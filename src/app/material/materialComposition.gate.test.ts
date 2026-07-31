@@ -84,22 +84,57 @@ describe('#394 S4 — one composition decision, translated N ways', () => {
     ]);
   });
 
-  it('nothing re-implements the map-defends-channel decision', () => {
-    // The decision's distinguishing shape is "the director forced this channel OR no
-    // source map defends it" (materialOverrideMerge.ts:99-100). A second spelling of the
-    // rule would have to write that branch again, so the branch itself is the tell —
-    // stronger than counting importers, because a copy-paste imports nothing.
+  it('nothing re-implements the per-field write decision', () => {
+    // A second spelling of the rule would have to combine the two things the decision
+    // combines: whether the director AUTHORED a field, and whether a MAP defends it.
+    // Either alone is innocent — `overrideDescriptor.ts` and `overrideSet.ts` both call
+    // `isOverridden` generically for any node type with an authored set, and
+    // `resolveMaterialFieldOwner.ts` handles map presence without deciding anything. It
+    // is the conjunction that means "this module has its own opinion about material
+    // composition".
+    //
+    // Deliberately NOT keyed to the branch's exact expression. The first version of this
+    // gate matched `|| !maps.`, and #529's fix moved that branch into a switch — a tell
+    // tied to a shape stops matching the moment the shape is refactored, and then reports
+    // a clean sweep forever. The conjunction survives refactors of either half.
+    const decides = (src: string) =>
+      /isOverridden\(/.test(src) && /mapDefends|MaterialMapPresence|maps\.roughnessMap/.test(src);
+
     const offenders = sourceFiles()
       .filter(([path]) => path !== 'src/app/material/materialOverrideMerge.ts')
-      .filter(([, src]) => /\|\|\s*!maps\./.test(src))
+      .filter(([, src]) => decides(src))
       .map(([path]) => path);
 
     expect(offenders).toEqual([]);
 
     // Guard the guard: the pattern must actually match where the decision DOES live,
     // or this sweep is an empty assertion that would pass over a deleted rule.
-    const merge = readFileSync(join(SRC, 'app/material/materialOverrideMerge.ts'), 'utf8');
-    expect(merge).toMatch(/\|\|\s*!maps\./);
+    expect(decides(readFileSync(join(SRC, 'app/material/materialOverrideMerge.ts'), 'utf8'))).toBe(
+      true,
+    );
+  });
+
+  it('every caller STATES which layer sits below it — no regime is inherited', () => {
+    // #529 was a regime chosen by default rather than stated. The authority argument is
+    // required, but `tsconfig.app.json` excludes `*.test.ts`, so the compiler does not
+    // enforce it where it is most likely to be dropped. This sweep does: every call to
+    // the decision or to either composer must name its road on the same line or the next.
+    const CALL = /(?:resolveMaterialOverrideFields|composeMaterial|composeBakedMaterial)\(/;
+    const silent: string[] = [];
+    for (const [path, src] of sourceFiles()) {
+      if (path === 'src/app/material/composeMaterial.ts') continue; // it forwards a param
+      if (path === 'src/app/material/materialOverrideMerge.ts') continue; // it defines it
+      const lines = src.split('\n');
+      lines.forEach((line, i) => {
+        if (!CALL.test(line) || line.trimStart().startsWith('//')) return;
+        // The argument may sit on the call line or within the next few, for a wrapped call.
+        // Generous, because a well-commented call site puts its argument a dozen lines
+        // below the opening paren — two of the four real ones do exactly that.
+        const window = lines.slice(i, i + 20).join('\n');
+        if (!/'(?:map-aware|authored-only)'/.test(window)) silent.push(`${path}:${i + 1}`);
+      });
+    }
+    expect(silent).toEqual([]);
   });
 });
 

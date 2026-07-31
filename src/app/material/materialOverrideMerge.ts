@@ -57,18 +57,52 @@ export interface MaterialMapPresence {
 }
 
 /**
- * The exact fields to write onto the cloned material. A `null` scalar means
- * "leave the source value untouched" — the source owns that channel via its map.
+ * WHAT SITS BELOW THIS OVERRIDE — the one thing the decision cannot infer (#529).
+ *
+ * The map-aware cut described above is a rule about a SOURCE MATERIAL: "no map defends
+ * this channel" is evidence that the scalar IS the value, so applying the override's
+ * scalar loses nothing. That reasoning is sound when the layer below is a passive
+ * source — an imported glTF material, a captured baked spec, a primitive's own IR.
+ *
+ * It is FALSE when the layer below is ANOTHER AUTHORED LAYER. In the material operator
+ * stack a lower operator's roughness is not an undefended default; it is a value a
+ * director deliberately put there. Reading "no map" as permission to overwrite it makes
+ * the upper operator claim every channel it has a param for, which is exactly #529: the
+ * `overridden` set — the entire mechanism that makes the diff sparse — is never
+ * consulted, because `||` short-circuits before it. Measured, one operator with empty
+ * params reset six of seven channels of an authored material to its own defaults.
+ *
+ * So the regime is an INPUT, not something to sniff. Two values, one branch:
+ *
+ *   'map-aware'     the layer below is a source material. The #99/#124 cut, unchanged.
+ *   'authored-only' the layer below is another authored layer. A field is written IFF
+ *                   the director authored it — map presence is irrelevant, because the
+ *                   thing being protected is authorship, not texture fidelity.
+ *
+ * Deliberately REQUIRED rather than defaulted. A default would let a new caller inherit
+ * the wrong regime silently, and a silently-wrong regime is the whole of #529. Every
+ * call site states which road it is on.
+ */
+export type OverrideAuthority = 'map-aware' | 'authored-only';
+
+/**
+ * The exact fields to write. A `null` means "leave the layer below untouched" — it owns
+ * that channel, whether by defending it with a map or by having authored it.
  * Map references are intentionally absent: they survive the clone, never set here.
+ *
+ * ALL SIX are nullable as of #529. On the 'map-aware' road the four tint fields are
+ * still never null, so that road's consumers are unaffected in practice — but the type
+ * no longer PROMISES it, which is what lets the data lane return nothing at all.
  */
 export interface MaterialOverrideFields {
-  readonly color: string;
+  readonly color: string | null;
   readonly roughness: number | null;
   readonly metalness: number | null;
-  readonly opacity: number;
-  readonly emissive: string;
-  readonly emissiveIntensity: number;
-  readonly transparent: boolean;
+  readonly opacity: number | null;
+  readonly emissive: string | null;
+  readonly emissiveIntensity: number | null;
+  /** Derived from `opacity`; null exactly when opacity is not written. */
+  readonly transparent: boolean | null;
 }
 
 /**
@@ -92,19 +126,57 @@ export interface MaterialOverrideFields {
 export function resolveMaterialOverrideFields(
   override: MaterialValue,
   maps: MaterialMapPresence,
-  overriddenSet?: OverriddenSet<MaterialOverrideField>,
+  overriddenSet: OverriddenSet<MaterialOverrideField> | undefined,
+  authority: OverrideAuthority,
 ): MaterialOverrideFields {
-  // A scalar channel is applied when the director explicitly authored it OR no
-  // source map defends it. Forced ⇒ the scalar; otherwise map present ⇒ null.
-  const roughnessForced = isOverridden(overriddenSet, 'roughness') || !maps.roughnessMap;
-  const metalnessForced = isOverridden(overriddenSet, 'metalness') || !maps.metalnessMap;
+  const authored = (f: MaterialOverrideField) => isOverridden(overriddenSet, f);
+
+  // THE ONE BRANCH (#529). Everything below reads `writes(field, mapDefends)`; the two
+  // regimes differ only in what that means, and they differ in exactly one place.
+  //
+  //   authored-only — the layer below is another authored layer. Authorship is the whole
+  //                   test. `mapDefends` is not consulted: a map below is somebody's
+  //                   authored choice too, and the director either asked for this field
+  //                   or did not.
+  //   map-aware     — the layer below is a source material. Unchanged #99/#124/D-06:
+  //                   authored ⇒ force the scalar even over a map; otherwise apply it
+  //                   only where no map defends the channel.
+  //
+  // Written as an EXHAUSTIVE switch that throws, not as a ternary with a fall-through
+  // side. `tsconfig.app.json` excludes `*.test.ts` from typecheck, so a required
+  // parameter is NOT enforced at the tier most likely to omit it — a test calling this
+  // with three arguments would compile silently, and a ternary would hand it the
+  // map-aware road. That is #529's own shape (a regime chosen by default rather than
+  // stated), so a missing authority has to be loud.
+  const writes = (f: MaterialOverrideField, mapDefends: boolean) => {
+    switch (authority) {
+      case 'authored-only':
+        return authored(f);
+      case 'map-aware':
+        return authored(f) || !mapDefends;
+      default: {
+        const exhaustive: never = authority;
+        throw new Error(`resolveMaterialOverrideFields: unknown authority ${String(exhaustive)}`);
+      }
+    }
+  };
+
+  // The four tints pass `mapDefends: false`, which is not a shortcut — it is the D-01
+  // statement that they have no map to defend against. Their default is map-identity
+  // (a white tint multiplies a `.map` to itself), so on the map-aware road they resolve
+  // to "always applied" exactly as before, while on the data lane they now obey the
+  // authored set like every other field. One expression, both roads.
+  const opacity = writes('opacity', false) ? override.opacity : null;
+
   return {
-    color: override.color,
-    roughness: roughnessForced ? override.roughness : null,
-    metalness: metalnessForced ? override.metalness : null,
-    opacity: override.opacity,
-    emissive: override.emissive,
-    emissiveIntensity: override.emissiveIntensity,
-    transparent: override.opacity < 1,
+    color: writes('color', false) ? override.color : null,
+    roughness: writes('roughness', maps.roughnessMap) ? override.roughness : null,
+    metalness: writes('metalness', maps.metalnessMap) ? override.metalness : null,
+    opacity,
+    emissive: writes('emissive', false) ? override.emissive : null,
+    emissiveIntensity: writes('emissiveIntensity', false) ? override.emissiveIntensity : null,
+    // Derived, never authored — so it is present exactly when the opacity it derives
+    // from is. An unwritten opacity leaves the layer below owning transparency too.
+    transparent: opacity === null ? null : opacity < 1,
   };
 }

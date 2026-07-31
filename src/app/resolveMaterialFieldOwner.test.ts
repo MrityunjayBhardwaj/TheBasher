@@ -162,6 +162,10 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
     // layer up). Asked per FIELD it lands on the layer that actually decides.
     const s = spliceOp(withLinkedMaterial(splitPair()), 'ovr', 'MaterialOverrideOp', {
       color: OP_COLOR,
+      // #529 — the bit is what makes the op the owner. Before that fix a bare scalar was
+      // enough, because the op claimed every channel it had a param for whether the
+      // director had asked for it or not; that is exactly what stopped being true.
+      overridden: { color: true },
     });
     expect(resolveDataParamOwner(s, 'obj', 'material')).toBe('mat'); // the per-root answer
     expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
@@ -173,6 +177,9 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
   it('is transparent while muted — a muted layer is byte-identically no layer', () => {
     const s = spliceOp(withLinkedMaterial(splitPair()), 'ovr', 'MaterialOverrideOp', {
       color: OP_COLOR,
+      // AUTHORED, so this really tests MUTING. Without the bit the op would own nothing
+      // anyway post-#529 and the test would pass no matter what `muted` did.
+      overridden: { color: true },
       muted: true,
     });
     expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
@@ -181,27 +188,35 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
     });
   });
 
-  it('owns roughness when nothing defends the channel', () => {
-    const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { roughness: 0.9 });
+  it('owns roughness once the director authors it', () => {
+    const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', {
+      roughness: 0.9,
+      overridden: { roughness: true },
+    });
     expect(resolveMaterialFieldOwners(s, 'obj').roughness?.nodeId).toBe('ovr');
   });
 
-  it('does NOT own roughness when a source map defends it and the bit is unauthored', () => {
-    // The conditional branch, and the reason ownership is READ OFF the one decision function
-    // rather than re-derived: a map-defended channel is genuinely still the source's, so a
-    // write must reach past the operator to the node that owns the scalar.
-    const s = spliceOp(splitPair({ roughnessMap: true }), 'ovr', 'MaterialOverrideOp', {
-      roughness: 0.9,
-    });
-    expect(resolveMaterialFieldOwners(s, 'obj').roughness).toEqual({
-      nodeId: 'data',
-      paramPath: 'material.specular.roughness',
-    });
+  it('does NOT own an UNAUTHORED field — and #529 made that true with OR without a map', () => {
+    // The conditional branch, and the reason ownership is READ OFF the one decision
+    // function rather than re-derived: an unauthored channel is genuinely still the
+    // layer's below, so a write must reach past the operator to the node that owns it.
+    //
+    // Both fixtures are asserted because the data lane composes 'authored-only', where map
+    // presence is IRRELEVANT. Before #529 the unmapped case answered 'ovr' and the mapped
+    // case answered 'data' — the same unauthored field, two owners, decided by a texture
+    // slot nobody had touched. Pinning them EQUAL is what states the map no longer votes.
+    for (const maps of [{}, { roughnessMap: true }]) {
+      const s = spliceOp(splitPair(maps), 'ovr', 'MaterialOverrideOp', { roughness: 0.9 });
+      expect(resolveMaterialFieldOwners(s, 'obj').roughness, JSON.stringify(maps)).toEqual({
+        nodeId: 'data',
+        paramPath: 'material.specular.roughness',
+      });
+    }
   });
 
   it('owns roughness over a map once the director authors the bit', () => {
-    // The other half of the same rule (#124 explicit force). Same fixture, one bit flipped —
-    // so a resolver that ignored `overridden` passes the case above and fails here.
+    // The #124 explicit force, and still the discriminating pair with the case above: same
+    // mapped fixture, one bit flipped, so a resolver that ignored `overridden` fails here.
     const s = spliceOp(splitPair({ roughnessMap: true }), 'ovr', 'MaterialOverrideOp', {
       roughness: 0.9,
       overridden: { roughness: true },
@@ -211,8 +226,14 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
 
   it('gives the TOPMOST forcing layer the field, not the first one found from the bottom', () => {
     // Order is the whole question: the layer nearest the Object is the one that renders.
-    let s = spliceOp(splitPair(), 'lower', 'MaterialOverrideOp', { color: '#ff0000' });
-    s = spliceOp(s, 'upper', 'MaterialOverrideOp', { color: OP_COLOR });
+    let s = spliceOp(splitPair(), 'lower', 'MaterialOverrideOp', {
+      color: '#ff0000',
+      overridden: { color: true },
+    });
+    s = spliceOp(s, 'upper', 'MaterialOverrideOp', {
+      color: OP_COLOR,
+      overridden: { color: true },
+    });
     expect(resolveMaterialFieldOwners(s, 'obj').color?.nodeId).toBe('upper');
   });
 });
@@ -261,7 +282,10 @@ describe('a geometry modifier is transparent to material', () => {
 
   it('walks past a modifier stacked ON an override op and still lands on the op', () => {
     // The interleaved case: the material answer must not depend on what else is in the lane.
-    let s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { color: OP_COLOR });
+    let s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', {
+      color: OP_COLOR,
+      overridden: { color: true },
+    });
     s = spliceOp(s, 'arr', 'ArrayModifier', { count: 2 });
     expect(resolveMaterialFieldOwners(s, 'obj').color?.nodeId).toBe('ovr');
   });

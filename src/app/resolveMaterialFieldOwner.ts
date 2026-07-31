@@ -169,18 +169,21 @@ function maskedFieldsOf(
         overrideValueOf(params as unknown as MaterialOverrideOpParams),
         mapPresenceBelow(state, opId),
         (params as unknown as MaterialOverrideOpParams).overridden,
+        // The data lane — the layer below is another authored layer, never a source
+        // material. Must match what `MaterialOverrideOp.evaluate` composes with, or the
+        // oracle and the render disagree about who owns a field, which is the class of
+        // defect this whole resolver exists to close.
+        'authored-only',
       );
       for (const field of MATERIAL_OVERRIDE_FIELDS) {
-        // `null` ⇒ the source keeps the channel ⇒ this layer is transparent for it. Only
-        // roughness/metalness can be null; the tint fields are always applied, which is
-        // why an override op with default params still owns `color`.
-        const written =
-          field === 'roughness'
-            ? fields.roughness !== null
-            : field === 'metalness'
-              ? fields.metalness !== null
-              : true;
-        if (written) out[field] = { nodeId: opId, paramPath: field };
+        // `null` ⇒ the layer below keeps the channel ⇒ this layer is transparent for it.
+        //
+        // #529 made this uniform. It used to special-case roughness/metalness and answer
+        // `true` for the other four, because the tints really were always applied — so an
+        // override op with DEFAULT params reported that it owned `color`, and the
+        // inspector labelled the base row "Set by <op>" when the op had authored nothing.
+        // Now every field answers the same way, off the same call.
+        if (fields[field] !== null) out[field] = { nodeId: opId, paramPath: field };
       }
       return out;
     }

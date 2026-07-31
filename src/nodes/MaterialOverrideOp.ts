@@ -111,10 +111,10 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
       geometry: source.geometry,
       material:
         base === null
-          ? composeMaterial(hydrateInlineMaterial(undefined), override)
+          ? composeMaterial(hydrateInlineMaterial(undefined), override, 'authored-only')
           : 'materialClass' in base
-            ? { ...base, ...composeBakedMaterial(base, override) }
-            : composeMaterial(base, override),
+            ? { ...base, ...composeBakedMaterial(base, override, 'authored-only') }
+            : composeMaterial(base, override, 'authored-only'),
     };
   },
 };

@@ -84,7 +84,10 @@ function spliceOp(state: DagState, opId: string, nodeType: string, params: objec
 
 describe('#519 — the topmost UNMASKED entry owns the field', () => {
   it('resolves a forced colour to the operator, in the operator’s flat vocabulary', () => {
-    const state = spliceOp(split('box'), 'ovr', 'MaterialOverrideOp', { color: '#00ff88' });
+    const state = spliceOp(split('box'), 'ovr', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
 
     // The vacuity guard: the two candidate nodes are genuinely different, and the answer is
     // the one ABOVE. Before the fix this returned the base with the IR path.
@@ -96,7 +99,10 @@ describe('#519 — the topmost UNMASKED entry owns the field', () => {
   });
 
   it('splits ONE param root across two layers — which is what per-root could never do', () => {
-    const state = spliceOp(split('box'), 'ovr', 'MaterialOverrideOp', { color: '#00ff88' });
+    const state = spliceOp(split('box'), 'ovr', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
 
     // Both requests live under the SAME `material` root, and they resolve to different
     // nodes: the operator supplies the colour, and it has no opinion about the material's
@@ -110,8 +116,14 @@ describe('#519 — the topmost UNMASKED entry owns the field', () => {
   });
 
   it('takes the TOPMOST of two stacked operators', () => {
-    let state = spliceOp(split('box'), 'lower', 'MaterialOverrideOp', { color: '#00ff88' });
-    state = spliceOp(state, 'upper', 'MaterialOverrideOp', { color: '#ff00ff' });
+    let state = spliceOp(split('box'), 'lower', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
+    state = spliceOp(state, 'upper', 'MaterialOverrideOp', {
+      color: '#ff00ff',
+      overridden: { color: true },
+    });
     expect(resolveExposedTarget(state, 'obj', COLOR)!.nodeId).toBe('upper');
   });
 

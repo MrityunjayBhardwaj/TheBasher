@@ -16,20 +16,21 @@
 //      claim of this slice: an op sees the socket-resolved base.
 //   4. the scene-band `MaterialOverride` wrapper, applied last, at compile time.
 //
-// ── WHY THE DISCRIMINATOR IS `specular.ior` AND NOT A COLOUR ────────────────────────
+// ── WHY THE DISCRIMINATOR IS `specular.ior` ─────────────────────────────────────────
 //
-// The obvious fixture — give each layer a different colour and see which one comes out —
-// proves nothing here, and finding out why cost a run. `composeMaterial.ts:80` writes
-// `color: fields.color` with NO `?? base.base.color`, so an override op forces
-// `base.color` UNCONDITIONALLY, even with `overridden.color` unset. Every colour probe
-// therefore reports the OP's colour whatever is underneath, and a fixture built on it
-// would be uniform — one answer, no information ([[the choice-between-two rule]]: a test
-// of a choice must present both sides).
+// It has to be a channel the operator does NOT write, or the probe reports the operator's
+// own value instead of the base it was handed — one uniform answer, no information.
 //
-// `specular.ior` is outside the op's vocabulary entirely — the op has no `ior` param and
-// composes no opinion about it — so it passes through whatever base the op was handed.
-// That makes it the one channel that can report WHICH base that was. The premise is
-// itself guarded below, because the whole gate rests on it.
+// When this file was first written that ruled out colour, because an override op forced
+// `base.color` unconditionally. That was #529, and it is now fixed: an op writes a field
+// only where the director authored it, so an unauthored colour passes through too.
+//
+// `ior` is still the better discriminator, and for a reason the fix does not touch: it is
+// outside the operator's vocabulary ENTIRELY — there is no `ior` param and no bit that
+// could ever author one — whereas colour merely happens to be unauthored in these
+// fixtures. A structural silence is a stronger premise than a circumstantial one, and it
+// stays true no matter what the authored set says. Both are pinned below, separately,
+// because they are silent for different reasons and only one of them is load-bearing.
 //
 // ── WHAT THIS TIER CANNOT REACH, STATED RATHER THAN FUDGED ─────────────────────────
 //
@@ -129,11 +130,11 @@ describe('#394 S4 — an operator sees the SOCKET-resolved base', () => {
     expect(matOf(state, 'op').specular.roughness).toBe(0.9);
   });
 
-  it('GUARDS THE PREMISE: the op is silent about ior and unconditional about colour', () => {
-    // The whole discriminator above rests on this, so it is asserted rather than trusted.
-    // If a later change gave the op an `ior` opinion, every assertion in this file would
-    // keep passing while measuring something else entirely — the failure mode where a
-    // fixture quietly stops being able to tell the two answers apart.
+  it('GUARDS THE PREMISE: the op is silent about ior structurally, about colour by authorship', () => {
+    // The discriminator above rests on this, so it is asserted rather than trusted. If a
+    // later change gave the op an `ior` opinion, every assertion in this file would keep
+    // passing while measuring something else entirely — the failure mode where a fixture
+    // quietly stops being able to tell the two answers apart.
     const state = build([
       materialNode('m', LINKED_IOR),
       dataNode('d', PARAM_IOR),
@@ -142,12 +143,16 @@ describe('#394 S4 — an operator sees the SOCKET-resolved base', () => {
       wire('d', 'out', 'op', 'target'),
     ]);
 
-    // Silent about ior: the base's value survives untouched.
+    // STRUCTURAL silence — there is no `ior` param and no bit that could author one, so
+    // the base's value survives whatever the director does. This is the load-bearing half.
     expect(matOf(state, 'op').specular.ior).toBe(matOf(state, 'd').specular.ior);
-    // Unconditional about colour: `overridden.color` was never set, and the op's default
-    // white still wins over the linked material's colour. This is the behaviour that
-    // makes a colour-based fixture useless here, pinned so the reasoning above stays true.
-    expect(matOf(state, 'op').base.color).toBe('#ffffff');
+
+    // CIRCUMSTANTIAL silence — colour is untouched here only because this fixture never
+    // authored it. Post-#529 that is enough to pass it through; the op's default white no
+    // longer overwrites the linked material. Pinned as the regression witness for #529 at
+    // the smallest possible scale: one op, one unauthored field, nothing wiped.
+    expect(matOf(state, 'op').base.color).toBe(matOf(state, 'd').base.color);
+    expect(matOf(state, 'op').base.color).not.toBe('#ffffff');
   });
 });
 
@@ -177,31 +182,19 @@ describe('#394 S4 — the stack folds bottom → top, and the top layer wins', (
     expect(matOf(state, 'lower').base.color).toBe('#111111');
   });
 
-  // 🔴 THIS GATE FOUND A DEFECT, AND PINS WHAT THE CODE DOES RATHER THAN WHAT IT SHOULD.
+  // ✅ THIS TEST FOUND #529 AND IS NOW ITS REGRESSION WITNESS.
   //
-  // The test written first asserted the fold is CUMULATIVE — two ops with disjoint
-  // opinions, each surviving the other. It failed: the lower op's roughness came back as
-  // the UPPER op's default, not its own authored 0.8.
+  // Written first as the cumulative claim, it failed: the lower op's authored roughness
+  // came back as the UPPER op's default. One `||` was the cause — an op wrote a scalar
+  // when the director authored it OR when no source map defended the channel. On the
+  // glTF road that fallback is right; on the data lane the base is an untextured
+  // primitive, so the map test was always false, the `||` short-circuited, and the
+  // authored set was never consulted at all.
   //
-  // The cause is one `||` (materialOverrideMerge.ts:99). An op writes a scalar when the
-  // director authored it OR when no source map defends the channel. That fallback is
-  // correct where it came from — the glTF road, one override over an imported material,
-  // where "no map" really does mean "the scalar is the value". On the data lane the base
-  // is an untextured primitive, so the map test is ALWAYS false, the `||` short-circuits,
-  // and the `overridden` set is never consulted. The mechanism that exists to make the
-  // diff sparse is inert in exactly the case this lane is always in.
-  //
-  // Measured consequence: a single override op with EMPTY params, dropped onto an
-  // authored material, resets six of its seven channels to the operator's own defaults —
-  // colour, metalness, roughness, emissive, luminance and opacity. Only `ior` survives,
-  // and only because the operator has no field for it.
-  //
-  // FILED AS #529. It is left unfixed here on purpose: the repair belongs with the
-  // decision function, which is deliberately a single shared function, and turning it
-  // into two spellings to fix this would undo the gate two files over. So this asserts
-  // the real behaviour, so that the fold is documented rather than quietly wrong, and
-  // #529 flips these expectations as part of its fix.
-  it('⚠️ #529 — an upper op erases channels it never authored (measured, not intended)', () => {
+  // The fix made the regime an explicit input rather than something inferred from map
+  // presence: the data lane composes 'authored-only', where a field is written iff the
+  // director authored it. So the expectations below are now the ones originally drafted.
+  it('two ops with DISJOINT opinions: each survives the other', () => {
     const state = build([
       dataNode('d', PARAM_IOR),
       overrideOp('lower', 0.8),
@@ -216,15 +209,46 @@ describe('#394 S4 — the stack folds bottom → top, and the top layer wins', (
     ]);
 
     const out = matOf(state, 'upper');
-    // The upper op's own opinion lands, as it should.
-    expect(out.base.metalness).toBe(0.7);
-    // …but so does its UNAUTHORED default roughness, erasing the lower op's 0.8.
-    // #529 flips this line to `toBe(0.8)`.
-    expect(out.specular.roughness).toBe(0.5);
+    expect(out.base.metalness).toBe(0.7); // the upper op's own opinion lands
+    expect(out.specular.roughness).toBe(0.8); // …and the LOWER op's survives it (#529)
     expect(matOf(state, 'lower').specular.roughness).toBe(0.8); // it really was there first
+    expect(out.specular.ior).toBe(PARAM_IOR); // …and the base's untouched channel
+  });
 
-    // The one channel that composes correctly, and it does so only by being outside the
-    // operator's vocabulary — which is the whole shape of #529 in one assertion.
-    expect(out.specular.ior).toBe(PARAM_IOR);
+  it('#529 — an operator with EMPTY params is a no-op, not a wipe', () => {
+    // The measured symptom that filed the issue, at its smallest: one operator, nothing
+    // authored, dropped onto a material with every channel deliberately set away from the
+    // operator's defaults. It used to reset six of the seven.
+    const state = build([
+      {
+        type: 'addNode',
+        nodeId: 'm',
+        nodeType: 'Material',
+        params: {
+          material: {
+            name: 'authored',
+            base: { color: '#c81e5a', metalness: 0.9 },
+            specular: { roughness: 0.05, ior: LINKED_IOR },
+            emission: { color: '#ff0000', luminance: 3 },
+            geometry: { opacity: 0.4 },
+          },
+        },
+      },
+      dataNode('d', PARAM_IOR),
+      { type: 'addNode', nodeId: 'op', nodeType: 'MaterialOverrideOp', params: {} },
+      wire('m', 'out', 'd', 'material'),
+      wire('d', 'out', 'op', 'target'),
+    ]);
+
+    // Every channel identical to the layer below — asserted as a whole object rather than
+    // field by field, so a NEW channel the operator learns to claim is caught too.
+    expect(matOf(state, 'op')).toEqual(matOf(state, 'd'));
+
+    // Guard the guard: the layer below really does hold non-default values, so "identical"
+    // is a claim about preservation and not about two copies of the schema defaults.
+    const below = matOf(state, 'd');
+    expect(below.base.color).toBe('#c81e5a');
+    expect(below.specular.roughness).toBe(0.05);
+    expect(below.geometry.opacity).toBe(0.4);
   });
 });

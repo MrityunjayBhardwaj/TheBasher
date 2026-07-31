@@ -68,6 +68,7 @@ const BASE_ROUGH = 0.9;
 const MAT_COLOR = '#2244ff'; // the linked Material's colour
 const MAT_IOR = 1.9; // ONLY the Material can supply this — the op has no ior
 const OP_ROUGH = 0.2;
+const OP_COLOR = '#11dd66'; // authored ON the operator — distinct from base AND from the link
 
 function rendered(page: import('@playwright/test').Page, id: string) {
   return page.evaluate((n) => (window as unknown as UiWindow).__basher_mesh_material!(n), id);
@@ -193,7 +194,16 @@ test('#394 S3d — MASK PRECEDENCE: the operator names its own field, the link n
             type: 'addNode',
             nodeId: a.op,
             nodeType: 'MaterialOverrideOp',
-            params: { roughness: a.opRough, overridden: { roughness: true } },
+            // #529 — the operator AUTHORS colour as well as roughness. It used to author
+            // only roughness and still claim `base.color`, because an override wrote every
+            // channel it had a param for whether the director asked or not. The
+            // discriminator below is unchanged, but it now rests on authorship rather than
+            // on that defect.
+            params: {
+              roughness: a.opRough,
+              color: a.opColor,
+              overridden: { roughness: true, color: true },
+            },
           },
           // BOTH coverings at once — this is the only shape where precedence is visible.
           {
@@ -229,6 +239,7 @@ test('#394 S3d — MASK PRECEDENCE: the operator names its own field, the link n
       matColor: MAT_COLOR,
       matIor: MAT_IOR,
       opRough: OP_ROUGH,
+      opColor: OP_COLOR,
       // NOTE: the data node's material has NO `material` connect in cubeOps — the
       // connect below supplies it, which is what makes the base a covered layer.
       ops: cubeOps(DATA, CUBE, 4, {
@@ -256,9 +267,9 @@ test('#394 S3d — MASK PRECEDENCE: the operator names its own field, the link n
   expect(colorTitle, 'base.color must be marked').toBeTruthy();
   expect(iorTitle, 'specular.ior must be marked').toBeTruthy();
 
-  // THE PRECEDENCE. `base.color` is written unconditionally by the operator, so the
-  // per-field mask wins there; `specular.ior` is outside the override vocabulary, so the
-  // wholesale supplier fills it in. Flipping `maskedBy?.[path] ?? suppliedBy` swaps these.
+  // THE PRECEDENCE. `base.color` is AUTHORED on the operator, so the per-field mask wins
+  // there; `specular.ior` is outside the override vocabulary entirely, so the wholesale
+  // supplier fills it in. Flipping `maskedBy?.[path] ?? suppliedBy` swaps these.
   expect(iorTitle).toContain(MAT);
   expect(colorTitle).not.toContain(MAT);
   // …and they genuinely differ, which is the assertion a single-covering fixture cannot
@@ -379,4 +390,107 @@ test('#394 S3d — two objects, one material, edited once: the payoff on the ren
   // to match. This is the claim #394 exists to make.
   expect((await rendered(page, CUBE))!.color).toBe('#00ff44');
   expect((await rendered(page, CUBE2))!.color).toBe('#00ff44');
+});
+
+// #529 — THE OPERATOR WRITES WHAT THE DIRECTOR AUTHORED, AND NOTHING ELSE.
+//
+// This lives at the browser tier because BOTH halves of the fix do. The composition half
+// has unit coverage; the AUTHORING half does not and cannot — whether the panel writes the
+// authored bit alongside the value is a fact about what a React component dispatches, and
+// this repo has no component-render tier. Before the decorator was wired into the
+// linked-data block, every unit test still passed while an edit to a material operator was
+// silently discarded by the fold: the value landed, the bit did not, and the fold reads the
+// bit. That is precisely the gap only this tier sees.
+test('#529 — an operator at its defaults changes nothing; an edit authors and lands', async ({
+  page,
+}) => {
+  await page.evaluate(
+    (a) => {
+      const w = window as unknown as UiWindow;
+      const dag = w.__basher_dag.getState();
+      const scene = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: a.mat,
+            nodeType: 'Material',
+            params: {
+              material: {
+                name: 'authored',
+                base: { color: a.matColor, metalness: 0.9 },
+                specular: { roughness: a.matRough },
+              },
+            },
+          },
+          ...(a.ops as Op[]),
+          // EMPTY params — the exact shape that used to reset six of seven channels.
+          { type: 'addNode', nodeId: a.op, nodeType: 'MaterialOverrideOp', params: {} },
+          {
+            type: 'connect',
+            from: { node: a.mat, socket: 'out' },
+            to: { node: a.data, socket: 'material' },
+          },
+          {
+            type: 'connect',
+            from: { node: a.data, socket: 'out' },
+            to: { node: a.op, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: a.op, socket: 'out' },
+            to: { node: a.cube, socket: 'data' },
+          },
+          {
+            type: 'connect',
+            from: { node: a.cube, socket: 'out' },
+            to: { node: scene, socket: 'children' },
+          },
+        ],
+        'e2e',
+        '#529',
+      );
+    },
+    {
+      cube: CUBE,
+      data: DATA,
+      mat: MAT,
+      op: OP,
+      matColor: MAT_COLOR,
+      matRough: OP_ROUGH,
+      // No material connect in cubeOps — the Material node above supplies it.
+      ops: cubeOps(DATA, CUBE, 4, { name: 'inline', base: { color: BASE_COLOR } }) as unknown,
+    },
+  );
+  await page.evaluate(
+    (c) => (window as unknown as UiWindow).__basher_selection.getState().select(c),
+    CUBE,
+  );
+  await openInspectorSection(page, 'material');
+
+  // 1. THE DEFAULT OPERATOR IS A NO-OP, asserted on what the renderer actually drew.
+  const atDefaults = await rendered(page, CUBE);
+  expect(atDefaults!.color).toBe(MAT_COLOR); // was '#ffffff' before the fix
+  expect(atDefaults!.roughness).toBeCloseTo(OP_ROUGH, 5); // was 0.5
+  expect(atDefaults!.metalness).toBeCloseTo(0.9, 5); // was 0
+
+  // 2. THE DECORATOR IS THERE TO AUTHOR WITH. Its absence is what made the fix incomplete:
+  // the rows were editable and unmarkable, so the fold discarded every edit.
+  await expect(page.getByTestId(`inspector-override-dot-${OP}-roughness`)).toBeVisible();
+
+  // 3. AN EDIT AUTHORS THE BIT AND MOVES THE RENDER — one dispatch, both halves.
+  const input = page.getByTestId(`inspector-input-${OP}-roughness`);
+  await input.fill('0.83');
+  await input.press('Enter');
+  await expect(page.getByTestId(`inspector-override-dot-${OP}-roughness`)).toHaveAttribute(
+    'data-overridden',
+    'true',
+  );
+  await expect.poll(async () => (await rendered(page, CUBE))!.roughness).toBeCloseTo(0.83, 5);
+
+  // 4. …AND ONLY THAT CHANNEL. The sparse claim, on the evaluated material: colour and
+  // metalness are still the linked Material's, because nobody authored them on the op.
+  const after = await rendered(page, CUBE);
+  expect(after!.color).toBe(MAT_COLOR);
+  expect(after!.metalness).toBeCloseTo(0.9, 5);
 });
