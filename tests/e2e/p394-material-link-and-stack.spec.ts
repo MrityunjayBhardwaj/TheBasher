@@ -46,7 +46,9 @@ interface Op {
   [k: string]: unknown;
 }
 interface UiWindow {
-  __basher_selection: { getState: () => { select: (id: string) => void } };
+  __basher_selection: {
+    getState: () => { select: (id: string) => void; primaryNodeId: string | null };
+  };
   __basher_dag: {
     getState: () => {
       state: { outputs: { scene?: { node: string } } };
@@ -69,6 +71,14 @@ const MAT_COLOR = '#2244ff'; // the linked Material's colour
 const MAT_IOR = 1.9; // ONLY the Material can supply this — the op has no ior
 const OP_ROUGH = 0.2;
 const OP_COLOR = '#11dd66'; // authored ON the operator — distinct from base AND from the link
+
+// ── S5 (the payoff) ──────────────────────────────────────────────────────────────────
+const CUBE3 = 'p394s5_cube3';
+const DATA3 = 'p394s5_data3';
+const OP3 = 'p394s5_op3';
+const SHARED_ROUGH = 0.72; // the Material's roughness — MUST differ from OP3_ROUGH, or
+const OP3_ROUGH = 0.11; //   "the third one differs" is true without anything doing it
+const EDITED_COLOR = '#ff00aa'; // distinct from every authored colour in the fixture
 
 function rendered(page: import('@playwright/test').Page, id: string) {
   return page.evaluate((n) => (window as unknown as UiWindow).__basher_mesh_material!(n), id);
@@ -493,4 +503,248 @@ test('#529 — an operator at its defaults changes nothing; an edit authors and 
   const after = await rendered(page, CUBE);
   expect(after!.color).toBe(MAT_COLOR);
   expect(after!.metalness).toBeCloseTo(0.9, 5);
+});
+
+// ── S5 — THE PAYOFF ──────────────────────────────────────────────────────────────────
+//
+// The composable claim, end to end and on the rendered mesh: one Material, three objects,
+// one edit, all three move — and the one carrying an override still differs, on exactly
+// the channel it authored and no other.
+//
+// WHY THREE AND NOT TWO. Two objects prove sharing. The THIRD is the one that makes the
+// claim composable rather than merely shared: it is linked to the same Material AND wears
+// an override operator, so it has to follow the edit on the channels the operator is silent
+// about while keeping its own on the one channel it authored. Before #529 this object could
+// not have existed in a passing test — an operator at any setting wiped six of seven
+// channels to its own defaults, so the third object would have stopped following the shared
+// material entirely. This test is the reason that fix was worth making.
+//
+// VACUITY GUARDS, because "they all agree" is the easiest thing in the world to get for the
+// wrong reason:
+//   · each cube authors a DIFFERENT base colour underneath, so agreement cannot be accidental
+//   · the Material's roughness differs from the operator's, so "the third differs" is a fact
+//     about the operator rather than about two numbers that happen to coincide
+//   · the edited colour differs from every colour authored anywhere in the fixture
+//   · roughness is re-read AFTER the colour edit, so "the override survived" is asserted
+//     rather than assumed from it having been true earlier
+test('#394 S5 — three objects, one material: edit once and all three move, and the overridden one still differs', async ({
+  page,
+}) => {
+  await page.evaluate(
+    (a) => {
+      const w = window as unknown as UiWindow;
+      const dag = w.__basher_dag.getState();
+      const scene = dag.state.outputs.scene!.node;
+      const link = (data: string): Op => ({
+        type: 'connect',
+        from: { node: a.mat, socket: 'out' },
+        to: { node: data, socket: 'material' },
+      });
+      const toScene = (cube: string): Op => ({
+        type: 'connect',
+        from: { node: cube, socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      });
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: a.mat,
+            nodeType: 'Material',
+            params: {
+              material: {
+                name: 'shared',
+                base: { color: a.matColor },
+                specular: { roughness: a.sharedRough },
+              },
+            },
+          },
+          ...(a.opsA as Op[]),
+          ...(a.opsB as Op[]),
+          ...(a.opsC as Op[]),
+          // The third object's override: authors roughness ONLY — and authors the BIT,
+          // not just the value. A fixture that set the value alone would be silently
+          // discarded by the fold and this test would assert nothing.
+          {
+            type: 'addNode',
+            nodeId: a.op3,
+            nodeType: 'MaterialOverrideOp',
+            params: { roughness: a.op3Rough, overridden: { roughness: true } },
+          },
+          // Splice the operator between the third data node and its Object.
+          {
+            type: 'connect',
+            from: { node: a.data3, socket: 'out' },
+            to: { node: a.op3, socket: 'target' },
+          },
+          {
+            type: 'connect',
+            from: { node: a.op3, socket: 'out' },
+            to: { node: a.cube3, socket: 'data' },
+          },
+          toScene(a.cube),
+          toScene(a.cube2),
+          toScene(a.cube3),
+          link(a.data),
+          link(a.data2),
+          link(a.data3),
+        ],
+        'e2e',
+        '#394 S5 payoff',
+      );
+    },
+    {
+      mat: MAT,
+      matColor: MAT_COLOR,
+      sharedRough: SHARED_ROUGH,
+      cube: CUBE,
+      cube2: CUBE2,
+      cube3: CUBE3,
+      data: DATA,
+      data2: DATA2,
+      data3: DATA3,
+      op3: OP3,
+      op3Rough: OP3_ROUGH,
+      // Three DIFFERENT authored colours underneath — only the shared material can make
+      // all three agree.
+      opsA: cubeOps(DATA, CUBE, 4, { name: 'a', base: { color: '#ff0000' } }) as unknown,
+      opsB: cubeOps(DATA2, CUBE2, 7, { name: 'b', base: { color: '#00ff00' } }) as unknown,
+      opsC: cubeOps(DATA3, CUBE3, 10, { name: 'c', base: { color: '#0000ff' } }) as unknown,
+    },
+  );
+
+  // Sharing is a STATED fact on the surface, not something the director has to infer.
+  await page.evaluate(
+    (c) => (window as unknown as UiWindow).__basher_selection.getState().select(c),
+    CUBE,
+  );
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId('material-link-users')).toHaveText('3');
+
+  // 1. ALL THREE draw the shared material's colour — including the overridden one, whose
+  //    operator authored roughness and therefore has no opinion about colour.
+  expect((await rendered(page, CUBE))!.color).toBe(MAT_COLOR);
+  expect((await rendered(page, CUBE2))!.color).toBe(MAT_COLOR);
+  expect((await rendered(page, CUBE3))!.color).toBe(MAT_COLOR);
+
+  // 2. AND THE THIRD DIFFERS — on exactly the channel its operator authored.
+  expect((await rendered(page, CUBE))!.roughness).toBeCloseTo(SHARED_ROUGH, 5);
+  expect((await rendered(page, CUBE2))!.roughness).toBeCloseTo(SHARED_ROUGH, 5);
+  expect((await rendered(page, CUBE3))!.roughness).toBeCloseTo(OP3_ROUGH, 5);
+
+  // 3. ONE edit, on the Material node, through its own inspector row.
+  await page.evaluate(
+    (m) => (window as unknown as UiWindow).__basher_selection.getState().select(m),
+    MAT,
+  );
+  await openInspectorSection(page, 'material');
+  const hex = page.getByTestId(`inspector-colorhex-${MAT}-material.base.color`);
+  await hex.fill(EDITED_COLOR);
+  await hex.press('Enter');
+
+  // 4. ALL THREE MOVE — the overridden one included. This is the claim #394 exists to make,
+  //    and the third object is the half of it that only became true with #529.
+  await expect.poll(async () => (await rendered(page, CUBE))!.color).toBe(EDITED_COLOR);
+  expect((await rendered(page, CUBE2))!.color).toBe(EDITED_COLOR);
+  expect((await rendered(page, CUBE3))!.color).toBe(EDITED_COLOR);
+
+  // 5. …AND THE OVERRIDE SURVIVED THE EDIT. Re-read rather than assumed: a fold that
+  //    rebuilt the third object from the edited material would satisfy step 4 and lose this.
+  expect((await rendered(page, CUBE3))!.roughness).toBeCloseTo(OP3_ROUGH, 5);
+  expect((await rendered(page, CUBE))!.roughness).toBeCloseTo(SHARED_ROUGH, 5);
+});
+
+// #394 S5 — DUPLICATING AN OBJECT KEEPS THE MATERIAL SHARED, observed rather than derived.
+//
+// The rule lives in `OWNED_SOCKETS` (`sceneNodeActions.ts`): duplicate deep-copies what an
+// object OWNS — children, wrapper target, its data node — and keeps every other input
+// shared. `material` is deliberately absent from that list, so the copy points at the same
+// Material node. That is pinned at the unit tier; this is the browser witness for it.
+//
+// 🔴 THE DISCRIMINATOR, and it is the whole design of this test. "The duplicate renders the
+// same colour" CANNOT tell sharing from copying — a private copy of a material holds the
+// same values and draws identically. The two hypotheses only separate under a PERTURBATION:
+// edit the Material once AFTER duplicating. If the copy is still linked, it moves; if
+// duplicate had deep-copied the material, it keeps the old colour. So the assertion that
+// carries this test is step 3, and steps 1-2 exist to prove the mesh was found at all.
+test('#394 S5 — duplicating a linked object keeps the material shared, not copied', async ({
+  page,
+}) => {
+  await page.evaluate(
+    (a) => {
+      const w = window as unknown as UiWindow;
+      const dag = w.__basher_dag.getState();
+      const scene = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: a.mat,
+            nodeType: 'Material',
+            params: { material: { name: 'shared', base: { color: a.matColor } } },
+          },
+          ...(a.ops as Op[]),
+          {
+            type: 'connect',
+            from: { node: a.cube, socket: 'out' },
+            to: { node: scene, socket: 'children' },
+          },
+          {
+            type: 'connect',
+            from: { node: a.mat, socket: 'out' },
+            to: { node: a.data, socket: 'material' },
+          },
+        ],
+        'e2e',
+        '#394 S5 duplicate',
+      );
+      w.__basher_selection.getState().select(a.cube);
+    },
+    {
+      mat: MAT,
+      matColor: MAT_COLOR,
+      cube: CUBE,
+      data: DATA,
+      // A DIFFERENT colour authored underneath, so drawing the link's colour is a fact
+      // about the link rather than about the cube's own material.
+      ops: cubeOps(DATA, CUBE, 4, { name: 'a', base: { color: '#ff0000' } }) as unknown,
+    },
+  );
+
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId('material-link-users')).toHaveText('1');
+
+  await page.keyboard.press('Shift+D');
+
+  // Duplicate selects the copy — that is how the new id is known without guessing it.
+  const copyId = await page.evaluate(
+    () => (window as unknown as UiWindow).__basher_selection.getState().primaryNodeId,
+  );
+  expect(copyId).toBeTruthy();
+  expect(copyId).not.toBe(CUBE);
+
+  // 1. THE COUNT IS A STATED FACT and it moved: the copy is a second USER of one material,
+  //    not an owner of a second material.
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId('material-link-users')).toHaveText('2');
+
+  // 2. POSITIVE CONTROL — the copy's mesh is reachable and drawing the shared colour. On
+  //    its own this proves nothing about sharing (a copy would look identical); it proves
+  //    the probe found the right object, so that step 3's answer means something.
+  expect((await rendered(page, copyId!))!.color).toBe(MAT_COLOR);
+
+  // 3. THE DISCRIMINATOR — edit the Material once and the COPY must follow. This is the
+  //    only observation in the test that a deep-copied material would fail.
+  await page.evaluate(
+    (m) => (window as unknown as UiWindow).__basher_selection.getState().select(m),
+    MAT,
+  );
+  await openInspectorSection(page, 'material');
+  const hex = page.getByTestId(`inspector-colorhex-${MAT}-material.base.color`);
+  await hex.fill(EDITED_COLOR);
+  await hex.press('Enter');
+
+  await expect.poll(async () => (await rendered(page, copyId!))!.color).toBe(EDITED_COLOR);
+  // …and the original moved with it, so the edit reached both users of the one material.
+  expect((await rendered(page, CUBE))!.color).toBe(EDITED_COLOR);
 });
