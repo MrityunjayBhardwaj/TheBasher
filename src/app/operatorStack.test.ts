@@ -357,26 +357,42 @@ describe('operatorStack', () => {
 // interleaved fixture is checked for the foreign node's presence before it is trusted.
 
 describe('#526 — a shared data lane: each stack sees its own kind and passes the other', () => {
-  /** `n_box_data → MaterialOverrideOp → ArrayModifier → n_box`. */
+  /**
+   * `n_box_data → MaterialOverrideOp → ArrayModifier → n_box`, wired EXPLICITLY.
+   *
+   * 🔑 NOT built through `+ Add`, and that is the point. `buildAddModifierOps` takes its
+   * insertion point from the very walk these cases test, so a fixture built with it is
+   * rebuilt into a DIFFERENT lane the moment the walk is perturbed — and then the case
+   * passes against the broken build while describing a shape that is not the one it
+   * names. Measured: with the pass-through removed, the `+ Add` version of this fixture
+   * quietly produced `data → mod → ovr` (the modifier BELOW) and stayed green. Explicit
+   * wiring plus the shape assertion is what makes these cases able to fail.
+   */
   function interleaved(): { state: DagState; modId: string } {
     let state = buildDefaultDagState();
     const base = resolveStackBase(state, BOX);
-    // the material operator goes in FIRST, so it sits BELOW the modifier
     const consumer = findConsumer(state, base)!;
     state = applyOps(state, [
       { type: 'addNode', nodeId: 'ovr', nodeType: 'MaterialOverrideOp', params: {} },
+      { type: 'addNode', nodeId: 'mod', nodeType: 'ArrayModifier', params: { count: 3 } },
       { type: 'disconnect', from: { node: base, socket: 'out' }, to: consumer },
       {
         type: 'connect',
         from: { node: base, socket: 'out' },
         to: { node: 'ovr', socket: 'target' },
       },
-      { type: 'connect', from: { node: 'ovr', socket: 'out' }, to: consumer },
+      {
+        type: 'connect',
+        from: { node: 'ovr', socket: 'out' },
+        to: { node: 'mod', socket: 'target' },
+      },
+      { type: 'connect', from: { node: 'mod', socket: 'out' }, to: consumer },
     ] as Op[]);
-    // provenance: the foreign node really is in the lane, below where the modifier goes
-    expect(state.nodes.ovr).toBeDefined();
-    const { state: withMod, id } = addMod(state, BOX);
-    return { state: withMod, modId: id };
+    // THE SHAPE, asserted rather than assumed: the material operator is BELOW the
+    // modifier. Without this the cases below cannot tell this lane from its mirror.
+    expect(findConsumer(state, base)!.node).toBe('ovr');
+    expect(findConsumer(state, 'ovr')!.node).toBe('mod');
+    return { state, modId: 'mod' };
   }
 
   it('enumerates a modifier sitting ABOVE a material operator', () => {
