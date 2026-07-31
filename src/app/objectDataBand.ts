@@ -55,6 +55,24 @@
 export type SplitBand = 'children' | 'lights' | 'camera';
 
 /**
+ * The bands whose picture actually comes from the overlaid VALUE — and therefore the only
+ * bands the lane overlay may be asked for (#522).
+ *
+ * ⚠️ THIS EXISTS BECAUSE A TEXT GATE WENT BLIND, AND THE REPLACEMENT IS STRICTER. The band
+ * used to be a literal at each of the four viewport hooks, so a scan of production sources
+ * for `channelPathForBand('camera', …)` could assert the camera never took the value road.
+ * #522 threads the band through two shared hooks instead, which left the scan with no
+ * subject at all — caught by that gate's own positive control, which is the only reason it
+ * was noticed. Excluding the band at the TYPE means a camera overlay is a compile error
+ * rather than something a scan has to keep being able to see.
+ *
+ * `renderReachForBand` is still the place that says WHY the camera is excluded; this is the
+ * enforcement, not the reason.
+ */
+export const OVERLAY_BANDS = ['children', 'lights'] as const;
+export type OverlayBand = (typeof OVERLAY_BANDS)[number];
+
+/**
  * The paramPath an overlay must use so the renderer reads it, given the band the
  * value renders in and the param's path ON THE DATA NODE.
  *
