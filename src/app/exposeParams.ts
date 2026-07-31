@@ -71,6 +71,7 @@ import {
   MATERIAL_OVERRIDE_FIELDS,
   resolveMaterialFieldOwners,
 } from './resolveMaterialFieldOwner';
+import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { nodeDisplayName } from './sceneTreeWalk';
 import type { MaterialOverrideField } from '../nodes/types';
 // The enumeration lives in `operatorStack` (it needs `nodeDisplayName`); the WALK
@@ -496,4 +497,108 @@ function withMaterialMasking(
     }
     return Object.keys(masked).length > 0 ? { ...row, maskedBy: masked } : row;
   });
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────
+// THE OWNERSHIP QUERY — for callers that hold no row (#394 P5, #519)
+// ────────────────────────────────────────────────────────────────────────────────────
+
+/** The node a write / channel / driver for one logical param must land on, and the path
+ *  it is called by THERE. Same shape as the per-field material owner it replaces, because
+ *  the vocabulary bridge is the reason the path has to travel with the id. */
+export interface ExposedTarget {
+  readonly nodeId: string;
+  readonly paramPath: string;
+}
+
+/** The IR path → override-field direction of `MATERIAL_FIELD_IR_PATH`. Derived from the
+ *  one table rather than written out, so the two cannot drift. */
+const MATERIAL_FIELD_BY_IR_PATH: Readonly<Record<string, MaterialOverrideField>> =
+  Object.fromEntries(MATERIAL_OVERRIDE_FIELDS.map((f) => [MATERIAL_FIELD_IR_PATH[f], f])) as Record<
+    string,
+    MaterialOverrideField
+  >;
+
+/** The top-level param key of a path: 'material.base.color' → 'material'. */
+function paramRootOf(paramPath: string): string {
+  const dot = paramPath.indexOf('.');
+  return dot === -1 ? paramPath : paramPath.slice(0, dot);
+}
+
+/**
+ * Where `requested` lives on `row`, or null when this row does not hold it.
+ *
+ * Two vocabularies, and the bridge between them is deliberately NARROW. A data node or a
+ * Material node holds every material channel inside one `material` IR param, so a request
+ * for `material.base.color` is served by the `material` row under its own name. A material
+ * override OPERATOR holds each channel as a flat scalar (`color`), so the same request is
+ * served by a row whose path is just the field name.
+ *
+ * 🔴 THE BRIDGE IS SCOPED TO MATERIAL-LANE OPERATORS, AND THAT SCOPE IS LOAD-BEARING.
+ * `color` is not a rare param name — a LightData owns one, and so does any future node that
+ * happens to spell a channel flat. Bridging on the name alone would make
+ * `material.base.color` resolve onto a split light's `color` row, quietly turning a mutator
+ * that reports "this target has no material" into one that writes the light. Asking whether
+ * the row's node is a material operator is the same question the flat vocabulary comes from,
+ * so it cannot drift from it.
+ */
+function pathOnRow(state: DagState, row: DerivedParam, requested: string): string | null {
+  if (requested === row.paramPath || requested.startsWith(`${row.paramPath}.`)) return requested;
+  const field = MATERIAL_FIELD_BY_IR_PATH[requested];
+  if (field === undefined || row.paramPath !== field) return null;
+  return isMaterialLaneOperator(state.nodes[row.nodeId]) ? field : null;
+}
+
+/**
+ * The topmost entry for a logical param that nothing above it supplies — the ONE ownership
+ * answer for callers that address an aggregate and hold no row (#394 P5, closing #519).
+ *
+ * ── WHY THIS EXISTS AND WHAT IT REPLACES ────────────────────────────────────────────
+ *
+ * A surface that generated its rows FROM nodes needs no query: the row carries the node it
+ * came from, and writing is the identity function on provenance. The agent has no row. It
+ * names a scene object and a param path, and something has to say which layer of the chain
+ * that path resolves to — per FIELD, because a material override operator authors a sparse
+ * per-field set, and per LAYER, because the answer for `color` can be the operator while the
+ * answer for `roughness` is still the material node underneath.
+ *
+ * Resolving per param ROOT is what #519 measured: the whole `material` root resolved to the
+ * layer at the bottom, so a channel created for a colour an operator forces was placed on
+ * the masked layer. It reported success, the dopesheet drew the curve, and the composed
+ * material took that field from the operator above.
+ *
+ * ── THE RULE ────────────────────────────────────────────────────────────────────────
+ *
+ * Walk the projection in its own order — poser, then the lane from the TOP down, then the
+ * producers wired into each — and take the first row that holds the field and is not marked
+ * as supplied by someone else. A masked row is skipped rather than followed, because its
+ * masker is a row of its own; that is what keeps this an answer ABOUT the projection rather
+ * than a second walk beside it.
+ *
+ * ⚠️ THE FALLBACK IS NOT DEFENSIVE — IT IS LOAD-BEARING, AND IT IS MEASURED. A param a
+ * custom control renders has NO projection row at all: `fov`, `near`, `far` and six more are
+ * omitted for the camera lens control, `points` for the curve editor, the channel modifier
+ * keys for their stack. The projection is the panel's generic rows, and those params are not
+ * generic rows. Falling through to the per-root reach keeps this a strict EXTENSION of the
+ * shipped answer rather than a narrower replacement — which is what a bare `?? id` at the
+ * call site would silently have made it (a camera channel would have gone back to targeting
+ * the Object, where the render overlay never collects it).
+ *
+ * ⚠️ THIS EVALUATES — `canApplyTransform` for the section context, and the masking walk when
+ * the chain has a layer that can mask. Call it from a mutator's `build`/`preconditions`, never
+ * from a zustand selector ([[H48]]).
+ */
+export function resolveExposedTarget(
+  state: DagState,
+  id: string,
+  paramPath: string,
+): ExposedTarget | null {
+  for (const row of exposeParams(state, id)) {
+    const path = pathOnRow(state, row, paramPath);
+    if (path === null) continue;
+    if (row.maskedBy?.[path]) continue;
+    return { nodeId: row.nodeId, paramPath: path };
+  }
+  const ownerId = resolveDataParamOwner(state, id, paramRootOf(paramPath));
+  return ownerId ? { nodeId: ownerId, paramPath } : null;
 }

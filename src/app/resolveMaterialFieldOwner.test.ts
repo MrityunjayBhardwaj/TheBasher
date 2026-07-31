@@ -11,7 +11,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
-import { MATERIAL_FIELD_IR_PATH, resolveMaterialFieldOwner } from './resolveMaterialFieldOwner';
+import { MATERIAL_FIELD_IR_PATH, resolveMaterialFieldOwners } from './resolveMaterialFieldOwner';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 
 beforeEach(() => {
@@ -106,7 +106,7 @@ describe('with no material operator in the chain, it is the shipped reach plus a
   // second answer to a question that already had one.
   it('resolves to the data node, at the field’s IR path', () => {
     const s = splitPair();
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: resolveDataParamOwner(s, 'obj', 'material'),
       paramPath: 'material.base.color',
     });
@@ -114,7 +114,7 @@ describe('with no material operator in the chain, it is the shipped reach plus a
 
   it('resolves to the LINKED Material node when the socket supersedes the param', () => {
     const s = withLinkedMaterial(splitPair());
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'mat',
       paramPath: 'material.base.color',
     });
@@ -127,7 +127,7 @@ describe('with no material operator in the chain, it is the shipped reach plus a
     const paths = Object.fromEntries(
       (
         ['color', 'metalness', 'roughness', 'opacity', 'emissive', 'emissiveIntensity'] as const
-      ).map((f) => [f, resolveMaterialFieldOwner(s, 'obj', f)?.paramPath]),
+      ).map((f) => [f, resolveMaterialFieldOwners(s, 'obj')[f]?.paramPath]),
     );
     expect(paths).toEqual({
       color: 'material.base.color',
@@ -149,8 +149,8 @@ describe('with no material operator in the chain, it is the shipped reach plus a
       nodeType: 'Null',
       params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     }).next;
-    expect(resolveMaterialFieldOwner(s, 'null1', 'color')).toBeNull();
-    expect(resolveMaterialFieldOwner(s, 'missing', 'color')).toBeNull();
+    expect(resolveMaterialFieldOwners(s, 'null1').color).toBeNull();
+    expect(resolveMaterialFieldOwners(s, 'missing').color).toBeNull();
   });
 });
 
@@ -164,7 +164,7 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
       color: OP_COLOR,
     });
     expect(resolveDataParamOwner(s, 'obj', 'material')).toBe('mat'); // the per-root answer
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'ovr',
       paramPath: 'color',
     });
@@ -175,7 +175,7 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
       color: OP_COLOR,
       muted: true,
     });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'mat',
       paramPath: 'material.base.color',
     });
@@ -183,7 +183,7 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
 
   it('owns roughness when nothing defends the channel', () => {
     const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { roughness: 0.9 });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'roughness')?.nodeId).toBe('ovr');
+    expect(resolveMaterialFieldOwners(s, 'obj').roughness?.nodeId).toBe('ovr');
   });
 
   it('does NOT own roughness when a source map defends it and the bit is unauthored', () => {
@@ -193,7 +193,7 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
     const s = spliceOp(splitPair({ roughnessMap: true }), 'ovr', 'MaterialOverrideOp', {
       roughness: 0.9,
     });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'roughness')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').roughness).toEqual({
       nodeId: 'data',
       paramPath: 'material.specular.roughness',
     });
@@ -206,14 +206,14 @@ describe('an override operator MASKS the layer below, so it owns the field (PLAN
       roughness: 0.9,
       overridden: { roughness: true },
     });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'roughness')?.nodeId).toBe('ovr');
+    expect(resolveMaterialFieldOwners(s, 'obj').roughness?.nodeId).toBe('ovr');
   });
 
   it('gives the TOPMOST forcing layer the field, not the first one found from the bottom', () => {
     // Order is the whole question: the layer nearest the Object is the one that renders.
     let s = spliceOp(splitPair(), 'lower', 'MaterialOverrideOp', { color: '#ff0000' });
     s = spliceOp(s, 'upper', 'MaterialOverrideOp', { color: OP_COLOR });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')?.nodeId).toBe('upper');
+    expect(resolveMaterialFieldOwners(s, 'obj').color?.nodeId).toBe('upper');
   });
 });
 
@@ -231,7 +231,7 @@ describe('a wholesale set operator delegates to the material it points at', () =
       from: { node: 'mat2', socket: 'out' },
       to: { node: 'setm', socket: 'material' },
     }).next;
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'mat2',
       paramPath: 'material.base.color',
     });
@@ -241,7 +241,7 @@ describe('a wholesale set operator delegates to the material it points at', () =
     // The resolver and the node must agree about when the operator does nothing, or the
     // write road diverges from what renders for exactly the unwired case.
     const s = spliceOp(splitPair(), 'setm', 'SetMaterialOp', {});
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'data',
       paramPath: 'material.base.color',
     });
@@ -253,7 +253,7 @@ describe('a geometry modifier is transparent to material', () => {
     // It INHERITS its source's material rather than having an opinion on it
     // (ArrayModifier.ts:76), so it must never be mistaken for an owning layer.
     const s = spliceOp(splitPair(), 'arr', 'ArrayModifier', { count: 3 });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')).toEqual({
+    expect(resolveMaterialFieldOwners(s, 'obj').color).toEqual({
       nodeId: 'data',
       paramPath: 'material.base.color',
     });
@@ -263,6 +263,6 @@ describe('a geometry modifier is transparent to material', () => {
     // The interleaved case: the material answer must not depend on what else is in the lane.
     let s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { color: OP_COLOR });
     s = spliceOp(s, 'arr', 'ArrayModifier', { count: 2 });
-    expect(resolveMaterialFieldOwner(s, 'obj', 'color')?.nodeId).toBe('ovr');
+    expect(resolveMaterialFieldOwners(s, 'obj').color?.nodeId).toBe('ovr');
   });
 });

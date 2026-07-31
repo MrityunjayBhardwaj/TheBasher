@@ -43,7 +43,8 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { mulberry32, randRange } from '../../../nodes/random';
 import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
-import { resolveMaterialFieldOwner } from '../../../app/resolveMaterialFieldOwner';
+import { resolveExposedTarget } from '../../../app/exposeParams';
+import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
 
 // ---------------------------------------------------------------------------
 // Sub-schemas (D-08 — bound discipline)
@@ -197,7 +198,8 @@ function sampleScaleFactor(rng: () => number, range: ScaleRangeT): number {
 function canColor(state: DagState, id: string): boolean {
   // #394 S3c — per FIELD, mirroring setMaterialColor.ts: with a material operator in the
   // stack the authority for `color` is the topmost layer that forces it, not the param root.
-  const hasMaterial = resolveMaterialFieldOwner(state, id, 'color') !== null;
+  // #394 P5 — through the projection, so the offer and the write cannot answer differently.
+  const hasMaterial = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color) !== null;
   const hasColor =
     typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.color === 'string';
   return hasMaterial || hasColor;
@@ -324,7 +326,7 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
         if (prop === 'color') {
           // mirror setMaterialColor.ts — the per-field owner + ITS path vs light `color`
           const hex = sampleHslToHex(rng, spec.ranges.color!);
-          const matOwner = resolveMaterialFieldOwner(state, id, 'color');
+          const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
           if (matOwner) {
             ops.push({
               type: 'setParam',

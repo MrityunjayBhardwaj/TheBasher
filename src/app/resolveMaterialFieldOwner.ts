@@ -250,15 +250,15 @@ export function resolveMaterialFieldOwners(
   return out;
 }
 
-/**
- * The owner of ONE material field. Delegates to the whole-set walk so there is a single
- * decision function — a per-field spelling would be a second answer to the same question,
- * which is the failure this module's own header is about.
- */
-export function resolveMaterialFieldOwner(
-  state: DagState,
-  id: string,
-  field: MaterialOverrideField,
-): MaterialFieldOwner | null {
-  return resolveMaterialFieldOwners(state, id)[field];
-}
+// #394 P5 — THE SINGLE-FIELD ENTRY POINT IS GONE, and its absence is the point.
+//
+// `resolveMaterialFieldOwner(state, id, field)` existed for the write roads that ask about
+// one field (`setMaterialColor`, `randomize`). Those roads now ask `resolveExposedTarget`,
+// which answers for ANY param — material or not — off the same projection the inspector's
+// rows come from. Keeping a material-only spelling beside it would put two functions in the
+// codebase that answer "who owns this?" for the same caller, which is the shape this
+// module's own header is about.
+//
+// What survives here is the whole-set walk, and it survives because it is a DIFFERENT
+// question: the projection asks it once per chain to label its rows, and it must stay a
+// six-answers-in-one-walk shape for that to be affordable at all.

@@ -8,7 +8,8 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { resolveMaterialFieldOwner } from '../../../app/resolveMaterialFieldOwner';
+import { resolveExposedTarget } from '../../../app/exposeParams';
+import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -49,7 +50,11 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
       // #394 S3c — and PER FIELD, because a material operator in the stack can force `color`
       // over whatever the data node or the linked Material node says. Asking per param ROOT
       // there writes a masked layer and reports success (PLAN-2 §5).
-      const matOwner = resolveMaterialFieldOwner(state, id, 'color');
+      // #394 P5 — asked through the PROJECTION, which is the same answer the inspector's rows
+      // and the channel road get. The agent is the caller this query exists for: it names an
+      // aggregate and holds no row, so it is the one road where ownership still has to be
+      // resolved rather than carried.
+      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
       const hasColor =
         typeof (node.params as Record<string, unknown> | undefined)?.color === 'string';
       if (!matOwner && !hasColor) {
@@ -67,7 +72,7 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
       const node = state.nodes[id];
       // Material → the resolved per-field owner (the BoxData for a split Object, the linked
       // Material node, or the topmost operator that forces `color`); light `color` → self.
-      const matOwner = resolveMaterialFieldOwner(state, id, 'color');
+      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
       if (matOwner) {
         ops.push({
           type: 'setParam',
