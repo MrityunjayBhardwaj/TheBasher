@@ -46,6 +46,21 @@
 // cleanup before any effect, so the count legitimately touches zero in between.
 // Re-checking a tick later sees the new holder and keeps the instance.
 //
+// DECLARED, not overlooked: only a RELEASE can queue an eviction, so an entry built
+// by a render that never commits is never counted and never evicted — it lingers
+// until `clear`. That is the geometry registry's behaviour for every entry, and it
+// is bounded here by the number of distinct materials a discarded render produced.
+// The alternative — sweeping uncounted entries on a timer — would race the commit
+// that is about to retain them, which is the more expensive failure.
+//
+// ── WHAT IS DELIBERATELY NOT ON THE SPEC ────────────────────────────────────────
+//
+// `openpbrToThree` also compiles `alphaTest`, `vertexColors` and `doubleSided`. The
+// native road has never applied them (#532), so they are absent here rather than
+// carried unused: the spec is the set of fields the build APPLIES, and keying on a
+// field nobody applies would split the cache while changing nothing on screen.
+// Whoever fixes #532 adds them here, and the key follows for free.
+//
 // REF: docs/PERFORMANCE.md Lever 5; src/app/geometryRegistry.ts (the mirrored
 //      pattern); issue #530.
 
