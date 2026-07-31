@@ -90,6 +90,7 @@ export type ControlKey =
   | 'cameraLens'
   | 'modifierStack'
   | 'materialStack'
+  | 'materialLink'
   | 'constraintStack'
   | 'driverStack'
   | 'curvePoints'
@@ -148,6 +149,12 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // v0.6 #2 (#178 W6) — the per-submesh slot selector, for a node that
   // addresses a submesh by index. #178 S4 — the glTF material editor / readout.
   material: [
+    // #394 S3d — the data-block row FIRST, because it answers the question everything
+    // below it depends on: where does this material come from? Blender's Material
+    // properties open the same way. Like `materialStack` this is `whenDeclared` and the
+    // component decides on possession, for the same reason: "does this node take a
+    // material over an EDGE?" is a registry question and `SectionCtx` carries no registry.
+    { key: 'materialLink', applies: whenDeclared, placement: 'before' },
     {
       key: 'slotSelector',
       applies: (c) => c.ownsParam('slotIndex'),

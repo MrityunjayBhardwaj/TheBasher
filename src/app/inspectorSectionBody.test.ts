@@ -66,7 +66,7 @@ describe('#458 SECTION_CONTROLS — shape', () => {
     // and, at 13, deleting that new row again left this assertion GREEN — the floor was
     // still guarding the table as it stood two controls ago. A floor that does not move
     // stops being a census and becomes a lower bound on ancient history.
-    expect(keys.length).toBeGreaterThanOrEqual(14);
+    expect(keys.length).toBeGreaterThanOrEqual(15);
   });
 
   it('places the two transform controls BELOW the rows and everything else above', () => {
@@ -215,14 +215,17 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     const without = ctxFor('GltfChild', { assetRef: 'a', childName: 'c', materials: [] });
     const active = (c: ReturnType<typeof ctxFor>): ControlKey[] =>
       SECTION_CONTROLS.material.filter((x) => x.applies(c)).map((x) => x.key);
-    // #394 S3d — `materialStack` is `whenDeclared`, so it is active for every node that
-    // declares the section, including these. Asserted as part of the SET rather than
-    // filtered out of it: the claim under test is which of the two glTF controls wins,
-    // and a filter would also hide the day a fourth control started applying here.
-    expect(active(withMaterials)).toEqual(['gltfMaterialEditor', 'materialStack']);
-    expect(active(without)).toEqual(['gltfMaterialReadout', 'materialStack']);
+    // #394 S3d — `materialLink` and `materialStack` are both `whenDeclared`, so they are
+    // active for every node that declares the section, including these. Asserted as part
+    // of the SET rather than filtered out of it: the claim under test is which of the two
+    // glTF controls wins, and a filter would also hide the day a fifth control started
+    // applying here. It is in TABLE ORDER, which is render order — the data-block row
+    // leads, then the stack, and the glTF editor sits between them.
+    expect(active(withMaterials)).toEqual(['materialLink', 'gltfMaterialEditor', 'materialStack']);
+    expect(active(without)).toEqual(['materialLink', 'gltfMaterialReadout', 'materialStack']);
     // The whole-asset node keeps the read-only readout.
     expect(active(ctxFor('GltfAsset', { assetRef: 'a' }))).toEqual([
+      'materialLink',
       'gltfMaterialReadout',
       'materialStack',
     ]);

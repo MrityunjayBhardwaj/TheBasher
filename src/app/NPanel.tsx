@@ -96,6 +96,7 @@ import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
 import { MaterialStackControls } from './MaterialStackControls';
+import { MaterialLinkControls } from './MaterialLinkControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
 import { DriverStackControls } from './DriverStackControls';
 import { CurvePointRows } from './CurvePointRows';
@@ -2993,6 +2994,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   ),
   modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
   materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
+  materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
   constraintStack: (ctx) => <ConstraintStackControls nodeId={ctx.paramsNodeId} />,
   driverStack: (ctx) => <DriverStackControls nodeId={ctx.paramsNodeId} />,
   curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
