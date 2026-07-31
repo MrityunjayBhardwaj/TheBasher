@@ -1766,7 +1766,18 @@ function MaterialRows({
    *  layer. Absent ⇒ byte-identical to before. */
   suppliedBy?: MaskSource;
 }) {
-  /** Per-field: the nearest layer that supplies it. */
+  /**
+   * Per-field: the nearest layer that supplies it.
+   *
+   * ⚠️ DECLARED GAP — THIS PRECEDENCE IS NOT COVERED BY THE UNIT TIER. Flipping the two
+   * operands reddens nothing under `vitest` and nothing under the forced typecheck, and
+   * that is a coverage fact rather than a sign the rule is inert: with an override
+   * operator above a linked base the two answers genuinely differ (the widget names the
+   * operator, not the Material node), so the wrong order is user-visible. The unit tests
+   * assert the two FACTS the projection states; only a DOM-level check can see how this
+   * composes them. The browser observation is what covers it — do not read the green
+   * unit tier as evidence about this line.
+   */
   const maskFor = (path: string): MaskSource | undefined => maskedBy?.[path] ?? suppliedBy;
   return (
     <>
