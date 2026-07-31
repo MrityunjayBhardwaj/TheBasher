@@ -40,8 +40,10 @@
 //    one, and the consequence is real; the repo simply has no component-render tier for
 //    the inspector, so nothing can see a component that returns null versus one that
 //    returns rows. That is a missing TIER, not a weak claim, so the claim is not
-//    demoted — it is named here and covered by the browser observation (S3d-d) instead.
-//    Same shape as the mask-precedence gap declared one slice earlier.
+//    demoted — it is named here and COVERED, by `tests/e2e/p394-material-link-and-stack.spec.ts`
+//    ("a Material node gets neither surface"). Falsified against that spec: the fallback
+//    leaves the whole unit tier green and reddens the browser case. Same shape as the
+//    mask-precedence gap declared one slice earlier, which the same spec now covers too.
 //
 // REF: src/app/OperatorStackRows.tsx (the shared rows); src/app/operatorStack.ts
 //      (enumerateMaterialStack + the material builders); src/app/dataSectionCapability.ts

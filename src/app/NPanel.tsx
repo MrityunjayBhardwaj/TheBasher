@@ -1779,6 +1779,14 @@ function MaterialRows({
    * assert the two FACTS the projection states; only a DOM-level check can see how this
    * composes them. The browser observation is what covers it — do not read the green
    * unit tier as evidence about this line.
+   *
+   * ✅ #394 S3d-d — THAT OBSERVATION NOW EXISTS AND IS TRACKED:
+   * `tests/e2e/p394-material-link-and-stack.spec.ts` ("MASK PRECEDENCE"). It needs BOTH
+   * coverings at once and two fields that disagree, which is the part a fixture gets
+   * wrong by default: an override op writes `base.color` unconditionally
+   * (`composeMaterial.ts:80`) while `specular.ior` is outside its vocabulary, so the
+   * first names the operator and the second names the linked Material. Falsified by
+   * swapping the two sides of this `??`: the unit tier stays green, that spec reds.
    */
   const maskFor = (path: string): MaskSource | undefined => maskedBy?.[path] ?? suppliedBy;
   return (
