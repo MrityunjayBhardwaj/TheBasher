@@ -1741,6 +1741,7 @@ function MaterialRows({
   commitSource,
   testids,
   maskedBy,
+  suppliedBy,
 }: {
   nodeId: string;
   /** The keyframe channel path for a lobe field (native `material.<lobe>.<field>`,
@@ -1757,7 +1758,16 @@ function MaterialRows({
    *  full param path `fieldPath` produces. Absent ⇒ nothing masked, and the rows render
    *  byte-identically to before the stage. */
   maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — the node supplying EVERY field here, because a connected socket
+   *  supersedes the param wholesale. The projection states WHO; this component knows
+   *  WHAT IT DRAWS, so it is the only place that can apply a wholesale fact to the full
+   *  widget set — including the lobe fields and maps no override vocabulary can express.
+   *  A per-field `maskedBy` entry WINS: an operator above a linked base is the nearer
+   *  layer. Absent ⇒ byte-identical to before. */
+  suppliedBy?: MaskSource;
 }) {
+  /** Per-field: the nearest layer that supplies it. */
+  const maskFor = (path: string): MaskSource | undefined => maskedBy?.[path] ?? suppliedBy;
   return (
     <>
       {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
@@ -1779,7 +1789,7 @@ function MaterialRows({
                   testidColor={tid.color}
                   testidHex={tid.colorHex}
                   onSource={(v) => commitSource(lobe, key, v)}
-                  masked={maskedBy?.[path]}
+                  masked={maskFor(path)}
                 />
               );
             }
@@ -1793,7 +1803,7 @@ function MaterialRows({
                 testidInput={tid.num}
                 testidScrub={tid.scrub}
                 onSource={(v) => commitSource(lobe, key, v)}
-                masked={maskedBy?.[path]}
+                masked={maskFor(path)}
               />
             );
           })}
@@ -1992,10 +2002,13 @@ function MaterialEditor({
   nodeId,
   material,
   maskedBy,
+  suppliedBy,
 }: {
   nodeId: string;
   material: unknown;
   maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — a connected `material` socket supersedes this param wholesale. */
+  suppliedBy?: MaskSource;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   if (!isMaterialIR(material)) return null;
@@ -2012,6 +2025,7 @@ function MaterialEditor({
       <MaterialRows
         nodeId={nodeId}
         maskedBy={maskedBy}
+        suppliedBy={suppliedBy}
         fieldPath={(lobe, key) => `material.${lobe}.${key}`}
         readValue={(lobe, key, kind) => {
           const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
@@ -2085,6 +2099,7 @@ function ParamRow({
   value,
   overrideInfo,
   maskedBy,
+  suppliedBy,
 }: {
   nodeId: string;
   paramPath: string;
@@ -2094,11 +2109,22 @@ function ParamRow({
    *  material row carries up to six (one per channel); a flat scalar row carries at most
    *  its own. Both shapes are looked up by path, so neither needs a special case. */
   maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — the node supplying EVERY field of this row (a connected socket
+   *  supersedes wholesale). Only a material row can carry one today; a flat scalar row
+   *  has no socket that shadows it. */
+  suppliedBy?: MaskSource;
 }) {
   // v0.6 #2 (#178, W3) — the inline material IR renders the lobe-grouped editor
   // INSTEAD of the (complex — Pro mode) fallback. Closes NPanel:636 for primitives.
   if (paramPath === 'material' && isMaterialIR(value)) {
-    return <MaterialEditor nodeId={nodeId} material={value} maskedBy={maskedBy} />;
+    return (
+      <MaterialEditor
+        nodeId={nodeId}
+        material={value}
+        maskedBy={maskedBy}
+        suppliedBy={suppliedBy}
+      />
+    );
   }
   if (typeof value === 'number') {
     return (
@@ -2881,15 +2907,17 @@ function LinkedDataSections({
               rowKey: row.relPath,
               nodeId: row.nodeId,
               maskedBy: row.maskedBy,
+              suppliedBy: row.suppliedBy,
             }))}
             renderers={SECTION_CONTROL_RENDERERS}
-            renderRow={({ key, value, rowKey, nodeId, maskedBy }) => (
+            renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
               <ParamRow
                 key={rowKey}
                 nodeId={nodeId}
                 paramPath={key}
                 value={value}
                 maskedBy={maskedBy}
+                suppliedBy={suppliedBy}
               />
             )}
           />

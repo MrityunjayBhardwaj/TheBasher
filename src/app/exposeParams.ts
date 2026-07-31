@@ -144,6 +144,38 @@ export interface DerivedParam {
    * whole material because one channel is forced, or say nothing because most are not.
    */
   readonly maskedBy?: Readonly<Record<string, MaskSource>>;
+  /**
+   * The node that supplies EVERY field of this row, because a connected socket
+   * supersedes the param it shares a name with WHOLESALE (#394 S3d, #525).
+   *
+   * ── WHY THIS IS NOT `maskedBy` WITH MORE KEYS ─────────────────────────────────────
+   *
+   * The two coverings have different REACH, and the difference is in the domain rather
+   * than in the implementation:
+   *
+   *   an override OPERATOR authors a SPARSE set — the six fields `MaterialOverriddenSet`
+   *     can carry. A field it does not author genuinely still comes from the base, so
+   *     naming the covered fields one by one is the whole truth.
+   *   a linked SOCKET supersedes WHOLESALE — "if an edge is present, the param is not
+   *     consulted at all" (`materialSocket.ts`). EVERY field comes from the linked node,
+   *     including the ones no override can express.
+   *
+   * Keying wholesale coverage per field would need this module to know which widgets the
+   * surface draws (`MATERIAL_LOBES`, plus the map slots and the UV transform) — and it
+   * would go stale the day a lobe is added, silently, in the direction that under-reports.
+   * So the projection states WHO supplies and the surface applies it to WHAT IT DRAWS:
+   * each side holds the half it actually knows.
+   *
+   * `maskedBy` WINS where both apply — an operator above a linked base is the nearer
+   * layer, and the nearest layer is the owner.
+   *
+   * Same treatment as `maskedBy`: a LABEL, never a redirect and never a lock. The row
+   * stays editable, the write lands on this row's own node, and unlinking the socket is
+   * what makes that value the one the viewport draws — measured, and the reason it is a
+   * fallback rather than dead state (`materialSocket.test.ts` "the param comes back
+   * untouched").
+   */
+  readonly suppliedBy?: MaskSource;
 }
 
 /** One param a promoted control drives. Carries the driver's OWN id alongside the target,
@@ -691,7 +723,25 @@ function withMaterialMasking(
       if (path === null) continue;
       masked[path] = { nodeId: owner.nodeId, label: labelOf(owner.nodeId) };
     }
-    return Object.keys(masked).length > 0 ? { ...row, maskedBy: masked } : row;
+
+    // WHOLESALE coverage (#525): this row's own `material` param is superseded by a
+    // producer wired into its `material` socket, so every field it renders comes from
+    // there — including the four lobe fields and the maps no override can express.
+    // Asked of the ROW's node, not of the selection: it is that node's socket that
+    // supersedes that node's param, which is the same provenance rule the rows carry.
+    const linked =
+      row.paramPath === 'material' ? singleRef(state.nodes[row.nodeId], 'material') : null;
+    const suppliedBy: MaskSource | undefined =
+      linked && linked.node !== row.nodeId
+        ? { nodeId: linked.node, label: labelOf(linked.node) }
+        : undefined;
+
+    if (Object.keys(masked).length === 0 && !suppliedBy) return row;
+    return {
+      ...row,
+      ...(Object.keys(masked).length > 0 ? { maskedBy: masked } : {}),
+      ...(suppliedBy ? { suppliedBy } : {}),
+    };
   });
 }
 

@@ -43,6 +43,7 @@ vi.mock('./resolveMaterialFieldOwner', async (importOriginal) => {
 });
 
 const { exposeParams } = await import('./exposeParams');
+const { MATERIAL_FIELD_IR_PATH } = await import('./resolveMaterialFieldOwner');
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -128,6 +129,92 @@ describe('#394 P4 — what a later layer masks', () => {
     const rows = exposeParams(splitCube(), 'obj');
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.maskedBy === undefined)).toBe(true);
+    expect(rows.every((r) => r.suppliedBy === undefined)).toBe(true);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+// #394 S3d (#525) — the two coverings have different REACH
+// ────────────────────────────────────────────────────────────────────────────────────
+//
+// An override OPERATOR authors a SPARSE set (the six `MaterialOverriddenSet` fields); a
+// field it does not author genuinely still comes from the base. A linked SOCKET
+// supersedes WHOLESALE — every field comes from the linked node, including ones no
+// override vocabulary can express. Labelling both through the six-field list was the
+// measured defect: four rendered widgets showed the base's value while the viewport drew
+// the linked node's, with nothing on screen saying so.
+//
+// THE COMPANION THIS FILE NEEDS: the wholesale claim is a claim ABOUT A SET — "fields the
+// sparse vocabulary cannot reach". If that set ever empties (someone widens
+// MATERIAL_OVERRIDE_FIELDS to every lobe), every assertion below stays green while the
+// mechanism they describe stops mattering. So the disjointness is asserted directly, and
+// it reddens by NAME the day the two vocabularies converge.
+
+describe('#394 S3d — a linked socket covers WHOLESALE, an operator covers what it authors', () => {
+  /** Rendered lobe fields that NO override can express — the reason `suppliedBy` exists.
+   *  Mirrors `MATERIAL_LOBES` in NPanel; kept as data here so the disjointness below is
+   *  a statement about two vocabularies rather than a re-read of one of them. */
+  const BEYOND_THE_OVERRIDE_SET = [
+    'material.specular.ior',
+    'material.coat.weight',
+    'material.coat.roughness',
+    'material.transmission.weight',
+  ];
+
+  function withLinkedMaterial(state: DagState, matId = 'mat'): DagState {
+    return applyOps(state, [
+      { type: 'addNode', nodeId: matId, nodeType: 'Material', params: {} },
+      {
+        type: 'connect',
+        from: { node: matId, socket: 'out' },
+        to: { node: 'obj_data', socket: 'material' },
+      },
+    ] as Op[]);
+  }
+
+  it('THE SUBJECT IS REAL — the sparse vocabulary genuinely cannot reach these fields', () => {
+    // Falsify the companion by widening MATERIAL_OVERRIDE_FIELDS: this reddens, naming
+    // the field that stopped being out of reach. Without it, every test below could go
+    // vacuously green on a build where the wholesale path never runs.
+    const sparse = Object.values(MATERIAL_FIELD_IR_PATH);
+    expect(sparse.length).toBe(6);
+    for (const field of BEYOND_THE_OVERRIDE_SET) {
+      expect(sparse, `${field} must stay outside the override vocabulary`).not.toContain(field);
+    }
+  });
+
+  it('names the linked node as supplying the WHOLE row, not six of its fields', () => {
+    const rows = exposeParams(withLinkedMaterial(splitCube()), 'obj');
+    const base = rowFor(rows, 'obj_data', 'material');
+    expect(base!.suppliedBy?.nodeId).toBe('mat');
+    expect(base!.suppliedBy?.label).toBeTruthy();
+    // The Material node's own row is the authority — it supplies itself.
+    expect(rowFor(rows, 'mat', 'material')!.suppliedBy).toBeUndefined();
+  });
+
+  it('an OPERATOR alone never claims the fields it cannot author', () => {
+    // The discriminator, and the reason this is not "just mark everything": with an
+    // override op and NO link, the four fields above genuinely still come from the base,
+    // so claiming them would be a false label rather than a missing one.
+    const rows = exposeParams(withOverrideOp(splitCube()), 'obj');
+    const base = rowFor(rows, 'obj_data', 'material');
+    expect(base!.suppliedBy).toBeUndefined();
+    for (const field of BEYOND_THE_OVERRIDE_SET) {
+      expect(base!.maskedBy?.[field]).toBeUndefined();
+    }
+  });
+
+  it('an operator ABOVE a link wins per field, and the link covers the rest', () => {
+    // Both coverings at once. The nearest layer owns the field it authors; everything
+    // else still comes from the linked node, so neither fact may swallow the other.
+    const rows = exposeParams(withOverrideOp(withLinkedMaterial(splitCube())), 'obj');
+    const base = rowFor(rows, 'obj_data', 'material');
+    expect(base!.maskedBy?.['material.specular.roughness']?.nodeId).toBe('ovr');
+    expect(base!.maskedBy?.['material.base.color']?.nodeId).toBe('ovr');
+    expect(base!.suppliedBy?.nodeId).toBe('mat');
+    for (const field of BEYOND_THE_OVERRIDE_SET) {
+      expect(base!.maskedBy?.[field]).toBeUndefined(); // the link covers these, not the op
+    }
   });
 });
 
