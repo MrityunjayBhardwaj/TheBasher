@@ -29,6 +29,7 @@ import { nodeDisplayName } from './sceneTreeWalk';
 import {
   isDataLaneOperator,
   isEffectNode,
+  isMaterialLaneOperator,
   isModifierNode,
   isPoserNode,
   resolveDataLaneBase,
@@ -103,6 +104,7 @@ export function enumerateOperatorStack(
   state: DagState,
   baseNodeId: string,
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): ModifierEntry[] {
   const out: ModifierEntry[] = [];
   const seen = new Set<string>([baseNodeId]); // cycle guard (a DAG shouldn't, but be safe)
@@ -111,14 +113,28 @@ export function enumerateOperatorStack(
     const consumer = findConsumer(state, producer, OUT);
     if (!consumer) break;
     const node = state.nodes[consumer.node];
-    if (!isOp(node) || consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    if (consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    const mine = isOp(node);
+    // #526 — "not my kind" means END OF STACK on a lane only ONE kind occupies, and
+    // KEEP LOOKING on a lane that is shared. Geometry modifiers and material operators
+    // are both `ObjectData → ObjectData` wired through `target`, so they interleave in
+    // one physical chain while the panel draws them as two stacks — and they are
+    // genuinely transparent to each other (a modifier inherits the material flowing
+    // through it; a material operator does not touch geometry), which is the same
+    // transparency the material ownership walk already relies on. Without this, a
+    // material operator below a modifier made the Modifiers section render EMPTY while
+    // the modifier was still cooking. Opt-in, because the Image-lane effect stack has
+    // no mixing and must keep terminating.
+    if (!mine && !passThrough?.(node)) break;
     seen.add(consumer.node);
-    out.push({
-      nodeId: node!.id,
-      type: node!.type,
-      muted: muted(node!),
-      label: nodeDisplayName(node!),
-    });
+    if (mine) {
+      out.push({
+        nodeId: node!.id,
+        type: node!.type,
+        muted: muted(node!),
+        label: nodeDisplayName(node!),
+      });
+    }
     producer = consumer.node;
   }
   return out;
@@ -127,7 +143,15 @@ export function enumerateOperatorStack(
 /** The geometry-modifier stack on `baseNodeId` (bottom → top). The geometry
  *  instantiation of {@link enumerateOperatorStack}. */
 export function enumerateModifierStack(state: DagState, baseNodeId: string): ModifierEntry[] {
-  return enumerateOperatorStack(state, baseNodeId, isModifierNode);
+  return enumerateOperatorStack(state, baseNodeId, isModifierNode, isDataLaneOperator);
+}
+
+/** The MATERIAL-operator stack on `baseNodeId` (bottom → top). The material
+ *  instantiation of {@link enumerateOperatorStack} — the fourth stack, and the second
+ *  sharing the data lane, so it passes through geometry modifiers the same way the
+ *  geometry stack passes through material operators (#526). */
+export function enumerateMaterialStack(state: DagState, baseNodeId: string): ModifierEntry[] {
+  return enumerateOperatorStack(state, baseNodeId, isMaterialLaneOperator, isDataLaneOperator);
 }
 
 /** The Image→Image effect stack on `baseNodeId` (bottom → top). The video-effect
@@ -219,8 +243,9 @@ function stackTail(
   state: DagState,
   baseNodeId: string,
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): { lastProducer: string; consumer: { node: string; socket: string } | null } {
-  const stack = enumerateOperatorStack(state, baseNodeId, isOp);
+  const stack = enumerateOperatorStack(state, baseNodeId, isOp, passThrough);
   const lastProducer = stack.length ? stack[stack.length - 1].nodeId : baseNodeId;
   return { lastProducer, consumer: findConsumer(state, lastProducer, OUT) };
 }
@@ -251,9 +276,10 @@ export function buildAddOperatorOps(
   params: Record<string, unknown> = {},
   explicitId?: string,
   idPrefix = 'op',
+  passThrough?: OperatorPredicate,
 ): AddModifierResult | null {
   if (!state.nodes[baseNodeId]) return null;
-  const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp);
+  const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp, passThrough);
   // The UI lets the registry mint a random id; the agent passes a deterministic
   // one (the closure spec needs the id before build, and the LLM references it).
   const modifierId = explicitId ?? newId(idPrefix);
@@ -332,6 +358,28 @@ export function buildAddModifierOps(
     params,
     explicitId,
     'mod',
+    isDataLaneOperator,
+  );
+}
+
+/** Insert a material operator at the top of the data node's material stack. Shares the
+ *  physical lane with the geometry stack, so it passes through modifiers (#526). */
+export function buildAddMaterialOpOps(
+  state: DagState,
+  baseNodeId: string,
+  operatorType: string,
+  params: Record<string, unknown> = {},
+  explicitId?: string,
+): AddModifierResult | null {
+  return buildAddOperatorOps(
+    state,
+    baseNodeId,
+    operatorType,
+    isMaterialLaneOperator,
+    params,
+    explicitId,
+    'matop',
+    isDataLaneOperator,
   );
 }
 
@@ -433,21 +481,23 @@ export function buildMoveOperatorOps(
   modifierId: string,
   dir: 'up' | 'down',
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): Op[] | null {
   const node = state.nodes[modifierId];
   if (!isOp(node)) return null;
 
   // Find the base (walk `target` down past operators) so we can enumerate order.
+  const inLane = (n: Node | undefined) => isOp(n) || Boolean(passThrough?.(n));
   let base = modifierId;
   for (;;) {
     const up = singleRef(state.nodes[base], TARGET);
-    if (!up || !isOp(state.nodes[up.node])) {
+    if (!up || !inLane(state.nodes[up.node])) {
       base = up ? up.node : base;
       break;
     }
     base = up.node;
   }
-  const stack = enumerateOperatorStack(state, base, isOp);
+  const stack = enumerateOperatorStack(state, base, isOp, passThrough);
   const idx = stack.findIndex((m) => m.nodeId === modifierId);
   if (idx < 0) return null;
   // 'up' = toward the consumer = higher index; 'down' = toward the base = lower.
@@ -460,6 +510,14 @@ export function buildMoveOperatorOps(
   const below = singleRef(state.nodes[lowerId], TARGET); // producer feeding `lower`
   const above = findConsumer(state, upperId, OUT); // node consuming `upper`
   if (!below) return null;
+  // #526 — this swap is a three-edge rewire that assumes `lower.out → upper.target`
+  // EXISTS. On a shared lane the two stack neighbours can have a foreign operator
+  // between them, and then that edge does not exist: the ops below would disconnect
+  // an absent edge and splice the chain into a shape nobody asked for. REFUSE instead.
+  // Reordering ACROSS a foreign operator is a real feature with its own question (does
+  // the user see one lane or two?) and is deliberately not smuggled in here.
+  const between = findConsumer(state, lowerId, OUT);
+  if (!between || between.node !== upperId || between.socket !== TARGET) return null;
 
   // Before: below → lower.target ; lower.out → upper.target ; upper.out → above
   // After:  below → upper.target ; upper.out → lower.target ; lower.out → above
@@ -510,7 +568,26 @@ export function buildMoveModifierOps(
   modifierId: string,
   dir: 'up' | 'down',
 ): Op[] | null {
-  return buildMoveOperatorOps(state, modifierId, dir, isModifierNode);
+  return buildMoveOperatorOps(state, modifierId, dir, isModifierNode, isDataLaneOperator);
+}
+
+/** Move a material operator one slot up/down its stack (shares the data lane). */
+export function buildMoveMaterialOpOps(
+  state: DagState,
+  operatorId: string,
+  dir: 'up' | 'down',
+): Op[] | null {
+  return buildMoveOperatorOps(state, operatorId, dir, isMaterialLaneOperator, isDataLaneOperator);
+}
+
+/** Remove a material operator from its stack, splicing the data lane closed. */
+export function buildRemoveMaterialOpOps(state: DagState, operatorId: string): Op[] | null {
+  return buildRemoveOperatorOps(state, operatorId, isMaterialLaneOperator);
+}
+
+/** Toggle a material operator's mute (the stack bypass). */
+export function buildToggleMaterialOpMuteOp(state: DagState, operatorId: string): Op | null {
+  return buildToggleOperatorMuteOp(state, operatorId, isMaterialLaneOperator);
 }
 
 /** Move a video effect one slot up/down its stack. */

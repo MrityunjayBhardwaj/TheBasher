@@ -37,6 +37,7 @@ import {
   buildMoveModifierOps,
   buildRemoveModifierOps,
   buildToggleModifierMuteOp,
+  enumerateMaterialStack,
   enumerateModifierStack,
   findConsumer,
   resolveStackBase,
@@ -336,5 +337,130 @@ describe('operatorStack', () => {
       const { state: withMod, id } = addMod(state, BOX);
       expect(resolveStackObject(withMod, id)).toBe(BOX);
     });
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────────────
+// #526 — ONE PHYSICAL LANE, TWO STACKS
+// ────────────────────────────────────────────────────────────────────────────────────
+//
+// Geometry modifiers and material operators are both `ObjectData → ObjectData` wired
+// through `target`, so they interleave in ONE chain while the panel draws them as two
+// stacks. The walk used to treat "not my kind" as "end of stack", which on a shared lane
+// meant a material operator below a modifier made the Modifiers section render EMPTY
+// while the modifier was still cooking — and, more quietly, made "+ Add" splice the new
+// modifier in BELOW the existing one.
+//
+// THE VACUITY GUARD: every case here asserts against a lane that genuinely contains BOTH
+// kinds, and the single-kind control is kept beside it. A build where the material
+// operator silently failed to wire would degrade to the control and pass, so the
+// interleaved fixture is checked for the foreign node's presence before it is trusted.
+
+describe('#526 — a shared data lane: each stack sees its own kind and passes the other', () => {
+  /** `n_box_data → MaterialOverrideOp → ArrayModifier → n_box`. */
+  function interleaved(): { state: DagState; modId: string } {
+    let state = buildDefaultDagState();
+    const base = resolveStackBase(state, BOX);
+    // the material operator goes in FIRST, so it sits BELOW the modifier
+    const consumer = findConsumer(state, base)!;
+    state = applyOps(state, [
+      { type: 'addNode', nodeId: 'ovr', nodeType: 'MaterialOverrideOp', params: {} },
+      { type: 'disconnect', from: { node: base, socket: 'out' }, to: consumer },
+      {
+        type: 'connect',
+        from: { node: base, socket: 'out' },
+        to: { node: 'ovr', socket: 'target' },
+      },
+      { type: 'connect', from: { node: 'ovr', socket: 'out' }, to: consumer },
+    ] as Op[]);
+    // provenance: the foreign node really is in the lane, below where the modifier goes
+    expect(state.nodes.ovr).toBeDefined();
+    const { state: withMod, id } = addMod(state, BOX);
+    return { state: withMod, modId: id };
+  }
+
+  it('enumerates a modifier sitting ABOVE a material operator', () => {
+    const { state, modId } = interleaved();
+    expect(enumerateModifierStack(state, BOX_DATA).map((e) => e.nodeId)).toEqual([modId]);
+  });
+
+  it('enumerates the material operator BELOW it, from the same base', () => {
+    const { state } = interleaved();
+    expect(enumerateMaterialStack(state, BOX_DATA).map((e) => e.nodeId)).toEqual(['ovr']);
+  });
+
+  it('CONTROL: a lane with only one kind is unchanged', () => {
+    let state = buildDefaultDagState();
+    const { state: withMod, id } = addMod(state, BOX);
+    state = withMod;
+    expect(enumerateModifierStack(state, BOX_DATA).map((e) => e.nodeId)).toEqual([id]);
+    expect(enumerateMaterialStack(state, BOX_DATA)).toEqual([]);
+  });
+
+  it('adds a second modifier ON TOP of the first, not below the material operator', () => {
+    // The quiet half of the defect: the insertion point came from the same broken walk,
+    // so the new modifier landed at the BOTTOM of the lane and composed in the wrong
+    // order — with nothing refusing and nothing warning.
+    const { state, modId } = interleaved();
+    const res = buildAddModifierOps(state, resolveStackBase(state, BOX), 'MirrorModifier');
+    const next = applyOps(state, res!.ops);
+    expect(enumerateModifierStack(next, BOX_DATA).map((e) => e.nodeId)).toEqual([
+      modId,
+      res!.modifierId,
+    ]);
+  });
+
+  it('REFUSES to reorder across a foreign operator rather than splicing a phantom edge', () => {
+    // Two modifiers with the material operator BETWEEN them. The swap is a three-edge
+    // rewire that assumes `lower.out → upper.target` exists; here it does not. Refusing
+    // is the honest answer — reordering across a foreign operator is its own feature.
+    let state = buildDefaultDagState();
+    const { state: s1, id: lower } = addMod(state, BOX);
+    state = s1;
+    // Wired by hand, because `+ Add` deliberately CANNOT build this shape — it places a
+    // new modifier directly above the top of the MODIFIER stack, so the two stay
+    // adjacent. The non-adjacent lane is reachable by other roads (loading a project,
+    // the agent, a future reorder), which is why the refusal has to exist.
+    const consumer = findConsumer(state, lower)!;
+    state = applyOps(state, [
+      { type: 'addNode', nodeId: 'ovr', nodeType: 'MaterialOverrideOp', params: {} },
+      { type: 'addNode', nodeId: 'upper', nodeType: 'MirrorModifier', params: {} },
+      { type: 'disconnect', from: { node: lower, socket: 'out' }, to: consumer },
+      {
+        type: 'connect',
+        from: { node: lower, socket: 'out' },
+        to: { node: 'ovr', socket: 'target' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'ovr', socket: 'out' },
+        to: { node: 'upper', socket: 'target' },
+      },
+      { type: 'connect', from: { node: 'upper', socket: 'out' }, to: consumer },
+    ] as Op[]);
+    const upper = 'upper';
+
+    // the fixture really is non-adjacent: both modifiers are in the stack, `ovr` between
+    expect(enumerateModifierStack(state, BOX_DATA).map((e) => e.nodeId)).toEqual([lower, upper]);
+    expect(findConsumer(state, lower)!.node).toBe('ovr');
+
+    expect(buildMoveModifierOps(state, upper, 'down')).toBeNull();
+    expect(buildMoveModifierOps(state, lower, 'up')).toBeNull();
+  });
+
+  it('CONTROL: reorder still works when the two ARE adjacent', () => {
+    // Without this the refusal above could be "move is broken" rather than "move refuses
+    // exactly the case it cannot express".
+    let state = buildDefaultDagState();
+    const { state: s1, id: lower } = addMod(state, BOX);
+    const { state: s2, id: upper } = addMod(s1, BOX);
+    state = s2;
+    expect(findConsumer(state, lower)!.node).toBe(upper);
+    const ops = buildMoveModifierOps(state, upper, 'down');
+    expect(ops).not.toBeNull();
+    expect(enumerateModifierStack(applyOps(state, ops!), BOX_DATA).map((e) => e.nodeId)).toEqual([
+      upper,
+      lower,
+    ]);
   });
 });
