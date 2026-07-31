@@ -68,6 +68,7 @@ const MAT_COLOR = '#2244ff'; // the linked Material's colour
 const MAT_ROUGH = 0.72; // differs from OP_ROUGH, or "the third differs" is free
 const OP_ROUGH = 0.11;
 const TWIN_COLOR = '#aa33cc';
+const EDITED_COLOR = '#00ff44'; // distinct from every colour the fixture authors
 // Each data node authors its OWN colour underneath, so a green run is one where the
 // link really superseded the param rather than one where they happened to match.
 const OWN = ['#ff0000', '#00ff00', '#111111'];
@@ -230,6 +231,50 @@ test('#530 — two objects that merely RESOLVE alike share too, with no link bet
   // …and they are NOT sharing with the linked group, which looks different.
   const linked = (await matOf(page, C1)) as { uuid?: string };
   expect(a.uuid).not.toBe(linked.uuid);
+});
+
+test('#530 — editing the shared Material moves BOTH, onto a new shared instance', async ({
+  page,
+}) => {
+  // The regression this pins is not "the colour is wrong" — it is that a shared object
+  // handed to two `<primitive>` elements loses track of which mesh owns it, so an edit
+  // repaints ONE of the sharers and freezes the other on the old instance. Measured
+  // exactly that way before the fix. Colour alone is how the older specs caught it;
+  // identity is what says WHY, and it is the half that stays true if someone reaches for
+  // `<primitive>` again.
+  const before1 = (await matOf(page, C1)) as { uuid?: string };
+  const before2 = (await matOf(page, C2)) as { uuid?: string };
+  expect(before2.uuid, 'the pair must start shared').toBe(before1.uuid);
+
+  await page.evaluate(
+    (a) => {
+      (window as unknown as UiWindow).__basher_dag
+        .getState()
+        .dispatchAtomic(
+          [{ type: 'setParam', nodeId: a.mat, paramPath: 'material.base.color', value: a.next }],
+          'user',
+          '#530 edit the shared material',
+        );
+    },
+    { mat: MAT, next: EDITED_COLOR },
+  );
+  await page.waitForTimeout(700);
+
+  const after1 = (await matOf(page, C1)) as { uuid?: string; color?: string };
+  const after2 = (await matOf(page, C2)) as { uuid?: string; color?: string };
+
+  // BOTH moved — the frozen-sharer bug repainted exactly one of these.
+  expect(after1.color).toBe(EDITED_COLOR);
+  expect(after2.color).toBe(EDITED_COLOR);
+  // …and they are STILL one instance, a NEW one. Sharing that survives one edit but not
+  // the next is the shape a per-edit rebuild would leave behind.
+  //
+  // Falsified by restoring `<primitive object={material} attach="material" />`: the LAST
+  // line is the one that reds — every sharer stayed on the pre-edit instance. The line
+  // above it PASSES under that bug, because the sharers froze together rather than
+  // separately; it is carried by the never-share falsification instead, not by this one.
+  expect(after2.uuid).toBe(after1.uuid);
+  expect(after1.uuid).not.toBe(before1.uuid);
 });
 
 test('#530 half 2 — an override operator SPLITS one object off the shared instance', async ({
