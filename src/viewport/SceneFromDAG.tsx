@@ -2222,23 +2222,23 @@ function ModifiedMeshR({
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
   if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
-  // #530 — a SHARED material is passed as a PROP, never adopted by <primitive>.
-  // `<primitive>` takes OWNERSHIP of the object it is handed (it stamps reconciler
-  // bookkeeping onto the object itself), so two meshes given one material instance
-  // clobber each other's, and only the last to attach ever swaps when the material
-  // changes. Measured: editing a Material node two objects share repainted one of
-  // them and left the other frozen on the old instance. As a prop it is a plain
-  // assignment — what a shared resource needs. The geometry stays a <primitive>
-  // because that is how it has always attached; see #533.
+  // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
+  // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
+  // reconciler bookkeeping onto the object itself), so two meshes given one instance
+  // clobber each other's and a later swap is applied against the wrong owner. Both
+  // the material and the geometry arrive from a content-keyed registry, i.e. both are
+  // shared by design, and both had the symptom: editing a Material two objects share
+  // repainted one and froze the other (#530), and resizing one of two boxes with
+  // matching geometry resized the OTHER one (#533). As props these are plain
+  // assignments — what a shared resource needs.
   return (
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
       material={material}
-    >
-      <primitive object={geom} attach="geometry" />
-    </mesh>
+      geometry={geom}
+    />
   );
 }
 
@@ -2383,23 +2383,23 @@ function ObjectMeshR({
   const material = usePrimitiveMaterial(inlineMat, override, shading);
   const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
-  // #530 — a SHARED material is passed as a PROP, never adopted by <primitive>.
-  // `<primitive>` takes OWNERSHIP of the object it is handed (it stamps reconciler
-  // bookkeeping onto the object itself), so two meshes given one material instance
-  // clobber each other's, and only the last to attach ever swaps when the material
-  // changes. Measured: editing a Material node two objects share repainted one of
-  // them and left the other frozen on the old instance. As a prop it is a plain
-  // assignment — what a shared resource needs. The geometry stays a <primitive>
-  // because that is how it has always attached; see #533.
+  // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
+  // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
+  // reconciler bookkeeping onto the object itself), so two meshes given one instance
+  // clobber each other's and a later swap is applied against the wrong owner. Both
+  // the material and the geometry arrive from a content-keyed registry, i.e. both are
+  // shared by design, and both had the symptom: editing a Material two objects share
+  // repainted one and froze the other (#530), and resizing one of two boxes with
+  // matching geometry resized the OTHER one (#533). As props these are plain
+  // assignments — what a shared resource needs.
   return (
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
       material={material}
-    >
-      <primitive object={geom} attach="geometry" />
-    </mesh>
+      geometry={geom}
+    />
   );
 }
 
@@ -2546,8 +2546,8 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       // IDENTITY scale — the transform is baked into the geometry verts (H40).
       scale={[1, 1, 1]}
+      geometry={geom}
     >
-      <primitive object={geom} attach="geometry" />
       <primitive object={material} attach="material" />
     </mesh>
   );
