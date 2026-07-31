@@ -93,13 +93,19 @@ test.describe('#168 render to image', () => {
   test('the render is NOT blank — the cube is visible (defeats the H68 trap)', async ({ page }) => {
     await waitReady(page);
     const res = (await renderAndSample(page))!;
-    // Center pixel is the green cube, not the #0a0a0a background and not blank.
+    // Center pixel is the lit cube, not the #0a0a0a background and not blank.
     // Revert Wave B (offscreen render) → toDataURL of preserveDrawingBuffer:false
-    // canvas → uniform blank → center fails the green check.
-    const [r, g, b, a] = res.center;
-    expect(g).toBeGreaterThan(60); // green channel dominant
-    expect(g).toBeGreaterThan(r);
-    expect(g).toBeGreaterThan(b);
+    // canvas → uniform blank → center collapses to the background and this fails.
+    //
+    // Asserted as centre-vs-corner SEPARATION, not by hue. The cube used to be the
+    // seed's green so "g dominates" doubled as a liveness check; the standard material
+    // is a neutral grey (#394 D7), so brightness separation is the property that
+    // actually distinguishes "a cube was drawn" from "a uniform fill".
+    const [, , , a] = res.center;
+    const centerLum = (res.center[0] + res.center[1] + res.center[2]) / 3;
+    const cornerLum = (res.corner[0] + res.corner[1] + res.corner[2]) / 3;
+    expect(centerLum).toBeGreaterThan(60); // the cube is lit, not black
+    expect(centerLum).toBeGreaterThan(cornerLum + 40); // …and it is not a uniform fill
     expect(a).toBe(255);
     // Background corner is the scene bg (#0a0a0a ≈ 10,10,10), proving a real
     // render with a real background, not a uniform fill.

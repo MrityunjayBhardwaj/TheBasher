@@ -27,7 +27,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
-import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
+import { resolveExposedTarget } from '../../../app/exposeParams';
 
 const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
 type ValueType = z.infer<typeof ValueType>;
@@ -68,12 +68,6 @@ function safePath(paramPath: string): string {
 /** The deterministic channel id for a (target, paramPath), unless caller-supplied. */
 function channelIdFor(spec: AddChannelSpec): NodeId {
   return spec.channelId ?? `${spec.target}_${safePath(spec.paramPath)}_channel`;
-}
-
-/** The top-level param key of a path: 'material.base.color' → 'material'. */
-function paramRoot(paramPath: string): string {
-  const dot = paramPath.indexOf('.');
-  return dot === -1 ? paramPath : paramPath.slice(0, dot);
 }
 
 function shapeOk(valueType: ValueType, value: unknown): boolean {
@@ -155,13 +149,30 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
     // lives on the linked data node, and the render overlay only collects
     // channels whose target is that data node (SceneFromDAG useDataParamChannels);
     // a channel left targeting the Object animates in the inspector read but
-    // never paints. Resolve the owner the same way the material/size mutators do
-    // — a transform param (position) resolves to the Object itself, unchanged.
+    // never paints. A transform param (position) resolves to the Object itself,
+    // unchanged.
+    //
+    // #519 — AND THE ANSWER IS PER FIELD, NOT PER PARAM ROOT. Resolving the root
+    // was sound while every superseding layer was wholesale. A material override
+    // operator authors a SPARSE per-field set, so with one forcing `color` in the
+    // lane the authority for `material.base.color` is the operator while the
+    // authority for `material.specular.roughness` is still the layer underneath;
+    // one answer for the whole `material` root cannot express that, and the one it
+    // gave was the masked layer. Measured before the fix: the mutator reported
+    // success, the channel was created, the dopesheet drew the curve, and the
+    // composed material kept taking that field from the operator above.
+    //
+    // The PATH travels with the id, because the two layers spell the same field
+    // differently: an IR node stores `material.base.color`, an override operator
+    // the flat `color`. A resolved target with the caller's path would name a param
+    // the operator does not have.
+    //
     // The channel *id* stays keyed to spec.target (channelIdFor) so it matches
     // buildClosureSpec, which has no state to resolve the owner; harmless because
     // every channel lookup is a (target, paramPath) scan, never an id compare.
-    const target =
-      resolveDataParamOwner(state, spec.target, paramRoot(spec.paramPath)) ?? spec.target;
+    const owner = resolveExposedTarget(state, spec.target, spec.paramPath);
+    const target = owner?.nodeId ?? spec.target;
+    const paramPath = owner?.paramPath ?? spec.paramPath;
     // ONE addNode op; NO connect (the channel is free-floating — reached by the
     // resolver's `params.target` scan, V57).
     return [
@@ -172,7 +183,7 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
         params: {
           name: spec.channelName ?? spec.paramPath,
           target,
-          paramPath: spec.paramPath,
+          paramPath,
           keyframes: spec.initialKeyframe
             ? [
                 {

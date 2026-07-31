@@ -132,6 +132,12 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
   },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['render'],
+  home: {
+    presetId: 'render',
+    frameStart: 'render',
+    frameEnd: 'render',
+    outputPath: 'render',
+  },
   evaluate(params, inputs: ResolvedInputs): ImageValue {
     const prompt = inputs.prompt as PromptValue | undefined;
     const passes = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];

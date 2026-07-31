@@ -88,6 +88,9 @@ export const StripNode: NodeDefinition<StripParams, StripValue> = {
   inputs: {},
   outputs: { out: { type: 'Strip', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params): StripValue {
     return {
       kind: 'Strip',

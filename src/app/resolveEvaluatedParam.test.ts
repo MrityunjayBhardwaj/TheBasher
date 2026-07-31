@@ -235,7 +235,7 @@ describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => 
     const dataMat = (state.nodes[dataId!].params as { material: { base: { color: string } } })
       .material;
     const trueColor = dataMat.base.color;
-    expect(trueColor).not.toBe('#808080'); // the seed cube has a real (green) default
+    expect(trueColor).not.toBe('#808080'); // the seed cube has a real default (the standard)
 
     // Asked on the OBJECT, un-animated — reaches the BoxData's base, not null/grey.
     const viaObject = resolveEvaluatedParam(state, BOX_ID, 'material.base.color', ctxAt(0));

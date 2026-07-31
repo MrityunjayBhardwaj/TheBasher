@@ -35,6 +35,11 @@ export const SpotLightNode: NodeDefinition<SpotLightParams, never> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   // Retired (#386 S4): a SpotLight is now an Object → LightData. Registered SOLELY for the
   // load-migration's version-ladder normalization; never evaluates. The SpotLightValue
   // interface stays in types.ts as the recomposition target.

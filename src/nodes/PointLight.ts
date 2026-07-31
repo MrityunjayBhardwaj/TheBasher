@@ -28,6 +28,11 @@ export const PointLightNode: NodeDefinition<PointLightParams, never> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   // Retired (#386 S4): a PointLight is now an Object → LightData. Registered SOLELY for the
   // load-migration's version-ladder normalization; never evaluates. The PointLightValue
   // interface stays in types.ts as the recomposition target.

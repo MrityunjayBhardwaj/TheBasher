@@ -22,6 +22,14 @@ export const OrthographicCameraNode: NodeDefinition<OrthographicCameraParams, ne
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // UX #12 — Camera (lens) primary, Transform secondary (mirrors PerspectiveCamera).
   inspectorSections: ['camera', 'transform', 'constraint', 'driver'],
+  home: {
+    zoom: 'camera',
+    near: 'camera',
+    far: 'camera',
+    position: 'transform',
+    lookAt: 'transform',
+    roll: 'transform',
+  },
   // Retired (#387 S8) — see PerspectiveCamera.ts for the full note. Registered SOLELY so the
   // load-migration can normalize an old fused camera through its own version ladder before
   // splitting it; `OrthographicCameraValue` survives as the recomposition target.

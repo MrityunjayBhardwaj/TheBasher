@@ -68,8 +68,12 @@ export function isDriverMuted(node: NodeLike): boolean {
 }
 
 /** The spare-param source ref of a driver, if it pulls from a promoted spare (the
- *  `ch()` road) rather than a wired `in` edge. Null for an Inc-2 wired driver. */
-function spareSourceOf(node: NodeLike): { node: string; key: string } | null {
+ *  `ch()` road) rather than a wired `in` edge. Null for an Inc-2 wired driver.
+ *
+ *  Exported since #394 P7: the inspector projection reads the SAME shape to emit a
+ *  promoted interface row, and a second spelling of "is this the spare road?" is exactly
+ *  the drift that makes a control visible on one surface and invisible on the other. */
+export function spareSourceOf(node: NodeLike): { node: string; key: string } | null {
   const s = ((node.params ?? {}) as DriverParams).sourceSpare;
   if (s && typeof s.node === 'string' && typeof s.key === 'string' && s.node && s.key) {
     return { node: s.node, key: s.key };

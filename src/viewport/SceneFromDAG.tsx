@@ -33,7 +33,14 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 // (SkeletonUtils is already a project dep; retarget.ts imports retargetClip from
 // the same module. This is a NEW `clone` named import.)
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { channelPathForBand } from '../app/objectDataBand';
+import { channelPathForBand, type OverlayBand } from '../app/objectDataBand';
+import {
+  dataLaneNodeIds,
+  dataLaneNodes,
+  dataLaneOverlaySources,
+  overlayPathOn,
+  type LaneOverlaySource,
+} from '../app/dataLaneOverlay';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import * as geometryRegistry from '../app/geometryRegistry';
@@ -83,7 +90,6 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
-import { linkedDataNodeId } from '../app/resolveDataParamOwner';
 import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -116,7 +122,8 @@ import { PostFx } from '../render/PostFx';
 import { SceneEnvironment } from './SceneEnvironment';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
-import { resolveMaterialOverrideFields } from './materialOverrideMerge';
+import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
+import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -236,9 +243,22 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // is keyed by the SCENE CHILD. Without this, an animated cube's Object is absent from
   // the set, DirectChannelsR never mounts, and the viewport silently never repaints —
   // no error anywhere, because "not animated" and "animated but unmounted" look the same.
+  //
+  // 🔴 #522 — AND THE REACH IS THE WHOLE LANE, NOT ONE HOP. Since the operator stack moved
+  // onto the data lane, `data` names the TOP of the stack, so a single hop asks the operator
+  // whether it is animated and never the base. Measured: a cube with one ordinary
+  // ArrayModifier and a correctly-targeted colour channel stayed static, because its Object
+  // never entered this set and DirectChannelsR never mounted. This site is the reason
+  // widening the four hooks alone changed nothing — the overlay they build was never asked
+  // for. "Not animated" and "animated but unmounted" still look the same from here, which is
+  // why this gate is worth widening in the same slice as the hooks it gates.
   for (const node of Object.values(state.nodes)) {
-    const dataId = linkedDataNodeId(state, node.id);
-    if (dataId && directChannelTargets.has(dataId)) directChannelTargets.add(node.id);
+    for (const laneId of dataLaneNodeIds(state, node.id)) {
+      if (directChannelTargets.has(laneId)) {
+        directChannelTargets.add(node.id);
+        break;
+      }
+    }
   }
   const constraintTargets = constraintTargetSet(state.nodes);
   // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
@@ -864,18 +884,110 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
  * could ask it, and a new band inherited whichever branch it was pasted beside.
  */
 function useDataParamChannels(targetId: string): KeyframeChannelValue[] {
-  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
-  const dataChannels = useLayeredChannels(dataId ?? '');
-  return useMemo(
-    () =>
-      dataId === null
-        ? EMPTY_CHANNELS
-        : dataChannels.map((ch) => ({
-            ...ch,
-            paramPath: channelPathForBand('children', ch.paramPath),
-          })),
-    [dataId, dataChannels],
+  return useLaneOverlayChannels(targetId, 'children');
+}
+
+/**
+ * #522 — the LANE's overlay sources, which is one hop more than "the linked data node" the
+ * moment an operator stands between the base and the Object.
+ *
+ * Subscribed narrowly to the lane's node objects and computed OUTSIDE the selector, because
+ * deciding what a later layer supplies EVALUATES and a selector runs on every store change
+ * ([[H48]]). Reading live state inside the memo is the same non-reactive read
+ * `useLayeredChannels` already does for drivers, keyed on the subscription that covers every
+ * change that matters.
+ */
+function useLaneOverlaySources(targetId: string): LaneOverlaySource[] {
+  const laneNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => dataLaneNodes(s.state, targetId),
+    shallow,
   );
+  // `laneNodes` is not referenced in the body ON PURPOSE — it IS the dependency. The body
+  // reads live state non-reactively, and this subscription is what says when that read is
+  // stale. The lint rule cannot see a dependency that exists to key a read rather than to
+  // feed it, and dropping it would freeze the sources at first render.
+  return useMemo(
+    () => dataLaneOverlaySources(useDagStore.getState().state, targetId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [laneNodes, targetId],
+  );
+}
+
+/**
+ * Every channel the lane contributes to `targetId`, in the band's own path vocabulary.
+ *
+ * Three things happen per entry and all three come from one place: the entry is collected
+ * from ANY node in the lane (not just its top), its path is translated out of an operator's
+ * flat spelling into the composed value's, and it is DROPPED when a later layer supplies
+ * that field. See `dataLaneOverlay` for why each is necessary.
+ */
+function useLaneOverlayChannels(targetId: string, band: OverlayBand): KeyframeChannelValue[] {
+  const sources = useLaneOverlaySources(targetId);
+  const contribNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => sources.flatMap((src) => layeredChannelNodesForTarget(s.state.nodes, src.nodeId)),
+    shallow,
+  );
+  const driverNodes = useStoreWithEqualityFn(
+    useDagStore,
+    (s) => sources.flatMap((src) => driverSubscriptionNodesForTarget(s.state.nodes, src.nodeId)),
+    shallow,
+  );
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  return useMemo(() => {
+    if (sources.length === 0) return EMPTY_CHANNELS;
+    const map: Record<string, (typeof contribNodes)[number]> = {};
+    for (const n of contribNodes) map[n.id] = n;
+    const out: KeyframeChannelValue[] = [];
+    for (const src of sources) {
+      const raw =
+        driverNodes.length === 0
+          ? layeredChannelValues(map, src.nodeId)
+          : [
+              ...layeredChannelValues(map, src.nodeId),
+              ...driverChannelValuesForTarget(
+                useDagStore.getState().state,
+                src.nodeId,
+                { time: { frame: 0, seconds: 0, normalized: 0 } },
+                cache,
+              ),
+            ];
+      for (const ch of raw) {
+        const own = overlayPathOn(src, ch.paramPath);
+        if (own === null) continue;
+        const paramPath = channelPathForBand(band, own);
+        out.push(paramPath === ch.paramPath ? ch : { ...ch, paramPath });
+      }
+    }
+    return out.length === 0 ? EMPTY_CHANNELS : out;
+  }, [sources, contribNodes, driverNodes, band, cache]);
+}
+
+/** The transient twin of {@link useLaneOverlayChannels}: held, un-keyed edits anywhere in the
+ *  lane, re-keyed onto the Object and translated the same way. Returns the ORIGINAL map ref
+ *  when nothing in the lane is held, so a static scene never churns the overlay memo (H48). */
+function useLaneOverlayTransients(
+  targetId: string,
+  edits: Map<string, TransientEdit>,
+  band: OverlayBand,
+): Map<string, TransientEdit> {
+  const sources = useLaneOverlaySources(targetId);
+  return useMemo(() => {
+    if (sources.length === 0) return edits;
+    const byNode = new Map(sources.map((s) => [s.nodeId, s]));
+    let merged: Map<string, TransientEdit> | null = null;
+    for (const e of edits.values()) {
+      const src = byNode.get(e.nodeId);
+      if (!src) continue;
+      const own = overlayPathOn(src, e.paramPath);
+      if (own === null) continue;
+      const paramPath = channelPathForBand(band, own);
+      merged ??= new Map(edits);
+      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
+    }
+    return merged ?? edits;
+  }, [sources, edits, targetId, band]);
 }
 
 /** Stable empty array — a fused node must not churn the overlay memo every render (H48). */
@@ -893,25 +1005,7 @@ function useDataParamTransients(
   targetId: string,
   edits: Map<string, TransientEdit>,
 ): Map<string, TransientEdit> {
-  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
-  return useMemo(() => {
-    if (dataId === null) return edits;
-    let hasDataEdit = false;
-    for (const e of edits.values()) {
-      if (e.nodeId === dataId) {
-        hasDataEdit = true;
-        break;
-      }
-    }
-    if (!hasDataEdit) return edits;
-    const merged = new Map(edits);
-    for (const e of edits.values()) {
-      if (e.nodeId !== dataId) continue;
-      const paramPath = channelPathForBand('children', e.paramPath);
-      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
-    }
-    return merged;
-  }, [dataId, edits, targetId]);
+  return useLaneOverlayTransients(targetId, edits, 'children');
 }
 
 /** #386 R2 — the FLAT twin of useDataParamChannels for the light path. A split light's
@@ -926,19 +1020,20 @@ function useLightShadingChannels(
   targetId: string,
   objChannels: KeyframeChannelValue[],
 ): KeyframeChannelValue[] {
-  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
-  const dataChannels = useLayeredChannels(dataId ?? '');
-  return useMemo(() => {
-    if (dataId === null) return objChannels;
-    // Routed through the SAME rule the mesh band uses, which for this band is the
-    // identity — so nothing is copied here today, and the reason it is not copied is
-    // stated in one place rather than inferred from the absence of a `.map`.
-    const banded = dataChannels.map((ch) => {
-      const paramPath = channelPathForBand('lights', ch.paramPath);
-      return paramPath === ch.paramPath ? ch : { ...ch, paramPath };
-    });
-    return [...objChannels, ...banded];
-  }, [dataId, objChannels, dataChannels]);
+  // Routed through the SAME lane walk and the SAME band rule as the mesh path (#522), which
+  // for this band is the identity — so nothing is copied here, and the reason it is not
+  // copied is stated in one place rather than inferred from the absence of a `.map`.
+  //
+  // ⚠️ DECLARED: the lane widening has NO SUBJECT on this band today. A light is offered no
+  // modifiers at all (#498 measured Blender at zero and made the offer match), so its lane is
+  // always exactly its data node and this is byte-identical. It is routed through the shared
+  // walk anyway because the alternative is three reaches that agree only by coincidence —
+  // which is how the mesh one came to be wrong alone.
+  const laneChannels = useLaneOverlayChannels(targetId, 'lights');
+  return useMemo(
+    () => (laneChannels.length === 0 ? objChannels : [...objChannels, ...laneChannels]),
+    [objChannels, laneChannels],
+  );
 }
 
 /** #386 R2 — the FLAT twin of useDataParamTransients for the light path. A split light's HELD
@@ -950,26 +1045,9 @@ function useLightShadingTransients(
   targetId: string,
   edits: Map<string, TransientEdit>,
 ): Map<string, TransientEdit> {
-  const dataId = useDagStore((s) => linkedDataNodeId(s.state, targetId));
-  return useMemo(() => {
-    if (dataId === null) return edits;
-    let hasDataEdit = false;
-    for (const e of edits.values()) {
-      if (e.nodeId === dataId) {
-        hasDataEdit = true;
-        break;
-      }
-    }
-    if (!hasDataEdit) return edits;
-    const merged = new Map(edits);
-    for (const e of edits.values()) {
-      if (e.nodeId !== dataId) continue;
-      // UN-rebased: the flat LightValue reads `value.intensity`, not `value.data.intensity`.
-      const paramPath = channelPathForBand('lights', e.paramPath);
-      merged.set(keyOf(targetId, paramPath), { nodeId: targetId, paramPath, value: e.value });
-    }
-    return merged;
-  }, [dataId, edits, targetId]);
+  // UN-rebased: the flat LightValue reads `value.intensity`, not `value.data.intensity` —
+  // which is `channelPathForBand('lights', …)`'s identity arm, not an absence of one.
+  return useLaneOverlayTransients(targetId, edits, 'lights');
 }
 
 function DirectChannelsLightR({
@@ -1983,40 +2061,6 @@ function ConstrainedR({
   return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
-function applyOverride(
-  baseColor: string,
-  override: MaterialValue | undefined,
-): {
-  color: string;
-  roughness: number;
-  metalness: number;
-  opacity: number;
-  emissive: string;
-  emissiveIntensity: number;
-  transparent: boolean;
-} {
-  if (!override) {
-    return {
-      color: baseColor,
-      roughness: 0.5,
-      metalness: 0,
-      opacity: 1,
-      emissive: '#000000',
-      emissiveIntensity: 0,
-      transparent: false,
-    };
-  }
-  return {
-    color: override.color,
-    roughness: override.roughness,
-    metalness: override.metalness,
-    opacity: override.opacity,
-    emissive: override.emissive,
-    emissiveIntensity: override.emissiveIntensity,
-    transparent: override.opacity < 1,
-  };
-}
-
 // v0.6 #2 (#178, W2) — the ONE shared primitive material builder for Box+Sphere.
 // Mirrors BakedMeshR's imperative useMemo build (single writer V20): compile the
 // OpenPBR IR via openpbrToThree (the one mapping site, V29) → MeshPhysicalMaterial.
@@ -2025,24 +2069,37 @@ function applyOverride(
 // on `> 0` (WebGLPrograms.js:130,134 HAS_CLEARCOAT/HAS_TRANSMISSION; the setters
 // MeshPhysicalMaterial.js:104,176 only recompile across the 0 boundary). roughness
 // and clearcoatRoughness are set EXPLICITLY (three defaults are 1 and 0 — D-03).
-// A MaterialOverride decorator (#99/#124) still wins WHOLESALE on its 7 scalars
-// (backward-compat — a primitive has no source map); coat/transmission/ior/maps
-// always come from the IR (the override carries no opinion on them).
+// A MaterialOverride decorator (#99/#124) composes onto the IR through the ONE
+// shared rule (`composeMaterial`, #394 S3b) BEFORE the compile, so the override
+// is map-aware here exactly as it is on the glTF road: a roughness/metalness map
+// on the primitive's own material defends its channel unless the director
+// explicitly authored that field. It used to win WHOLESALE on all 7 scalars, on
+// the premise "a primitive has no source map" — false since MaterialEditor grew
+// map rows (NPanel.tsx:1395) and this very function started loading them below.
+// coat/transmission/ior/maps still always come from the IR (the override carries
+// no opinion on them), and `transparent` now comes from the compile rather than
+// being re-derived as `opacity < 1`.
 function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
 ): THREE.MeshPhysicalMaterial {
-  const three = openpbrToThree(ir);
-  const color = override ? override.color : three.color;
-  const roughness = override ? override.roughness : three.roughness;
-  const metalness = override ? override.metalness : three.metalness;
-  const opacity = override ? override.opacity : three.opacity;
-  const emissive = override ? override.emissive : three.emissive;
-  const emissiveIntensity = override ? override.emissiveIntensity : three.emissiveIntensity;
-  const transparent = override ? override.opacity < 1 : three.transparent;
+  const three = openpbrToThree(override ? composeMaterial(ir, override) : ir);
+  const {
+    color,
+    roughness,
+    metalness,
+    opacity,
+    emissive,
+    emissiveIntensity,
+    transparent,
+    ior,
+    clearcoat,
+    clearcoatRoughness,
+    transmission,
+    thickness,
+  } = three;
   const wireframe = shading === 'wireframe';
-  const { ior, clearcoat, clearcoatRoughness, transmission, thickness } = three;
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
   // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
   // the loader hook, never in the resolver (V29). The ref carries the colorspace;
@@ -2399,11 +2456,14 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
   const aoTex = useBakedTexture(spec.aoMap);
   const emissiveTex = useBakedTexture(spec.emissiveMap);
 
-  // The override wins on scalar color when present (#99/#124); otherwise the
-  // baked spec's own captured scalars drive the material (a Box bake carries Box
-  // defaults; a glTF bake carries the resolved post-override scalars).
+  // The override composes onto the captured spec through the ONE shared rule
+  // (`composeBakedMaterial`, #394 S3b) when present; otherwise the baked spec's
+  // own captured scalars drive the material (a Box bake carries Box defaults; a
+  // glTF bake carries the resolved post-override scalars). The compose is
+  // map-aware: a bake that captured a roughness/metalness map keeps it, where the
+  // old `applyOverride` forced the override's scalar over it.
   const scalar = override
-    ? applyOverride(spec.color, override)
+    ? composeBakedMaterial(spec, override)
     : {
         color: spec.color,
         roughness: spec.roughness,

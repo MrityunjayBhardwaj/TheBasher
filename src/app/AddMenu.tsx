@@ -40,6 +40,15 @@ const GROUPS: MenuGroup[] = [
     ],
   },
   {
+    // #394 — a Material is its own node: scene objects POINT AT it rather than each
+    // carrying a private copy, so one material shared by three cubes is a drawn edge
+    // instead of a coincidence. Its own group because it is neither a body (no
+    // transform, nothing to select in the viewport) nor compute (never touches the
+    // driver rail) — it is a resource.
+    label: 'Material',
+    items: [{ kind: 'Material', label: 'Material' }],
+  },
+  {
     label: 'Light',
     items: [
       { kind: 'DirectionalLight', label: 'Sun (Directional)' },

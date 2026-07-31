@@ -54,6 +54,10 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['modifier'],
+  home: {
+    offset: 'modifier',
+    muted: 'modifier',
+  },
   evaluate(params, inputs) {
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.

@@ -172,6 +172,14 @@ export const KeyframeChannelVec2Node: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
+  home: {
+    paramPath: 'channel',
+    weight: 'animate',
+    extendBefore: 'animate',
+    extendAfter: 'animate',
+    modifiers: 'animate',
+    keyframes: 'channel',
+  },
   evaluate(params): KeyframeChannelVec2Value {
     return {
       kind: 'KeyframeChannel',

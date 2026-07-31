@@ -8,8 +8,16 @@
 // override → renderToImage falls back to beauty → the depth-grayscale and
 // normal-blue assertions fail (the green cube has g≫r,b on every pixel).
 //
-// Default project = green cube (#5af07a) lit by one DirectionalLight, framed by
-// the PerspectiveCamera at [3,2,3]→origin, RenderOutput 1920×1080.
+// Default project = one cube lit by one DirectionalLight, framed by the
+// PerspectiveCamera at [3,2,3]→origin, RenderOutput 1920×1080.
+//
+// ⚠️ THE CUBE'S COLOUR IS AUTHORED BY THIS SPEC, not inherited from the seed.
+// Every falsifier here is "the beauty cube is chromatic, a control pass is not":
+// depth is grayscale, normal is blue-dominant, beauty is neither. The seed's cube
+// is THE standard material now (#cccccc, #394 D7) — a neutral grey — which would
+// make the depth pass's `|r-g| ≤ 12` grayscale check pass even if the beauty pass
+// were served instead of depth. The test would still be GREEN and prove nothing.
+// So the spec paints the cube green itself; the control belongs to the test.
 
 import { test, expect } from './_fixtures';
 
@@ -19,13 +27,29 @@ interface BasherWindow {
   __basher_render_png?: (
     pass?: RenderPass,
   ) => Promise<{ width: number; height: number; dataUrl: string } | null>;
+  __basher_dag?: {
+    getState(): { dispatch(op: unknown): void };
+  };
 }
+
+/** The colour this spec paints the cube. Strongly chromatic (g ≫ r,b) so that
+ *  "beauty vs a control pass" is a real distinction — see the header. */
+const BEAUTY_CUBE_COLOR = '#5af07a';
 
 async function waitReady(page: import('@playwright/test').Page) {
   await page.goto('/');
   await page.waitForFunction(() =>
     Boolean((window as unknown as BasherWindow).__basher_render_png),
   );
+  // Author the cube's colour — the control this spec's falsifiers rest on.
+  await page.evaluate((color) => {
+    (window as unknown as BasherWindow).__basher_dag!.getState().dispatch({
+      type: 'setParam',
+      nodeId: 'n_box_data',
+      paramPath: 'material.base.color',
+      value: color,
+    });
+  }, BEAUTY_CUBE_COLOR);
   await page.waitForTimeout(400); // let the first frame paint
 }
 

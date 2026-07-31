@@ -13,8 +13,6 @@ import {
   openpbrMaterialSchema,
 } from './materialSchema';
 
-const BOX_DEFAULT_COLOR = '#5af07a';
-
 export const BoxMeshParams = z.object({
   size: z.tuple([z.number().positive(), z.number().positive(), z.number().positive()]),
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
@@ -27,7 +25,7 @@ export const BoxMeshParams = z.object({
   scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
   // v0.6 #2 (#178): the OpenPBR core-10 inline material IR (layer 1 — NEW-node
   // defaults). See materialSchema.ts for the V10/H14 three-layer guard.
-  material: openpbrMaterialSchema(BOX_DEFAULT_COLOR),
+  material: openpbrMaterialSchema(),
 });
 export type BoxMeshParams = z.infer<typeof BoxMeshParams>;
 
@@ -40,6 +38,13 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, never> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material', 'modifier'],
+  home: {
+    size: 'mesh',
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+    material: 'material',
+  },
   // v0.6 #1 — v1 (no scale) → v2 (scale=identity). Lossless: every other param
   // is preserved untouched; scale defaults to identity so the rendered result is
   // unchanged. (V4 migration runner, THESIS §52.)
@@ -54,14 +59,11 @@ export const BoxMeshNode: NodeDefinition<BoxMeshParams, never> = {
     1: (old) => ({ ...(old as object), scale: [1, 1, 1] }),
     2: (old) => ({
       ...(old as object),
-      material: migrateInlineMaterialV2toV3(
-        (old as { material?: unknown }).material,
-        BOX_DEFAULT_COLOR,
-      ),
+      material: migrateInlineMaterialV2toV3((old as { material?: unknown }).material),
     }),
     3: (old) => ({
       ...(old as object),
-      material: hydrateInlineMaterial((old as { material?: unknown }).material, BOX_DEFAULT_COLOR),
+      material: hydrateInlineMaterial((old as { material?: unknown }).material),
     }),
   },
   // RETIRED (#365 Phase 5a Slice 2). A box is an Object → BoxData split; old saves are

@@ -22,9 +22,10 @@
 // REF: P2.5.2 PLAN §5 Wave A; vyapti V13.
 
 import type { DagState } from '../../core/dag/state';
-import type { NodeId } from '../../core/dag/types';
+import type { Node, NodeId } from '../../core/dag/types';
 import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
 import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
+import { isDataLaneOperator } from '../../app/operatorChain';
 
 const DEFAULT_MAX_DEPTH = 256;
 
@@ -184,12 +185,37 @@ function visitEdge(
   if (!node) return;
 
   for (const [socket, binding] of Object.entries(node.inputs)) {
-    if (kind !== 'children' && socket !== kind) continue;
+    if (kind !== 'children' && !socketCarriesKind(socket, kind, node)) continue;
     const refs = Array.isArray(binding) ? binding : [binding];
     for (const ref of refs) {
       enqueue(ref.node, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     }
   }
+}
+
+/**
+ * Does `socket` on `node` carry the relationship `kind` names?
+ *
+ * Normally that is just name equality. The exception is `'data'`, and it exists
+ * because the relationship the kind NAMES is "the object and the data it wears",
+ * while the WIRE spelling it out changed: since the operator stack moved onto the
+ * data lane, an Object's `data` edge lands on the top of the stack, and the rest of
+ * the way down is spelled `target`. Name equality alone therefore stops at the first
+ * operator — and because each kind walks its own BFS, no combination of declared
+ * kinds chains `data` then `target`.
+ *
+ * MEASURED (#516): with one ArrayModifier on a cube, `setMaterialColor` resolved the
+ * right owner and was then REFUSED — `Op targets node "n_box_data" outside the
+ * declared closure`. The mutator was correct; the closure could not see that far.
+ *
+ * Narrow on purpose: only a node that is genuinely a data-lane operator extends the
+ * walk, so this cannot become a back door onto arbitrary producers the way declaring
+ * `'children'` would. A closure is a permission scope — widening it weakens the guard
+ * it exists to be.
+ */
+function socketCarriesKind(socket: string, kind: EdgeKind, node: Node): boolean {
+  if (socket === kind) return true;
+  return kind === 'data' && socket === 'target' && isDataLaneOperator(node);
 }
 
 function enqueue(

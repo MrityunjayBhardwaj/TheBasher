@@ -1,4 +1,17 @@
-// materialOverrideMerge — the pure decision layer for #99 (P7.13).
+// materialOverrideMerge — THE pure decision layer for compositing a
+// `MaterialOverride` onto a source material (#99, P7.13).
+//
+// This module answers ONE question — "which of the override's scalars may be
+// written over this source, and which does the source own?" — and it is the only
+// place that answers it. Representations differ (an OpenPBR IR, a captured baked
+// spec, a cloned three.js material); the DECISION does not. `composeMaterial.ts`
+// is the IR-shaped adapter over this rule; see its header for the split.
+//
+// MOVED here from `src/viewport/` at #394 S3b. It was never viewport-specific —
+// it is pure — but the renderer was its only consumer. The material operator lane
+// (`src/nodes`) is now a second consumer, and `src/nodes → src/app` is the legal
+// direction (`BoxData.ts:19`, `ArrayModifier.ts:43`), `src/nodes → src/viewport`
+// is not.
 //
 // When a `MaterialOverride` is wired upstream of a `GltfAsset`, the renderer
 // must NOT replace the imported material wholesale (that drops .map / normalMap
@@ -27,9 +40,15 @@
 // `SceneFromDAG.tsx` GltfAssetR consumes this, clones `source.clone()`, and sets
 // the returned fields onto the clone. It must NEVER touch a map reference: maps
 // survive via clone(), not via this helper.
+//
+// The `maps` argument is MAP PRESENCE, not the maps themselves — deliberately, so
+// each representation can answer it in its own vocabulary (a three.js material asks
+// `.roughnessMap !== null`, an IR asks `maps.roughness !== null`, a baked spec asks
+// `roughnessMap !== null`) while the rule stays one function. That is what makes
+// this rule shareable across representations at all.
 
-import type { MaterialOverrideField, MaterialValue } from '../nodes/types';
-import { isOverridden, type OverriddenSet } from '../core/override/overrideSet';
+import type { MaterialOverrideField, MaterialValue } from '../../nodes/types';
+import { isOverridden, type OverriddenSet } from '../../core/override/overrideSet';
 
 /** Which scalar-channel maps the SOURCE (imported) material already carries. */
 export interface MaterialMapPresence {

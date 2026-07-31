@@ -40,6 +40,9 @@ export const CompositionNode: NodeDefinition<CompositionParams, CompositionValue
   },
   outputs: { out: { type: 'Composition', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params, inputs: ResolvedInputs): CompositionValue {
     const layers = (inputs.layers as LayerValue[] | undefined) ?? [];
     return {

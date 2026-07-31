@@ -22,11 +22,13 @@ import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 import type { DagState, Op } from '../core/dag/types';
 import type { MeshDataValue, ObjectValue } from './types';
 
-// The box's default color — the value BoxData (and the retired fused box) seed the OpenPBR IR
-// with. Kept in sync with BoxData.ts / the former BoxMesh.ts.
-const BOX_DEFAULT_COLOR = '#5af07a';
-// The sphere's default color — kept in sync with SphereData.ts / SphereMesh.ts.
-const SPHERE_DEFAULT_COLOR = '#88aaff';
+// #394 D7 — THE standard base colour, spelled as a LITERAL on purpose.
+//
+// This used to be two constants (box green, sphere blue) and the expectations were built by
+// calling the schema under test — so each assertion read `schema == schema` and could not fail
+// when the colour moved. Measured: changing every new primitive's colour left all 3206 tests
+// green. Writing the literal is what makes these assertions able to fail.
+const STANDARD_BASE_COLOR = '#cccccc';
 
 registerAllNodes();
 
@@ -65,12 +67,10 @@ describe('object↔data split (#361) — Object+BoxData ≡ a fused BoxMesh', ()
     ]);
     const data = evaluate(dataState, 'd').value as MeshDataValue;
 
-    // The same OpenPBR schema + hydrate the box always used (formerly BoxMesh, now BoxData) —
-    // a complete, byte-identical inline material spec.
-    const expectedMaterial = hydrateInlineMaterial(
-      openpbrMaterialSchema(BOX_DEFAULT_COLOR).parse(undefined),
-      BOX_DEFAULT_COLOR,
-    );
+    // The colour is asserted as a literal — the part that can actually fail (#394 D7).
+    expect(data.material!.base.color).toBe(STANDARD_BASE_COLOR);
+    // The remaining lobes are a complete, byte-identical inline material spec.
+    const expectedMaterial = hydrateInlineMaterial(openpbrMaterialSchema().parse(undefined));
     expect(data.material).toEqual(expectedMaterial);
   });
 
@@ -144,12 +144,25 @@ describe('object↔data split (#384) — Object+SphereData ≡ a fused SphereMes
     const dataState = build([{ type: 'addNode', nodeId: 'd', nodeType: 'SphereData', params: {} }]);
     const data = evaluate(dataState, 'd').value as MeshDataValue;
 
-    // The same OpenPBR schema + hydrate the sphere always used (formerly SphereMesh) —
-    // a complete, byte-identical inline material spec.
-    const expectedMaterial = hydrateInlineMaterial(
-      openpbrMaterialSchema(SPHERE_DEFAULT_COLOR).parse(undefined),
-      SPHERE_DEFAULT_COLOR,
-    );
+    expect(data.material!.base.color).toBe(STANDARD_BASE_COLOR);
+    const expectedMaterial = hydrateInlineMaterial(openpbrMaterialSchema().parse(undefined));
     expect(data.material).toEqual(expectedMaterial);
+  });
+
+  // #394 D7 — the reference's answer, asserted directly. Measured on Blender 5.1.1:
+  // `primitive_cube_add` and `primitive_uv_sphere_add` produce IDENTICAL material state
+  // (`data.materials == []`, `slot_count == 0`). No reference gives a primitive a special
+  // material. This is the assertion a re-introduced per-primitive colour has to break.
+  it('a new box and a new sphere carry the SAME material — there is no per-primitive colour', () => {
+    const boxState = build([
+      { type: 'addNode', nodeId: 'b', nodeType: 'BoxData', params: { size: SIZE } },
+    ]);
+    const sphereState = build([
+      { type: 'addNode', nodeId: 's', nodeType: 'SphereData', params: {} },
+    ]);
+    const box = evaluate(boxState, 'b').value as MeshDataValue;
+    const sphere = evaluate(sphereState, 's').value as MeshDataValue;
+    expect(box.material).toEqual(sphere.material);
+    expect(box.material!.base.color).toBe(STANDARD_BASE_COLOR);
   });
 });

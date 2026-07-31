@@ -340,8 +340,8 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     baseDataParams: { size: [1, 1, 1] },
     // `size` becomes a GeometryRef handle; the material leaf survives verbatim.
     observableDataParam: 'material.base.color',
-    // BoxData's default is '#5af07a' and the missing-material fallback is a grey —
-    // neither of these collides with either.
+    // BoxData's default is the standard '#cccccc' (#394 D7) and the missing-material
+    // fallback is '#808080' — neither of these collides with either trap value.
     distinctValues: ['#c81e5a', '#1e9ac8'],
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
@@ -356,7 +356,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     migratesFromVersion: 3,
     baseDataParams: {},
     observableDataParam: 'material.base.color',
-    // SphereData's default is '#88aaff'.
+    // SphereData's default is the standard '#cccccc' — same as every other kind (#394 D7).
     distinctValues: ['#c81e5a', '#1e9ac8'],
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),

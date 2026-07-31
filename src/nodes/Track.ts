@@ -45,6 +45,9 @@ export const TrackNode: NodeDefinition<TrackParams, TrackValue> = {
   inputs: {},
   outputs: { out: { type: 'Track', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params): TrackValue {
     return {
       kind: 'Track',

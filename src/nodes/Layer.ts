@@ -62,6 +62,10 @@ export const LayerNode: NodeDefinition<LayerParams, LayerValue> = {
   },
   outputs: { out: { type: 'Layer', cardinality: 'single' } },
   inspectorSections: ['layout', 'animate'],
+  home: {
+    name: 'layout',
+    startFrame: 'animate',
+  },
   evaluate(params, inputs: ResolvedInputs): LayerValue {
     const t = params.transform ?? {};
     return {

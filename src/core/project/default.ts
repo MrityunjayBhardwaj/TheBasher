@@ -77,9 +77,11 @@ const DEFAULT_OPS: Op[] = [
     nodeType: 'BoxData',
     params: {
       size: [1, 1, 1],
-      // v0.6 #2 (#178): OpenPBR IR. base.color explicit; the remaining lobes fill
-      // from the zod NEW-box defaults (specular.roughness 0.3 etc).
-      material: { name: 'default', base: { color: '#5af07a' } },
+      // #394 D7 — NO `material`. The canonical seed takes THE standard material from
+      // the schema, so a new project's cube is the same cube Add ▸ Cube produces; it
+      // used to author `base.color: '#5af07a'`, which made the seed the one green
+      // thing in an otherwise standardized app. Named example scenes (examples.ts)
+      // keep their authored palettes — those colours are the content.
     },
   },
   {

@@ -34,7 +34,6 @@ const vec3 = z.tuple([z.number(), z.number(), z.number()]);
 /** Schema default base colour for a captured glTF material slot — never actually
  *  used (the importer always seeds explicit values from json.materials[]); a
  *  neutral grey only matters for a partial setParam re-parse. */
-const GLTF_MATERIAL_DEFAULT_COLOR = '#cccccc';
 
 export const GltfChildParams = z.object({
   /**
@@ -73,7 +72,7 @@ export const GltfChildParams = z.object({
    * → the renderer falls back to the clone's embedded material (V10/H14 backward-
    * compat — a saved project renders byte-identically until the user edits).
    */
-  materials: z.array(openpbrMaterialSchema(GLTF_MATERIAL_DEFAULT_COLOR)).optional(),
+  materials: z.array(openpbrMaterialSchema()).optional(),
 });
 export type GltfChildParams = z.infer<typeof GltfChildParams>;
 
@@ -90,6 +89,11 @@ export const GltfChildNode: NodeDefinition<GltfChildParams, GltfChildValue> = {
   // (UX #8) — the child owns no material PARAMS, so the section renders only the
   // GltfMaterialReadout (NPanel), not editable rows. Editing is via MaterialOverride.
   inspectorSections: ['transform', 'constraint', 'driver', 'material'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   evaluate(params): GltfChildValue {
     return {
       kind: 'GltfChild',

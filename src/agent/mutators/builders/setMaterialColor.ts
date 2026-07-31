@@ -8,7 +8,8 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
+import { resolveExposedTarget } from '../../../app/exposeParams';
+import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -46,7 +47,14 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
       // #365 Phase 5a — a split Object's material lives on the BoxData it points at, so resolve
       // the true material owner (self for a fused mesh, the data node for a split Object).
-      const matOwner = resolveDataParamOwner(state, id, 'material');
+      // #394 S3c — and PER FIELD, because a material operator in the stack can force `color`
+      // over whatever the data node or the linked Material node says. Asking per param ROOT
+      // there writes a masked layer and reports success (PLAN-2 §5).
+      // #394 P5 — asked through the PROJECTION, which is the same answer the inspector's rows
+      // and the channel road get. The agent is the caller this query exists for: it names an
+      // aggregate and holds no row, so it is the one road where ownership still has to be
+      // resolved rather than carried.
+      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
       const hasColor =
         typeof (node.params as Record<string, unknown> | undefined)?.color === 'string';
       if (!matOwner && !hasColor) {
@@ -62,14 +70,16 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
     const ops: Op[] = [];
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
-      // Material → the resolved owner (the BoxData for a split Object); light `color` → self.
-      const matOwner = resolveDataParamOwner(state, id, 'material');
+      // Material → the resolved per-field owner (the BoxData for a split Object, the linked
+      // Material node, or the topmost operator that forces `color`); light `color` → self.
+      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
       if (matOwner) {
         ops.push({
           type: 'setParam',
-          nodeId: matOwner,
-          // v0.6 #2 (#178): the inline color now lives at material.base.color.
-          paramPath: 'material.base.color',
+          nodeId: matOwner.nodeId,
+          // The path comes WITH the owner: an IR node stores this at material.base.color
+          // (v0.6 #2, #178), an override operator stores the flat scalar `color`.
+          paramPath: matOwner.paramPath,
           value: spec.color,
         });
       } else if (typeof (node.params as Record<string, unknown>).color === 'string') {

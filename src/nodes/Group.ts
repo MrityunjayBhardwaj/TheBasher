@@ -37,6 +37,12 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   inputs: { children: { type: 'SceneObject', cardinality: 'list' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver', 'layout'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+    pivot: 'transform',
+  },
   evaluate(params, inputs) {
     // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)
     // is NOT re-parsed through the zod schema on load (migrateOneNode runs only

@@ -44,6 +44,19 @@ export const PerspectiveCameraNode: NodeDefinition<PerspectiveCameraParams, neve
   // UX #12 — Camera (lens) is the primary domain for a camera node; Transform
   // (position / lookAt) is secondary. Mirrors Scene leading with Environment.
   inspectorSections: ['camera', 'transform', 'constraint', 'driver'],
+  home: {
+    fov: 'camera',
+    sensorSize: 'camera',
+    near: 'camera',
+    far: 'camera',
+    dofEnabled: 'camera',
+    focusDistance: 'camera',
+    fStop: 'camera',
+    focusOnTarget: 'camera',
+    position: 'transform',
+    lookAt: 'transform',
+    roll: 'transform',
+  },
   // Retired (#387 S8): a perspective camera is now an Object → CameraData, so the lens no
   // longer lives on a node of this type. This node stays registered SOLELY so the
   // load-migration (migrateFusedCameraToSplit) can normalize an old fused camera through its

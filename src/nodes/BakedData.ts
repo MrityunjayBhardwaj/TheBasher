@@ -74,6 +74,9 @@ export const BakedDataNode: NodeDefinition<BakedDataParams, BakedDataValue> = {
   // read-only baked-geometry readout (vertex count, hash) is wanted, it needs a
   // control before the section can be declared, not after.
   inspectorSections: ['material'],
+  home: {
+    material: 'material',
+  },
   evaluate(params) {
     return {
       kind: 'BakedData',

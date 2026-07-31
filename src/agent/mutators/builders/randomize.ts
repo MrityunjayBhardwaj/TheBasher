@@ -43,6 +43,8 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { mulberry32, randRange } from '../../../nodes/random';
 import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
+import { resolveExposedTarget } from '../../../app/exposeParams';
+import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
 
 // ---------------------------------------------------------------------------
 // Sub-schemas (D-08 — bound discipline)
@@ -194,7 +196,10 @@ function sampleScaleFactor(rng: () => number, range: ScaleRangeT): number {
 // resolve the true owner through `data` (a fused mesh owns them itself; a light owns `color`).
 // Rotation stays on the Object, so canRotation reads the target's own params.
 function canColor(state: DagState, id: string): boolean {
-  const hasMaterial = resolveDataParamOwner(state, id, 'material') !== null;
+  // #394 S3c — per FIELD, mirroring setMaterialColor.ts: with a material operator in the
+  // stack the authority for `color` is the topmost layer that forces it, not the param root.
+  // #394 P5 — through the projection, so the offer and the write cannot answer differently.
+  const hasMaterial = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color) !== null;
   const hasColor =
     typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.color === 'string';
   return hasMaterial || hasColor;
@@ -319,15 +324,16 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
 
       for (const prop of spec.properties) {
         if (prop === 'color') {
-          // mirror setMaterialColor.ts — material.base.color (resolved owner) vs light `color`
+          // mirror setMaterialColor.ts — the per-field owner + ITS path vs light `color`
           const hex = sampleHslToHex(rng, spec.ranges.color!);
-          const matOwner = resolveDataParamOwner(state, id, 'material');
+          const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
           if (matOwner) {
             ops.push({
               type: 'setParam',
-              nodeId: matOwner,
-              // v0.6 #2 (#178): the inline color now lives at material.base.color.
-              paramPath: 'material.base.color',
+              nodeId: matOwner.nodeId,
+              // The path rides with the owner: material.base.color on an IR node (v0.6 #2,
+              // #178), the flat `color` scalar on an override operator.
+              paramPath: matOwner.paramPath,
               value: hex,
             });
           } else if (typeof params.color === 'string') {

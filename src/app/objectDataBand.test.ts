@@ -23,7 +23,12 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { stripComments } from '../test-utils/sourceScan';
-import { channelPathForBand, renderReachForBand, type SplitBand } from './objectDataBand';
+import {
+  channelPathForBand,
+  OVERLAY_BANDS,
+  renderReachForBand,
+  type SplitBand,
+} from './objectDataBand';
 
 describe('channelPathForBand', () => {
   it('rebases under `data.` for the children band — ObjectR reads value.data.*', () => {
@@ -154,12 +159,40 @@ describe('the camera arm of channelPathForBand is unreached, and that is asserte
     ).toEqual([]);
   });
 
-  it('POSITIVE CONTROL — the scan does find the call sites that DO exist', () => {
-    // Without this, the assertion above would be equally green if the scan matched
-    // nothing at all: an empty subject is how a gate quietly stops biting.
-    const bands = literalBandArgs();
-    expect(bands.length).toBeGreaterThanOrEqual(4);
-    expect([...new Set(bands.map((b) => b.band))].sort()).toEqual(['children', 'lights']);
+  // 🔴 THE POSITIVE CONTROL EXPIRED, AND IT SAID SO — #522.
+  //
+  // It used to assert the scan found at least four literal band arguments, because the band
+  // WAS a literal at each of the four viewport hooks. #522 threads it through two shared
+  // hooks instead, so the scan's real subject dropped to zero and this control went red
+  // while the assertion above stayed green — which is exactly the job it was written for: an
+  // empty subject is how a gate quietly stops biting, and without this control the camera
+  // assertion would have kept passing for free and nobody would have known.
+  //
+  // Re-anchored STRICTER rather than relaxed. The camera can no longer reach the overlay
+  // road at the TYPE (`OverlayBand`), which a text scan cannot go blind to, and the two
+  // remaining facts a runtime test can still hold are pinned below. The scan and its
+  // negative control stay: they still catch a NEW literal call site, which is how a future
+  // road would most likely reintroduce the camera.
+  it('POSITIVE CONTROL — the overlay road cannot be asked for the camera band', () => {
+    // The bands the value overlay may be asked for, as data rather than as a habit. A
+    // future edit adding 'camera' here reddens this; passing 'camera' without adding it is
+    // a compile error at the hook.
+    expect([...OVERLAY_BANDS]).toEqual(['children', 'lights']);
+    // …and it is a strict SUBSET of the bands that exist, or the exclusion means nothing.
+    const allBands: SplitBand[] = ['children', 'lights', 'camera'];
+    expect(OVERLAY_BANDS.length).toBeLessThan(allBands.length);
+    for (const band of OVERLAY_BANDS) expect(allBands).toContain(band);
+  });
+
+  it('the scan itself still has teeth, measured against a source that DOES call it', () => {
+    // The real subject is now empty by construction, so the detector is exercised against
+    // the shape it exists to catch. This is the same reasoning as the negative control
+    // below, on the other side.
+    const live = "channelPathForBand('children', p); channelPathForBand('lights', p);";
+    expect([...stripComments(live).matchAll(CALL_RE)].map((m) => m[1])).toEqual([
+      'children',
+      'lights',
+    ]);
   });
 
   it('NEGATIVE CONTROL — a camera call would be seen, and a commented one would not', () => {

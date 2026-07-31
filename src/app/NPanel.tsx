@@ -52,6 +52,15 @@ import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
+import {
+  exposeParams,
+  groupExposedRows,
+  partitionPromotedRows,
+  type DerivedParam,
+  type MaskSource,
+  type PromotedParam,
+} from './exposeParams';
+import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -232,9 +241,18 @@ interface NumericFieldProps {
   label: string;
   value: number;
   overrideInfo?: OverrideInfo;
+  /** #394 P4 — a later layer supplies this value. Labels the row; never locks it. */
+  masked?: MaskSource;
 }
 
-function NumericField({ nodeId, paramPath, label, value, overrideInfo }: NumericFieldProps) {
+function NumericField({
+  nodeId,
+  paramPath,
+  label,
+  value,
+  overrideInfo,
+  masked,
+}: NumericFieldProps) {
   const dispatch = useDagStore((s) => s.dispatch);
   const scrub = useDragScrub({
     value,
@@ -324,7 +342,13 @@ function NumericField({ nodeId, paramPath, label, value, overrideInfo }: Numeric
         >
           {label}
         </span>
+        {masked ? <MaskedMarker nodeId={nodeId} paramPath={paramPath} masked={masked} /> : null}
         <ParamDriverBind nodeId={nodeId} paramPath={paramPath} />
+        {/* #394 P7 — promote is the SAME act as binding, with the source minted instead
+            of picked ("promotion is itself a driver"), so it sits beside the bind chip
+            rather than in a surface of its own. Renders nothing where a promote could
+            not succeed — see PromoteParamControl's offer==accept note. */}
+        <PromoteParamControl nodeId={nodeId} paramPath={paramPath} />
       </span>
       <input
         type="number"
@@ -1716,6 +1740,8 @@ function MaterialRows({
   readValue,
   commitSource,
   testids,
+  maskedBy,
+  suppliedBy,
 }: {
   nodeId: string;
   /** The keyframe channel path for a lobe field (native `material.<lobe>.<field>`,
@@ -1728,7 +1754,31 @@ function MaterialRows({
   commitSource: (lobe: string, key: string, value: number | string) => void;
   /** Per-field e2e testids — each caller keeps its existing scheme (H95, no churn). */
   testids: (lobe: string, key: string) => MaterialRowTestids;
+  /** #394 P4 — which of these lobe fields a LATER layer supplies, keyed by the same
+   *  full param path `fieldPath` produces. Absent ⇒ nothing masked, and the rows render
+   *  byte-identically to before the stage. */
+  maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — the node supplying EVERY field here, because a connected socket
+   *  supersedes the param wholesale. The projection states WHO; this component knows
+   *  WHAT IT DRAWS, so it is the only place that can apply a wholesale fact to the full
+   *  widget set — including the lobe fields and maps no override vocabulary can express.
+   *  A per-field `maskedBy` entry WINS: an operator above a linked base is the nearer
+   *  layer. Absent ⇒ byte-identical to before. */
+  suppliedBy?: MaskSource;
 }) {
+  /**
+   * Per-field: the nearest layer that supplies it.
+   *
+   * ⚠️ DECLARED GAP — THIS PRECEDENCE IS NOT COVERED BY THE UNIT TIER. Flipping the two
+   * operands reddens nothing under `vitest` and nothing under the forced typecheck, and
+   * that is a coverage fact rather than a sign the rule is inert: with an override
+   * operator above a linked base the two answers genuinely differ (the widget names the
+   * operator, not the Material node), so the wrong order is user-visible. The unit tests
+   * assert the two FACTS the projection states; only a DOM-level check can see how this
+   * composes them. The browser observation is what covers it — do not read the green
+   * unit tier as evidence about this line.
+   */
+  const maskFor = (path: string): MaskSource | undefined => maskedBy?.[path] ?? suppliedBy;
   return (
     <>
       {MATERIAL_LOBES.map(({ lobe, label, fields }) => (
@@ -1750,6 +1800,7 @@ function MaterialRows({
                   testidColor={tid.color}
                   testidHex={tid.colorHex}
                   onSource={(v) => commitSource(lobe, key, v)}
+                  masked={maskFor(path)}
                 />
               );
             }
@@ -1763,6 +1814,7 @@ function MaterialRows({
                 testidInput={tid.num}
                 testidScrub={tid.scrub}
                 onSource={(v) => commitSource(lobe, key, v)}
+                masked={maskFor(path)}
               />
             );
           })}
@@ -1777,6 +1829,51 @@ function MaterialRows({
 // diamond's first-key); `effective` is the evaluated value the renderer shows
 // (transient → channel → base). Read-only while a channel actively drives it
 // during playback (`playing && resolved !== null`) — the VectorField D-02 gate.
+/**
+ * #394 P4 — the mark on a row whose value the viewport takes from a LATER layer.
+ *
+ * 🔴 IT LABELS, IT DOES NOT LOCK, and that is the whole point of the stage. The row stays
+ * editable and its write still lands on its own node; redirecting the write is what makes
+ * the failure silent, and saying so out loud makes the same fact loud.
+ *
+ * This is deliberately NOT the driven-param treatment, which sets `readOnly` (see
+ * `NumericField`'s `driven` branch). The two look alike and are not: a driven value is
+ * recomputed every frame and the base is never read again, whereas a masked material
+ * field's base IS the value the moment the operator above it is muted, removed, or its
+ * authored bit cleared. Locking the base would hide a layer the director is meant to be
+ * able to reach — Houdini's rule, where an upstream node is always editable and the
+ * display flag decides only what you SEE.
+ */
+function MaskedMarker({
+  nodeId,
+  paramPath,
+  masked,
+}: {
+  nodeId: string;
+  paramPath: string;
+  masked: MaskSource;
+}) {
+  const title = `Set by ${masked.label} — this layer is still editable, but the viewport shows ${masked.label}'s value`;
+  return (
+    <span
+      data-testid={`inspector-masked-${nodeId}-${paramPath}`}
+      data-masked-by={masked.nodeId}
+      aria-label={title}
+      title={title}
+      // Same weight as the param label it annotates, NOT a dimmer token. The contrast
+      // drift gate rejected a fainter one, and it was right for a reason beyond coverage:
+      // this mark is the only thing telling a director why their edit is not showing, so
+      // it is information, not decoration.
+      //
+      // ⚠️ That gate scans SOURCE TEXT, so it enrols a token named in a comment exactly as
+      // if it were used — do not name a rejected class here, it re-reds the coverage check.
+      className="select-none font-mono text-[9px] leading-none text-fg/60"
+    >
+      ↑{masked.label}
+    </span>
+  );
+}
+
 function MaterialNumberRow({
   nodeId,
   paramPath,
@@ -1785,6 +1882,7 @@ function MaterialNumberRow({
   testidInput,
   testidScrub,
   onSource,
+  masked,
 }: {
   nodeId: string;
   paramPath: string;
@@ -1793,6 +1891,7 @@ function MaterialNumberRow({
   testidInput: string;
   testidScrub: string;
   onSource: (next: number) => void;
+  masked?: MaskSource;
 }) {
   // The animatable-field spine (evaluated read-side + Auto-Key edit routing) is the
   // ONE shared hook (H104 — wire the affordance once); this row owns only its chrome.
@@ -1811,6 +1910,7 @@ function MaterialNumberRow({
         >
           {label}
         </span>
+        {masked ? <MaskedMarker nodeId={nodeId} paramPath={paramPath} masked={masked} /> : null}
       </span>
       <input
         type="number"
@@ -1842,6 +1942,7 @@ function MaterialColorRow({
   testidColor,
   testidHex,
   onSource,
+  masked,
 }: {
   nodeId: string;
   paramPath: string;
@@ -1850,6 +1951,7 @@ function MaterialColorRow({
   testidColor: string;
   testidHex: string;
   onSource: (next: string) => void;
+  masked?: MaskSource;
 }) {
   // The shared animatable-field spine (H104); this row owns only its colour chrome.
   const { effective, readOnly, onEdit } = useAnimatableField(nodeId, paramPath, value, onSource);
@@ -1870,6 +1972,7 @@ function MaterialColorRow({
       <span className="flex items-center gap-1 font-mono text-fg/60">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
         {label}
+        {masked ? <MaskedMarker nodeId={nodeId} paramPath={paramPath} masked={masked} /> : null}
       </span>
       <span className="flex items-center gap-1">
         <input
@@ -1906,7 +2009,18 @@ function MaterialColorRow({
   );
 }
 
-function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknown }) {
+function MaterialEditor({
+  nodeId,
+  material,
+  maskedBy,
+  suppliedBy,
+}: {
+  nodeId: string;
+  material: unknown;
+  maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — a connected `material` socket supersedes this param wholesale. */
+  suppliedBy?: MaskSource;
+}) {
   const dispatch = useDagStore((s) => s.dispatch);
   if (!isMaterialIR(material)) return null;
   const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
@@ -1921,6 +2035,8 @@ function MaterialEditor({ nodeId, material }: { nodeId: string; material: unknow
           fields never carried one). */}
       <MaterialRows
         nodeId={nodeId}
+        maskedBy={maskedBy}
+        suppliedBy={suppliedBy}
         fieldPath={(lobe, key) => `material.${lobe}.${key}`}
         readValue={(lobe, key, kind) => {
           const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
@@ -1993,16 +2109,33 @@ function ParamRow({
   paramPath,
   value,
   overrideInfo,
+  maskedBy,
+  suppliedBy,
 }: {
   nodeId: string;
   paramPath: string;
   value: unknown;
   overrideInfo?: OverrideInfo;
+  /** #394 P4 — fields on this row a later layer supplies, keyed by full param path. A
+   *  material row carries up to six (one per channel); a flat scalar row carries at most
+   *  its own. Both shapes are looked up by path, so neither needs a special case. */
+  maskedBy?: Readonly<Record<string, MaskSource>>;
+  /** #394 S3d (#525) — the node supplying EVERY field of this row (a connected socket
+   *  supersedes wholesale). Only a material row can carry one today; a flat scalar row
+   *  has no socket that shadows it. */
+  suppliedBy?: MaskSource;
 }) {
   // v0.6 #2 (#178, W3) — the inline material IR renders the lobe-grouped editor
   // INSTEAD of the (complex — Pro mode) fallback. Closes NPanel:636 for primitives.
   if (paramPath === 'material' && isMaterialIR(value)) {
-    return <MaterialEditor nodeId={nodeId} material={value} />;
+    return (
+      <MaterialEditor
+        nodeId={nodeId}
+        material={value}
+        maskedBy={maskedBy}
+        suppliedBy={suppliedBy}
+      />
+    );
   }
   if (typeof value === 'number') {
     return (
@@ -2012,6 +2145,7 @@ function ParamRow({
         label={paramPath}
         value={value}
         overrideInfo={overrideInfo}
+        masked={maskedBy?.[paramPath]}
       />
     );
   }
@@ -2692,6 +2826,8 @@ function LinkedDataSections({
   dataNodeId,
   objectNodeId,
   canApply,
+  promoted,
+  rows,
 }: {
   dataNodeId: string;
   objectNodeId: string;
@@ -2699,35 +2835,66 @@ function LinkedDataSections({
    *  than re-derived: the panel already computed it for this very node, and
    *  `canApplyTransform` evaluates the node to answer. */
   canApply: boolean;
+  /** #394 P2/P3 — this block's rows, GENERATED FROM the chain by `exposeParams` rather
+   *  than grouped here from one node's params. Passed in (not computed here) so the
+   *  panel builds ONE projection per render and both blocks read the same one.
+   *
+   *  Since P3 these are the base data node's rows AND the rows of every data-lane
+   *  operator standing above it, so the rows in this block no longer share a node —
+   *  which is why every one of them is drawn against `row.nodeId`.
+   *
+   *  DERIVED rows only, by type (#394 P7). This block draws a node's params; a promoted
+   *  control is an interface element with no node/param of its own to draw here, and the
+   *  narrowing is on the prop rather than inside so the caller cannot quietly pass one. */
+  rows: readonly DerivedParam[];
+  /** #394 P7 — the promoted controls the PANEL assigned to this block, already partitioned
+   *  against the selected node's own sections so the two blocks cannot both draw one. Kept
+   *  as a separate prop from `rows` for the same reason `rows` is narrowed: they are drawn
+   *  by a different component and must not be reachable from the derived path. */
+  promoted: readonly PromotedParam[];
 }) {
-  const dataNode = useDagStore((s) => s.state.nodes[dataNodeId] ?? null);
+  const nodes = useDagStore((s) => s.state.nodes);
+  const dataNode = nodes[dataNodeId] ?? null;
   const declared = useDagStore((s) => sectionsOf(s.state, dataNodeId));
   if (!dataNode) return null;
   if (declared.length === 0) return null;
 
-  const grouped = new Map<SectionId, [string, unknown][]>();
-  // #386 — the main-block inspector renders un-sectioned params via an `unrouted`
-  // bucket (:2942-2943); the linked-data block historically DROPPED them (the H189
-  // parity gap). Mirror the bucket here as defense-in-depth so a data param that
-  // routes to no declared section renders as a raw row instead of vanishing.
-  const unrouted: [string, unknown][] = [];
-  for (const [key, value] of Object.entries((dataNode.params ?? {}) as Record<string, unknown>)) {
-    if (isInputBinding(value)) continue;
-    const section = paramToSection(key, declared);
-    if (section === null) {
-      unrouted.push([key, value]);
-      continue;
-    }
-    if (!grouped.has(section)) grouped.set(section, []);
-    grouped.get(section)!.push([key, value]);
-  }
+  // #386 — un-sectioned params render in an `unrouted` bucket rather than vanishing (the
+  // H189 parity gap). That bucket is now the projection's `section: null` rows: it is a
+  // real destination in the model, not an absence, which is why it survived the move.
+  const { bySection, unrouted } = groupExposedRows(rows);
+
+  // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
+  // only while every row in this block came from the base — see the note on the `rows`
+  // prop. (#518)
+  const valueOf = (row: DerivedParam) =>
+    (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
+
+  // Sections to draw: the base node's declared list, plus any section a row actually
+  // routes to that the base does not declare. Without the union an operator declaring a
+  // section its base does not — a material operator over a curve, say — would contribute
+  // rows to a card that is never drawn, and they would vanish with no signal. The base's
+  // order is preserved and the extras follow, so the common case (an operator declaring
+  // `material`, which every mesh data node already declares) is byte-identical.
+  // #394 P7 — a promoted control's home counts toward the card union for exactly the
+  // reason an operator's section does: a card that is never drawn is a row that vanishes,
+  // and a control is the one row whose disappearance also strands its drives.
+  const promotedSections = promoted
+    .map((r) => r.home.section)
+    .filter((s): s is SectionId => s !== null);
+  const extraSections = [...new Set([...bySection.keys(), ...promotedSections])].filter(
+    (s) => !declared.includes(s),
+  );
+  const cards: readonly SectionId[] = extraSections.length
+    ? [...declared, ...extraSections]
+    : declared;
 
   return (
     <div data-testid="inspector-linked-data" className="flex flex-col">
       <div className="px-3 pt-1 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Data · {dataNode.type}
       </div>
-      {declared.map((sectionId) => (
+      {cards.map((sectionId) => (
         <SectionCard
           key={sectionId}
           nodeType={dataNode.type}
@@ -2743,19 +2910,47 @@ function LinkedDataSections({
           <SectionBody
             sectionId={sectionId}
             ctx={makeSectionCtx(dataNode, objectNodeId, canApply)}
-            rows={grouped.get(sectionId) ?? []}
+            rows={(bySection.get(sectionId) ?? []).map((row) => ({
+              key: row.paramPath,
+              value: valueOf(row),
+              // Two nodes in one card, and two operators in one lane can both own a
+              // `color` — so identity is the row's chain address, not its param name.
+              rowKey: row.relPath,
+              nodeId: row.nodeId,
+              maskedBy: row.maskedBy,
+              suppliedBy: row.suppliedBy,
+            }))}
             renderers={SECTION_CONTROL_RENDERERS}
-            renderRow={(key, value) => (
-              <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+            renderRow={({ key, value, rowKey, nodeId, maskedBy, suppliedBy }) => (
+              <ParamRow
+                key={rowKey}
+                nodeId={nodeId}
+                paramPath={key}
+                value={value}
+                maskedBy={maskedBy}
+                suppliedBy={suppliedBy}
+              />
             )}
           />
+          {/* #394 P7 — the controls homed into this card. Drawn after the params so a
+              knob reads as standing in front of the rows it drives, not among them. */}
+          {promoted
+            .filter((r) => r.home.section === sectionId)
+            .map((r) => (
+              <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+            ))}
         </SectionCard>
       ))}
       {/* #386 — un-sectioned data params (defense-in-depth), rendered as raw rows
           after the declared sections so a future data kind's un-routed param never
           silently vanishes (the H189 class). */}
-      {unrouted.map(([key, value]) => (
-        <ParamRow key={key} nodeId={dataNode.id} paramPath={key} value={value} />
+      {unrouted.map((row) => (
+        <ParamRow
+          key={row.relPath}
+          nodeId={row.nodeId}
+          paramPath={row.paramPath}
+          value={valueOf(row)}
+        />
       ))}
     </div>
   );
@@ -2854,6 +3049,82 @@ export function NPanel() {
   // "(complex)" object row.
   const refParamMeta = node ? getNodeType(node.type)?.refParams : undefined;
   const refKeys = refParamMeta ? new Set(Object.keys(refParamMeta)) : null;
+
+  // #394 P2 — ONE projection per render, and the rows are generated FROM the chain rather
+  // than found by starting at the selection and resolving outward.
+  //
+  // ⚠️ NOT a `useDagStore` selector, and that is load-bearing. `exposeParams` returns a
+  // fresh array every call, zustand compares selector results with `Object.is`, so a
+  // selector would re-render the inspector on EVERY store change — the same hazard
+  // `sectionsOf` caches a stable reference to avoid, and the shape behind the measured
+  // ~458ms edit lag. Subscribe to `state` (stable under structural sharing unless the DAG
+  // actually changed) and memoize on it.
+  //
+  // `canApply` is threaded in because the predicate EVALUATES; the panel already computed
+  // it, and letting the projection recompute would add a third evaluate per render.
+  const dagState = useDagStore((s) => s.state);
+  const projection = useMemo(
+    () => exposeParams(dagState, selectedId, { canApply }),
+    [dagState, selectedId, canApply],
+  );
+  // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every
+  // data-lane operator standing above it. Before this, a material operator's fields were
+  // in the projection and rendered nowhere, so the authority for a forced field could not
+  // be reached from the interface at all: the base row was editable, accepted the edit,
+  // and the viewport did not move because the operator supplied that field.
+  //
+  // Order comes from the walk (topmost operator first, base last), which is the declared
+  // precedence ladder read top-down. It is NOT re-sorted here — see the ORDER note in
+  // `exposeParams`.
+  //
+  // DECLARED LIMIT: an operator's rows that route to no section (`name`, `muted`, and the
+  // authored-bit set `overridden`) are dropped rather than shown raw. The unrouted bucket
+  // exists so a data node's VALUE param cannot silently vanish; these three are not value
+  // params but the operator's own control state, and `overridden` in particular has a
+  // purpose-built affordance (the per-field override dot) that a "(complex — Pro mode)"
+  // row would stand in front of. The operator's lifecycle controls have no home yet —
+  // that is the material section's data-block design, tracked with the lane work.
+  //
+  // #394 P7 — the `kind` test is the narrowing that lets the rest of this stay unchanged:
+  // the projection now also carries PROMOTED controls, which are interface elements
+  // rather than a node's params and have no place in a block that draws a node's params.
+  // They render in P7b; until then they are carried and not shown, exactly as the
+  // operator and linked rows were between P1 and P3.
+  const linkedRows = useMemo(
+    () =>
+      projection.filter(
+        (r): r is DerivedParam =>
+          r.kind === 'derived' &&
+          (r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null)),
+      ),
+    [projection],
+  );
+
+  // #394 P7 — the promoted controls this chain carries, PARTITIONED HERE and only here.
+  //
+  // A control renders in the card its `home` names, and two different blocks draw cards:
+  // this node's own sections, and the linked data node's. Partitioning in one place is
+  // what keeps a control from being drawn twice (both blocks claiming a section they both
+  // declare) or zero times (each assuming the other draws it) — the two failures a
+  // per-block filter cannot rule out on its own.
+  //
+  // The rule: the SELECTED node's declared sections win, the linked block takes the rest,
+  // and whatever neither block can place falls to a visible bucket below. That last arm is
+  // the [[V145]] degradation reaching the interface layer — an unplaceable control is
+  // shown unrouted, never dropped, because a control that vanishes takes the only handle
+  // on its drives with it.
+  const promoted = useMemo(
+    () => projection.filter((r): r is PromotedParam => r.kind === 'promoted'),
+    [projection],
+  );
+  const {
+    main: promotedMain,
+    linked: promotedLinked,
+    unplaced: promotedUnplaced,
+  } = useMemo(
+    () => partitionPromotedRows(promoted, declared, linkedDataId !== null),
+    [promoted, declared, linkedDataId],
+  );
 
   // #130 (D-04) — the override-set descriptor for this node type (null for the
   // ~38 node types that track no overrides). `makeOverrideInfo` returns the
@@ -3028,7 +3299,7 @@ export function NPanel() {
                 // all — the per-submesh slot index does not, and would otherwise
                 // land in the unrouted bucket beside the selector that owns it.
                 if (ownedRowKeys.has(key)) continue;
-                const section = paramToSection(key, declared);
+                const section = paramToSection(key, declared, node.type);
                 if (section === null) {
                   unrouted.push([key, value]);
                 } else {
@@ -3048,9 +3319,12 @@ export function NPanel() {
                       <SectionBody
                         sectionId={sectionId}
                         ctx={sectionCtx}
-                        rows={grouped.get(sectionId) ?? []}
+                        rows={(grouped.get(sectionId) ?? []).map(([key, value]) => ({
+                          key,
+                          value,
+                        }))}
                         renderers={SECTION_CONTROL_RENDERERS}
-                        renderRow={(key, value) => (
+                        renderRow={({ key, value }) => (
                           <ParamRow
                             key={key}
                             nodeId={node.id}
@@ -3060,6 +3334,13 @@ export function NPanel() {
                           />
                         )}
                       />
+                      {/* #394 P7 — controls homed into THIS node's sections, drawn after
+                          the params they stand in front of. */}
+                      {promotedMain
+                        .filter((r) => r.home.section === sectionId)
+                        .map((r) => (
+                          <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+                        ))}
                     </SectionCard>
                   ))}
                   {unrouted.length > 0 ? (
@@ -3088,7 +3369,19 @@ export function NPanel() {
               dataNodeId={linkedDataId}
               objectNodeId={node.id}
               canApply={canApply}
+              rows={linkedRows}
+              promoted={promotedLinked}
             />
+          ) : null}
+          {/* #394 P7 — a control neither block could place: its home names no section this
+              chain draws, or names none at all. Shown rather than dropped ([[V145]]), and
+              shown HERE rather than inside a block so the rule has one site. */}
+          {promotedUnplaced.length > 0 ? (
+            <div data-testid="inspector-promoted-unrouted" className="flex flex-col py-1">
+              {promotedUnplaced.map((r) => (
+                <PromotedControlRow key={`${r.controlNodeId}-${r.controlPath}`} row={r} />
+              ))}
+            </div>
           ) : null}
           {/* #294 (Inc 3) — spare-param authoring for EVERY node kind (F2): add /
               edit / remove controller knobs + promote them to the Controllers dock.

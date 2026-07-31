@@ -61,6 +61,11 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['modifier'],
+  home: {
+    count: 'modifier',
+    offset: 'modifier',
+    muted: 'modifier',
+  },
   evaluate(params, inputs) {
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.

@@ -28,6 +28,11 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   evaluate(params, inputs) {
     return {
       kind: 'Transform',

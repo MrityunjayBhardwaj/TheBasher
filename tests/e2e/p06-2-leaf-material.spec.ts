@@ -45,7 +45,7 @@ test.describe('v0.6 #2 W2 — primitive renders one MeshPhysicalMaterial leaf', 
     // Side-A = the REAL three.js material object (not the resolver).
     expect(mat).not.toBeNull();
     expect(mat!.type).toBe('MeshPhysicalMaterial'); // Standard→Physical switch (W2)
-    expect(mat!.color?.toLowerCase()).toBe('#5af07a'); // default box colour PRESERVED
+    expect(mat!.color?.toLowerCase()).toBe('#cccccc'); // standard box colour PRESERVED (#394 D7)
     expect(mat!.roughness).toBeCloseTo(0.3, 5); // OpenPBR fresh default (D-03), set EXPLICITLY
     expect(mat!.metalness).toBeCloseTo(0, 5);
     expect(mat!.opacity).toBeCloseTo(1, 5);

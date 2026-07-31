@@ -23,37 +23,36 @@
 //      vyapti V58.
 
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeRef, Op } from '../core/dag/types';
-import { getNodeType } from '../core/dag/registry';
+import type { Node, Op } from '../core/dag/types';
 import { canModifyGeometry } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
+import {
+  isDataLaneOperator,
+  isEffectNode,
+  isMaterialLaneOperator,
+  isModifierNode,
+  isPoserNode,
+  resolveDataLaneBase,
+  resolveOperatorBase,
+  singleRef,
+  type OperatorPredicate,
+} from './operatorChain';
 
-/** The geometry-operator (SOP / modifier) node types this stack manages. A node
- *  is a modifier iff its type is registered here — new modifiers (Mirror, Subdiv…)
- *  register by adding their type, nothing else. They all share the Mesh `target`
- *  input / Mesh `out` output shape, which is what makes the sub-chain uniform. */
-export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set([
-  'ArrayModifier',
-  'MirrorModifier',
-]);
-
-/** The video-effect (Image→Image) node types — the [[V58]] lift to the Image socket
- *  (epic #235 / spine 1e+). An effect is a typed `target: Image`/`out: Image`
- *  operator on the SAME sub-chain engine as a geometry modifier; new effects
- *  register by adding their type here, nothing else. The stack helpers are socket-
- *  agnostic (they re-wire `target`/`out` edges) — only this predicate differs. */
-export const EFFECT_NODE_TYPES: ReadonlySet<string> = new Set(['ColorCorrect']);
-
-/** Predicate over the set of node types an OperatorStack instance manages. */
-export type OperatorPredicate = (node: Node | undefined) => boolean;
-
-export function isModifierNode(node: Node | undefined): boolean {
-  return !!node && MODIFIER_NODE_TYPES.has(node.type);
-}
-
-export function isEffectNode(node: Node | undefined): boolean {
-  return !!node && EFFECT_NODE_TYPES.has(node.type);
-}
+// The chain vocabulary lives in `operatorChain.ts` (a leaf that imports only
+// core/dag) so surfaces which cannot import THIS module — it reaches sceneTreeWalk
+// and modifierGeometry, and sceneTreeWalk -> activeCamera -> resolveDataParamOwner
+// closes a cycle — can still share one walk (#516). Re-exported here so this stays
+// the address every existing caller already knows.
+export {
+  MODIFIER_NODE_TYPES,
+  EFFECT_NODE_TYPES,
+  isModifierNode,
+  isEffectNode,
+  isDataLaneOperator,
+  resolveOperatorBase,
+  resolveDataLaneBase,
+  type OperatorPredicate,
+} from './operatorChain';
 
 /** One entry in an operator stack, bottom (closest to the base) → top. */
 export interface ModifierEntry {
@@ -66,25 +65,6 @@ export interface ModifierEntry {
 const OUT = 'out';
 const TARGET = 'target';
 const DATA = 'data';
-
-/**
- * Is `node` a POSER — an object that wears data through a `data` input? Derived from
- * the registry (it declares a `data` input carrying the `ObjectData` socket), never
- * matched against `type === 'Object'`: a type list is exactly the drift #377 measured
- * when the modifier's supported-source set named a retired type AND missed a live one
- * at the same time. A future poser is covered the day it declares the socket.
- */
-function isPoserNode(node: Node | undefined): boolean {
-  if (!node) return false;
-  return getNodeType(node.type)?.inputs[DATA]?.type === 'ObjectData';
-}
-
-/** The single ref a (possibly list) input binding holds for `socket`, or null. */
-function singleRef(node: Node | undefined, socket: string): NodeRef | null {
-  const b = node?.inputs[socket];
-  if (!b) return null;
-  return Array.isArray(b) ? (b[0] ?? null) : b;
-}
 
 /**
  * The node + input-socket that consumes `(fromNode, fromSocket)`. Scans every
@@ -124,6 +104,7 @@ export function enumerateOperatorStack(
   state: DagState,
   baseNodeId: string,
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): ModifierEntry[] {
   const out: ModifierEntry[] = [];
   const seen = new Set<string>([baseNodeId]); // cycle guard (a DAG shouldn't, but be safe)
@@ -132,14 +113,28 @@ export function enumerateOperatorStack(
     const consumer = findConsumer(state, producer, OUT);
     if (!consumer) break;
     const node = state.nodes[consumer.node];
-    if (!isOp(node) || consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    if (consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    const mine = isOp(node);
+    // #526 — "not my kind" means END OF STACK on a lane only ONE kind occupies, and
+    // KEEP LOOKING on a lane that is shared. Geometry modifiers and material operators
+    // are both `ObjectData → ObjectData` wired through `target`, so they interleave in
+    // one physical chain while the panel draws them as two stacks — and they are
+    // genuinely transparent to each other (a modifier inherits the material flowing
+    // through it; a material operator does not touch geometry), which is the same
+    // transparency the material ownership walk already relies on. Without this, a
+    // material operator below a modifier made the Modifiers section render EMPTY while
+    // the modifier was still cooking. Opt-in, because the Image-lane effect stack has
+    // no mixing and must keep terminating.
+    if (!mine && !passThrough?.(node)) break;
     seen.add(consumer.node);
-    out.push({
-      nodeId: node!.id,
-      type: node!.type,
-      muted: muted(node!),
-      label: nodeDisplayName(node!),
-    });
+    if (mine) {
+      out.push({
+        nodeId: node!.id,
+        type: node!.type,
+        muted: muted(node!),
+        label: nodeDisplayName(node!),
+      });
+    }
     producer = consumer.node;
   }
   return out;
@@ -148,36 +143,21 @@ export function enumerateOperatorStack(
 /** The geometry-modifier stack on `baseNodeId` (bottom → top). The geometry
  *  instantiation of {@link enumerateOperatorStack}. */
 export function enumerateModifierStack(state: DagState, baseNodeId: string): ModifierEntry[] {
-  return enumerateOperatorStack(state, baseNodeId, isModifierNode);
+  return enumerateOperatorStack(state, baseNodeId, isModifierNode, isDataLaneOperator);
+}
+
+/** The MATERIAL-operator stack on `baseNodeId` (bottom → top). The material
+ *  instantiation of {@link enumerateOperatorStack} — the fourth stack, and the second
+ *  sharing the data lane, so it passes through geometry modifiers the same way the
+ *  geometry stack passes through material operators (#526). */
+export function enumerateMaterialStack(state: DagState, baseNodeId: string): ModifierEntry[] {
+  return enumerateOperatorStack(state, baseNodeId, isMaterialLaneOperator, isDataLaneOperator);
 }
 
 /** The Image→Image effect stack on `baseNodeId` (bottom → top). The video-effect
  *  instantiation of {@link enumerateOperatorStack}. */
 export function enumerateEffectStack(state: DagState, baseNodeId: string): ModifierEntry[] {
   return enumerateOperatorStack(state, baseNodeId, isEffectNode);
-}
-
-/**
- * The BASE mesh of a stack from any node in it: if `nodeId` is a modifier, walk
- * down its `target` chain past modifiers to the first non-modifier producer (the
- * mesh); if it is already a mesh-producer, return it unchanged. Lets the inspector
- * show the SAME stack whether the user selected the base mesh or one of its
- * modifiers (the rendered arrayed mesh click-selects the top modifier).
- */
-export function resolveOperatorBase(
-  state: DagState,
-  nodeId: string,
-  isOp: OperatorPredicate,
-): string {
-  let cur = nodeId;
-  const seen = new Set<string>();
-  while (isOp(state.nodes[cur]) && !seen.has(cur)) {
-    seen.add(cur);
-    const up = singleRef(state.nodes[cur], TARGET);
-    if (!up) break; // dangling operator — treat it as the base
-    cur = up.node;
-  }
-  return cur;
 }
 
 /**
@@ -193,15 +173,24 @@ export function resolveOperatorBase(
  *
  * An Object with no data (an Empty) has no stack, so it is its own base — the caller
  * then enumerates an empty stack, which is the honest answer.
+ *
+ * #517 — THE WALK IS A SHAPE QUESTION, AND ASKING IT WITH THE CURATED MODIFIER SET STOPS
+ * IT ONE HOP SHORT. "What stands between this Object and its base data?" is answered by
+ * whether a node HAS the data-lane shape (`ObjectData → ObjectData`), never by whether
+ * the modifier section happens to offer it: #394's material operators have that shape and
+ * are deliberately not members of `MODIFIER_NODE_TYPES` (they reshape no geometry, so
+ * offering them there would be wrong). With one spliced in, the curated walk returned the
+ * OPERATOR as the base — and then `canModifyGeometry` refused it, so "+ Array" on a
+ * perfectly ordinary cube silently did nothing.
+ *
+ * So this delegates to {@link resolveDataLaneBase} — the same walk `resolveDataParamOwner`
+ * needed at #516, which had this exact blindness one layer over. MEMBERSHIP stays curated:
+ * {@link enumerateModifierStack} still lists only modifiers, and a new modifier still
+ * splices into the modifier sub-chain BELOW a material operator, which is the order both
+ * references resolve in (materials after modifiers).
  */
 export function resolveStackBase(state: DagState, nodeId: string): string {
-  const node = state.nodes[nodeId];
-  if (isPoserNode(node)) {
-    const data = singleRef(node, DATA);
-    if (!data) return nodeId; // an Empty — nothing on the data lane to modify
-    return resolveOperatorBase(state, data.node, isModifierNode);
-  }
-  return resolveOperatorBase(state, nodeId, isModifierNode);
+  return resolveDataLaneBase(state, nodeId);
 }
 
 /**
@@ -215,6 +204,13 @@ export function resolveStackBase(state: DagState, nodeId: string): string {
  * a surface that needs "where does this modified geometry actually sit?" — the gizmo,
  * the read road — has to walk UP. Getting the direction wrong lands on the data node,
  * which has no transform at all, so it fails visibly rather than subtly.
+ *
+ * #517 — and it walks past ANY data-lane operator, for the same reason its inverse does.
+ * A material operator sitting above the modifier is neither a modifier nor a poser, so
+ * the curated walk fell off the end and answered `null` — "nothing wears this result",
+ * which reads as a dangling chain rather than as a walk that stopped early. This one is
+ * the more dangerous of the pair: `null` is a legitimate answer here, so the wrong answer
+ * is indistinguishable from a real one at the call site.
  */
 export function resolveStackObject(state: DagState, nodeId: string): string | null {
   let cur = nodeId;
@@ -222,7 +218,7 @@ export function resolveStackObject(state: DagState, nodeId: string): string | nu
   for (;;) {
     const consumer = findConsumer(state, cur, OUT);
     if (!consumer) return null; // dangling chain — nothing wears it yet
-    if (isModifierNode(state.nodes[consumer.node])) {
+    if (isDataLaneOperator(state.nodes[consumer.node])) {
       if (seen.has(consumer.node)) return null; // cycle guard
       seen.add(consumer.node);
       cur = consumer.node;
@@ -247,8 +243,9 @@ function stackTail(
   state: DagState,
   baseNodeId: string,
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): { lastProducer: string; consumer: { node: string; socket: string } | null } {
-  const stack = enumerateOperatorStack(state, baseNodeId, isOp);
+  const stack = enumerateOperatorStack(state, baseNodeId, isOp, passThrough);
   const lastProducer = stack.length ? stack[stack.length - 1].nodeId : baseNodeId;
   return { lastProducer, consumer: findConsumer(state, lastProducer, OUT) };
 }
@@ -279,9 +276,10 @@ export function buildAddOperatorOps(
   params: Record<string, unknown> = {},
   explicitId?: string,
   idPrefix = 'op',
+  passThrough?: OperatorPredicate,
 ): AddModifierResult | null {
   if (!state.nodes[baseNodeId]) return null;
-  const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp);
+  const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp, passThrough);
   // The UI lets the registry mint a random id; the agent passes a deterministic
   // one (the closure spec needs the id before build, and the LLM references it).
   const modifierId = explicitId ?? newId(idPrefix);
@@ -360,6 +358,28 @@ export function buildAddModifierOps(
     params,
     explicitId,
     'mod',
+    isDataLaneOperator,
+  );
+}
+
+/** Insert a material operator at the top of the data node's material stack. Shares the
+ *  physical lane with the geometry stack, so it passes through modifiers (#526). */
+export function buildAddMaterialOpOps(
+  state: DagState,
+  baseNodeId: string,
+  operatorType: string,
+  params: Record<string, unknown> = {},
+  explicitId?: string,
+): AddModifierResult | null {
+  return buildAddOperatorOps(
+    state,
+    baseNodeId,
+    operatorType,
+    isMaterialLaneOperator,
+    params,
+    explicitId,
+    'matop',
+    isDataLaneOperator,
   );
 }
 
@@ -461,21 +481,23 @@ export function buildMoveOperatorOps(
   modifierId: string,
   dir: 'up' | 'down',
   isOp: OperatorPredicate,
+  passThrough?: OperatorPredicate,
 ): Op[] | null {
   const node = state.nodes[modifierId];
   if (!isOp(node)) return null;
 
   // Find the base (walk `target` down past operators) so we can enumerate order.
+  const inLane = (n: Node | undefined) => isOp(n) || Boolean(passThrough?.(n));
   let base = modifierId;
   for (;;) {
     const up = singleRef(state.nodes[base], TARGET);
-    if (!up || !isOp(state.nodes[up.node])) {
+    if (!up || !inLane(state.nodes[up.node])) {
       base = up ? up.node : base;
       break;
     }
     base = up.node;
   }
-  const stack = enumerateOperatorStack(state, base, isOp);
+  const stack = enumerateOperatorStack(state, base, isOp, passThrough);
   const idx = stack.findIndex((m) => m.nodeId === modifierId);
   if (idx < 0) return null;
   // 'up' = toward the consumer = higher index; 'down' = toward the base = lower.
@@ -488,6 +510,14 @@ export function buildMoveOperatorOps(
   const below = singleRef(state.nodes[lowerId], TARGET); // producer feeding `lower`
   const above = findConsumer(state, upperId, OUT); // node consuming `upper`
   if (!below) return null;
+  // #526 — this swap is a three-edge rewire that assumes `lower.out → upper.target`
+  // EXISTS. On a shared lane the two stack neighbours can have a foreign operator
+  // between them, and then that edge does not exist: the ops below would disconnect
+  // an absent edge and splice the chain into a shape nobody asked for. REFUSE instead.
+  // Reordering ACROSS a foreign operator is a real feature with its own question (does
+  // the user see one lane or two?) and is deliberately not smuggled in here.
+  const between = findConsumer(state, lowerId, OUT);
+  if (!between || between.node !== upperId || between.socket !== TARGET) return null;
 
   // Before: below → lower.target ; lower.out → upper.target ; upper.out → above
   // After:  below → upper.target ; upper.out → lower.target ; lower.out → above
@@ -538,7 +568,26 @@ export function buildMoveModifierOps(
   modifierId: string,
   dir: 'up' | 'down',
 ): Op[] | null {
-  return buildMoveOperatorOps(state, modifierId, dir, isModifierNode);
+  return buildMoveOperatorOps(state, modifierId, dir, isModifierNode, isDataLaneOperator);
+}
+
+/** Move a material operator one slot up/down its stack (shares the data lane). */
+export function buildMoveMaterialOpOps(
+  state: DagState,
+  operatorId: string,
+  dir: 'up' | 'down',
+): Op[] | null {
+  return buildMoveOperatorOps(state, operatorId, dir, isMaterialLaneOperator, isDataLaneOperator);
+}
+
+/** Remove a material operator from its stack, splicing the data lane closed. */
+export function buildRemoveMaterialOpOps(state: DagState, operatorId: string): Op[] | null {
+  return buildRemoveOperatorOps(state, operatorId, isMaterialLaneOperator);
+}
+
+/** Toggle a material operator's mute (the stack bypass). */
+export function buildToggleMaterialOpMuteOp(state: DagState, operatorId: string): Op | null {
+  return buildToggleOperatorMuteOp(state, operatorId, isMaterialLaneOperator);
 }
 
 /** Move a video effect one slot up/down its stack. */

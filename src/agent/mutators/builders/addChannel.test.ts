@@ -9,6 +9,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../../core/dag';
+import type { Op } from '../../../core/dag/types';
 import { __reseedAllNodesForTests } from '../../../nodes/registerAll';
 import { makeSplitCube } from '../../../test-utils/splitCube';
 import { addChannelMutator, type AddChannelSpec } from './addChannel';
@@ -68,5 +69,101 @@ describe('addChannel — data-param channel targets the owning half (#450)', () 
       initialKeyframe: { time: 0, value: '#00ff00' },
     });
     expect(target).toBe('n_sphere');
+  });
+});
+
+// ── #519 — the same question, one layer finer ──────────────────────────────────────
+//
+// The reach above resolves per param ROOT, which is sound while every superseding layer
+// is wholesale. A material override operator authors a SPARSE per-field set, so with one
+// forcing `color` in the lane the whole `material` root resolved to the layer BELOW the
+// operator — the masked one. Reproduced before the fix on exactly this graph: the mutator
+// returned ok, the channel was created on the base data node, and the composed material
+// went on taking the colour from the operator above. Nothing thrown, nothing logged.
+//
+// The PATH is asserted alongside the target because the two layers spell the field
+// differently: the base stores `material.base.color`, the operator the flat `color`. A
+// correct target carrying the caller's path would name a param the operator does not have,
+// which is a channel that evaluates against nothing.
+describe('addChannel — a forcing material operator owns the field it supplies (#519)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  function withForcingOp(): { state: DagState; objectId: string; dataId: string; opId: string } {
+    const {
+      state: split,
+      objectId,
+      dataId,
+    } = makeSplitCube(emptyDagState(), { objectId: 'n_cube' });
+    const opId = 'n_ovr';
+    const state = (
+      [
+        {
+          type: 'addNode',
+          nodeId: opId,
+          nodeType: 'MaterialOverrideOp',
+          params: { color: '#00ff88' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: objectId, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: opId, socket: 'target' },
+        },
+        {
+          type: 'connect',
+          from: { node: opId, socket: 'out' },
+          to: { node: objectId, socket: 'data' },
+        },
+      ] as Op[]
+    ).reduce((s, op) => applyOp(s, op).next, split);
+    return { state, objectId, dataId, opId };
+  }
+
+  it('targets the operator, in the operator’s own vocabulary', () => {
+    const { state, objectId, dataId, opId } = withForcingOp();
+    // Vacuity guard: the two candidate nodes are real and distinct.
+    expect(opId).not.toBe(dataId);
+
+    const plan = validatePlan(
+      addChannelMutator,
+      {
+        target: objectId,
+        paramPath: 'material.base.color',
+        valueType: 'color',
+        initialKeyframe: { time: 0, value: '#ff0000' },
+      },
+      state,
+      'x',
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) throw new Error(plan.reason);
+    const params = (plan.ops[0] as { params: { target: string; paramPath: string } }).params;
+    expect(params.target).toBe(opId);
+    expect(params.paramPath).toBe('color');
+  });
+
+  it('CONTROL: the same cube with the operator MUTED keeps the channel on the base', () => {
+    const { state: forced, objectId, dataId, opId } = withForcingOp();
+    const state = applyOp(forced, {
+      type: 'setParam',
+      nodeId: opId,
+      paramPath: 'muted',
+      value: true,
+    }).next;
+    expect(
+      channelTarget(state, {
+        target: objectId,
+        paramPath: 'material.base.color',
+        valueType: 'color',
+        initialKeyframe: { time: 0, value: '#ff0000' },
+      }),
+    ).toBe(dataId);
   });
 });

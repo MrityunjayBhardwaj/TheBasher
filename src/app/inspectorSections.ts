@@ -87,206 +87,38 @@ export function formatSectionLabel(id: SectionId): string {
  *  the closest "foundational positioning hints" substitute. */
 export const MULTI_SELECT_SECTIONS: readonly SectionId[] = ['transform', 'layout'];
 
-/** Route a param path to its owning section. Predicate-based — no
- *  parallel mapping table to drift from the catalog. Returns null when
- *  the param doesn't belong to any declared section (renders in raw
- *  fallback area). Caller passes the node's declared sections so the
- *  router can degrade gracefully (e.g. a 'material' param on a node
- *  that doesn't declare 'material' falls through to the raw bucket).
+/** Route a param path to its owning section, from the node type's own `home`
+ *  declaration (`NodeDefinition.home`, #394 PLAN-3 P6).
+ *
+ *  Returns null when the param has no home — it renders in the raw fallback
+ *  bucket, which is visible, not hidden.
+ *
+ *  ── WHY THIS IS A LOOKUP AND NOT A PREDICATE CHAIN ─────────────────────────
+ *
+ *  Until P6 this was ~190 lines of `declaredSections.includes(s) && (path ===
+ *  'a' || path === 'b' || …)`, one arm per section. Every arm was gated on the
+ *  declared sections for one reason: three param keys mean different things on
+ *  different nodes — `color` (light vs material), `lookAt` (transform vs camera
+ *  vs light), `roll` (transform vs camera). The chain resolved those by ARM
+ *  ORDER, so adding a param meant editing a shared file and hoping no earlier
+ *  arm claimed the key first. A per-node table resolves them by construction.
+ *
+ *  `declaredSections` is still consulted, and it is load-bearing: a home naming
+ *  a section this node does not declare is treated as unrouted. `rowsForNode`
+ *  emits rows by walking the DECLARED sections, so a row grouped under an
+ *  undeclared one is never emitted at all — honouring such a home would make the
+ *  param VANISH, where falling through to the raw bucket keeps it on screen.
+ *  That is the same degradation the old chain gave, preserved deliberately.
+ *  `paramHome.gate.test.ts` fails on such an entry, so this is a backstop.
  */
 export function paramToSection(
   paramPath: string,
   declaredSections: readonly SectionId[],
+  nodeType: string | undefined,
 ): SectionId | null {
-  // Transform params — position / rotation / scale. lookAt (camera aim target)
-  // is positional, so it groups with Transform too (UX #12). pivot (a Group's
-  // origin, #222/#228) is the rotation/scale centre → also Transform. roll (a
-  // camera's bank about the view axis, #229) is an orientation property → also
-  // Transform, beside its position/lookAt. All first-class labeled rows instead
-  // of stray raw-fallback rows.
-  if (
-    declaredSections.includes('transform') &&
-    (paramPath === 'position' ||
-      paramPath === 'rotation' ||
-      paramPath === 'scale' ||
-      paramPath === 'pivot' ||
-      paramPath === 'lookAt' ||
-      paramPath === 'roll')
-  ) {
-    return 'transform';
-  }
-  // Curve params (#321) — the path's SHAPE. `points` renders through a dedicated rows
-  // control (a variable-length vec3 list has no generic param row); `closed` and
-  // `resolution` are ordinary rows that land here beside it.
-  if (
-    declaredSections.includes('curve') &&
-    (paramPath === 'points' || paramPath === 'closed' || paramPath === 'resolution')
-  ) {
-    return 'curve';
-  }
-  // Light params (#386) — a LightData's SHADING: kind + intensity/colour/falloff/aim.
-  // The pose (position/rotation/scale) stays on the Object's 'transform'; this section
-  // owns the shading. Gated on the node declaring 'light' (only LightData does), so bare
-  // `color`/`intensity` here never collide with a mesh material's colour (which routes
-  // through 'material', declared by a different node). `lightKind` is the discriminator
-  // row. `target`/`lookAt` are the spot/area aim points — grouped with shading here (the
-  // light doesn't declare 'transform', so the transform arm above skips them).
-  if (
-    declaredSections.includes('light') &&
-    (paramPath === 'lightKind' ||
-      paramPath === 'intensity' ||
-      paramPath === 'color' ||
-      paramPath === 'distance' ||
-      paramPath === 'decay' ||
-      paramPath === 'angle' ||
-      paramPath === 'penumbra' ||
-      paramPath === 'width' ||
-      paramPath === 'height' ||
-      paramPath === 'target' ||
-      paramPath === 'lookAt' ||
-      paramPath === 'tex')
-  ) {
-    return 'light';
-  }
-  // Mesh params — size / radius / segments / topology hints.
-  if (
-    declaredSections.includes('mesh') &&
-    (paramPath === 'size' ||
-      paramPath === 'radius' ||
-      paramPath === 'widthSegments' ||
-      paramPath === 'heightSegments' ||
-      paramPath === 'assetRef')
-  ) {
-    return 'mesh';
-  }
-  // Material params — color / material / opacity / metalness / roughness / emissive.
-  if (
-    declaredSections.includes('material') &&
-    (paramPath === 'material' ||
-      paramPath === 'color' ||
-      paramPath === 'opacity' ||
-      paramPath === 'metalness' ||
-      paramPath === 'roughness' ||
-      paramPath === 'emissive' ||
-      paramPath === 'emissiveIntensity')
-  ) {
-    return 'material';
-  }
-  // Render params — paths, settings, codec, fps, frame ranges, presets.
-  if (
-    declaredSections.includes('render') &&
-    (paramPath === 'outputPath' ||
-      paramPath === 'frameStart' ||
-      paramPath === 'frameEnd' ||
-      paramPath === 'fps' ||
-      paramPath === 'codec' ||
-      paramPath === 'presetId' ||
-      paramPath === 'promptText' ||
-      paramPath === 'settings' ||
-      paramPath === 'jobId')
-  ) {
-    return 'render';
-  }
-  // Animate params — playback / weight / time / clipId. extendBefore/extendAfter
-  // (#270, D1 per-side extrapolation) are the channel's playback ENVELOPE — what
-  // the animation does before it starts / after it ends — so they group with
-  // weight here. Routing them out of the raw-fallback bucket lets the animate
-  // section author them via the dedicated ChannelExtendControls (NPanel), mirroring
-  // how Environment/Camera params route here only to leave the raw bucket.
-  if (
-    declaredSections.includes('animate') &&
-    (paramPath === 'weight' ||
-      paramPath === 'playing' ||
-      paramPath === 'startFrame' ||
-      paramPath === 'endFrame' ||
-      paramPath === 'clipId' ||
-      paramPath === 'targetPath' ||
-      paramPath === 'extendBefore' ||
-      paramPath === 'extendAfter' ||
-      // #274 (D2) / #275 — the F-Modifier stack (Noise, Cycles …) is authored by the
-      // dedicated ChannelModifierControls in the animate section; route it out of the
-      // raw bucket (mirrors extendBefore/After). The #270 cycle counts live in the
-      // Cycles modifier now, so no separate cyclesBefore/After params to route.
-      paramPath === 'modifiers')
-  ) {
-    return 'animate';
-  }
-  // Channel params — interpolation / loop / keyframes themselves.
-  if (
-    declaredSections.includes('channel') &&
-    (paramPath === 'interpolation' ||
-      paramPath === 'loop' ||
-      paramPath === 'keyframes' ||
-      paramPath === 'easing' ||
-      paramPath === 'paramPath')
-  ) {
-    return 'channel';
-  }
-  // Environment params (UX #9) — the scene-level HDRI/IBL config. Routed here so
-  // they group under the Environment section's custom control instead of landing
-  // in the raw-fallback bucket; the custom control (SceneEnvironmentControls)
-  // authors them, so the generic ParamRows for this section are suppressed.
-  if (
-    declaredSections.includes('environment') &&
-    (paramPath === 'envSource' ||
-      paramPath === 'envIntensity' ||
-      paramPath === 'envRotationY' ||
-      paramPath === 'envBackground')
-  ) {
-    return 'environment';
-  }
-  // Camera params (UX #12) — fov / sensorSize / near / far / zoom (ortho). Routed
-  // here so they group under the Camera section's custom control instead of the
-  // raw-fallback bucket; the custom control (CameraLensControls) authors those nine,
-  // so they are listed in its `omitRowKeys` and do not double-render beneath it.
-  //
-  // #387 adds `projection`, `lookAt` and `roll`, which the lens control does NOT
-  // author — they render as labelled generic rows in this section, the same shape
-  // `lightKind`/`target`/`lookAt` have on a LightData. That only works because the
-  // section stopped suppressing all its rows; routing them into a suppressing section
-  // would have made them render nowhere at all.
-  //
-  // A FUSED camera is unaffected: it declares 'transform' too, so the transform arm
-  // above claims its `lookAt`/`roll` first. Only a CameraData — which declares
-  // 'camera' and nothing else — reaches these three here.
-  if (
-    declaredSections.includes('camera') &&
-    (paramPath === 'fov' ||
-      paramPath === 'sensorSize' ||
-      paramPath === 'near' ||
-      paramPath === 'far' ||
-      paramPath === 'zoom' ||
-      paramPath === 'dofEnabled' ||
-      paramPath === 'focusDistance' ||
-      paramPath === 'fStop' ||
-      // #247 (fix #257): focusOnTarget is authored by CameraLensControls' DoF
-      // block; without routing it here it ALSO leaked into the raw unrouted-params
-      // bucket as a second, duplicate toggle.
-      paramPath === 'focusOnTarget' ||
-      // #387 — the projection discriminator (the Camera Type enum) and the authored
-      // aim, which stays on the data half parity-first.
-      paramPath === 'projection' ||
-      paramPath === 'lookAt' ||
-      paramPath === 'roll')
-  ) {
-    return 'camera';
-  }
-  // Modifier params (epic #201, #209) — the geometry operator's params (Array's
-  // count/offset, mute). Routed here so they group under the Modifier section.
-  if (
-    declaredSections.includes('modifier') &&
-    (paramPath === 'count' || paramPath === 'offset' || paramPath === 'muted')
-  ) {
-    return 'modifier';
-  }
-  // Layout params — name / labels / cosmetic positioning.
-  if (
-    declaredSections.includes('layout') &&
-    (paramPath === 'name' || paramPath === 'label' || paramPath === 'notes')
-  ) {
-    return 'layout';
-  }
-  return null;
+  const home = nodeType ? getNodeType(nodeType)?.home?.[paramPath] : undefined;
+  if (home === undefined || !isSectionId(home)) return null;
+  return declaredSections.includes(home) ? home : null;
 }
 
 /** The sections a NODE declares, narrowed to known ids.

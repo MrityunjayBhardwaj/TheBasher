@@ -90,8 +90,25 @@ export const COMPUTE_KINDS = [
 ] as const;
 export type ComputeKind = (typeof COMPUTE_KINDS)[number];
 
+/**
+ * THE RESOURCES — things scene objects POINT AT rather than things that live in the scene
+ * (#394). A material is not a body: it has no transform, nothing to select in the viewport,
+ * and it is not a scene child. It is also not compute — it never touches the driver rail.
+ *
+ * A third list rather than a member of either existing one, because the two existing lists
+ * are each defined by a property this does not have: SCENE_OBJECT_KINDS is "has a transform
+ * and is a scene child", COMPUTE_KINDS is "feeds ParamDrivers through the pull rail". Filing
+ * a material under either would make the list's own definition false, and both lists are
+ * DERIVED FROM by other surfaces (the agent's `mesh.add` enum, `identify`'s primitive types),
+ * so a wrong membership propagates into vocabularies rather than staying local.
+ *
+ * Added UNWIRED, like a camera or an empty: the director wires it to what it should shade.
+ */
+export const RESOURCE_KINDS = ['Material'] as const;
+export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+
 /** Every kind `buildAddPrimitiveOps` accepts. Derived — see SCENE_OBJECT_KINDS. */
-export type PrimitiveKind = SceneObjectKind | ComputeKind;
+export type PrimitiveKind = SceneObjectKind | ComputeKind | ResourceKind;
 
 export interface AddResult {
   ops: Op[];
@@ -181,7 +198,11 @@ export function buildAddPrimitiveOps(
             radius: 0.5,
             widthSegments: 24,
             heightSegments: 16,
-            material: { name: 'default', color: '#88aaff' },
+            // No `material`: a new sphere takes the ONE standard material from the
+            // schema, exactly as a new cube does (#394 D7). The flat `{name,color}`
+            // payload that used to sit here was already inert — zod strips unknown
+            // keys, so the colour it named never reached `base.color`; the schema
+            // default was doing the work. Removed rather than left reading as live.
           },
         },
         {
@@ -363,6 +384,7 @@ export function buildAddPrimitiveOps(
 }
 
 function prefixFor(kind: PrimitiveKind): string {
+  if (isResource(kind)) return 'mat';
   if (isLight(kind)) return 'light';
   if (isCamera(kind)) return 'cam';
   if (isCompute(kind)) return 'num';
@@ -438,8 +460,16 @@ function isCamera(kind: PrimitiveKind): boolean {
   return kind === 'PerspectiveCamera' || kind === 'OrthographicCamera';
 }
 
+/** A RESOURCE — something scene objects point at, with no body of its own (#394). Derived
+ *  from RESOURCE_KINDS so a new resource cannot be added to the list and forgotten here. */
+function isResource(kind: PrimitiveKind): boolean {
+  return (RESOURCE_KINDS as readonly string[]).includes(kind);
+}
+
 function humanLabel(kind: PrimitiveKind): string {
   switch (kind) {
+    case 'Material':
+      return 'material';
     case 'Curve':
       return 'curve';
     case 'Cube':
@@ -588,6 +618,11 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'PerspectiveCamera':
     case 'OrthographicCamera':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // #394 — a Material has NO pose. Its params come from its own zod defaults (THE
+    // standard material), so nothing is seeded here; passing a `position` would mint a
+    // param the schema strips and read as though a material had a place in the world.
+    case 'Material':
+      return {};
     case 'Group':
       return {};
     case 'Transform':

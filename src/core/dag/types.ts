@@ -201,6 +201,30 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   inspectorSections?: readonly string[];
   /**
+   * #394 (PLAN-3 P6) — where each of this node's params RENDERS: param key →
+   * section id. Declared beside the schema, because "which card does this param
+   * belong on?" is a property of the node, not of a central table.
+   *
+   * It replaces a ~190-line if-chain (`paramToSection`) in which every arm was
+   * gated on the node's declared sections precisely so that the same key could
+   * mean different things on different nodes. Three keys genuinely collide today
+   * — `color` (light vs material), `lookAt` (transform vs camera vs light) and
+   * `roll` (transform vs camera) — and a per-node table resolves them by
+   * construction instead of by ordering the arms correctly.
+   *
+   * A param with no entry here is UNROUTED: it renders in the raw fallback
+   * bucket, which is visible, not hidden. An entry naming a section this node
+   * does not declare is also treated as unrouted rather than honoured — the row
+   * would otherwise be grouped under a card that never renders and disappear
+   * entirely. `paramHome.gate.test.ts` fails on such an entry, so the runtime
+   * degradation is a backstop and not the plan.
+   *
+   * Loose `string` typing for the same reason `inspectorSections` above is
+   * loose: it keeps the DAG registry app-agnostic. SectionId narrowing happens
+   * at the Inspector layer (`src/app/inspectorSections.ts`).
+   */
+  home?: Readonly<Record<string, string>>;
+  /**
    * #421/#424 — the ID-REFERENCE UNIVERSE: every param on this node type that
    * holds ANOTHER node's id. This is the half of the graph that does NOT travel
    * on edges (V57 edge-less sidecars: channels, constraints, drivers, strips),
@@ -307,10 +331,34 @@ export interface NodeDefinition<P = unknown, O = unknown> {
 // object grabbed with the normal gizmo, and a param is driven from its transform
 // channel (Blender's "Transform Channel" driver / Houdini `ch("../null/tx")`, V93).
 // One controller idiom, not two. The spare dock + inspector spare authoring stay.
+// #394 (PLAN-3 P7) — `home` is where a PROMOTED spare renders as an interface row in
+// the inspector of the chain it drives. It is the promote twin of `NodeDefinition.home`
+// (the per-node param→section table P6 landed), and it has to live HERE rather than
+// there for one structural reason: a spare param is not a declared param of a type. It
+// lives in `node.spare`, a bag explicitly disjoint from the fixed schema, so it never
+// reaches `paramToSection` and inherits no routing. Promote must therefore say where the
+// row goes, per instance, or the row has no home at all.
+//
+// ABSENT (and an unknown/undeclared section id) = UNROUTED, which is VISIBLE — the raw
+// bucket, never a hidden row. Same degradation rule as `NodeDefinition.home`, and for the
+// same reason: honouring a section that never renders would make the control VANISH,
+// which is the one outcome a promoted interface element must not have.
+//
+// Optional, so every pre-P7 spare param serializes byte-identical — no migration, exactly
+// as `promoted` (#294) was added. Loose `string` for the section, narrowed at the
+// inspector layer (`isSectionId`), keeping the DAG registry app-agnostic like the two
+// fields above it.
 export const SpareParamSchema = z.object({
   type: z.enum(['float', 'int', 'bool', 'string', 'vec2', 'vec3']),
   value: z.unknown(),
   promoted: z.boolean().optional(),
+  home: z
+    .object({
+      section: z.string(),
+      order: z.number().optional(),
+      label: z.string().optional(),
+    })
+    .optional(),
 });
 export type SpareParam = z.infer<typeof SpareParamSchema>;
 

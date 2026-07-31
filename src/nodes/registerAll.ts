@@ -17,6 +17,7 @@ import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { BoxMeshNode } from './BoxMesh';
 import { BoxDataNode } from './BoxData';
+import { MaterialNode } from './Material';
 import { SphereDataNode } from './SphereData';
 import { ObjectNode } from './ObjectNode';
 import { CameraSelectNode } from './CameraSelect';
@@ -57,6 +58,8 @@ import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
+import { MaterialOverrideOpNode } from './MaterialOverrideOp';
+import { SetMaterialOpNode } from './SetMaterialOp';
 import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
@@ -124,6 +127,9 @@ const ALL: NodeDefinition[] = [
   // SphereMesh below; the split retires the fused value kind in a later slice.
   SphereDataNode as unknown as NodeDefinition,
   SphereMeshNode as unknown as NodeDefinition,
+  // #394 — the material's own producer. Emits the finished OpenPBR IR as a tagged
+  // value; nothing consumes it until the data nodes grow a `material` socket.
+  MaterialNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
   // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,
   // non-producing addressing satellite; emitted one-per-child at import
@@ -192,6 +198,14 @@ const ALL: NodeDefinition[] = [
   // constraint above) that rewrites its source geometry into a rebuildable handle.
   ArrayModifierNode as unknown as NodeDefinition,
   MirrorModifierNode as unknown as NodeDefinition,
+  // #394 S3c — the MATERIAL half of the same lane. Both are `ObjectData → ObjectData`
+  // operators standing between the data and the Object that wears it (Houdini's Material
+  // SOP / Blender GN `Set Material`): SetMaterialOp replaces wholesale from a Material
+  // node on its socket, MaterialOverrideOp composes a sparse per-field diff through the
+  // one composition rule. They reshape no geometry, so they are deliberately NOT in
+  // MODIFIER_NODE_TYPES — the material stack is its own section.
+  SetMaterialOpNode as unknown as NodeDefinition,
+  MaterialOverrideOpNode as unknown as NodeDefinition,
   // Studio lighting — a switchable lighting PROFILE (epic #201, slice #208). A
   // LightRig groups its lights + owns the shared aim centre/radius; a
   // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.

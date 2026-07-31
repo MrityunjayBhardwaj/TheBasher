@@ -112,6 +112,9 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
   // mesh/material (the asset's editable surface) + driver. Phase 3 (#363) makes the
   // import build explicit Object(s) + data; this is the honest interim.
   inspectorSections: ['mesh', 'driver', 'material'],
+  home: {
+    assetRef: 'mesh',
+  },
   evaluate(params, inputs: ResolvedInputs): GltfAssetValue {
     return {
       kind: 'GltfAsset',

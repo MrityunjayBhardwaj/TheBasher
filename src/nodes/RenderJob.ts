@@ -48,6 +48,13 @@ export const RenderJobNode: NodeDefinition<RenderJobParams, JobResultValue> = {
   },
   outputs: { out: { type: 'JobResult', cardinality: 'single' } },
   inspectorSections: ['render'],
+  home: {
+    jobId: 'render',
+    frameStart: 'render',
+    frameEnd: 'render',
+    fps: 'render',
+    outputPath: 'render',
+  },
   evaluate(params, inputs: ResolvedInputs): JobResultValue {
     const passes = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];
     return {

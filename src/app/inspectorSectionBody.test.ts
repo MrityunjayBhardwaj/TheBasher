@@ -21,12 +21,14 @@ import {
   SECTION_CONTROLS,
   SectionBody,
   controlOwnedRowKeys,
+  declaredParamKeys,
   makeSectionCtx,
   sectionRendersCustomControl,
   type ControlKey,
   type SectionControlRenderers,
   type SectionCtx,
 } from './inspectorSectionBody';
+import { getNodeType, listNodeTypes } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 
 // The registry is populated by a side-effecting boot step in the real app.
@@ -71,27 +73,51 @@ describe('#458 SECTION_CONTROLS — shape', () => {
 });
 
 describe('#458 per-section row suppression is equivalent to the global filter it replaces', () => {
-  // Every section that declares the key, so the routing question is asked the
-  // way the inspector asks it.
-  const sectionsDeclaring = (id: SectionId): readonly SectionId[] => [id];
+  // RE-ANCHORED AT #394 P6b, AND THIS ONE HAD EXPIRED SILENTLY.
+  //
+  // It used to ask the routing question against a SYNTHETIC section list — a bare
+  // `[sectionId]` — because that was the router's whole input. Routing is now per NODE, so
+  // that call answers `null` for every key, and both assertions passed for free:
+  // `expect([sectionId, null]).toContain(null)` and `expect(null).not.toBe(other)` are
+  // unfalsifiable. The suite stayed green while the check measured nothing.
+  //
+  // The invariant is unchanged and is now asked of REAL nodes, which is strictly stronger:
+  // a synthetic list could never say whether any shipped node actually homes a suppressed
+  // key in the wrong card.
+  //
+  // INVARIANT: if a control anywhere suppresses key K, then every node that homes K must
+  // home it in a section that ALSO suppresses it. Otherwise K renders as a raw row in a
+  // card where nothing filters it — beside the control that exists to replace it.
 
-  it('never routes a suppressed key into a section OTHER than the one suppressing it', () => {
-    for (const sectionId of SECTION_IDS) {
-      for (const control of SECTION_CONTROLS[sectionId]) {
-        for (const key of control.omitRowKeys ?? []) {
-          // A suppressed key either routes to its own section (and SectionBody
-          // filters it out of the rows there) or routes nowhere at all (and the
-          // caller's pre-grouping skip keeps it out of the unrouted bucket).
-          // What must never happen is it routing into a DIFFERENT section,
-          // where nothing would suppress it and it would render raw.
-          expect([sectionId, null]).toContain(paramToSection(key, sectionsDeclaring(sectionId)));
-          for (const other of SECTION_IDS) {
-            if (other === sectionId) continue;
-            expect(paramToSection(key, sectionsDeclaring(other))).not.toBe(other);
-          }
-        }
+  /** Every section whose controls omit `key`. */
+  const suppressors = (key: string): SectionId[] =>
+    SECTION_IDS.filter((s) => SECTION_CONTROLS[s].some((c) => (c.omitRowKeys ?? []).includes(key)));
+
+  it('never homes a suppressed key in a section that does not suppress it', () => {
+    const suppressed = new Set(
+      Object.values(SECTION_CONTROLS)
+        .flat()
+        .flatMap((c) => c.omitRowKeys ?? []),
+    );
+    let examined = 0;
+    for (const nodeType of listNodeTypes()) {
+      const declared = (getNodeType(nodeType)?.inspectorSections ?? []) as readonly SectionId[];
+      for (const key of declaredParamKeys(nodeType)) {
+        if (!suppressed.has(key)) continue;
+        const home = paramToSection(key, declared, nodeType);
+        if (home === null) continue; // unrouted: the raw bucket, nothing to suppress against
+        examined++;
+        expect(
+          suppressors(key),
+          `${nodeType}.${key} is homed in '${home}', which does not suppress it`,
+        ).toContain(home);
       }
     }
+    // THE COMPANION THE OLD FORM LACKED. Every assertion above is inside a filtered loop,
+    // so the check is only worth what the loop iterated. If a refactor empties the subject
+    // again — no suppressed key homed anywhere — this fails LOUDLY instead of passing on
+    // nothing, which is exactly how the previous version went blind.
+    expect(examined).toBeGreaterThanOrEqual(10);
   });
 
   it('omits exactly the five original keys plus the nine the lens control authors', () => {
@@ -238,9 +264,12 @@ function emitted(
     SectionBody({
       sectionId,
       ctx,
-      rows,
+      // The cases here are written as `[key, value]` pairs because that is the shape a
+      // single-node section has; `SectionBody` takes named rows since #518 so a section
+      // fed by several nodes can carry each row's provenance and its own React identity.
+      rows: rows.map(([key, value]) => ({ key, value })),
       renderers: STUB_RENDERERS,
-      renderRow: (key) => `row:${key}`,
+      renderRow: ({ key }) => `row:${key}`,
     }),
   );
   return out;
