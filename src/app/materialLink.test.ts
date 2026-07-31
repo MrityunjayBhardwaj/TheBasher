@@ -13,7 +13,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, __resetRegistryForTests } from '../core/dag';
-import { getNodeType } from '../core/dag/registry';
+import { getNodeType, listNodeTypes } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { evaluate } from '../core/dag/evaluator';
@@ -93,6 +93,37 @@ describe('#394 S3d-c — possession decides who gets the data-block row', () => 
     expect(getNodeType('BakedData')!.inputs.material).toBeUndefined();
     expect(getNodeType('BoxData')!.inputs.material!.type).toBe('Material');
   });
+
+  it("every input named 'material' really carries the Material socket", () => {
+    // ⚠️ READ WHAT THIS DOES AND DOES NOT PROVE.
+    //
+    // `hasMaterialSocket` compares the socket TYPE rather than merely asking whether the
+    // input exists, and that comparison is UNFALSIFIABLE today — measured: weakening it
+    // to a presence check reddens nothing, here or anywhere. The reason is that the two
+    // spellings are extensionally EQUAL over the current registry: no node declares an
+    // input named `material` of any other type. So the stronger form is DEMOTED IN PLACE
+    // — it is a statement of intent, not a behaviour any tier can currently observe. It
+    // is kept rather than simplified because the weaker form would silently start
+    // accepting a foreign socket, and simplifying to match today's registry is how a
+    // guard quietly becomes wrong later.
+    //
+    // This sweep is NOT that falsification, and must not be read as one. It guards the
+    // PREMISE the two spellings rest on: while every `material` input is the Material
+    // socket, they agree. The day one is not — a texture slot declaring
+    // `material: { type: 'Image' }` — this reds FIRST, which forces the choice to be made
+    // deliberately instead of inherited. Inventing such a node type here purely to make
+    // the falsification go red would have proven the test, not the product.
+    let examined = 0;
+    for (const type of listNodeTypes()) {
+      const input = getNodeType(type)?.inputs?.material;
+      if (!input) continue;
+      examined++;
+      expect(input.type, `${type}.material is not the Material socket`).toBe('Material');
+    }
+    // The companion, without which an empty registry satisfies the sweep vacuously
+    // ([[H251]]): BoxData, SphereData and SetMaterialOp all declare one today.
+    expect(examined).toBeGreaterThanOrEqual(3);
+  });
 });
 
 describe('#394 S3d-c — picking a material REPLACES, it does not append', () => {
@@ -136,6 +167,13 @@ describe('#394 S3d-c — picking a material REPLACES, it does not append', () =>
     ]);
     expect(boundIds(state)).toEqual(['matA', 'matB']);
     expect(drawnColor(state)).toBe('#ff0000');
+    // AND THE SURFACE MUST AGREE WITH THE VIEWPORT, not with the binding's tail. This
+    // is the only state in the file where entry 0 and the last entry differ, so it is
+    // the only place the "read entry 0, because that is what the renderer reads" claim
+    // is falsifiable at all — every state the builders produce holds exactly one entry.
+    // Measured: without this line, changing `resolveMaterialLink` to read the LAST entry
+    // reddens nothing, and the row would name a material the viewport is not drawing.
+    expect(resolveMaterialLink(state, BOX_DATA)).toBe('matA');
   });
 
   it('re-picking the material already linked builds nothing', () => {
