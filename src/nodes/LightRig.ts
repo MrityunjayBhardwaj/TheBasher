@@ -44,6 +44,9 @@ export const LightRigNode: NodeDefinition<LightRigParams, LightRigValue> = {
   },
   outputs: { out: { type: 'LightRig', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params, inputs: ResolvedInputs): LightRigValue {
     const raw = inputs.lights;
     // #386 — a posable rig light is now an `Object` posing a `LightData`. Recompose

@@ -63,6 +63,14 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['material'],
+  home: {
+    color: 'material',
+    roughness: 'material',
+    metalness: 'material',
+    opacity: 'material',
+    emissive: 'material',
+    emissiveIntensity: 'material',
+  },
   evaluate(params, inputs) {
     return {
       kind: 'MaterialOverride',

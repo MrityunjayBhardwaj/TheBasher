@@ -97,6 +97,14 @@ export const CurveNode: NodeDefinition<CurveParams, never> = {
   // with 'mesh' and a camera with 'camera'. Leading with 'transform' would open a Curve on
   // its TRS and hide the path itself.
   inspectorSections: ['curve', 'transform', 'constraint', 'driver'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+    points: 'curve',
+    closed: 'curve',
+    resolution: 'curve',
+  },
   // Retired (#385 S4): a Curve is now an Object → CurveData, so no value kind carries the fused
   // curve any longer — it is unrepresentable at runtime. This node stays registered SOLELY so
   // the load-migration (migrateFusedCurveToSplit) can normalize an old fused curve through its

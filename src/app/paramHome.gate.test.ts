@@ -38,12 +38,17 @@
 // the change, and the diff names the cell — which is the review surface this table exists
 // to provide.
 //
-// ── THE ONE LINE THAT MOVES AT P6b ──────────────────────────────────────────────────
+// ── THE ONE LINE THAT MOVED AT P6b ──────────────────────────────────────────────────
 //
-// `homeOf` below is the production seam. At P6a it calls `paramToSection(key, declared)`.
-// At P6b it calls the `home`-backed resolver instead, and NOTHING else in this file
-// changes — the golden is untouched, so byte-identity across the swap is what a green run
-// means.
+// `homeOf` below is the production seam. At P6a it called `paramToSection(key, declared)`,
+// the if-chain. At P6b it calls the `home`-backed resolver, and the golden was NOT touched
+// in that commit — so all 90 lines and both totals passing is the evidence that the swap
+// preserved every one of the 410 cells.
+//
+// The collision block below WAS re-anchored at P6b, and deliberately: it had been written
+// against synthetic section lists, a shape that stopped existing when routing became
+// node-based. It now names real registered node types, which is strictly stronger. The
+// reachability block is new at P6b — it is the cost of decentralizing, priced in.
 //
 // REF: PLAN-3 §4 P6 and §5 gates 1/4; src/app/inspectorSections.ts; src/app/exposeParams.gate.test.ts.
 
@@ -51,7 +56,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
-import { paramToSection, type SectionId } from './inspectorSections';
+import { isSectionId, paramToSection, type SectionId } from './inspectorSections';
 import { declaredParamKeys } from './inspectorSectionBody';
 import { GOLDEN_PARAM_HOMES, GOLDEN_TOTALS } from './paramHomeGolden';
 
@@ -62,11 +67,11 @@ beforeEach(() => {
 
 const UNROUTED = '(unrouted)';
 
-/** THE PRODUCTION SEAM. P6b repoints this at the `home`-backed resolver; the golden and
- *  every assertion below stay exactly as they are. */
+/** THE PRODUCTION SEAM. Repointed at P6b from the if-chain to the `home`-backed
+ *  resolver. The golden and every assertion below were NOT touched in that commit —
+ *  that is what makes a green run here evidence of byte-identity across the swap. */
 function homeOf(nodeType: string, paramKey: string, declared: readonly SectionId[]) {
-  void nodeType;
-  return paramToSection(paramKey, declared);
+  return paramToSection(paramKey, declared, nodeType);
 }
 
 function declaredSectionsOf(nodeType: string): readonly SectionId[] {
@@ -121,26 +126,59 @@ describe('param->section routing is pinned cell by cell', () => {
 });
 
 describe('the collisions that make per-node homes necessary', () => {
-  // The measured reason PLAN-3 §3.4 gives for decentralizing: the same param key routes
-  // to DIFFERENT sections depending on what the node declares. Three keys do this today.
-  // Pinned so P6b cannot quietly collapse one — a `home` table resolves these by
-  // construction, and this is what "by construction" has to keep meaning.
-  it('lookAt routes three ways', () => {
-    expect(paramToSection('lookAt', ['transform'])).toBe('transform');
-    expect(paramToSection('lookAt', ['camera'])).toBe('camera');
-    expect(paramToSection('lookAt', ['light'])).toBe('light');
+  // The measured reason PLAN-3 §3.4 gives for decentralizing: the same param key lands on
+  // DIFFERENT cards depending on the node. Three keys do this today.
+  //
+  // RE-ANCHORED AT P6b, AND STRICTER. These were written against hypothetical section
+  // lists (`paramToSection('color', ['light'])`) — a shape that stopped existing when
+  // routing became node-based, and one that never proved any REAL node disambiguates.
+  // They now name registered node types, so the assertion is about the shipped `home`
+  // tables rather than about a signature.
+  const routes = (nodeType: string, key: string) =>
+    homeOf(nodeType, key, declaredSectionsOf(nodeType));
+
+  it('lookAt lands on three different cards, on three real nodes', () => {
+    expect(routes('AreaLight', 'lookAt')).toBe('transform');
+    expect(routes('CameraData', 'lookAt')).toBe('camera');
+    expect(routes('LightData', 'lookAt')).toBe('light');
   });
-  it('roll routes two ways', () => {
-    expect(paramToSection('roll', ['transform'])).toBe('transform');
-    expect(paramToSection('roll', ['camera'])).toBe('camera');
+  it('roll lands on two different cards, on two real nodes', () => {
+    expect(routes('PerspectiveCamera', 'roll')).toBe('transform');
+    expect(routes('CameraData', 'roll')).toBe('camera');
   });
-  it('color routes two ways', () => {
-    expect(paramToSection('color', ['material'])).toBe('material');
-    expect(paramToSection('color', ['light'])).toBe('light');
+  it('color lands on two different cards, on two real nodes', () => {
+    expect(routes('MaterialOverride', 'color')).toBe('material');
+    expect(routes('LightData', 'color')).toBe('light');
   });
-  it('and a node declaring neither claims none of them', () => {
-    expect(paramToSection('color', ['driver'])).toBeNull();
-    expect(paramToSection('lookAt', ['driver'])).toBeNull();
-    expect(paramToSection('roll', ['driver'])).toBeNull();
+  it('a node that declares no home for a key does not claim it', () => {
+    // The old chain answered this by every arm testing `declaredSections.includes(...)`.
+    // The table answers it by absence — assert the absence is real, not accidental.
+    expect(routes('ArrayModifier', 'color')).toBeNull();
+    expect(routes('ArrayModifier', 'lookAt')).toBeNull();
+    expect(routes('AreaLight', 'color')).toBeNull(); // a FUSED light: color is unrouted
+  });
+});
+
+describe('every declared home is reachable (PLAN-3 §5 gate 4)', () => {
+  // The cost of decentralizing: the table stops being centrally auditable, so the thing
+  // that used to be impossible by construction — routing a param to a card this node does
+  // not draw — becomes merely a typo. `rowsForNode` emits rows by walking the DECLARED
+  // sections, so such a row is never emitted and the param VANISHES from the inspector.
+  // The resolver degrades it to unrouted (visible) as a backstop; this is the gate that
+  // means the backstop should never fire.
+  it.each(Object.keys(GOLDEN_PARAM_HOMES).sort())('%s declares no unreachable home', (t) => {
+    const declared = declaredSectionsOf(t);
+    const params = declaredParamKeys(t);
+    for (const [key, section] of Object.entries(getNodeType(t)?.home ?? {})) {
+      expect(
+        { key, section, isSectionId: isSectionId(section) },
+        `${t}.home.${key} names '${section}'`,
+      ).toMatchObject({ isSectionId: true });
+      expect(
+        declared,
+        `${t}.home.${key} routes to '${section}', which ${t} does not declare`,
+      ).toContain(section);
+      expect(params, `${t}.home.${key} homes a param ${t} does not declare`).toContain(key);
+    }
   });
 });

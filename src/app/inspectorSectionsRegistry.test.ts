@@ -127,7 +127,7 @@ describe('C2 — inspectorSections declarations', () => {
       );
       for (const sectionId of declared) {
         sectionsChecked++;
-        const routesAParam = keys.some((key) => paramToSection(key, declared) === sectionId);
+        const routesAParam = keys.some((key) => paramToSection(key, declared, type) === sectionId);
         expect(
           routesAParam || sectionRendersCustomControl(sectionId, ctx),
           `${type} declares section "${sectionId}" but nothing renders in it: no param routes there and the shared section table has no control for it`,

@@ -100,6 +100,20 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
   // The DEFINING section — a camera's substance is its lens. A data node owns no pose,
   // so no 'transform'/'constraint'/'driver' (those live on the Object).
   inspectorSections: ['camera'],
+  home: {
+    projection: 'camera',
+    fov: 'camera',
+    zoom: 'camera',
+    near: 'camera',
+    far: 'camera',
+    sensorSize: 'camera',
+    dofEnabled: 'camera',
+    focusDistance: 'camera',
+    fStop: 'camera',
+    focusOnTarget: 'camera',
+    lookAt: 'camera',
+    roll: 'camera',
+  },
   evaluate(params) {
     return {
       kind: 'CameraData',

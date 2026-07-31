@@ -3188,7 +3188,7 @@ export function NPanel() {
                 // all — the per-submesh slot index does not, and would otherwise
                 // land in the unrouted bucket beside the selector that owns it.
                 if (ownedRowKeys.has(key)) continue;
-                const section = paramToSection(key, declared);
+                const section = paramToSection(key, declared, node.type);
                 if (section === null) {
                   unrouted.push([key, value]);
                 } else {

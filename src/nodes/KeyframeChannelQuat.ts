@@ -99,6 +99,11 @@ export const KeyframeChannelQuatNode: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
+  home: {
+    paramPath: 'channel',
+    weight: 'animate',
+    keyframes: 'channel',
+  },
   evaluate(params): KeyframeChannelQuatValue {
     // Sort ONCE in the closure; sample() slerps per call (function of time, V24).
     const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);

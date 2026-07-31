@@ -59,6 +59,9 @@ export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
   inputs: {},
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params, _inputs, ctx: EvalCtx): ImageValue {
     const frameIndex = mediaClipFrameAt(params, ctx.time.seconds);
     return {

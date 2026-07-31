@@ -87,6 +87,14 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['material'],
+  home: {
+    color: 'material',
+    roughness: 'material',
+    metalness: 'material',
+    opacity: 'material',
+    emissive: 'material',
+    emissiveIntensity: 'material',
+  },
   evaluate(params, inputs) {
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to compose onto.

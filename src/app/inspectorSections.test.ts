@@ -1,6 +1,9 @@
 // Unit tests for inspectorSections (P6 W4).
 
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { __resetRegistryForTests } from '../core/dag';
+import { getNodeType } from '../core/dag/registry';
+import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import {
   formatSectionLabel,
   isDefaultCollapsed,
@@ -11,32 +14,48 @@ import {
   type SectionId,
 } from './inspectorSections';
 
+// RE-ANCHORED AT #394 P6b. Routing moved off a central predicate chain onto each node's
+// own `home` declaration, so it is asked of a NODE TYPE rather than of a synthetic section
+// list. These read the shipped registry now, which is what they were always trying to
+// describe — `['transform','camera']` was a stand-in for "a camera", and a stand-in cannot
+// tell you whether the camera that ships is routed correctly.
+beforeAll(() => {
+  __resetRegistryForTests();
+  __reseedAllNodesForTests();
+});
+
+const homeOn = (nodeType: string, key: string) =>
+  paramToSection(
+    key,
+    (getNodeType(nodeType)?.inspectorSections ?? []) as readonly SectionId[],
+    nodeType,
+  );
+
 describe('paramToSection — camera params route to the Camera section', () => {
-  const cam: readonly SectionId[] = ['transform', 'camera'];
   it('routes every DoF/lens param the CameraLensControls block authors', () => {
     for (const p of [
       'fov',
       'sensorSize',
       'near',
       'far',
-      'zoom',
       'dofEnabled',
       'focusDistance',
       'fStop',
       'focusOnTarget',
     ]) {
-      expect(paramToSection(p, cam)).toBe('camera');
+      expect(homeOn('PerspectiveCamera', p), `PerspectiveCamera.${p}`).toBe('camera');
     }
+    // `zoom` is orthographic-only, so it is pinned on the node that actually declares it.
+    expect(homeOn('OrthographicCamera', 'zoom')).toBe('camera');
   });
   it('#257 — focusOnTarget must NOT fall through to the unrouted bucket (duplicate toggle)', () => {
-    // A camera-less node does not claim it (no spurious routing), but a camera does.
-    expect(paramToSection('focusOnTarget', ['transform'])).not.toBe('camera');
-    expect(paramToSection('focusOnTarget', cam)).toBe('camera');
+    // A camera claims it; a node with no camera lens does not (no spurious routing).
+    expect(homeOn('PerspectiveCamera', 'focusOnTarget')).toBe('camera');
+    expect(homeOn('Transform', 'focusOnTarget')).not.toBe('camera');
   });
 });
 
 describe('paramToSection — light shading routes to the Light section (#386, H189 fix)', () => {
-  const light: readonly SectionId[] = ['light'];
   it('routes every LightData shading param to the light section', () => {
     for (const p of [
       'lightKind',
@@ -52,21 +71,22 @@ describe('paramToSection — light shading routes to the Light section (#386, H1
       'lookAt',
       'tex',
     ]) {
-      expect(paramToSection(p, light)).toBe('light');
+      expect(homeOn('LightData', p), `LightData.${p}`).toBe('light');
     }
   });
-  it('a node that does NOT declare light never claims these params (no spurious routing)', () => {
-    // The H189 mechanism: without the light arm, intensity/color route to null and the
-    // linked-data inspector drops them → empty panel. Proven by the split-light routing
-    // above; here the negative — a transform-only node leaves them unrouted.
-    expect(paramToSection('intensity', ['transform'])).toBeNull();
-    expect(paramToSection('penumbra', ['transform'])).toBeNull();
+  it('a FUSED light does NOT claim these params (no spurious routing)', () => {
+    // The H189 mechanism: with no light home, intensity/color route to null and the
+    // linked-data inspector drops them → empty panel. The split LightData above is the
+    // positive; here the negative, and it is a REAL node — the fused PointLight declares
+    // 'transform' and no 'light', so its shading params sit in the raw bucket, exactly as
+    // they did before the split.
+    expect(homeOn('PointLight', 'intensity')).toBeNull();
+    expect(homeOn('SpotLight', 'penumbra')).toBeNull();
   });
-  it('bare light color/intensity never collide with a mesh material colour', () => {
-    // A material node routes bare `color` through 'material'; a light node routes it
-    // through 'light'. They never both declare, so no collision — assert both directions.
-    expect(paramToSection('color', ['material'])).toBe('material');
-    expect(paramToSection('color', ['light'])).toBe('light');
+  it('bare light color never collides with a mesh material colour', () => {
+    // The collision `home` exists to resolve: one key, two cards, decided per node.
+    expect(homeOn('MaterialOverride', 'color')).toBe('material');
+    expect(homeOn('LightData', 'color')).toBe('light');
   });
 });
 

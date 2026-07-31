@@ -99,6 +99,12 @@ export const BakedMeshNode: NodeDefinition<BakedMeshParams, BakedMeshValue> = {
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['mesh', 'transform', 'constraint', 'driver', 'material'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+    material: 'material',
+  },
   // RETIRED (#388 Stage C · C5). A baked mesh is an `Object` → `BakedData` split: saved
   // projects migrate on load (v7 → v8) and Apply Transform mints the pair directly, so no
   // live `BakedMesh` node ever reaches evaluate. Kept as a hard fail-fast: if one somehow

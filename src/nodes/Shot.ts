@@ -31,6 +31,9 @@ export const ShotNode: NodeDefinition<ShotParams, ShotValue> = {
   },
   outputs: { out: { type: 'Shot', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params, inputs: ResolvedInputs) {
     return {
       kind: 'Shot',

@@ -46,6 +46,9 @@ export const MaterialNode: NodeDefinition<MaterialParams, OpenPBRMaterialValue> 
   // whole point of this node. 'single' states what it emits: one material.
   outputs: { out: { type: 'Material', cardinality: 'single' } },
   inspectorSections: ['material'],
+  home: {
+    material: 'material',
+  },
   evaluate(params) {
     return {
       kind: 'OpenPBRMaterial',

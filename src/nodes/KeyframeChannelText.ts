@@ -64,6 +64,11 @@ export const KeyframeChannelTextNode: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
+  home: {
+    paramPath: 'channel',
+    weight: 'animate',
+    keyframes: 'channel',
+  },
   evaluate(params): KeyframeChannelTextValue {
     return {
       kind: 'KeyframeChannel',

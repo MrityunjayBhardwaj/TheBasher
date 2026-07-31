@@ -81,6 +81,20 @@ export const LightDataNode: NodeDefinition<LightDataParams, LightDataValue> = {
   // The DEFINING section — a light's substance is its shading. A data node owns no
   // pose, so no 'transform'/'constraint'/'driver' (those live on the Object).
   inspectorSections: ['light'],
+  home: {
+    lightKind: 'light',
+    intensity: 'light',
+    color: 'light',
+    distance: 'light',
+    decay: 'light',
+    angle: 'light',
+    penumbra: 'light',
+    width: 'light',
+    height: 'light',
+    target: 'light',
+    lookAt: 'light',
+    tex: 'light',
+  },
   evaluate(params) {
     // H14 hydrate seam: re-guard every field with `?? default` so a migrated or
     // hand-authored param bag (which bypasses zod's default-fill) never yields

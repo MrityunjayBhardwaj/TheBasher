@@ -201,6 +201,30 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   inspectorSections?: readonly string[];
   /**
+   * #394 (PLAN-3 P6) — where each of this node's params RENDERS: param key →
+   * section id. Declared beside the schema, because "which card does this param
+   * belong on?" is a property of the node, not of a central table.
+   *
+   * It replaces a ~190-line if-chain (`paramToSection`) in which every arm was
+   * gated on the node's declared sections precisely so that the same key could
+   * mean different things on different nodes. Three keys genuinely collide today
+   * — `color` (light vs material), `lookAt` (transform vs camera vs light) and
+   * `roll` (transform vs camera) — and a per-node table resolves them by
+   * construction instead of by ordering the arms correctly.
+   *
+   * A param with no entry here is UNROUTED: it renders in the raw fallback
+   * bucket, which is visible, not hidden. An entry naming a section this node
+   * does not declare is also treated as unrouted rather than honoured — the row
+   * would otherwise be grouped under a card that never renders and disappear
+   * entirely. `paramHome.gate.test.ts` fails on such an entry, so the runtime
+   * degradation is a backstop and not the plan.
+   *
+   * Loose `string` typing for the same reason `inspectorSections` above is
+   * loose: it keeps the DAG registry app-agnostic. SectionId narrowing happens
+   * at the Inspector layer (`src/app/inspectorSections.ts`).
+   */
+  home?: Readonly<Record<string, string>>;
+  /**
    * #421/#424 — the ID-REFERENCE UNIVERSE: every param on this node type that
    * holds ANOTHER node's id. This is the half of the graph that does NOT travel
    * on edges (V57 edge-less sidecars: channels, constraints, drivers, strips),

@@ -303,7 +303,7 @@ function rowsForNode(
     if (isInputBinding(value)) continue;
     if (role === 'main' && refKeys.has(key)) continue;
     if (ownedRowKeys.has(key)) continue;
-    const section = paramToSection(key, declared);
+    const section = paramToSection(key, declared, node.type);
     if (section === null) {
       unrouted.push(key);
       continue;

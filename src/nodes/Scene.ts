@@ -51,6 +51,12 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
   inspectorSections: ['environment', 'layout'],
+  home: {
+    envSource: 'environment',
+    envIntensity: 'environment',
+    envRotationY: 'environment',
+    envBackground: 'environment',
+  },
   evaluate(params, inputs) {
     // UX #9 — fold the env params into SceneValue.environment. The `?? default`
     // here is the SECOND layer of the V10/H14 two-layer default (the zod

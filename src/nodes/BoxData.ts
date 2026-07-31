@@ -49,6 +49,10 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   // section (a data node has no world transform to constrain). This is exactly
   // what makes "posable" the Object's type, not a property test.
   inspectorSections: ['mesh', 'material'],
+  home: {
+    size: 'mesh',
+    material: 'material',
+  },
   evaluate(params, inputs) {
     return {
       kind: 'MeshData',

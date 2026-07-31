@@ -65,6 +65,11 @@ export const CurveDataNode: NodeDefinition<CurveDataParams, CurveDataValue> = {
   // The DEFINING section — a curve's substance is its points. A data node owns no
   // pose, so no 'transform'/'constraint'/'driver' (those live on the Object).
   inspectorSections: ['curve'],
+  home: {
+    points: 'curve',
+    closed: 'curve',
+    resolution: 'curve',
+  },
   evaluate(params) {
     // The ONE {id,co}[] → co[] boundary (mirrors the fused Curve.evaluate): the
     // sampler, the world seam (curveSampleSource) and the renderer (CurveLine)

@@ -55,6 +55,12 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   // section (a data node has no world transform to constrain). This is exactly
   // what makes "posable" the Object's type, not a property test.
   inspectorSections: ['mesh', 'material'],
+  home: {
+    radius: 'mesh',
+    widthSegments: 'mesh',
+    heightSegments: 'mesh',
+    material: 'material',
+  },
   evaluate(params, inputs) {
     return {
       kind: 'MeshData',

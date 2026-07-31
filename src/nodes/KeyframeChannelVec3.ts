@@ -198,6 +198,14 @@ export const KeyframeChannelVec3Node: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
+  home: {
+    paramPath: 'channel',
+    weight: 'animate',
+    extendBefore: 'animate',
+    extendAfter: 'animate',
+    modifiers: 'animate',
+    keyframes: 'channel',
+  },
   evaluate(params): KeyframeChannelVec3Value {
     // Sort ONCE in the closure; sample() interpolates per call (function of
     // time, V24). buildVec3Sampler is the shared sampler builder (also used by

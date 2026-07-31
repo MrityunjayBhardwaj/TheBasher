@@ -28,6 +28,11 @@ export const DirectionalLightNode: NodeDefinition<DirectionalLightParams, never>
   inputs: {},
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   // Retired (#386 S4): a DirectionalLight is now an Object → LightData, so no fused value
   // carries it any longer. This node stays registered SOLELY so the load-migration
   // (migrateFusedLightToSplit) can normalize an old fused light through its OWN version

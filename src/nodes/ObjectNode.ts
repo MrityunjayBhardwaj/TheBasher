@@ -59,6 +59,11 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // 'modifier' is appended LAST so `sections[0]` stays 'transform' and no section's
   // default-collapsed state shifts underneath the existing specs.
   inspectorSections: ['transform', 'constraint', 'driver', 'modifier'],
+  home: {
+    position: 'transform',
+    rotation: 'transform',
+    scale: 'transform',
+  },
   evaluate(params, inputs) {
     return {
       kind: 'Object',

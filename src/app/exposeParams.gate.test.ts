@@ -114,7 +114,7 @@ function panelRows(state: DagState, nodeId: string, role: 'main' | 'linked', obj
     if (isBindingShaped(v)) continue;
     if (role === 'main' && refKeys.has(k)) continue;
     if (owned.has(k)) continue;
-    const section = paramToSection(k, declared);
+    const section = paramToSection(k, declared, node.type);
     if (section === null) {
       unrouted.push(k);
       continue;

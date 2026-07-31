@@ -59,6 +59,9 @@ export const ActionNode: NodeDefinition<ActionParams, ActionValue> = {
   inputs: {},
   outputs: { out: { type: 'Action', cardinality: 'single' } },
   inspectorSections: ['layout'],
+  home: {
+    name: 'layout',
+  },
   evaluate(params): ActionValue {
     return {
       kind: 'Action',

@@ -49,6 +49,11 @@ export const VideoStitchNode: NodeDefinition<VideoStitchParams, VideoValue> = {
   },
   outputs: { out: { type: 'Video', cardinality: 'single' } },
   inspectorSections: ['render'],
+  home: {
+    codec: 'render',
+    fps: 'render',
+    outputPath: 'render',
+  },
   evaluate(params, inputs: ResolvedInputs): VideoValue {
     const frames = (inputs['pass-input'] as ImageValue[] | undefined) ?? [];
     const time = inputs.time as TimeValue | undefined;

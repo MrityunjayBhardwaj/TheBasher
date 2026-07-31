@@ -162,6 +162,14 @@ export const KeyframeChannelNumberNode: NodeDefinition<
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],
+  home: {
+    paramPath: 'channel',
+    weight: 'animate',
+    extendBefore: 'animate',
+    extendAfter: 'animate',
+    modifiers: 'animate',
+    keyframes: 'channel',
+  },
   evaluate(params): KeyframeChannelNumberValue {
     // Sort defensively ONCE in the closure — ops may insert keyframes out of
     // order; sorting at evaluator time keeps purity (same params → same sorted
