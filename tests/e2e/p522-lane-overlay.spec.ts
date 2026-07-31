@@ -135,7 +135,14 @@ test.beforeEach(async ({ page }) => {
             type: 'addNode',
             nodeId: 'p522_ovr',
             nodeType: 'MaterialOverrideOp',
-            params: { color: forced },
+            // THE AUTHORED BIT IS NOT DECORATION HERE — IT IS THIS FIXTURE'S PRECONDITION.
+            // Since #529 a data-lane operator writes a field IFF the director authored it
+            // ('authored-only'), so a colour VALUE with no bit forces nothing: the base's
+            // colour would show through, the ownership walk would name the base rather than
+            // the operator, and both tests below would be asserting the absence of the
+            // covering they exist to test. Every one of those tests needs this operator to
+            // genuinely be the colour authority.
+            params: { color: forced, overridden: { color: true } },
           },
           {
             type: 'connect',
