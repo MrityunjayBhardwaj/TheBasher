@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
-import { applyOp } from '../core/dag';
+import { applyOp, emptyDagState } from '../core/dag';
+import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import type { MeshDataValue } from '../nodes/types';
 
 // #421 — the delete sweep now reads what each node type DECLARES (`idRefs`), so it
 // needs the registry populated. Production gets this at boot (boot.ts:162); a unit
@@ -620,5 +622,132 @@ describe('buildDuplicateNodeOps', () => {
     };
     const res = buildDuplicateNodeOps(state, 'box')!;
     expect(addNodeOf(res, 'TrackTo')).toBeUndefined();
+  });
+});
+
+// ─── #394 S4 — SHARE-ON-DUPLICATE, THE GATE (D5) ─────────────────────────────────
+//
+// The claim: duplicating an Object whose data links a Material node leaves the MATERIAL
+// SHARED while the data node itself is deep-copied. That is Blender's Shift+D — the mesh
+// datablock is copied, the material datablock keeps its user count and gains one.
+//
+// ⚠️ THE PLAN ASKED FOR THE WRONG GATE, AND MEASURING IT IS WHY THIS BLOCK LOOKS
+// DIFFERENT. PLAN S4 says "assert `followedEdges` does not include 'material'". Two
+// measurements at head say that assertion could never fail and would not pin this
+// anyway:
+//   1. 'material' is not a member of `EdgeKind` (closure/types.ts:22-41), so
+//      `followedEdges: ['material']` is a COMPILE error. A runtime assertion that it is
+//      absent is satisfied by the type system before it runs — a gate that cannot go red.
+//   2. The duplicate mutator follows 'children', which walks producers under ANY socket,
+//      so the Material node IS inside the closure regardless. Closure membership is a
+//      PERMISSION scope, not the sharing rule — and it must include the Material, or the
+//      re-point `connect` the builder emits would be rejected as out-of-scope.
+//
+// What actually decides sharing is `OWNED_SOCKETS` (sceneNodeActions.ts:209): the walk
+// deep-copies through 'children'/'target'/'data' and RE-POINTS every other input at the
+// original. 'material' is absent from that list, which is the whole mechanism. So this
+// gate pins the observable consequence of that absence rather than the absence itself.
+//
+// AND IT ASSERTS THE EVALUATED MATERIAL, NEVER THE OPS. An op-shaped assertion ("a
+// connect to 'm' was emitted") passes against a build where the clone's binding appended
+// instead of replaced, or where the socket read the wrong entry — the exact defect the
+// material picker shipped a fix for. The vacuity guard is the same one materialSocket.ts
+// uses: the Material node and the data node's own param carry DIFFERENT colours, so a
+// clone that lost its edge would read the param's colour rather than merely matching.
+describe('#394 S4 — a duplicated Object SHARES its Material node', () => {
+  const LINKED = '#c81e5a';
+  const INLINE = '#1e9ac8';
+
+  function linkedScene(): DagState {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+      {
+        type: 'addNode',
+        nodeId: 'm',
+        nodeType: 'Material',
+        params: { material: { name: 'shared', base: { color: LINKED } } },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'data',
+        nodeType: 'BoxData',
+        params: { size: [1, 1, 1], material: { name: 'inline', base: { color: INLINE } } },
+      },
+      { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: { position: [0, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'data', socket: 'out' },
+        to: { node: 'obj', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'obj', socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'm', socket: 'out' },
+        to: { node: 'data', socket: 'material' },
+      },
+    ];
+    let state = emptyDagState();
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  function duplicated(): DagState {
+    const state = linkedScene();
+    const res = buildDuplicateNodeOps(state, 'obj')!;
+    let next = state;
+    for (const op of res.ops) next = applyOp(next, op).next;
+    return next;
+  }
+
+  const colorOf = (state: DagState, id: string) =>
+    (evaluate(state, id).value as MeshDataValue).material!.base.color;
+
+  it('clones the data node but NOT the Material — the user count grows, the datablock does not', () => {
+    const before = linkedScene();
+    const after = duplicated();
+
+    const materialsBefore = Object.values(before.nodes).filter((n) => n.type === 'Material');
+    const materialsAfter = Object.values(after.nodes).filter((n) => n.type === 'Material');
+    // Guard the guard: a fixture with no Material at all would satisfy "count unchanged".
+    expect(materialsBefore).toHaveLength(1);
+    expect(materialsAfter).toHaveLength(1);
+
+    // …while the DATA node genuinely was deep-copied (the 'data' socket IS owned). Without
+    // this half, "nothing was cloned at all" would also pass the assertion above.
+    const dataNodes = Object.values(after.nodes).filter((n) => n.type === 'BoxData');
+    expect(dataNodes).toHaveLength(2);
+
+    // Both data nodes point at the SAME Material node id — sharing stated structurally.
+    expect(after.nodes.data_copy.inputs.material).toEqual([{ node: 'm', socket: 'out' }]);
+  });
+
+  it('OBSERVED ON THE EVALUATED MATERIAL: both read the linked colour, not the param colour', () => {
+    const after = duplicated();
+    // If the clone had lost its material edge it would fall through to its own copied
+    // param and read INLINE. Distinct colours are what make that failure visible instead
+    // of merely equal.
+    expect(colorOf(after, 'data')).toBe(LINKED);
+    expect(colorOf(after, 'data_copy')).toBe(LINKED);
+    expect(colorOf(after, 'data_copy')).not.toBe(INLINE);
+  });
+
+  it('THE PAYOFF: editing the shared Material once moves BOTH the original and the clone', () => {
+    const after = duplicated();
+    const EDITED = '#00ff44';
+    const edited = applyOp(after, {
+      type: 'setParam',
+      nodeId: 'm',
+      paramPath: 'material.base.color',
+      value: EDITED,
+    }).next;
+
+    expect(colorOf(edited, 'data')).toBe(EDITED);
+    expect(colorOf(edited, 'data_copy')).toBe(EDITED);
+    // Non-vacuous: the edit really did change something (both were LINKED before).
+    expect(EDITED).not.toBe(LINKED);
   });
 });
