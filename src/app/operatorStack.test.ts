@@ -32,7 +32,9 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { canWearMaterial, resolveDataKind } from './modifierGeometry';
 import {
+  buildAddMaterialOpOps,
   buildAddModifierOps,
   buildMoveModifierOps,
   buildRemoveModifierOps,
@@ -478,5 +480,88 @@ describe('#526 — a shared data lane: each stack sees its own kind and passes t
       upper,
       lower,
     ]);
+  });
+});
+
+describe("#394 S3d — the material lane's ACCEPT, at the one authority both callers go through", () => {
+  // WHY THIS SUITE EXISTS. `MaterialOverrideOp.target` takes `ObjectData` FLAT — no
+  // geometry handle, no material field required — so a camera's data is a TYPE-LEGAL
+  // source for a material operator. That is #498's defect re-minted one section over:
+  // "+ Set Material" on a camera would build a real, persistable, permanently inert node
+  // and report success. The refusal lives in the BUILDER, not the panel, so the agent
+  // cannot mint what the panel refuses to offer.
+
+  const CAMERA_DATA = 'n_camera_data';
+  const LIGHT_DATA = 'n_light_data';
+
+  it('accepts a material operator over mesh data', () => {
+    const state = buildDefaultDagState();
+    // The positive control, and it must come FIRST: a suite where every case returns
+    // null is satisfied by a builder that returns null unconditionally.
+    for (const type of ['SetMaterialOp', 'MaterialOverrideOp']) {
+      const res = buildAddMaterialOpOps(state, resolveStackBase(state, BOX), type);
+      expect(res, `${type} refused over mesh data`).not.toBeNull();
+      const next = applyOps(state, res!.ops);
+      expect(enumerateMaterialStack(next, BOX_DATA).map((e) => e.nodeId)).toEqual([
+        res!.modifierId,
+      ]);
+    }
+  });
+
+  it('REFUSES a material operator over camera and light data', () => {
+    const state = buildDefaultDagState();
+    // Asserted on the DATA nodes by name, because that is what the walk lands on and
+    // what an agent op would be handed. Both are 'never' in the capability table, and
+    // both are reachable: they are in the default project.
+    for (const base of [CAMERA_DATA, LIGHT_DATA]) {
+      for (const type of ['SetMaterialOp', 'MaterialOverrideOp']) {
+        expect(buildAddMaterialOpOps(state, base, type), `${type} over ${base}`).toBeNull();
+      }
+    }
+  });
+
+  it('REFUSES over curve data too, even though the gap is tracked rather than permanent', () => {
+    // 'not-yet' offers the SECTION (so the gap keeps reading as a gap) but not the ADD:
+    // building one today mints an inert node exactly as a camera would. The two halves
+    // of the three-state answer come apart here, which is the whole reason the state is
+    // three-valued rather than boolean.
+    let state = buildDefaultDagState();
+    state = applyOps(state, [
+      { type: 'addNode', nodeId: 'crv_data', nodeType: 'CurveData', params: {} },
+    ]);
+    expect(resolveDataKind(state, 'crv_data')).toBe('CurveData');
+    expect(canWearMaterial(state, 'crv_data')).toBe(false);
+    expect(buildAddMaterialOpOps(state, 'crv_data', 'SetMaterialOp')).toBeNull();
+  });
+
+  it('refuses a base that is not on the data lane at all', () => {
+    // A `Material` node is what the lane POINTS AT; it emits 'Material', not 'ObjectData'.
+    // Without the gate the builder would happily wire `Material.out → SetMaterialOp.target`
+    // and leave `connect` to refuse it later, which is a failure reported in the wrong
+    // place and at the wrong time.
+    let state = buildDefaultDagState();
+    state = applyOps(state, [{ type: 'addNode', nodeId: 'mat', nodeType: 'Material', params: {} }]);
+    expect(canWearMaterial(state, 'mat')).toBe(false);
+    expect(buildAddMaterialOpOps(state, 'mat', 'SetMaterialOp')).toBeNull();
+    // …and a base that does not exist, which is the pre-existing guard, kept honest.
+    expect(buildAddMaterialOpOps(state, 'no_such_node', 'SetMaterialOp')).toBeNull();
+  });
+
+  it('OFFER == ACCEPT: the predicate the panel asks is the one the builder asks', () => {
+    // [[V108]] asserted as an equality over every base in the default project rather than
+    // as two lists that happen to agree. `canWearMaterial` is what MaterialStackControls
+    // computes `addable` from, and what `buildAddMaterialOpOps` gates on — so this is a
+    // check that the ONE predicate really is one, not that two spellings match today.
+    const state = buildDefaultDagState();
+    for (const id of Object.keys(state.nodes)) {
+      const offered = canWearMaterial(state, id);
+      const accepted = buildAddMaterialOpOps(state, id, 'SetMaterialOp') !== null;
+      expect(accepted, `offer/accept disagree on ${id} (${state.nodes[id].type})`).toBe(offered);
+    }
+    // Guard the guard ([[H251]]): a sweep over an empty node table, or one where nothing
+    // is ever offered, satisfies the equality vacuously.
+    const offeredCount = Object.keys(state.nodes).filter((id) => canWearMaterial(state, id)).length;
+    expect(Object.keys(state.nodes).length).toBeGreaterThanOrEqual(9);
+    expect(offeredCount).toBeGreaterThanOrEqual(1);
   });
 });

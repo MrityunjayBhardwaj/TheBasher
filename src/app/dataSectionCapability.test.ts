@@ -125,7 +125,10 @@ describe('#498 dataSectionCapability', () => {
   it('classifies every ObjectData kind, and classifies nothing else', () => {
     // Guard the guard: an empty sweep would pass every assertion below vacuously.
     expect(OBJECT_DATA_KINDS.length).toBeGreaterThan(0);
-    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier']);
+    // #394 S3d added 'material'. The list is pinned as an EQUALITY rather than a floor
+    // because a section silently leaving the table takes its whole column of answers
+    // with it, and nothing else here would notice.
+    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier', 'material']);
 
     const fixtureKinds = Object.keys(FIXTURES).sort();
     expect([...OBJECT_DATA_KINDS].sort()).toEqual(fixtureKinds);
@@ -180,7 +183,9 @@ describe('#498 dataSectionCapability', () => {
       }
     }
     // Pin the census so a kind silently changing state is a red, not a shrug.
-    expect({ notYet, never }).toEqual({ notYet: 1, never: 2 });
+    // modifier: curve 'not-yet' (#349) + light/camera 'never'.
+    // material: curve 'not-yet' (#528) + light/camera 'never'.
+    expect({ notYet, never }).toEqual({ notYet: 2, never: 4 });
   });
 
   it('pins the measured Blender answer per kind', () => {
@@ -192,6 +197,35 @@ describe('#498 dataSectionCapability', () => {
     expect(dataSectionCapability('CurveData', 'modifier').state).toBe('not-yet');
     expect(dataSectionCapability('LightData', 'modifier').state).toBe('never');
     expect(dataSectionCapability('CameraData', 'modifier').state).toBe('never');
+  });
+
+  it('pins the measured Blender answer per kind for the material section', () => {
+    // #394 S3d. Read off the Blender 5.1 Python API reference, property by property —
+    // a datablock either declares `materials` or it does not, which is a stronger
+    // signal than a poll result: bpy.types.Mesh.materials and bpy.types.Curve.materials
+    // are both declared (the same `IDMaterials[Material]` collection), while
+    // bpy.types.Light and bpy.types.Camera declare no such property at all.
+    expect(dataSectionCapability('MeshData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('BakedData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('ModifiedData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('CurveData', 'material').state).toBe('not-yet');
+    expect(dataSectionCapability('LightData', 'material').state).toBe('never');
+    expect(dataSectionCapability('CameraData', 'material').state).toBe('never');
+  });
+
+  it('keeps the two sections from collapsing into one answer', () => {
+    // Guard against the cheapest way this table could go wrong: a second column that is
+    // a copy of the first would satisfy every per-kind pin above AND the census, because
+    // the two sections happen to partition the kinds the same way today. What must
+    // differ is the ISSUE a 'not-yet' names — the curve's modifier gap (#349) and its
+    // material gap (#528) are separate pieces of work, and a copied column would file
+    // one under the other.
+    const mod = dataSectionCapability('CurveData', 'modifier');
+    const mat = dataSectionCapability('CurveData', 'material');
+    expect(mod.state).toBe('not-yet');
+    expect(mat.state).toBe('not-yet');
+    if (mod.state !== 'not-yet' || mat.state !== 'not-yet') throw new Error('unreachable');
+    expect(mat.issue).not.toBe(mod.issue);
   });
 
   it('offers the section for supported and not-yet, and withholds it only for never', () => {

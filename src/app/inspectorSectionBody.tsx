@@ -89,6 +89,7 @@ export type ControlKey =
   | 'sceneEnvironment'
   | 'cameraLens'
   | 'modifierStack'
+  | 'materialStack'
   | 'constraintStack'
   | 'driverStack'
   | 'curvePoints'
@@ -161,6 +162,22 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       applies: (c) => c.ownsParam('assetRef') && !hasCapturedMaterials(c),
       placement: 'before',
     },
+    // #394 S3d — the material operator stack, the fourth OperatorStackRows caller.
+    //
+    // `whenDeclared` rather than a possession test, and the reason is a limit of this
+    // table rather than a looser rule: "is this node a DATA-LANE SOURCE?" is answered by
+    // evaluating it (`resolveDataKind`), and `SectionCtx` deliberately carries no store
+    // and no evaluator — it is a pure, allocation-free predicate over params. Five other
+    // node types declare 'material' without being on the lane (`Material` itself, the
+    // scene-band `MaterialOverride`, `GltfChild`, `GltfAsset`, `ScatterNode`), so the
+    // control renders NOTHING for them, decided inside `MaterialStackControls` where the
+    // question can actually be asked. Stated here so the split does not read as an
+    // oversight: the table gates on declaration, the component gates on the lane.
+    //
+    // 'before', like every other stack: Blender's Material Properties tab leads with the
+    // slot list and puts the shading settings under it, and the modifier stack already
+    // reads that way here. The two 'after' controls stay the only two.
+    { key: 'materialStack', applies: whenDeclared, placement: 'before' },
   ],
   render: [],
   // #270 the per-side extend rules, #274 (D2) the F-Modifier stack — for a

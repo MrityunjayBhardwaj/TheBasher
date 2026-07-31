@@ -209,10 +209,17 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     const without = ctxFor('GltfChild', { assetRef: 'a', childName: 'c', materials: [] });
     const active = (c: ReturnType<typeof ctxFor>): ControlKey[] =>
       SECTION_CONTROLS.material.filter((x) => x.applies(c)).map((x) => x.key);
-    expect(active(withMaterials)).toEqual(['gltfMaterialEditor']);
-    expect(active(without)).toEqual(['gltfMaterialReadout']);
+    // #394 S3d — `materialStack` is `whenDeclared`, so it is active for every node that
+    // declares the section, including these. Asserted as part of the SET rather than
+    // filtered out of it: the claim under test is which of the two glTF controls wins,
+    // and a filter would also hide the day a fourth control started applying here.
+    expect(active(withMaterials)).toEqual(['gltfMaterialEditor', 'materialStack']);
+    expect(active(without)).toEqual(['gltfMaterialReadout', 'materialStack']);
     // The whole-asset node keeps the read-only readout.
-    expect(active(ctxFor('GltfAsset', { assetRef: 'a' }))).toEqual(['gltfMaterialReadout']);
+    expect(active(ctxFor('GltfAsset', { assetRef: 'a' }))).toEqual([
+      'gltfMaterialReadout',
+      'materialStack',
+    ]);
   });
 
   it('names no node type anywhere in the table', () => {
