@@ -52,7 +52,7 @@ import type { DagState } from '../core/dag/state';
 import type { Node, NodeRef } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { canApplyTransform } from './animate/dispatchApplyTransform';
-import { paramToSection, sectionsOf, type SectionId } from './inspectorSections';
+import { isSectionId, paramToSection, sectionsOf, type SectionId } from './inspectorSections';
 import {
   controlOwnedRowKeys,
   makeSectionCtx,
@@ -79,6 +79,7 @@ import type { MaterialOverrideField } from '../nodes/types';
 // leaf — `operatorStack` reaches `sceneTreeWalk`, which closes a cycle back to the
 // ownership reach, which is why the split exists at all (#516).
 import { enumerateOperatorStack } from './operatorStack';
+import { spareSourceOf } from './paramDrivers';
 
 /** Where a row's node sits relative to the selection. */
 export type ExposedOrigin =
@@ -145,9 +146,62 @@ export interface DerivedParam {
   readonly maskedBy?: Readonly<Record<string, MaskSource>>;
 }
 
-/** P7 adds a `'promoted'` arm (a spare param plus N drivers). The union is declared as a
- *  union from the start so 1:N is not retrofitted onto a struct with optional fields. */
-export type ExposedParam = DerivedParam;
+/** One param a promoted control drives. Carries the driver's OWN id alongside the target,
+ *  because unbinding one drive of a 1:N control is an operation on that driver node —
+ *  looking it back up from `(target, paramPath)` would be resolution where provenance is
+ *  already exact ([[V142]]), and a band can legitimately hold more than one driver. */
+export interface PromotedDrive {
+  /** The driven node — ABSOLUTE, this instance. */
+  readonly nodeId: string;
+  /** The driven param path on that node. */
+  readonly paramPath: string;
+  /** The driven param's chain-relative address — what a template stores. */
+  readonly relPath: string;
+  /** The `ParamDriver` node carrying this drive. */
+  readonly driverId: string;
+}
+
+/**
+ * An interface element that is a REAL param: a promoted spare on a control node, pulled
+ * into N driven params by N `ParamDriver`s (#394 P7, PLAN-3 §3.6).
+ *
+ * ── WHY THIS IS DERIVED FROM THE GRAPH AND NOT FROM A CURATION LIST ──────────────────
+ *
+ * Promote is an ADDITION to the graph, not a view over it: it writes a spare param and
+ * one driver per drive, both of which already exist, are already persisted, already
+ * undo-safe, and already fold through the shipped overlay rail. This row is read back OUT
+ * of those two facts. A separate list of promoted refs would be a second store of the
+ * same truth, and the Controllers dock (#294) deliberately avoided exactly that.
+ *
+ * ── 1:N IS THE SHAPE, NOT AN EXTENSION ──────────────────────────────────────────────
+ *
+ * `drives` is a list from the first line. One control driving one param is the degenerate
+ * case of one driving many, and retrofitting the plural onto a singular field is how a
+ * 1:N model ends up with a "primary" drive and N-1 second-class ones.
+ *
+ * ── HOME ────────────────────────────────────────────────────────────────────────────
+ *
+ * A spare param lives in `node.spare`, a bag explicitly disjoint from the fixed schema, so
+ * it never reaches `paramToSection` and inherits NO routing from P6's per-node table.
+ * Promote states the home; absent or unknown degrades to `section: null` — the unrouted
+ * bucket, which is VISIBLE ([[V145]]).
+ */
+export interface PromotedParam {
+  readonly kind: 'promoted';
+  /** The node hosting the spare param that IS the control. */
+  readonly controlNodeId: string;
+  /** The spare-param key on that node. */
+  readonly controlPath: string;
+  /** Every param this control drives WITHIN the projected chain, in a deterministic,
+   *  id-free order (`relPath`). A drive onto a node outside this chain is real but is not
+   *  this selection's interface, so it is not carried here. */
+  readonly drives: readonly PromotedDrive[];
+  readonly home: ExposedHome;
+}
+
+/** The union is declared as a union (rather than a struct with optional fields) so 1:N is
+ *  not retrofitted, and so every consumer is compiler-forced to say which arm it means. */
+export type ExposedParam = DerivedParam | PromotedParam;
 
 /**
  * Rows regrouped the way a panel draws them: per section, plus the unrouted bucket.
@@ -165,13 +219,22 @@ export type ExposedParam = DerivedParam;
  * have written to the node underneath it and changed nothing on screen. Provenance is
  * exact and resolution is inference; a regroup that drops the exact half is where the
  * inference gets reintroduced.
+ *
+ * GENERIC IN THE ROW, and deliberately so (#394 P7). Bucketing by `home` is the one thing
+ * both arms of `ExposedParam` genuinely share, so widening the union did NOT force this
+ * function — the compiler would have accepted it operating on the union and handing back
+ * rows a caller then reads as derived. Taking the row type as a parameter makes the
+ * narrowing the CALLER already did survive the call, so the panel's derived-only block
+ * cannot be handed a promoted row by this seam.
  */
-export function groupExposedRows(rows: readonly ExposedParam[]): {
-  bySection: ReadonlyMap<SectionId, ExposedParam[]>;
-  unrouted: ExposedParam[];
+export function groupExposedRows<T extends { readonly home: ExposedHome }>(
+  rows: readonly T[],
+): {
+  bySection: ReadonlyMap<SectionId, T[]>;
+  unrouted: T[];
 } {
-  const bySection = new Map<SectionId, ExposedParam[]>();
-  const unrouted: ExposedParam[] = [];
+  const bySection = new Map<SectionId, T[]>();
+  const unrouted: T[] = [];
   for (const r of rows) {
     if (r.home.section === null) {
       unrouted.push(r);
@@ -416,10 +479,18 @@ export function exposeParams(
   }
 
   const out: DerivedParam[] = [];
+  // Every node the projection covers, with the slot it occupies — the map the promoted
+  // walk needs to give a driven param its chain-relative address. Built HERE, from the
+  // same walk that emits the rows, so a control can never report a slot the projection
+  // does not actually contain.
+  const slotOf = new Map<string, Slot>();
   for (const plan of plans) {
+    slotOf.set(plan.node.id, plan.slot);
     out.push(...rowsForNode(state, plan, selected.id, canApply));
     // …then whatever is wired INTO that node, one hop, at the same layer.
     for (const { node: producer, socket } of linkedProducers(state, plan.node)) {
+      const slot = `${plan.slot}.${socket}`;
+      slotOf.set(producer.id, slot);
       out.push(
         ...rowsForNode(
           state,
@@ -427,7 +498,7 @@ export function exposeParams(
             node: producer,
             role: 'linked',
             origin: 'linked',
-            slot: `${plan.slot}.${socket}`,
+            slot,
             depth: plan.depth,
           },
           selected.id,
@@ -437,7 +508,95 @@ export function exposeParams(
     }
   }
 
-  return withMaterialMasking(state, selected.id, plans, out);
+  // Promoted controls come FIRST. They are the top of the declared precedence ladder —
+  // a driven param takes its value from the control, not from its own row — so the
+  // interface reads above the layers it drives, exactly as the topmost operator does.
+  // The derived rows keep their walk order untouched behind them, which is what keeps
+  // the byte-identical gate (§5 gate 1) comparing the same list it always did.
+  return [
+    ...promotedRowsFor(state, slotOf),
+    ...withMaterialMasking(state, selected.id, plans, out),
+  ];
+}
+
+/**
+ * The promoted controls whose drives land inside this projection (#394 P7).
+ *
+ * Read back out of the graph, never out of a list: a control IS a promoted spare param
+ * plus the `ParamDriver`s pulling from it. That is the whole model — see {@link
+ * PromotedParam}.
+ *
+ * ⚠️ `promoted === true` IS REQUIRED, and it is the discriminator, not a filter. The
+ * spare road (#294) is also how an ordinary, un-promoted knob drives a param; such a
+ * driver is a relation between two nodes and has no business appearing as an interface
+ * row in a third node's inspector. The flag is the existing, shipped answer to "is this
+ * spare an interface element?" — the Controllers dock is built on the same one, so a
+ * control cannot be in the dock and absent here, or the reverse.
+ *
+ * PURE and params-only: no evaluate, no store. This runs inside the panel's memo on every
+ * projection.
+ */
+function promotedRowsFor(state: DagState, slotOf: ReadonlyMap<string, Slot>): PromotedParam[] {
+  const byControl = new Map<string, { nodeId: string; key: string; drives: PromotedDrive[] }>();
+
+  for (const driver of Object.values(state.nodes)) {
+    const spare = spareSourceOf(driver);
+    if (!spare) continue;
+    const params = (driver.params ?? {}) as { target?: unknown; paramPath?: unknown };
+    const target = params.target;
+    const paramPath = params.paramPath;
+    if (typeof target !== 'string' || typeof paramPath !== 'string' || !target || !paramPath) {
+      continue;
+    }
+    const slot = slotOf.get(target);
+    if (slot === undefined) continue; // drives something outside this chain
+    if (state.nodes[spare.node]?.spare?.[spare.key]?.promoted !== true) continue;
+
+    const id = `${spare.node}::${spare.key}`;
+    let entry = byControl.get(id);
+    if (!entry) {
+      entry = { nodeId: spare.node, key: spare.key, drives: [] };
+      byControl.set(id, entry);
+    }
+    entry.drives.push({
+      nodeId: target,
+      paramPath,
+      relPath: relPathOf(slot, paramPath),
+      driverId: driver.id,
+    });
+  }
+
+  const rows: PromotedParam[] = [];
+  for (const { nodeId, key, drives } of byControl.values()) {
+    // Deterministic and id-free: `Object.values(state.nodes)` is table order, which is an
+    // authoring accident. Sorting on the chain-relative address means the same chain
+    // instanced twice lists its drives identically — the property `relPath` exists for.
+    drives.sort(
+      (a, b) => a.relPath.localeCompare(b.relPath) || a.driverId.localeCompare(b.driverId),
+    );
+    const declaredHome = state.nodes[nodeId]?.spare?.[key]?.home;
+    // An unknown section id degrades to the unrouted bucket rather than being honoured:
+    // a card that never renders would take the control off screen entirely ([[V145]]).
+    const section = declaredHome && isSectionId(declaredHome.section) ? declaredHome.section : null;
+    rows.push({
+      kind: 'promoted',
+      controlNodeId: nodeId,
+      controlPath: key,
+      drives,
+      home: {
+        section,
+        ...(declaredHome?.order !== undefined ? { order: declaredHome.order } : {}),
+        ...(declaredHome?.label !== undefined ? { label: declaredHome.label } : {}),
+      },
+    });
+  }
+  rows.sort(
+    (a, b) =>
+      (a.home.order ?? 0) - (b.home.order ?? 0) ||
+      a.controlNodeId.localeCompare(b.controlNodeId) ||
+      a.controlPath.localeCompare(b.controlPath),
+  );
+  return rows;
 }
 
 /**
@@ -594,6 +753,21 @@ export function resolveExposedTarget(
   paramPath: string,
 ): ExposedTarget | null {
   for (const row of exposeParams(state, id)) {
+    // A PROMOTED CONTROL IS NOT AN ANSWER TO THIS QUESTION. The caller asked which LAYER
+    // of this chain owns a path; a control is a spare param on another node, with its own
+    // type and range, and answering with it would be the redirect [[V143]] forbids —
+    // `setParam('roughness')` landing on a knob merely NAMED `roughness` because it drives
+    // the real one, with nothing in the return value to say so.
+    //
+    // ⚠️ MEASURED, AND THE HONEST STATUS IS "ENFORCED BY THE COMPILER, NOT BY THIS LINE."
+    // Deleting the skip does not redden a single test — it is a COMPILE error (TS2345,
+    // naming `PromotedParam`), because everything below narrows to the derived arm. And
+    // were it reached anyway, `pathOnRow` compares against `row.paramPath`, which a
+    // promoted row does not have, so it would return null regardless. So this is the
+    // narrowing spelled as a guard, and the property is guaranteed twice over rather than
+    // resting here. Written down instead of left reading as though this line were the
+    // thing standing between the agent and a wrong write.
+    if (row.kind === 'promoted') continue;
     const path = pathOnRow(state, row, paramPath);
     if (path === null) continue;
     if (row.maskedBy?.[path]) continue;

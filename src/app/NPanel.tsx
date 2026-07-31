@@ -52,7 +52,7 @@ import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
-import { exposeParams, groupExposedRows, type ExposedParam, type MaskSource } from './exposeParams';
+import { exposeParams, groupExposedRows, type DerivedParam, type MaskSource } from './exposeParams';
 import { z } from 'zod';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
@@ -2790,8 +2790,12 @@ function LinkedDataSections({
    *
    *  Since P3 these are the base data node's rows AND the rows of every data-lane
    *  operator standing above it, so the rows in this block no longer share a node —
-   *  which is why every one of them is drawn against `row.nodeId`. */
-  rows: readonly ExposedParam[];
+   *  which is why every one of them is drawn against `row.nodeId`.
+   *
+   *  DERIVED rows only, by type (#394 P7). This block draws a node's params; a promoted
+   *  control is an interface element with no node/param of its own to draw here, and the
+   *  narrowing is on the prop rather than inside so the caller cannot quietly pass one. */
+  rows: readonly DerivedParam[];
 }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dataNode = nodes[dataNodeId] ?? null;
@@ -2807,7 +2811,7 @@ function LinkedDataSections({
   // A row's value comes from the row's OWN node. Reading it off `dataNode` was correct
   // only while every row in this block came from the base — see the note on the `rows`
   // prop. (#518)
-  const valueOf = (row: ExposedParam) =>
+  const valueOf = (row: DerivedParam) =>
     (nodes[row.nodeId]?.params as Record<string, unknown> | undefined)?.[row.paramPath];
 
   // Sections to draw: the base node's declared list, plus any section a row actually
@@ -3007,10 +3011,18 @@ export function NPanel() {
   // purpose-built affordance (the per-field override dot) that a "(complex — Pro mode)"
   // row would stand in front of. The operator's lifecycle controls have no home yet —
   // that is the material section's data-block design, tracked with the lane work.
+  //
+  // #394 P7 — the `kind` test is the narrowing that lets the rest of this stay unchanged:
+  // the projection now also carries PROMOTED controls, which are interface elements
+  // rather than a node's params and have no place in a block that draws a node's params.
+  // They render in P7b; until then they are carried and not shown, exactly as the
+  // operator and linked rows were between P1 and P3.
   const linkedRows = useMemo(
     () =>
       projection.filter(
-        (r) => r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null),
+        (r): r is DerivedParam =>
+          r.kind === 'derived' &&
+          (r.origin === 'base' || (r.origin === 'operator' && r.home.section !== null)),
       ),
     [projection],
   );

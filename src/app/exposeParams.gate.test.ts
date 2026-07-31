@@ -256,6 +256,20 @@ describe('exposeParams — what the projection carries beyond the panel', () => 
   it('every row is addressed by the node it came from — provenance, not resolution', () => {
     const state = buildDefaultDagState();
     for (const r of exposeParams(state, 'n_box')) {
+      // #394 P7 — the property is stated per ARM rather than left to fail by accident.
+      // A promoted row has no `nodeId`/`paramPath`, so the derived assertions below would
+      // have reddened on `undefined` with a message about the wrong thing. Provenance is
+      // what this test is about, and a control has provenance too — it is just addressed
+      // by (control node, spare key) instead of (node, param).
+      if (r.kind === 'promoted') {
+        const host = state.nodes[r.controlNodeId];
+        expect(host, `${r.controlPath} names a control node that exists`).toBeTruthy();
+        expect(
+          r.controlPath in ((host!.spare ?? {}) as Record<string, unknown>),
+          `${r.controlPath} must live in ${r.controlNodeId}'s spare bag`,
+        ).toBe(true);
+        continue;
+      }
       const node = state.nodes[r.nodeId];
       expect(node, `${r.relPath} names a node that exists`).toBeTruthy();
       // The param must actually live on the node the row points at. This is the property
