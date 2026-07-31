@@ -41,6 +41,7 @@ import type {
 import { evaluate } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
+import { dataSectionCapability } from './dataSectionCapability';
 
 /**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
@@ -208,6 +209,30 @@ export function resolveDataKind(state: DagState, nodeId: string): ObjectData['ki
   } catch {
     return null;
   }
+}
+
+/**
+ * Can a material operator actually be added over the data `nodeId` produces? (#394 S3d.)
+ *
+ * The material sibling of {@link canModifyGeometry}, and the difference in HOW it answers
+ * is the point rather than an inconsistency. `canModifyGeometry` asks the modifier's own
+ * accept (`modifierDataSource`) because a modifier reaches into the value and needs a
+ * geometry handle out of it. A material operator reaches into no such thing — its `target`
+ * socket takes `ObjectData` flat and its `evaluate` composes over whatever material is
+ * there — so there is no resolver to ask, and asking the value would return "yes" for a
+ * camera. The accept therefore IS the capability table, which is where the reference
+ * measurement lives ([[V108]]: one phrasing, two readers).
+ *
+ * 'supported' only. A 'not-yet' kind (a curve, #528) still OFFERS the section with an
+ * honest banner — that is {@link sectionAppliesToData}'s job — but adding an operator to
+ * one today would mint an inert node, so the accept refuses it exactly as the modifier
+ * road refuses a curve.
+ *
+ * ⚠️ Same evaluation cost as {@link resolveDataKind}: component bodies, never selectors.
+ */
+export function canWearMaterial(state: DagState, nodeId: string): boolean {
+  const kind = resolveDataKind(state, nodeId);
+  return kind !== null && dataSectionCapability(kind, 'material').state === 'supported';
 }
 
 /**

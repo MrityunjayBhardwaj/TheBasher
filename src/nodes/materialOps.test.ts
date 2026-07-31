@@ -122,7 +122,10 @@ describe('SetMaterialOp — wholesale replace from a Material node on its socket
 
 describe('MaterialOverrideOp — the sparse diff, folded through the one composition rule', () => {
   it('composes its authored channel over the source', () => {
-    const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { color: OP_COLOR });
+    const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', {
+      color: OP_COLOR,
+      overridden: { color: true },
+    });
     expect(evaluatedMaterial(s).base.color).toBe(OP_COLOR);
   });
 
@@ -134,9 +137,11 @@ describe('MaterialOverrideOp — the sparse diff, folded through the one composi
       roughness: 0.5,
       overridden: { roughness: false },
     });
-    // With no source map defending it the scalar IS the value, so it applies — the #99
-    // map-aware default, not a wholesale write. Pinned so the rule cannot drift silently.
-    expect(evaluatedMaterial(s).specular.roughness).toBe(0.5);
+    // #529 — this line used to read `toBe(0.5)`: with no source map defending it, the
+    // op's scalar applied even though the bit says the director did NOT author it. That
+    // made this test's own name false. On the data lane the layer below is another
+    // authored layer, not a source, so an unauthored channel is left alone.
+    expect(evaluatedMaterial(s).specular.roughness).toBe(0.11);
     // …while the lobes no MaterialValue carries an opinion about ride through untouched.
     expect(evaluatedMaterial(s).specular.ior).toBe(evaluatedMaterial(splitPair()).specular.ior);
   });
@@ -150,8 +155,14 @@ describe('MaterialOverrideOp — the sparse diff, folded through the one composi
   });
 
   it('folds a chain in stack order — the TOP layer is the one that renders', () => {
-    let s = spliceOp(splitPair(), 'lower', 'MaterialOverrideOp', { color: '#ff0000' });
-    s = spliceOp(s, 'upper', 'MaterialOverrideOp', { color: OP_COLOR });
+    let s = spliceOp(splitPair(), 'lower', 'MaterialOverrideOp', {
+      color: '#ff0000',
+      overridden: { color: true },
+    });
+    s = spliceOp(s, 'upper', 'MaterialOverrideOp', {
+      color: OP_COLOR,
+      overridden: { color: true },
+    });
     expect(evaluatedMaterial(s).base.color).toBe(OP_COLOR);
   });
 
@@ -180,15 +191,21 @@ describe('MaterialOverrideOp — the sparse diff, folded through the one composi
     expect(evaluatedMaterial(splitPair()).name).toBe('inline'); // the control
   });
 
-  it('applies its colour even at the default — the tint fields are unconditional', () => {
-    // NOT a defect and NOT this slice's call: `color`/`emissive`/`opacity` ignore the
-    // authored set by design (their default is map-identity, materialOverrideMerge.ts:88),
-    // and the scene-band wrapper has always behaved this way. Pinned because it is
-    // surprising on a MAPLESS native material, where white means white rather than
-    // "multiply the map by 1" — so a stack UI that adds one of these with defaults
-    // visibly whitens the object. Changing it would diverge the two hosts of one rule.
+  it('#529 — an operator at its defaults changes NOTHING', () => {
+    // This test used to assert the opposite, and the reasoning it carried is worth keeping
+    // as a record of how the defect survived review: the tint fields ignored the authored
+    // set "by design", because their default is map-identity — a white tint multiplies a
+    // `.map` by 1. True on a TEXTURED source. On a mapless native material white means
+    // white, which the old comment noted as merely "surprising": adding an operator at its
+    // defaults visibly whitened the object. It was filed as #529 once the fold gate showed
+    // the same mechanism erasing a LOWER OPERATOR'S authored values, which no reading of
+    // map-identity can excuse.
+    //
+    // The two hosts of the rule have NOT diverged — that objection was the right one, and
+    // it is answered by making the regime an argument rather than a second function. The
+    // scene-band wrapper still composes 'map-aware' and still behaves exactly as it did.
     const s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', {});
-    expect(evaluatedMaterial(s).base.color).toBe('#ffffff');
+    expect(evaluatedMaterial(s).base.color).toBe(BASE_COLOR);
   });
 
   it('passes non-mesh data through — a light wears no material', () => {
@@ -230,7 +247,10 @@ describe('THE WRITE ROAD, asserted on what renders (PLAN-2 §5)', () => {
     // MEASURED SHAPE OF THE DEFECT: with the per-root reach this wrote the Material node,
     // the op composed over it, the mutator reported success and the cube did not change.
     // The assertion is the EVALUATED colour, so that version cannot pass here.
-    let s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', { color: OP_COLOR });
+    let s = spliceOp(splitPair(), 'ovr', 'MaterialOverrideOp', {
+      color: OP_COLOR,
+      overridden: { color: true },
+    });
     s = addMaterialNode(s, 'mat', MAT_COLOR);
     s = applyOp(s, {
       type: 'connect',

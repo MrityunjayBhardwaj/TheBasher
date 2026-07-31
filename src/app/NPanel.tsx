@@ -95,6 +95,8 @@ import { RevertImportedClipConnector } from './animate/RevertImportedClipConnect
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
+import { MaterialStackControls } from './MaterialStackControls';
+import { MaterialLinkControls } from './MaterialLinkControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
 import { DriverStackControls } from './DriverStackControls';
 import { CurvePointRows } from './CurvePointRows';
@@ -137,6 +139,37 @@ import {
 interface OverrideInfo {
   readonly descriptor: OverrideDescriptor;
   readonly marked: boolean;
+}
+
+/**
+ * The decorator contract for one node's one param path, or undefined when that node type
+ * tracks no overrides / the field is not covered (the ~38 types that carry no set, and
+ * every uncovered param on the ones that do — those render byte-identical to pre-#130).
+ *
+ * ONE helper, TWO surfaces (#529). The selected-node block and the linked-data block both
+ * draw override-carrying rows, and they resolve the node differently: the first from the
+ * selection, the second from `row.nodeId`, because since P3 the rows in that block do not
+ * share a node. Only the first had a decorator, which is how the material operator lane
+ * shipped rows the panel could edit but never MARK — and with the data lane composing
+ * 'authored-only', an unmarked edit is an edit the fold discards. The lookup is the same
+ * question in both places, so it is asked in one function rather than copied with the
+ * node argument swapped.
+ */
+function overrideInfoFor(
+  node: { type: string; params?: unknown } | null | undefined,
+  paramPath: string,
+): OverrideInfo | undefined {
+  if (!node) return undefined;
+  const descriptor = overrideDescriptor(node.type);
+  if (!descriptor || !descriptor.fields.includes(paramPath)) return undefined;
+  return {
+    descriptor,
+    marked: isFieldOverridden(
+      node.params as Record<string, unknown> | undefined,
+      descriptor,
+      paramPath,
+    ),
+  };
 }
 
 // #130 (D-04 / K6) — editing a covered field MARKS it overridden in the SAME
@@ -1777,6 +1810,14 @@ function MaterialRows({
    * assert the two FACTS the projection states; only a DOM-level check can see how this
    * composes them. The browser observation is what covers it — do not read the green
    * unit tier as evidence about this line.
+   *
+   * ✅ #394 S3d-d — THAT OBSERVATION NOW EXISTS AND IS TRACKED:
+   * `tests/e2e/p394-material-link-and-stack.spec.ts` ("MASK PRECEDENCE"). It needs BOTH
+   * coverings at once and two fields that disagree, which is the part a fixture gets
+   * wrong by default: an override op writes `base.color` unconditionally
+   * (`composeMaterial.ts:80`) while `specular.ior` is outside its vocabulary, so the
+   * first names the operator and the second names the linked Material. Falsified by
+   * swapping the two sides of this `??`: the unit tier stays green, that spec reds.
    */
   const maskFor = (path: string): MaskSource | undefined => maskedBy?.[path] ?? suppliedBy;
   return (
@@ -2166,9 +2207,19 @@ function ParamRow({
   if (typeof value === 'string') {
     // A declared string-ENUM param (Mirror's axis, RenderOutput's tonemap, …) is
     // authorable via a dropdown read from the node's paramSchema; a free string has
-    // no options → falls through to the read-only row below. No string param is a
-    // covered override field today (the descriptor covers only numeric roughness/
-    // metalness + the vec3 TRS), so neither row needs a decorator.
+    // no options → falls through to the read-only row below.
+    //
+    // ⚠️ THAT READ-ONLY ROW IS NOW LOAD-BEARING, AND IT IS #521. A material operator's
+    // `color`/`emissive` are free hex strings, so they land here and cannot be edited —
+    // and since #529 the data lane writes only what the director AUTHORED, which means
+    // those two channels are not merely awkward to set, they can no longer be set at all.
+    // Before #529 an unauthorable colour still applied, because the operator forced every
+    // channel unconditionally; the fix removed the forcing and left the gap visible.
+    //
+    // The descriptor deliberately still covers all six fields: the authored SET covers
+    // them and the fold consults them, so the coverage is correct and only the widget is
+    // missing. When #521 gives a bare hex param a real field, it must pass `overrideInfo`
+    // through like `NumericField` does, and colour becomes authorable with no change here.
     const options = stringEnumOptions(nodeId, paramPath);
     if (options) {
       return (
@@ -2929,6 +2980,9 @@ function LinkedDataSections({
                 value={value}
                 maskedBy={maskedBy}
                 suppliedBy={suppliedBy}
+                // #529 — resolved from the ROW's node, not the selected one. These rows
+                // belong to the base data node AND to every operator above it.
+                overrideInfo={overrideInfoFor(nodes[nodeId], key)}
               />
             )}
           />
@@ -2950,6 +3004,7 @@ function LinkedDataSections({
           nodeId={row.nodeId}
           paramPath={row.paramPath}
           value={valueOf(row)}
+          overrideInfo={overrideInfoFor(nodes[row.nodeId], row.paramPath)}
         />
       ))}
     </div>
@@ -2991,6 +3046,8 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
     <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />
   ),
   modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
+  materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
+  materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
   constraintStack: (ctx) => <ConstraintStackControls nodeId={ctx.paramsNodeId} />,
   driverStack: (ctx) => <DriverStackControls nodeId={ctx.paramsNodeId} />,
   curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
@@ -3131,18 +3188,8 @@ export function NPanel() {
   // decorator contract for a covered field, else undefined → ParamRow renders
   // byte-identical to pre-#130. Recomputed on every params change because NPanel
   // subscribes to the node (the dot re-renders after edit/revert).
-  const overrideDesc = node ? overrideDescriptor(node.type) : null;
-  const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined => {
-    if (!overrideDesc || !node || !overrideDesc.fields.includes(paramPath)) return undefined;
-    return {
-      descriptor: overrideDesc,
-      marked: isFieldOverridden(
-        node.params as Record<string, unknown> | undefined,
-        overrideDesc,
-        paramPath,
-      ),
-    };
-  };
+  const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
+    overrideInfoFor(node, paramPath);
 
   const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
 

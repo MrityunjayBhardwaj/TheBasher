@@ -125,7 +125,10 @@ describe('#498 dataSectionCapability', () => {
   it('classifies every ObjectData kind, and classifies nothing else', () => {
     // Guard the guard: an empty sweep would pass every assertion below vacuously.
     expect(OBJECT_DATA_KINDS.length).toBeGreaterThan(0);
-    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier']);
+    // #394 S3d added 'material'. The list is pinned as an EQUALITY rather than a floor
+    // because a section silently leaving the table takes its whole column of answers
+    // with it, and nothing else here would notice.
+    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier', 'material']);
 
     const fixtureKinds = Object.keys(FIXTURES).sort();
     expect([...OBJECT_DATA_KINDS].sort()).toEqual(fixtureKinds);
@@ -180,7 +183,9 @@ describe('#498 dataSectionCapability', () => {
       }
     }
     // Pin the census so a kind silently changing state is a red, not a shrug.
-    expect({ notYet, never }).toEqual({ notYet: 1, never: 2 });
+    // modifier: curve 'not-yet' (#349) + light/camera 'never'.
+    // material: curve 'not-yet' (#528) + light/camera 'never'.
+    expect({ notYet, never }).toEqual({ notYet: 2, never: 4 });
   });
 
   it('pins the measured Blender answer per kind', () => {
@@ -194,13 +199,93 @@ describe('#498 dataSectionCapability', () => {
     expect(dataSectionCapability('CameraData', 'modifier').state).toBe('never');
   });
 
+  it('pins the measured Blender answer per kind for the material section', () => {
+    // #394 S3d. Read off the Blender 5.1 Python API reference, property by property —
+    // a datablock either declares `materials` or it does not, which is a stronger
+    // signal than a poll result: bpy.types.Mesh.materials and bpy.types.Curve.materials
+    // are both declared (the same `IDMaterials[Material]` collection), while
+    // bpy.types.Light and bpy.types.Camera declare no such property at all.
+    expect(dataSectionCapability('MeshData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('BakedData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('ModifiedData', 'material').state).toBe('supported');
+    expect(dataSectionCapability('CurveData', 'material').state).toBe('not-yet');
+    expect(dataSectionCapability('LightData', 'material').state).toBe('never');
+    expect(dataSectionCapability('CameraData', 'material').state).toBe('never');
+  });
+
+  it('keeps the two sections from collapsing into one answer', () => {
+    // Guard against the cheapest way this table could go wrong: a second column that is
+    // a copy of the first would satisfy every per-kind pin above AND the census, because
+    // the two sections happen to partition the kinds the same way today. What must
+    // differ is the ISSUE a 'not-yet' names — the curve's modifier gap (#349) and its
+    // material gap (#528) are separate pieces of work, and a copied column would file
+    // one under the other.
+    const mod = dataSectionCapability('CurveData', 'modifier');
+    const mat = dataSectionCapability('CurveData', 'material');
+    expect(mod.state).toBe('not-yet');
+    expect(mat.state).toBe('not-yet');
+    if (mod.state !== 'not-yet' || mat.state !== 'not-yet') throw new Error('unreachable');
+    expect(mat.issue).not.toBe(mod.issue);
+  });
+
   it('offers the section for supported and not-yet, and withholds it only for never', () => {
     // The curve keeps its affordance ON PURPOSE. Hiding it would encode a tracked gap
     // (#349) as an intentional design decision, which is the thing #498 warns against.
-    expect(sectionAppliesToData('MeshData', 'modifier')).toBe(true);
-    expect(sectionAppliesToData('CurveData', 'modifier')).toBe(true);
-    expect(sectionAppliesToData('CameraData', 'modifier')).toBe(false);
-    expect(sectionAppliesToData('LightData', 'modifier')).toBe(false);
+    //
+    // #394 S4 — SWEPT OVER BOTH COLUMNS rather than spot-checked on 'modifier'. The
+    // spot-check version tested four of twelve cells and none of the material ones, so
+    // a material column whose offer decision disagreed with its state would have passed.
+    // Derived from the state rather than re-listed per kind, because a second hand-written
+    // list of "which kinds offer it" is the exact thing this function exists to prevent.
+    let offered = 0;
+    let withheld = 0;
+    for (const section of DATA_DEPENDENT_SECTIONS) {
+      for (const kind of OBJECT_DATA_KINDS) {
+        const state = dataSectionCapability(kind, section).state;
+        const applies = sectionAppliesToData(kind, section);
+        expect(applies, `${kind}/${section} is '${state}' but offers=${applies}`).toBe(
+          state !== 'never',
+        );
+        if (applies) offered++;
+        else withheld++;
+      }
+    }
+    // Guard the guard, and pin the split so a column emptying cannot pass vacuously:
+    // 12 cells = 2 sections × 6 kinds; 4 are 'never' (light + camera, both sections).
+    expect({ offered, withheld }).toEqual({ offered: 8, withheld: 4 });
+  });
+
+  it('MATERIAL: "supported" means the VALUE carries a material field, both directions', () => {
+    // #394 S4 — the material column's anti-drift gate, and it is NOT the modifier
+    // column's. `canWearMaterial` (modifierGeometry.ts:233-236) READS this table, so
+    // asserting the two agree would be a tautology — unlike `modifierDataSource`, there
+    // is no independent resolver to check against. The independent fact is the VALUE:
+    // a material operator composes onto `data.material`, so a kind this table calls
+    // 'supported' must be a kind whose value actually has that field to compose onto,
+    // and a kind that has one must not be refused.
+    //
+    // ⚠️ PLAN S4 asked for "wherever the table says supported, a `material` SOCKET
+    // exists". Measured at head, that is false and should be: only `BoxData` and
+    // `SphereData` declare a `material` socket, while `BakedData` is 'supported' and
+    // declares none (it carries a CAPTURED `BakedMaterialSpec` on its value) and the
+    // three `ModifiedData` producers inherit through their source. The socket is one way
+    // a material ARRIVES; the field is what every one of them lands in, which is why the
+    // field is the property the lane actually depends on.
+    let withField = 0;
+    for (const kind of OBJECT_DATA_KINDS) {
+      const value = FIXTURES[kind] as { material?: unknown };
+      const hasMaterialField = 'material' in value;
+      const state = dataSectionCapability(kind, 'material').state;
+      expect(
+        hasMaterialField,
+        `${kind} is '${state}' but ${hasMaterialField ? 'has' : 'has no'} material field`,
+      ).toBe(state === 'supported');
+      if (hasMaterialField) withField++;
+    }
+    // Non-vacuous in BOTH directions — 3 kinds carry the field, 3 do not. A sweep that
+    // landed all on one side would satisfy the equivalence and prove only one arm of it.
+    expect(withField).toBe(3);
+    expect(OBJECT_DATA_KINDS.length - withField).toBe(3);
   });
 
   it('returns a stable reference so callers can memoize on it', () => {

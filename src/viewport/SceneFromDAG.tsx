@@ -2084,7 +2084,7 @@ function usePrimitiveMaterial(
   override: MaterialValue | undefined,
   shading: string,
 ): THREE.MeshPhysicalMaterial {
-  const three = openpbrToThree(override ? composeMaterial(ir, override) : ir);
+  const three = openpbrToThree(override ? composeMaterial(ir, override, 'map-aware') : ir);
   const {
     color,
     roughness,
@@ -2463,7 +2463,7 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
   // map-aware: a bake that captured a roughness/metalness map keeps it, where the
   // old `applyOverride` forced the override's scalar over it.
   const scalar = override
-    ? composeBakedMaterial(spec, override)
+    ? composeBakedMaterial(spec, override, 'map-aware')
     : {
         color: spec.color,
         roughness: spec.roughness,
@@ -2993,12 +2993,19 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           metalnessMap: Boolean(std.metalnessMap),
         },
         (override as MaterialValue).overridden, // #124 (V28): per-field force-vs-map
+        // The layer below is an IMPORTED material — a source, not another authored
+        // layer — so this road keeps the map-aware cut unchanged (#529).
+        'map-aware',
       );
-      std.color?.set(fields.color);
-      std.emissive?.set(fields.emissive);
-      if ('emissiveIntensity' in std) std.emissiveIntensity = fields.emissiveIntensity;
-      if ('opacity' in std) std.opacity = fields.opacity;
-      if ('transparent' in std) std.transparent = fields.transparent;
+      // The four tints are never null on the map-aware road, so these guards change
+      // nothing here today; they exist because #529 made the TYPE honest, and a null
+      // that reached `.set()` would throw rather than skip.
+      if (fields.color !== null) std.color?.set(fields.color);
+      if (fields.emissive !== null) std.emissive?.set(fields.emissive);
+      if (fields.emissiveIntensity !== null && 'emissiveIntensity' in std)
+        std.emissiveIntensity = fields.emissiveIntensity;
+      if (fields.opacity !== null && 'opacity' in std) std.opacity = fields.opacity;
+      if (fields.transparent !== null && 'transparent' in std) std.transparent = fields.transparent;
       if (fields.roughness !== null && 'roughness' in std) std.roughness = fields.roughness;
       if (fields.metalness !== null && 'metalness' in std) std.metalness = fields.metalness;
       // NB: wireframe is deliberately NOT set here. applyTintFields runs per-frame

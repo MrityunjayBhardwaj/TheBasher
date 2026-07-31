@@ -54,6 +54,31 @@ const DESCRIPTORS: Readonly<Record<string, OverrideDescriptor>> = {
     fields: ['roughness', 'metalness'],
     shape: 'sparse',
   },
+  // #529 — the DATA-LANE operator, and its field list is deliberately WIDER than its
+  // scene-band sibling's above. That asymmetry is the whole point rather than an
+  // oversight, so it is stated here:
+  //
+  // `MaterialOverride` sits over a SOURCE material, where the four tints are
+  // always-applied with map-identity defaults — their bit changes nothing, so offering
+  // a decorator would imply an inherit-vs-override choice that does not exist.
+  // `MaterialOverrideOp` sits over ANOTHER AUTHORED LAYER, where every field's bit is
+  // live: the layer below has real authored values for all six, and the op composes
+  // 'authored-only', so an unauthored field means "keep what is underneath".
+  //
+  // Without this entry the op would have no way to author anything at all — the panel
+  // would write the scalar and never the bit, and an 'authored-only' fold would ignore
+  // every edit. The regime change and this entry are one fix, not two.
+  //
+  // ⚠️ FOUR OF THE SIX ARE REACHABLE IN THE UI TODAY. `color` and `emissive` are free hex
+  // strings, and a bare hex param still renders READ-ONLY (#521, NPanel's string branch),
+  // so no widget exists to author them. They are listed anyway because the authored SET
+  // genuinely covers them and the fold consults them — the coverage is right and the
+  // widget is missing, which is #521's job and not a reason to under-declare here.
+  MaterialOverrideOp: {
+    setParamPath: 'overridden',
+    fields: ['color', 'roughness', 'metalness', 'opacity', 'emissive', 'emissiveIntensity'],
+    shape: 'sparse',
+  },
   GltfChild: {
     setParamPath: 'overridden',
     fields: ['position', 'rotation', 'scale'],

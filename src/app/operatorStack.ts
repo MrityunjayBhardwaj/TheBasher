@@ -24,7 +24,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, Op } from '../core/dag/types';
-import { canModifyGeometry } from './modifierGeometry';
+import { canModifyGeometry, canWearMaterial } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
 import {
   isDataLaneOperator,
@@ -362,8 +362,23 @@ export function buildAddModifierOps(
   );
 }
 
-/** Insert a material operator at the top of the data node's material stack. Shares the
- *  physical lane with the geometry stack, so it passes through modifiers (#526). */
+/**
+ * Insert a material operator at the top of the data node's material stack. Shares the
+ * physical lane with the geometry stack, so it passes through modifiers (#526).
+ *
+ * #394 S3d — THE REFUSAL LIVES HERE FOR THE SAME REASON IT DOES ON THE MODIFIER ROAD,
+ * and the hazard is a degree worse. `target` takes `ObjectData` FLAT, so a camera's data
+ * is a type-legal source: without this line, "+ Set Material" over a camera would mint a
+ * real, persistable operator that composes a material nothing will ever read — #498's
+ * "+ Array on a camera succeeded" defect, re-minted one section over by the feature that
+ * file predicted would mint it. The modifier road at least had `modifierDataSource` to
+ * ask; here the accept is the capability table itself, because there is no resolver that
+ * would say no ({@link canWearMaterial}).
+ *
+ * Gating the panel's `onAdd` instead would leave the agent free to build the same graph,
+ * which is precisely the argument that put `canModifyGeometry` in `buildAddModifierOps`
+ * rather than in `ModifierStackControls`.
+ */
 export function buildAddMaterialOpOps(
   state: DagState,
   baseNodeId: string,
@@ -371,6 +386,7 @@ export function buildAddMaterialOpOps(
   params: Record<string, unknown> = {},
   explicitId?: string,
 ): AddModifierResult | null {
+  if (!canWearMaterial(state, baseNodeId)) return null;
   return buildAddOperatorOps(
     state,
     baseNodeId,

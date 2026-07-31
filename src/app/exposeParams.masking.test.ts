@@ -63,10 +63,22 @@ function splitCube(): DagState {
   );
 }
 
-/** …with a material override operator spliced into its data lane. */
+/**
+ * …with a material override operator spliced into its data lane.
+ *
+ * The operator AUTHORS colour and roughness. That is not decoration: post-#529 an
+ * operator writes only what the director authored, so one built with empty params masks
+ * NOTHING — every masking assertion below would then be asserting the absence of a mask
+ * while claiming to test its presence.
+ */
 function withOverrideOp(state: DagState, opId = 'ovr'): DagState {
   return applyOps(state, [
-    { type: 'addNode', nodeId: opId, nodeType: 'MaterialOverrideOp', params: {} },
+    {
+      type: 'addNode',
+      nodeId: opId,
+      nodeType: 'MaterialOverrideOp',
+      params: { overridden: { color: true, roughness: true } },
+    },
     {
       type: 'disconnect',
       from: { node: 'obj_data', socket: 'out' },
@@ -239,7 +251,12 @@ describe('#394 P4 — masking is asked ONCE PER CHAIN, never once per row', () =
   it('still asks only once with two operators stacked', () => {
     let state = withOverrideOp(splitCube(), 'ovr1');
     state = applyOps(state, [
-      { type: 'addNode', nodeId: 'ovr2', nodeType: 'MaterialOverrideOp', params: {} },
+      {
+        type: 'addNode',
+        nodeId: 'ovr2',
+        nodeType: 'MaterialOverrideOp',
+        params: { overridden: { color: true, roughness: true } },
+      },
       {
         type: 'disconnect',
         from: { node: 'ovr1', socket: 'out' },

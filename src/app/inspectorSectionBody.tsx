@@ -89,6 +89,8 @@ export type ControlKey =
   | 'sceneEnvironment'
   | 'cameraLens'
   | 'modifierStack'
+  | 'materialStack'
+  | 'materialLink'
   | 'constraintStack'
   | 'driverStack'
   | 'curvePoints'
@@ -147,6 +149,12 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // v0.6 #2 (#178 W6) — the per-submesh slot selector, for a node that
   // addresses a submesh by index. #178 S4 — the glTF material editor / readout.
   material: [
+    // #394 S3d — the data-block row FIRST, because it answers the question everything
+    // below it depends on: where does this material come from? Blender's Material
+    // properties open the same way. Like `materialStack` this is `whenDeclared` and the
+    // component decides on possession, for the same reason: "does this node take a
+    // material over an EDGE?" is a registry question and `SectionCtx` carries no registry.
+    { key: 'materialLink', applies: whenDeclared, placement: 'before' },
     {
       key: 'slotSelector',
       applies: (c) => c.ownsParam('slotIndex'),
@@ -161,6 +169,22 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       applies: (c) => c.ownsParam('assetRef') && !hasCapturedMaterials(c),
       placement: 'before',
     },
+    // #394 S3d — the material operator stack, the fourth OperatorStackRows caller.
+    //
+    // `whenDeclared` rather than a possession test, and the reason is a limit of this
+    // table rather than a looser rule: "is this node a DATA-LANE SOURCE?" is answered by
+    // evaluating it (`resolveDataKind`), and `SectionCtx` deliberately carries no store
+    // and no evaluator — it is a pure, allocation-free predicate over params. Five other
+    // node types declare 'material' without being on the lane (`Material` itself, the
+    // scene-band `MaterialOverride`, `GltfChild`, `GltfAsset`, `ScatterNode`), so the
+    // control renders NOTHING for them, decided inside `MaterialStackControls` where the
+    // question can actually be asked. Stated here so the split does not read as an
+    // oversight: the table gates on declaration, the component gates on the lane.
+    //
+    // 'before', like every other stack: Blender's Material Properties tab leads with the
+    // slot list and puts the shading settings under it, and the modifier stack already
+    // reads that way here. The two 'after' controls stay the only two.
+    { key: 'materialStack', applies: whenDeclared, placement: 'before' },
   ],
   render: [],
   // #270 the per-side extend rules, #274 (D2) the F-Modifier stack — for a

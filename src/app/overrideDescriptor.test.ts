@@ -16,11 +16,49 @@ import {
 } from './overrideDescriptor';
 
 describe('overrideDescriptor', () => {
-  it('gates the decorator to the two override consumers only', () => {
+  it('gates the decorator to the three override consumers only', () => {
     expect(overrideDescriptor('MaterialOverride')?.fields).toContain('metalness');
+    expect(overrideDescriptor('MaterialOverrideOp')?.fields).toContain('color');
     expect(overrideDescriptor('GltfChild')?.fields).toEqual(['position', 'rotation', 'scale']);
     expect(overrideDescriptor('BoxMesh')).toBeNull();
     expect(overrideDescriptor('Transform')).toBeNull();
+  });
+
+  it('#529 — MaterialOverrideOp covers ALL SIX fields, unlike its scene-band sibling', () => {
+    // THE ENTRY THAT MAKES THE OPERATOR AUTHORABLE AT ALL. The data lane composes
+    // 'authored-only', so a field with no bit is left to the layer below; without this
+    // descriptor the panel would write the scalar and never the bit, and every edit to an
+    // override operator would be silently discarded by the fold. Deleting this entry is a
+    // total loss of function that no other test in the repo can see.
+    const op = overrideDescriptor('MaterialOverrideOp')!;
+    expect(op.fields).toEqual([
+      'color',
+      'roughness',
+      'metalness',
+      'opacity',
+      'emissive',
+      'emissiveIntensity',
+    ]);
+    expect(op.shape).toBe('sparse');
+    expect(op.setParamPath).toBe('overridden');
+  });
+
+  it('the two material hosts differ EXACTLY where their regimes differ', () => {
+    // Asserted as a relationship, not two independent lists, because the asymmetry is the
+    // thing that has to stay true: the wrapper sits over a SOURCE material where the four
+    // tints are always-applied with map-identity defaults (an inert bit, so no decorator);
+    // the operator sits over ANOTHER AUTHORED LAYER where every bit is live. A future edit
+    // that "tidied" these into one list would break one road or the other.
+    const wrapper = overrideDescriptor('MaterialOverride')!.fields;
+    const op = overrideDescriptor('MaterialOverrideOp')!.fields;
+    expect(op.length).toBeGreaterThan(wrapper.length);
+    for (const f of wrapper) expect(op).toContain(f);
+    expect(op.filter((f) => !wrapper.includes(f)).sort()).toEqual([
+      'color',
+      'emissive',
+      'emissiveIntensity',
+      'opacity',
+    ]);
   });
 
   it('MaterialOverride covers ONLY the bit-consulting fields (roughness/metalness)', () => {

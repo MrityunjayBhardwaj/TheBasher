@@ -104,7 +104,10 @@ describe('#522 — the overlay reaches the whole lane', () => {
 
 describe('#522 — what a lane node’s path MEANS on the composed value', () => {
   it('translates a forcing operator’s flat field into the IR the value carries', () => {
-    const state = spliceOp(splitCube(), 'ovr', 'MaterialOverrideOp', { color: '#00ff88' });
+    const state = spliceOp(splitCube(), 'ovr', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
     const op = dataLaneOverlaySources(state, 'obj').find((s) => s.nodeId === 'ovr')!;
     // Without this the entry is rebased as `data.color`, which no renderer reads — measured,
     // and it is why a channel placed on the operator did not paint either.
@@ -112,7 +115,10 @@ describe('#522 — what a lane node’s path MEANS on the composed value', () =>
   });
 
   it('drops a masked layer’s entry, so a fallback cannot beat the layer above it', () => {
-    const state = spliceOp(splitCube(), 'ovr', 'MaterialOverrideOp', { color: '#00ff88' });
+    const state = spliceOp(splitCube(), 'ovr', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
     const base = dataLaneOverlaySources(state, 'obj').find((s) => s.nodeId === 'obj_data')!;
     expect(overlayPathOn(base, COLOR_IR)).toBeNull();
     // …and only that field. The base still owns everything the operator does not supply.
@@ -148,9 +154,15 @@ describe('#522 — how OFTEN the ownership question is asked', () => {
   });
 
   it('asks exactly ONCE for a lane that can, however many nodes it holds', () => {
-    let state = spliceOp(splitCube(), 'lower', 'MaterialOverrideOp', { color: '#00ff88' });
+    let state = spliceOp(splitCube(), 'lower', 'MaterialOverrideOp', {
+      color: '#00ff88',
+      overridden: { color: true },
+    });
     state = spliceOp(state, 'mod', 'ArrayModifier', { count: 2 });
-    state = spliceOp(state, 'upper', 'MaterialOverrideOp', { color: '#ff00ff' });
+    state = spliceOp(state, 'upper', 'MaterialOverrideOp', {
+      color: '#ff00ff',
+      overridden: { color: true },
+    });
     const sources = dataLaneOverlaySources(state, 'obj');
     expect(sources).toHaveLength(4);
     expect(calls.owners).toBe(1);

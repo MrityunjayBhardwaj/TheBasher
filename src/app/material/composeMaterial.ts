@@ -44,7 +44,7 @@
 // it, and this slice does not change that.
 
 import type { BakedMaterialSpec, InlineMaterialSpec, MaterialValue } from '../../nodes/types';
-import { resolveMaterialOverrideFields } from './materialOverrideMerge';
+import { resolveMaterialOverrideFields, type OverrideAuthority } from './materialOverrideMerge';
 
 /**
  * Compose an override onto an OpenPBR IR, yielding an IR.
@@ -62,6 +62,7 @@ import { resolveMaterialOverrideFields } from './materialOverrideMerge';
 export function composeMaterial(
   base: InlineMaterialSpec,
   override: MaterialValue,
+  authority: OverrideAuthority,
 ): InlineMaterialSpec {
   const fields = resolveMaterialOverrideFields(
     override,
@@ -72,25 +73,29 @@ export function composeMaterial(
       metalnessMap: base.maps.metalness !== null,
     },
     override.overridden,
+    authority,
   );
+  // EVERY field falls back to the base now (#529). It used to be only roughness and
+  // metalness, which is what let an override op claim the other four unconditionally —
+  // the fold was cumulative for two channels and last-writer-take-all for the rest.
+  // `null` reads the same for all six: the layer below owns this channel.
   return {
     ...base,
     base: {
       ...base.base,
-      color: fields.color,
-      // `null` ⇒ a source map owns the channel ⇒ keep the base scalar.
+      color: fields.color ?? base.base.color,
       metalness: fields.metalness ?? base.base.metalness,
     },
     specular: { ...base.specular, roughness: fields.roughness ?? base.specular.roughness },
     emission: {
       ...base.emission,
-      color: fields.emissive,
+      color: fields.emissive ?? base.emission.color,
       // The IR is photometric; the override's `emissiveIntensity` is the same
       // unitless multiplier `openpbrToThree` maps luminance onto 1:1
       // (EMISSION_NIT_TO_INTENSITY = 1.0), so this is an identity, not a rescale.
-      luminance: fields.emissiveIntensity,
+      luminance: fields.emissiveIntensity ?? base.emission.luminance,
     },
-    geometry: { ...base.geometry, opacity: fields.opacity },
+    geometry: { ...base.geometry, opacity: fields.opacity ?? base.geometry.opacity },
   };
   // NB: `transparent` is deliberately NOT carried. It is DERIVED, and its one
   // derivation lives in `openpbrToThree` (`transmission > 0 || opacity < 1`).
@@ -123,20 +128,23 @@ export interface ComposedBakedScalars {
 export function composeBakedMaterial(
   spec: BakedMaterialSpec,
   override: MaterialValue,
+  authority: OverrideAuthority,
 ): ComposedBakedScalars {
   const fields = resolveMaterialOverrideFields(
     override,
     // Map presence in the baked spec's vocabulary.
     { roughnessMap: spec.roughnessMap !== null, metalnessMap: spec.metalnessMap !== null },
     override.overridden,
+    authority,
   );
+  // Same #529 change as the IR lane: all six fall back, not just the two.
   return {
-    color: fields.color,
+    color: fields.color ?? spec.color,
     roughness: fields.roughness ?? spec.roughness,
     metalness: fields.metalness ?? spec.metalness,
-    opacity: fields.opacity,
-    emissive: fields.emissive,
-    emissiveIntensity: fields.emissiveIntensity,
-    transparent: fields.transparent,
+    opacity: fields.opacity ?? spec.opacity,
+    emissive: fields.emissive ?? spec.emissive,
+    emissiveIntensity: fields.emissiveIntensity ?? spec.emissiveIntensity,
+    transparent: fields.transparent ?? spec.transparent,
   };
 }

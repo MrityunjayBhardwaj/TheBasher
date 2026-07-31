@@ -104,7 +104,7 @@ describe('addChannel — a forcing material operator owns the field it supplies 
           type: 'addNode',
           nodeId: opId,
           nodeType: 'MaterialOverrideOp',
-          params: { color: '#00ff88' },
+          params: { color: '#00ff88', overridden: { color: true } },
         },
         {
           type: 'disconnect',

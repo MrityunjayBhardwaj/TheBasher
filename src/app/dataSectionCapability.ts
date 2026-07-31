@@ -68,11 +68,18 @@ export type ObjectDataKind = ObjectData['kind'];
  * Deliberately NOT `SectionId`. Of the four sections `ObjectNode` declares, only
  * 'modifier' is data-dependent — 'transform', 'constraint' and 'driver' are properties
  * of the Object, which owns the pose no matter what it points at, and they are correctly
- * unconditional. Widening this type is how #394 adds 'material' (a `Camera` datablock has
- * no `materials` property at all in Blender 5.1.1 — measured), and doing so is a compile
- * error in the table below until every kind has an answer for it.
+ * unconditional.
+ *
+ * #394 S3d WIDENED IT WITH 'material', which this file predicted it would. The two are not
+ * symmetric and the difference is worth stating: 'modifier' is declared unconditionally by
+ * `ObjectNode` and needs this table to qualify it, whereas 'material' is declared by the
+ * DATA nodes themselves — a `CameraData` simply never lists it, so the SECTION already
+ * hides itself. What the table adds for 'material' is the ACCEPT half: the material lane's
+ * `target` socket takes any `ObjectData`, so `buildAddMaterialOpOps` would otherwise mint
+ * a real, persistable, permanently inert operator over a camera exactly as "+ Array" once
+ * did (#498). One table, asked by both halves, is what keeps offer == accept ([[V108]]).
  */
-export type DataDependentSection = 'modifier';
+export type DataDependentSection = 'modifier' | 'material';
 
 /** The section applies to this kind, and the machinery to honour it exists. */
 export interface CapabilitySupported {
@@ -142,8 +149,61 @@ const MODIFIER_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
   },
 };
 
+/**
+ * Can a source of this data kind WEAR a material? (#394 S3d.)
+ *
+ * GROUNDED IN THE REFERENCE, PROPERTY BY PROPERTY, because the answer here is a datablock
+ * fact rather than a poll result — which is what makes it stronger evidence than the
+ * modifier table's ([[H230]]: a reference can ground the accept and be silent on the
+ * offer; here it grounds both, because the property either exists on the datablock or it
+ * does not). Read off the Blender 5.1 Python API reference:
+ *
+ *   bpy.types.Mesh.materials    — declared (`IDMaterials[Material]`)
+ *   bpy.types.Curve.materials   — declared, the SAME collection type
+ *   bpy.types.Light             — no `materials` property at all
+ *   bpy.types.Camera            — no `materials` property at all
+ *
+ * So the three-state answer is forced by the reference rather than chosen, exactly as it
+ * was for modifiers, and it lands on the same partition: the mesh faces carry materials, a
+ * curve legitimately does and Basher has not built it, a light and a camera never will.
+ */
+const MATERIAL_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
+  // The three mesh faces. Each carries a `material` on its value and declares the
+  // 'material' section, so the lane's operators have something to compose over.
+  MeshData: { state: 'supported' },
+  BakedData: { state: 'supported' },
+  // The chain case, and it is load-bearing rather than an afterthought: a material
+  // operator over a geometry modifier's output is the interleaved lane #526 exists for.
+  ModifiedData: { state: 'supported' },
+
+  CurveData: {
+    state: 'not-yet',
+    reason:
+      'bpy.types.Curve declares the same `materials` collection bpy.types.Mesh does, so a ' +
+      'curve legitimately wears a material in the reference. CurveDataValue carries no ' +
+      'material field and CurveData declares no material section, so this is a real gap in ' +
+      'Basher rather than a category error — the same shape as #349 one section over.',
+    issue: 528,
+  },
+
+  LightData: {
+    state: 'never',
+    reason:
+      'A material describes how a surface responds to light, and a light is not a surface. ' +
+      'Measured: bpy.types.Light declares no `materials` property at all — not an empty ' +
+      'collection, absent.',
+  },
+  CameraData: {
+    state: 'never',
+    reason:
+      'Same as a light — nothing to shade. Measured: bpy.types.Camera declares no ' +
+      '`materials` property at all.',
+  },
+};
+
 const CAPABILITY: Record<DataDependentSection, Record<ObjectDataKind, SectionCapability>> = {
   modifier: MODIFIER_CAPABILITY,
+  material: MATERIAL_CAPABILITY,
 };
 
 /**

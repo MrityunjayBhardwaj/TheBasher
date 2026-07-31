@@ -52,7 +52,7 @@ const OVERRIDE: MaterialValue = {
 
 describe('composeMaterial — the IR lane', () => {
   it('writes the override onto every channel it has an opinion about', () => {
-    const out = composeMaterial(baseIR(), OVERRIDE);
+    const out = composeMaterial(baseIR(), OVERRIDE, 'map-aware');
     expect(out.base.color).toBe('#ff0000');
     expect(out.base.metalness).toBe(0.8);
     expect(out.specular.roughness).toBe(0.1);
@@ -65,7 +65,7 @@ describe('composeMaterial — the IR lane', () => {
     // ior / coat / transmission / maps / uvTransform: a MaterialValue carries no
     // field for them, so inventing one would be an opinion nobody expressed.
     const base = baseIR();
-    const out = composeMaterial(base, OVERRIDE);
+    const out = composeMaterial(base, OVERRIDE, 'map-aware');
     expect(out.specular.ior).toBe(1.7);
     expect(out.coat).toEqual({ weight: 0.4, roughness: 0.2 });
     expect(out.transmission).toEqual({ weight: 0 });
@@ -77,7 +77,14 @@ describe('composeMaterial — the IR lane', () => {
     // This is the property the operator lane (#394 S3c) folds on. A compose that
     // returned a flat three.js bag could be applied once and never chained.
     const second: MaterialValue = { ...OVERRIDE, color: '#0000ff', roughness: 0.9 };
-    const folded = [OVERRIDE, second].reduce(composeMaterial, baseIR());
+    // NB: an explicit lambda, not a bare `reduce(composeMaterial, …)`. `reduce` passes
+    // (acc, value, INDEX, array), so the point-free form silently handed the index in as
+    // the authority — caught only because #529 made an unknown authority throw instead of
+    // falling through to a default.
+    const folded = [OVERRIDE, second].reduce(
+      (acc, o) => composeMaterial(acc, o, 'map-aware'),
+      baseIR(),
+    );
     expect(folded.base.color).toBe('#0000ff');
     expect(folded.specular.roughness).toBe(0.9);
     // …and the untouched channels survive the whole fold, not just one step.
@@ -86,35 +93,40 @@ describe('composeMaterial — the IR lane', () => {
 
   it('does not mutate the base (a fold must not corrupt a shared upstream)', () => {
     const base = baseIR();
-    composeMaterial(base, OVERRIDE);
+    composeMaterial(base, OVERRIDE, 'map-aware');
     expect(base.base.color).toBe('#112233');
     expect(base.specular.roughness).toBe(0.75);
   });
 
   describe('map-awareness — the behaviour #394 S3b brought to the native road', () => {
     it('a roughness map defends its channel; the base scalar survives', () => {
-      const out = composeMaterial(baseIR({ roughness: TEX }), OVERRIDE);
+      const out = composeMaterial(baseIR({ roughness: TEX }), OVERRIDE, 'map-aware');
       expect(out.specular.roughness).toBe(0.75); // base, NOT the override's 0.1
       expect(out.base.metalness).toBe(0.8); // unmapped ⇒ the override still wins
     });
 
     it('a metalness map defends its channel independently', () => {
-      const out = composeMaterial(baseIR({ metalness: TEX }), OVERRIDE);
+      const out = composeMaterial(baseIR({ metalness: TEX }), OVERRIDE, 'map-aware');
       expect(out.base.metalness).toBe(0.25); // base
       expect(out.specular.roughness).toBe(0.1); // unmapped ⇒ override
     });
 
     it('an explicitly authored field FORCES the scalar over its map (#124)', () => {
-      const out = composeMaterial(baseIR({ roughness: TEX, metalness: TEX }), {
-        ...OVERRIDE,
-        overridden: { roughness: true },
-      });
+      const out = composeMaterial(
+        baseIR({ roughness: TEX, metalness: TEX }),
+        { ...OVERRIDE, overridden: { roughness: true } },
+        'map-aware',
+      );
       expect(out.specular.roughness).toBe(0.1); // forced past the map
       expect(out.base.metalness).toBe(0.25); // not authored ⇒ map still defends
     });
 
     it('the always-applied tint channels ignore maps entirely', () => {
-      const out = composeMaterial(baseIR({ roughness: TEX, metalness: TEX }), OVERRIDE);
+      const out = composeMaterial(
+        baseIR({ roughness: TEX, metalness: TEX }),
+        OVERRIDE,
+        'map-aware',
+      );
       expect(out.base.color).toBe('#ff0000');
       expect(out.emission.color).toBe('#00ff00');
       expect(out.geometry.opacity).toBe(0.5);
@@ -127,7 +139,9 @@ describe('composeMaterial — the IR lane', () => {
     // material. Composing into the IR and compiling restores the one derivation.
     const transmissive = { ...baseIR(), transmission: { weight: 0.6 } };
     const opaqueOverride: MaterialValue = { ...OVERRIDE, opacity: 1 };
-    expect(openpbrToThree(composeMaterial(transmissive, opaqueOverride)).transparent).toBe(true);
+    expect(
+      openpbrToThree(composeMaterial(transmissive, opaqueOverride, 'map-aware')).transparent,
+    ).toBe(true);
   });
 });
 
@@ -150,7 +164,7 @@ describe('composeBakedMaterial — the baked lane, same decision', () => {
   };
 
   it('writes the override onto an unmapped spec', () => {
-    expect(composeBakedMaterial(spec, OVERRIDE)).toEqual({
+    expect(composeBakedMaterial(spec, OVERRIDE, 'map-aware')).toEqual({
       color: '#ff0000',
       roughness: 0.1,
       metalness: 0.8,
@@ -163,8 +177,8 @@ describe('composeBakedMaterial — the baked lane, same decision', () => {
 
   it('a captured map defends its channel — the old applyOverride forced it', () => {
     const mapped = { ...spec, roughnessMap: TEX };
-    expect(composeBakedMaterial(mapped, OVERRIDE).roughness).toBe(0.75);
-    expect(composeBakedMaterial(mapped, OVERRIDE).metalness).toBe(0.8);
+    expect(composeBakedMaterial(mapped, OVERRIDE, 'map-aware').roughness).toBe(0.75);
+    expect(composeBakedMaterial(mapped, OVERRIDE, 'map-aware').metalness).toBe(0.8);
   });
 
   it('reaches the SAME answer as the IR lane on the same question', () => {
@@ -173,8 +187,8 @@ describe('composeBakedMaterial — the baked lane, same decision', () => {
     // goes red — which is the drift guard the S4 one-composer gate formalises.
     const mappedSpec = { ...spec, roughnessMap: TEX };
     const mappedIR = baseIR({ roughness: TEX });
-    const baked = composeBakedMaterial(mappedSpec, OVERRIDE);
-    const ir = composeMaterial(mappedIR, OVERRIDE);
+    const baked = composeBakedMaterial(mappedSpec, OVERRIDE, 'map-aware');
+    const ir = composeMaterial(mappedIR, OVERRIDE, 'map-aware');
     expect(baked.roughness).toBe(ir.specular.roughness);
     expect(baked.metalness).toBe(ir.base.metalness);
     expect(baked.color).toBe(ir.base.color);
