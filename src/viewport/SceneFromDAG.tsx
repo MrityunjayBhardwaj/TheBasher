@@ -23,6 +23,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,6 +45,7 @@ import {
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import * as geometryRegistry from '../app/geometryRegistry';
+import * as materialRegistry from '../app/materialRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
@@ -2079,6 +2081,14 @@ function ConstrainedR({
 // coat/transmission/ior/maps still always come from the IR (the override carries
 // no opinion on them), and `transparent` now comes from the compile rather than
 // being re-derived as `opacity < 1`.
+//
+// #530 — the built material is no longer per-component. Two meshes whose material
+// RESOLVES to the same thing now draw the same `THREE.Material` instance, via the
+// content-keyed `materialRegistry` (PERFORMANCE.md Lever 5). Everything the build
+// reads travels in one spec object, and the key is taken over that spec, so a mesh
+// carrying an override composes to a different spec and correctly gets its own
+// instance — clone-on-override is preserved by construction rather than by a rule
+// the registry has to be told.
 function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
@@ -2115,48 +2125,11 @@ function usePrimitiveMaterial(
   const [tilingX, tilingY] = three.uvTransform.tiling;
   const [offsetX, offsetY] = three.uvTransform.offset;
   const uvRotation = three.uvTransform.rotation;
-  const material = useMemo(() => {
-    // v0.6 #3 (A-5): textures are cached & SHARED by hash (bakedTextureLoader),
-    // so we CLONE per material before applying the UV transform — mutating the
-    // shared instance would cross-contaminate every other material using that
-    // image. The clone shares the image source; we own + dispose the clones (V20).
-    const clones: THREE.Texture[] = [];
-    const prep = (t: THREE.Texture | null, colorSpace: THREE.ColorSpace) => {
-      if (!t) return null;
-      const c = t.clone();
-      c.colorSpace = colorSpace; // re-assert per slot (M5 — a data map as sRGB washes out)
-      c.center.set(0.5, 0.5); // rotate/scale about the texture centre (Blender / KHR)
-      c.repeat.set(tilingX, tilingY);
-      c.offset.set(offsetX, offsetY);
-      c.rotation = uvRotation;
-      c.needsUpdate = true;
-      clones.push(c);
-      return c;
-    };
-    const m = new THREE.MeshPhysicalMaterial();
-    m.color = new THREE.Color(color);
-    m.roughness = roughness; // explicit — three default is 1 (D-03)
-    m.metalness = metalness;
-    m.opacity = opacity;
-    m.transparent = transparent;
-    m.emissive = new THREE.Color(emissive);
-    m.emissiveIntensity = emissiveIntensity;
-    m.ior = ior;
-    m.clearcoat = clearcoat;
-    m.clearcoatRoughness = clearcoatRoughness; // explicit — three default is 0
-    m.transmission = transmission;
-    m.thickness = thickness;
-    m.wireframe = wireframe;
-    // The 6 texture-map slots (D-04) — sRGB for colour maps, linear for data maps.
-    m.map = prep(mapTex, THREE.SRGBColorSpace);
-    m.normalMap = prep(normalTex, THREE.LinearSRGBColorSpace);
-    m.roughnessMap = prep(roughnessTex, THREE.LinearSRGBColorSpace);
-    m.metalnessMap = prep(metalnessTex, THREE.LinearSRGBColorSpace);
-    m.aoMap = prep(aoTex, THREE.LinearSRGBColorSpace);
-    m.emissiveMap = prep(emissiveTex, THREE.SRGBColorSpace);
-    m.userData.__uvClones = clones; // disposed alongside the material below
-    return m;
-  }, [
+  // The registry builds and owns the material AND its texture clones (V20 single
+  // writer, moved one level out). `get` deliberately does not count holders — a
+  // render can be discarded, and StrictMode runs every render twice, so a count
+  // taken here would over-count on both. The commit phase counts instead.
+  const { key, material } = materialRegistry.get({
     color,
     roughness,
     metalness,
@@ -2170,27 +2143,24 @@ function usePrimitiveMaterial(
     transmission,
     thickness,
     wireframe,
-    mapTex,
-    normalTex,
-    roughnessTex,
-    metalnessTex,
-    aoTex,
-    emissiveTex,
-    tilingX,
-    tilingY,
-    offsetX,
-    offsetY,
-    uvRotation,
-  ]);
-  // Single writer (V20) owns the material AND its cloned textures — dispose both
-  // on replace/unmount (Material.dispose does NOT free textures).
-  useEffect(
-    () => () => {
-      material.dispose();
-      (material.userData.__uvClones as THREE.Texture[] | undefined)?.forEach((t) => t.dispose());
+    uvTransform: { tiling: [tilingX, tilingY], offset: [offsetX, offsetY], rotation: uvRotation },
+    textures: {
+      map: mapTex,
+      normalMap: normalTex,
+      roughnessMap: roughnessTex,
+      metalnessMap: metalnessTex,
+      aoMap: aoTex,
+      emissiveMap: emissiveTex,
     },
-    [material],
-  );
+  });
+  // LAYOUT effect, not passive: it runs synchronously inside the commit, so there
+  // is no window between this mesh rendering with the shared instance and this
+  // mesh being counted as a holder of it. A passive effect leaves that window open
+  // for another mesh's release to evict the instance out from under this one.
+  useLayoutEffect(() => {
+    materialRegistry.retain(key);
+    return () => materialRegistry.release(key);
+  }, [key]);
   return material;
 }
 
@@ -2252,15 +2222,23 @@ function ModifiedMeshR({
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
   if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
+  // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
+  // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
+  // reconciler bookkeeping onto the object itself), so two meshes given one instance
+  // clobber each other's and a later swap is applied against the wrong owner. Both
+  // the material and the geometry arrive from a content-keyed registry, i.e. both are
+  // shared by design, and both had the symptom: editing a Material two objects share
+  // repainted one and froze the other (#530), and resizing one of two boxes with
+  // matching geometry resized the OTHER one (#533). As props these are plain
+  // assignments — what a shared resource needs.
   return (
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-    >
-      <primitive object={geom} attach="geometry" />
-      <primitive object={material} attach="material" />
-    </mesh>
+      material={material}
+      geometry={geom}
+    />
   );
 }
 
@@ -2405,15 +2383,23 @@ function ObjectMeshR({
   const material = usePrimitiveMaterial(inlineMat, override, shading);
   const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
+  // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
+  // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
+  // reconciler bookkeeping onto the object itself), so two meshes given one instance
+  // clobber each other's and a later swap is applied against the wrong owner. Both
+  // the material and the geometry arrive from a content-keyed registry, i.e. both are
+  // shared by design, and both had the symptom: editing a Material two objects share
+  // repainted one and froze the other (#530), and resizing one of two boxes with
+  // matching geometry resized the OTHER one (#533). As props these are plain
+  // assignments — what a shared resource needs.
   return (
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-    >
-      <primitive object={geom} attach="geometry" />
-      <primitive object={material} attach="material" />
-    </mesh>
+      material={material}
+      geometry={geom}
+    />
   );
 }
 
@@ -2560,8 +2546,8 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       // IDENTITY scale — the transform is baked into the geometry verts (H40).
       scale={[1, 1, 1]}
+      geometry={geom}
     >
-      <primitive object={geom} attach="geometry" />
       <primitive object={material} attach="material" />
     </mesh>
   );
