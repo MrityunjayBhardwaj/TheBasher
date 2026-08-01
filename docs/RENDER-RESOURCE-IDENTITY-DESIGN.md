@@ -15,6 +15,13 @@ description are written in the same present tense, so this document marks them:
   before implementing the slice that depends on it.** A disproof is itself a finding —
   that is how #530 got split out of #394 in the first place.
 
+**Update 2026-08-01 — S1's four premises are now measured, and two of them moved a slice.**
+S5 turned out to be mostly built already; S2's key substitution turned out not to be clean.
+Both are recorded in place below. One ⚠️ remains inside S1 (the memo strategy) and one in
+§3 (Houdini at source tier). Keep this honest as the document is edited: the whole reason
+for the convention is that a sentence arguing what _should_ hold reads, one slice later,
+exactly like a sentence describing what _does_.
+
 ---
 
 ## 1. The problem
@@ -171,16 +178,36 @@ start from the branch.
 `GeometryRef`. The key is minted **after the full fold** (param → socket → operator
 stack), because the fold is what decides identity.
 
-Premises to measure first:
+Premises, all four measured 2026-08-01 before writing any of this slice:
 
-- ⚠️ **UNMEASURED** — how many places produce `MeshDataValue.material`. More than one
-  means minting is N-spelled, which is the drift this repo has already paid for. Measure
-  by **searching for the constructor across every tier**; the sweep that stopped at the
-  unit tier last session let a broken e2e fixture ride into CI.
-- ⚠️ **UNMEASURED** — whether any save / export / bundle path serializes an evaluated
-  value. If it does, this is a format migration, not a type change.
-- ⚠️ **UNMEASURED** — per-evaluation hashing cost. `GeometryRef` is precedent, which is
-  encouragement, not evidence.
+- **MEASURED — one mint seam, but it feeds two value kinds.** `MeshDataValue` has exactly
+  two constructors (`BoxData.ts:58`, `SphereData.ts:66`) and both mint through the single
+  `resolveNodeMaterial` seam, so minting a ref is one edit, not N. The catch is that the
+  same seam has a **third** caller, `SetMaterialOp.ts:94`, which emits `ModifiedData` —
+  so changing its return type lands on two members of the union at once. Two further
+  producers carry a material without going through it at all: `BakedData.ts:84`
+  (`params.material` straight through) and `MaterialOverrideOp.ts:110` (a three-way
+  compose over the upstream base). Those two need an explicit answer in this slice rather
+  than being absorbed by `ModifiedDataValue.material`'s `Inline | Baked | null` union.
+  🔑 **And the sweep method mattered:** searching the type name `MeshDataValue` finds only
+  the two primitives — `SetMaterialOp` never spells `kind: 'MeshData'`, so it is invisible
+  to a type-name sweep and appears only when you search for the constructor and for
+  `resolveNodeMaterial` itself. Same shape as the miss recorded in the catalogue.
+- **MEASURED — no migration.** Nothing serializes an evaluated value. The persisted node
+  is `{ id, type, version, params, spare?, inputs, meta? }` (`src/core/dag/types.ts`
+  `NodeSchema`) and `state.outputs` is `Record<string, NodeRef>` — socket references, not
+  values. The material IR is persisted as a **param** (`openpbrMaterialSchema()`), and the
+  agent's only material read (`identify.ts:590`) is against params too. So long as the
+  param schema is untouched and the ref is minted at evaluate time, this is a type change.
+- **MEASURED, and the precedent is weaker than it looked.** `boxGeometryRef` hashes
+  nothing — it string-templates three scalars (`box|x,y,z`), so it is no evidence at all
+  about the cost of keying a full OpenPBR IR. Worse, the evaluator's existing params-hash
+  memo is a `WeakMap` keyed on **params object identity** (exact only because `ops.ts`
+  structurally shares unchanged params), and `resolveNodeMaterial` hydrates a **fresh** IR
+  on every evaluation — so that memo would never hit for a material ref. The encouraging
+  half: `materialRegistry.keyOf` already walks the whole spec on every acquire, so most of
+  this cost is a **move** rather than a new charge. ⚠️ **STILL OPEN:** a material ref needs
+  its own memo strategy; neither precedent supplies one.
 
 **Gate:** two objects linked to one Material node evaluate to the **same `ref.key`**;
 adding an override to one changes only that one's key. Unit tier — moving this claim
@@ -194,6 +221,16 @@ the ref, the cause is gone rather than the symptom.
 
 The registry becomes `resolve(ref, globalShading) → GPU material`, still refcounted
 because it owns per-material texture clones.
+
+🔴 **MEASURED 2026-08-01 — "keys on `ref.key`" is NOT a clean substitution, and the reason
+is deliberate.** `keyOf` is taken over the **resolved** `PrimitiveMaterialSpec`, in which
+each texture slot is an actual `THREE.Texture` reduced to `tex:<uuid>`. Resolution happens
+_above_ the registry, in the suspense hooks, and the module says why: keying on the
+instance means "a slot that is still loading and one that has loaded are distinct
+materials rather than the same one at two moments." A `ref.key` minted at evaluation holds
+map _refs_, not resolved textures, so it cannot express that distinction. ⇒ the registry
+key must be `ref.key` **plus** the resolved-texture / global-shading contribution; dropping
+the second half would collapse loading and loaded into one entry. Scope S2 accordingly.
 
 **Gate:** the four `p530-material-instance-sharing` tests pass **unchanged** — they assert
 product behaviour, not mechanism, so they are the regression proof.
@@ -223,13 +260,38 @@ fail on its own.
 This is the backstop for mechanisms that never route through the registries at all
 (instancing, batching).
 
-### S5 — the artist half: make authored sharing breakable — PROPOSED
+### S5 — the artist half: make authored sharing breakable — MOSTLY ALREADY BUILT
 
 The Material link row shows a user count. In Blender that number _is_ the affordance that
 gives this object its own copy.
 
-⚠️ **UNMEASURED** — whether clicking ours does anything today. Measure before scoping; it
-may be nothing, a one-liner, or a real slice.
+**MEASURED 2026-08-01 in a browser** (two separate tests, so neither could mask the other):
+
+- **The count is inert.** `material-link-users` is a bare `<span>` with no handler
+  anywhere in its subtree; clicking it leaves node count, users text and material uuid
+  untouched — measured in a world where the fixture genuinely shared, so a make-single-user
+  _would_ have had something to do.
+- **🔑 "New Material" already IS make-single-user.** `buildNewMaterialOps` seeds the new
+  node from the currently-linked material ("seed from what is on screen NOW"), disconnects
+  this consumer and links it to the copy. Observed on three linked cubes: the colour is
+  preserved rather than reset to a default, the other two stay linked, users goes 3 → 1 on
+  the copy and 2 on the original, and **editing the original afterwards moves only the two
+  that stayed linked**. That last perturbation is the discriminator — appearance cannot
+  tell a copy from a link, and neither can the uuid (see below).
+
+⇒ **S5 shrinks from "build make-single-user" to "make the number the affordance"** —
+the semantics exist and are correct; what is missing is that the count is not the button,
+and the button that does the work is labelled "New Material".
+
+🔑 **AND ONE THING THE SAME RUN SETTLED, which S1/S2 must not conflate.** After the split,
+the copy still resolves to the **same `THREE.Material` instance** as the original, because
+the registry is content-keyed and a value-seeded copy is content-identical. That is
+correct, not a leak: the **authored** share was broken while the **derived** one survived,
+which is §2's table observed live. Graph identity (which Material _node_) and render
+identity (which GPU material) are separate layers. A gate that asserts make-single-user by
+reading a uuid would therefore fail against the right behaviour — a gate that passes the
+broken build and fails the correct one, avoided here only because the premise was measured
+before the gate was written.
 
 ### S6 — #532 folds in — PROPOSED
 
