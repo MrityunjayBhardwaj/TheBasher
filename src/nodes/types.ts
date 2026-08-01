@@ -960,6 +960,21 @@ export interface MeshDataValue {
   readonly kind: 'MeshData';
   readonly geometry: GeometryRef;
   readonly material: InlineMaterialSpec | null;
+  /**
+   * #536 S1 — the material's IDENTITY, minted by evaluation after the full fold
+   * (param → socket → operator stack), null exactly when `material` is.
+   *
+   * Two objects whose materials resolve to the same thing carry the same key, so
+   * "do these draw one material?" is answered by the graph rather than rediscovered
+   * downstream by content-hashing the compiled spec (which is what `materialRegistry`
+   * does today, and what S2 replaces with this).
+   *
+   * ⚠️ DELIBERATELY A SIBLING, NOT A HANDLE WRAPPING THE IR. A `{ key, spec }` handle
+   * mirroring `GeometryRef` was tried first and measured wrong: the animation overlay
+   * addresses values by a path mirroring the PARAM path, so the extra hop would make an
+   * animated material freeze on screen. `materialKey.ts` carries the full argument.
+   */
+  readonly materialKey: string | null;
 }
 
 /**

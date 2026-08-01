@@ -22,6 +22,7 @@ import type { MeshDataValue } from './types';
 import { sphereGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
+import { materialKeyOf } from './materialKey';
 
 // Match SphereMesh's default so an Object→SphereData look is byte-identical to a
 // fused sphere.
@@ -62,6 +63,7 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
     material: 'material',
   },
   evaluate(params, inputs) {
+    const material = resolveNodeMaterial(inputs.material, params.material);
     return {
       kind: 'MeshData',
       geometry: sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments),
@@ -69,7 +71,11 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
       // nothing connected this is the param, hydrated exactly as before. The socket is
       // a FOURTH source of a material value, so it goes through the SAME hydrate seam
       // (C-1 / V10/H14) rather than around it.
-      material: resolveNodeMaterial(inputs.material, params.material),
+      material,
+      // #536 S1 — minted AFTER the fold, because the fold is what decides identity;
+      // keying the authored param instead would miss two objects that resolve to the
+      // same material by different routes (one linked, one authored identically).
+      materialKey: materialKeyOf(material),
     };
   },
 };

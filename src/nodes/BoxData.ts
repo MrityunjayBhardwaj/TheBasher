@@ -19,6 +19,7 @@ import type { MeshDataValue } from './types';
 import { boxGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
+import { materialKeyOf } from './materialKey';
 
 // Match BoxMesh's default so an Object→BoxData look is byte-identical to a box.
 
@@ -54,6 +55,7 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
     material: 'material',
   },
   evaluate(params, inputs) {
+    const material = resolveNodeMaterial(inputs.material, params.material);
     return {
       kind: 'MeshData',
       geometry: boxGeometryRef(params.size),
@@ -61,7 +63,11 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
       // nothing connected this is the param, hydrated exactly as before. The socket is
       // a FOURTH source of a material value, so it goes through the SAME hydrate seam
       // (C-1 / V10/H14) rather than around it.
-      material: resolveNodeMaterial(inputs.material, params.material),
+      material,
+      // #536 S1 — minted AFTER the fold, because the fold is what decides identity;
+      // keying the authored param instead would miss two objects that resolve to the
+      // same material by different routes (one linked, one authored identically).
+      materialKey: materialKeyOf(material),
     };
   },
 };
