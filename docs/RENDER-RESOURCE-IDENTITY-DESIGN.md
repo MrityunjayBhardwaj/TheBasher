@@ -15,12 +15,20 @@ description are written in the same present tense, so this document marks them:
   before implementing the slice that depends on it.** A disproof is itself a finding —
   that is how #530 got split out of #394 in the first place.
 
-**Update 2026-08-01 — S1's four premises are now measured, and two of them moved a slice.**
-S5 turned out to be mostly built already; S2's key substitution turned out not to be clean.
-Both are recorded in place below. One ⚠️ remains inside S1 (the memo strategy) and one in
-§3 (Houdini at source tier). Keep this honest as the document is edited: the whole reason
-for the convention is that a sentence arguing what _should_ hold reads, one slice later,
-exactly like a sentence describing what _does_.
+**Update 2026-08-01 — S0 merged, S1 built, and the convention earned its keep.** All four of
+S1's premises were measured before building: S5 turned out to be mostly built already, and
+S2's key substitution turned out not to be clean. Then S1's own headline — `MaterialRef`,
+"mirroring `GeometryRef`" — was measured wrong DURING the build and replaced with a sibling
+key; the argument is kept in §5 rather than edited away, because the analogy that produced
+it is the reusable mistake. The memo question is closed too (measured: no memo).
+
+Two ⚠️ remain, both untouched by this round: §3 (Houdini at source tier) and S3 (whether a
+syntactic sweep survives refactors).
+
+Keep this honest as the document is edited. The whole reason for the convention is that a
+sentence arguing what _should_ hold reads, one slice later, exactly like a sentence
+describing what _does_ — and "mirroring `GeometryRef`" is now the clearest example in the
+file, because the mirror was true about the shape and false about the constraint.
 
 ---
 
@@ -172,11 +180,50 @@ _these two are the same thing_; it cannot stop a consumer writing to it afterwar
 Fixes #530 and #533. Changes no architecture. Nothing below depends on it merging; S1 can
 start from the branch.
 
-### S1 — `MaterialRef`, minted by the evaluator — PROPOSED
+### S1 — identity minted by the evaluator — ✅ BUILT 2026-08-01 (`cb89909`), and NOT as planned
 
-`material: MaterialRef | null`, where `MaterialRef = { key, spec }`, mirroring
-`GeometryRef`. The key is minted **after the full fold** (param → socket → operator
-stack), because the fold is what decides identity.
+**Shipped:** `materialKey: string | null` as a SIBLING of `material`, minted after the full
+fold (param → socket → operator stack), because the fold is what decides identity.
+
+🔴 **The planned shape — `material: MaterialRef | null` where `MaterialRef = { key, spec }`,
+mirroring `GeometryRef` — was built first and MEASURED WRONG.** It is recorded here rather
+than quietly replaced, because the reason generalises.
+
+**What broke.** The animation overlay addresses an evaluated value by a path that MIRRORS
+the param path (`channelPathForBand`). Wrapping the IR in a handle inserts a `.spec` hop
+that the param path does not have, so a channel authored on `material.base.color` lands at
+`data.material.base.color` while the renderer reads `data.material.spec.base.color`: the
+colour animates in the inspector and **freezes on screen**, with typecheck and the whole
+unit suite green. The conformance matrix's overlay road caught it — the road exists for
+exactly this failure, previously seen on the lights band.
+
+**And the obvious repair failed too.** Adding the hop inside `channelPathForBand` fixed box
+and sphere and immediately broke `BakedData`: that rule keys on the **band**, while the
+handle is per-**kind** — `MeshData` would carry one, `BakedData` and `ModifiedData` would
+still hold bare specs. One band would no longer have one shape.
+
+🔑 **Why `GeometryRef` gets away with it and material cannot.** Nothing reads a `size` off
+the evaluated value; geometry is a recipe the registry rebuilds. Material is read AND
+animated leaf by leaf. Same-looking problem, genuinely different constraint — so "mirror
+`GeometryRef`" was the wrong instinct, and the mirror is the part of the original plan that
+did not survive contact. (That geometry ALSO has no working overlay path for `size` is a
+separate, pre-existing, now-OBSERVED defect → **#537**.)
+
+**What it cost, measured both ways:** the handle needed ~40 edits across 17 files and still
+broke the overlay road; the sibling key touched **3 files with zero test changes**. The
+invariant's first clause — identity minted by evaluation, never rediscovered downstream —
+is satisfied either way. Only the carrier changed.
+
+**One correction the gate forced on its own author:** the first key walked `name` too, which
+would have separated two identical-LOOKING materials by their labels — a silently lost
+dedup that S2 would have inherited, since the registry's compiled spec has no `name` at all.
+`name` is now excluded, pinned in both directions.
+
+**Gate:** `src/nodes/materialKey.test.ts`, 8 tests, falsified three ways (mint before the
+fold → only the 3 fold-dependent tests red; a constant key → 5, including every
+"not a constant" pairing; keying on `name` → exactly the 2 name tests). Unit tier, which was
+most of the point: sharing previously had exactly one witness, a `THREE.Material` uuid read
+off a live scene.
 
 Premises, all four measured 2026-08-01 before writing any of this slice:
 
@@ -213,23 +260,25 @@ Premises, all four measured 2026-08-01 before writing any of this slice:
 adding an override to one changes only that one's key. Unit tier — moving this claim
 below the browser is most of the point.
 
-### S2 — the registry keys on `ref.key` — PROPOSED
+### S2 — the registry keys on the evaluator's key — PROPOSED
 
 Deletes the generic key walk and the "spec is the builder's only input" scaffolding from
 #530. That machinery exists only because identity was being rediscovered downstream; with
 the ref, the cause is gone rather than the symptom.
 
-The registry becomes `resolve(ref, globalShading) → GPU material`, still refcounted
-because it owns per-material texture clones.
+The registry becomes `resolve(materialKey, spec, globalShading) → GPU material`, still
+refcounted because it owns per-material texture clones. (S1 shipped a sibling `materialKey`
+rather than a `{key, spec}` handle — see above — so the key arrives beside the spec rather
+than wrapping it. Nothing else about this slice changes.)
 
-🔴 **MEASURED 2026-08-01 — "keys on `ref.key`" is NOT a clean substitution, and the reason
+🔴 **MEASURED 2026-08-01 — keying the registry on the evaluator's key is NOT a clean substitution, and the reason
 is deliberate.** `keyOf` is taken over the **resolved** `PrimitiveMaterialSpec`, in which
 each texture slot is an actual `THREE.Texture` reduced to `tex:<uuid>`. Resolution happens
 _above_ the registry, in the suspense hooks, and the module says why: keying on the
 instance means "a slot that is still loading and one that has loaded are distinct
 materials rather than the same one at two moments." A `ref.key` minted at evaluation holds
 map _refs_, not resolved textures, so it cannot express that distinction. ⇒ the registry
-key must be `ref.key` **plus** the resolved-texture / global-shading contribution; dropping
+key must be `materialKey` **plus** the resolved-texture / global-shading contribution; dropping
 the second half would collapse loading and loaded into one entry. Scope S2 accordingly.
 
 **Gate:** the four `p530-material-instance-sharing` tests pass **unchanged** — they assert
@@ -322,7 +371,12 @@ on the native road is one place. Cheapest after S1, not before.
 
 ## 7. Sequencing
 
-**S0 → S1 (measure first) → S2 → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
+**S0 ✅ → S1 ✅ → S2 → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
+
+S0 merged (`main` == `e6aaf52`, canary green as the combination). S1 built, and its plan
+sentence — "mirroring `GeometryRef`" — is the fifth instance of the failure this document's
+reading convention exists for: an analogy that argued a design was quoted as though it
+described a constraint. Measuring it cost one build and saved the slice.
 
 Every ⚠️ above is the shape that produced four wrong gates in #394: a plan sentence that
 argues, read later as a sentence that describes. Measure each before building the slice
