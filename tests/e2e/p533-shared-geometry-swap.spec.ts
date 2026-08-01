@@ -144,20 +144,18 @@ test('#533 — resizing one of two boxes that share a geometry resizes THAT box,
 
   await page.evaluate(
     (a) => {
-      (window as unknown as UiWindow).__basher_dag
-        .getState()
-        .dispatchAtomic(
-          [
-            {
-              type: 'setParam',
-              nodeId: a.d1,
-              paramPath: 'size',
-              value: [a.next, a.start, a.start],
-            },
-          ],
-          'user',
-          '#533 resize one sharer',
-        );
+      (window as unknown as UiWindow).__basher_dag.getState().dispatchAtomic(
+        [
+          {
+            type: 'setParam',
+            nodeId: a.d1,
+            paramPath: 'size',
+            value: [a.next, a.start, a.start],
+          },
+        ],
+        'user',
+        '#533 resize one sharer',
+      );
     },
     { d1: D1, next: RESIZED, start: START },
   );
