@@ -45,8 +45,15 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { SPLIT_KIND_NAMES } from './splitKinds';
-import { isCovered, KIND_MARKERS, ROAD_IDS, SPLIT_ROADS, type RoadSpec } from './splitRoads';
+import { SPLIT_KIND_NAMES, type SplitKindName } from './splitKinds';
+import {
+  isCovered,
+  KIND_MARKERS,
+  ROAD_IDS,
+  SPLIT_ROADS,
+  type RoadCell,
+  type RoadSpec,
+} from './splitRoads';
 
 const REPO_ROOT = join(__dirname, '..', '..');
 
@@ -64,16 +71,92 @@ const delegatedRoads = (): RoadSpec[] =>
 const derivedRoads = (): RoadSpec[] =>
   ROAD_IDS.map((id) => SPLIT_ROADS[id]).filter((r) => r.derivation === 'derived');
 
-describe('road-coverage gate (#491)', () => {
-  it('every delegated road answers for every kind (totality)', () => {
-    const missing: string[] = [];
-    for (const road of delegatedRoads()) {
-      for (const kind of SPLIT_KIND_NAMES) {
-        if (!road.coverage || !(kind in road.coverage)) missing.push(`${road.id}/${kind}`);
+// THE CHECKS ARE PURE FUNCTIONS OVER A ROAD LIST, and that is the point (#506).
+//
+// Every per-cell check below iterates the DELEGATED roads. That means all of them go
+// vacuous together the moment that list is empty — and emptying it is not a hypothetical,
+// it is what finishing this work looks like: R2 is the last delegated road. The old
+// arrangement tried to cover that with three assertions on live debt
+// (`delegatedRoads().length > 0`, `gaps.length > 0`, `covered.length > 0`), all of which
+// went red for the work that pays the debt off, and all of which only bit in that order so
+// fixing one revealed the next.
+//
+// Taking a road list as a PARAMETER lets the same checker run against a synthetic table
+// whose cells are deliberately broken. That answers "is this check exercised?" from a
+// fixture instead of from however much real debt happens to exist — so the answer stays
+// true when the debt reaches zero, which is the only state we are actually aiming for.
+function checkTotality(roads: RoadSpec[]): string[] {
+  const bad: string[] = [];
+  for (const road of roads)
+    for (const kind of SPLIT_KIND_NAMES)
+      if (!road.coverage || !(kind in road.coverage)) bad.push(`${road.id}/${kind}`);
+  return bad;
+}
+
+function checkNamedSpecs(roads: RoadSpec[]): string[] {
+  const bad: string[] = [];
+  for (const road of roads) {
+    for (const kind of SPLIT_KIND_NAMES) {
+      const cell = road.coverage![kind];
+      if (!isCovered(cell)) continue;
+      const src = readRepoFile(cell.by);
+      if (src === null) {
+        bad.push(`${road.id}/${kind}: named spec ${cell.by} does not exist`);
+        continue;
+      }
+      const markers = KIND_MARKERS[kind];
+      if (!markers.some((m) => src.includes(m))) {
+        bad.push(
+          `${road.id}/${kind}: ${cell.by} is named as covering ${kind}, but contains none ` +
+            `of ${markers.join(', ')} — it does not build this kind at all`,
+        );
       }
     }
+  }
+  return bad;
+}
+
+function checkGapMetadata(roads: RoadSpec[]): string[] {
+  const bad: string[] = [];
+  for (const road of roads) {
+    for (const kind of SPLIT_KIND_NAMES) {
+      const cell = road.coverage![kind];
+      if (isCovered(cell)) continue;
+      if (!cell.why.trim()) bad.push(`${road.id}/${kind}: gap with no reason`);
+      if (!/^#\d+$/.test(cell.issue)) bad.push(`${road.id}/${kind}: gap with no issue number`);
+    }
+  }
+  return bad;
+}
+
+function checkCandidates(roads: RoadSpec[]): string[] {
+  const bad: string[] = [];
+  for (const road of roads) {
+    for (const kind of SPLIT_KIND_NAMES) {
+      const cell = road.coverage![kind];
+      if (isCovered(cell) || !cell.candidates) continue;
+      for (const cand of cell.candidates) {
+        const src = readRepoFile(cand);
+        if (src === null) {
+          bad.push(`${road.id}/${kind}: candidate ${cand} does not exist`);
+          continue;
+        }
+        if (!KIND_MARKERS[kind].some((m) => src.includes(m))) {
+          bad.push(
+            `${road.id}/${kind}: candidate ${cand} does not build ${kind} — it would send ` +
+              `whoever closes this gap to the wrong file`,
+          );
+        }
+      }
+    }
+  }
+  return bad;
+}
+
+describe('road-coverage gate (#491)', () => {
+  it('every delegated road answers for every kind (totality)', () => {
     expect(
-      missing,
+      checkTotality(delegatedRoads()),
       'a delegated road has no answer for a kind, so that kind ships with the road unswept ' +
         'and nothing reports it — the exact failure the matrix exists to end',
     ).toEqual([]);
@@ -96,66 +179,20 @@ describe('road-coverage gate (#491)', () => {
   });
 
   it('every NAMED spec exists and demonstrably touches the kind it is named for', () => {
-    const bad: string[] = [];
-    for (const road of delegatedRoads()) {
-      for (const kind of SPLIT_KIND_NAMES) {
-        const cell = road.coverage![kind];
-        if (!isCovered(cell)) continue;
-        const src = readRepoFile(cell.by);
-        if (src === null) {
-          bad.push(`${road.id}/${kind}: named spec ${cell.by} does not exist`);
-          continue;
-        }
-        const markers = KIND_MARKERS[kind];
-        if (!markers.some((m) => src.includes(m))) {
-          bad.push(
-            `${road.id}/${kind}: ${cell.by} is named as covering ${kind}, but contains none ` +
-              `of ${markers.join(', ')} — it does not build this kind at all`,
-          );
-        }
-      }
-    }
+    const bad = checkNamedSpecs(delegatedRoads());
     expect(bad, bad.join('\n')).toEqual([]);
   });
 
   it('every gap carries a reason and an issue', () => {
-    const bad: string[] = [];
-    for (const road of delegatedRoads()) {
-      for (const kind of SPLIT_KIND_NAMES) {
-        const cell = road.coverage![kind];
-        if (isCovered(cell)) continue;
-        if (!cell.why.trim()) bad.push(`${road.id}/${kind}: gap with no reason`);
-        if (!/^#\d+$/.test(cell.issue)) bad.push(`${road.id}/${kind}: gap with no issue number`);
-      }
-    }
     expect(
-      bad,
+      checkGapMetadata(delegatedRoads()),
       'a gap with no reason is indistinguishable from an oversight, and a gap with no issue ' +
         'is one nobody will close',
     ).toEqual([]);
   });
 
   it("every gap's candidate specs exist and touch the kind (a stale lead is worse than none)", () => {
-    const bad: string[] = [];
-    for (const road of delegatedRoads()) {
-      for (const kind of SPLIT_KIND_NAMES) {
-        const cell = road.coverage![kind];
-        if (isCovered(cell) || !cell.candidates) continue;
-        for (const cand of cell.candidates) {
-          const src = readRepoFile(cand);
-          if (src === null) {
-            bad.push(`${road.id}/${kind}: candidate ${cand} does not exist`);
-            continue;
-          }
-          if (!KIND_MARKERS[kind].some((m) => src.includes(m))) {
-            bad.push(
-              `${road.id}/${kind}: candidate ${cand} does not build ${kind} — it would send ` +
-                `whoever closes this gap to the wrong file`,
-            );
-          }
-        }
-      }
-    }
+    const bad = checkCandidates(delegatedRoads());
     expect(bad, bad.join('\n')).toEqual([]);
   });
 
@@ -190,25 +227,92 @@ describe('road-coverage gate (#491)', () => {
     expect(bad, bad.join('\n')).toEqual([]);
   });
 
-  it('the table covers all ten roads and both derivations are represented (guard the guard)', () => {
-    // Without this, an empty or all-derived table would pass every check above by having
-    // nothing to check — the same zero-rows-reads-as-covered failure the kind axis guards
-    // with its own length assertion.
+  it('the table covers all ten roads (guard the guard)', () => {
+    // Table integrity, and nothing about how much debt exists. Combined with the
+    // `delegated + derived === ROAD_IDS.length` identity below, these two pin that every
+    // road is present and sits on exactly one side — which is the whole of what this test
+    // used to be reaching for.
+    //
+    // WHAT WAS REMOVED AND WHY (#506). This test also asserted `delegatedRoads().length > 0`,
+    // `gaps.length > 0` and `covered.length > 0`. All three were pinned to the CURRENT SHAPE
+    // OF THE DEBT rather than to a property, so all three went red for the work that pays the
+    // debt off — R2 is the last delegated road, and promoting it empties every one of those
+    // three quantities at once. They also failed in sequence rather than together, so fixing
+    // the known one would simply have revealed the next.
+    //
+    // `derivedRoads().length > 0` is kept: it only ever grows, so it is a floor on progress
+    // rather than a floor on debt.
     expect(ROAD_IDS.length).toBe(10);
-    expect(delegatedRoads().length).toBeGreaterThan(0);
     expect(derivedRoads().length).toBeGreaterThan(0);
-    // And the gap branch is actually exercised, so the checks above are not vacuous.
-    const gaps = delegatedRoads().flatMap((r) =>
-      SPLIT_KIND_NAMES.map((k) => r.coverage![k]).filter((c) => !isCovered(c)),
-    );
-    const covered = delegatedRoads().flatMap((r) =>
-      SPLIT_KIND_NAMES.map((k) => r.coverage![k]).filter(isCovered),
-    );
-    expect(gaps.length, 'no gaps at all would mean the gap checks never ran').toBeGreaterThan(0);
-    expect(
-      covered.length,
-      'no covered cells would mean the named-spec check never ran',
-    ).toBeGreaterThan(0);
+  });
+
+  it('each per-cell check REJECTS a broken cell (vacuity guarded by a synthetic road)', () => {
+    // The question the three deleted assertions were trying to answer — "are these checks
+    // actually exercised, or are they looping over nothing?" — asked of a FIXTURE instead of
+    // of live debt. Every checker is run against a road built to fail it, so the answer stays
+    // true on the day the real table has no gaps left. That is the state we are aiming for,
+    // and the old guard treated it as a regression.
+    //
+    // The fixtures are TOTAL apart from the one cell under test. That is deliberate: only
+    // `checkTotality` is a backstop for an incomplete table (the type normally guarantees
+    // totality), so the other checkers are entitled to assume every kind is present. Making
+    // them defensive to suit a fixture would weaken the production check to buy a test.
+    //
+    // `id` is only ever interpolated into a message, so borrowing a real RoadId is harmless.
+    const wellFormedGap = (): RoadCell => ({ gap: true, why: 'declared', issue: '#500' });
+    const totalTable = (): Record<SplitKindName, RoadCell> =>
+      Object.fromEntries(SPLIT_KIND_NAMES.map((k) => [k, wellFormedGap()])) as Record<
+        SplitKindName,
+        RoadCell
+      >;
+    const synthetic = (override: Partial<Record<SplitKindName, RoadCell>> = {}): RoadSpec => ({
+      id: 'R1',
+      title: 'synthetic road — fixture only, never registered in SPLIT_ROADS',
+      runsIn: 'src/test-utils/splitRoads.gate.test.ts',
+      derivation: 'delegated',
+      coverage: { ...totalTable(), ...override },
+    });
+
+    // 1. TOTALITY catches missing kinds. An empty table is missing all six.
+    const empty: RoadSpec = { ...synthetic(), coverage: {} as Record<SplitKindName, RoadCell> };
+    expect(checkTotality([empty])).toHaveLength(SPLIT_KIND_NAMES.length);
+
+    // 2. A NAMED SPEC THAT DOES NOT EXIST is caught.
+    const ghost = checkNamedSpecs([synthetic({ box: { by: 'tests/e2e/does-not-exist.spec.ts' } })]);
+    expect(ghost.join('\n')).toContain('does not exist');
+
+    // 3. A NAMED SPEC THAT EXISTS BUT NEVER BUILDS THE KIND is caught. This is the one that
+    //    matters — it is the exact false claim the whole module was written to end, and a
+    //    check that merely confirmed the file exists would pass it. This very file exists and
+    //    contains no box marker.
+    const wrongFile = checkNamedSpecs([
+      synthetic({ box: { by: 'src/test-utils/splitRoads.gate.test.ts' } }),
+    ]);
+    expect(wrongFile.join('\n')).toContain('does not build this kind at all');
+
+    // 4. GAP METADATA catches an empty reason and a malformed issue — two complaints.
+    const badGap = checkGapMetadata([
+      synthetic({ box: { gap: true, why: '   ', issue: 'not-an-issue' } }),
+    ]);
+    expect(badGap).toHaveLength(2);
+    expect(badGap.join('\n')).toContain('no reason');
+    expect(badGap.join('\n')).toContain('no issue number');
+
+    // 5. A STALE CANDIDATE LEAD is caught.
+    const badCand = checkCandidates([
+      synthetic({
+        box: { gap: true, why: 'why', issue: '#1', candidates: ['tests/e2e/nope.spec.ts'] },
+      }),
+    ]);
+    expect(badCand.join('\n')).toContain('does not exist');
+
+    // And the complement: a WELL-FORMED gap draws no complaint, so the checks above are
+    // discriminating rather than merely noisy.
+    const goodGap = synthetic();
+    expect(checkTotality([goodGap])).toEqual([]);
+    expect(checkGapMetadata([goodGap])).toEqual([]);
+    expect(checkCandidates([goodGap])).toEqual([]);
+    expect(checkNamedSpecs([goodGap])).toEqual([]);
   });
 
   it('reports the coverage it is describing, so the number is visible in CI', () => {
