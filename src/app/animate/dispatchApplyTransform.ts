@@ -9,7 +9,7 @@
 //
 // Lifecycle (K15 extension, ORDERED):
 //   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
-//   2. clone+matrix(sync) — geometryRegistry.get(ref) returns a SHARED instance;
+//   2. clone+matrix(sync) — getForRead(ref) returns a SHARED instance;
 //      `.clone()` BEFORE applyMatrix4 (H45 — mutating the cache corrupts every
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
 //   3. OPFS write(async, AWAITED) — writeBakedGeometry. The await guarantees the
@@ -39,7 +39,7 @@ import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
 import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import * as geometryRegistry from '../geometryRegistry';
+import { getForRead } from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
@@ -360,7 +360,7 @@ export async function dispatchApplyTransform(
   const matrix = composeMaskedMatrix(mesh.transform, mask);
 
   // 2 — clone the SHARED registry geometry before baking (H45).
-  const src = geometryRegistry.get(mesh.geometry);
+  const src = getForRead(mesh.geometry);
   if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
   const baked = src.clone();
   baked.applyMatrix4(matrix);

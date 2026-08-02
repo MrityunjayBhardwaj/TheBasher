@@ -13,7 +13,7 @@ import { resolveWorldTransform } from './resolveWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { unionUVBounds } from './uvIslands';
-import * as geometryRegistry from './geometryRegistry';
+import { getForRead } from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -667,7 +667,7 @@ export function boot(): Promise<void> {
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
         if (!mesh || mesh.geometry.kind !== 'baked') return null;
-        const geom = geometryRegistry.get(mesh.geometry);
+        const geom = getForRead(mesh.geometry);
         if (!geom) return null; // registry miss — geometry not yet primed
         geom.computeBoundingBox();
         const box = geom.boundingBox;
@@ -687,7 +687,7 @@ export function boot(): Promise<void> {
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
         if (!mesh) return null;
-        const geom = geometryRegistry.get(mesh.geometry);
+        const geom = getForRead(mesh.geometry);
         if (!geom) return null; // registry miss (gltf/baked source) — not buildable here
         const pos = geom.getAttribute('position');
         return pos ? pos.count : null;

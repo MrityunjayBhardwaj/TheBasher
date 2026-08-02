@@ -29,7 +29,7 @@ import type { Mesh, Object3D } from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Node } from '../core/dag/types';
-import { get as getGeometry } from './geometryRegistry';
+import { getForRead as getGeometry } from './geometryRegistry';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveWorldTransform } from './resolveWorldTransform';

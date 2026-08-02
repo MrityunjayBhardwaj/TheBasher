@@ -49,7 +49,7 @@ import { modifierDataSource } from './modifierGeometry';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
-import { get as getRegistryGeometry } from './geometryRegistry';
+import { getForRead as getRegistryGeometry } from './geometryRegistry';
 import { extractUVIslands } from './uvIslands';
 import type { EvaluatedUVs } from '../nodes/types';
 

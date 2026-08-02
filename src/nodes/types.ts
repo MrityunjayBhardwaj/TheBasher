@@ -417,7 +417,7 @@ export type GeometryDescriptor =
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
   // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry
   // operator over a `source` handle. The registry builds the source on demand
-  // (geometryRegistry.get(source)) then applies the op. `array` replicates the
+  // (geometryRegistry.getForRead(source)) then applies the op. `array` replicates the
   // source `count` times, each translated by `i*offset` (local space), and merges.
   // Sync-buildable when the source is sync-buildable (box/sphere) — a glTF/baked
   // source is a follow-up (its geometry is async, outside the sync registry).
@@ -544,7 +544,7 @@ export interface BakedMeshValue {
  * Like {@link BakedMeshValue} it carries a `geometry: GeometryRef` handle — but
  * the handle is REBUILDABLE from params (the registry builds it SYNCHRONOUSLY by
  * recursing into the source), not an authoritative OPFS baked buffer. The
- * renderer (ModifiedMeshR) reads it via `geometryRegistry.get` (sync, no
+ * renderer (ModifiedMeshR) reads it via `geometryRegistry.getForRead` (sync, no
  * suspense). A `muted` modifier passes its source through unchanged at
  * `evaluate`, so there is no muted ModifiedMeshValue — mute is identity.
  */
@@ -1074,7 +1074,7 @@ export interface CameraDataValue {
  * difference was measured, not reasoned: patching a `MeshData` producer to emit
  * baked payloads renders a baked material as the grey `#808080` fallback (ObjectR
  * narrows with `'base' in mat`, and a baked spec has no `base` key) and renders a
- * baked geometry as NOTHING AT ALL (`geometryRegistry.get` returns null for baked
+ * baked geometry as NOTHING AT ALL (`geometryRegistry.getForRead` returns null for baked
  * refs by design, and the renderer returns null on a miss). Both silent; typecheck
  * clean throughout. The axis underneath is RECIPE vs BUFFER — `BoxData`/`SphereData`
  * are rebuildable-from-params and resolve SYNCHRONOUSLY through the registry, while a

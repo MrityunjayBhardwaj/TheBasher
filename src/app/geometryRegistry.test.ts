@@ -1,7 +1,7 @@
 import { BoxGeometry } from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
-import { clear, get, prime, size } from './geometryRegistry';
+import { clear, getForAttach, getForRead, prime, size } from './geometryRegistry';
 
 afterEach(() => clear());
 
@@ -20,16 +20,27 @@ const bakedRef = (hash: string, vertexCount: number): GeometryRef => ({
 describe('geometryRegistry', () => {
   it('builds a box geometry on miss and caches it (same key → same instance)', () => {
     const ref = boxRef('box|1,1,1', [1, 1, 1]);
-    const a = get(ref);
-    const b = get(boxRef('box|1,1,1', [1, 1, 1]));
+    const a = getForRead(ref);
+    const b = getForRead(boxRef('box|1,1,1', [1, 1, 1]));
     expect(a).not.toBeNull();
     expect(a).toBe(b); // cache hit — identical instance, no churn
     expect(size()).toBe(1);
   });
 
+  // #536 S3 — the two doors are the SAME function today, and that is a declared limit
+  // rather than an accident: geometry has no refcount, so `getForAttach` has no extra
+  // bookkeeping to do. This pins it, so the day someone gives one door different
+  // behaviour (a clone, a refcount, a dispose) it is a decision with a red test attached
+  // rather than a silent divergence between two names that used to agree.
+  it('both doors resolve one ref to the SAME shared instance', () => {
+    const ref = boxRef('box|1,1,1', [1, 1, 1]);
+    expect(getForAttach(ref)).toBe(getForRead(ref));
+    expect(size()).toBe(1); // one ref, one entry — neither door cloned
+  });
+
   it('keys distinct params to distinct instances (no false sharing)', () => {
-    const a = get(boxRef('box|1,1,1', [1, 1, 1]));
-    const b = get(boxRef('box|2,2,2', [2, 2, 2]));
+    const a = getForRead(boxRef('box|1,1,1', [1, 1, 1]));
+    const b = getForRead(boxRef('box|2,2,2', [2, 2, 2]));
     expect(a).not.toBe(b);
     expect(size()).toBe(2);
   });
@@ -40,9 +51,9 @@ describe('geometryRegistry', () => {
       kind: 'sphere',
       descriptor: { kind: 'sphere', radius: 0.5, widthSegments: 24, heightSegments: 16 },
     };
-    const g = get(ref);
+    const g = getForRead(ref);
     expect(g).not.toBeNull();
-    expect(g).toBe(get(ref)); // cached
+    expect(g).toBe(getForRead(ref)); // cached
   });
 
   it('returns null for a gltf ref (registry does not own loaded glTF geometry)', () => {
@@ -51,12 +62,12 @@ describe('geometryRegistry', () => {
       kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'asset-1', childName: 'Mesh0' },
     };
-    expect(get(ref)).toBeNull();
+    expect(getForRead(ref)).toBeNull();
     expect(size()).toBe(0); // not cached
   });
 
   it('clear() empties the cache', () => {
-    get(boxRef('box|1,1,1', [1, 1, 1]));
+    getForRead(boxRef('box|1,1,1', [1, 1, 1]));
     expect(size()).toBe(1);
     clear();
     expect(size()).toBe(0);
@@ -64,16 +75,16 @@ describe('geometryRegistry', () => {
 
   it('returns null for an UNPRIMED baked ref (miss → caller suspends + loads from OPFS)', () => {
     const ref = bakedRef('abc123', 8);
-    expect(get(ref)).toBeNull();
+    expect(getForRead(ref)).toBeNull();
     expect(size()).toBe(0); // no sync build attempted for baked
   });
 
-  it('prime() then get() is a sync cache hit returning the same instance', () => {
+  it('prime() then getForRead() is a sync cache hit returning the same instance', () => {
     const ref = bakedRef('abc123', 8);
     const geom = new BoxGeometry(1, 1, 1);
     const primed = prime(ref, geom);
     expect(primed).toBe(geom);
-    expect(get(ref)).toBe(geom); // sync hit after prime
+    expect(getForRead(ref)).toBe(geom); // sync hit after prime
     expect(size()).toBe(1);
   });
 
@@ -84,7 +95,7 @@ describe('geometryRegistry', () => {
     prime(ref, first);
     const kept = prime(ref, second); // second instance dropped, first kept
     expect(kept).toBe(first);
-    expect(get(ref)).toBe(first);
+    expect(getForRead(ref)).toBe(first);
     expect(size()).toBe(1);
   });
 
@@ -101,16 +112,16 @@ describe('geometryRegistry', () => {
 
   it('builds an array modifier: N copies of the source merged (count× the vertices)', () => {
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const one = get(src)!;
+    const one = getForRead(src)!;
     const oneCount = one.getAttribute('position').count; // BoxGeometry → 24
-    const three = get(arrayRef(src, 3, [2, 0, 0]))!;
+    const three = getForRead(arrayRef(src, 3, [2, 0, 0]))!;
     expect(three).not.toBeNull();
     expect(three.getAttribute('position').count).toBe(oneCount * 3);
   });
 
   it('array copies are TRANSLATED by i*offset (the merged bounds span the run)', () => {
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const arr = get(arrayRef(src, 3, [5, 0, 0]))!;
+    const arr = getForRead(arrayRef(src, 3, [5, 0, 0]))!;
     arr.computeBoundingBox();
     const bb = arr.boundingBox!;
     // copy0 spans x∈[-0.5,0.5]; copy2 sits at +10 → spans [9.5,10.5]. Width ≈ 11.
@@ -120,9 +131,9 @@ describe('geometryRegistry', () => {
 
   it('array build caches by key (same params → same instance) and does not mutate the source', () => {
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const sourceInstance = get(src)!;
-    const a = get(arrayRef(src, 2, [2, 0, 0]));
-    const b = get(arrayRef(src, 2, [2, 0, 0]));
+    const sourceInstance = getForRead(src)!;
+    const a = getForRead(arrayRef(src, 2, [2, 0, 0]));
+    const b = getForRead(arrayRef(src, 2, [2, 0, 0]));
     expect(a).toBe(b); // cached
     // the cached source is still the unmodified single box (clones were translated)
     sourceInstance.computeBoundingBox();
@@ -135,7 +146,7 @@ describe('geometryRegistry', () => {
       kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
     };
-    expect(get(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
+    expect(getForRead(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
   });
 
   // SOP / modifier (epic #201, #209) — the recursive `mirror` descriptor build.
@@ -147,8 +158,8 @@ describe('geometryRegistry', () => {
 
   it('builds a mirror modifier: source + reflection merged (2× the vertices)', () => {
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const oneCount = get(src)!.getAttribute('position').count; // BoxGeometry → 24
-    const mir = get(mirrorRef(src, 'x'))!;
+    const oneCount = getForRead(src)!.getAttribute('position').count; // BoxGeometry → 24
+    const mir = getForRead(mirrorRef(src, 'x'))!;
     expect(mir).not.toBeNull();
     expect(mir.getAttribute('position').count).toBe(oneCount * 2);
   });
@@ -157,7 +168,7 @@ describe('geometryRegistry', () => {
     // A unit box (x∈[-0.5,0.5]) mirrored across x=2 → reflected half spans
     // [2·2−0.5, 2·2+0.5] = [3.5,4.5]. The merged bounds span the original + reflection.
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const mir = get(mirrorRef(src, 'x', 2))!;
+    const mir = getForRead(mirrorRef(src, 'x', 2))!;
     mir.computeBoundingBox();
     expect(mir.boundingBox!.min.x).toBeCloseTo(-0.5, 5); // original half
     expect(mir.boundingBox!.max.x).toBeCloseTo(4.5, 5); // reflected half across x=2
@@ -170,7 +181,7 @@ describe('geometryRegistry', () => {
     // way as the stored vertex normal (dot > 0). A box face's 3 vertex normals all
     // equal the face normal, so a correct mirror gives dot ≈ +1 for ALL triangles.
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    const mir = get(mirrorRef(src, 'x'))!;
+    const mir = getForRead(mirrorRef(src, 'x'))!;
     const pos = mir.getAttribute('position');
     const nrm = mir.getAttribute('normal');
     const index = mir.getIndex()!;
@@ -196,9 +207,9 @@ describe('geometryRegistry', () => {
 
   it('mirror caches by key (same params → same instance) and does not mutate the source', () => {
     const src = boxRef('box|2,1,1', [2, 1, 1]);
-    const sourceInstance = get(src)!;
-    const a = get(mirrorRef(src, 'x'));
-    const b = get(mirrorRef(src, 'x'));
+    const sourceInstance = getForRead(src)!;
+    const a = getForRead(mirrorRef(src, 'x'));
+    const b = getForRead(mirrorRef(src, 'x'));
     expect(a).toBe(b); // cached
     // the cached source is still the unmodified single box (clones were reflected)
     sourceInstance.computeBoundingBox();
@@ -207,7 +218,7 @@ describe('geometryRegistry', () => {
 
   it('distinct mirror axes key to distinct instances (no false sharing)', () => {
     const src = boxRef('box|1,1,1', [1, 1, 1]);
-    expect(get(mirrorRef(src, 'x'))).not.toBe(get(mirrorRef(src, 'y')));
+    expect(getForRead(mirrorRef(src, 'x'))).not.toBe(getForRead(mirrorRef(src, 'y')));
   });
 
   it('returns null for a mirror over a non-sync-buildable source (gltf) — v1 follow-up', () => {
@@ -216,6 +227,6 @@ describe('geometryRegistry', () => {
       kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
     };
-    expect(get(mirrorRef(gltfSrc, 'x'))).toBeNull();
+    expect(getForRead(mirrorRef(gltfSrc, 'x'))).toBeNull();
   });
 });

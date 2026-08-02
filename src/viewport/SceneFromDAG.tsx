@@ -43,7 +43,7 @@ import {
 } from '../app/dataLaneOverlay';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
-import * as geometryRegistry from '../app/geometryRegistry';
+import { getForAttach } from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
@@ -2076,7 +2076,7 @@ function ConstrainedR({
 
 // ModifiedMeshR (epic #201 / #209) — the renderer for a geometry MODIFIER's
 // output (the SOP half of V58). Reads the modified geometry from the registry
-// SYNCHRONOUSLY (geometryRegistry.get recursively builds the `array` descriptor
+// SYNCHRONOUSLY (getForAttach recursively builds the `array` descriptor
 // from its source) — NO suspense, unlike BakedMeshR (a modifier's geometry is
 // rebuildable from params, not an async OPFS handle). The material is the source's
 // inline OpenPBR IR (V53), built through the SAME usePrimitiveMaterial as Box/
@@ -2104,7 +2104,7 @@ function ModifiedMeshR({
   const mat = value.material;
   const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
   const material = usePrimitiveMaterial(inlineMat, override, shading);
-  const geom = geometryRegistry.get(value.geometry);
+  const geom = getForAttach(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
   // ultimate source is a BAKED mesh whose OPFS bytes aren't primed (ArrayModifier
@@ -2152,7 +2152,7 @@ function ModifiedMeshR({
 // #361 — ObjectR: renders the object↔data split's Object half (Phase 1).
 // An Object OWNS the TRS and points at data; it draws `data.geometry` (a shared
 // GeometryRef handle) at its own transform with the data's inline material — the
-// SAME `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so
+// SAME `getForAttach` + `usePrimitiveMaterial` path ModifiedMeshR uses, so
 // an `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band,
 // no parallel render logic). `data: null` = an Empty → renders nothing. Selection
 // /onClick come from the enclosing SceneChildNode band, like the other leaf Rs.
@@ -2208,7 +2208,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // #388 — a baked mesh IS render geometry and MUST draw, unlike the three arms
     // above (a curve draws its own chrome, a light recomposes, a camera correctly
     // draws nothing). It just cannot draw through `ObjectMeshR`, whose whole road is
-    // synchronous: `geometryRegistry.get` returns null for a baked handle BY DESIGN
+    // synchronous: `getForAttach` returns null for a baked handle BY DESIGN
     // (the caller is expected to suspend and prime), and `usePrimitiveMaterial` wants
     // an inline OpenPBR IR, not the flat baked spec. Falling through to it renders an
     // invisible object with a grey material — measured, both halves, before `BakedData`
@@ -2232,7 +2232,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
   if (data?.kind === 'ModifiedData') {
     // #415 — a modifier's output IS render geometry and MUST draw, so this arm
     // RECOMPOSES and hands the flat value to `ModifiedMeshR`, the renderer the fused
-    // `ModifiedMesh` already draws through: the same synchronous `geometryRegistry.get`
+    // `ModifiedMesh` already draws through: the same synchronous `getForAttach`
     // (which recursively builds an `array` descriptor from its source) and the same
     // `usePrimitiveMaterial`. One band (H40) — the pair and the fused node cannot drift
     // while both exist, and there is no parallel sync walk to keep in step. This is the
@@ -2263,7 +2263,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
 
 // The mesh half of an Object: draws `data.geometry` (a shared GeometryRef handle)
 // at the Object's TRS with the data's inline material — the SAME
-// `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so an
+// `getForAttach` + `usePrimitiveMaterial` path ModifiedMeshR uses, so an
 // `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band, no
 // parallel render logic). `data: null` = an Empty → renders nothing.
 function ObjectMeshR({
@@ -2296,7 +2296,7 @@ function ObjectMeshR({
     shading,
     mat ? data?.materialKey : null,
   );
-  const geom = data ? geometryRegistry.get(data.geometry) : null;
+  const geom = data ? getForAttach(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps

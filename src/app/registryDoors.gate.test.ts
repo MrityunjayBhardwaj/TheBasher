@@ -47,10 +47,15 @@
 // consumer that walks the scene graph and takes `mesh.geometry` off an object3D holds the
 // very same shared instance while importing nothing. Two such readers exist today and both
 // write to what they find (`sceneBounds.ts`, `renderToImage.ts` — they lazily fill
-// `boundingBox`), and this file is structurally incapable of noticing either. They are
-// tracked as #541 and named in the exception list below so the omission is recorded rather
-// than implied. The behavioural backstop for that whole class is #535, which asks "did
-// anything leak" rather than "did anyone open the door".
+// `boundingBox`), and the IMPORT-keyed cases below are structurally incapable of noticing
+// either.
+//
+// So the write rule is gated a second way, by CONTENT rather than by import (case 4). A
+// sweep for `computeBounding*` over the same file set sees all three sites regardless of
+// how they reached the instance, which is exactly the blind spot the importer cases have.
+// Two questions, two techniques, both stated: the importer cases answer "who opened the
+// door", the content case answers "who wrote to what came out of it". Neither answers
+// "who is holding the resource" — that is #535's behavioural backstop, and it stays open.
 //
 // REF: src/app/geometryRegistry.ts + src/app/materialRegistry.ts (the two subjects);
 //      src/app/overlayIdentity.gate.test.ts (the sibling gate this shape comes from);
@@ -60,6 +65,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
+import { stripComments } from '../test-utils/sourceScan';
 
 /** Does `src` pull `module` in as a whole namespace, hiding which door it opens? */
 export function importsNamespace(src: string, module: string): boolean {
@@ -112,10 +118,8 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   'src/viewport/SceneFromDAG.tsx': 'attach',
 
   // READ — computes and discards. None of these may write to what they take.
-  // ⚠️ boot.ts is a DECLARED EXCEPTION (#541): its `__basher_baked_geometry_bounds` dev
-  // seam calls `computeBoundingBox()` on the shared instance, unconditionally. Benign only
-  // because `boundingBox` is an idempotent derived cache of the geometry's own attribute
-  // data — a property of that field, NOT of this door. Recorded, not waved through.
+  // ⚠️ boot.ts is a DECLARED EXCEPTION (#541) — see WRITERS below, which is where the
+  // whole exception set lives now that it is machine-checked rather than described.
   'src/app/boot.ts': 'read',
   'src/app/geometrySampleSource.ts': 'read',
   'src/app/resolveEvaluatedMesh.ts': 'read',
@@ -141,6 +145,29 @@ const GEOMETRY_DOORS: Record<Door, string[]> = {
  * consumer. The rule here is the narrower one: only the seam may touch an instance.
  */
 const MATERIAL_ACCESSORS = ['get', 'retain', 'release'];
+
+/**
+ * Every production site that WRITES to a geometry it does not own, and why each is
+ * tolerated (#541). Keyed by file because the sweep below is per-file.
+ *
+ * This is the exception list to `getForRead`'s rule, and it is checked rather than
+ * described: an undeclared fourth writer reds, and a declared one that goes away reds too,
+ * so the list cannot quietly become fiction in either direction.
+ *
+ * All three are benign for ONE reason, and it does not generalise: `boundingBox` is an
+ * idempotent derived cache of the geometry's own attribute data, so every writer computes
+ * the same answer. That is a property of THAT FIELD, not of the seam. If anything ever
+ * replaces attribute data on a shared instance in place, a stale `boundingBox` survives
+ * and these are the readers that would serve it.
+ */
+const SHARED_GEOMETRY_WRITERS: Record<string, string> = {
+  // Reaches the instance THROUGH the registry — the importer cases can see this one.
+  'src/app/boot.ts': 'the __basher_baked_geometry_bounds dev seam, unconditionally',
+  // Reach it off the scene graph (`mesh.geometry`) and import nothing. Invisible to an
+  // importer census by construction — these two are why this case exists at all.
+  'src/viewport/sceneBounds.ts': 'lazily fills boundingBox while walking the live scene',
+  'src/render/renderToImage.ts': 'same shape as sceneBounds, on the offline render path',
+};
 
 const MATERIAL_CONSUMERS: Record<string, Door> = {
   // The seam. Builds, retains in a layout effect, releases on unmount.
@@ -203,6 +230,19 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(touching).toEqual(expected);
   });
 
+  it('pins every site that writes to a geometry it does not own (#541)', () => {
+    // Keyed on CONTENT, not on the import — deliberately a different technique from the
+    // cases above, because two of these three reach the shared instance off the scene
+    // graph and import nothing at all. Comments are stripped so prose that DOCUMENTS the
+    // hazard (this file's own header did exactly that) is not read as a violation.
+    const writers = sourceFiles()
+      .filter(([, src]) => /\bcomputeBounding(Box|Sphere)\s*\(/.test(stripComments(src)))
+      .map(([path]) => path)
+      .sort();
+
+    expect(writers).toEqual(Object.keys(SHARED_GEOMETRY_WRITERS).sort());
+  });
+
   it('neither registry is re-exported through a barrel', () => {
     // The one thing that would defeat an import-keyed sweep: a module a consumer could
     // import the registry FROM without naming the registry's own path. Nothing does this
@@ -248,5 +288,15 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(
       importsNamespace(`import { getForRead } from './geometryRegistry';`, 'geometryRegistry'),
     ).toBe(false);
+
+    // And the CONTENT sweep sees a real write while ignoring prose about one — the
+    // distinction the whole write case rests on, since this file's own header discusses
+    // `computeBoundingBox` at length and must not thereby become a violation.
+    const seesWrite = (src: string) =>
+      /\bcomputeBounding(Box|Sphere)\s*\(/.test(stripComments(src));
+    expect(seesWrite(`if (!g.boundingBox) g.computeBoundingBox();`)).toBe(true);
+    expect(seesWrite(`mesh.geometry.computeBoundingSphere();`)).toBe(true);
+    expect(seesWrite(`// never call computeBoundingBox() on a shared instance`)).toBe(false);
+    expect(seesWrite(`/* computeBoundingBox() is forbidden here */`)).toBe(false);
   });
 });
