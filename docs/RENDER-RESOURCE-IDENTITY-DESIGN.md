@@ -15,15 +15,25 @@ description are written in the same present tense, so this document marks them:
   before implementing the slice that depends on it.** A disproof is itself a finding —
   that is how #530 got split out of #394 in the first place.
 
-**Update 2026-08-01 — S0 merged, S1 built, and the convention earned its keep.** All four of
-S1's premises were measured before building: S5 turned out to be mostly built already, and
-S2's key substitution turned out not to be clean. Then S1's own headline — `MaterialRef`,
-"mirroring `GeometryRef`" — was measured wrong DURING the build and replaced with a sibling
-key; the argument is kept in §5 rather than edited away, because the analogy that produced
-it is the reusable mistake. The memo question is closed too (measured: no memo).
+**Update 2026-08-01 — S0 merged, S1 and S2 built, and the convention earned its keep twice.**
+All four of S1's premises were measured before building: S5 turned out to be mostly built
+already, and S2's key substitution turned out not to be clean. Then S1's own headline —
+`MaterialRef`, "mirroring `GeometryRef`" — was measured wrong DURING the build and replaced
+with a sibling key; the argument is kept in §5 rather than edited away, because the analogy
+that produced it is the reusable mistake. The memo question is closed too (measured: no memo).
 
-Two ⚠️ remain, both untouched by this round: §3 (Houdini at source tier) and S3 (whether a
-syntactic sweep survives refactors).
+**S2 then failed the same way in a new place, and the lesson is one level up.** Its key
+substitution was already flagged here as not clean (textures); building it found **two more**
+contributions the evaluator cannot see, one of which would have reopened #530's repaint bug.
+Worse, the gate this document cited as S2's safety net — "the four `p530` tests pass
+unchanged" — exercises a different override road and would have stayed green through it.
+⇒ **a plan citing an existing gate must re-read what that gate's FIXTURE BUILDS, not what its
+name suggests.** This is the same failure as the `GeometryRef` analogy wearing different
+clothes: a claim about a neighbour taken as a claim about this case.
+
+Two ⚠️ remain, both untouched by these rounds: §3 (Houdini at source tier) and S3 (whether a
+syntactic sweep survives refactors). One new gap is now declared in S2: `ModifiedData` still
+carries no minted key, so half the registry's traffic re-derives identity at render.
 
 Keep this honest as the document is edited. The whole reason for the convention is that a
 sentence arguing what _should_ hold reads, one slice later, exactly like a sentence
@@ -260,29 +270,85 @@ Premises, all four measured 2026-08-01 before writing any of this slice:
 adding an override to one changes only that one's key. Unit tier — moving this claim
 below the browser is most of the point.
 
-### S2 — the registry keys on the evaluator's key — PROPOSED
+### S2 — the registry keys on the evaluator's key — ✅ BUILT 2026-08-01 (`b2019f5`, `1540bc9`), and the plan was wrong three ways
 
-Deletes the generic key walk and the "spec is the builder's only input" scaffolding from
-#530. That machinery exists only because identity was being rediscovered downstream; with
-the ref, the cause is gone rather than the symptom.
+**Shipped:** the registry key is
+`materialKey ⊕ override ⊕ shading ⊕ resolvedTextures`, composed in one pure module
+(`src/app/material/primitiveMaterialInputs.ts`) that also assembles the spec. The
+derivation moved out of `usePrimitiveMaterial`, which is what gives it a tier below the
+browser at all.
 
-The registry becomes `resolve(materialKey, spec, globalShading) → GPU material`, still
-refcounted because it owns per-material texture clones. (S1 shipped a sibling `materialKey`
-rather than a `{key, spec}` handle — see above — so the key arrives beside the spec rather
-than wrapping it. Nothing else about this slice changes.)
+🔴 **This slice was planned as a SUBSTITUTION — "key on `materialKey`, delete the spec
+walk" — and it is not one.** The rendered material depends on three inputs the evaluator
+never sees. One was already recorded here before building; the other two were found by
+measuring:
 
-🔴 **MEASURED 2026-08-01 — keying the registry on the evaluator's key is NOT a clean substitution, and the reason
-is deliberate.** `keyOf` is taken over the **resolved** `PrimitiveMaterialSpec`, in which
-each texture slot is an actual `THREE.Texture` reduced to `tex:<uuid>`. Resolution happens
-_above_ the registry, in the suspense hooks, and the module says why: keying on the
-instance means "a slot that is still loading and one that has loaded are distinct
-materials rather than the same one at two moments." A `ref.key` minted at evaluation holds
-map _refs_, not resolved textures, so it cannot express that distinction. ⇒ the registry
-key must be `materialKey` **plus** the resolved-texture / global-shading contribution; dropping
-the second half would collapse loading and loaded into one entry. Scope S2 accordingly.
+1. **The scene-band `MaterialOverride`.** `MaterialOverrideR` pushes it down the render
+   TREE as an inherited prop, and it is composed at render time — so it is not in the
+   evaluated value at all. **This is the dangerous one:** keyed on `materialKey` alone,
+   two objects with one base material under different override wrappers collide onto ONE
+   instance and repaint an object nobody overrode. That is #530's regression class,
+   reopened by the slice meant to strengthen it.
+2. **The global shading mode.** `wireframe` comes from the viewport store, not the graph.
+3. **The resolved textures.** The IR carries map refs; the suspense hooks resolve them,
+   and keying on the instance is deliberate so a loading slot and a loaded one stay
+   distinct materials rather than one material at two moments.
 
-**Gate:** the four `p530-material-instance-sharing` tests pass **unchanged** — they assert
-product behaviour, not mechanism, so they are the regression proof.
+So the win is not deleting the downstream hash. It is that the **evaluated half stops
+being re-derived by the renderer**, and the three render-time contributions become named
+inputs instead of leaves buried in a generic walk.
+
+🔴 **The declared gate was blind to the failure it was cited against.** "The four
+`p530-material-instance-sharing` tests pass unchanged" — measured, that suite's split test
+wires a `MaterialOverrideOp` into the **data lane**, which is part of the fold and
+therefore already inside `materialKey`, so it stays green under the exact defect. The
+scene-band road had **no** instance-identity coverage: of the nine specs that build a
+`MaterialOverride`, none read a material uuid. **`tests/e2e/p536-override-band-instance-split.spec.ts`
+was written and committed FIRST, against unchanged code**, so it is a regression test
+rather than a description of what the refactor produced. Both halves, since the defect
+swaps the readings — and when it was falsified, the leaked colour turned out to be a
+_starter-scene_ material, i.e. the collision reached objects the fixture never touched.
+
+**What the naming costs, and how it is bought back.** The old key was a total function of
+the spec, and the spec was the builder's only input, so "two materials that render
+differently share an instance" was impossible **by construction**. A key composed from
+named inputs gives that up. So `keyOf` is kept in two roles: the **default** when a caller
+passes no key (forgetting lands on the old safe behaviour, not a weaker one), and the
+**oracle** for `primitiveMaterialInputs.test.ts`, which asserts the composed key separates
+every pair the walk separates. Only that direction is required; the reverse — this key may
+split what the compile would have merged — is a lost dedup, a perf cost invisible on
+screen, and #532 is the live example.
+
+⚠️ **DECLARED LIMIT, verified not assumed: the wiring is behaviourally unfalsifiable.**
+Forcing `mintedKey` to `null` at the call site reddens **nothing** (3622 unit tests, all
+six browser sharing gates green), because the fallback is the _same function_ over the
+same IR — which is itself the point, since a second spelling of identity is how the two
+halves would drift. So the claim is a **cost** claim and was measured rather than given a
+fake tier (20k iterations):
+
+|                                              | µs        |
+| -------------------------------------------- | --------- |
+| `keyOf(spec)` — what the registry did before | 2.528     |
+| composed key, with the evaluator's minted id | **0.482** |
+| composed key, re-deriving the id at render   | 1.282     |
+
+Two independent savings: dropping the sort and the per-leaf `JSON.stringify` buys
+2.528 → 1.282; using the minted key buys 1.282 → 0.482. The second is what the wiring
+buys, and it is the one no test can see.
+
+⚠️ **COVERAGE, still open:** only `MeshDataValue` carries a `materialKey`. The registry's
+other consumer is `ModifiedMeshR`, whose `ModifiedDataValue` has none and whose material
+union is wider, so it takes the fallback. That is correct but it means half this
+boundary's traffic still re-derives identity at render. Minting on `ModifiedData` needs an
+answer for all four of its producers (`SetMaterialOp`, `MaterialOverrideOp` mint;
+`ArrayModifier`, `MirrorModifier` pass a source's material through) and is not in this
+slice.
+
+**Gate:** `src/app/material/primitiveMaterialInputs.test.ts` (6 tests, the oracle
+property) + the two new browser tests + the four `p530` tests unchanged. Falsified six
+ways, each discriminating: dropping any one of the four contributions reds the collision
+test; a never-repeating key reds _only_ the dedup assertion; `irKeyFor` ignoring the
+minted value reds only the preference test.
 
 ### S3 — the single ownership seam — PROPOSED
 
@@ -371,12 +437,25 @@ on the native road is one place. Cheapest after S1, not before.
 
 ## 7. Sequencing
 
-**S0 ✅ → S1 ✅ → S2 → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
+**S0 ✅ → S1 ✅ → S2 ✅ → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
 
 S0 merged (`main` == `e6aaf52`, canary green as the combination). S1 built, and its plan
 sentence — "mirroring `GeometryRef`" — is the fifth instance of the failure this document's
 reading convention exists for: an analogy that argued a design was quoted as though it
 described a constraint. Measuring it cost one build and saved the slice.
+
+S2 built, and it is the sixth instance in a new grammatical dress: not an analogy but a
+**citation**. "The four `p530` tests pass unchanged" was quoted as proof the slice was safe,
+and that suite covers the data-lane override while the slice's hazard was on the scene-band
+one. The repair generalises past this document — **write the missing gate BEFORE the
+refactor, against unchanged code**, so it is a regression test rather than a description of
+whatever the refactor produces.
+
+S3 is next and its own ⚠️ is already the interesting one: a syntactic sweep for the
+ownership seam probably cannot survive refactors, which makes S4's behavioural gate the real
+backstop rather than a nice-to-have. Note also that S2 leaves clause 1 of the invariant
+**partially** satisfied by construction, not by omission — evaluation can only mint the
+fold's half of render identity, so S3 inherits a two-tier world rather than a one-tier one.
 
 Every ⚠️ above is the shape that produced four wrong gates in #394: a plan sentence that
 argues, read later as a sentence that describes. Measure each before building the slice
@@ -384,6 +463,8 @@ that rests on it.
 
 ---
 
-**REF:** issues #530, #532, #533, #535; PR #534; `src/app/geometryRegistry.ts`,
-`src/app/materialRegistry.ts`, `src/viewport/SceneFromDAG.tsx`, `src/nodes/types.ts`;
+**REF:** issues #530, #532, #533, #535, #536, #537; PRs #534, #538; `src/app/geometryRegistry.ts`,
+`src/app/materialRegistry.ts`, `src/app/material/primitiveMaterialInputs.ts`,
+`src/viewport/SceneFromDAG.tsx`, `src/nodes/types.ts`, `src/nodes/materialKey.ts`;
+`tests/e2e/p536-override-band-instance-split.spec.ts`;
 `docs/PERFORMANCE.md` Lever 5; `ref/houdini/SOP.md`.

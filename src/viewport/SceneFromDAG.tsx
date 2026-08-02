@@ -61,6 +61,7 @@ import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
+import { overlayWithIdentity } from '../app/overlayWithIdentity';
 import {
   channelValuesFromNodes,
   directChannelTargetSet,
@@ -125,7 +126,11 @@ import { SceneEnvironment } from './SceneEnvironment';
 import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
-import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
+import { composeBakedMaterial } from '../app/material/composeMaterial';
+import {
+  compilePrimitiveMaterial,
+  primitiveMaterialInputs,
+} from '../app/material/primitiveMaterialInputs';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -1922,9 +1927,15 @@ function DirectChannelsR({
   // (the transient twin of #398's data-param channels). Ref-stable for a fused node
   // or when no data edit is held, so the useFrame gate below still bails (H48).
   const transients = useDataParamTransients(pickId, rawTransients);
+  // #536 S2b — through the seam, not the two primitives directly. The overlay CLONES the
+  // evaluated value and writes the animated field into the clone, and the clone inherited
+  // the `materialKey` the evaluator minted BEFORE that write — so the content-keyed material
+  // registry answered with the pre-edit material and an animated colour never reached the
+  // screen. `overlayWithIdentity` composes the same two primitives in the same order and
+  // clears the identity its own writes invalidated. It returns `value` by reference when
+  // nothing is written, so the static-node guard below is untouched.
   const sample = (seconds: number): SceneObject =>
-    overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
-    value;
+    overlayWithIdentity('children', value, pickId, channels, transients, seconds);
 
   const [patched, setPatched] = useState<SceneObject>(() =>
     sample(useTimeStore.getState().seconds),
@@ -2002,12 +2013,11 @@ function ConstrainedR({
   const build = (seconds: number): { v: SceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
-    const base =
-      overlayTransients(
-        overlayChannels(value, channels, 1, seconds) ?? value,
-        pickId,
-        transients,
-      ) ?? value;
+    // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
+    // only one a CONSTRAINED split object ever travels, so a stale material key freezes an
+    // animated colour here exactly as it did there (#422 is the precedent for this pair of
+    // reaches having to move together).
+    const base = overlayWithIdentity('children', value, pickId, channels, transients, seconds);
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
     // #339 — the POSITION band. A Follow-Path derives the position from a curve, so it
     // overrides the authored/animated one exactly as the aim overrides rotation. Both
@@ -2089,61 +2099,40 @@ function ConstrainedR({
 // carrying an override composes to a different spec and correctly gets its own
 // instance — clone-on-override is preserved by construction rather than by a rule
 // the registry has to be told.
+// #536 S2 — `mintedKey` is `MeshDataValue.materialKey`, the identity the EVALUATOR
+// decided (the fold: param → socket → operator lane). Pass it and the renderer stops
+// re-deriving that half. It is optional because only `MeshData` carries one today:
+// `ModifiedMeshR`'s value kind has none, and a materialless data node draws the fallback
+// IR, which the evaluator never keyed. Both fall back to the SAME function the evaluator
+// used, never to a second spelling of identity.
 function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
+  mintedKey?: string | null,
 ): THREE.MeshPhysicalMaterial {
-  const three = openpbrToThree(override ? composeMaterial(ir, override, 'map-aware') : ir);
-  const {
-    color,
-    roughness,
-    metalness,
-    opacity,
-    emissive,
-    emissiveIntensity,
-    transparent,
-    ior,
-    clearcoat,
-    clearcoatRoughness,
-    transmission,
-    thickness,
-  } = three;
-  const wireframe = shading === 'wireframe';
+  const compiled = compilePrimitiveMaterial(ir, override);
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
   // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
   // the loader hook, never in the resolver (V29). The ref carries the colorspace;
-  // re-assert it here per slot (M5 — a data map as sRGB washes out), mirroring
-  // BakedMeshR's sRGB/linear split.
-  const mapTex = useBakedTexture(three.maps.map);
-  const normalTex = useBakedTexture(three.maps.normalMap);
-  const roughnessTex = useBakedTexture(three.maps.roughnessMap);
-  const metalnessTex = useBakedTexture(three.maps.metalnessMap);
-  const aoTex = useBakedTexture(three.maps.aoMap);
-  const emissiveTex = useBakedTexture(three.maps.emissiveMap);
-  // v0.6 #3 (#181, W2) — the ONE shared UV placement, applied to all 6 maps.
-  const [tilingX, tilingY] = three.uvTransform.tiling;
-  const [offsetX, offsetY] = three.uvTransform.offset;
-  const uvRotation = three.uvTransform.rotation;
-  // The registry builds and owns the material AND its texture clones (V20 single
-  // writer, moved one level out). `get` deliberately does not count holders — a
-  // render can be discarded, and StrictMode runs every render twice, so a count
-  // taken here would over-count on both. The commit phase counts instead.
-  const { key, material } = materialRegistry.get({
-    color,
-    roughness,
-    metalness,
-    opacity,
-    transparent,
-    emissive,
-    emissiveIntensity,
-    ior,
-    clearcoat,
-    clearcoatRoughness,
-    transmission,
-    thickness,
-    wireframe,
-    uvTransform: { tiling: [tilingX, tilingY], offset: [offsetX, offsetY], rotation: uvRotation },
+  // re-assert it per slot in the registry's build (M5 — a data map as sRGB washes
+  // out), mirroring BakedMeshR's sRGB/linear split. This is why compiling and
+  // assembling are two calls: the refs to suspend on come out of the compile.
+  const mapTex = useBakedTexture(compiled.maps.map);
+  const normalTex = useBakedTexture(compiled.maps.normalMap);
+  const roughnessTex = useBakedTexture(compiled.maps.roughnessMap);
+  const metalnessTex = useBakedTexture(compiled.maps.metalnessMap);
+  const aoTex = useBakedTexture(compiled.maps.aoMap);
+  const emissiveTex = useBakedTexture(compiled.maps.emissiveMap);
+  // Both halves from one pure place, so "same key ⇒ same spec" has a tier below the
+  // browser to be checked at. v0.6 #3 (#181, W2)'s ONE shared UV placement travels on
+  // the spec and is applied to all 6 map clones by the build.
+  const { spec, key } = primitiveMaterialInputs({
+    ir,
+    mintedKey,
+    override,
+    shading,
+    compiled,
     textures: {
       map: mapTex,
       normalMap: normalTex,
@@ -2153,6 +2142,11 @@ function usePrimitiveMaterial(
       emissiveMap: emissiveTex,
     },
   });
+  // The registry builds and owns the material AND its texture clones (V20 single
+  // writer, moved one level out). `get` deliberately does not count holders — a
+  // render can be discarded, and StrictMode runs every render twice, so a count
+  // taken here would over-count on both. The commit phase counts instead.
+  const { material } = materialRegistry.get(spec, key);
   // LAYOUT effect, not passive: it runs synchronously inside the commit, so there
   // is no window between this mesh rendering with the shared instance and this
   // mesh being counted as a holder of it. A passive effect leaves that window open
@@ -2380,7 +2374,15 @@ function ObjectMeshR({
   // with no material. A baked material reaches `BakedMeshR` through its own arm.
   const mat = data?.material ?? null;
   const inlineMat = mat ?? MODIFIED_FALLBACK_MATERIAL;
-  const material = usePrimitiveMaterial(inlineMat, override, shading);
+  // #536 S2 — the evaluator already decided this material's identity; hand it down
+  // instead of letting the renderer re-derive it. Only when the data node actually
+  // HAS a material: the fallback below is not what the evaluator keyed.
+  const material = usePrimitiveMaterial(
+    inlineMat,
+    override,
+    shading,
+    mat ? data?.materialKey : null,
+  );
   const geom = data ? geometryRegistry.get(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by

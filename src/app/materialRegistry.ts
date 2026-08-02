@@ -22,13 +22,24 @@
 // equal IRs (distinct objects — `resolveNodeMaterial` hydrates a fresh one per
 // evaluation), so reference identity was never available as a key anyway.
 //
-// ── THE KEY IS TAKEN OVER THE WHOLE SPEC, GENERICALLY, ON PURPOSE ───────────────
+// ── WHERE THE KEY COMES FROM (CHANGED BY #536 S2) ───────────────────────────────
 //
-// `keyOf` walks every leaf of the spec rather than listing fields. The spec is
-// also the builder's ONLY input. Together that closes the drift this cache would
-// otherwise invite: a field the builder reads must be on the spec, and a field on
-// the spec is in the key, so "two materials that render differently share an
-// instance" has no way in. A field added to the spec joins the key for free.
+// Originally `keyOf` walked every leaf of the spec, and since the spec is also the
+// builder's ONLY input, "two materials that render differently share an instance"
+// had no way in — the guarantee was structural.
+//
+// S2 moved the EVALUATED half of that identity upstream: the caller now passes a
+// key anchored on `MeshDataValue.materialKey`, which the evaluator mints after the
+// fold, combined with the three things the evaluator cannot see (the scene-band
+// override, composed at render time; the global shading mode; the RESOLVED
+// textures). See `material/primitiveMaterialInputs.ts` for the composition and the
+// measurements behind it.
+//
+// That trades the structural guarantee for a checked one, so it is checked:
+// `primitiveMaterialInputs.test.ts` holds `keyOf` as an ORACLE and asserts the
+// composed key separates every pair the walk separates. `keyOf` also remains this
+// module's DEFAULT, so a caller that passes no key gets the old behaviour rather
+// than a weaker one.
 //
 // ── LIFETIME: REFCOUNTED, AND EVICTION IS DEFERRED BY ONE TICK ──────────────────
 //
@@ -122,6 +133,15 @@ const MAP_COLOR_SPACE: Record<keyof PrimitiveMaterialSpec['textures'], THREE.Col
   emissiveMap: THREE.SRGBColorSpace,
 };
 
+/**
+ * The map slots, in one order. Derived from {@link MAP_COLOR_SPACE} rather than written
+ * out again, so a seventh slot cannot be added to the spec and forgotten by a caller
+ * assembling the texture half of an identity key (#536 S2).
+ */
+export const MAP_SLOTS = Object.keys(
+  MAP_COLOR_SPACE,
+) as (keyof PrimitiveMaterialSpec['textures'])[];
+
 interface Entry {
   readonly material: THREE.MeshPhysicalMaterial;
   /** Committed holders. `get` never touches this — only `retain` / `release`. */
@@ -136,6 +156,17 @@ const cache = new Map<string, Entry>();
  * The content key. Walks the spec GENERICALLY — sorted keys so declaration order
  * cannot matter, textures reduced to their uuid — so that a field added to
  * `PrimitiveMaterialSpec` is keyed without anyone remembering to key it.
+ *
+ * #536 S2 — this is no longer what production keys on. The renderer now supplies a key
+ * anchored on the identity the EVALUATOR minted (`materialKey`) combined with the three
+ * contributions the evaluator cannot see, so identity stops being rediscovered here.
+ * This function survives in two roles, both deliberate:
+ *
+ *   · the DEFAULT for {@link get}, so a caller that supplies no key falls back to the
+ *     old, structurally-safe behaviour rather than to something weaker;
+ *   · the ORACLE for `primitiveMaterialInputs.test.ts`, which asserts that the composed
+ *     key separates every pair this walk separates. That is what keeps "a field added to
+ *     the spec is keyed for free" true after the key stopped being a function of the spec.
  */
 export function keyOf(spec: PrimitiveMaterialSpec): string {
   return serialize(spec);
@@ -161,12 +192,20 @@ function serialize(value: unknown): string {
  * Does NOT change the refcount — a render may never commit. The caller retains in
  * the commit phase and releases on unmount. Returns the key alongside so the
  * caller can key that effect without re-deriving it.
+ *
+ * `key` is the caller's identity for this spec (#536 S2 — `primitiveMaterialInputs`
+ * composes it from the evaluator's `materialKey` plus what the evaluator cannot see).
+ * It carries ONE obligation: two specs the build would render differently must never
+ * share a key. Omitting it falls back to {@link keyOf}, which satisfies that obligation
+ * structurally — so a forgetful caller lands on the old behaviour, not on a weaker one.
  */
-export function get(spec: PrimitiveMaterialSpec): {
+export function get(
+  spec: PrimitiveMaterialSpec,
+  key: string = keyOf(spec),
+): {
   key: string;
   material: THREE.MeshPhysicalMaterial;
 } {
-  const key = keyOf(spec);
   const hit = cache.get(key);
   if (hit) return { key, material: hit.material };
   const material = build(spec);
