@@ -973,6 +973,15 @@ export interface MeshDataValue {
    * mirroring `GeometryRef` was tried first and measured wrong: the animation overlay
    * addresses values by a path mirroring the PARAM path, so the extra hop would make an
    * animated material freeze on screen. `materialKey.ts` carries the full argument.
+   *
+   * ⚠️ AND THIS IS THE ONLY MEMBER OF `ObjectData` THAT CARRIES ONE (#542). The invariant
+   * is stated over the whole union and minted here alone, from two producers. `BakedData`
+   * and `ModifiedData` hold a material with no key, for two DIFFERENT reasons — baked does
+   * not share at all, while modified shares this very registry and re-derives the key
+   * downstream through `materialKeyOf`, the same function minting it here. The reach is
+   * spelled out in docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 ("How far this reaches
+   * today") and its counts are pinned by `materialKeyReach.gate.test.ts`, so widening the
+   * mint reds a test until that section is updated with it.
    */
   readonly materialKey: string | null;
 }
@@ -1090,6 +1099,13 @@ export interface BakedDataValue {
   readonly kind: 'BakedData';
   /** Always `GeometryRef{kind:'baked'}` — an OPFS handle, never rebuildable. */
   readonly geometry: GeometryRef;
+  /**
+   * Carries a material and NO minted identity, deliberately (#542). Nothing shares it:
+   * `BakedMeshR` builds its own `THREE.Material` in a per-component `useMemo` and disposes
+   * it itself, so there is no shared instance for a key to disambiguate. If this road ever
+   * routes through `materialRegistry`, it needs a key FIRST — see
+   * docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 "How far this reaches today".
+   */
   readonly material: BakedMaterialSpec;
 }
 
@@ -1128,6 +1144,21 @@ export interface BakedDataValue {
 export interface ModifiedDataValue {
   readonly kind: 'ModifiedData';
   readonly geometry: GeometryRef;
+  /**
+   * Carries a material and no minted identity (#542) — and unlike `BakedData`, this road
+   * DOES share. `ModifiedMeshR` goes through the same `usePrimitiveMaterial` seam as the
+   * keyed road, so a modifier's inline material lands in the same content-keyed
+   * `materialRegistry`. What keeps it in agreement with a keyed object is that the seam's
+   * fallback calls `materialKeyOf` — the same function the evaluator mints with, over the
+   * same IR — so equal materials collide onto one instance across both roads by
+   * construction rather than by coincidence.
+   *
+   * ⚠️ The moment this kind mints its own key, that key joins the S3 ownership rule: a
+   * writer patching an evaluated value owns the identity on it, so `overlayWithIdentity`
+   * must clear it for this band too. Until then the downstream re-derivation cannot go
+   * stale, because it is computed from the content it is handed.
+   * See docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 "How far this reaches today".
+   */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
 }
 
