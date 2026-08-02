@@ -54,6 +54,7 @@ import { join } from 'node:path';
 // still passing. Its positive controls live in `src/test-utils/sourceFiles.test.ts`; the
 // walk itself sits in `tools/` for the typecheck reason its header records.
 import { sourceFiles } from '../../tools/gates/sourceFiles';
+import { stripComments } from '../test-utils/sourceScan';
 
 const SRC = join(__dirname, '..');
 
@@ -162,10 +163,21 @@ describe('#536 S2b — every overlay patch site is classified', () => {
 
     expect(declarers).toEqual(['src/viewport/SceneFromDAG.tsx']);
 
-    // And the subject must not be empty — a census whose subject vanished reports success
-    // forever. Two call sites today: the dispatcher's bare branch and the scatter road.
-    const src = readFileSync(join(SRC, 'viewport/SceneFromDAG.tsx'), 'utf8');
-    expect(src.match(/\bidentityIntact\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    // EXACTLY two call sites — the dispatcher's bare branch and the scatter road — not a
+    // floor. A floor was the first version and falsification showed it too weak: swapping
+    // the constraint road's `clearInvalidatedIdentity` for a declaration typechecks once the
+    // now-unused import is also removed, and a `>= 2` census stays green through it. The
+    // whole point of routing that site through the shared rule is that it does NOT get to
+    // assert its own exemption, so a THIRD declaration must red and be argued for here.
+    //
+    // It also stops the subject silently emptying, which is the failure a bare census has.
+    //
+    // Comments are stripped, and that is not a precaution — the first version counted 3 on
+    // a clean tree because the prop's own doc comment spells `identityIntact(value, reason)`
+    // while explaining the rule. Prose that documents a mechanism must not register as a use
+    // of it, or the honest way to make this gate green is to stop writing the explanation.
+    const src = stripComments(readFileSync(join(SRC, 'viewport/SceneFromDAG.tsx'), 'utf8'));
+    expect(src.match(/\bidentityIntact\(/g)?.length ?? 0).toBe(2);
   });
 
   it('guards the guard — the sweep sees an ALIASED import, which a call-shape sweep cannot', () => {
