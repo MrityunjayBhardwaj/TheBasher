@@ -31,8 +31,10 @@ unchanged" — exercises a different override road and would have stayed green t
 name suggests.** This is the same failure as the `GeometryRef` analogy wearing different
 clothes: a claim about a neighbour taken as a claim about this case.
 
-Two ⚠️ remain, both untouched by these rounds: §3 (Houdini at source tier) and S3 (whether a
-syntactic sweep survives refactors). One new gap is now declared in S2: `ModifiedData` still
+One ⚠️ remains untouched by these rounds: §3 (Houdini at source tier). S3's — whether a
+syntactic sweep survives refactors — is now MEASURED, and the answer sharpened it: an
+import-clause sweep is complete only over a subject that cannot be imported as a namespace,
+so the gate refuses that form as its precondition. One new gap is now declared in S2: `ModifiedData` still
 carries no minted key, so half the registry's traffic re-derives identity at render.
 
 Keep this honest as the document is edited. The whole reason for the convention is that a
@@ -350,18 +352,50 @@ ways, each discriminating: dropping any one of the four contributions reds the c
 test; a never-repeating key reds _only_ the dedup assertion; `irKeyFor` ignoring the
 minted value reds only the preference test.
 
-### S3 — the single ownership seam — PROPOSED
+### S3 — the ownership doors — BUILT
 
-One module turns a handle into an attached GPU object; the unwrap is not exported past
-it. Covers **both** registries.
+This section was proposed as _"one module turns a handle into an attached GPU object; the
+unwrap is not exported past it, covering **both** registries"_. Three parts of that did
+not survive contact with the code, so what shipped is different and the original is kept
+above as the claim rather than silently rewritten.
 
-Collapse the _attachment_, not the three renderer components — they have genuinely
-different lifecycles (suspense, error banner, Empty) and merging them is the wrong
-boundary.
+**Two seams enforcing one rule, not one module.** The registries have incompatible
+ownership models — `materialRegistry` is refcounted (`retain`/`release`/`holders`, eviction
+queued a tick after zero), `geometryRegistry` has no refcount at all — and they disagree on
+which tier decides the key: after S2 a material's key is composed at _render_ time, while a
+`GeometryRef` is purely _evaluated_. Merging them would mean either giving geometry a
+refcount it does not have (new behaviour, not a refactor) or writing one module that is
+internally two things wearing one name.
 
-⚠️ **UNMEASURED** whether a syntactic sweep can survive refactors here. Assume it cannot
-— a gate keyed to an expression's shape reports a clean sweep forever once the expression
-moves. Rely on S4.
+**The unwrap surface is dominated by READS.** Measured: geometry is 2 attach / 6 read /
+1 produce. "The unwrap is not exported past it" would have forbidden the majority of
+legitimate use, so the seam has a **read-only door** beside the attach door.
+
+What exists now:
+
+- `getForAttach` / `getForRead` on `geometryRegistry`; `get` is no longer exported. Each of
+  the seven consumers names its door at the import line.
+- `usePrimitiveMaterial` extracted to its own module — the single consumer that touches a
+  material instance, so the accessor surface has exactly one importer.
+- `registryDoors.gate.test.ts` holds both importer sets closed.
+
+⚠️ **Declared limit:** the two geometry doors are the same function today. `getForRead`
+cannot _enforce_ its no-write rule — a `BufferGeometry` is mutable and every reader hands
+the real object to three.js. This is a naming tier, not a type tier.
+
+✅ **The syntactic-sweep ⚠️ is now MEASURED, and the answer is sharper than "assume it
+cannot work".** A **call-shape** sweep fails _today_, before any refactor — three consumers
+imported `get` under an alias. An **import-clause** sweep fixes that but has its own hole:
+it is blind to `import * as`, and five of the nine importers were exactly that. The repair
+is to refuse the namespace form as the census's _precondition_, not to resolve the
+namespace's local name and match `ns.get(` — that is the call-shape sweep again, for
+precisely the members the clause sweep cannot see.
+
+⚠️ **What no import-keyed gate can see**, stated because it is the residual risk: a
+consumer that takes `mesh.geometry` off the scene graph holds the same shared instance
+while importing nothing. Three production sites write to a geometry they do not own
+(#541); two of them are invisible to any importer census. Those are pinned by a **content**
+sweep instead, and **S4 remains the behavioural backstop** for the class as a whole.
 
 ### S4 — the locality gate (#535) — PROPOSED
 
@@ -437,7 +471,7 @@ on the native road is one place. Cheapest after S1, not before.
 
 ## 7. Sequencing
 
-**S0 ✅ → S1 ✅ → S2 ✅ → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
+**S0 ✅ → S1 ✅ → S2 ✅ → S3 ✅ → S4**, with S5 / S6 / S7 folded in where cheapest.
 
 S0 merged (`main` == `e6aaf52`, canary green as the combination). S1 built, and its plan
 sentence — "mirroring `GeometryRef`" — is the fifth instance of the failure this document's
@@ -451,9 +485,11 @@ one. The repair generalises past this document — **write the missing gate BEFO
 refactor, against unchanged code**, so it is a regression test rather than a description of
 whatever the refactor produces.
 
-S3 is next and its own ⚠️ is already the interesting one: a syntactic sweep for the
-ownership seam probably cannot survive refactors, which makes S4's behavioural gate the real
-backstop rather than a nice-to-have. Note also that S2 leaves clause 1 of the invariant
+S3's own ⚠️ turned out to be the interesting one, and it was measured rather than assumed:
+the question is not whether a syntactic sweep survives a refactor but which sweep — a
+call-shape sweep already failed at HEAD, and an import-clause sweep is blind to
+`import * as` unless it refuses that form outright. S4 remains the backstop for consumers
+that reach a shared instance off the scene graph, importing nothing. Note also that S2 leaves clause 1 of the invariant
 **partially** satisfied by construction, not by omission — evaluation can only mint the
 fold's half of render identity, so S3 inherits a two-tier world rather than a one-tier one.
 
