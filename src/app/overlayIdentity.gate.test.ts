@@ -46,29 +46,16 @@
 //      hetvabhasa H261, vyapti V149 (the fourth hole), dharana B20 target 4; issue #536.
 
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+// #536 S3 — the enumeration is shared with the other two structural censuses rather than
+// copied a third time. All three assert over "every source file", and a walk that silently
+// narrowed in one copy would let that gate report a closed set over a smaller subject while
+// still passing. Its positive controls live in `src/test-utils/sourceFiles.test.ts`; the
+// walk itself sits in `tools/` for the typecheck reason its header records.
+import { sourceFiles } from '../../tools/gates/sourceFiles';
 
 const SRC = join(__dirname, '..');
-
-/** Every non-test source file under `src/`, as [repo-relative path, contents]. */
-function sourceFiles(): [string, string][] {
-  const out: [string, string][] = [];
-  const walk = (dir: string, rel: string) => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry);
-      if (statSync(abs).isDirectory()) {
-        walk(abs, `${rel}${entry}/`);
-        continue;
-      }
-      if (!/\.tsx?$/.test(entry)) continue;
-      if (/\.test\.tsx?$/.test(entry)) continue;
-      out.push([`${rel}${entry}`, readFileSync(abs, 'utf8')]);
-    }
-  };
-  walk(SRC, 'src/');
-  return out;
-}
 
 /**
  * Does this source APPLY an overlay — i.e. import one of the two primitives that write a
