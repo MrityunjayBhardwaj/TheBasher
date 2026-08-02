@@ -61,6 +61,7 @@ import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
+import { overlayWithIdentity } from '../app/overlayWithIdentity';
 import {
   channelValuesFromNodes,
   directChannelTargetSet,
@@ -1926,9 +1927,15 @@ function DirectChannelsR({
   // (the transient twin of #398's data-param channels). Ref-stable for a fused node
   // or when no data edit is held, so the useFrame gate below still bails (H48).
   const transients = useDataParamTransients(pickId, rawTransients);
+  // #536 S2b — through the seam, not the two primitives directly. The overlay CLONES the
+  // evaluated value and writes the animated field into the clone, and the clone inherited
+  // the `materialKey` the evaluator minted BEFORE that write — so the content-keyed material
+  // registry answered with the pre-edit material and an animated colour never reached the
+  // screen. `overlayWithIdentity` composes the same two primitives in the same order and
+  // clears the identity its own writes invalidated. It returns `value` by reference when
+  // nothing is written, so the static-node guard below is untouched.
   const sample = (seconds: number): SceneObject =>
-    overlayTransients(overlayChannels(value, channels, 1, seconds) ?? value, pickId, transients) ??
-    value;
+    overlayWithIdentity('children', value, pickId, channels, transients, seconds);
 
   const [patched, setPatched] = useState<SceneObject>(() =>
     sample(useTimeStore.getState().seconds),
@@ -2006,12 +2013,11 @@ function ConstrainedR({
   const build = (seconds: number): { v: SceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
-    const base =
-      overlayTransients(
-        overlayChannels(value, channels, 1, seconds) ?? value,
-        pickId,
-        transients,
-      ) ?? value;
+    // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
+    // only one a CONSTRAINED split object ever travels, so a stale material key freezes an
+    // animated colour here exactly as it did there (#422 is the precedent for this pair of
+    // reaches having to move together).
+    const base = overlayWithIdentity('children', value, pickId, channels, transients, seconds);
     const aim = resolveConstraintRotation(state, pickId, ctx, cache);
     // #339 — the POSITION band. A Follow-Path derives the position from a curve, so it
     // overrides the authored/animated one exactly as the aim overrides rotation. Both

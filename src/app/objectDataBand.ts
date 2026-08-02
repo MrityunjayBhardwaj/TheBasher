@@ -146,3 +146,99 @@ export function renderReachForBand(band: SplitBand): RenderReach {
     }
   }
 }
+
+/**
+ * An identity field the band's value carries, and the region of the value whose CONTENT
+ * that identity stands for.
+ *
+ * Both paths are stated in the band's own vocabulary — i.e. rebased through
+ * `channelPathForBand`, exactly like an overlay write — so a caller compares like with
+ * like and never has to know that the children band lives under `data.`.
+ */
+export interface BandIdentityField {
+  /** Where the identity field itself sits on the band's value. */
+  readonly identityPath: string;
+  /** The region it identifies. A write at or under this path invalidates it. */
+  readonly sourcePath: string;
+}
+
+/**
+ * The DUAL of `channelPathForBand`, and the third member of this family.
+ *
+ * `channelPathForBand` answers "where must an overlay be WRITTEN?"; `renderReachForBand`
+ * answers "is that what the renderer READS?". This one answers the question those two left
+ * unasked, and whose absence shipped as a bug (#536 S2, [[H261]]): **what does that write
+ * INVALIDATE?**
+ *
+ * Identity is minted by evaluation (`MeshDataValue.materialKey`) and consumed by a
+ * content-keyed registry. An overlay does not write into the evaluator's output — it clones
+ * the evaluated value, writes the animated field into the clone, and hands the clone on. The
+ * clone inherits the producer's key verbatim, so content and identity disagree and the
+ * registry answers with the resource built for the PRE-EDIT content. Nothing errors; the
+ * inspector shows the new value and the picture is frozen.
+ *
+ * So a writer that patches an evaluated value owns the identity on it. This function is what
+ * lets it discharge that without knowing anything about materials: it holds the paths it
+ * wrote, and this says which identity fields those writes killed.
+ *
+ * ⚠️ DERIVED FROM `channelPathForBand`, NEVER SPELLED. Writing `data.material` here would
+ * put a per-KIND assumption beside a per-BAND rule — the exact shape that broke the first
+ * attempt at S1 ([[H260]]): the rebase rule keys on the band, so a hardcoded prefix is
+ * correct for one band and silently wrong for the next.
+ *
+ * ⚠️ DECLARED GAP — GEOMETRY IS ABSENT ON PURPOSE, AND IT IS NOT AN OVERSIGHT (#537).
+ * `MeshDataValue.geometry` is a `GeometryRef` that the same writes invalidate (animating
+ * `size` moves the content the ref stands for), and it has the same defect live on `main`.
+ * It cannot be repaired the same way: clearing works for material only because the seam has
+ * a documented fallback (`materialKeyOf(ir)` — it can always re-derive from the spec it
+ * holds), while the renderer needs a geometry ref to build ANYTHING, so its repair is a
+ * REBUILD of the descriptor from the patched params. Strictly bigger, and #537's own work.
+ * Listing it here would clear a ref nothing can replace and draw nothing at all.
+ */
+export function identityFieldsForBand(band: SplitBand): readonly BandIdentityField[] {
+  switch (band) {
+    case 'children':
+      // `MeshDataValue.materialKey` sits beside `material` on the data half, so both rebase
+      // the same way and the pair is derived, not written.
+      return [
+        {
+          identityPath: channelPathForBand(band, 'materialKey'),
+          sourcePath: channelPathForBand(band, 'material'),
+        },
+      ];
+    case 'lights':
+      // The recomposed LightValue carries shading scalars and no minted identity: a light
+      // is not built through a content-keyed registry, so no write here can go stale.
+      // ⚠️ IF THIS ARM EVER BECOMES NON-EMPTY, THE TWO LIGHT PATCH SITES MUST BE MOVED ONTO
+      // THE SEAM — they still call the overlay primitives directly today, which is correct
+      // only while there is nothing here for them to invalidate. Nothing enforces that
+      // ordering, so it is written at the arm whose change would create the obligation.
+      return EMPTY_IDENTITY_FIELDS;
+    case 'camera':
+      // Nothing renders from the camera's evaluated value at all (`renderReachForBand`), so
+      // there is no identity on it for a write to invalidate. Same answer as the light band,
+      // for a different reason — which is exactly why this file states each band's answer
+      // rather than letting one arm be inherited from whichever it was pasted beside.
+      return EMPTY_IDENTITY_FIELDS;
+    default: {
+      const exhaustive: never = band;
+      void exhaustive;
+      return EMPTY_IDENTITY_FIELDS;
+    }
+  }
+}
+
+/** Stable empty array — a band with no minted identity must not churn a caller's memo. */
+const EMPTY_IDENTITY_FIELDS: readonly BandIdentityField[] = [];
+
+/**
+ * Does a write at `writtenPath` invalidate an identity standing for `sourcePath`?
+ *
+ * Prefix containment on whole segments: `data.material` is invalidated by `data.material`
+ * itself and by `data.material.base.color`, and NOT by `data.materialKey` — which shares a
+ * character prefix and is a different field. A naive `startsWith` gets that pair wrong in
+ * the one place it matters most, since the key sits right beside the region it identifies.
+ */
+export function writeInvalidates(writtenPath: string, sourcePath: string): boolean {
+  return writtenPath === sourcePath || writtenPath.startsWith(`${sourcePath}.`);
+}
