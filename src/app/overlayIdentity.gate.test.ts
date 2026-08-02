@@ -146,6 +146,28 @@ describe('#536 S2b — every overlay patch site is classified', () => {
     expect(reExporters).toEqual([]);
   });
 
+  it('keeps the set of values DECLARED exempt from the repair closed (#536 S3)', () => {
+    // The brand on the renderer's entry point makes it impossible to draw a value nobody
+    // decided about — but `identityIntact` is the one answer the compiler cannot check. It
+    // records a caller's claim that nothing wrote to the value; it cannot verify it.
+    //
+    // So the claim itself is censused. This is not a third defence for the same question:
+    // the brand enforces "you must decide", and this enforces "the set of things declared
+    // exempt is small, named, and reviewed". A new caller is a RED that forces whoever adds
+    // it to justify the exemption here, which is exactly where that argument belongs.
+    const declarers = sourceFiles()
+      .filter(([, src]) => /import\s*\{[^}]*\bidentityIntact\b[^}]*\}\s*from/.test(src))
+      .map(([path]) => path)
+      .sort();
+
+    expect(declarers).toEqual(['src/viewport/SceneFromDAG.tsx']);
+
+    // And the subject must not be empty — a census whose subject vanished reports success
+    // forever. Two call sites today: the dispatcher's bare branch and the scatter road.
+    const src = readFileSync(join(SRC, 'viewport/SceneFromDAG.tsx'), 'utf8');
+    expect(src.match(/\bidentityIntact\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
   it('guards the guard — the sweep sees an ALIASED import, which a call-shape sweep cannot', () => {
     // The positive control that makes the two cases above evidence rather than an empty
     // assertion. Three synthetic sources: the plain form, the alias form (the one that

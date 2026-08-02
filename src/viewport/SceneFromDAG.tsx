@@ -59,7 +59,12 @@ import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
-import { overlayWithIdentity } from '../app/overlayWithIdentity';
+import {
+  clearInvalidatedIdentity,
+  identityIntact,
+  overlayWithIdentity,
+  type IdentifiedSceneObject,
+} from '../app/overlayWithIdentity';
 import {
   channelValuesFromNodes,
   directChannelTargetSet,
@@ -1595,7 +1600,15 @@ interface MeshChildProps {
   // kinds render LightKindR (inheriting the group's world via GroupR's `<group>`
   // nesting). Camera bodies render nothing here — their frustum helper is drawn
   // globally from `cameraNodeIds` (Inc 2b composes that with the parent world).
-  value: SceneObject;
+  //
+  // #536 S3 — BRANDED, not a bare `SceneObject`. This component is where an evaluated
+  // value becomes pixels, so it is the last place that can ask whether the value's
+  // identity still describes its content. A bare `SceneObject` cannot be mounted here:
+  // it arrives either from `overlayWithIdentity` (which repaired it) or from
+  // `identityIntact(value, reason)` (which declares that nothing wrote to it, and names
+  // the guarantee). Two of the four mounts below are each kind, and before the brand they
+  // were the same expression — indistinguishable from a site that had simply forgotten.
+  value: IdentifiedSceneObject;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
   /** #266 — this value's producing DAG node id, threaded so a CONTAINER kind
@@ -1851,7 +1864,15 @@ function OverlayDispatch({
     return <ConstrainedR value={value} pickId={nodeId} override={override} />;
   if (hasDirectChannels && nodeId)
     return <DirectChannelsR value={value} pickId={nodeId} override={override} />;
-  return <MeshChild value={value} nodeId={nodeId} override={override} />;
+  // Neither overlay renderer ran, so nothing patched the evaluated value — its identity is
+  // the one the evaluator minted. Declared rather than assumed (#536 S3).
+  return (
+    <MeshChild
+      value={identityIntact(value, 'no-overlay-ran')}
+      nodeId={nodeId}
+      override={override}
+    />
+  );
 }
 
 // #266 (B1/B2) — the NESTED overlay-resolution seam. A container renderer (GroupR /
@@ -1932,10 +1953,10 @@ function DirectChannelsR({
   // screen. `overlayWithIdentity` composes the same two primitives in the same order and
   // clears the identity its own writes invalidated. It returns `value` by reference when
   // nothing is written, so the static-node guard below is untouched.
-  const sample = (seconds: number): SceneObject =>
+  const sample = (seconds: number): IdentifiedSceneObject =>
     overlayWithIdentity('children', value, pickId, channels, transients, seconds);
 
-  const [patched, setPatched] = useState<SceneObject>(() =>
+  const [patched, setPatched] = useState<IdentifiedSceneObject>(() =>
     sample(useTimeStore.getState().seconds),
   );
   const lastApplied = useRef<{
@@ -2008,7 +2029,7 @@ function ConstrainedR({
   // patched value AND a stable key for the aim, so the useFrame can skip
   // setState when nothing changed (H48 — a static constrained node must not
   // re-render every frame).
-  const build = (seconds: number): { v: SceneObject; aimKey: string } => {
+  const build = (seconds: number): { v: IdentifiedSceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
     // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
@@ -2026,8 +2047,20 @@ function ConstrainedR({
     const patch: Record<string, unknown> = {};
     if (aim && 'rotation' in rec) patch.rotation = aim;
     if (followed && 'position' in rec) patch.position = followed;
+    // #536 S3 — the spread builds a SECOND value after the seam already ran, so it owes the
+    // same debt the overlay does: it must not hand on an identity its own writes made stale.
+    // The bands it writes (rotation/position) invalidate no identity field today, but that
+    // is derived here rather than asserted — `clearInvalidatedIdentity` is the same rule the
+    // seam applies, so a constraint that ever learns to write a keyed band is handled by
+    // construction instead of by someone remembering this site exists.
     const v =
-      Object.keys(patch).length > 0 ? ({ ...rec, ...patch } as unknown as SceneObject) : base;
+      Object.keys(patch).length > 0
+        ? clearInvalidatedIdentity(
+            'children',
+            { ...rec, ...patch } as unknown as SceneObject,
+            Object.keys(patch),
+          )
+        : base;
     // The skip-key must cover EVERY band this builds, or a change in an unkeyed band
     // silently stops re-rendering (the H48 static-node guard would eat the update).
     return {
@@ -2036,7 +2069,7 @@ function ConstrainedR({
     };
   };
 
-  const [patched, setPatched] = useState<SceneObject>(
+  const [patched, setPatched] = useState<IdentifiedSceneObject>(
     () => build(useTimeStore.getState().seconds).v,
   );
   const lastApplied = useRef<{
@@ -3604,7 +3637,10 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
             rotation={inst.rotation as [number, number, number]}
             scale={inst.scale as [number, number, number]}
           >
-            <MeshChild value={asset} override={override} />
+            <MeshChild
+              value={identityIntact(asset, 'no-overlay-on-this-road')}
+              override={override}
+            />
           </group>
         );
       })}

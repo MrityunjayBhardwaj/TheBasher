@@ -12,7 +12,7 @@
 //      filters `writtenPaths` mirrors); hetvabhasa H261; issue #536.
 
 import { describe, expect, it } from 'vitest';
-import { overlayWithIdentity } from './overlayWithIdentity';
+import { clearInvalidatedIdentity, overlayWithIdentity } from './overlayWithIdentity';
 import { channelPathForBand } from './objectDataBand';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
@@ -227,5 +227,38 @@ describe('#536 S2b — the band decides, and a band with no minted identity is u
       0,
     );
     expect('materialKey' in out.data).toBe(false);
+  });
+});
+
+// #536 S3 — the rule, reachable by a writer that patches AFTER the overlay has run.
+//
+// The brand on the renderer's entry point surfaced one: the constraint road spreads the
+// overlaid value into a fresh object to apply a derived aim/position. It could have declared
+// itself exempt — its writes are transform bands, which invalidate nothing today — but that
+// would put a second copy of "does writing rotation invalidate a material key?" in the
+// renderer, and the two would drift the first time a constraint writes a keyed band. These
+// cases pin the shared rule at both answers, so the exemption stays derived rather than
+// asserted.
+describe('#536 S3 — a post-overlay writer clears through the same rule', () => {
+  it('leaves the key alone when the write is a transform band', () => {
+    const out = clearInvalidatedIdentity('children', baseValue(), [POSITION, 'rotation']);
+    // The whole reason the constraint road is allowed to skip the repair — derived here, so
+    // it is a measurement rather than a claim in a comment.
+    expect(out.data.materialKey).toBe('MINTED-BY-EVALUATION');
+  });
+
+  it('clears the key when a post-overlay write does reach the material', () => {
+    // The case that makes the one above evidence: the same call, the same value, a path that
+    // DOES invalidate. Without this, "leaves the key alone" would also pass for a function
+    // that never clears anything.
+    const out = clearInvalidatedIdentity('children', baseValue(), [`${MATERIAL}.base.color`]);
+    expect(out.data.materialKey).toBeNull();
+  });
+
+  it('does not treat a write to the KEY as a write to the region it identifies', () => {
+    // The segment-wise containment case, restated at this entry point: `materialKey` shares a
+    // character prefix with `material`, and a naive startsWith would read one as the other.
+    const out = clearInvalidatedIdentity('children', baseValue(), [MATERIAL_KEY]);
+    expect(out.data.materialKey).toBe('MINTED-BY-EVALUATION');
   });
 });
