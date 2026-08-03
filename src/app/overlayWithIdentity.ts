@@ -59,6 +59,75 @@ import { overlayTransients } from './overlayTransients';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
 import { identityFieldsForBand, writeInvalidates, type OverlayBand } from './objectDataBand';
+import type { SceneObject } from '../nodes/types';
+
+// ── THE BRAND (#536 S3, rung 3) ───────────────────────────────────────────────────────
+//
+// Everything above closes the defect for the two call sites that HAD it. It does not stop
+// a third site from mounting a renderer with a value whose identity nobody considered —
+// which is how this bug arrived in the first place, and gating for it would be a third
+// defence rather than a stronger tier.
+//
+// So the renderer's entry point stops accepting a bare `SceneObject`. A value reaches it
+// only from a named producer: either it went through the repair above, or a caller stated
+// that nothing wrote to it and said which guarantee makes that true.
+//
+// ⚠️ WHAT THIS IS AND IS NOT — the honest limit, because the difference matters. This makes
+// it impossible to mount the renderer with a value NOBODY DECIDED ABOUT. It does NOT verify
+// that a declaration is true: `identityIntact` cannot check that no write happened, it can
+// only record a caller's claim that none did. The strengthening is real — the two exempt
+// sites become visible and named instead of silently indistinguishable from the two that
+// needed repair, and a fifth mount cannot compile until it picks a side — and it stops
+// exactly there. Rung 4 (the bad pairing unconstructible) would mean the renderer taking
+// the un-overlaid value and doing the overlay itself, which is a different design.
+
+declare const IDENTITY_INTACT: unique symbol;
+
+/**
+ * A value whose render identity agrees with its content — i.e. any identity field on it
+ * (today, `materialKey`) still describes what the value actually holds.
+ *
+ * Only the two producers below mint this. It is a marker, not data: it exists at the type
+ * level and nothing is added to the value at runtime.
+ */
+export type IdentityIntact<T> = T & { readonly [IDENTITY_INTACT]: true };
+
+/**
+ * The closed set of reasons a value can carry sound identity WITHOUT going through the
+ * repair. Each member is a specific structural guarantee that no render-time write
+ * happened — not a general "looks fine to me".
+ *
+ * Closed on purpose. A sixth mount site cannot quietly join by inventing a reason string;
+ * adding a member is an edit to this union, which is where the argument belongs.
+ */
+export type NoWriteReason =
+  /**
+   * The overlay dispatcher took its bare branch: the node has no active constraint and no
+   * direct channels, so neither overlay renderer ran and nothing patched the evaluated
+   * value. Its identity is the one the evaluator minted, which is by definition correct.
+   */
+  | 'no-overlay-ran'
+  /**
+   * A road with no render-time overlay at all — the scatter instances, which draw an
+   * asset value straight off the evaluated scatter. No writer exists on this path, so
+   * there is nothing that could invalidate an identity.
+   */
+  | 'no-overlay-on-this-road';
+
+/**
+ * Declare that `value` carries sound identity because nothing wrote to it.
+ *
+ * This is a DECLARATION, not a check — see the limit above. It is nonetheless the point of
+ * the exercise: before this existed, a site that legitimately needed no repair and a site
+ * that had silently skipped one were the same expression, so neither reader nor compiler
+ * could tell them apart. Now the first states its reason and the second does not compile.
+ */
+export function identityIntact<T>(value: T, _reason: NoWriteReason): IdentityIntact<T> {
+  return value as IdentityIntact<T>;
+}
+
+/** Narrowed alias for the renderer's entry point, which is where the brand is enforced. */
+export type IdentifiedSceneObject = IdentityIntact<SceneObject>;
 
 /**
  * Every path this overlay actually WRITES, in the band's vocabulary.
@@ -113,19 +182,41 @@ export function overlayWithIdentity<T>(
   channels: readonly KeyframeChannelValue[],
   transients: Map<string, TransientEdit>,
   seconds: number,
-): T {
+): IdentityIntact<T> {
   const patched =
     overlayTransients(overlayChannels(base, channels, 1, seconds) ?? base, nodeId, transients) ??
     base;
   // Nothing was written — the base travels on untouched, and so does its identity. This is
   // the static scene, which must cost nothing and must not churn the caller's memo.
-  if (patched === base) return base;
+  if (patched === base) return base as IdentityIntact<T>;
 
+  return clearInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients));
+}
+
+/**
+ * Clear any identity on `value` that a write to `paths` invalidated, and brand the result.
+ *
+ * The rule the overlay owes its own clone, available to any writer that patches a value
+ * AFTER the overlay has run. There is exactly one such writer today — the constraint road
+ * spreads the overlaid value into a fresh object to apply a derived aim/position — and it
+ * calls this rather than declaring itself exempt, because "does writing `rotation`
+ * invalidate a material key?" is a question this module already answers. A declaration
+ * there would be a second spelling of that answer, and the two would drift the first time
+ * a constraint learns to write a band it does not write today.
+ *
+ * ⚠️ PRECONDITION: `value` must be freshly built and not yet handed to anyone — this
+ * mutates in place. Both callers satisfy it (the overlay's own clone, and the constraint's
+ * spread), and it is the same precondition the overlay has always relied on.
+ */
+export function clearInvalidatedIdentity<T>(
+  band: OverlayBand,
+  value: T,
+  paths: readonly string[],
+): IdentityIntact<T> {
   const fields = identityFieldsForBand(band);
-  if (fields.length === 0) return patched;
+  if (fields.length === 0) return value as IdentityIntact<T>;
 
-  const paths = writtenPaths(channels, nodeId, transients);
-  const clone = patched as unknown as Record<string, unknown>;
+  const clone = value as unknown as Record<string, unknown>;
   for (const field of fields) {
     if (!paths.some((p) => writeInvalidates(p, field.sourcePath))) continue;
     // Only clear an identity that is actually there. A data kind in this band that carries
@@ -138,5 +229,7 @@ export function overlayWithIdentity<T>(
     // be a second one, and it would have to live in the renderer.
     writeAt(clone, field.identityPath, null);
   }
-  return patched;
+  // Every identity the writes invalidated has been cleared, which is exactly the claim the
+  // brand carries — so this is the one place entitled to mint it by repair.
+  return value as IdentityIntact<T>;
 }

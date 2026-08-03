@@ -38,29 +38,14 @@
 //      PLAN.md S4 / PLAN-2-COMPOSABLE.md S4; docs/PERFORMANCE.md; issue #394.
 
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+// #536 S3 — shared with the other two structural censuses rather than copied a third time.
+// The walk's header records why it sits in `tools/` rather than `src/test-utils/`: a plain
+// module there is typechecked without `@types/node`, so it cannot import `node:fs`.
+import { sourceFiles } from '../../../tools/gates/sourceFiles';
 
 const SRC = join(__dirname, '../..');
-
-/** Every non-test source file under `src/`, as [repo-relative path, contents]. */
-function sourceFiles(): [string, string][] {
-  const out: [string, string][] = [];
-  const walk = (dir: string, rel: string) => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry);
-      if (statSync(abs).isDirectory()) {
-        walk(abs, `${rel}${entry}/`);
-        continue;
-      }
-      if (!/\.tsx?$/.test(entry)) continue;
-      if (/\.test\.tsx?$/.test(entry)) continue;
-      out.push([`${rel}${entry}`, readFileSync(abs, 'utf8')]);
-    }
-  };
-  walk(SRC, 'src/');
-  return out;
-}
 
 describe('#394 S4 — one composition decision, translated N ways', () => {
   it('has exactly one set of modules importing the decision, and each is a known translation', () => {

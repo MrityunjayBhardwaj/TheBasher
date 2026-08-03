@@ -46,29 +46,17 @@
 //      hetvabhasa H261, vyapti V149 (the fourth hole), dharana B20 target 4; issue #536.
 
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+// #536 S3 — the enumeration is shared with the other two structural censuses rather than
+// copied a third time. All three assert over "every source file", and a walk that silently
+// narrowed in one copy would let that gate report a closed set over a smaller subject while
+// still passing. Its positive controls live in `src/test-utils/sourceFiles.test.ts`; the
+// walk itself sits in `tools/` for the typecheck reason its header records.
+import { sourceFiles } from '../../tools/gates/sourceFiles';
+import { stripComments } from '../test-utils/sourceScan';
 
 const SRC = join(__dirname, '..');
-
-/** Every non-test source file under `src/`, as [repo-relative path, contents]. */
-function sourceFiles(): [string, string][] {
-  const out: [string, string][] = [];
-  const walk = (dir: string, rel: string) => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry);
-      if (statSync(abs).isDirectory()) {
-        walk(abs, `${rel}${entry}/`);
-        continue;
-      }
-      if (!/\.tsx?$/.test(entry)) continue;
-      if (/\.test\.tsx?$/.test(entry)) continue;
-      out.push([`${rel}${entry}`, readFileSync(abs, 'utf8')]);
-    }
-  };
-  walk(SRC, 'src/');
-  return out;
-}
 
 /**
  * Does this source APPLY an overlay — i.e. import one of the two primitives that write a
@@ -157,6 +145,39 @@ describe('#536 S2b — every overlay patch site is classified', () => {
       .map(([path]) => path);
 
     expect(reExporters).toEqual([]);
+  });
+
+  it('keeps the set of values DECLARED exempt from the repair closed (#536 S3)', () => {
+    // The brand on the renderer's entry point makes it impossible to draw a value nobody
+    // decided about — but `identityIntact` is the one answer the compiler cannot check. It
+    // records a caller's claim that nothing wrote to the value; it cannot verify it.
+    //
+    // So the claim itself is censused. This is not a third defence for the same question:
+    // the brand enforces "you must decide", and this enforces "the set of things declared
+    // exempt is small, named, and reviewed". A new caller is a RED that forces whoever adds
+    // it to justify the exemption here, which is exactly where that argument belongs.
+    const declarers = sourceFiles()
+      .filter(([, src]) => /import\s*\{[^}]*\bidentityIntact\b[^}]*\}\s*from/.test(src))
+      .map(([path]) => path)
+      .sort();
+
+    expect(declarers).toEqual(['src/viewport/SceneFromDAG.tsx']);
+
+    // EXACTLY two call sites — the dispatcher's bare branch and the scatter road — not a
+    // floor. A floor was the first version and falsification showed it too weak: swapping
+    // the constraint road's `clearInvalidatedIdentity` for a declaration typechecks once the
+    // now-unused import is also removed, and a `>= 2` census stays green through it. The
+    // whole point of routing that site through the shared rule is that it does NOT get to
+    // assert its own exemption, so a THIRD declaration must red and be argued for here.
+    //
+    // It also stops the subject silently emptying, which is the failure a bare census has.
+    //
+    // Comments are stripped, and that is not a precaution — the first version counted 3 on
+    // a clean tree because the prop's own doc comment spells `identityIntact(value, reason)`
+    // while explaining the rule. Prose that documents a mechanism must not register as a use
+    // of it, or the honest way to make this gate green is to stop writing the explanation.
+    const src = stripComments(readFileSync(join(SRC, 'viewport/SceneFromDAG.tsx'), 'utf8'));
+    expect(src.match(/\bidentityIntact\(/g)?.length ?? 0).toBe(2);
   });
 
   it('guards the guard — the sweep sees an ALIASED import, which a call-shape sweep cannot', () => {

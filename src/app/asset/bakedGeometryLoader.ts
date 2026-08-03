@@ -20,7 +20,7 @@
 import type { BufferGeometry } from 'three';
 import { getStorage } from '../boot';
 import type { GeometryRef } from '../../nodes/types';
-import * as geometryRegistry from '../geometryRegistry';
+import { getForRead, prime } from '../geometryRegistry';
 import { readBakedGeometry } from './bakedGeometryStore';
 
 const promiseCache = new Map<string, Promise<void>>();
@@ -33,7 +33,7 @@ function loadAndPrime(ref: GeometryRef): Promise<void> {
     }
     const storage = await getStorage();
     const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
-    geometryRegistry.prime(ref, geom);
+    prime(ref, geom);
   })();
 }
 
@@ -47,7 +47,7 @@ function loadAndPrime(ref: GeometryRef): Promise<void> {
  * is the React-hook entry point.
  */
 export function resolveBakedGeometry(ref: GeometryRef): BufferGeometry {
-  const hit = geometryRegistry.get(ref);
+  const hit = getForRead(ref);
   if (hit) return hit;
 
   // A prior read that rejected surfaces its Error here (mirrors opfsLoader's

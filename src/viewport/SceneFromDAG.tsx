@@ -23,7 +23,6 @@ import {
   useCallback,
   useContext,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -44,8 +43,7 @@ import {
 } from '../app/dataLaneOverlay';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
-import * as geometryRegistry from '../app/geometryRegistry';
-import * as materialRegistry from '../app/materialRegistry';
+import { getForAttach } from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
@@ -61,7 +59,12 @@ import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
-import { overlayWithIdentity } from '../app/overlayWithIdentity';
+import {
+  clearInvalidatedIdentity,
+  identityIntact,
+  overlayWithIdentity,
+  type IdentifiedSceneObject,
+} from '../app/overlayWithIdentity';
 import {
   channelValuesFromNodes,
   directChannelTargetSet,
@@ -127,10 +130,10 @@ import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
 import { composeBakedMaterial } from '../app/material/composeMaterial';
-import {
-  compilePrimitiveMaterial,
-  primitiveMaterialInputs,
-} from '../app/material/primitiveMaterialInputs';
+// #536 S3 — the ATTACH door on `materialRegistry`, extracted into its own module so the
+// one consumer that takes a share of ownership can be named at an import line. This file
+// no longer reaches the registry at all.
+import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -1597,7 +1600,15 @@ interface MeshChildProps {
   // kinds render LightKindR (inheriting the group's world via GroupR's `<group>`
   // nesting). Camera bodies render nothing here — their frustum helper is drawn
   // globally from `cameraNodeIds` (Inc 2b composes that with the parent world).
-  value: SceneObject;
+  //
+  // #536 S3 — BRANDED, not a bare `SceneObject`. This component is where an evaluated
+  // value becomes pixels, so it is the last place that can ask whether the value's
+  // identity still describes its content. A bare `SceneObject` cannot be mounted here:
+  // it arrives either from `overlayWithIdentity` (which repaired it) or from
+  // `identityIntact(value, reason)` (which declares that nothing wrote to it, and names
+  // the guarantee). Two of the four mounts below are each kind, and before the brand they
+  // were the same expression — indistinguishable from a site that had simply forgotten.
+  value: IdentifiedSceneObject;
   /** Inherited material override pushed down by an ancestor MaterialOverride. */
   override?: MaterialValue;
   /** #266 — this value's producing DAG node id, threaded so a CONTAINER kind
@@ -1853,7 +1864,15 @@ function OverlayDispatch({
     return <ConstrainedR value={value} pickId={nodeId} override={override} />;
   if (hasDirectChannels && nodeId)
     return <DirectChannelsR value={value} pickId={nodeId} override={override} />;
-  return <MeshChild value={value} nodeId={nodeId} override={override} />;
+  // Neither overlay renderer ran, so nothing patched the evaluated value — its identity is
+  // the one the evaluator minted. Declared rather than assumed (#536 S3).
+  return (
+    <MeshChild
+      value={identityIntact(value, 'no-overlay-ran')}
+      nodeId={nodeId}
+      override={override}
+    />
+  );
 }
 
 // #266 (B1/B2) — the NESTED overlay-resolution seam. A container renderer (GroupR /
@@ -1934,10 +1953,10 @@ function DirectChannelsR({
   // screen. `overlayWithIdentity` composes the same two primitives in the same order and
   // clears the identity its own writes invalidated. It returns `value` by reference when
   // nothing is written, so the static-node guard below is untouched.
-  const sample = (seconds: number): SceneObject =>
+  const sample = (seconds: number): IdentifiedSceneObject =>
     overlayWithIdentity('children', value, pickId, channels, transients, seconds);
 
-  const [patched, setPatched] = useState<SceneObject>(() =>
+  const [patched, setPatched] = useState<IdentifiedSceneObject>(() =>
     sample(useTimeStore.getState().seconds),
   );
   const lastApplied = useRef<{
@@ -2010,7 +2029,7 @@ function ConstrainedR({
   // patched value AND a stable key for the aim, so the useFrame can skip
   // setState when nothing changed (H48 — a static constrained node must not
   // re-render every frame).
-  const build = (seconds: number): { v: SceneObject; aimKey: string } => {
+  const build = (seconds: number): { v: IdentifiedSceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
     const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
     // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
@@ -2028,8 +2047,20 @@ function ConstrainedR({
     const patch: Record<string, unknown> = {};
     if (aim && 'rotation' in rec) patch.rotation = aim;
     if (followed && 'position' in rec) patch.position = followed;
+    // #536 S3 — the spread builds a SECOND value after the seam already ran, so it owes the
+    // same debt the overlay does: it must not hand on an identity its own writes made stale.
+    // The bands it writes (rotation/position) invalidate no identity field today, but that
+    // is derived here rather than asserted — `clearInvalidatedIdentity` is the same rule the
+    // seam applies, so a constraint that ever learns to write a keyed band is handled by
+    // construction instead of by someone remembering this site exists.
     const v =
-      Object.keys(patch).length > 0 ? ({ ...rec, ...patch } as unknown as SceneObject) : base;
+      Object.keys(patch).length > 0
+        ? clearInvalidatedIdentity(
+            'children',
+            { ...rec, ...patch } as unknown as SceneObject,
+            Object.keys(patch),
+          )
+        : base;
     // The skip-key must cover EVERY band this builds, or a change in an unkeyed band
     // silently stops re-rendering (the H48 static-node guard would eat the update).
     return {
@@ -2038,7 +2069,7 @@ function ConstrainedR({
     };
   };
 
-  const [patched, setPatched] = useState<SceneObject>(
+  const [patched, setPatched] = useState<IdentifiedSceneObject>(
     () => build(useTimeStore.getState().seconds).v,
   );
   const lastApplied = useRef<{
@@ -2073,97 +2104,12 @@ function ConstrainedR({
   return <MeshChild value={patched} override={override} nodeId={pickId} />;
 }
 
-// v0.6 #2 (#178, W2) — the ONE shared primitive material builder for Box+Sphere.
-// Mirrors BakedMeshR's imperative useMemo build (single writer V20): compile the
-// OpenPBR IR via openpbrToThree (the one mapping site, V29) → MeshPhysicalMaterial.
-// Standard→Physical is PERF-SAFE: at coat.weight=0/transmission.weight=0 the
-// compiled shader carries no clearcoat/transmission GLSL — three gates the defines
-// on `> 0` (WebGLPrograms.js:130,134 HAS_CLEARCOAT/HAS_TRANSMISSION; the setters
-// MeshPhysicalMaterial.js:104,176 only recompile across the 0 boundary). roughness
-// and clearcoatRoughness are set EXPLICITLY (three defaults are 1 and 0 — D-03).
-// A MaterialOverride decorator (#99/#124) composes onto the IR through the ONE
-// shared rule (`composeMaterial`, #394 S3b) BEFORE the compile, so the override
-// is map-aware here exactly as it is on the glTF road: a roughness/metalness map
-// on the primitive's own material defends its channel unless the director
-// explicitly authored that field. It used to win WHOLESALE on all 7 scalars, on
-// the premise "a primitive has no source map" — false since MaterialEditor grew
-// map rows (NPanel.tsx:1395) and this very function started loading them below.
-// coat/transmission/ior/maps still always come from the IR (the override carries
-// no opinion on them), and `transparent` now comes from the compile rather than
-// being re-derived as `opacity < 1`.
-//
-// #530 — the built material is no longer per-component. Two meshes whose material
-// RESOLVES to the same thing now draw the same `THREE.Material` instance, via the
-// content-keyed `materialRegistry` (PERFORMANCE.md Lever 5). Everything the build
-// reads travels in one spec object, and the key is taken over that spec, so a mesh
-// carrying an override composes to a different spec and correctly gets its own
-// instance — clone-on-override is preserved by construction rather than by a rule
-// the registry has to be told.
-// #536 S2 — `mintedKey` is `MeshDataValue.materialKey`, the identity the EVALUATOR
-// decided (the fold: param → socket → operator lane). Pass it and the renderer stops
-// re-deriving that half. It is optional because only `MeshData` carries one today:
-// `ModifiedMeshR`'s value kind has none, and a materialless data node draws the fallback
-// IR, which the evaluator never keyed. Both fall back to the SAME function the evaluator
-// used, never to a second spelling of identity.
-function usePrimitiveMaterial(
-  ir: InlineMaterialSpec,
-  override: MaterialValue | undefined,
-  shading: string,
-  mintedKey?: string | null,
-): THREE.MeshPhysicalMaterial {
-  const compiled = compilePrimitiveMaterial(ir, override);
-  // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
-  // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
-  // the loader hook, never in the resolver (V29). The ref carries the colorspace;
-  // re-assert it per slot in the registry's build (M5 — a data map as sRGB washes
-  // out), mirroring BakedMeshR's sRGB/linear split. This is why compiling and
-  // assembling are two calls: the refs to suspend on come out of the compile.
-  const mapTex = useBakedTexture(compiled.maps.map);
-  const normalTex = useBakedTexture(compiled.maps.normalMap);
-  const roughnessTex = useBakedTexture(compiled.maps.roughnessMap);
-  const metalnessTex = useBakedTexture(compiled.maps.metalnessMap);
-  const aoTex = useBakedTexture(compiled.maps.aoMap);
-  const emissiveTex = useBakedTexture(compiled.maps.emissiveMap);
-  // Both halves from one pure place, so "same key ⇒ same spec" has a tier below the
-  // browser to be checked at. v0.6 #3 (#181, W2)'s ONE shared UV placement travels on
-  // the spec and is applied to all 6 map clones by the build.
-  const { spec, key } = primitiveMaterialInputs({
-    ir,
-    mintedKey,
-    override,
-    shading,
-    compiled,
-    textures: {
-      map: mapTex,
-      normalMap: normalTex,
-      roughnessMap: roughnessTex,
-      metalnessMap: metalnessTex,
-      aoMap: aoTex,
-      emissiveMap: emissiveTex,
-    },
-  });
-  // The registry builds and owns the material AND its texture clones (V20 single
-  // writer, moved one level out). `get` deliberately does not count holders — a
-  // render can be discarded, and StrictMode runs every render twice, so a count
-  // taken here would over-count on both. The commit phase counts instead.
-  const { material } = materialRegistry.get(spec, key);
-  // LAYOUT effect, not passive: it runs synchronously inside the commit, so there
-  // is no window between this mesh rendering with the shared instance and this
-  // mesh being counted as a holder of it. A passive effect leaves that window open
-  // for another mesh's release to evict the instance out from under this one.
-  useLayoutEffect(() => {
-    materialRegistry.retain(key);
-    return () => materialRegistry.release(key);
-  }, [key]);
-  return material;
-}
-
 // #365 Phase 5a / #384 Stage C: BoxMeshR and SphereMeshR are RETIRED — a box/sphere renders
 // through <ObjectR> (the split's Object → BoxData/SphereData road, byte-identical).
 
 // ModifiedMeshR (epic #201 / #209) — the renderer for a geometry MODIFIER's
 // output (the SOP half of V58). Reads the modified geometry from the registry
-// SYNCHRONOUSLY (geometryRegistry.get recursively builds the `array` descriptor
+// SYNCHRONOUSLY (getForAttach recursively builds the `array` descriptor
 // from its source) — NO suspense, unlike BakedMeshR (a modifier's geometry is
 // rebuildable from params, not an async OPFS handle). The material is the source's
 // inline OpenPBR IR (V53), built through the SAME usePrimitiveMaterial as Box/
@@ -2191,7 +2137,7 @@ function ModifiedMeshR({
   const mat = value.material;
   const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
   const material = usePrimitiveMaterial(inlineMat, override, shading);
-  const geom = geometryRegistry.get(value.geometry);
+  const geom = getForAttach(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
   // ultimate source is a BAKED mesh whose OPFS bytes aren't primed (ArrayModifier
@@ -2239,7 +2185,7 @@ function ModifiedMeshR({
 // #361 — ObjectR: renders the object↔data split's Object half (Phase 1).
 // An Object OWNS the TRS and points at data; it draws `data.geometry` (a shared
 // GeometryRef handle) at its own transform with the data's inline material — the
-// SAME `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so
+// SAME `getForAttach` + `usePrimitiveMaterial` path ModifiedMeshR uses, so
 // an `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band,
 // no parallel render logic). `data: null` = an Empty → renders nothing. Selection
 // /onClick come from the enclosing SceneChildNode band, like the other leaf Rs.
@@ -2295,7 +2241,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // #388 — a baked mesh IS render geometry and MUST draw, unlike the three arms
     // above (a curve draws its own chrome, a light recomposes, a camera correctly
     // draws nothing). It just cannot draw through `ObjectMeshR`, whose whole road is
-    // synchronous: `geometryRegistry.get` returns null for a baked handle BY DESIGN
+    // synchronous: `getForAttach` returns null for a baked handle BY DESIGN
     // (the caller is expected to suspend and prime), and `usePrimitiveMaterial` wants
     // an inline OpenPBR IR, not the flat baked spec. Falling through to it renders an
     // invisible object with a grey material — measured, both halves, before `BakedData`
@@ -2319,7 +2265,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
   if (data?.kind === 'ModifiedData') {
     // #415 — a modifier's output IS render geometry and MUST draw, so this arm
     // RECOMPOSES and hands the flat value to `ModifiedMeshR`, the renderer the fused
-    // `ModifiedMesh` already draws through: the same synchronous `geometryRegistry.get`
+    // `ModifiedMesh` already draws through: the same synchronous `getForAttach`
     // (which recursively builds an `array` descriptor from its source) and the same
     // `usePrimitiveMaterial`. One band (H40) — the pair and the fused node cannot drift
     // while both exist, and there is no parallel sync walk to keep in step. This is the
@@ -2350,7 +2296,7 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
 
 // The mesh half of an Object: draws `data.geometry` (a shared GeometryRef handle)
 // at the Object's TRS with the data's inline material — the SAME
-// `geometryRegistry.get` + `usePrimitiveMaterial` path ModifiedMeshR uses, so an
+// `getForAttach` + `usePrimitiveMaterial` path ModifiedMeshR uses, so an
 // `Object → BoxData` pair is byte-identical to a fused BoxMesh (H40 one band, no
 // parallel render logic). `data: null` = an Empty → renders nothing.
 function ObjectMeshR({
@@ -2383,7 +2329,7 @@ function ObjectMeshR({
     shading,
     mat ? data?.materialKey : null,
   );
-  const geom = data ? geometryRegistry.get(data.geometry) : null;
+  const geom = data ? getForAttach(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
@@ -3691,7 +3637,10 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
             rotation={inst.rotation as [number, number, number]}
             scale={inst.scale as [number, number, number]}
           >
-            <MeshChild value={asset} override={override} />
+            <MeshChild
+              value={identityIntact(asset, 'no-overlay-on-this-road')}
+              override={override}
+            />
           </group>
         );
       })}

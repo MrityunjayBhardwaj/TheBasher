@@ -3,7 +3,7 @@
 // issue #151).
 //
 // THE PROBLEM (the Wave 4 crux): a GltfChild's geometry + material live BY NAME
-// inside the GltfAsset's SkeletonUtils clone. `geometryRegistry.get()` returns
+// inside the GltfAsset's SkeletonUtils clone. `geometryRegistry.getForRead()` returns
 // null for gltf (the bytes live in the loaded asset, not the box/sphere builder),
 // so `dispatchApplyTransform` — a non-React helper — has no handle to that clone.
 //

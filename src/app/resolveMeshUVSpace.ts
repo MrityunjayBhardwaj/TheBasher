@@ -28,7 +28,7 @@
 //    so there is no list to forget.
 //
 // 2. THE MISS RULE IS DERIVED FROM THE SOURCE'S AVAILABILITY MODEL, NOT GUESSED.
-//    `geometryRegistry.get()` returns null for THREE different reasons, and collapsing
+//    `geometryRegistry.getForRead()` returns null for THREE different reasons, and collapsing
 //    them into one rule is wrong twice over (geometryRegistry.ts:41-59):
 //      - a `gltf` ref ALWAYS returns null — the registry does not own loaded glTF
 //        geometry, the asset clone does. Null means "look elsewhere", not "wait".
@@ -83,7 +83,7 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { extractUVIslands } from './uvIslands';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
-import { get as getRegistryGeometry } from './geometryRegistry';
+import { getForRead as getRegistryGeometry } from './geometryRegistry';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
 // the map binding is a material param, not a channel), so a zero ctx is exact for the

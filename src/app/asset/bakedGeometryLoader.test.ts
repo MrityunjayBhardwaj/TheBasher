@@ -47,13 +47,13 @@ describe('bakedGeometryLoader', () => {
     const ref = await writeBakedGeometry(currentStorage, box);
 
     // Unprimed: a direct registry get is a miss.
-    expect(geometryRegistry.get(ref)).toBeNull();
+    expect(geometryRegistry.getForRead(ref)).toBeNull();
 
     const loaded = await resolveSuspense(ref);
     loaded.computeBoundingBox();
 
     // Registry is now primed — a subsequent get is a sync hit (same instance).
-    expect(geometryRegistry.get(ref)).toBe(loaded);
+    expect(geometryRegistry.getForRead(ref)).toBe(loaded);
 
     // Bounds match the written geometry (round-trip fidelity).
     const src = box.boundingBox!;

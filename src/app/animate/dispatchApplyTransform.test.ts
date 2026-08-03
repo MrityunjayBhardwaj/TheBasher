@@ -508,7 +508,7 @@ describe('dispatchApplyTransform (primitives)', () => {
         heightSegments: 16,
       },
     };
-    const sharedBefore = geometryRegistry.get(sharedRef)!;
+    const sharedBefore = geometryRegistry.getForRead(sharedRef)!;
     const posBefore = Float32Array.from(sharedBefore.getAttribute('position').array);
 
     const storage = new MemoryStorage();
@@ -523,7 +523,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     });
 
     // The shared cached instance is byte-identical (the bake cloned first, H45).
-    const posAfter = geometryRegistry.get(sharedRef)!.getAttribute('position').array;
+    const posAfter = geometryRegistry.getForRead(sharedRef)!.getAttribute('position').array;
     expect(Array.from(posAfter)).toEqual(Array.from(posBefore));
   });
 

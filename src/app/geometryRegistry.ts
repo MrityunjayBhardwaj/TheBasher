@@ -46,8 +46,11 @@ const cache = new Map<string, BufferGeometry>();
  * live in OPFS and must be loaded asynchronously by the renderer hook, then
  * `prime`d (see header). Returns the SAME instance for repeated calls with an
  * identical key (cache hit).
+ *
+ * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
+ * outside this module reaches the cache through one of them.
  */
-export function get(ref: GeometryRef): BufferGeometry | null {
+function get(ref: GeometryRef): BufferGeometry | null {
   if (ref.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
@@ -55,6 +58,69 @@ export function get(ref: GeometryRef): BufferGeometry | null {
   const built = build(ref);
   if (built) cache.set(ref.key, built);
   return built;
+}
+
+// ── THE TWO DOORS (#536 S3) ───────────────────────────────────────────────────────────
+//
+// `get` handed every caller the same thing, so the ONE fact that distinguishes them was
+// nowhere in the code: what the caller does with the instance next. That matters here
+// because the instance is SHARED by design — two refs with one key resolve to the same
+// `BufferGeometry`, which is the whole point of the cache — so "who calls get?" selects
+// everybody and discriminates nothing.
+//
+// The two answers carry incompatible rules, and one of them is where a real bug lived
+// (#530/#533: a shared resource adopted by `<primitive>`, which stamps ownership onto the
+// object itself). Naming the door moves the answer to the import line, where
+// `registryDoors.gate.test.ts` can read it and hold the consumer set closed.
+//
+// ⚠️ DECLARED LIMIT — these are the same function today, and that is honest rather than
+// accidental. Geometry has no refcount (unlike `materialRegistry`), so `getForAttach`
+// takes no bookkeeping to do; and `getForRead` CANNOT enforce its no-write rule, because
+// a `BufferGeometry` is mutable and every reader must hand the real object to three.js.
+// This is a naming tier, not a type tier: it makes intent reviewable and a new consumer's
+// door declared, and it stops there. #535 is the behavioural backstop that asks whether
+// anything actually leaked.
+
+/**
+ * Take a shared geometry in order to ATTACH it to the scene graph — a share of ownership.
+ *
+ * The caller renders with this instance while other meshes hold it simultaneously, so it
+ * must be passed as a PROP and never adopted by `<primitive>` (#530/#533). If geometry
+ * ever grows a refcount, it belongs on this door and not on {@link getForRead}.
+ *
+ * Null cases are `get`'s: a `gltf` ref, or a `baked` MISS the caller resolves by
+ * suspending and priming.
+ */
+export function getForAttach(ref: GeometryRef): BufferGeometry | null {
+  return get(ref);
+}
+
+/**
+ * Take a shared geometry in order to COMPUTE from it and discard it — no ownership.
+ *
+ * The rule is that a reader never writes to what it takes. Three production sites break
+ * it today, and they are named here rather than left in an issue thread (#541) — the
+ * point of a declared exception is that the next reader of this door meets it:
+ *
+ *   • `src/app/boot.ts:672` — the `__basher_baked_geometry_bounds` dev seam calls
+ *     `computeBoundingBox()` on the shared instance, unconditionally.
+ *   • `src/viewport/sceneBounds.ts:53` — walks the live scene graph and lazily fills
+ *     `boundingBox` on whatever is attached, which includes shared instances.
+ *   • `src/render/renderToImage.ts:322` — the same shape as sceneBounds.
+ *
+ * All three are benign for ONE reason, and it is worth stating precisely because it does
+ * not generalise: `boundingBox` is an idempotent derived cache of the geometry's own
+ * attribute data, so every writer computes the same answer. That is a property of THAT
+ * FIELD, not of this door. The moment anything replaces attribute data on a shared
+ * instance in place, a stale `boundingBox` survives on it and these are the readers that
+ * would serve it.
+ *
+ * Two of the three reach the instance off the scene graph (`mesh.geometry`) and import
+ * nothing, so no importer census can see them — which is why the set is pinned by a
+ * CONTENT sweep in `registryDoors.gate.test.ts` instead.
+ */
+export function getForRead(ref: GeometryRef): BufferGeometry | null {
+  return get(ref);
 }
 
 /**

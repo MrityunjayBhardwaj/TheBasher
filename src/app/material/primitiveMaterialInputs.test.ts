@@ -28,6 +28,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
+import { BoxDataNode, BoxDataParams } from '../../nodes/BoxData';
 import { hydrateInlineMaterial } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { keyOf } from '../materialRegistry';
@@ -192,6 +193,35 @@ describe('#536 S2 — the evaluator’s key is used, and the fallback is the sam
     // `name` is excluded from render identity (the S1 corollary), so a relabelled but
     // otherwise identical material must not lose its share of the instance.
     expect(irKeyFor(sameContent, null)).toBe(irKeyFor(BASE_IR, null));
+  });
+
+  it('lands a keyed and an unkeyed road on ONE instance for the same material (#542)', () => {
+    // The cross-road claim §4's reach paragraph rests on, and NOT covered by the two cases
+    // above: those compare the fallback with itself. This one compares the fallback with
+    // what the EVALUATOR actually mints, taken from `BoxData.evaluate` rather than by
+    // calling the key function here — writing `irKeyFor(ir, materialKeyOf(ir))` was the
+    // first attempt and it is equal by construction, so it could never have failed.
+    //
+    // It matters because `ModifiedData` carries no minted key while sharing the very same
+    // registry: an arrayed cube (fallback road) and a plain cube (minted road) with equal
+    // materials must draw ONE instance. If the evaluator ever minted with a different
+    // function, the two roads would silently stop sharing — a lost dedup, invisible on
+    // screen and impossible to see from either road on its own.
+    const params = BoxDataParams.parse({
+      size: [1, 1, 1],
+      material: { base: { color: '#2244ff' } },
+    });
+    const evaluated = BoxDataNode.evaluate(
+      params,
+      { material: [] },
+      {
+        time: { frame: 0, seconds: 0, normalized: 0 },
+      },
+    ) as MeshDataValue;
+    expect(evaluated.materialKey, 'the evaluator must mint one at all').toBeTruthy();
+    expect(irKeyFor(evaluated.material as InlineMaterialSpec, evaluated.materialKey)).toBe(
+      irKeyFor(evaluated.material as InlineMaterialSpec, null),
+    );
   });
 
   it('a map REF change moves the key even when the resolved textures are equal', () => {

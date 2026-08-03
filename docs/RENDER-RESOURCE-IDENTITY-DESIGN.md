@@ -31,8 +31,10 @@ unchanged" — exercises a different override road and would have stayed green t
 name suggests.** This is the same failure as the `GeometryRef` analogy wearing different
 clothes: a claim about a neighbour taken as a claim about this case.
 
-Two ⚠️ remain, both untouched by these rounds: §3 (Houdini at source tier) and S3 (whether a
-syntactic sweep survives refactors). One new gap is now declared in S2: `ModifiedData` still
+One ⚠️ remains untouched by these rounds: §3 (Houdini at source tier). S3's — whether a
+syntactic sweep survives refactors — is now MEASURED, and the answer sharpened it: an
+import-clause sweep is complete only over a subject that cannot be imported as a namespace,
+so the gate refuses that form as its precondition. One new gap is now declared in S2: `ModifiedData` still
 carries no minted key, so half the registry's traffic re-derives identity at render.
 
 Keep this honest as the document is edited. The whole reason for the convention is that a
@@ -173,6 +175,51 @@ Two lines apart. Geometry got the packed-prim treatment; material never did.
 `GeometryRef` is already a deterministic content key minted by evaluation and resolved by
 the renderer. **MEASURED consequence:** the material registry shipped in #530 is a
 renderer-side reimplementation of identity the evaluator should be handing down.
+
+### How far this reaches today — 1 of 6 kinds (#542)
+
+The invariant above is stated over the whole `ObjectData` union. It is **enforced on one
+member of it.** `materialKey` exists on `MeshDataValue` and nowhere else, minted at exactly
+two producers (`BoxData`, `SphereData`), while two other kinds carry a material with no key
+at all. Read the invariant on its own and you would reasonably conclude that every evaluated
+material carries identity; it does not, and this is where that is written down.
+
+| kind                   | carries a material | carries a minted key | what keeps it non-divergent                                                                       |
+| ---------------------- | ------------------ | -------------------- | ------------------------------------------------------------------------------------------------- |
+| `MeshData`             | yes                | **yes**              | the key itself — the registry-backed primitive road                                               |
+| `BakedData`            | yes                | no                   | **does not share.** A per-component `useMemo`, disposed at the site (`SceneFromDAG` `BakedMeshR`) |
+| `ModifiedData`         | yes                | no                   | **shares, and re-derives.** See below — this is the interesting one                               |
+| curve / light / camera | no                 | n/a                  | nothing to key. Not missing                                                                       |
+
+The glTF road is not a kind at all (a `GltfChild` is still fused) and belongs in the same
+census: it writes onto **per-clone** `THREE.Material` instances and never touches the
+registry, so it is `BakedData`'s answer — safe by not sharing.
+
+**`ModifiedData` is the one whose safety argument is easy to state wrongly.** It is not safe
+by not sharing: `ModifiedMeshR` calls the same `usePrimitiveMaterial` seam the keyed road
+calls, so a modifier's material goes into the same content-keyed `materialRegistry` and two
+arrayed cubes with equal materials genuinely draw one instance. It carries no minted key, so
+the renderer falls back to `materialKeyOf(ir)` — **the same function the evaluator calls, over
+the same IR.** That is what keeps the two roads agreeing, and it is why a keyed and an unkeyed
+object with equal materials correctly land on one instance rather than two. One function, one
+answer; a fallback, never a second spelling of identity.
+
+So the honest reading of the invariant's first clause is narrower than its wording: identity
+is minted by evaluation **on the registry-backed primitive road**, and rediscovered downstream
+— through the evaluator's own function — everywhere else that shares.
+
+**What would break it, and therefore what to check.** If `ModifiedData` (or any pass-through
+producer) ever mints its own key, that key immediately joins the S3 ownership rule: a writer
+that patches an evaluated value owns the identity on it, and `overlayWithIdentity` would have
+to clear it for that band too. Until then the fallback is immune to staleness by construction,
+because it is computed from the content it is handed. Widening the mint is #542's stronger
+half and is deliberately still open: `SetMaterialOp`/`MaterialOverrideOp` mint a material while
+`ArrayModifier`/`MirrorModifier` pass one through, and "pass through" has to decide whether it
+inherits the source's identity or gets its own. That is a design question, not a blank to fill.
+
+The three counts in this section — two minting producers, one keyed kind of six, one downstream
+re-derivation — are machine-checked by `src/nodes/materialKeyReach.gate.test.ts`, so this
+paragraph cannot quietly become fiction.
 
 ### And why the handle alone is not enough
 
@@ -336,13 +383,13 @@ Two independent savings: dropping the sort and the per-leaf `JSON.stringify` buy
 2.528 → 1.282; using the minted key buys 1.282 → 0.482. The second is what the wiring
 buys, and it is the one no test can see.
 
-⚠️ **COVERAGE, still open:** only `MeshDataValue` carries a `materialKey`. The registry's
-other consumer is `ModifiedMeshR`, whose `ModifiedDataValue` has none and whose material
-union is wider, so it takes the fallback. That is correct but it means half this
-boundary's traffic still re-derives identity at render. Minting on `ModifiedData` needs an
-answer for all four of its producers (`SetMaterialOp`, `MaterialOverrideOp` mint;
-`ArrayModifier`, `MirrorModifier` pass a source's material through) and is not in this
-slice.
+⚠️ **COVERAGE, still open — and deliberately described in ONE place.** S2 left the
+registry's other consumer (`ModifiedMeshR`) on the downstream fallback, so half this
+boundary's traffic re-derives identity at render. That is not a defect of this slice but
+the standing reach of the invariant, so it is stated once in **§4 "How far this reaches
+today"** and machine-checked by `src/nodes/materialKeyReach.gate.test.ts`, rather than
+restated here where it would drift out of date the moment the reach changes. Widening the
+mint was out of S2's scope and remains #542's open half.
 
 **Gate:** `src/app/material/primitiveMaterialInputs.test.ts` (6 tests, the oracle
 property) + the two new browser tests + the four `p530` tests unchanged. Falsified six
@@ -350,18 +397,50 @@ ways, each discriminating: dropping any one of the four contributions reds the c
 test; a never-repeating key reds _only_ the dedup assertion; `irKeyFor` ignoring the
 minted value reds only the preference test.
 
-### S3 — the single ownership seam — PROPOSED
+### S3 — the ownership doors — BUILT
 
-One module turns a handle into an attached GPU object; the unwrap is not exported past
-it. Covers **both** registries.
+This section was proposed as _"one module turns a handle into an attached GPU object; the
+unwrap is not exported past it, covering **both** registries"_. Three parts of that did
+not survive contact with the code, so what shipped is different and the original is kept
+above as the claim rather than silently rewritten.
 
-Collapse the _attachment_, not the three renderer components — they have genuinely
-different lifecycles (suspense, error banner, Empty) and merging them is the wrong
-boundary.
+**Two seams enforcing one rule, not one module.** The registries have incompatible
+ownership models — `materialRegistry` is refcounted (`retain`/`release`/`holders`, eviction
+queued a tick after zero), `geometryRegistry` has no refcount at all — and they disagree on
+which tier decides the key: after S2 a material's key is composed at _render_ time, while a
+`GeometryRef` is purely _evaluated_. Merging them would mean either giving geometry a
+refcount it does not have (new behaviour, not a refactor) or writing one module that is
+internally two things wearing one name.
 
-⚠️ **UNMEASURED** whether a syntactic sweep can survive refactors here. Assume it cannot
-— a gate keyed to an expression's shape reports a clean sweep forever once the expression
-moves. Rely on S4.
+**The unwrap surface is dominated by READS.** Measured: geometry is 2 attach / 6 read /
+1 produce. "The unwrap is not exported past it" would have forbidden the majority of
+legitimate use, so the seam has a **read-only door** beside the attach door.
+
+What exists now:
+
+- `getForAttach` / `getForRead` on `geometryRegistry`; `get` is no longer exported. Each of
+  the seven consumers names its door at the import line.
+- `usePrimitiveMaterial` extracted to its own module — the single consumer that touches a
+  material instance, so the accessor surface has exactly one importer.
+- `registryDoors.gate.test.ts` holds both importer sets closed.
+
+⚠️ **Declared limit:** the two geometry doors are the same function today. `getForRead`
+cannot _enforce_ its no-write rule — a `BufferGeometry` is mutable and every reader hands
+the real object to three.js. This is a naming tier, not a type tier.
+
+✅ **The syntactic-sweep ⚠️ is now MEASURED, and the answer is sharper than "assume it
+cannot work".** A **call-shape** sweep fails _today_, before any refactor — three consumers
+imported `get` under an alias. An **import-clause** sweep fixes that but has its own hole:
+it is blind to `import * as`, and five of the nine importers were exactly that. The repair
+is to refuse the namespace form as the census's _precondition_, not to resolve the
+namespace's local name and match `ns.get(` — that is the call-shape sweep again, for
+precisely the members the clause sweep cannot see.
+
+⚠️ **What no import-keyed gate can see**, stated because it is the residual risk: a
+consumer that takes `mesh.geometry` off the scene graph holds the same shared instance
+while importing nothing. Three production sites write to a geometry they do not own
+(#541); two of them are invisible to any importer census. Those are pinned by a **content**
+sweep instead, and **S4 remains the behavioural backstop** for the class as a whole.
 
 ### S4 — the locality gate (#535) — PROPOSED
 
@@ -437,7 +516,7 @@ on the native road is one place. Cheapest after S1, not before.
 
 ## 7. Sequencing
 
-**S0 ✅ → S1 ✅ → S2 ✅ → S3 → S4**, with S5 / S6 / S7 folded in where cheapest.
+**S0 ✅ → S1 ✅ → S2 ✅ → S3 ✅ → S4**, with S5 / S6 / S7 folded in where cheapest.
 
 S0 merged (`main` == `e6aaf52`, canary green as the combination). S1 built, and its plan
 sentence — "mirroring `GeometryRef`" — is the fifth instance of the failure this document's
@@ -451,9 +530,11 @@ one. The repair generalises past this document — **write the missing gate BEFO
 refactor, against unchanged code**, so it is a regression test rather than a description of
 whatever the refactor produces.
 
-S3 is next and its own ⚠️ is already the interesting one: a syntactic sweep for the
-ownership seam probably cannot survive refactors, which makes S4's behavioural gate the real
-backstop rather than a nice-to-have. Note also that S2 leaves clause 1 of the invariant
+S3's own ⚠️ turned out to be the interesting one, and it was measured rather than assumed:
+the question is not whether a syntactic sweep survives a refactor but which sweep — a
+call-shape sweep already failed at HEAD, and an import-clause sweep is blind to
+`import * as` unless it refuses that form outright. S4 remains the backstop for consumers
+that reach a shared instance off the scene graph, importing nothing. Note also that S2 leaves clause 1 of the invariant
 **partially** satisfied by construction, not by omission — evaluation can only mint the
 fold's half of render identity, so S3 inherits a two-tier world rather than a one-tier one.
 

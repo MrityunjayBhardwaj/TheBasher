@@ -159,7 +159,7 @@ describe('ArrayModifier.evaluate', () => {
     // The array wraps the unprimed baked ref → the registry cannot build it sync.
     // (Rendering a baked-sourced modifier — geometry AND material — is the deferred
     // follow-up; this test locks the VALUE-level material fix independent of that.)
-    expect(geometryRegistry.get(out.geometry)).toBeNull();
+    expect(geometryRegistry.getForRead(out.geometry)).toBeNull();
   });
 });
 
