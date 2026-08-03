@@ -122,13 +122,20 @@ describe('#550 case 4 — the per-map slot list is DERIVED from the IR map slots
     expect([...MAP_UV_SLOTS].sort()).toEqual([...Object.keys(NULL_MAPS)].sort());
   });
 
-  it('every slot actually round-trips a placement (not just the one the tests happen to use)', () => {
+  // BOTH roads, every slot. Covering only ONE road here was a real blind spot, and it
+  // was measured rather than reasoned: deleting `ao` from the zod per-slot schema left
+  // this file 14/14 GREEN, because the loop below ran the hand-written hydrator and the
+  // only zod assertion in the file happened to use `normal`. A per-road × per-slot
+  // matrix is the smallest thing that cannot be fooled by which slot a test picked.
+  it('every slot round-trips a placement on BOTH parse roads', () => {
     for (const slot of MAP_UV_SLOTS) {
-      const out = hydrateInlineMaterial({
-        ...legacyRaw,
-        mapUvTransforms: { [slot]: placement([5, 5]) },
-      });
-      expect(out.mapUvTransforms?.[slot]?.tiling, `slot ${slot}`).toEqual([5, 5]);
+      const raw = { ...legacyRaw, mapUvTransforms: { [slot]: placement([5, 5]) } };
+
+      const hydrated = hydrateInlineMaterial(raw);
+      expect(hydrated.mapUvTransforms?.[slot]?.tiling, `hydrator, slot ${slot}`).toEqual([5, 5]);
+
+      const parsed = openpbrMaterialSchema().parse(raw) as InlineMaterialSpec;
+      expect(parsed.mapUvTransforms?.[slot]?.tiling, `zod, slot ${slot}`).toEqual([5, 5]);
     }
   });
 });
