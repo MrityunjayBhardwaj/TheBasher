@@ -32,6 +32,7 @@
 
 import type {
   BakedMaterialSpec,
+  GeometryDescriptor,
   GeometryRef,
   InlineMaterialSpec,
   MirrorAxis,
@@ -274,4 +275,92 @@ export function mirrorGeometryRef(
     kind: 'mirror',
     descriptor: { kind: 'mirror', source, axis, offset },
   };
+}
+
+// ── #537 — REBUILDING A HANDLE THE ANIMATION OVERLAY HAS WRITTEN THROUGH ───────────────
+//
+// The four builders above are called by the EVALUATOR, once per evaluation, from the node's
+// params. The render-time overlay does not re-evaluate: it clones the evaluated value and
+// writes the animated param at its param path. For material that lands on the value and is
+// read (#536 S1 kept the IR inline for exactly this reason). For geometry it lands on a
+// field nothing consumes — `MeshDataValue` has no `size`; it has a `GeometryRef`, and the
+// renderer draws through `getForAttach(data.geometry)`. Hence the freeze (#537).
+//
+// So the overlay owes the handle the same debt it owes an identity key, with the opposite
+// repair. A material key can be CLEARED because its consumer re-derives from the spec it
+// still holds; a geometry ref cannot, because the registry needs a descriptor to build
+// ANYTHING and a null ref draws nothing. The repair is to fold the written params into the
+// descriptor and re-mint — through the builders above, so a key still has one spelling.
+
+/**
+ * The descriptor fields a node's PARAMS feed, i.e. the ones an animated channel can write.
+ *
+ * Derived from the descriptor itself rather than tabulated per kind, because a table would
+ * be a second enumeration of the same fields and would go stale the first time a descriptor
+ * gained one. Two exclusions, both structural:
+ *   `kind`   — the discriminant, not a param.
+ *   `source` — a nested handle carrying ANOTHER producer's identity. A modifier animates its
+ *              own `count`, never its input; rebuilding a source from a param write would
+ *              overwrite someone else's minted key with this node's guess.
+ *
+ * The correspondence this rests on — a descriptor field is named exactly like the param that
+ * feeds it — is not assumed. `geometryHandleReach.gate.test.ts` checks it against each
+ * producing node's own param schema, so a descriptor field that no param can reach (or a
+ * rename that breaks the pairing) is a red rather than a silent freeze.
+ */
+export function descriptorParamFields(descriptor: GeometryDescriptor): readonly string[] {
+  return Object.keys(descriptor).filter((k) => k !== 'kind' && k !== 'source');
+}
+
+/**
+ * Re-mint `ref` with `values` folded into its descriptor, through the same builder the
+ * evaluator used. Returns `ref` UNCHANGED (by reference) when `values` names nothing the
+ * descriptor is built from — the caller uses that to avoid touching a handle a write never
+ * reached.
+ *
+ * ⚠️ `gltf` and `baked` are deliberately returned untouched rather than rebuilt, and this is
+ * the one arm worth reading twice. Their identity does not come from params at all — a glTF
+ * child is keyed by (assetRef, childName) and a baked geometry by the CONTENT HASH of bytes
+ * in OPFS, which is authoritative and not rebuildable from anything on the value. Minting a
+ * key for either here would be a second spelling of a key this module does not own, and for
+ * `baked` it would be a fabricated hash pointing at bytes that do not exist.
+ */
+export function rebuildGeometryRef(
+  ref: GeometryRef,
+  values: Readonly<Record<string, unknown>>,
+): GeometryRef {
+  if (Object.keys(values).length === 0) return ref;
+  const d = ref.descriptor;
+  switch (d.kind) {
+    case 'box':
+      return boxGeometryRef((values.size ?? d.size) as Vec3);
+    case 'sphere':
+      // Each field falls back to what the descriptor already holds, so animating one of the
+      // three does not reset the other two.
+      return sphereGeometryRef(
+        (values.radius ?? d.radius) as number,
+        (values.widthSegments ?? d.widthSegments) as number,
+        (values.heightSegments ?? d.heightSegments) as number,
+      );
+    case 'array':
+      return arrayGeometryRef(
+        d.source,
+        (values.count ?? d.count) as number,
+        (values.offset ?? d.offset) as Vec3,
+      );
+    case 'mirror':
+      return mirrorGeometryRef(
+        d.source,
+        (values.axis ?? d.axis) as MirrorAxis,
+        (values.offset ?? d.offset) as number,
+      );
+    case 'gltf':
+    case 'baked':
+      return ref;
+    default: {
+      const exhaustive: never = d;
+      void exhaustive;
+      return ref;
+    }
+  }
 }

@@ -165,7 +165,7 @@ describe('#536 S2b — every overlay patch site is classified', () => {
 
     // EXACTLY two call sites — the dispatcher's bare branch and the scatter road — not a
     // floor. A floor was the first version and falsification showed it too weak: swapping
-    // the constraint road's `clearInvalidatedIdentity` for a declaration typechecks once the
+    // the constraint road's `repairInvalidatedIdentity` for a declaration typechecks once the
     // now-unused import is also removed, and a `>= 2` census stays green through it. The
     // whole point of routing that site through the shared rule is that it does NOT get to
     // assert its own exemption, so a THIRD declaration must red and be argued for here.

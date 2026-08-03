@@ -1,5 +1,5 @@
-// overlayWithIdentity — the render-time overlay, WITH the identity repair the overlay owes
-// the value it patches (#536 S2b).
+// overlayWithIdentity — the render-time overlay, WITH the repairs the overlay owes the value
+// it patches: an identity key it invalidated (#536 S2b) and a handle it wrote through (#537).
 //
 // ── THE DEFECT THIS EXISTS TO CLOSE ────────────────────────────────────────────────────
 //
@@ -48,7 +48,11 @@
 //    per-kind assumption sitting beside a per-band rule — correct for the children band and
 //    silently wrong for the next one.
 //
-// REF: src/app/objectDataBand.ts (`identityFieldsForBand` — the rule); src/nodes/materialKey.ts
+// REF: src/app/objectDataBand.ts (`identityFieldsForBand` + `handleFieldsForBand` — the two
+//      rules); src/app/modifierGeometry.ts (`rebuildGeometryRef` — the handle repair);
+//      src/app/geometryHandleReach.gate.test.ts (the correspondence it rests on);
+//      tests/e2e/p537-animated-geometry-param.spec.ts (the behaviour, in a browser);
+//      src/nodes/materialKey.ts
 //      (the mint); src/app/material/primitiveMaterialInputs.ts (`irKeyFor` — the documented
 //      fallback a cleared key lands on); src/app/materialRegistry.ts (the consumer);
 //      src/app/overlayIdentity.gate.test.ts (the structural gate);
@@ -58,8 +62,15 @@ import { overlayChannels, readAt, writeAt } from '../nodes/overlayChannels';
 import { overlayTransients } from './overlayTransients';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
-import { identityFieldsForBand, writeInvalidates, type OverlayBand } from './objectDataBand';
-import type { SceneObject } from '../nodes/types';
+import {
+  channelPathForBand,
+  handleFieldsForBand,
+  identityFieldsForBand,
+  writeInvalidates,
+  type OverlayBand,
+} from './objectDataBand';
+import { descriptorParamFields, rebuildGeometryRef } from './modifierGeometry';
+import type { GeometryRef, SceneObject } from '../nodes/types';
 
 // ── THE BRAND (#536 S3, rung 3) ───────────────────────────────────────────────────────
 //
@@ -190,11 +201,83 @@ export function overlayWithIdentity<T>(
   // the static scene, which must cost nothing and must not churn the caller's memo.
   if (patched === base) return base as IdentityIntact<T>;
 
-  return clearInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients));
+  return repairInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients));
 }
 
 /**
- * Clear any identity on `value` that a write to `paths` invalidated, and brand the result.
+ * Rebuild any HANDLE on `value` that the writes fed (#537).
+ *
+ * The other half of the same debt, with the opposite repair. A material key is cleared
+ * because its consumer re-derives from the spec the value still holds; a geometry ref cannot
+ * be cleared, because the registry needs a descriptor to build anything and a null ref draws
+ * nothing at all. So this folds the written params into the descriptor and re-mints through
+ * `rebuildGeometryRef`, i.e. through the very builder the evaluator used — one spelling of a
+ * geometry key, not two.
+ *
+ * Both questions are answered by the pieces that own them, and neither is spelled here:
+ * WHERE the handle sits comes from the band (`handleFieldsForBand`), WHICH params feed it
+ * comes from the handle's own descriptor (`descriptorParamFields`). That split is what lets a
+ * new geometry kind work with no edit to this file, and a new band with no edit to the
+ * geometry module.
+ *
+ * ⚠️ THE COST THIS SHIPS WITH, MEASURED RATHER THAN GUESSED — read before assuming it is
+ * free. A re-minted key is a registry MISS, so every distinct animated value builds and
+ * caches a `BufferGeometry`, and `geometryRegistry` is a plain Map with no refcount and no
+ * eviction (unlike `materialRegistry`, which `usePrimitiveMaterial` retains and releases).
+ * Measured: a 2s animation at 60fps leaves 121 entries, one per frame.
+ *
+ * What makes that acceptable rather than a leak is the second measurement: replaying the
+ * SAME frames adds ZERO. The cache is content-keyed, so growth is bounded by the number of
+ * DISTINCT values a director actually visits, not by time or by playback count — scrubbing
+ * a timeline back and forth converges instead of accumulating. The residual is a long
+ * editing session over continuously varying values, which is the geometry half of the
+ * lifetime question #535 already owns; it is not created by this repair, only made
+ * reachable by it. Deliberately NOT fixed here (the alternative was a refcount touching
+ * every attach site, i.e. a different slice).
+ */
+function rebuildInvalidatedHandles(
+  band: OverlayBand,
+  value: unknown,
+  paths: readonly string[],
+): void {
+  const fields = handleFieldsForBand(band);
+  if (fields.length === 0) return;
+
+  const clone = value as Record<string, unknown>;
+  for (const field of fields) {
+    const ref = readAt(clone, field.handlePath) as GeometryRef | null | undefined;
+    // A data kind in this band may carry no handle at all (a curve has no geometry), and a
+    // loose value may carry something that is not a ref. Neither is an error here.
+    if (!ref || typeof ref !== 'object' || !('descriptor' in ref)) continue;
+
+    const written: Record<string, unknown> = {};
+    for (const param of descriptorParamFields(ref.descriptor)) {
+      const paramPath = channelPathForBand(band, param);
+      // `writeInvalidates`, not equality — reused from the identity half deliberately, so a
+      // component-level write (`data.size.0`) counts as reaching `size` exactly as a whole
+      // one does, and the containment rule has one definition rather than two.
+      if (!paths.some((p) => writeInvalidates(p, paramPath))) continue;
+      written[param] = readAt(clone, paramPath);
+    }
+
+    const rebuilt = rebuildGeometryRef(ref, written);
+    // Returned by reference when nothing it builds from was written — so a value whose
+    // animation never touches geometry keeps the key the evaluator minted, and two objects
+    // sharing a build do not stop sharing because one of them moved.
+    if (rebuilt !== ref) writeAt(clone, field.handlePath, rebuilt);
+  }
+}
+
+/**
+ * Repair everything on `value` that a write to `paths` invalidated, and brand the result.
+ *
+ * TWO repairs, because the boundary has two kinds of stale thing and they need opposite
+ * treatment (#536 S2b, #537):
+ *   • an identity KEY whose consumer can re-derive → CLEAR it, and let the documented
+ *     fallback recompute from the content the value still holds.
+ *   • a HANDLE whose consumer cannot → REBUILD it from the written params, because clearing
+ *     it would replace a frozen picture with no picture at all.
+ * Naming this "clear" would have been half the rule, and the half that shipped a freeze.
  *
  * The rule the overlay owes its own clone, available to any writer that patches a value
  * AFTER the overlay has run. There is exactly one such writer today — the constraint road
@@ -208,11 +291,13 @@ export function overlayWithIdentity<T>(
  * mutates in place. Both callers satisfy it (the overlay's own clone, and the constraint's
  * spread), and it is the same precondition the overlay has always relied on.
  */
-export function clearInvalidatedIdentity<T>(
+export function repairInvalidatedIdentity<T>(
   band: OverlayBand,
   value: T,
   paths: readonly string[],
 ): IdentityIntact<T> {
+  rebuildInvalidatedHandles(band, value, paths);
+
   const fields = identityFieldsForBand(band);
   if (fields.length === 0) return value as IdentityIntact<T>;
 
