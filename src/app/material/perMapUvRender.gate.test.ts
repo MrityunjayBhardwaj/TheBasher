@@ -202,6 +202,20 @@ describe('#550 render case 4 — the SHAPE rule survives one tier down (the re-m
     expect(Object.prototype.hasOwnProperty.call(spec, 'mapUvTransforms')).toBe(false);
   });
 
+  it('an EMPTY bag on the IR compiles to no key either — absence, one representation later', () => {
+    // Found by falsification: deleting the empty-bag guard reddened nothing, because
+    // `hydrateInlineMaterial` already drops an empty bag, so no fixture built through
+    // the hydrator can reach that branch. `openpbrToThree` takes an IR from anywhere —
+    // its own contract has to hold, not the hydrator's on its behalf.
+    const compiled = openpbrToThree({ ...ir(), mapUvTransforms: {} });
+    expect(Object.prototype.hasOwnProperty.call(compiled, 'mapUvTransforms')).toBe(false);
+  });
+
+  it('…and a bag whose only slot is empty is the same absence', () => {
+    const compiled = openpbrToThree({ ...ir(), mapUvTransforms: { albedo: undefined } });
+    expect(Object.prototype.hasOwnProperty.call(compiled, 'mapUvTransforms')).toBe(false);
+  });
+
   it('CONTROL — a per-map IR DOES put the key on the spec (so the absence above is not vacuous)', () => {
     const spec = specOf(ir({ albedo: placement(2) }));
     expect(Object.prototype.hasOwnProperty.call(spec, 'mapUvTransforms')).toBe(true);
