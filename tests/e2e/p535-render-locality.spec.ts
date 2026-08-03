@@ -250,15 +250,27 @@ async function read(page: import('@playwright/test').Page): Promise<SceneRead> {
       };
     };
     /**
-     * The selection gizmo, by STRUCTURE rather than by name: three.js mounts it as a
-     * `TransformControlsGizmo` subtree (plus a `TransformControlsPlane`) directly under the
-     * scene, so a mesh with one of those in its ancestry is chrome. Measured — the header
-     * says why it is excluded.
+     * Editor chrome — MIRRORS the production predicate at `src/viewport/sceneBounds.ts:27`,
+     * which is itself a mirror of the render hide-pass in `renderToImage.ts`. Both halves
+     * matter and the first was missed here at first: the explicit `editorChrome` flag (the
+     * grid, helpers, the editor fill rig, the ground-click plane), plus drei's
+     * TransformControls, which is injected raw into the scene and so cannot carry the flag.
+     * Matching only the second half counted real chrome as scene content.
+     *
+     * ⚠️ That makes this the THIRD spelling of one rule — the two in production already
+     * describe themselves as mirrors of each other. It is duplicated here rather than
+     * imported because the production one is module-private, and exporting it is a change
+     * to production code that this test's issue does not own. Tracked separately; if the
+     * definition of chrome moves, this has to move with it.
+     *
+     * Ancestry, not just the object: a chrome subtree is PRUNED, exactly as sceneBounds
+     * does it, so a helper's child mesh cannot slip through.
      */
     const isChrome = (o: unknown) => {
       let p: unknown = o;
       for (let i = 0; i < 16 && p; i++) {
-        const q = p as { type?: string; parent?: unknown };
+        const q = p as { type?: string; userData?: { editorChrome?: boolean }; parent?: unknown };
+        if (q.userData?.editorChrome === true) return true;
         if (q.type?.startsWith('TransformControls')) return true;
         p = q.parent;
       }
@@ -565,4 +577,49 @@ test('#535 — deleting one sharer leaves the objects it was sharing with drawin
   expect(after.byOwner[C.obj], 'the deleted object is still being drawn').toHaveLength(0);
   // Half 2 — and the two it was sharing with are untouched, instances included.
   expect(bystanders(after, C.obj), 'deleting one sharer changed another object').toEqual(others);
+});
+
+test('#535 — hiding one object hides only it, and unhiding restores exactly what it drew', async ({
+  page,
+}) => {
+  const before = await read(page);
+  expectSharedPremise(before);
+  const others = bystanders(before, A.obj);
+  const mineBefore = before.byOwner[A.obj];
+
+  // This case exists because the op-union census demanded it, not because anyone thought
+  // of it: `setHidden` writes the very visibility this file's snapshot already reads, and
+  // five hand-picked perturbations plus a self-review had all missed it. Measured: hiding
+  // does not set `visible = false`, it takes the mesh OUT of the scene — so a hide that
+  // leaked across subgraphs would blank a co-sharer outright.
+  const hide = async (hidden: boolean) => {
+    await page.evaluate(
+      (a) => {
+        (window as unknown as UiWindow).__basher_dag
+          .getState()
+          .dispatchAtomic(
+            [{ type: 'setHidden', nodeId: a.obj, hidden: a.hidden }],
+            'user',
+            '#535 toggle one object',
+          );
+      },
+      { obj: A.obj, hidden },
+    );
+    await page.waitForTimeout(900);
+  };
+
+  await hide(true);
+  const hidden = await read(page);
+  // Half 1 — the hide reached the screen.
+  expect(hidden.byOwner[A.obj], 'the hidden object is still being drawn').toHaveLength(0);
+  // Half 2 — and it took nothing with it. The co-sharers draw the same INSTANCES, which is
+  // the direction that matters: they hold the geometry and material the hidden one held.
+  expect(bystanders(hidden, A.obj), 'hiding one object changed another').toEqual(others);
+
+  await hide(false);
+  const shown = await read(page);
+  // Coming back must restore what it drew, instances included — a round trip that handed
+  // it a private copy would be a silent un-sharing, invisible to any appearance read.
+  expect(shown.byOwner[A.obj], 'unhiding did not restore what the object drew').toEqual(mineBefore);
+  expect(bystanders(shown, A.obj), 'unhiding one object changed another').toEqual(others);
 });
