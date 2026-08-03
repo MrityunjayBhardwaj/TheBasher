@@ -228,6 +228,37 @@ correctly resolved to one shared geometry via the graph, and the renderer still 
 them between meshes. Identity and ownership are different problems: evaluation can say
 _these two are the same thing_; it cannot stop a consumer writing to it afterwards.
 
+### The property all of it exists to protect — RENDER LOCALITY (#535)
+
+> **What a node draws is a function of its own subgraph. Two objects whose subgraphs are
+> disjoint cannot affect each other, so an edit is local to the subgraph it lands in.**
+
+The invariant above is a mechanism; this is the thing the mechanism is for, and it is worth
+naming separately because it is what a director actually notices. #533 and #530 were not
+rendering bugs — they were locality violations, and they are the reason a shared instance is
+worth any of this ceremony at all.
+
+Locality is not enforced anywhere. It **holds** (MEASURED, 2026-08-03), because five separate
+places each independently remembered to clone before mutating: the registry's `array` and
+`mirror` roads, Apply-Transform's bake, the decoded-texture clone taken before a UV transform,
+and attachment passing shared resources as props rather than handing them to `<primitive>`.
+That is one rule with five spellings, and the sixth site is the one that forgets.
+
+**Why no static gate closes this.** The structural censuses beside the registries answer two
+questions — who IMPORTS a registry, and who WRITES through a known call — and both are keyed
+to something the violating consumer need not have. The consumer that produces this bug is
+merely _holding_ an instance it took off the scene graph: it imports nothing and writes
+through whatever call it likes. There is no static key for "who is holding the resource", so
+the backstop is behavioural: `tests/e2e/p535-render-locality.spec.ts` perturbs one subgraph
+five ways and compares every other mesh the renderer drew.
+
+**Both halves, every time.** "Nothing else changed" alone is satisfied by a build where the
+edit does nothing — a freeze, which that gate would then certify as healthy. "The edited one
+changed" alone is satisfied by a build where everything changed. The defect **swaps** the two
+readings. **MEASURED** by breaking each direction in turn: re-adopting geometry through
+`<primitive>` reddens both halves independently, while freezing the size reddens only the
+first and leaves the second perfectly true.
+
 ---
 
 ## 5. Slices
@@ -442,7 +473,7 @@ while importing nothing. Three production sites write to a geometry they do not 
 (#541); two of them are invisible to any importer census. Those are pinned by a **content**
 sweep instead, and **S4 remains the behavioural backstop** for the class as a whole.
 
-### S4 — the locality gate (#535) — PROPOSED
+### S4 — the locality gate (#535) — ✅ BUILT 2026-08-03 (`p535-render-locality.spec.ts`)
 
 Two disjoint subgraphs → snapshot every mesh → perturb one → assert nothing outside it
 moved, **and** that the perturbed one did.
@@ -452,7 +483,38 @@ satisfied by it. **MEASURED** on #533 by suppressing each in turn and watching t
 fail on its own.
 
 This is the backstop for mechanisms that never route through the registries at all
-(instancing, batching).
+(instancing, batching), and for the residual the structural censuses declared they could not
+reach: a consumer merely HOLDING a shared instance.
+
+Built as three identically-authored cubes and five perturbations — resize, recolour, splice
+an operator, link a Material node, bake a pose — each in its own case, each targeting a
+different subgraph so no subgraph is permanently the victim and none permanently inert. Four
+things the plan above did not say, all of which the build had to measure:
+
+- **The premise has to be asserted.** In a build that shares nothing, locality is trivially
+  true and every case passes while saying nothing. Making the geometry registry never share
+  reddens all five cases on that assertion — which is the point of having it.
+- **The world matrix has to be read.** The pose rides the GROUP while the mesh keeps identity
+  scale, so a bystander that got moved or scaled is invisible to a geometry read. Found by
+  probing the fixture before writing it: a posed object showed up as no change at all.
+- **The selection gizmo has to be excluded**, by ancestor type rather than by name. Apply
+  Transform selects its target, which mounts ~50 `TransformControlsGizmo` meshes into the
+  same scene — it arrived as a red in the bystander set. Chrome is a function of the
+  selection, not of the graph.
+- **The bystanders are compared as a sorted multiset**, so traversal order and object identity
+  churn cannot red the file; only something the renderer actually draws can.
+
+⚠️ **Declared limit:** of the five clone sites, four are exercised (the registry's array
+transform, Apply-Transform's bake, the material registry's no-mutation rule, and attachment,
+which every case rides on). The **decoded-texture clone** taken before a UV transform is not —
+it needs an image asset fixture, and until one exists that site is guarded only by the comment
+beside it. That is the first thing to add here, and it lands naturally with the UV work.
+
+One thing the falsification pass found that is worth carrying: making `materialRegistry.keyOf`
+colour-blind changed **nothing**, because the seam passes its own composed key and `keyOf` is
+only the default and the oracle. A perturbation can land in the file and never touch the live
+road — the break had to be re-aimed at the composed key, which then reddened exactly the two
+material cases and left the three geometry ones green.
 
 ### S5 — the artist half: make authored sharing breakable — MOSTLY ALREADY BUILT
 

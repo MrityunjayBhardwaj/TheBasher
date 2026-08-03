@@ -12,8 +12,9 @@
 //      filters `writtenPaths` mirrors); hetvabhasa H261; issue #536.
 
 import { describe, expect, it } from 'vitest';
-import { clearInvalidatedIdentity, overlayWithIdentity } from './overlayWithIdentity';
+import { repairInvalidatedIdentity, overlayWithIdentity } from './overlayWithIdentity';
 import { channelPathForBand } from './objectDataBand';
+import { arrayGeometryRef, boxGeometryRef, sphereGeometryRef } from './modifierGeometry';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
 
@@ -241,7 +242,7 @@ describe('#536 S2b — the band decides, and a band with no minted identity is u
 // asserted.
 describe('#536 S3 — a post-overlay writer clears through the same rule', () => {
   it('leaves the key alone when the write is a transform band', () => {
-    const out = clearInvalidatedIdentity('children', baseValue(), [POSITION, 'rotation']);
+    const out = repairInvalidatedIdentity('children', baseValue(), [POSITION, 'rotation']);
     // The whole reason the constraint road is allowed to skip the repair — derived here, so
     // it is a measurement rather than a claim in a comment.
     expect(out.data.materialKey).toBe('MINTED-BY-EVALUATION');
@@ -251,14 +252,258 @@ describe('#536 S3 — a post-overlay writer clears through the same rule', () =>
     // The case that makes the one above evidence: the same call, the same value, a path that
     // DOES invalidate. Without this, "leaves the key alone" would also pass for a function
     // that never clears anything.
-    const out = clearInvalidatedIdentity('children', baseValue(), [`${MATERIAL}.base.color`]);
+    const out = repairInvalidatedIdentity('children', baseValue(), [`${MATERIAL}.base.color`]);
     expect(out.data.materialKey).toBeNull();
   });
 
   it('does not treat a write to the KEY as a write to the region it identifies', () => {
     // The segment-wise containment case, restated at this entry point: `materialKey` shares a
     // character prefix with `material`, and a naive startsWith would read one as the other.
-    const out = clearInvalidatedIdentity('children', baseValue(), [MATERIAL_KEY]);
+    const out = repairInvalidatedIdentity('children', baseValue(), [MATERIAL_KEY]);
     expect(out.data.materialKey).toBe('MINTED-BY-EVALUATION');
+  });
+});
+
+// ── #537 — THE OTHER HALF OF THE SAME RULE: A HANDLE THE WRITE FEEDS ─────────────────────
+//
+// The cases above cover the repair whose answer is CLEAR. Geometry is the same defect with
+// a different repair, and it is the one that shipped: `channelPathForBand('children','size')`
+// writes `data.size`, but `MeshDataValue` has no `size` — it carries a `GeometryRef`, and the
+// renderer draws through `getForAttach(data.geometry)`. The write lands somewhere real,
+// reads back fine, and is ignored.
+//
+// MEASURED before writing these, three subjects and a control in one browser run: a box's
+// `size` FROZEN, a sphere's `radius` FROZEN, an ArrayModifier's own `count` FROZEN, an
+// animated `position` on the same road MOVING. So this is not a `size` bug — it is every
+// param that becomes a DESCRIPTOR FIELD instead of a leaf, and the repair belongs at the
+// handle rather than at any one param.
+//
+// Clearing cannot work here: the material seam has a documented fallback that re-derives
+// identity from the spec it holds, while a null geometry ref draws NOTHING. So the repair is
+// a REBUILD — fold the written params into the descriptor and re-mint through the same
+// builder the evaluator used, which keeps one spelling of a geometry key rather than two.
+
+const SIZE = channelPathForBand('children', 'size');
+const RADIUS = channelPathForBand('children', 'radius');
+const COUNT = channelPathForBand('children', 'count');
+const GEOMETRY = channelPathForBand('children', 'geometry');
+
+/** A split box whose geometry is a REAL handle, minted the way the evaluator mints it. */
+function boxValue() {
+  return {
+    kind: 'SceneChild' as const,
+    position: [0, 0, 0],
+    data: {
+      kind: 'MeshData',
+      geometry: boxGeometryRef([1, 1, 1]),
+      material: { base: { color: '#c81e5a' } },
+      materialKey: 'MINTED-BY-EVALUATION',
+    },
+  };
+}
+
+describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
+  it('rebuilds the box handle when an animated channel writes `size`', () => {
+    const out = overlayWithIdentity(
+      'children',
+      boxValue(),
+      NODE,
+      [channel(SIZE, [4, 4, 4])],
+      NO_TRANSIENTS,
+      0,
+    );
+    // Both halves, and the key is the load-bearing one: the registry is content-keyed, so a
+    // patched descriptor under the pre-edit key would hand back the pre-edit BufferGeometry —
+    // the material bug (H261) arriving through the geometry door.
+    expect(out.data.geometry.descriptor).toEqual({ kind: 'box', size: [4, 4, 4] });
+    expect(out.data.geometry.key).toBe(boxGeometryRef([4, 4, 4]).key);
+  });
+
+  it('rebuilds through the SAME builder the evaluator uses, not a second spelling', () => {
+    // The claim that keeps one key format in the repo. Stated against the builder's own
+    // output rather than against a literal, so a change to the key spelling moves both.
+    const out = overlayWithIdentity(
+      'children',
+      boxValue(),
+      NODE,
+      [channel(SIZE, [2, 3, 4])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data.geometry).toEqual(boxGeometryRef([2, 3, 4]));
+  });
+
+  it('rebuilds a sphere from its three params, including a HELD edit', () => {
+    // Sphere is the multi-param case: a write to one field must keep the other two, or an
+    // animated radius silently resets the segment counts.
+    const base = {
+      kind: 'SceneChild' as const,
+      position: [0, 0, 0],
+      data: {
+        kind: 'MeshData',
+        geometry: sphereGeometryRef(1, 32, 16),
+        material: null,
+        materialKey: null,
+      },
+    };
+    const out = overlayWithIdentity('children', base, NODE, NO_CHANNELS, transient(RADIUS, 3), 0);
+    expect(out.data.geometry).toEqual(sphereGeometryRef(3, 32, 16));
+  });
+
+  it('rebuilds a modifier handle from the modifier’s OWN param (`count`)', () => {
+    // The subject the issue did not name and the browser found: an ArrayModifier's params
+    // become fields of a RECURSIVE descriptor, so they take this road too. The nested
+    // `source` handle must survive untouched — it is another producer's identity.
+    const source = boxGeometryRef([1, 1, 1]);
+    const base = {
+      kind: 'SceneChild' as const,
+      position: [0, 0, 0],
+      data: {
+        kind: 'ModifiedData',
+        geometry: arrayGeometryRef(source, 2, [2, 0, 0]),
+        material: null,
+      },
+    };
+    const out = overlayWithIdentity('children', base, NODE, [channel(COUNT, 5)], NO_TRANSIENTS, 0);
+    expect(out.data.geometry).toEqual(arrayGeometryRef(source, 5, [2, 0, 0]));
+    // The source's KEY, not its reference — everything is a deep clone by this point, so
+    // object identity says nothing. The key is the part that matters anyway: it is another
+    // producer's minted identity, and rebuilding it here would overwrite that with a guess.
+    expect(out.data.geometry.descriptor.source.key).toBe(source.key);
+  });
+
+  it('never rebuilds a modifier’s SOURCE from a param write (the nested handle is not ours)', () => {
+    // The `source` exclusion, which is the one field of a recursive descriptor that must be
+    // left alone. `size` is a real param name and a real field of the source's OWN
+    // descriptor, so a rebuild that walked into `source` would happily re-mint the box from
+    // a channel authored on a different node — silently repointing this modifier at geometry
+    // its producer never agreed to.
+    const source = boxGeometryRef([1, 1, 1]);
+    const base = {
+      kind: 'SceneChild' as const,
+      position: [0, 0, 0],
+      data: {
+        kind: 'ModifiedData',
+        geometry: arrayGeometryRef(source, 2, [2, 0, 0]),
+        material: null,
+      },
+    };
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(SIZE, [9, 9, 9])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data.geometry).toEqual(arrayGeometryRef(source, 2, [2, 0, 0]));
+  });
+
+  it('leaves the handle UNCHANGED when the write feeds nothing it builds from', () => {
+    // Property 2 of this seam, restated for geometry: animating a position must not move a
+    // geometry key, or two objects sharing a build would stop sharing the moment one moved.
+    //
+    // ⚠️ Written as `toBe` first, and that was wrong for a reason worth keeping: once ANY
+    // write happens the primitives hand back a DEEP CLONE, so no sub-object survives by
+    // reference and the assertion failed on an unchanged handle. Reference stability at this
+    // seam lives entirely in the `patched === base` early return (its own case above), not
+    // here. Which means "did not re-mint" and "re-minted an identical descriptor" are
+    // indistinguishable at this tier by construction — equal key, equal content, different
+    // object — so this pins the observable half and the guard against pointless re-minting is
+    // the `writeFeeds` check itself, not this test.
+    const base = boxValue();
+    const before = base.data.geometry;
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(POSITION, [5, 0, 0]), channel(`${MATERIAL}.base.color`, '#1e9ac8')],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data.geometry).toEqual(before);
+  });
+
+  it('does not treat a write to the HANDLE itself as a param that feeds it', () => {
+    // The dual of the `materialKey` vs `material` case above. Nothing writes `data.geometry`
+    // today; if something did, it is handing over a whole ref and must not have it rebuilt
+    // from a descriptor field named after it.
+    const base = boxValue();
+    const replacement = boxGeometryRef([9, 9, 9]);
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(GEOMETRY, replacement)],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data.geometry).toEqual(replacement);
+  });
+
+  it('leaves a value with no handle alone (a light, in its own band)', () => {
+    // The lights band recomposes flat and carries no geometry at all. A repair that assumed
+    // every band had a handle would stamp one on, which is the [[H260]] shape: a per-kind
+    // assumption sitting beside a per-band rule.
+    const light = { kind: 'SceneLight' as const, intensity: 1, color: '#fff' };
+    const out = overlayWithIdentity(
+      'lights',
+      light,
+      NODE,
+      [channel('intensity', 4)],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out).toEqual({ kind: 'SceneLight', intensity: 4, color: '#fff' });
+  });
+});
+
+// ⚠️ BOTH CASES BELOW ARE NON-DISCRIMINATING TODAY, and that is recorded rather than
+// glossed. They were written expecting to guard the mute/owner filters for geometry the way
+// the material cases do, and neither could be made to red: removing the mute filter from
+// `writtenPaths` leaves them green (the muted path is in the set but was never written, so
+// the fold reads `undefined` and falls back to the descriptor), and removing the fallback
+// leaves them green too (the path never enters `written` while the filter is intact, so
+// `rebuildGeometryRef` takes its empty-values early return). The property is guarded twice
+// over, by two mechanisms that each cover for the other.
+//
+// They are kept because they pin the BEHAVIOUR at this entry point for a future change that
+// bypasses `writtenPaths` and reads the clone directly — the obvious "simplification" — which
+// is exactly when a muted channel would start re-minting keys. But they are documentation of
+// intent, not evidence, and a write-up that counted them as falsified coverage would be
+// claiming a guard that no perturbation demonstrated.
+describe('#537 — the handle repair mirrors the primitives it wraps', () => {
+  it('does NOT rebuild for a MUTED size channel', () => {
+    // The same filter the material half is pinned against, restated for geometry because it
+    // is reached through a different branch of the repair. `overlayChannels` drops muted
+    // channels, so nothing was written and nothing is invalidated — a rebuild here would
+    // re-mint a key from a value the director explicitly switched off, and (with no eviction)
+    // cache a geometry nobody asked to see.
+    const base = boxValue();
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(SIZE, [4, 4, 4], true), channel(POSITION, [5, 0, 0])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.position).toEqual([5, 0, 0]);
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
+  });
+
+  it("does NOT rebuild from ANOTHER node's held edit", () => {
+    // The transient store is global. Without the node filter, dragging one object's size
+    // would re-mint every other object's geometry in the scene.
+    const base = boxValue();
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(POSITION, [5, 0, 0])],
+      transient(SIZE, [9, 9, 9], 'n_other'),
+      0,
+    );
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
   });
 });
