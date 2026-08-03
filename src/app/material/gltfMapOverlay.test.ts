@@ -11,6 +11,7 @@ import {
   isImportedMap,
   hasMapEdits,
   applyEditedMaps,
+  type EditedMapPlacement,
 } from './gltfMapOverlay';
 
 /** A captured imported-texture descriptor (empty hash + a gltfTexture index). */
@@ -21,6 +22,17 @@ const IMPORTED: BakedTextureRef = {
   wrapS: 10497,
   wrapT: 10497,
   gltfTexture: 0,
+};
+
+/**
+ * An identity placement, for the cases in this file that are about the edit-layer
+ * SEMANTICS (inherit / replace / clear) rather than about placement. What a
+ * replaced texture is placed with is #553's subject and is gated in full next
+ * door, in `replacedMapPlacement.gate.test.ts` — this constant deliberately says
+ * "no placement question here", it does not stand in for coverage of one.
+ */
+const NO_PLACEMENT: EditedMapPlacement = {
+  shared: { tiling: [1, 1], offset: [0, 0], rotation: 0 },
 };
 
 // happy-dom has no image decoder, so the load path is driven through an injected
@@ -75,6 +87,7 @@ describe('gltfMapOverlay', () => {
     const changed = await applyEditedMaps(
       mat,
       maps({ albedo: IMPORTED }),
+      NO_PLACEMENT,
       new MemoryStorage(),
       () => false,
     );
@@ -86,7 +99,13 @@ describe('gltfMapOverlay', () => {
     const mat = new THREE.MeshStandardMaterial();
     const imported = new THREE.Texture();
     mat.map = imported;
-    const changed = await applyEditedMaps(mat, maps({}), new MemoryStorage(), () => false);
+    const changed = await applyEditedMaps(
+      mat,
+      maps({}),
+      NO_PLACEMENT,
+      new MemoryStorage(),
+      () => false,
+    );
     expect(changed).toBe(false);
     expect(mat.map).toBe(imported); // inherited, not removed
   });
@@ -97,6 +116,7 @@ describe('gltfMapOverlay', () => {
     const changed = await applyEditedMaps(
       mat,
       maps({ albedo: CLEARED_MAP }),
+      NO_PLACEMENT,
       new MemoryStorage(),
       () => false,
     );
@@ -119,9 +139,14 @@ describe('gltfMapOverlay', () => {
     const imported = new THREE.Texture();
     mat.map = imported;
     const loaded = new THREE.Texture();
-    const changed = await applyEditedMaps(mat, maps({ albedo: ref }), storage, () => false, {
-      decode: async () => loaded,
-    });
+    const changed = await applyEditedMaps(
+      mat,
+      maps({ albedo: ref }),
+      NO_PLACEMENT,
+      storage,
+      () => false,
+      { decode: async () => loaded },
+    );
     expect(changed).toBe(true);
     expect(mat.map).toBe(loaded);
     expect(mat.map).not.toBe(imported);
@@ -138,9 +163,14 @@ describe('gltfMapOverlay', () => {
     const mat = new THREE.MeshStandardMaterial();
     const imported = new THREE.Texture();
     mat.map = imported;
-    const changed = await applyEditedMaps(mat, maps({ albedo: ref }), storage, () => true, {
-      decode: async () => new THREE.Texture(),
-    });
+    const changed = await applyEditedMaps(
+      mat,
+      maps({ albedo: ref }),
+      NO_PLACEMENT,
+      storage,
+      () => true,
+      { decode: async () => new THREE.Texture() },
+    );
     expect(changed).toBe(false);
     expect(mat.map).toBe(imported); // stale load dropped
   });
