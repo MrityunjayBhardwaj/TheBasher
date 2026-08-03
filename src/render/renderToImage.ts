@@ -41,6 +41,7 @@ import {
 import type { CameraPose } from '../app/activeCamera';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import type { DofEffectSettings } from '../app/cameraDof';
+import { isEditorChrome } from '../app/editorChrome';
 import type { PostFxConfig } from '../nodes/types';
 
 /** Which control pass to render. 'beauty' is the lit production frame (the #168
@@ -228,11 +229,12 @@ export async function renderSceneToImageCanvas(
   // production sees). Record only the ones we actually flip, to restore exactly.
   const hidden: THREE.Object3D[] = [];
   scene.traverse((o) => {
-    // Denylist: explicit editor-chrome flag, OR the drei TransformControls
-    // gizmo (a helper object injected straight into the scene — it can't carry
-    // our userData flag, so catch it by three.js type).
-    const isChrome = o.userData?.editorChrome === true || o.type.startsWith('TransformControls');
-    if (isChrome && o.visible) {
+    // The predicate is shared with the viewport's framing read (#546) — this used
+    // to be a second copy of it, and the two describing each other as mirrors is
+    // what got the rule centralised. What stays local is the TRAVERSAL: flipping
+    // `visible` per object lets three.js's own inheritance carry it to children,
+    // where the framing read instead prunes the subtree.
+    if (isEditorChrome(o) && o.visible) {
       o.visible = false;
       hidden.push(o);
     }

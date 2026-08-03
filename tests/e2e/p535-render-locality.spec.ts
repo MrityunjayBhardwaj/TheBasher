@@ -206,7 +206,7 @@ async function seed(page: import('@playwright/test').Page) {
 
 /** Every mesh the renderer is drawing, split into the named subgraphs and everything else. */
 async function read(page: import('@playwright/test').Page): Promise<SceneRead> {
-  return page.evaluate((owners) => {
+  return page.evaluate(async (owners) => {
     const w = window as unknown as UiWindow;
     const scene = w.__basher_three.getState().scene as {
       getObjectByName: (n: string) => unknown;
@@ -250,28 +250,23 @@ async function read(page: import('@playwright/test').Page): Promise<SceneRead> {
       };
     };
     /**
-     * Editor chrome — MIRRORS the production predicate at `src/viewport/sceneBounds.ts:27`,
-     * which is itself a mirror of the render hide-pass in `renderToImage.ts`. Both halves
-     * matter and the first was missed here at first: the explicit `editorChrome` flag (the
-     * grid, helpers, the editor fill rig, the ground-click plane), plus drei's
-     * TransformControls, which is injected raw into the scene and so cannot carry the flag.
-     * Matching only the second half counted real chrome as scene content.
+     * Editor chrome — the PRODUCTION predicate, imported through the dev server rather
+     * than spelled again here (#546). It used to be the third copy of a rule whose other
+     * two already described each other as mirrors, and it arrived the way third copies
+     * do: this file needed the answer, could not import it because the function was
+     * module-private, and wrote it out — matching the gizmo clause and NOT the flag on
+     * the first pass, so real chrome was compared as scene content.
      *
-     * ⚠️ That makes this the THIRD spelling of one rule — the two in production already
-     * describe themselves as mirrors of each other. It is duplicated here rather than
-     * imported because the production one is module-private, and exporting it is a change
-     * to production code that this test's issue does not own. Tracked separately; if the
-     * definition of chrome moves, this has to move with it.
-     *
-     * Ancestry, not just the object: a chrome subtree is PRUNED, exactly as sceneBounds
-     * does it, so a helper's child mesh cannot slip through.
+     * What stays local is the ANCESTRY: the predicate answers "is this object chrome",
+     * and a leaf mesh under a chrome group is not chrome by that answer. This file reads
+     * leaves, so it walks up, exactly as sceneBounds prunes on the way down.
      */
+    const { isEditorChrome } = await import('/src/app/editorChrome.ts');
     const isChrome = (o: unknown) => {
       let p: unknown = o;
       for (let i = 0; i < 16 && p; i++) {
-        const q = p as { type?: string; userData?: { editorChrome?: boolean }; parent?: unknown };
-        if (q.userData?.editorChrome === true) return true;
-        if (q.type?.startsWith('TransformControls')) return true;
+        const q = p as { parent?: unknown };
+        if (isEditorChrome(q as Parameters<typeof isEditorChrome>[0])) return true;
         p = q.parent;
       }
       return false;

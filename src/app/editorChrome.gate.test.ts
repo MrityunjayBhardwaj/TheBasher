@@ -62,7 +62,15 @@ const MODULE = 'src/app/editorChrome.ts';
  * object to test with — as a second implementation.
  */
 const FLAG_WRITE = /editorChrome\s*(?::|=(?!=))\s*true/g;
-const FLAG_ANY = /editorChrome/g;
+/**
+ * Every mention of the flag EXCEPT a module path — `'../app/editorChrome'` and
+ * `'/src/app/editorChrome.ts'` both end in the flag's own name, so the first draft of this
+ * tell reported each consumer as an offender the moment it started importing the
+ * predicate, i.e. it reported the fix as the violation. A slash is what separates naming
+ * the MODULE from reading the FLAG; the exported identifier (`isEditorChrome`) never
+ * collides, being capitalised. Writes are subtracted separately.
+ */
+const FLAG_ANY = /(?<!\/)editorChrome/g;
 /**
  * The gizmo clause. Keyed to the QUOTED type name, because that is what a type test is
  * made of however it is spelled (`startsWith` / `includes` / `===`) — while the bare
