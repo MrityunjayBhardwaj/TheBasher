@@ -60,7 +60,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import {
-  clearInvalidatedIdentity,
+  repairInvalidatedIdentity,
   identityIntact,
   overlayWithIdentity,
   type IdentifiedSceneObject,
@@ -2050,12 +2050,12 @@ function ConstrainedR({
     // #536 S3 — the spread builds a SECOND value after the seam already ran, so it owes the
     // same debt the overlay does: it must not hand on an identity its own writes made stale.
     // The bands it writes (rotation/position) invalidate no identity field today, but that
-    // is derived here rather than asserted — `clearInvalidatedIdentity` is the same rule the
+    // is derived here rather than asserted — `repairInvalidatedIdentity` is the same rule the
     // seam applies, so a constraint that ever learns to write a keyed band is handled by
     // construction instead of by someone remembering this site exists.
     const v =
       Object.keys(patch).length > 0
-        ? clearInvalidatedIdentity(
+        ? repairInvalidatedIdentity(
             'children',
             { ...rec, ...patch } as unknown as SceneObject,
             Object.keys(patch),

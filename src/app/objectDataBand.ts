@@ -186,14 +186,12 @@ export interface BandIdentityField {
  * attempt at S1 ([[H260]]): the rebase rule keys on the band, so a hardcoded prefix is
  * correct for one band and silently wrong for the next.
  *
- * ⚠️ DECLARED GAP — GEOMETRY IS ABSENT ON PURPOSE, AND IT IS NOT AN OVERSIGHT (#537).
- * `MeshDataValue.geometry` is a `GeometryRef` that the same writes invalidate (animating
- * `size` moves the content the ref stands for), and it has the same defect live on `main`.
- * It cannot be repaired the same way: clearing works for material only because the seam has
- * a documented fallback (`materialKeyOf(ir)` — it can always re-derive from the spec it
- * holds), while the renderer needs a geometry ref to build ANYTHING, so its repair is a
- * REBUILD of the descriptor from the patched params. Strictly bigger, and #537's own work.
- * Listing it here would clear a ref nothing can replace and draw nothing at all.
+ * ⚠️ GEOMETRY IS NOT IN THIS LIST, AND THAT IS STILL DELIBERATE — it is repaired by
+ * {@link handleFieldsForBand} instead, because its repair is a REBUILD rather than a clear
+ * (#537). Clearing works for material only because the consumer has a documented fallback
+ * (`materialKeyOf(ir)` — it re-derives from the spec the value still holds); a null geometry
+ * ref draws NOTHING, since the registry needs a descriptor to build anything at all. Listing
+ * geometry here would replace a freeze with a blank.
  */
 export function identityFieldsForBand(band: SplitBand): readonly BandIdentityField[] {
   switch (band) {
@@ -242,3 +240,55 @@ const EMPTY_IDENTITY_FIELDS: readonly BandIdentityField[] = [];
 export function writeInvalidates(writtenPath: string, sourcePath: string): boolean {
   return writtenPath === sourcePath || writtenPath.startsWith(`${sourcePath}.`);
 }
+
+/**
+ * A HANDLE the band's value carries — a field whose content is not on the value at all, but
+ * behind a key into a registry that builds it.
+ *
+ * The FIFTH member of this family, and the dual of {@link BandIdentityField}. That one says
+ * "a write here invalidates an identity, and the repair is to clear it". This says "a write
+ * to a param this handle is BUILT FROM invalidates the handle, and the repair is to rebuild
+ * it" — which is a different repair because a cleared handle has no fallback to land on.
+ */
+export interface BandHandleField {
+  /** Where the handle sits on the band's value. */
+  readonly handlePath: string;
+}
+
+/**
+ * The handles a band's value carries, in the band's own vocabulary (#537).
+ *
+ * ⚠️ THE QUESTION THIS ANSWERS IS NOT "WHICH PARAMS FEED IT". That would be a per-KIND table
+ * sitting beside a per-BAND rule — [[H260]]'s trap, and the reason the first attempt at
+ * carrying material identity failed. Which params feed a handle is answered by the handle
+ * itself, from its own descriptor (`descriptorParamFields`), so a new geometry kind needs no
+ * edit here. This function only says WHERE the handle lives on this band's value.
+ */
+export function handleFieldsForBand(band: SplitBand): readonly BandHandleField[] {
+  switch (band) {
+    case 'children':
+      // `ObjectR` draws `getForAttach(value.data.geometry)`. Derived through the rebase rule
+      // exactly like every other path in this file — `data.` is never spelled.
+      return CHILDREN_HANDLE_FIELDS;
+    case 'lights':
+      // A light has no geometry: `LightKindR` builds from flat scalars on the recomposed
+      // value, with no registry between it and the picture. Nothing here to go stale.
+      return EMPTY_HANDLE_FIELDS;
+    case 'camera':
+      // Nothing renders from the camera's evaluated value at all (`renderReachForBand`), so
+      // it holds no handle the renderer could resolve. Same answer as the light band, for a
+      // different reason — which is why each band states its own.
+      return EMPTY_HANDLE_FIELDS;
+    default: {
+      const exhaustive: never = band;
+      void exhaustive;
+      return EMPTY_HANDLE_FIELDS;
+    }
+  }
+}
+
+/** Stable arrays — a band's handle list must not churn a caller's memo (see the identity twin). */
+const EMPTY_HANDLE_FIELDS: readonly BandHandleField[] = [];
+const CHILDREN_HANDLE_FIELDS: readonly BandHandleField[] = [
+  { handlePath: channelPathForBand('children', 'geometry') },
+];
