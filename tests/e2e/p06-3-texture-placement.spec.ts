@@ -9,9 +9,18 @@
 // __basher_mesh_material): editing the NPanel placement controls changes the live
 // mesh.material.map.repeat/.offset/.rotation.
 //
-// FALSIFICATION (run once, then revert — see the wave log):
-//   drop `c.repeat.set(...)` in usePrimitiveMaterial (apply identity always) →
-//   SC-1's mapRepeat === [2,2] goes RED.
+// FALSIFICATION — three probes, each MEASURED on the tree that carries this note,
+// and each aimed at a different one of the three claims below (run one, revert it):
+//   · neutralise the placement — hand `placeTexture` an identity in
+//     `materialRegistry.build`'s `prep` → BOTH cases red. This replaces the note
+//     that stood here until #554, which said to drop `c.repeat.set(...)` in
+//     `usePrimitiveMaterial`: that line has not existed since the placement moved
+//     into the registry, so the instruction pointed at nothing and a reader
+//     following it would have concluded the gate could not be falsified.
+//   · drop the `.clone()` in that same `prep` → A-5's premise reds on the texture
+//     identity, which is the clone itself.
+//   · end the sharing — return a fresh decode per consumer from
+//     `resolveBakedTexture` → A-5's premise reds on the source identity.
 //
 // ── THE PREMISE UNDER A-5, ADDED BY #554 ───────────────────────────────────────
 //
