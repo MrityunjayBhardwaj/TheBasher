@@ -76,6 +76,8 @@
 //      pattern); issue #530.
 
 import * as THREE from 'three';
+import { CENTRE_PIVOT, placeTexture, resolveSlotPlacement } from './material/uvPlacement';
+import type { SlotPlacements } from './material/uvPlacement';
 
 /**
  * Everything a shared primitive material is made of — and the builder's ONLY
@@ -101,12 +103,22 @@ export interface PrimitiveMaterialSpec {
   readonly transmission: number;
   readonly thickness: number;
   readonly wireframe: boolean;
-  /** The ONE shared UV placement, applied to every map clone (v0.6 #3). */
+  /** The shared UV placement — used by every slot that has none of its own (v0.6 #3). */
   readonly uvTransform: {
     readonly tiling: readonly [number, number];
     readonly offset: readonly [number, number];
     readonly rotation: number;
   };
+  /**
+   * #550 — per-slot placement, in THREE's slot vocabulary (translated once, by
+   * `openpbrToThree`). A slot listed here REPLACES the shared placement above; a
+   * slot not listed uses it. Never composed — see `material/uvPlacement.ts`.
+   *
+   * 🔴 ABSENT, not `undefined`, when there is nothing per-map: {@link keyOf} walks
+   * this spec generically, so a materialised empty bag keys differently from an
+   * absent one and would re-mint every cached material on first load.
+   */
+  readonly mapUvTransforms?: SlotPlacements<keyof PrimitiveMaterialSpec['textures']>;
   /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
@@ -246,17 +258,23 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   // source; this registry owns + disposes the clones (V20 single writer), which is
   // exactly why the cache is refcounted rather than permanent.
   const clones: THREE.Texture[] = [];
-  const [tilingX, tilingY] = spec.uvTransform.tiling;
-  const [offsetX, offsetY] = spec.uvTransform.offset;
-  const prep = (t: THREE.Texture | null, colorSpace: THREE.ColorSpace) => {
+  const prep = (
+    t: THREE.Texture | null,
+    slot: keyof PrimitiveMaterialSpec['textures'],
+    colorSpace: THREE.ColorSpace,
+  ) => {
     if (!t) return null;
     const c = t.clone();
     c.colorSpace = colorSpace; // re-assert per slot (M5 — a data map as sRGB washes out)
-    c.center.set(0.5, 0.5); // rotate/scale about the texture centre (Blender / KHR)
-    c.repeat.set(tilingX, tilingY);
-    c.offset.set(offsetX, offsetY);
-    c.rotation = spec.uvTransform.rotation;
-    c.needsUpdate = true;
+    // #550 — the slot's OWN placement if it has one, else the shared one. One lookup,
+    // never a composition of the two (`material/uvPlacement.ts`). This road pivots
+    // about the texture CENTRE — our authoring convention, not glTF/Blender parity,
+    // which both pivot about the UV origin (#551). The pivot rides the ROAD.
+    placeTexture(
+      c,
+      resolveSlotPlacement(spec.uvTransform, spec.mapUvTransforms, slot),
+      CENTRE_PIVOT,
+    );
     clones.push(c);
     return c;
   };
@@ -276,7 +294,7 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   for (const slot of Object.keys(MAP_COLOR_SPACE) as (keyof typeof MAP_COLOR_SPACE)[]) {
-    m[slot] = prep(spec.textures[slot], MAP_COLOR_SPACE[slot]);
+    m[slot] = prep(spec.textures[slot], slot, MAP_COLOR_SPACE[slot]);
   }
   m.userData.__uvClones = clones;
   return m;

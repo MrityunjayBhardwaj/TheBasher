@@ -48,6 +48,19 @@
 // that fact written down as an exact census rather than left as an assumption: it fails
 // the moment a reader appears, and forces whoever adds one to say which road it is on.
 //
+// ✅ IT DID FAIL, ON THE FIRST READER (#550's render slice), AND THE ANSWER IS BELOW.
+// Four readers appeared at once — the compile step that translates the bag into three's
+// slot vocabulary, the two things that carry it down to a road, and the glTF overlay's
+// call site. They are declared in `MAY_NAME_PER_MAP` with the road each is on.
+//
+// The same failure also made the census's OWN blind spot live, exactly as predicted: the
+// two modules that actually WRITE a placement onto a texture (`uvPlacement.ts` and
+// `applyGltfUvTransform.ts`) never name the field — they take the bag as a parameter — so
+// a name-keyed census cannot see them. That is closed by a SECOND census below, keyed on
+// the writer instead of on the field: every caller of `placeTexture` must name exactly one
+// declared pivot constant. A third apply road cannot appear without answering the pivot
+// question in one census or the other.
+//
 // REF: src/core/import/gltfJsonMaterialToOpenpbr.ts (the subject);
 //      src/nodes/perMapUvTransform.gate.test.ts (the IR half of #550);
 //      src/nodes/types.ts (`UvPlacement`, `mapUvTransforms` — replacement, not layering);
@@ -237,6 +250,23 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     'src/nodes/types.ts': 'declares the field',
     'src/nodes/materialSchema.ts': 'the two parse roads',
     'src/core/import/gltfJsonMaterialToOpenpbr.ts': 'the producer — captures KHR values',
+    // #550 render slice — the readers, each with the road it feeds.
+    'src/app/material/openpbrToThree.ts':
+      'translates the bag into THREE slot names — road-neutral, the pivot is the caller’s',
+    'src/app/material/primitiveMaterialInputs.ts':
+      'carries the translated bag onto the spec — AUTHORED road (centre pivot)',
+    'src/app/materialRegistry.ts': 'AUTHORED road — resolves per slot, pivots about the centre',
+    'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
+  };
+
+  /**
+   * The SECOND census, closing the residual the first one cannot see: a module can carry
+   * or apply a placement without ever naming the field. Every caller of the shared writer
+   * must therefore name exactly one declared pivot — which is the road, stated in code.
+   */
+  const PIVOT_OF_ROAD: Record<string, 'CENTRE_PIVOT' | 'ORIGIN_PIVOT'> = {
+    'src/app/materialRegistry.ts': 'CENTRE_PIVOT',
+    'src/viewport/applyGltfUvTransform.ts': 'ORIGIN_PIVOT',
   };
 
   it('is named by exactly the declared modules', () => {
@@ -254,16 +284,38 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     expect(src.includes('mapUvTransforms')).toBe(true);
   });
 
-  it('the two apply roads still disagree about the pivot, which is why the census matters', () => {
-    const authored = readFileSync(join(__dirname, '../../app/materialRegistry.ts'), 'utf8');
-    const gltf = readFileSync(join(__dirname, '../../viewport/SceneFromDAG.tsx'), 'utf8');
-    expect(stripComments(authored)).toContain('center.set(0.5, 0.5)');
-    expect(stripComments(gltf)).toContain('center.set(0, 0)');
+  it('every caller of the shared writer names exactly ONE declared pivot', () => {
+    const callers = sourceFiles()
+      .filter(([, src]) => stripComments(src).includes('placeTexture('))
+      .map(([path]) => path)
+      .filter((p) => p !== 'src/app/material/uvPlacement.ts') // the writer itself
+      .sort();
+    expect(callers).toEqual(Object.keys(PIVOT_OF_ROAD).sort());
+
+    for (const [path, pivot] of Object.entries(PIVOT_OF_ROAD)) {
+      const src = stripComments(readFileSync(join(__dirname, '../../..', path), 'utf8'));
+      const other = pivot === 'CENTRE_PIVOT' ? 'ORIGIN_PIVOT' : 'CENTRE_PIVOT';
+      expect(src, `${path} must place about ${pivot}`).toContain(pivot);
+      expect(src, `${path} must NOT also use ${other}`).not.toContain(other);
+    }
   });
 
-  // WHAT THIS CENSUS CANNOT SEE, stated here rather than discovered later: it keys on the
-  // FIELD NAME, so it sees any module that reads `spec.mapUvTransforms` or destructures
-  // it — but not one that forwards the whole spec to a road that reads the field
-  // elsewhere. That residual is bounded today by the fact that no module reads it at all;
-  // the render slice is what makes the distinction live, and it will red this case first.
+  it('the two roads still disagree about the pivot — the divergence itself, not a spelling', () => {
+    // Asserted on the VALUES, so "tidying" the two constants into agreement reds here
+    // rather than silently re-placing every imported texture. See #551.
+    const src = stripComments(
+      readFileSync(join(__dirname, '../../app/material/uvPlacement.ts'), 'utf8'),
+    );
+    expect(src).toContain('CENTRE_PIVOT = [0.5, 0.5]');
+    expect(src).toContain('ORIGIN_PIVOT = [0, 0]');
+  });
+
+  // WHAT THE FIELD-NAME CENSUS CANNOT SEE, and why the pivot census above exists: keying
+  // on `mapUvTransforms` finds every module that reads or destructures the field, but not
+  // one that forwards it under another name — which is precisely what the render slice
+  // produced (`uvPlacement.ts` and `applyGltfUvTransform.ts` take it as a parameter). The
+  // pivot census closes that by keying on the WRITER instead. What neither can see: a road
+  // that places a texture WITHOUT going through `placeTexture`. That is bounded by the
+  // registry gate, which asserts the built material carries the spec's placement — a road
+  // writing its own numbers would have to be a third builder, not a third spelling.
 });

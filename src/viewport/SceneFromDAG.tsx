@@ -46,7 +46,12 @@ import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { getForAttach } from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
-import { openpbrToThree, type ThreeMaterialParams } from '../app/material/openpbrToThree';
+import {
+  openpbrToThree,
+  threeMapUvTransforms,
+  type ThreeMaterialParams,
+} from '../app/material/openpbrToThree';
+import { applyGltfUvTransform } from './applyGltfUvTransform';
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
@@ -2599,49 +2604,6 @@ function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Ma
   return next;
 }
 
-// The map slots a glTF child's shared uvTransform applies to.
-const GLTF_UV_MAP_SLOTS = [
-  'map',
-  'normalMap',
-  'roughnessMap',
-  'metalnessMap',
-  'aoMap',
-  'emissiveMap',
-] as const;
-
-/**
- * Apply a glTF child material's captured KHR_texture_transform (the single shared
- * `ir.uvTransform`) onto an OVERLAY material's map textures (#181 / V53). Pivots
- * about the UV ORIGIN (center [0,0]) — three's GLTFLoader sets the same values
- * with the default center [0,0] (GLTFLoader.js extendTexture), so an UNEDITED
- * import is byte-identical; editing the uvTransform re-runs the overlay and
- * re-applies. Textures are SHARED by the clone (A-5), so each is CLONED before
- * mutation. Identity uvTransform → no-op (keep the clone's own per-map transform,
- * which already renders correctly — including the per-map-differing case).
- */
-function applyGltfUvTransform(mat: THREE.Material, uv: InlineMaterialSpec['uvTransform']): void {
-  const identity =
-    uv.tiling[0] === 1 &&
-    uv.tiling[1] === 1 &&
-    uv.offset[0] === 0 &&
-    uv.offset[1] === 0 &&
-    uv.rotation === 0;
-  if (identity || !('map' in mat)) return;
-  const std = mat as unknown as Record<string, THREE.Texture | null | undefined>;
-  for (const slot of GLTF_UV_MAP_SLOTS) {
-    const tex = std[slot];
-    if (!tex) continue;
-    const c = tex.clone();
-    c.center.set(0, 0); // glTF pivots about the UV origin (matches GLTFLoader)
-    c.repeat.set(uv.tiling[0], uv.tiling[1]);
-    c.offset.set(uv.offset[0], uv.offset[1]);
-    c.rotation = uv.rotation;
-    c.needsUpdate = true;
-    std[slot] = c;
-  }
-  (mat as THREE.Material).needsUpdate = true;
-}
-
 // #198 — one per-frame material-animation write target. `mat` is the slot's FINAL
 // owned material (a per-slot clone). `reapplyOverride`, when present, re-layers a
 // MaterialOverride tint's forced fields on top AFTER the animated base IR is
@@ -3010,10 +2972,11 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         const ir = irs?.[local];
         if (ir) {
           dagBase = overlayDagMaterial(src, ir);
-          // #181 / V53 — apply the captured KHR_texture_transform (shared
-          // uvTransform) onto the overlay's inherited map textures. Identity for
-          // an unedited import (matches GLTFLoader); editing it re-overlays.
-          applyGltfUvTransform(dagBase, ir.uvTransform);
+          // #181 / V53 — apply the captured KHR_texture_transform onto the overlay's
+          // inherited map textures: each slot's OWN placement where the import
+          // captured one (#550), else the shared `uvTransform`. Identity for an
+          // unedited import (matches GLTFLoader); editing either re-overlays.
+          applyGltfUvTransform(dagBase, ir.uvTransform, threeMapUvTransforms(ir.mapUvTransforms));
         }
         // #178 S5 — defer this slot's edit-layer map application (replace/clear)
         // to the async pass below; it lands on the FINAL material `m.material`.
