@@ -257,6 +257,16 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
       'carries the translated bag onto the spec — AUTHORED road (centre pivot)',
     'src/app/materialRegistry.ts': 'AUTHORED road — resolves per slot, pivots about the centre',
     'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
+    // #550 inspector slice — the EDIT side. Owns the field's presence so the panel
+    // cannot reintroduce an empty bag; pass-through, no pivot conversion.
+    'src/app/material/perMapPlacementEdit.ts':
+      'the inspector’s read/write rule — glTF editor only, ORIGIN road, values unconverted',
+    // NPanel names the field ONLY in the aria path it gives each per-map row
+    // (`materials.<n>.mapUvTransforms.<slot>.tiling.x`), which mirrors the param path
+    // on purpose — an addressable value whose path does not match its param is how a
+    // surface animates in the panel and freezes on screen. The read/write RULE is not
+    // here; the panel holds no per-map logic beyond rendering a row per returned slot.
+    'src/app/NPanel.tsx': 'glTF material editor — per-map rows, ORIGIN road, aria path only',
   };
 
   /**

@@ -44,9 +44,15 @@ import {
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
 import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
+import {
+  perMapPlacementRows,
+  withSlotPlacement,
+  type IrMapSlot,
+  type PerMapPlacementHost,
+} from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import type { BakedTextureRef, InlineMaterialSpec } from '../nodes/types';
+import type { BakedTextureRef, InlineMaterialSpec, UvPlacement } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
@@ -1525,16 +1531,27 @@ function MapRow({
 // glTF a whole-`materials`-array replace (setAtPath can't index an array, V53 S4).
 // `testidBase`/`ariaBase` keep each caller's existing id scheme (H95: native stays
 // `inspector-uvtransform-<nodeId>`, glTF adds the slot).
+// #550 — the SAME editor now also renders a per-map row, so a slot with its own
+// placement is edited by the identical control the shared one uses. `title` names the
+// row (the shared header additionally says what it governs once per-map rows exist);
+// `onReset`, when given, clears that slot back to the shared placement. The reset is
+// not optional polish: a control that owns a persisted optional value must keep its
+// reset reachable whenever the value is set, or the value is stranded with no
+// affordance to recover it (the SlotSelector lesson, #178).
 function UvTransformSection({
   uvTransform,
   testidBase,
   ariaBase,
   onSet,
+  title = 'Texture Placement',
+  onReset,
 }: {
   uvTransform: { tiling: [number, number]; offset: [number, number]; rotation: number };
   testidBase: string;
   ariaBase: string;
   onSet: (field: 'tiling' | 'offset' | 'rotation', value: [number, number] | number) => void;
+  title?: string;
+  onReset?: () => void;
 }) {
   const { tiling, offset, rotation } = uvTransform;
   const setVec = (field: 'tiling' | 'offset', axis: 0 | 1, cur: [number, number], v: string) => {
@@ -1544,8 +1561,19 @@ function UvTransformSection({
   };
   return (
     <div className="flex flex-col" data-testid={`inspector-uvtransform-${testidBase}`}>
-      <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
-        Texture Placement
+      <div className="flex items-center justify-between gap-2 px-3 pb-0.5 pt-1.5">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">{title}</span>
+        {onReset ? (
+          <button
+            type="button"
+            data-testid={`inspector-uvtransform-reset-${testidBase}`}
+            onClick={onReset}
+            title="Use the shared placement for this map"
+            className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/60 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            reset
+          </button>
+        ) : null}
       </div>
       <div className="flex items-center justify-between gap-2 px-3 py-1 text-[11px] text-fg/80">
         <span className="font-mono text-fg/60">tiling</span>
@@ -2489,6 +2517,8 @@ function GltfMaterialEditor({
   // Clamp: a slot switch + undo could leave activeSlot past the array end.
   const slot = activeSlot < materials.length ? activeSlot : 0;
   const mat = materials[slot] as unknown as Record<string, Record<string, unknown>>;
+  // #550 — the map slots carrying their OWN placement, in the IR table's order.
+  const perMapRows = perMapPlacementRows(materials[slot] as PerMapPlacementHost);
   // The keyframe paramPath for a lobe field — `materials.<slot>.<lobe>.<field>`,
   // targeting THIS GltfChild dagId directly (the glTF direct-channel road, V57).
   const fieldPath = (lobe: string, key: string) => `materials.${slot}.${lobe}.${key}`;
@@ -2532,6 +2562,22 @@ function GltfMaterialEditor({
       { type: 'setParam', nodeId, paramPath: 'materials', value: next },
       'user',
       `edit material slot ${slot} ${lobe}.${key}`,
+    );
+  };
+  // #550 — write ONE map slot's own UV placement (or clear it back to the shared one
+  // with null). Same whole-`materials`-array replace as every other glTF write; the
+  // per-map bag's shape — which slots it lists, and whether the field exists at all —
+  // is decided by `withSlotPlacement`, NOT here, because an empty-but-present bag
+  // renders identically to an absent one and re-keys every material silently.
+  const commitSlotPlacement = (mapSlot: IrMapSlot, placement: UvPlacement | null) => {
+    const nextMat = withSlotPlacement(materials[slot] as PerMapPlacementHost, mapSlot, placement);
+    const next = materials.map((m, i) => (i === slot ? nextMat : m));
+    dispatch(
+      { type: 'setParam', nodeId, paramPath: 'materials', value: next },
+      'user',
+      placement
+        ? `edit material slot ${slot} ${mapSlot} placement`
+        : `reset material slot ${slot} ${mapSlot} placement`,
     );
   };
   // #220 — rename the active slot's material. `name` is a TOP-LEVEL string (not a
@@ -2639,9 +2685,39 @@ function GltfMaterialEditor({
           }
           testidBase={`${nodeId}-${slot}`}
           ariaBase={`materials.${slot}`}
+          // #550 — once some map carries its own placement, this one no longer governs
+          // every map, and saying so is the whole point: a per-map import leaves this
+          // value at IDENTITY by design, so an unlabelled "Texture Placement" reading
+          // [1,1] over a quad drawn at [2,3] is the panel disagreeing with the screen.
+          title={perMapRows.length > 0 ? 'Texture Placement · shared' : 'Texture Placement'}
           onSet={(field, value) => commitLobeField('uvTransform', field, value)}
         />
       ) : null}
+      {/* #550 — the maps that carry their OWN placement. REPLACEMENT: a listed slot
+          ignores the shared value entirely, so each row is an absolute placement, not
+          a delta. Rows come from the IR's closed slot table (never the bag's own key
+          order) and each keeps a reset back to shared, so a captured placement can
+          always be undone. Values pass through unconverted — this editor's road places
+          about the UV origin, which is the convention they were captured in (#551). */}
+      {perMapRows.map(({ slot: mapSlot, placement }) => (
+        <UvTransformSection
+          key={mapSlot}
+          uvTransform={
+            placement as unknown as {
+              tiling: [number, number];
+              offset: [number, number];
+              rotation: number;
+            }
+          }
+          testidBase={`${nodeId}-${slot}-${mapSlot}`}
+          ariaBase={`materials.${slot}.mapUvTransforms.${mapSlot}`}
+          title={`Texture Placement · ${mapSlot}`}
+          onSet={(field, value) =>
+            commitSlotPlacement(mapSlot, { ...placement, [field]: value } as UvPlacement)
+          }
+          onReset={() => commitSlotPlacement(mapSlot, null)}
+        />
+      ))}
       {/* #217 — render-mode flags (double-sided / alpha-cutout / vertex-colors)
           captured from the import, now editable like a native base object. */}
       <MaterialRenderOptions
