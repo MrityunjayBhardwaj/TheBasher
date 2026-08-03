@@ -340,9 +340,18 @@ describe('#553 case 7 — the slot vocabulary comes from the ONE table, not a lo
     // Comments are stripped first: this module's header legitimately DISCUSSES the
     // three.js slot names, and a census that counts prose reds on documentation.
     const code = stripComments(readFileSync(join(__dirname, 'gltfMapOverlay.ts'), 'utf8'));
+    // A local correspondence table has to spell EVERY slot's three.js name. The
+    // five that have no other reason to appear are therefore the discriminating
+    // ones — `'map'` is excluded here because it doubles as the material-capability
+    // guard (`'map' in material`), and censusing it would red on a type check.
     for (const three of Object.values(THREE_SLOT_OF)) {
+      if (three === 'map') continue;
       expect(code).not.toContain(`'${three}'`);
     }
+    // …and `'map'` appears EXACTLY once, as that guard — so the exemption above
+    // cannot quietly cover a re-introduced table that happens to start with albedo.
+    expect(code.split(`'map'`).length - 1).toBe(1);
+    expect(code).toContain(`'map' in`);
   });
 
   it('CONTROL — the census can see such a table when there IS one', () => {

@@ -56,7 +56,11 @@ import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRe
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
 import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
-import { applyEditedMaps, hasMapEdits } from '../app/material/gltfMapOverlay';
+import {
+  applyEditedMaps,
+  hasMapEdits,
+  type EditedMapPlacement,
+} from '../app/material/gltfMapOverlay';
 import { getStorage } from '../app/boot';
 import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -2846,7 +2850,15 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     // traverse; the baked textures are loaded + applied to the FINAL assigned
     // material asynchronously after the traverse (the load can't run inline). The
     // `cancelled` flag drops a stale load when the effect re-runs first.
-    const mapWork: { mesh: THREE.Mesh; maps: InlineMaterialSpec['maps'] }[] = [];
+    // #553 — the placement rides ALONG with the maps. The edit-layer pass lands
+    // after this traverse has painted the inherited textures, so it must place the
+    // texture it loads itself; carrying only `maps` is what let a replaced map
+    // reach the screen with no placement at all.
+    const mapWork: {
+      mesh: THREE.Mesh;
+      maps: InlineMaterialSpec['maps'];
+      placement: EditedMapPlacement;
+    }[] = [];
     let cancelled = false;
     // #131 (D-05) — the coarse flatten / clay path. When the override asks to
     // ignore the source material, build a FRESH MeshStandardMaterial from the 7
@@ -2980,7 +2992,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
         }
         // #178 S5 — defer this slot's edit-layer map application (replace/clear)
         // to the async pass below; it lands on the FINAL material `m.material`.
-        if (ir && hasMapEdits(ir.maps)) mapWork.push({ mesh: m, maps: ir.maps });
+        if (ir && hasMapEdits(ir.maps)) {
+          // The IR's own vocabulary on BOTH sides here — the edit pass iterates IR
+          // slots, so `mapUvTransforms` is passed straight through with no
+          // translation (the inherited road needs one only because it walks the
+          // material's three.js-named slots).
+          mapWork.push({
+            mesh: m,
+            maps: ir.maps,
+            placement: { shared: ir.uvTransform, perMap: ir.mapUvTransforms },
+          });
+        }
       }
       // The override applies to THIS slot iff it exists AND either it is a
       // whole-child override (slotIndex undefined) or it addresses this exact
@@ -3032,7 +3054,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
           if (cancelled) return;
           if (Array.isArray(w.mesh.material)) continue;
           try {
-            await applyEditedMaps(w.mesh.material, w.maps, storage, () => cancelled);
+            await applyEditedMaps(w.mesh.material, w.maps, w.placement, storage, () => cancelled);
           } catch {
             // A missing/corrupt baked texture must not break the whole asset —
             // the slot keeps its imported texture (the inherit default).
