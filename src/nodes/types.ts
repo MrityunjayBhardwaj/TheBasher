@@ -211,6 +211,22 @@ export interface MaterialValue {
 // emits only the supported subset and tags the rest (`unsupported`) for v0.7.
 // ---------------------------------------------------------------------------
 
+/**
+ * ONE UV placement — tiling / offset / rotation. Named once because the shared
+ * placement and each per-map placement (#550) are the SAME shape and must stay so:
+ * a per-map value REPLACES the shared one, so anything the shared value can express
+ * a per-map value must express too.
+ *
+ * Deliberately NOT a general 2D transform. The family is closed under neither
+ * composition nor inversion (a rotation after a non-uniform scale is a shear), which
+ * is exactly why per-map placement replaces rather than layers.
+ */
+export interface UvPlacement {
+  readonly tiling: readonly [number, number];
+  readonly offset: readonly [number, number];
+  readonly rotation: number;
+}
+
 /** The 6 texture-map slots the inline material carries (W5 populates; null = none). */
 export interface InlineMaterialMaps {
   readonly albedo: BakedTextureRef | null;
@@ -279,17 +295,35 @@ export interface InlineMaterialSpec {
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
   /**
-   * v0.6 #3 (#181) — ONE shared UV placement applied to ALL loaded map textures
-   * (three.js Texture.repeat=tiling / .offset / .rotation, about .center=[.5,.5]).
-   * IDENTITY default (tiling [1,1], offset [0,0], rotation 0) → saved projects
-   * render byte-identically. Mirrors glTF KHR_texture_transform / Blender mapping
-   * node. Per-map transform is a v0.7 follow-up.
+   * v0.6 #3 (#181) — the UV placement used by every map slot that does NOT carry
+   * its own in {@link InlineMaterialSpec.mapUvTransforms} (three.js
+   * Texture.repeat=tiling / .offset / .rotation). IDENTITY default (tiling [1,1],
+   * offset [0,0], rotation 0) → saved projects render byte-identically.
+   *
+   * ⚠️ The PIVOT is a property of the ROAD, not of this value: the authored road
+   * applies it about `.center=[.5,.5]` (`materialRegistry.ts`), the glTF road about
+   * `.center=[0,0]` (`SceneFromDAG.tsx`, matching GLTFLoader). Neither glTF
+   * KHR_texture_transform nor Blender's mapping node pivots about the centre — both
+   * use the UV origin — so `[.5,.5]` is our own authoring convention, not parity (#551).
    */
-  readonly uvTransform: {
-    readonly tiling: readonly [number, number];
-    readonly offset: readonly [number, number];
-    readonly rotation: number;
-  };
+  readonly uvTransform: UvPlacement;
+  /**
+   * #550 — PER-MAP placement. A slot listed here uses its own placement INSTEAD of
+   * the shared {@link InlineMaterialSpec.uvTransform}; a slot not listed uses the
+   * shared one. REPLACEMENT, never a delta composed over the shared value — the
+   * `{tiling, offset, rotation}` family is not closed under composition (a rotation
+   * after a non-uniform scale is a shear it cannot represent), and both references
+   * store absolute per-slot placement: glTF KHR_texture_transform is per-slot with no
+   * shared layer, and Blender reuses ONE mapping node rather than layering deltas.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()` IN THE SCHEMA, DELIBERATELY BREAKING THIS FILE'S
+   * "every field carries a default" rule — and it must stay that way. `materialKeyOf`
+   * walks own enumerable keys, so a materialised `mapUvTransforms: {}` keys
+   * DIFFERENTLY from an absent one and would re-mint EVERY existing material's
+   * identity on first load after the version bump. MEASURED: `.optional()` omits the
+   * key (safe), `.optional().default({})` emits it (re-mints). Absent means absent.
+   */
+  readonly mapUvTransforms?: { readonly [K in keyof InlineMaterialMaps]?: UvPlacement };
   /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
