@@ -54,9 +54,21 @@
 //   · The audit in #535 names five places that preserve locality by cloning. Four are
 //     exercised below (the registry's array transform, Apply-Transform's bake, the
 //     material registry's no-mutation rule, and attachment — which every case rides on).
-//     The FIFTH, the decoded-texture clone taken before a UV transform is applied, is not:
-//     it needs an image asset fixture. It is the next thing to add here, and until then it
-//     is guarded only by the comment at its own site.
+//     The FIFTH, the decoded-texture clone taken before a UV transform is applied, is
+//     covered ELSEWHERE and was covered before this file existed: p06-3's A-5 puts two
+//     boxes on one image through the production pick → bake road and asserts their
+//     placements stay independent. Measured, not assumed — dropping the `.clone()` in
+//     `materialRegistry.build`'s `prep` reds it, and #554 added the sharing premise it
+//     had only claimed in a comment. This bullet used to say the site was ungated and
+//     needed a fixture here; both halves of that were false, found by perturbing rather
+//     than by re-reading (#554).
+//   · What this file still cannot see about that site: `MeshRow` reads geometry, material
+//     identity, colour, roughness, visibility and the world matrix — no map fields. So a
+//     locality violation confined to a texture's repeat/offset/rotation is invisible to
+//     the bystander sweep, and it is the one class p06-3 covers directly instead. Adding
+//     map fields would mean adding a textured cube to this fixture, since none of these
+//     three carry a map and the fields would otherwise be null everywhere — deliberately
+//     not done, because the claim already has a witness.
 //   · Non-mesh scene chrome (lines, points, helpers) is not read. A violation that only
 //     moved a grid line would pass.
 //   · The SELECTION GIZMO is excluded, by ancestor type rather than by name. It is not
@@ -77,7 +89,9 @@
 //      src/app/registryDoors.gate.test.ts (the structural half, and the limit this answers);
 //      docs/RENDER-RESOURCE-IDENTITY-DESIGN.md; .anvi/non-negotiables.md §5;
 //      tests/e2e/p533-shared-geometry-swap.spec.ts + p530-material-instance-sharing.spec.ts
-//      (the two instances this generalises); issues #530, #533, #535, #536.
+//      (the two instances this generalises); tests/e2e/p06-3-texture-placement.spec.ts +
+//      src/app/asset/bakedTextureLoader.test.ts (the fifth clone site, and the premise
+//      under it); issues #530, #533, #535, #536, #554.
 
 import { expect, test } from './_fixtures';
 import { modifierChainOps } from './_modifierStack';

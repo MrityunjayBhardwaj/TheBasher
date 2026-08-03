@@ -9,9 +9,42 @@
 // __basher_mesh_material): editing the NPanel placement controls changes the live
 // mesh.material.map.repeat/.offset/.rotation.
 //
-// FALSIFICATION (run once, then revert — see the wave log):
-//   drop `c.repeat.set(...)` in usePrimitiveMaterial (apply identity always) →
-//   SC-1's mapRepeat === [2,2] goes RED.
+// FALSIFICATION — three probes, each MEASURED on the tree that carries this note,
+// and each aimed at a different one of the three claims below (run one, revert it):
+//   · neutralise the placement — hand `placeTexture` an identity in
+//     `materialRegistry.build`'s `prep` → BOTH cases red. This replaces the note
+//     that stood here until #554, which said to drop `c.repeat.set(...)` in
+//     `usePrimitiveMaterial`: that line has not existed since the placement moved
+//     into the registry, so the instruction pointed at nothing and a reader
+//     following it would have concluded the gate could not be falsified.
+//   · drop the `.clone()` in that same `prep` → A-5's premise reds on the texture
+//     identity, which is the clone itself.
+//   · end the sharing — return a fresh decode per consumer from
+//     `resolveBakedTexture` → A-5's premise reds on the source identity.
+//
+// ── THE PREMISE UNDER A-5, ADDED BY #554 ───────────────────────────────────────
+//
+// A-5 was written as the browser cover for the per-material texture clone, and it
+// is: dropping the `.clone()` in `materialRegistry.build`'s `prep` reds it. But it
+// asserted the CONSEQUENCE (independent placements) while only claiming the
+// premise in a comment — "same hash → the SAME cached Texture instance" — and a
+// premise nobody measures is a premise that can lapse. Measured: making the hash
+// cache hand each consumer its own copy leaves this whole file green, because two
+// boxes that never shared anything have independent placements trivially. The
+// clone would then be guarding nothing and this file would have gone on certifying
+// it. So A-5 now reads the premise off the live materials first.
+//
+// WHAT THE BROWSER CAN AND CANNOT SEE HERE, since it decided the assertion:
+// `Texture.clone()` carries the SOURCE over by reference, so "same source" cannot
+// tell one shared decode from two clones of it — but it does tell one decode from
+// two INDEPENDENT decodes, which is the way the cache realistically lapses (drop
+// the cache, decode per consumer). The instance-level half of the premise — the
+// cache handing ONE object to two consumers — is not visible from a material that
+// only ever holds a clone of it, so it is gated where it IS visible, at the cache:
+// `src/app/asset/bakedTextureLoader.test.ts`. Two tiers, one premise, neither
+// redundant.
+//
+// REF: src/app/materialRegistry.ts (`build`'s `prep`); issues #554, #535, #181.
 
 import { expect, test } from './_fixtures';
 
@@ -27,9 +60,23 @@ interface Op {
   type: string;
   [k: string]: unknown;
 }
+/** Who is holding what, for the premise read — identities only, no values. */
+interface MapIdentity {
+  /** The material instance. Two boxes with different colours are two materials. */
+  mat: string;
+  /** The Texture the material holds — a per-material CLONE when the rule holds. */
+  tex: string;
+  /** The decoded image container: one per DECODE, shared by every clone of it. */
+  src: string;
+  imageOk: boolean;
+}
+interface SceneLike {
+  getObjectByName: (n: string) => unknown;
+}
 interface BasherWindow {
   __basher_selection?: { getState: () => { select: (id: string) => void } };
   __basher_mesh_material?: (nodeId: string) => MeshMaterial | null;
+  __basher_three?: { getState: () => { scene: SceneLike | null } };
   __basher_dag: {
     getState: () => {
       state: {
@@ -69,6 +116,51 @@ async function selectBoxAndAttachMap(page: import('@playwright/test').Page) {
     const m = w.__basher_mesh_material!('n_box');
     return m != null && m.hasMap && m.mapImageOk;
   });
+}
+
+/**
+ * Who a node's rendered material and map ARE — read off the live scene, never the store.
+ *
+ * The mesh lookup mirrors `__basher_mesh_material` (the first mesh under the group named
+ * by the node id). It is read here rather than added to that probe on purpose: texture
+ * IDENTITY is a question only a test about sharing asks, and the app has no use for it.
+ */
+async function mapIdentity(
+  page: import('@playwright/test').Page,
+  nodeId: string,
+): Promise<MapIdentity | null> {
+  return page.evaluate((id) => {
+    interface MeshLike {
+      isMesh?: boolean;
+      material?: {
+        uuid: string;
+        map?: { uuid: string; source?: { uuid: string }; image?: { width?: number } } | null;
+      };
+    }
+    const w = window as unknown as {
+      __basher_three?: {
+        getState: () => { scene: { getObjectByName: (n: string) => unknown } | null };
+      };
+    };
+    const grp = w.__basher_three?.getState().scene?.getObjectByName(id) as
+      | { traverse: (f: (o: unknown) => void) => void }
+      | undefined;
+    if (!grp) return null;
+    let target: MeshLike | null = null;
+    grp.traverse((o) => {
+      const m = o as MeshLike;
+      if (!target && m.isMesh) target = m;
+    });
+    const mesh = target as MeshLike | null;
+    const map = mesh?.material?.map;
+    if (!mesh?.material || !map) return null;
+    return {
+      mat: mesh.material.uuid,
+      tex: map.uuid,
+      src: map.source?.uuid ?? '',
+      imageOk: (map.image?.width ?? 0) > 0,
+    };
+  }, nodeId);
 }
 
 test.describe('v0.6 #3 W2 — texture placement', () => {
@@ -171,6 +263,27 @@ test.describe('v0.6 #3 W2 — texture placement', () => {
       const m = (window as unknown as BasherWindow).__basher_mesh_material!('n_box2');
       return m != null && m.hasMap && m.mapImageOk;
     });
+
+    // ── THE PREMISE, MEASURED BEFORE ANYTHING IS PERTURBED (#554) ──────────────
+    // Three identities, and each says a different thing. The boxes carry different
+    // colours (#cccccc vs #ffffff), so TWO materials is by construction — asserted
+    // anyway, because it is what makes "its own clone" the right expectation rather
+    // than a coincidence. ONE source is the sharing this whole case is about. TWO
+    // textures over that one source is the clone itself, named at the point where a
+    // reader can see why the placements below are allowed to differ.
+    const premiseA = await mapIdentity(page, 'n_box');
+    const premiseB = await mapIdentity(page, 'n_box2');
+    expect(premiseA, 'box 1 is not drawing a material with a map').not.toBeNull();
+    expect(premiseB, 'box 2 is not drawing a material with a map').not.toBeNull();
+    expect(premiseA!.imageOk && premiseB!.imageOk, 'a map is present but not decoded').toBe(true);
+    expect(premiseB!.mat, 'the two boxes must be TWO materials').not.toBe(premiseA!.mat);
+    // If this ever goes red the case below stops meaning anything: two boxes that
+    // never shared a decode have independent placements for free.
+    expect(premiseB!.src, 'the two boxes must draw ONE decoded image').toBe(premiseA!.src);
+    // …and this is the clone the rest of the case exists to prove holds.
+    expect(premiseB!.tex, 'each material must hold its OWN texture over that image').not.toBe(
+      premiseA!.tex,
+    );
 
     // Distinct tiling on each box.
     await page.getByTestId('inspector-uvtransform-tilingX-n_box_data').fill('4');
