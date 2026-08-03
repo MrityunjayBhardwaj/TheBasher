@@ -457,3 +457,53 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     expect(out).toEqual({ kind: 'SceneLight', intensity: 4, color: '#fff' });
   });
 });
+
+// ⚠️ BOTH CASES BELOW ARE NON-DISCRIMINATING TODAY, and that is recorded rather than
+// glossed. They were written expecting to guard the mute/owner filters for geometry the way
+// the material cases do, and neither could be made to red: removing the mute filter from
+// `writtenPaths` leaves them green (the muted path is in the set but was never written, so
+// the fold reads `undefined` and falls back to the descriptor), and removing the fallback
+// leaves them green too (the path never enters `written` while the filter is intact, so
+// `rebuildGeometryRef` takes its empty-values early return). The property is guarded twice
+// over, by two mechanisms that each cover for the other.
+//
+// They are kept because they pin the BEHAVIOUR at this entry point for a future change that
+// bypasses `writtenPaths` and reads the clone directly — the obvious "simplification" — which
+// is exactly when a muted channel would start re-minting keys. But they are documentation of
+// intent, not evidence, and a write-up that counted them as falsified coverage would be
+// claiming a guard that no perturbation demonstrated.
+describe('#537 — the handle repair mirrors the primitives it wraps', () => {
+  it('does NOT rebuild for a MUTED size channel', () => {
+    // The same filter the material half is pinned against, restated for geometry because it
+    // is reached through a different branch of the repair. `overlayChannels` drops muted
+    // channels, so nothing was written and nothing is invalidated — a rebuild here would
+    // re-mint a key from a value the director explicitly switched off, and (with no eviction)
+    // cache a geometry nobody asked to see.
+    const base = boxValue();
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(SIZE, [4, 4, 4], true), channel(POSITION, [5, 0, 0])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.position).toEqual([5, 0, 0]);
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
+  });
+
+  it("does NOT rebuild from ANOTHER node's held edit", () => {
+    // The transient store is global. Without the node filter, dragging one object's size
+    // would re-mint every other object's geometry in the scene.
+    const base = boxValue();
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(POSITION, [5, 0, 0])],
+      transient(SIZE, [9, 9, 9], 'n_other'),
+      0,
+    );
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
+  });
+});

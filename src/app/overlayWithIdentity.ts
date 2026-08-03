@@ -265,6 +265,14 @@ function rebuildInvalidatedHandles(
     // animation never touches geometry keeps the key the evaluator minted, and two objects
     // sharing a build do not stop sharing because one of them moved.
     if (rebuilt !== ref) writeAt(clone, field.handlePath, rebuilt);
+
+    // ⚠️ THE OVERLAY'S OWN WRITE IS LEFT WHERE IT LANDED, and a reader should know why. The
+    // clone still carries `data.size` — a field with no consumer, which is precisely the
+    // shape that kept this bug invisible. It is NOT deleted here, deliberately: the overlay
+    // primitives own what they write, this function owns what those writes invalidated, and
+    // reaching back to unwrite another owner's field would put two owners on one path. The
+    // rebuilt handle is the authoritative one; treat `data.<param>` on a patched value as a
+    // by-product of the write, never as something the renderer reads.
   }
 }
 
