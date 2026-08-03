@@ -13,7 +13,13 @@
 //
 // REF: CONTEXT D-03 (core-10 table); PLAN W1 (1.5); vyapti V29/V32; #178.
 
-import type { BakedTextureRef, InlineMaterialSpec } from '../../nodes/types';
+import type {
+  BakedTextureRef,
+  InlineMaterialMaps,
+  InlineMaterialSpec,
+  UvPlacement,
+} from '../../nodes/types';
+import type { SlotPlacements } from './uvPlacement';
 
 /**
  * OpenPBR emission is photometric (cd/m²). The classic WebGL MeshPhysicalMaterial
@@ -40,6 +46,33 @@ export interface ThreeMaterialMaps {
   readonly emissiveMap: BakedTextureRef | null;
   readonly aoMap: BakedTextureRef | null;
 }
+
+/** A per-slot UV placement bag in THREE's slot vocabulary (the compile output's). */
+export type ThreeMapUvTransforms = SlotPlacements<keyof ThreeMaterialMaps>;
+
+/**
+ * The IR slot → three.js slot correspondence, stated ONCE for this whole compile
+ * target and consumed by everything that needs it (the map handles and the per-map
+ * placements). Keyed by `keyof InlineMaterialMaps`, so a seventh IR slot is a TYPE
+ * error here rather than a slot that silently never reaches a texture.
+ *
+ * Both apply roads name their slots in THREE's vocabulary, so this is the only
+ * place the two vocabularies meet. A second copy in the registry and a third in the
+ * glTF overlay is exactly the shape that already cost this issue one bug at the
+ * import end (six IR slots over five glTF texture fields).
+ */
+export const THREE_SLOT_OF: {
+  readonly [K in keyof InlineMaterialMaps]: keyof ThreeMaterialMaps;
+} = {
+  albedo: 'map',
+  normal: 'normalMap',
+  roughness: 'roughnessMap',
+  metalness: 'metalnessMap',
+  emissive: 'emissiveMap',
+  ao: 'aoMap',
+};
+
+const IR_MAP_SLOTS = Object.keys(THREE_SLOT_OF) as (keyof InlineMaterialMaps)[];
 
 /** Flat three.js MeshPhysicalMaterial parameter bag (the compile output). */
 export interface ThreeMaterialParams {
@@ -80,6 +113,19 @@ export interface ThreeMaterialParams {
     readonly offset: readonly [number, number];
     readonly rotation: number;
   };
+  /**
+   * #550 — the IR's per-map placements, translated into THREE's slot vocabulary so
+   * both apply roads read one spelling. A slot listed here uses its own placement
+   * INSTEAD of {@link uvTransform}; a slot not listed uses the shared one.
+   * REPLACEMENT, never composition (the family is not closed under it).
+   *
+   * 🔴 The key is ABSENT — not `undefined` — when the IR carries no per-map entries.
+   * It flows into `PrimitiveMaterialSpec`, whose content key is a GENERIC walk over
+   * own enumerable keys, so a materialised empty bag would re-key every existing
+   * material and re-mint the whole GPU cache on first load. Same trap as at the IR
+   * tier; same answer: absent means absent.
+   */
+  readonly mapUvTransforms?: ThreeMapUvTransforms;
 }
 
 /**
@@ -88,6 +134,7 @@ export interface ThreeMaterialParams {
  * dropped here (rendered by the v0.7 TSL backend, not now).
  */
 export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
+  const perMap = threeMapUvTransforms(ir.mapUvTransforms);
   const transmission = ir.transmission.weight;
   const opacity = ir.geometry.opacity;
   // three needs `transparent` for BOTH a transmissive lobe AND a <1 opacity.
@@ -108,16 +155,38 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     alphaTest: ir.geometry.alphaCutoff ?? 0,
     vertexColors: ir.geometry.vertexColors ?? false,
     doubleSided: ir.geometry.doubleSided ?? false,
-    maps: {
-      map: ir.maps.albedo,
-      normalMap: ir.maps.normal,
-      roughnessMap: ir.maps.roughness,
-      metalnessMap: ir.maps.metalness,
-      emissiveMap: ir.maps.emissive,
-      aoMap: ir.maps.ao,
-    },
+    maps: threeMaps(ir.maps),
     uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it
+    // #550 — the key is OMITTED, not set to undefined, when there is nothing per-map.
+    ...(perMap ? { mapUvTransforms: perMap } : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).
+}
+
+/** The map handles, re-keyed into THREE's vocabulary through {@link THREE_SLOT_OF}. */
+function threeMaps(maps: InlineMaterialMaps): ThreeMaterialMaps {
+  const out = {} as Record<keyof ThreeMaterialMaps, BakedTextureRef | null>;
+  for (const slot of IR_MAP_SLOTS) out[THREE_SLOT_OF[slot]] = maps[slot];
+  return out;
+}
+
+/**
+ * The per-map placements, re-keyed the same way. Returns `undefined` — so the caller
+ * can OMIT the field — both when the IR has no bag and when the bag is empty: an
+ * empty bag is the same absence one representation later, and materialising it would
+ * re-key every existing material (see {@link ThreeMaterialParams.mapUvTransforms}).
+ */
+export function threeMapUvTransforms(
+  perMap: InlineMaterialSpec['mapUvTransforms'],
+): ThreeMapUvTransforms | undefined {
+  if (!perMap) return undefined;
+  // `-readonly` because a mapped type over ThreeMaterialMaps inherits its readonly
+  // modifiers; this is the local builder, and the RETURNED type is readonly again.
+  const out: { -readonly [K in keyof ThreeMaterialMaps]?: UvPlacement } = {};
+  for (const slot of IR_MAP_SLOTS) {
+    const placement = perMap[slot];
+    if (placement) out[THREE_SLOT_OF[slot]] = placement;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }

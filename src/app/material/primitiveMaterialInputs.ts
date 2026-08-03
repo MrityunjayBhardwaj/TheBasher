@@ -150,6 +150,10 @@ export function primitiveMaterialSpec(
     thickness: compiled.thickness,
     wireframe: shading === 'wireframe',
     uvTransform: compiled.uvTransform,
+    // #550 — per-slot placement, already in THREE's vocabulary. OMITTED when the
+    // compile produced none: the spec's content key is a generic walk over own
+    // enumerable keys, so a materialised empty bag would re-key every material.
+    ...(compiled.mapUvTransforms ? { mapUvTransforms: compiled.mapUvTransforms } : {}),
     textures,
   };
 }

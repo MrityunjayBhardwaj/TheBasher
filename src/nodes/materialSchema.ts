@@ -20,7 +20,7 @@
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
 
 import { z } from 'zod';
-import type { BakedMaterialSpec, InlineMaterialSpec } from './types';
+import type { BakedMaterialSpec, InlineMaterialSpec, UvPlacement } from './types';
 
 /**
  * The roughness a pre-#178 material rendered at when no override was present.
@@ -67,6 +67,12 @@ const bakedTextureRefSchema = z.object({
   gltfTexCoord: z.number().optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
+/**
+ * The map slot names, DERIVED from {@link NULL_MAPS} rather than written out again, so
+ * a seventh slot cannot be added to the IR and silently miss per-map placement (#550).
+ * Declared after NULL_MAPS below; see `perMapUvTransform.gate.test.ts`, which pins this
+ * list equal to the IR's own map keys in both directions.
+ */
 // Exported so the glTF→OpenPBR converter (gltfMaterialToOpenpbr) seeds an IR with
 // the SAME empty-maps / identity-UV defaults the schema uses — one source, no drift.
 export const NULL_MAPS = {
@@ -77,6 +83,7 @@ export const NULL_MAPS = {
   emissive: null,
   ao: null,
 } as const;
+export const MAP_UV_SLOTS = Object.keys(NULL_MAPS) as (keyof typeof NULL_MAPS)[];
 const mapsSchema = z
   .object({
     albedo: mapSlot,
@@ -97,13 +104,40 @@ export const IDENTITY_UV_TRANSFORM = {
   offset: [0, 0] as [number, number],
   rotation: 0,
 };
-const uvTransformSchema = z
+const uvPlacementFields = {
+  tiling: z.tuple([z.number(), z.number()]).default([1, 1]),
+  offset: z.tuple([z.number(), z.number()]).default([0, 0]),
+  rotation: z.number().default(0),
+};
+const uvTransformSchema = z.object(uvPlacementFields).default({ ...IDENTITY_UV_TRANSFORM });
+
+/**
+ * #550 — PER-MAP placement. A slot present here replaces the shared `uvTransform`
+ * for that slot; a slot absent uses the shared one.
+ *
+ * 🔴 `.optional()` WITH NO `.default()`, AND THAT IS THE POINT — it deliberately
+ * breaks this file's "every field carries a default" rule (see `openpbrMaterialSchema`).
+ * `materialKeyOf` walks own enumerable keys, so a materialised `mapUvTransforms: {}`
+ * keys differently from an absent one: adding a default here would re-mint EVERY
+ * existing material's identity on the first load after the version bump — a cold
+ * cache and a silent cost, with no visible change to what is drawn. MEASURED both
+ * ways before this was written; `unsupported` below is the existing precedent for an
+ * optional-no-default field. Pinned by `perMapUvTransform.gate.test.ts`.
+ *
+ * The inner fields DO keep their defaults — the house rule is right WHERE the slot
+ * exists, so a partial `setParam` on one component still refills its siblings. The
+ * defaults belong inside a present slot, never on the map of slots.
+ */
+const mapUvTransformsSchema = z
   .object({
-    tiling: z.tuple([z.number(), z.number()]).default([1, 1]),
-    offset: z.tuple([z.number(), z.number()]).default([0, 0]),
-    rotation: z.number().default(0),
+    albedo: z.object(uvPlacementFields).optional(),
+    normal: z.object(uvPlacementFields).optional(),
+    roughness: z.object(uvPlacementFields).optional(),
+    metalness: z.object(uvPlacementFields).optional(),
+    emissive: z.object(uvPlacementFields).optional(),
+    ao: z.object(uvPlacementFields).optional(),
   })
-  .default({ ...IDENTITY_UV_TRANSFORM });
+  .optional();
 
 /**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
@@ -160,6 +194,7 @@ export function openpbrMaterialSchema() {
         .default({ opacity: 1 }),
       maps: mapsSchema,
       uvTransform: uvTransformSchema,
+      mapUvTransforms: mapUvTransformsSchema,
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -246,6 +281,7 @@ export function hydrateInlineMaterial(
     };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
+    mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -290,7 +326,36 @@ export function hydrateInlineMaterial(
       rotation: num(m.uvTransform?.rotation, 0),
     },
   };
-  return m.unsupported ? { ...out, unsupported: m.unsupported } : out;
+  // #550 — per-map placement. CONDITIONAL, exactly like `unsupported` above and for a
+  // sharper reason: `materialKeyOf` walks own enumerable keys, so spreading
+  // `mapUvTransforms: undefined` in unconditionally would give every existing material
+  // a different key and re-mint the whole cache on first load. Absent must mean absent.
+  const perMap = hydrateMapUvTransforms(m.mapUvTransforms);
+  const withPerMap = perMap ? { ...out, mapUvTransforms: perMap } : out;
+  return m.unsupported ? { ...withPerMap, unsupported: m.unsupported } : withPerMap;
+}
+
+/**
+ * Normalise the per-map placement bag, or return `undefined` when there is nothing to
+ * carry — so the caller can omit the key entirely rather than store an empty object.
+ * An empty bag is NOT the same as an absent one to a generic key walk (#550/H265),
+ * and "every slot uses the shared placement" is exactly what absence already means.
+ */
+function hydrateMapUvTransforms(
+  raw: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }> | undefined,
+): InlineMaterialSpec['mapUvTransforms'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: Record<string, UvPlacement> = {};
+  for (const slot of MAP_UV_SLOTS) {
+    const p = raw[slot];
+    if (!p || typeof p !== 'object') continue;
+    out[slot] = {
+      tiling: vec2(p.tiling, [1, 1]),
+      offset: vec2(p.offset, [0, 0]),
+      rotation: num(p.rotation, 0),
+    };
+  }
+  return Object.keys(out).length > 0 ? (out as InlineMaterialSpec['mapUvTransforms']) : undefined;
 }
 
 /**
