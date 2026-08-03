@@ -729,7 +729,7 @@ describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
           },
         ],
       }),
-    ).toEqual(['per-map texture transform (only the shared transform is editable)']);
+    ).toEqual(['per-map texture transform (captured per map; not yet applied or editable)']);
   });
 
   it('does NOT flag loader-handled or IR-captured extensions', () => {

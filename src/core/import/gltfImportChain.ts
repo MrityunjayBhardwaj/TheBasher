@@ -97,12 +97,15 @@ export function detectUnsupportedGltfFeatures(json: {
   for (const ext of json.extensionsUsed ?? []) {
     if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
   }
-  // KHR_texture_transform is captured into the shared uvTransform — but only when
-  // uniform across a material's textures. A material whose maps carry DIFFERING
-  // transforms can't be represented by the single shared transform (only the
-  // shared one applies; the clone still renders each map's own), so flag it.
+  // KHR_texture_transform: uniform across a material's maps → the shared uvTransform;
+  // DIFFERING → each slot's own placement in `mapUvTransforms` (#550), so the values
+  // are no longer dropped. Still flagged, on the same grounds as TEXCOORD_1+ below:
+  // captured is not applied. Nothing reads the per-slot placements yet — the viewport
+  // shows them because the imported clone carries its own — so editing one does
+  // nothing and a DAG-replaced map uses the shared placement. Drop this entry when
+  // the render + inspector slices land, not before.
   if ((json.materials ?? []).some((m) => materialHasPerMapUvTransform(m))) {
-    out.push('per-map texture transform (only the shared transform is editable)');
+    out.push('per-map texture transform (captured per map; not yet applied or editable)');
   }
   // Secondary UV sets: the texCoord index is captured on the map descriptor, but
   // a DAG-replaced map currently binds UV0 only — so flag UV1+ as a limitation.

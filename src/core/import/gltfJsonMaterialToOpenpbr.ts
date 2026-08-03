@@ -19,14 +19,22 @@
 // the clone's textures in place for these (inherit), so the captured descriptor
 // only makes the slot inspector-visible + DAG-addressable; render is byte-
 // identical. KHR_materials_unlit is captured as core (flat-shading nuance deferred).
+// KHR_texture_transform is captured into the shared `uvTransform` when a material's
+// maps agree, and PER SLOT into `mapUvTransforms` when they don't (#550) — absolute
+// per-slot placements, never deltas over the shared one.
 //
 // REF: #178 (glTF materials → OpenPBR DAG); openpbrToThree.ts (forward adapter);
 //      gltfMaterialToOpenpbr.ts (the clone-read SIBLING + round-trip oracle);
 //      V53 (the IR invariant + the DIRECT-IMPORTABILITY GAP block).
 
 import { Color, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
-import type { BakedTextureRef, InlineMaterialMaps, InlineMaterialSpec } from '../../nodes/types';
-import { NULL_MAPS, IDENTITY_UV_TRANSFORM } from '../../nodes/materialSchema';
+import type {
+  BakedTextureRef,
+  InlineMaterialMaps,
+  InlineMaterialSpec,
+  UvPlacement,
+} from '../../nodes/types';
+import { NULL_MAPS, IDENTITY_UV_TRANSFORM, MAP_UV_SLOTS } from '../../nodes/materialSchema';
 
 /** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
 const GLTF_WRAP_REPEAT = 10497;
@@ -57,6 +65,38 @@ interface UvSlotTransform {
 
 const IDENTITY_SLOT_TRANSFORM: UvSlotTransform = { offset: [0, 0], scale: [1, 1], rotation: 0 };
 
+/**
+ * The glTF texture slot each IR map slot is captured from — the ONE place that
+ * correspondence is stated. Both the map capture and the per-map UV placement
+ * capture walk this table, so they cannot drift about which glTF field feeds
+ * which IR slot; and because it is keyed by `keyof InlineMaterialMaps`, a seventh
+ * IR map slot is a TYPE error here rather than a silently unread one.
+ *
+ * The mapping is not one-to-one in either direction: glTF packs roughness (G) and
+ * metalness (B) into a single `metallicRoughnessTexture`, so two IR slots read one
+ * glTF field, and `ao` reads `occlusionTexture`, whose name matches nothing.
+ * Colorspaces follow the glTF convention — baseColor/emissive sRGB, the rest linear.
+ */
+const IR_SLOT_SOURCES: {
+  readonly [K in keyof InlineMaterialMaps]: {
+    readonly info: (mat: GltfJsonMaterial) => GltfTextureInfo | undefined;
+    readonly colorSpace: BakedTextureRef['colorSpace'];
+  };
+} = {
+  albedo: { info: (m) => m.pbrMetallicRoughness?.baseColorTexture, colorSpace: 'srgb' },
+  normal: { info: (m) => m.normalTexture, colorSpace: 'srgb-linear' },
+  roughness: {
+    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
+    colorSpace: 'srgb-linear',
+  },
+  metalness: {
+    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
+    colorSpace: 'srgb-linear',
+  },
+  emissive: { info: (m) => m.emissiveTexture, colorSpace: 'srgb' },
+  ao: { info: (m) => m.occlusionTexture, colorSpace: 'srgb-linear' },
+};
+
 /** The normalized KHR_texture_transform for a present texture slot (identity when
  *  the slot has no transform); undefined when the slot is absent. */
 function slotTransform(info: GltfTextureInfo | undefined): UvSlotTransform | undefined {
@@ -80,23 +120,26 @@ function slotTransformEq(a: UvSlotTransform, b: UvSlotTransform): boolean {
   );
 }
 
-/** Every present texture slot's normalized transform, in capture order. */
+/** Every present texture slot's normalized transform, in IR slot order. */
 function materialSlotTransforms(mat: GltfJsonMaterial): UvSlotTransform[] {
-  const pbr = mat.pbrMetallicRoughness ?? {};
-  return [
-    slotTransform(pbr.baseColorTexture),
-    slotTransform(pbr.metallicRoughnessTexture),
-    slotTransform(mat.normalTexture),
-    slotTransform(mat.occlusionTexture),
-    slotTransform(mat.emissiveTexture),
-  ].filter((t): t is UvSlotTransform => t !== undefined);
+  return MAP_UV_SLOTS.map((slot) => slotTransform(IR_SLOT_SOURCES[slot].info(mat))).filter(
+    (t): t is UvSlotTransform => t !== undefined,
+  );
+}
+
+/** A normalized glTF slot transform → the IR's UV placement (`scale` is `tiling`).
+ *  Arrays are COPIED: an untransformed slot normalizes to the shared
+ *  IDENTITY_SLOT_TRANSFORM constant, whose arrays must never end up aliased into
+ *  a material's IR. */
+function toPlacement(t: UvSlotTransform): UvPlacement {
+  return { tiling: [...t.scale], offset: [...t.offset], rotation: t.rotation };
 }
 
 /**
- * True iff a material's textures DON'T share one UV transform — the case the
- * single shared `uvTransform` IR can't represent (only the shared transform is
- * captured/applied; the clone still renders each map's own). Used by the
- * no-silent-drop detector to warn precisely for this case (V53).
+ * True iff a material's textures DON'T share one UV transform — the case the single
+ * shared `uvTransform` can't represent. Each such slot carries its own placement in
+ * `mapUvTransforms` instead (#550); the detector still names the material, because
+ * capturing the values is not yet the same as applying or editing them.
  */
 export function materialHasPerMapUvTransform(mat: GltfJsonMaterial): boolean {
   const slots = materialSlotTransforms(mat);
@@ -105,7 +148,10 @@ export function materialHasPerMapUvTransform(mat: GltfJsonMaterial): boolean {
 
 /** Capture a material's KHR_texture_transform into the single shared IR uvTransform
  *  WHEN uniform across its textures (the common case); a per-map-differing material
- *  captures IDENTITY (the clone renders each map's own transform; the detector warns). */
+ *  captures IDENTITY here and places every slot individually in `mapUvTransforms`,
+ *  so nothing falls back to the shared value and this stays a no-op for the
+ *  renderer (`applyGltfUvTransform` skips identity, leaving the clone's own
+ *  per-map transforms exactly as they render today). */
 function captureUvTransform(mat: GltfJsonMaterial): InlineMaterialSpec['uvTransform'] {
   const slots = materialSlotTransforms(mat);
   const t = slots[0];
@@ -116,7 +162,32 @@ function captureUvTransform(mat: GltfJsonMaterial): InlineMaterialSpec['uvTransf
       rotation: IDENTITY_UV_TRANSFORM.rotation,
     };
   }
-  return { tiling: t.scale, offset: t.offset, rotation: t.rotation };
+  return toPlacement(t);
+}
+
+/**
+ * Capture each present texture slot's OWN KHR_texture_transform (#550) — the data
+ * `materialHasPerMapUvTransform` already computes and this converter used to throw
+ * away. REPLACEMENT semantics: a listed slot uses its own absolute placement and
+ * ignores the shared one, which is how both references model it (glTF stores the
+ * transform per slot with no shared layer; Blender reuses one mapping node rather
+ * than layering deltas). Every PRESENT slot is listed, including an untransformed
+ * one at identity — a slot that fell back to the shared value would silently move
+ * if the shared value were later edited.
+ *
+ * Returns `undefined` — not an empty object — for a uniform material, and the
+ * caller must then omit the key entirely. `materialKeyOf` walks own enumerable
+ * keys, so a materialised empty bag keys differently from an absent one and would
+ * re-mint every already-imported material's identity (#550/H265).
+ */
+function capturePerMapUvTransforms(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvTransforms'] {
+  if (!materialHasPerMapUvTransform(mat)) return undefined;
+  const out: { -readonly [K in keyof InlineMaterialMaps]?: UvPlacement } = {};
+  for (const slot of MAP_UV_SLOTS) {
+    const t = slotTransform(IR_SLOT_SOURCES[slot].info(mat));
+    if (t) out[slot] = toPlacement(t);
+  }
+  return out;
 }
 
 /** A glTF 2.0 material object as it appears in `json.materials[]` (partial, the
@@ -182,20 +253,17 @@ function captureMap(
     : ref;
 }
 
-/** Build the 6 IR map slots from a material's texture references. glTF packs
- *  roughness (G) + metalness (B) in ONE metallicRoughnessTexture, so the
- *  roughness + metalness slots reference the SAME imported texture. Colorspaces
- *  follow the glTF convention: baseColor/emissive = srgb, the rest = linear. */
+/** Build the 6 IR map slots from a material's texture references, through the ONE
+ *  slot→glTF-field table above (so the roughness + metalness slots reference the
+ *  SAME imported texture, and a slot cannot be captured from one field here and a
+ *  different one when its UV placement is read). */
 function captureMaps(mat: GltfJsonMaterial, tables: GltfTextureTables): InlineMaterialMaps {
-  const pbr = mat.pbrMetallicRoughness ?? {};
-  return {
-    albedo: captureMap(pbr.baseColorTexture, 'srgb', tables),
-    normal: captureMap(mat.normalTexture, 'srgb-linear', tables),
-    roughness: captureMap(pbr.metallicRoughnessTexture, 'srgb-linear', tables),
-    metalness: captureMap(pbr.metallicRoughnessTexture, 'srgb-linear', tables),
-    emissive: captureMap(mat.emissiveTexture, 'srgb', tables),
-    ao: captureMap(mat.occlusionTexture, 'srgb-linear', tables),
-  };
+  const out = {} as { -readonly [K in keyof InlineMaterialMaps]: BakedTextureRef | null };
+  for (const slot of MAP_UV_SLOTS) {
+    const src = IR_SLOT_SOURCES[slot];
+    out[slot] = captureMap(src.info(mat), src.colorSpace, tables);
+  }
+  return out;
 }
 
 function num(v: unknown, fallback: number): number {
@@ -245,6 +313,10 @@ export function gltfJsonMaterialToOpenpbr(
   // render fully opaque in three's metallic-roughness path).
   const bcf = pbr.baseColorFactor;
   const opacity = mat.alphaMode === 'BLEND' ? num(bcf?.[3], 1) : 1;
+  // #550 — per-map placements, spread CONDITIONALLY. A uniform material must not
+  // gain the key at all: `materialKeyOf` walks own enumerable keys, so spreading
+  // `undefined` in unconditionally would re-key every material (H265).
+  const perMap = capturePerMapUvTransforms(mat);
   return {
     name: mat.name || 'default',
     base: {
@@ -275,7 +347,9 @@ export function gltfJsonMaterialToOpenpbr(
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.
     maps: tables ? captureMaps(mat, tables) : { ...NULL_MAPS },
     // KHR_texture_transform → the single shared uvTransform (uniform case); a
-    // per-map-differing material captures identity (clone renders each map's own).
+    // per-map-differing material captures identity here and places each slot
+    // individually below, since one shared placement cannot express them.
     uvTransform: captureUvTransform(mat),
+    ...(perMap ? { mapUvTransforms: perMap } : {}),
   };
 }

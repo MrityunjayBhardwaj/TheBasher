@@ -197,7 +197,7 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(materialHasPerMapUvTransform(mat)).toBe(false); // shared → not per-map
   });
 
-  it('leaves uvTransform IDENTITY when maps carry DIFFERING transforms (per-map case)', () => {
+  it('leaves uvTransform IDENTITY when maps DIFFER, placing each slot instead (#550)', () => {
     const mat = {
       pbrMetallicRoughness: {
         baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
@@ -207,6 +207,10 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     const ir = gltfJsonMaterialToOpenpbr(mat);
     expect(ir.uvTransform).toEqual({ tiling: [1, 1], offset: [0, 0], rotation: 0 }); // identity
     expect(materialHasPerMapUvTransform(mat)).toBe(true);
+    // …and the per-slot values are KEPT, not dropped — every case in
+    // `perMapUvCapture.gate.test.ts`, named here so this file stops implying otherwise.
+    expect(ir.mapUvTransforms?.albedo?.tiling).toEqual([2, 2]);
+    expect(ir.mapUvTransforms?.normal?.tiling).toEqual([4, 4]);
   });
 
   it('a single transformed texture is uniform (not flagged per-map)', () => {
