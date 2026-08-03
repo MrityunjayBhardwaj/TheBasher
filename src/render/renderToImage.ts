@@ -211,6 +211,37 @@ export function createRenderScratch(width: number, height: number, samples: numb
  * canvas is overwritten each call, so the caller must consume the returned
  * canvas (encode the frame) BEFORE the next render call.
  */
+/**
+ * Hide every editor-chrome object in `scene` and return exactly the ones flipped,
+ * for the caller to restore. A render shows DAG content only (V37) — the parity
+ * half of "what production sees".
+ *
+ * Extracted from the render body for ONE reason: it is the render road's whole
+ * enforcement of V37, and inside an async function that needs a live WebGL
+ * context it had no tier that could reach it. Both output roads consume it — the
+ * still (#168) and every animation frame (#189) — so this is the single place the
+ * rule is applied, and now the single place it can be tested (#557).
+ *
+ * The PREDICATE is shared (`isEditorChrome`, #546); the TRAVERSAL is deliberately
+ * local and stays that way. Flipping `visible` per object lets three.js's own
+ * inheritance carry it to children, where the framing read instead prunes the
+ * subtree. This is not the beginning of folding traversal into the predicate —
+ * `editorChrome.ts` states why the three consumers legitimately differ.
+ *
+ * Only objects actually flipped are returned, so an object the DIRECTOR hid stays
+ * hidden after restore rather than being switched on by the render.
+ */
+export function hideEditorChrome(scene: THREE.Object3D): THREE.Object3D[] {
+  const hidden: THREE.Object3D[] = [];
+  scene.traverse((o) => {
+    if (isEditorChrome(o) && o.visible) {
+      o.visible = false;
+      hidden.push(o);
+    }
+  });
+  return hidden;
+}
+
 export async function renderSceneToImageCanvas(
   opts: RenderToImageOptions,
   scratch?: RenderScratch,
@@ -225,20 +256,7 @@ export async function renderSceneToImageCanvas(
   const sc = reuse ? scratch! : createRenderScratch(width, height, samples);
   const camera = buildRenderCamera(pose, width, height);
 
-  // Hide editor chrome — a render shows DAG content only (parity with what
-  // production sees). Record only the ones we actually flip, to restore exactly.
-  const hidden: THREE.Object3D[] = [];
-  scene.traverse((o) => {
-    // The predicate is shared with the viewport's framing read (#546) — this used
-    // to be a second copy of it, and the two describing each other as mirrors is
-    // what got the rule centralised. What stays local is the TRAVERSAL: flipping
-    // `visible` per object lets three.js's own inheritance carry it to children,
-    // where the framing read instead prunes the subtree.
-    if (isEditorChrome(o) && o.visible) {
-      o.visible = false;
-      hidden.push(o);
-    }
-  });
+  const hidden = hideEditorChrome(scene);
 
   try {
     // Control pass (depth/normal) → material-override path into a raw target.

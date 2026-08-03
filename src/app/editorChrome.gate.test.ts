@@ -87,6 +87,10 @@ const GIZMO = /['"`]TransformControls/g;
 const OPT_OUTS: Record<string, string> = {
   'tests/e2e/p322-curve-viewport-authoring.spec.ts':
     'counts gizmo objects to prove the TransformControls mounted at all — asks whether the gizmo EXISTS, not whether an object is chrome.',
+  'src/render/renderToImage.test.ts':
+    "the render road's per-clause tests (#557). Like this gate, it has to NAME each clause to build a subject for it — a flagged object and a TransformControls-typed one — and the whole point is that neither subject satisfies the other clause. Importing the predicate here would test it against itself.",
+  'tests/e2e/p168-render-to-image.spec.ts':
+    'same question as p322 — counts gizmo objects to prove a selection actually mounted the control, which the predicate cannot answer because it deliberately returns only chrome/not-chrome (#557). It asks the CHROME question through the imported predicate and never reads the flag, so it is an offender for the gizmo sweep alone.',
 };
 
 /**
