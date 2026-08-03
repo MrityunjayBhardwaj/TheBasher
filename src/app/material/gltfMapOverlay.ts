@@ -75,7 +75,6 @@ export function isClearedMap(ref: BakedTextureRef | null | undefined): boolean {
 // meet — its own header names this module as the copy to fold in — and
 // `MATERIAL_MAP_SLOTS` is the one slot list. A local table agreeing today is
 // exactly how the six-IR-slots-over-five-glTF-fields bug reached the screen.
-const SLOTS = MATERIAL_MAP_SLOTS;
 
 /** True iff any slot carries a real EDIT — a replacement ref or a clear. An
  *  imported-texture descriptor is NOT an edit (it inherits the clone's texture),
@@ -83,7 +82,7 @@ const SLOTS = MATERIAL_MAP_SLOTS;
  *  ZERO map work (the "unedited import pays zero cost" invariant holds). */
 export function hasMapEdits(maps: InlineMaterialMaps | undefined): boolean {
   if (!maps) return false;
-  return SLOTS.some((slot) => {
+  return MATERIAL_MAP_SLOTS.some((slot) => {
     const ref = maps[slot];
     return ref != null && !isImportedMap(ref);
   });
@@ -139,7 +138,7 @@ export async function applyEditedMaps(
   if (!maps || !('map' in material)) return false;
   const std = material as THREE.MeshStandardMaterial;
   let changed = false;
-  for (const slot of SLOTS) {
+  for (const slot of MATERIAL_MAP_SLOTS) {
     const ref = maps[slot];
     if (ref == null) continue; // inherit the imported texture
     if (isImportedMap(ref)) continue; // captured descriptor → inherit (leave clone)
