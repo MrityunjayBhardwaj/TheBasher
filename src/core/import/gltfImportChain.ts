@@ -29,10 +29,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
-import {
-  gltfJsonMaterialToOpenpbr,
-  materialHasPerMapUvTransform,
-} from './gltfJsonMaterialToOpenpbr';
+import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import {
   parseGltfContainer,
@@ -90,7 +87,6 @@ const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
  */
 export function detectUnsupportedGltfFeatures(json: {
   extensionsUsed?: string[];
-  materials?: Parameters<typeof materialHasPerMapUvTransform>[0][];
   meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
 }): string[] {
   const out: string[] = [];
@@ -98,15 +94,26 @@ export function detectUnsupportedGltfFeatures(json: {
     if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
   }
   // KHR_texture_transform: uniform across a material's maps → the shared uvTransform;
-  // DIFFERING → each slot's own placement in `mapUvTransforms` (#550), so the values
-  // are no longer dropped. Still flagged, on the same grounds as TEXCOORD_1+ below:
-  // captured is not applied. Nothing reads the per-slot placements yet — the viewport
-  // shows them because the imported clone carries its own — so editing one does
-  // nothing and a DAG-replaced map uses the shared placement. Drop this entry when
-  // the render + inspector slices land, not before.
-  if ((json.materials ?? []).some((m) => materialHasPerMapUvTransform(m))) {
-    out.push('per-map texture transform (captured per map; not yet applied or editable)');
-  }
+  // DIFFERING → each slot's own placement in `mapUvTransforms` (#550).
+  //
+  // THE ENTRY THAT WAS HERE IS GONE, and its removal condition was the one written
+  // beside it: "drop when the render + inspector slices land". Both have. Each clause
+  // of its stated reason was re-checked rather than assumed, because the entry had
+  // already survived one premature removal attempt on the strength of a premise that
+  // did not hold:
+  //   · "nothing reads the per-slot placements"      → false: `prep` and the glTF
+  //     overlay both resolve `perMap[slot] ?? shared`.
+  //   · "editing one does nothing"                   → false, observed in a browser:
+  //     editing a per-map row re-places that slot and only that slot.
+  //   · "a DAG-replaced map uses the shared placement" → false, and MEASURED to be
+  //     too generous: a replaced map draws with NO placement at all. But that is not
+  //     an import-fidelity limitation and not per-map — it hits a material carrying
+  //     only a shared placement identically, and it predates this work. It belongs to
+  //     the replaced-map road, and is tracked as its own defect (#553), not as a
+  //     footnote on what the importer captured.
+  // A slot with no captured entry uses the shared placement; that is what replacement
+  // means, not a gap. TEXCOORD_1+ below keeps its entry — that one really is captured
+  // on the descriptor and not applied.
   // Secondary UV sets: the texCoord index is captured on the map descriptor, but
   // a DAG-replaced map currently binds UV0 only — so flag UV1+ as a limitation.
   const multiUV = (json.meshes ?? []).some((m) =>

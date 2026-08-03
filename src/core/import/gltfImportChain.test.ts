@@ -713,23 +713,25 @@ describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
     );
   });
 
-  it('flags only the PER-MAP texture-transform case (maps with differing transforms)', () => {
+  // #550 — the per-map texture-transform entry is GONE: each slot's placement is now
+  // captured, applied on both roads, and editable per map in the inspector, so an
+  // entry would be a false warning on a fully supported file. (A DAG-replaced map
+  // ignoring placement is real, but it belongs to the replaced-map road rather than to
+  // import fidelity, and hits a shared placement identically → #553.)
+  //
+  // ⚠️ NOTE WHAT THIS CASE CAN AND CANNOT SAY. It asserts that KHR_texture_transform
+  // produces no notice — it does NOT encode a per-map-DIFFERING material, because this
+  // function no longer accepts `materials` at all. That is the stronger half of the
+  // removal and the reason no runtime assertion is needed for it: re-introducing a
+  // per-map entry would first have to re-introduce the parameter, which is a change to
+  // the signature rather than a line quietly added to the body.
+  it('does NOT flag KHR_texture_transform — it is captured into the IR, per map or shared', () => {
     expect(
       detectUnsupportedGltfFeatures({
         extensionsUsed: ['KHR_texture_transform'],
-        materials: [
-          {
-            pbrMetallicRoughness: {
-              baseColorTexture: {
-                index: 0,
-                extensions: { KHR_texture_transform: { scale: [2, 2] } },
-              },
-            },
-            normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [4, 4] } } },
-          },
-        ],
+        meshes: [{ primitives: [{ material: 0, attributes: { TEXCOORD_0: 0 } }] }],
       }),
-    ).toEqual(['per-map texture transform (captured per map; not yet applied or editable)']);
+    ).toEqual([]);
   });
 
   it('does NOT flag loader-handled or IR-captured extensions', () => {
