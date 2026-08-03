@@ -67,6 +67,10 @@
 //     the right scope: the gizmo is a function of the SELECTION, not of the graph.
 //   · Locality at the evaluator / op / undo layer is a larger claim and is NOT asserted —
 //     this file is about the renderer's shared GPU resources, which is where both bugs were.
+//   · Everything here is read off the scene graph in JS, never off pixels. A violation
+//     that leaves every object, instance and matrix correct while drawing wrong — a
+//     disposed-but-still-referenced material is the live example, see case 6 — is
+//     invisible to this file by construction.
 //
 // REF: src/app/geometryRegistry.ts + src/app/materialRegistry.ts (the two shared surfaces);
 //      src/app/animate/dispatchApplyTransform.ts:365 (`src.clone()` — case 5's subject);
@@ -493,4 +497,72 @@ test('#535 — baking a pose into one object bakes THAT geometry, and not the on
     before.byOwner[B.obj][0].hx,
   );
   expect(bystanders(after, B.obj), 'an object nobody posed changed').toEqual(others);
+});
+
+test('#535 — deleting one sharer leaves the objects it was sharing with drawing exactly as before', async ({
+  page,
+}) => {
+  const before = await read(page);
+  expectSharedPremise(before);
+  // C is the one being removed, so the bystanders here are A, B and the starter scene.
+  const others = bystanders(before, C.obj);
+
+  // The only perturbation here that REMOVES a holder rather than editing one, which is
+  // why it is worth its own case: it is the single path that reaches the material
+  // registry's refcount and its deferred eviction. Per-consumer bookkeeping is the one
+  // piece of shared state a consumer genuinely owns, so it is where the next violation
+  // is likeliest to land.
+  //
+  // ⚠️ NON-DISCRIMINATING FOR THE REFCOUNT ITSELF, and this is measured, not assumed.
+  // Deleting BOTH guards in `materialRegistry.release` — so that any release evicts and
+  // a surviving holder is ignored — leaves all six cases GREEN. The reason is a property
+  // of this reader, not of the registry: eviction disposes the material and drops the
+  // cache entry, but the two surviving meshes keep their existing references, and
+  // `dispose()` changes neither uuid nor colour. They never re-`get`, because their own
+  // spec did not change. A JS-level read cannot see a disposed-but-still-referenced
+  // material; only a pixel read could.
+  //
+  // What this case DOES discriminate: that the delete happens at all (it caught the
+  // op being refused outright — `removeNode` on a still-consumed node), and any future
+  // implementation where removing one holder re-points or rebuilds what its co-sharers
+  // draw. Both are the shapes this file exists for. The refcount's own correctness is
+  // unit-tested beside the registry; do not read this case as covering it.
+  await page.evaluate(
+    (a) => {
+      const dag = (window as unknown as UiWindow).__basher_dag.getState();
+      const scene = dag.state.outputs.scene!.node;
+      // The edges come out first: `removeNode` on a still-consumed node is REFUSED
+      // (`p535_oc is still consumed by n_scene`), which surfaced here as a thrown
+      // evaluate rather than a quiet no-op — the deletion has to really happen for
+      // half 2 to mean anything.
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'disconnect',
+            from: { node: a.obj, socket: 'out' },
+            to: { node: scene, socket: 'children' },
+          },
+          {
+            type: 'disconnect',
+            from: { node: a.data, socket: 'out' },
+            to: { node: a.obj, socket: 'data' },
+          },
+          { type: 'removeNode', nodeId: a.obj },
+          { type: 'removeNode', nodeId: a.data },
+        ],
+        'user',
+        '#535 delete one sharer',
+      );
+    },
+    { obj: C.obj, data: C.data },
+  );
+  // Longer than the others on purpose: eviction is queued a microtask after the refcount
+  // hits zero, and a co-sharer blanking would appear after the delete, not with it.
+  await page.waitForTimeout(1500);
+
+  const after = await read(page);
+  // Half 1 — the delete actually happened. Without it, half 2 passes on a no-op.
+  expect(after.byOwner[C.obj], 'the deleted object is still being drawn').toHaveLength(0);
+  // Half 2 — and the two it was sharing with are untouched, instances included.
+  expect(bystanders(after, C.obj), 'deleting one sharer changed another object').toEqual(others);
 });
