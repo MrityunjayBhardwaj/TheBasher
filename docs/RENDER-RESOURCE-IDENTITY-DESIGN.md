@@ -516,7 +516,7 @@ only the default and the oracle. A perturbation can land in the file and never t
 road — the break had to be re-aimed at the composed key, which then reddened exactly the two
 material cases and left the three geometry ones green.
 
-### S5 — the artist half: make authored sharing breakable — MOSTLY ALREADY BUILT
+### S5 — the artist half: make authored sharing breakable — ✅ BUILT
 
 The Material link row shows a user count. In Blender that number _is_ the affordance that
 gives this object its own copy.
@@ -548,6 +548,32 @@ identity (which GPU material) are separate layers. A gate that asserts make-sing
 reading a uuid would therefore fail against the right behaviour — a gate that passes the
 broken build and fails the correct one, avoided here only because the premise was measured
 before the gate was written.
+
+**RE-MEASURED 2026-08-04 on `0537a16`, after S2/S3/S4 and five other PRs landed, because a
+MEASURED claim decays when the code moves.** All four premises held — including this last
+one, which was predicted to FLIP and did not. The prediction came from reading S2's "the
+registry is re-keyed on the evaluator's minted key" as "keyed on the node"; `materialKey`
+is minted at the fold but its VALUE is a generic walk over IR content, so the mint moved
+where identity is decided, not what it is a function of. The uuid warning above is still
+live.
+
+**Slice log (2026-08-04).** The count is a button above one user and plain text at one,
+dispatching the same `buildNewMaterialOps` the New button dispatches — one builder, two
+entrances, differing only in the undo label. Plain text at one user because the act there
+mints another single-user copy: an affordance that cannot change anything is one the
+director learns to ignore.
+
+The gate is `tests/e2e/p536-make-single-user.spec.ts`, written first and measured red, and
+its shape is the interesting part. The split itself is asserted through the count, and the
+copy's independence through a PERTURBATION — edit the original, and the two objects left
+linked must move while the copy does not. Those two are the presence control for the
+absence, in the same observation. Falsified five ways, each reddening exactly one
+assertion: no button reds the affordance case · a button at one user reds the plain-text
+case · seeding the copy with a default material reds value-preservation · dispatching
+unlink instead reds the split · and **a colour-blind registry key plus an in-place mutation
+reds the perturbation alone** — the copy follows the original's edit while every count on
+the surface still reads correctly, which is precisely the render-tier leak no graph-level
+assertion can see.
 
 ### S6 — #532 folds in — ✅ BUILT
 
@@ -602,7 +628,7 @@ module away had quietly removed. It now says _unsatisfiable_ instead of _inert_.
 
 ## 7. Sequencing
 
-**S0 ✅ → S1 ✅ → S2 ✅ → S3 ✅ → S4**, with S5 / S6 / S7 folded in where cheapest.
+**S0 ✅ → S1 ✅ → S2 ✅ → S3 ✅ → S4 ✅ → S5 ✅**, with S6 / S7 folded in where cheapest.
 
 S0 merged (`main` == `e6aaf52`, canary green as the combination). S1 built, and its plan
 sentence — "mirroring `GeometryRef`" — is the fifth instance of the failure this document's

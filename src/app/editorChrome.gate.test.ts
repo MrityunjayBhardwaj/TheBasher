@@ -80,18 +80,48 @@ const FLAG_ANY = /(?<!\/)editorChrome/g;
 const GIZMO = /['"`]TransformControls/g;
 
 /**
- * Sites that name a clause for a DIFFERENT question, each with the reason. An opt-out is
- * a claim about intent that a census cannot make for itself; recording it here is what
- * keeps the census exact rather than approximately clean.
+ * The two sweeps this gate runs. They are INDEPENDENT questions — "who re-implements the
+ * flag test" and "who re-implements the drei type test" — and a file can legitimately need
+ * one exemption without the other.
  */
-const OPT_OUTS: Record<string, string> = {
-  'tests/e2e/p322-curve-viewport-authoring.spec.ts':
-    'counts gizmo objects to prove the TransformControls mounted at all — asks whether the gizmo EXISTS, not whether an object is chrome.',
-  'src/render/renderToImage.test.ts':
-    "the render road's per-clause tests (#557). Like this gate, it has to NAME each clause to build a subject for it — a flagged object and a TransformControls-typed one — and the whole point is that neither subject satisfies the other clause. Importing the predicate here would test it against itself.",
-  'tests/e2e/p168-render-to-image.spec.ts':
-    'same question as p322 — counts gizmo objects to prove a selection actually mounted the control, which the predicate cannot answer because it deliberately returns only chrome/not-chrome (#557). It asks the CHROME question through the imported predicate and never reads the flag, so it is an offender for the gizmo sweep alone.',
+type Check = 'flag' | 'gizmo';
+
+/**
+ * Sites that name a clause for a DIFFERENT question, each with the reason — recorded
+ * PER CHECK, because an opt-out is a claim about intent and the intent is per clause.
+ *
+ * This map was keyed by FILE until #561. That silently granted every exemption to both
+ * sweeps, which is not what any of the three entries below meant: two of them say in their
+ * own words that they only ever name the gizmo. Measured at the time: a real second
+ * implementation of the flag read, appended to `p168-render-to-image.spec.ts`, left this
+ * gate green — while the identical line in a non-exempt file reddened it. An exemption
+ * applied more broadly than it was recorded gives back exactly the exactness this map is
+ * here to buy, and it does it in the two files most likely to grow a hand-rolled chrome
+ * check, since they already build chrome subjects by hand.
+ *
+ * Every entry is asserted LOAD-BEARING below: an exemption for a check the file does not
+ * actually trip is stale, and a stale exemption reads as meaningful while covering nothing.
+ */
+const OPT_OUTS: Record<string, Partial<Record<Check, string>>> = {
+  'tests/e2e/p322-curve-viewport-authoring.spec.ts': {
+    gizmo:
+      'counts gizmo objects to prove the TransformControls mounted at all — asks whether the gizmo EXISTS, not whether an object is chrome.',
+  },
+  'src/render/renderToImage.test.ts': {
+    flag: "the render road's per-clause tests (#557) build a FLAGGED subject by hand and assert the gizmo subject carries no flag — naming the flag is how the subjects are made. Importing the predicate here would test it against itself.",
+    gizmo:
+      'the same tests build a TransformControls-typed subject by hand, and the whole point is that neither subject satisfies the other clause.',
+  },
+  'tests/e2e/p168-render-to-image.spec.ts': {
+    gizmo:
+      'same question as p322 — counts gizmo objects to prove a selection actually mounted the control, which the predicate cannot answer because it deliberately returns only chrome/not-chrome (#557). It asks the CHROME question through the imported predicate and only ever WRITES the flag (planting a chrome occluder), so it is an offender for the gizmo sweep alone.',
+  },
 };
+
+/** Is `file` exempt from THIS check specifically? */
+function exempt(file: string, check: Check): boolean {
+  return Boolean(OPT_OUTS[file]?.[check]);
+}
 
 /**
  * Every tracked source file except the definition and this gate. Both exclusions are
@@ -111,9 +141,23 @@ function count(src: string, re: RegExp): number {
   return (src.match(new RegExp(re.source, 'g')) ?? []).length;
 }
 
+/**
+ * Whether a file trips a given sweep, independent of any exemption. ONE definition per
+ * check, consumed by both the sweep and the load-bearing assertion below, so the two can
+ * never drift into disagreeing about what an offender is.
+ */
+const OFFENDS: Record<Check, (src: string) => boolean> = {
+  flag: (src) => count(src, FLAG_ANY) > count(src, FLAG_WRITE),
+  gizmo: (src) => count(src, GIZMO) > 0,
+};
+
 describe('#546 — the editor-chrome predicate has exactly one definition', () => {
   const files = trackedFiles();
   const scanned = files.map((f) => ({ file: f, src: stripComments(readFileSync(f, 'utf8')) }));
+
+  /** Files tripping `check` that are not exempt from THAT check. */
+  const offenders = (check: Check) =>
+    scanned.filter(({ file }) => !exempt(file, check)).filter(({ src }) => OFFENDS[check](src));
 
   it('the subject is real — the module exists and spells BOTH clauses', () => {
     // The companion every census needs: without it, deleting the module (or renaming a
@@ -132,20 +176,38 @@ describe('#546 — the editor-chrome predicate has exactly one definition', () =
   });
 
   it('nobody else READS the flag — every consumer imports the predicate instead', () => {
-    const offenders = scanned
-      .filter(({ file }) => !(file in OPT_OUTS))
-      .filter(({ src }) => count(src, FLAG_ANY) > count(src, FLAG_WRITE))
-      .map(({ file }) => file);
-    expect(offenders, `these re-ask the chrome question instead of importing ${MODULE}`).toEqual(
-      [],
-    );
+    expect(
+      offenders('flag').map(({ file }) => file),
+      `these re-ask the chrome question instead of importing ${MODULE}`,
+    ).toEqual([]);
   });
 
   it('nobody else names the gizmo clause — the drei workaround lives in one place', () => {
-    const offenders = scanned
-      .filter(({ file }) => !(file in OPT_OUTS))
-      .filter(({ src }) => count(src, GIZMO) > 0)
-      .map(({ file }) => file);
-    expect(offenders, `these spell the gizmo clause instead of importing ${MODULE}`).toEqual([]);
+    expect(
+      offenders('gizmo').map(({ file }) => file),
+      `these spell the gizmo clause instead of importing ${MODULE}`,
+    ).toEqual([]);
+  });
+
+  it('every opt-out is LOAD-BEARING — no file is exempted from a check it does not trip', () => {
+    // Without this, the map rots in the direction that looks harmless: an entry survives a
+    // refactor that removed the very mention it was written for, and from then on it is a
+    // standing exemption for a file nobody has re-read. The same failure the sweeps guard
+    // against — a claim that has stopped being measured — one level up.
+    const byFile = new Map(scanned.map(({ file, src }) => [file, src]));
+    const stale: string[] = [];
+    for (const [file, checks] of Object.entries(OPT_OUTS)) {
+      const src = byFile.get(file);
+      // A named file that is no longer tracked is stale in a second way — it cannot be
+      // scanned at all, so its exemption covers nothing and hides a typo in the path.
+      if (src === undefined) {
+        stale.push(`${file} (not a tracked source file — renamed or deleted?)`);
+        continue;
+      }
+      for (const check of Object.keys(checks) as Check[]) {
+        if (!OFFENDS[check](src)) stale.push(`${file} → '${check}'`);
+      }
+    }
+    expect(stale, 'these exemptions no longer buy anything — delete them').toEqual([]);
   });
 });
