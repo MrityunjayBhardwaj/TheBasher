@@ -948,7 +948,11 @@ function CameraAimReticle({
   const color = bound ? RETICLE_BOUND_COLOR : RETICLE_COLOR;
   const opacity = bound ? 0.75 : hovered ? 1 : 0.85;
   return (
-    <group ref={group}>
+    // Editor-only: the aim target is an authoring handle, not something the
+    // director authored into the shot, so a render must not contain it (#558).
+    // Marked on the ROOT — the render hides per object and lets three.js
+    // inheritance carry it to the disc, the ring and the dot beneath.
+    <group ref={group} userData={{ editorChrome: true }}>
       {/* Invisible hit disc — the draggable surface (raycast ON). Only grabbable
           when free; bound reticles pass the click through (return without
           stopPropagation) so selection still works underneath. */}
@@ -1004,6 +1008,11 @@ function AimConnector({
     const l = new THREE.Line(geom, mat);
     l.renderOrder = 998;
     l.raycast = () => {};
+    // Editor-only: an authoring affordance, never DAG content, so the render's
+    // hide-pass must exclude it (#558). Marked here rather than on the JSX because
+    // <primitive> takes ownership of the object it is handed — the object IS the
+    // component's own, and this is where its identity is decided.
+    l.userData.editorChrome = true;
     return l;
   }, [color]);
   useEffect(

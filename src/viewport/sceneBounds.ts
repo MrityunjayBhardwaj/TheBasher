@@ -5,26 +5,22 @@
 //
 // Discipline: measures DAG CONTENT only — editor chrome (grid, gizmo, helpers,
 // lights, ground-click plane) is excluded with the SAME predicate the render
-// hide-pass uses (renderToImage.ts:219), so the framed bounds match what the
-// camera should actually fit. Chrome subtrees are PRUNED (not just the chrome
-// root skipped) so a helper's children never inflate the bounds.
+// hide-pass uses, so the framed bounds match what the camera should actually
+// fit. That used to be a claim in this comment backed by a copy of the rule; it
+// is now the same function (#546). What stays LOCAL is the traversal: chrome
+// subtrees are PRUNED here (not just the chrome root skipped) so a helper's
+// children never inflate the bounds, which is this consumer's own decision.
 //
-// REF: issue #186; vyapti V37 (editorChrome flag); sibling of the render
-// hide-pass in renderToImage.ts.
+// REF: issue #186, #546; vyapti V37 (editorChrome flag); src/app/editorChrome.ts
+// (the one predicate); sibling consumer: the render hide-pass in renderToImage.ts.
 
 import * as THREE from 'three';
+import { isEditorChrome } from '../app/editorChrome';
 
 export interface SceneBounds {
   center: [number, number, number];
   /** Bounding-sphere radius. 0 for a single-point / zero-extent scene. */
   radius: number;
-}
-
-/** Editor-chrome predicate — mirrors the render hide-pass (renderToImage.ts):
- *  the explicit V37 flag, plus drei's TransformControls (injected raw into the
- *  scene, so it can't carry our flag — caught by three type). */
-function isChrome(o: THREE.Object3D): boolean {
-  return o.userData?.editorChrome === true || o.type.startsWith('TransformControls');
 }
 
 const tmpBox = new THREE.Box3();
@@ -46,7 +42,7 @@ export function computeSceneBounds(root: THREE.Object3D): SceneBounds | null {
   let any = false;
 
   const walk = (o: THREE.Object3D): void => {
-    if (isChrome(o)) return; // prune the whole chrome subtree
+    if (isEditorChrome(o)) return; // prune the whole chrome subtree
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh && mesh.geometry) {
       const geom = mesh.geometry;

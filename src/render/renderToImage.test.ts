@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import type { CameraPose } from '../app/activeCamera';
-import { buildRenderCamera, flipRowsY, isUniformColor } from './renderToImage';
+import { buildRenderCamera, flipRowsY, hideEditorChrome, isUniformColor } from './renderToImage';
 
 const PERSP: CameraPose = {
   kind: 'PerspectiveCamera',
@@ -101,5 +101,109 @@ describe('isUniformColor (blank-render guard)', () => {
     const buf = new Uint8Array(16);
     buf[8] = 200; // one pixel's red channel differs
     expect(isUniformColor(buf)).toBe(false);
+  });
+});
+
+// ── V37 on the RENDER road (#557) ────────────────────────────────────────────
+//
+// Why these live here and not only in the browser: the render's chrome exclusion
+// is a rule with TWO clauses, and until #557 the whole `src/render` tier had no
+// case that reached either. The e2e cases that looked like they covered it were
+// measured and did not — see the falsification notes in p168.
+//
+// The discipline these encode: ONE CLAUSE PER CASE. A subject that carries both
+// the flag AND the gizmo type would pass whenever either clause survived, which
+// is exactly the coverage-shaped failure #557 was filed for. So the flag subject
+// is a plain Mesh and the gizmo subject is type-only, and neither is both.
+describe('hideEditorChrome — a render shows DAG content only (V37)', () => {
+  /** A flagged chrome object: the grid, helpers, the fill rig, the ghost overlay. */
+  const flagged = (name = 'grid') => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    o.name = name;
+    o.userData.editorChrome = true;
+    return o;
+  };
+  /** drei injects the gizmo raw, so it cannot carry our flag — caught by type. */
+  const gizmo = (type = 'TransformControlsGizmo') => {
+    const o = new THREE.Object3D();
+    o.name = 'gizmo';
+    o.type = type;
+    return o;
+  };
+  const content = (name = 'cube') => {
+    const o = new THREE.Mesh(new THREE.BoxGeometry(), new THREE.MeshBasicMaterial());
+    o.name = name;
+    return o;
+  };
+
+  it('CLAUSE 1 — hides an object carrying userData.editorChrome', () => {
+    const scene = new THREE.Scene();
+    const chrome = flagged();
+    scene.add(chrome);
+    const hidden = hideEditorChrome(scene);
+    // Drop the flag clause from isEditorChrome → the grid renders → this fails.
+    expect(chrome.visible).toBe(false);
+    expect(hidden).toContain(chrome);
+  });
+
+  it('CLAUSE 2 — hides drei TransformControls* by three.js type, with no flag', () => {
+    const scene = new THREE.Scene();
+    const g = gizmo();
+    scene.add(g);
+    expect(g.userData.editorChrome).toBeUndefined(); // the clause exists BECAUSE it can't be flagged
+    const hidden = hideEditorChrome(scene);
+    // Drop the type clause → the gizmo renders into every image → this fails.
+    expect(g.visible).toBe(false);
+    expect(hidden).toContain(g);
+  });
+
+  it('CLAUSE 2 covers the whole TransformControls* family, not one exact type', () => {
+    const scene = new THREE.Scene();
+    const parts = ['TransformControls', 'TransformControlsGizmo', 'TransformControlsPlane'].map(
+      (t) => gizmo(t),
+    );
+    parts.forEach((p) => scene.add(p));
+    hideEditorChrome(scene);
+    // Measured live: selecting an object mounts BOTH the Gizmo and the Plane.
+    // An equality check on one type name would leak the others.
+    expect(parts.map((p) => p.visible)).toEqual([false, false, false]);
+  });
+
+  it('leaves DAG content alone — the denylist never hides a directors object', () => {
+    const scene = new THREE.Scene();
+    const cube = content();
+    scene.add(cube, flagged());
+    const hidden = hideEditorChrome(scene);
+    // The catastrophic direction (V37): a missed CONTENT mark makes a user's
+    // object vanish from their render. Hiding content is worse than leaking chrome.
+    expect(cube.visible).toBe(true);
+    expect(hidden).not.toContain(cube);
+  });
+
+  it('returns only what it flipped, so an already-hidden object stays hidden on restore', () => {
+    const scene = new THREE.Scene();
+    const chrome = flagged();
+    chrome.visible = false; // the director (or a component) already hid it
+    scene.add(chrome);
+    const hidden = hideEditorChrome(scene);
+    // Restoring blindly (`visible = true` for every chrome object) would switch on
+    // something nobody asked to see — the reason the pass records what it flips.
+    expect(hidden).toEqual([]);
+  });
+
+  it('flips the chrome ROOT only and lets three.js inheritance carry it to children', () => {
+    const scene = new THREE.Scene();
+    const root = new THREE.Group();
+    root.userData.editorChrome = true;
+    const leaf = content('helper-line');
+    root.add(leaf);
+    scene.add(root);
+    const hidden = hideEditorChrome(scene);
+    // TRAVERSAL is per-consumer by design (#546): the render flips and inherits,
+    // the framing read prunes the subtree. Pushing the leaf too would make restore
+    // show a child that its parent had independently hidden.
+    expect(root.visible).toBe(false);
+    expect(hidden).toEqual([root]);
+    expect(leaf.visible).toBe(true); // untouched — invisible only via its parent
   });
 });
