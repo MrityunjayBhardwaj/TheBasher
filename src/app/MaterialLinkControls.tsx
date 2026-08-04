@@ -166,6 +166,11 @@ export function MaterialLinkControls({ nodeId }: { nodeId: string }) {
               data-testid="material-link-users"
               onClick={() => mintOwnMaterial('make single user')}
               title="Make single-user — give this object its own copy of the material"
+              // The visible label is a bare number, which tells a screen-reader user
+              // nothing about what the button does. The count is kept INSIDE the name
+              // rather than replaced by prose, so the spoken name still contains the
+              // visible label (WCAG 2.5.3).
+              aria-label={`Make single-user — ${users} users share this material`}
             >
               {users}
             </button>

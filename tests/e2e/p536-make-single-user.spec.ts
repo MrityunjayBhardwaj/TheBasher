@@ -178,6 +178,10 @@ test('#536 S5 — clicking the users count breaks THIS object out of a three-way
   // The number is the button, in Blender's position. `toHaveRole` rather than a tag check:
   // what matters is that a keyboard or an agent can reach it as an action.
   await expect(users).toHaveRole('button');
+  // …and it says what it does. The visible label is a bare number, so the spoken name is
+  // the only place the ACT is named — and it keeps the number inside it, so name and
+  // label cannot disagree.
+  await expect(users).toHaveAccessibleName(/make single-user.*3/i);
   await users.click();
 
   // ── THE SHARE SPLIT: 1 here, 2 left behind ────────────────────────────────────────
