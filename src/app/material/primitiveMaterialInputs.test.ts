@@ -26,8 +26,11 @@
 //      tests/e2e/p536-override-band-instance-split.spec.ts (the same claim, in a browser);
 //      issues #530, #532, #536.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
+import { stripComments } from '../../test-utils/sourceScan';
 import { BoxDataNode, BoxDataParams } from '../../nodes/BoxData';
 import { hydrateInlineMaterial } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
@@ -415,12 +418,90 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       'flat',
       NO_MAPS,
     );
+    const produced = producedFields();
     for (const [compiled, specField] of Object.entries(CARRIED)) {
+      // #570 — the map's LEFT-hand side needs the same guarantee its right-hand side has,
+      // and the same one every exclusion already has. Without this a carried entry naming a
+      // field the compile does not produce passes every case in this file (measured: adding
+      // one left 3820/3820 green), so the map can start describing a compile that no longer
+      // exists — the one thing a declared correspondence is here to prevent.
+      expect(
+        produced,
+        `CARRIED names \`${compiled}\`, which the compile does not produce in any world`,
+      ).toContain(compiled);
       expect(
         Object.prototype.hasOwnProperty.call(spec, specField),
         `CARRIED says \`${compiled}\` → \`${specField}\`, but the spec has no such key`,
       ).toBe(true);
     }
+  });
+
+  /**
+   * #570 — THE CORPUS'S OWN OBLIGATION, read from the compile rather than from memory.
+   *
+   * Every case above is a statement about `producedFields()`, and `producedFields()` unions
+   * four HAND-PICKED worlds. `openpbrToThree` emits most of its keys unconditionally, but a
+   * conditional emission (`...(cond ? { field } : {})`) only appears when some world triggers
+   * `cond` — so a conditional field no world reaches is absent from the union, accounted for
+   * by nobody, and the count stays put. Measured: adding one left **3820/3820 green**, while
+   * the same field emitted unconditionally reddened exactly one file of 306. The condition
+   * was the entire difference.
+   *
+   * That is this file's own subject one level up — "the next field it learns to compile can
+   * be lost exactly the same way with every tier green" — so the corpus cannot stay a list
+   * somebody remembered to extend.
+   *
+   * ⚠️ STATED RESIDUAL: derivation B reads SYNTAX. A conditional emission written some other
+   * way (an `if` that assigns, a spread of a prebuilt object) is invisible to it, and if no
+   * world triggers that one either, derivation A cannot see it and the two agree vacuously.
+   * The pair narrows the gap to "a new conditional emission, in a new syntax, that nothing
+   * exercises"; it does not close it. Widen the pattern when the compile grows a second way
+   * of emitting conditionally, not before.
+   */
+  const COMPILER = 'src/app/material/openpbrToThree.ts';
+
+  /** Derivation B — the field named by each conditional spread in the compiler's source. */
+  const conditionallyEmittedInSource = (): string[] => {
+    const src = stripComments(readFileSync(join(__dirname, '..', '..', '..', COMPILER), 'utf8'));
+    const body = /export function openpbrToThree[\s\S]*?\n}/.exec(src);
+    if (!body) throw new Error('could not find the openpbrToThree body');
+    return [...body[0].matchAll(/\.\.\.\([^?]*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map((m) => m[1]);
+  };
+
+  /**
+   * Derivation A — the fields observed to be NON-universal: produced by some world in the
+   * corpus, absent from the leanest one. Runtime, so it owes nothing to the compiler's
+   * syntax, which is what makes it an independent check on B's regex rather than a restating
+   * of it.
+   */
+  const observedConditional = (): string[] => {
+    const always = new Set(Object.keys(compilePrimitiveMaterial(BASE_IR, undefined)));
+    return producedFields().filter((f) => !always.has(f));
+  };
+
+  it('every conditionally-emitted field is triggered by a world in the corpus', () => {
+    const declared = conditionallyEmittedInSource();
+    // Anti-vacuity: a regex that matched nothing would make this case green and meaningless,
+    // which is how a census dies quietly.
+    expect(
+      declared.length,
+      'the conditional-spread parse read nothing — this census would be vacuous',
+    ).toBeGreaterThan(0);
+    const produced = producedFields();
+    for (const field of declared) {
+      expect(
+        produced,
+        `\`${field}\` is emitted conditionally and NO world in the corpus triggers it, so ` +
+          `every case in this file is blind to it — add a world that populates its input`,
+      ).toContain(field);
+    }
+  });
+
+  it('reads the conditional set two independent ways — source syntax and runtime — and they agree', () => {
+    // If B's regex silently stops matching a form the compiler starts using, A still sees the
+    // field (some world triggers it) and the two disagree. That disagreement is the only
+    // signal that the source-text half has gone blind.
+    expect(conditionallyEmittedInSource().sort()).toEqual(observedConditional().sort());
   });
 
   it('every EXCLUSION is load-bearing — remove it and the first case must actually accuse', () => {
