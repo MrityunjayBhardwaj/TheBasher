@@ -110,15 +110,26 @@ Rule, stated for the artist:
 
 ### Blender — MEASURED live (5.1.1, via MCP, scene restored afterwards)
 
+📎 **GROUNDED, S7 2026-08-04 — the probe/value tables live in
+`ref/GROUND_TRUTH_BLENDER_RENDER_RESOURCE_IDENTITY.md`.** What follows is the summary; that
+document is the citable one. It was **re-measured** rather than transcribed from this section,
+with a presence control in every round — and the re-measurement corrected one of the sentences
+below (see "What they give us") and turned up two instrument traps that each return a
+plausible wrong answer.
+
 **The authored layer is explicit, counted, breakable.** Two objects on one mesh
-datablock: `users == 2`, `a.data is b.data`. Editing the shared mesh moves **both** — the
-leak is the feature. "Make single user" (`.copy()`) drops users 2→1 and the two diverge
-from then on. The user count _is_ the button that breaks the link.
+datablock: `users == 2`, `a.data is b.data`. Editing the shared mesh moves **both** (extent
+2→7 each) and not the control — the leak is the feature. "Make single user" (`.copy()`)
+preserves the value, drops users 2→1, and the discriminator — edit the original _again_ —
+moves only the one still linked (9 vs 7). The user count _is_ the button that breaks the link.
 
 **The evaluated layer is a separate address space.** With an Array modifier on one
-sharer: original **4** verts, `A_eval` **12**, `B_eval` **4**, `users` still 2. All three
-are distinct meshes, and the evaluated mesh **is not in `bpy.data.meshes` at all**.
+sharer: authored **8** verts, `A_eval` **24**, `B_eval` **8**, `users` still 2. All three
+are distinct meshes, and **no datablock in `bpy.data.meshes` IS the evaluated one**.
 Writing to an evaluated mesh is _allowed_ and cannot reach the authored datablock.
+⚠️ State that membership claim by pointer, never by name: the evaluated mesh carries the
+**same name** as its authored datablock, so `ev.name in bpy.data.meshes` answers **True** and
+hands back the wrong object (8 verts vs 24).
 
 **Materials are shared across consumers exactly like our registry.** One material on two
 meshes, three objects: `A_eval_mat is B_eval_mat is C_eval_mat` → **True**, including
@@ -130,9 +141,15 @@ evaluated material.
 an unrelated object on a different mesh **saw the change**, and the authored datablock
 stayed clean. Blender has **no access control in the evaluated layer**.
 
-**How it avoids the bug.** Setting a slot's `link = 'OBJECT'` and pointing it at an
-override material: the other object still resolves the original, and the mesh datablock
-is untouched. Divergence is a **re-point**, never a write.
+**How it avoids the bug.** Setting a slot's `link = 'OBJECT'` (the default is `DATA`) and
+pointing it at an override material: the other object still resolves the original, the two
+still share **one instance with each other**, and the mesh datablock is untouched — it still
+names the shared material. Divergence is a **re-point**, never a write.
+⚠️ Read the effective material through `material_slots[n].material`, not
+`evaluated.data.materials[n]`: the latter is the datablock's own list, so it cannot see an
+`OBJECT`-linked slot — and it agrees with the correct read for every `DATA`-linked object, i.e.
+it is right until the case you are testing. It reported "the override did not take" during this
+very round.
 
 ### Houdini — docs tier only
 
@@ -163,11 +180,23 @@ Only there does "does acquiring a write lock make a private copy?" decide anythi
 Blender supplies the **principle** (divergence is a re-point; never write to shared).
 Houdini supplies the **enforcement** (the shared form cannot be edited).
 
-**We need both, and the reason is specific:** Blender's evaluated layer is rebuilt by the
-depsgraph, so a stray write is thrown away. Ours is **persistent and refcounted** — a
-stray write is permanent and inherited by every future consumer that keys the same. Our
-registry is _more_ dangerous than Blender's evaluated layer, which is why we cannot rely
-on Blender's discipline alone.
+**We need both, and the reason is specific — CORRECTED S7 2026-08-04, because the old form
+claimed more than the measurement supports.** This section used to say: _Blender's evaluated
+layer is rebuilt by the depsgraph, so a stray write is thrown away._ That asserts a difference
+of **kind**, and it is too strong. Measured: the evaluated layer is rebuilt **per datablock, on
+demand**. A stray write to a shared evaluated material **survived a proven full rebuild of the
+object's geometry** (array count 3→5, evaluated verts 24→40 as the control) and was discarded
+only by an authored edit to the material's _own_ datablock. Blender has a live leak window too.
+
+Ours is **persistent and refcounted** — a stray write is permanent and inherited by every
+future consumer that keys the same. So the conclusion stands and the argument is now honest: a
+difference of **duration, not of kind**, decisive because ours has no terminating event at all.
+We cannot rely on Blender's discipline alone.
+
+🔑 Worth noticing how this survived: the sentence was quoted through six slices as a
+description, and was an inference the entire time — this document's own stated failure mode,
+occurring inside the grounding section that exists to prevent it. Re-measuring is what caught
+it; re-reading would not have.
 
 ---
 
@@ -604,11 +633,23 @@ transcribed:
   #535's target 3 had **declared exactly this residual one slice earlier**. The pixel tier
   already exists here (`p57-bright-scene-contrast.spec.ts:93-98`) and no case at this
   boundary uses it.
-- **⏳ The Blender Ground Truth doc is the remaining piece.** Deliberately not written from
-  §3's prose: the measurements are three days and eight merges old, and a document whose
-  whole claim is "measured live" must not launder recalled numbers. Blocked on a running
-  Blender with the MCP bridge; re-measure with the depsgraph re-fetch discipline and a
-  presence control per round.
+- **✅ The Blender Ground Truth doc is written, and re-measuring rather than transcribing is
+  what earned it.** `ref/GROUND_TRUTH_BLENDER_RENDER_RESOURCE_IDENTITY.md` — nine sections,
+  probe/value tables, a presence control in every round, isolated rig removed and the scene's
+  inventory verified identical afterwards. It did not merely confirm §3. It produced:
+  - **A correction to the sentence this design leans on hardest** (see §3 "What they give us").
+    "Blender rebuilds the evaluated layer, so a stray write is discarded" claims a difference
+    of _kind_; the rebuild is **per datablock, on demand**, and a stray write survived a proven
+    geometry rebuild. Duration, not kind. Six slices had quoted it as description.
+  - **Two instrument traps, each returning a plausible wrong answer.** `name in bpy.data.meshes`
+    is a name lookup that says "present" and returns the authored datablock; and
+    `evaluated.data.materials[n]` cannot see an `OBJECT`-linked slot while agreeing with the
+    correct read everywhere else. The second one bit inside this round — it reported the
+    re-point had failed, contradicting its own sibling assertion, and that contradiction is
+    what exposed it.
+  - **Stronger versions of the claims that did hold**: the make-single-user round now carries
+    value-preservation and the edit-the-original discriminator, which is the same shape as our
+    own gate for the same reason.
 
 ---
 
