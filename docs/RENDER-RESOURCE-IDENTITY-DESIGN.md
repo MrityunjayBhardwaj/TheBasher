@@ -580,6 +580,36 @@ on the native road is one place. Cheapest after S1, not before.
 - The Blender measurements in §3 — the ownership boundary is currently ungrounded for
   both reference systems.
 
+**IN FLIGHT 2026-08-04.** Two of the three are done, and each one moved rather than being
+transcribed:
+
+- **The invariant** is catalogued, and its status line was **six slices stale** — it still
+  read "#530/#533 fixed the attach; #536 carries the rest". Re-derived per clause, because
+  the three clauses did not ship together and a lagging status is how a named gap gets read
+  as closed: identity is implemented for **1 of 6** value kinds with `ModifiedData` declared
+  absent (#545); ownership is at rung 3, refusing a value nobody decided about but not the
+  write; divergence is gated behaviourally, because no static key reaches a consumer defined
+  by what it POSSESSES.
+- **The error pattern** had two of its three sightings. The missing one is the interesting
+  one and it is not a defect — it is a **comment**. `materialRegistry.ts:255-259` states this
+  document's rule, correctly, for _textures_, inside the very module whose _materials_ were
+  then handed to an ownership-taking attach. ⇒ a correct "clone before mutating the shared X"
+  comment is a **detection signal, not reassurance**: it proves the module traffics in shared
+  resources and that someone already met the hazard at one scope. The narrow scope is the
+  camouflage — a reader looking for a missing rule finds a present one and moves on.
+- **A ninth observation target fell out of S6**, and it is the one this document's own gates
+  cannot supply. Every gate for all three clauses interrogates the SOURCE. #532's build left
+  the graph flawless and drew a **pure black box**; 3810 unit tests, every e2e assertion, the
+  compiler, the issue and the plan agreed with it. A screenshot was the only dissent — and
+  #535's target 3 had **declared exactly this residual one slice earlier**. The pixel tier
+  already exists here (`p57-bright-scene-contrast.spec.ts:93-98`) and no case at this
+  boundary uses it.
+- **⏳ The Blender Ground Truth doc is the remaining piece.** Deliberately not written from
+  §3's prose: the measurements are three days and eight merges old, and a document whose
+  whole claim is "measured live" must not launder recalled numbers. Blocked on a running
+  Blender with the MCP bridge; re-measure with the depsgraph re-fetch discipline and a
+  presence control per round.
+
 ---
 
 ## 6. Deliberately not doing
