@@ -64,16 +64,35 @@
 // The alternative — sweeping uncounted entries on a timer — would race the commit
 // that is about to retain them, which is the more expensive failure.
 //
-// ── WHAT IS DELIBERATELY NOT ON THE SPEC ────────────────────────────────────────
+// ── THE RENDER-MODE FLAGS, AND THE ONE THAT IS DELIBERATELY NOT HERE (#532) ─────
 //
-// `openpbrToThree` also compiles `alphaTest`, `vertexColors` and `doubleSided`. The
-// native road has never applied them (#532), so they are absent here rather than
-// carried unused: the spec is the set of fields the build APPLIES, and keying on a
-// field nobody applies would split the cache while changing nothing on screen.
-// Whoever fixes #532 adds them here, and the key follows for free.
+// `alphaTest` and the double-sided flag are compiled by `openpbrToThree` and were for
+// a long time absent here, because the native build did not apply them. That was a
+// real cost, not a neutral omission: the identity key is a content walk over the IR,
+// so it already separated two materials differing only in these fields while the build
+// made them identical — a split cache buying nothing. They are now specced and applied,
+// which turns that split into a justified one.
+//
+// The double-sided flag is carried as `side`, three's own property, and the
+// translation happens once where the spec is assembled. That is what keeps the
+// "every scalar lands under the same name" gate exact rather than exempted, and the
+// gate is the reason a field cannot be specced and keyed but silently unapplied.
+//
+// 🔴 `vertexColors` is the third compiled flag and it stays OFF this spec, which is a
+// measurement rather than an oversight. It is not a property of the material; it is a
+// REQUEST FOR GEOMETRY the material does not own — three's shader reads a `COLOR_0`
+// attribute, and the only producer of the flag in the whole codebase is the glTF import
+// chain, which sets it precisely when the imported primitive HAS that attribute and
+// applies it on the imported material, not through this registry. No native geometry
+// producer creates a colour attribute at all. Applying it here was tried and OBSERVED:
+// the box renders pure black, because the shader multiplies by an attribute that is not
+// there. A shared material also cannot answer this question honestly — two meshes may
+// share one material and differ in whether they carry the attribute, so conditioning
+// the build on a consumer's geometry is the coupling this whole epic exists to remove.
 //
 // REF: docs/PERFORMANCE.md Lever 5; src/app/geometryRegistry.ts (the mirrored
-//      pattern); issue #530.
+//      pattern); src/app/material/primitiveMaterialInputs.ts (`primitiveMaterialSpec`,
+//      where `doubleSided` becomes `side`); issues #530, #532.
 
 import * as THREE from 'three';
 import { CENTRE_PIVOT, placeTexture, resolveSlotPlacement } from './material/uvPlacement';
@@ -103,6 +122,14 @@ export interface PrimitiveMaterialSpec {
   readonly transmission: number;
   readonly thickness: number;
   readonly wireframe: boolean;
+  /** Alpha cutout threshold; 0 = off (#532). Authored as `geometry.alphaCutoff`. */
+  readonly alphaTest: number;
+  /**
+   * Which faces to render — three's own `Side`, translated from the IR's
+   * `geometry.doubleSided` once, at the spec assembly (#532). Named for the property
+   * it lands on so the build gate stays a plain enumeration.
+   */
+  readonly side: THREE.Side;
   /** The shared UV placement — used by every slot that has none of its own (v0.6 #3). */
   readonly uvTransform: {
     readonly tiling: readonly [number, number];
@@ -293,6 +320,8 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   m.transmission = spec.transmission;
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
+  m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0
+  m.side = spec.side;
   for (const slot of Object.keys(MAP_COLOR_SPACE) as (keyof typeof MAP_COLOR_SPACE)[]) {
     m[slot] = prep(spec.textures[slot], slot, MAP_COLOR_SPACE[slot]);
   }

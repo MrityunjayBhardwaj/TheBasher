@@ -5,6 +5,12 @@
 // compiled all three, only the glTF road consumed them, and the native build never read
 // them. A control the inspector offers must be one the fold honours.
 //
+// TWO of the three are now honoured. The third, `vertexColors`, is honoured by NOT being
+// applied, and that is a decision with a measurement behind it: it asks the shader for a
+// COLOR_0 attribute a BoxGeometry does not have, and wiring it through renders the box
+// pure black. The inspector already hides that checkbox on this road — its comment said
+// "toggling is a no-op", a premise this slice would otherwise have quietly falsified.
+//
 // ── WHY THIS NEEDS A BROWSER AT ALL ────────────────────────────────────────────────
 //
 // The unit tier covers both halves of the seam — that the spec carries the fields
@@ -43,6 +49,7 @@ const FRONT_SIDE = 0;
 const DOUBLE_SIDE = 2;
 const CUTOFF = 0.5;
 const ROUGH_BEFORE = 0.5;
+const OWN_COLOR = '#ff0000';
 const ROUGH_AFTER = 0.11;
 
 /** The render-mode state of the first mesh under a node, read off the live scene. */
@@ -67,6 +74,7 @@ async function renderMode(page: import('@playwright/test').Page, id: string) {
           alphaTest: number;
           vertexColors: boolean;
           roughness: number;
+          color?: { getHexString(): string };
         };
       } | null
     )?.material;
@@ -77,6 +85,7 @@ async function renderMode(page: import('@playwright/test').Page, id: string) {
           alphaTest: mat.alphaTest,
           vertexColors: mat.vertexColors,
           roughness: mat.roughness,
+          color: mat.color ? `#${mat.color.getHexString()}` : null,
         }
       : null;
   }, id);
@@ -92,7 +101,7 @@ function cubeOps(data: string, cube: string, x: number, geometry: Record<string,
         size: [1, 1, 1],
         material: {
           name: 'own',
-          base: { color: '#ff0000' },
+          base: { color: OWN_COLOR },
           specular: { roughness: ROUGH_BEFORE },
           geometry,
         },
@@ -148,7 +157,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('#532 — double-sided, alpha cutout and vertex colours reach a native primitive', async ({
+test('#532 — double-sided and alpha cutout reach a native primitive; vertex colours do not', async ({
   page,
 }) => {
   await seed(page, cubeOps('p532_data', 'p532_cube', 3, { opacity: 1 }), ['p532_cube']);
@@ -203,10 +212,17 @@ test('#532 — double-sided, alpha cutout and vertex colours reach a native prim
   await expect.poll(async () => (await renderMode(page, 'p532_cube'))?.side).toBe(DOUBLE_SIDE);
   const after = await renderMode(page, 'p532_cube');
   expect(after!.alphaTest).toBeCloseTo(CUTOFF, 5);
-  expect(after!.vertexColors).toBe(true);
-  // CONTROL — the road itself is working, so the three above are statements about the
-  // three fields rather than about a dead pipeline.
+  // CONTROL — the road itself is working, so the two above are statements about those
+  // two fields rather than about a dead pipeline.
   expect(after!.roughness).toBeCloseTo(ROUGH_AFTER, 5);
+
+  // 🔴 AND THE THIRD FLAG STAYS OFF, DELIBERATELY. `vertexColors` asks the shader to
+  // read a COLOR_0 attribute a BoxGeometry does not have; honouring it here was tried
+  // and OBSERVED — the box renders pure black. The dispatch above set it to true, so
+  // this is the live witness that the native road ignores it and the object still
+  // draws its own colour.
+  expect(after!.vertexColors).toBe(false);
+  expect(after!.color).toBe(OWN_COLOR);
 });
 
 test('#532 — two primitives differing ONLY in a render flag do not share one material', async ({

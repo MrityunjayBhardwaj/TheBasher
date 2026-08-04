@@ -143,6 +143,7 @@ import { composeBakedMaterial } from '../app/material/composeMaterial';
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
 import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
+import { threeSideFor } from '../app/material/threeSide';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -2587,8 +2588,11 @@ function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void
   if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
   if ('vertexColors' in next) next.vertexColors = tp.vertexColors;
   // doubleSided → three `side`. Identity for an unedited import (matches the
-  // clone); editing re-clones first, so the new `side` compiles correctly.
-  if ('side' in next) next.side = tp.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+  // clone); editing re-clones first, so the new `side` compiles correctly. The
+  // mapping is shared with the native road's spec assembly (#532) rather than
+  // spelled twice — two sites and a two-valued function can only diverge by
+  // inversion, which is the divergence that reads as correct.
+  if ('side' in next) next.side = threeSideFor(tp.doubleSided);
   // metalness/roughness ARE the captured glTF factors → applying them onto a
   // mapped material is identity (the scalar multiplies its map, as in glTF).
   if ('roughness' in next) next.roughness = tp.roughness;
