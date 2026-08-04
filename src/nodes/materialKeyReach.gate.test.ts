@@ -18,7 +18,7 @@
 // that the reach SHOULD be wider — that question is #542's stronger half and needs a design
 // answer for pass-through producers. It only makes the reach impossible to misstate.
 //
-// ── THREE QUESTIONS, THREE KEYS ────────────────────────────────────────────────────────
+// ── FOUR QUESTIONS, FOUR KEYS ──────────────────────────────────────────────────────────
 //
 // Each case names which question it answers, because they fail independently:
 //
@@ -27,6 +27,10 @@
 //                               from the union rather than copied out of it.
 //   C. WHO RE-DERIVES IT?     — keyed on importers of `materialKeyOf`, which is what makes
 //                               an unkeyed road safe rather than merely unkeyed.
+//   D. WHO ATTACHES WITHOUT   — keyed on the arguments at the seam's call sites (#545).
+//      ONE?                     A, B and C all watch the key itself; only D watches who
+//                               joins the shared registry while having none, which is the
+//                               condition §4's safety argument actually depends on.
 //
 // ⚠️ WHAT THIS CANNOT SEE, stated here rather than discovered later. Case C pins the set of
 // modules that reach for the key FUNCTION; it cannot notice a second SPELLING of the same
@@ -40,7 +44,9 @@
 //      src/nodes/types.ts (the union and the one member carrying a key);
 //      src/app/material/primitiveMaterialInputs.ts (the downstream fallback);
 //      src/app/registryDoors.gate.test.ts (the sibling gate this shape comes from);
-//      tools/gates/sourceFiles.ts (the shared enumeration); issues #536, #537, #542.
+//      src/app/material/usePrimitiveMaterial.ts (the attach seam case D counts, and where
+//      the required-parameter argument is written out);
+//      tools/gates/sourceFiles.ts (the shared enumeration); issues #536, #537, #542, #545.
 
 import { describe, expect, it } from 'vitest';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
@@ -75,6 +81,46 @@ export function interfaceBody(src: string, name: string): string | null {
 /** Does that interface DECLARE `field` (as opposed to mentioning it)? */
 export function declaresField(body: string, field: string): boolean {
   return new RegExp(`(?:^|\\n)\\s*(?:readonly\\s+)?${field}\\??\\s*:`).test(body);
+}
+
+/**
+ * The argument lists of every CALL to `fn`, one array of source-text arguments per call.
+ *
+ * Bracket-matched rather than comma-split, and the difference is load-bearing rather than
+ * fastidious: the keyed call site passes `mat ? (data?.materialKey ?? null) : null`, which
+ * a comma split reports as three arguments — and its last one is the bare text `null`,
+ * so the naive parser would count the KEYED road as unkeyed and the census would be exactly
+ * inverted while looking perfectly green.
+ *
+ * The definition is excluded by the `function` lookbehind, since `export function fn(` is
+ * otherwise indistinguishable from a call and would be counted as one forever.
+ */
+export function callArgsOf(src: string, fn: string): string[][] {
+  const stripped = stripComments(src);
+  const out: string[][] = [];
+  for (const m of stripped.matchAll(new RegExp(`(?<!function\\s)\\b${fn}\\s*\\(`, 'g'))) {
+    const open = (m.index as number) + m[0].length;
+    const args: string[] = [];
+    let depth = 1;
+    let start = open;
+    for (let i = open; i < stripped.length && depth > 0; i++) {
+      const c = stripped[i];
+      if (c === '(' || c === '[' || c === '{') depth++;
+      else if (c === ')' || c === ']' || c === '}') {
+        depth--;
+        if (depth === 0) args.push(stripped.slice(start, i));
+      } else if (c === ',' && depth === 1) {
+        args.push(stripped.slice(start, i));
+        start = i + 1;
+      }
+    }
+    if (depth !== 0) continue; // unbalanced — do not guess
+    const trimmed = args.map((a) => a.trim());
+    // A trailing comma leaves an empty final slot; it is punctuation, not an argument.
+    if (trimmed.length > 0 && trimmed[trimmed.length - 1] === '') trimmed.pop();
+    out.push(trimmed);
+  }
+  return out;
 }
 
 /** The member names of `export type <name> = A | B | …`, in declaration order. */
@@ -203,5 +249,78 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
 
     expect(unionMembers(`export type Two = Alpha | Beta;`, 'Two')).toEqual(['Alpha', 'Beta']);
     expect(unionMembers(`export type Two = Alpha | Beta;`, 'Missing')).toEqual([]);
+  });
+
+  // ── D. WHO ATTACHES WITHOUT A MINTED KEY? (#545) ─────────────────────────────────────
+  //
+  // The fourth question, and the one the other three cannot answer. A, B and C are all
+  // about who MINTS, CARRIES or RE-DERIVES the key. This one is about who joins the shared
+  // registry while having none — #545's third reopen condition, "a second unkeyed road
+  // starts sharing the registry", which is the condition that turns the documented fallback
+  // from sufficient into wrong.
+  //
+  // #545's answer is that `ModifiedData` should NOT mint: the fallback calls the evaluator's
+  // own function over the evaluator's own IR, so there is no second spelling to drift. That
+  // answer is only safe while the unkeyed set stays at ONE, and nothing was watching it.
+  //
+  // Making the seam's parameter required (rather than optional) is what gives this case
+  // something to count. While it was optional, a new road joined by writing nothing at all,
+  // and `irKeyFor(ir, undefined)` equals `materialKeyOf(ir)` — the same value a correct
+  // minted key produces — so the new road was EQUAL BY CONSTRUCTION to a correct one and no
+  // behavioural test at any tier could red on it. The signature was the only tier where the
+  // claim could live; this case is what makes the claim checkable once it lives there.
+  //
+  // Counted EXACTLY, not floored, for the reason the sibling censuses give: a floor guards
+  // against the set emptying, and the failure here is the set GROWING one quiet caller at a
+  // time until "the unkeyed road" is most of them.
+  const UNKEYED_ATTACH_CALLERS: Record<string, string> = {
+    'src/viewport/SceneFromDAG.tsx':
+      'ModifiedMeshR — ModifiedDataValue mints no materialKey, and #545 measured the ' +
+      'downstream fallback as the right permanent answer for it rather than as a gap',
+  };
+
+  it('attaches to the shared registry without a minted key in exactly one place', () => {
+    const calls = sourceFiles().flatMap(([path, src]) =>
+      callArgsOf(src, 'usePrimitiveMaterial').map((args) => ({ path, args })),
+    );
+
+    // Anti-vacuity, and it is not theoretical: a parser that found nothing would make every
+    // assertion below green while counting an empty set.
+    expect(calls.length, 'the call-site parse read nothing — this census would be vacuous').toBe(2);
+
+    // The type system already refuses an omitted argument. This re-checks it structurally,
+    // because the way this gate dies is someone widening the parameter back to optional to
+    // silence a red — at which point typecheck goes quiet and only this case still speaks.
+    expect(
+      calls.filter((c) => c.args.length !== 4).map((c) => c.path),
+      'a caller omits the minted-key argument — the omission is exactly what #545 closed',
+    ).toEqual([]);
+
+    const unkeyed = calls.filter((c) => c.args[3] === 'null');
+    expect(
+      unkeyed.length,
+      'a second road now attaches with no minted key — #545 reopen condition 3. The ' +
+        'fallback is only safe while this set has one member; decide, do not drift',
+    ).toBe(1);
+    expect([...new Set(unkeyed.map((c) => c.path))]).toEqual(Object.keys(UNKEYED_ATTACH_CALLERS));
+  });
+
+  it('guards case D — the call parser reads arguments, not prose or definitions', () => {
+    // The definition must not be counted as a call: it is written `function name(` and
+    // would otherwise make the census report one caller too many, forever.
+    expect(callArgsOf(`export function f(a: string, b: number) {}`, 'f')).toEqual([]);
+    expect(callArgsOf(`// f(a, b, c, null) in a comment`, 'f')).toEqual([]);
+
+    // Nested parens, ternaries and object args must not split the argument list — the
+    // 4th argument at the real call site is `mat ? (data?.materialKey ?? null) : null`,
+    // which a naive comma split reports as three arguments and reads as unkeyed.
+    expect(callArgsOf(`f(ir, o, s, mat ? (d?.k ?? null) : null);`, 'f')).toEqual([
+      ['ir', 'o', 's', 'mat ? (d?.k ?? null) : null'],
+    ]);
+    expect(callArgsOf(`f({ a: 1, b: 2 }, null);`, 'f')).toEqual([['{ a: 1, b: 2 }', 'null']]);
+
+    // A trailing comma is not a fifth argument, and a 3-argument call is still 3.
+    expect(callArgsOf(`f(\n  a,\n  b,\n  c,\n  null,\n);`, 'f')).toEqual([['a', 'b', 'c', 'null']]);
+    expect(callArgsOf(`f(a, b, c);`, 'f')).toEqual([['a', 'b', 'c']]);
   });
 });
