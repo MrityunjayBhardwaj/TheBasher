@@ -130,6 +130,14 @@ const CORPUS: readonly World[] = [
   world('emissive', { ir: irWith({ emission: { color: '#ff0000', luminance: 1 } }) }),
   world('emissiveIntensity', { ir: irWith({ emission: { color: '#ff0000', luminance: 5 } }) }),
   world('opacity+transparent', { ir: irWith({ geometry: { opacity: 0.4 } }) }),
+  // #532 — the two render-mode flags the native build honours. Each has to reach the
+  // SPEC, not just the compile: the vacuity check below asserts every world produces a
+  // DIFFERENT spec, so a flag the spec drops makes its world a duplicate of `base` and
+  // reds there. That is the whole gate for the missing half — no separate assertion
+  // states it twice. (`vertexColors` is deliberately absent from the spec and therefore
+  // absent from this corpus; it is pinned on its own below.)
+  world('alphaTest', { ir: irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } }) }),
+  world('side (doubleSided)', { ir: irWith({ geometry: { opacity: 1, doubleSided: true } }) }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),
@@ -172,6 +180,59 @@ describe('#536 S2 — the composed key is at least as discriminating as the spec
     // registry would hand every mesh its own material and every sharing claim above
     // would be satisfied by a cache that never hits.
     expect(derive(world('a')).key).toBe(derive(world('b')).key);
+  });
+});
+
+describe('#532 — `vertexColors` is deliberately NOT a native spec field', () => {
+  // It is not a property of the material; it is a request for a geometry attribute the
+  // material does not own and a SHARED material cannot promise — two meshes may share
+  // one material and differ in whether they carry `COLOR_0`. The only producer of the
+  // flag is the glTF import chain, which sets it exactly when the imported primitive
+  // has the attribute and applies it on the imported material, never through this
+  // registry. Applying it here was tried and observed: a native box renders pure black.
+  //
+  // So this is a REACH stated with a gate, not a silent omission — and the pair below
+  // is what makes it a statement rather than a wish.
+  const flagged = irWith({ geometry: { opacity: 1, vertexColors: true } });
+  const cutout = irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } });
+
+  it('the native spec is INSENSITIVE to it', () => {
+    const plain = primitiveMaterialSpec(
+      compilePrimitiveMaterial(BASE_IR, undefined),
+      'material',
+      NO_MAPS,
+    );
+    const withFlag = primitiveMaterialSpec(
+      compilePrimitiveMaterial(flagged, undefined),
+      'material',
+      NO_MAPS,
+    );
+    expect(keyOf(withFlag)).toBe(keyOf(plain));
+    expect(Object.keys(withFlag)).not.toContain('vertexColors');
+  });
+
+  it('…and the PRESENCE CONTROL: the same shape of edit on a sibling flag DOES reach it', () => {
+    // Without this, "insensitive" is indistinguishable from a compile that dropped the
+    // whole geometry lobe, or from a spec builder that ignores its input.
+    const plain = primitiveMaterialSpec(
+      compilePrimitiveMaterial(BASE_IR, undefined),
+      'material',
+      NO_MAPS,
+    );
+    const withCutout = primitiveMaterialSpec(
+      compilePrimitiveMaterial(cutout, undefined),
+      'material',
+      NO_MAPS,
+    );
+    expect(keyOf(withCutout)).not.toBe(keyOf(plain));
+    expect(withCutout.alphaTest).toBe(0.5);
+  });
+
+  it('the compile still carries it, so the glTF road is unaffected', () => {
+    // The exclusion is at the SPEC, not at the compiler — `applyOpenpbrScalars` reads
+    // the compiled value directly and must keep seeing it.
+    expect(compilePrimitiveMaterial(flagged, undefined).vertexColors).toBe(true);
+    expect(compilePrimitiveMaterial(BASE_IR, undefined).vertexColors).toBe(false);
   });
 });
 

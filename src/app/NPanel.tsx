@@ -1638,8 +1638,10 @@ function UvTransformSection({
 // `alphaTest = alphaCutoff ?? 0`, `side = doubleSided ? DoubleSide : FrontSide`,
 // `vertexColors ?? false` (openpbrToThree), so an explicit value here is additive
 // and byte-identical for a material that never had one (V10/H14). vertexColors is
-// shown ONLY when captured (a native primitive has no COLOR_0 → toggling is a
-// no-op, so it's hidden to avoid a confusing dead control).
+// shown ONLY when captured, and the reason is sharper than it used to be: a native
+// primitive has no COLOR_0, and the native build deliberately does not apply the flag
+// (#532) precisely because doing so renders the mesh black. So this is not "hidden
+// because it is a no-op" — it is hidden because it is UNSATISFIABLE on that road.
 function MaterialRenderOptions({
   geometry,
   testidBase,

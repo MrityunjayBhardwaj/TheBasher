@@ -621,10 +621,34 @@ reds the perturbation alone** — the copy follows the original's edit while eve
 the surface still reads correctly, which is precisely the render-tier leak no graph-level
 assertion can see.
 
-### S6 — #532 folds in — PROPOSED
+### S6 — #532 folds in — ✅ BUILT
 
-Once the spec is the ref's payload, applying `doubleSided` / `alphaTest` / `vertexColors`
-on the native road is one place. Cheapest after S1, not before.
+The plan sentence was "applying `doubleSided` / `alphaTest` / `vertexColors` on the native
+road is one place." Two of the three landed exactly that way. The third turned out not to
+belong there at all, and finding that out is the whole content of this slice.
+
+**Premise RE-MEASURED 2026-08-04 on `0537a16`** — the issue's numbers dated to `5a8fb15`,
+eight merges earlier. It still held: the params land on the node, the rendered mesh does
+not move, and a roughness control in the same run moved. The re-measurement added one
+thing the issue did not have — **the material uuid changed anyway**, because the identity
+key is a content walk. So the dead checkboxes were costing a fresh cache entry and buying
+no picture, which is the lost dedup this document predicted in §S2 and is now closed.
+
+**And `vertexColors` is deliberately excluded, which is a measurement, not an omission.**
+Wiring it through the native build was tried and OBSERVED in a browser: the box renders
+pure black, because three's shader multiplies by a `COLOR_0` attribute a `BoxGeometry`
+does not have. A census puts the only writer of that flag in the glTF import chain, gated
+on the imported primitive actually carrying the attribute, and applied on the imported
+material rather than through this registry. The deeper reason is this document's own
+invariant: **a shared material cannot answer a question about its consumer's geometry** —
+two meshes may share one material and differ in what they carry, so conditioning the build
+on one of them is exactly the coupling the epic removes. The reach is stated beside the
+spec and pinned with a presence control, per §"how far this reaches today".
+
+One thing the slice found on the way: the inspector already hid that checkbox for native
+primitives, giving the reason "toggling is a no-op". Applying the flag would have
+falsified that sentence silently — the control was hidden for a premise that a change one
+module away had quietly removed. It now says _unsatisfiable_ instead of _inert_.
 
 ### S7 — catalogues and Ground Truth
 

@@ -61,11 +61,14 @@
 //
 // The reverse direction is deliberately NOT required: this key may separate two inputs
 // that compile to the same spec (two IRs differing only where the compile drops them).
-// That is a lost dedup — a perf cost, invisible on screen — never a wrong picture. #532
-// is the case in point: `alphaTest` / `vertexColors` / `doubleSided` are compiled and
-// then ignored by the native build, so materials differing only there share today and
-// would stop sharing here. That is the safe direction, and it becomes correct rather
-// than merely safe once #532 makes the build apply them.
+// That is a lost dedup — a perf cost, invisible on screen — never a wrong picture.
+// #532 was the case in point and is now HALF closed, deliberately. `alphaTest` and
+// `doubleSided` were compiled, keyed and then ignored by the build — measured in a
+// browser, toggling them minted a fresh material instance that drew the same picture.
+// They are now on the spec and applied, so that split is justified rather than wasted.
+// `vertexColors` stays in the lost-dedup category ON PURPOSE: it asks for a geometry
+// attribute a shared material cannot promise, and the reason is written where the spec
+// is (`materialRegistry.ts`). So this direction is one case shorter, not empty.
 //
 // REF: src/nodes/materialKey.ts (the evaluator's half); src/app/materialRegistry.ts
 //      (`keyOf`, now the gate's oracle); src/viewport/SceneFromDAG.tsx
@@ -73,6 +76,7 @@
 
 import type * as THREE from 'three';
 import { materialKeyOf } from '../../nodes/materialKey';
+import { threeSideFor } from './threeSide';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { MAP_SLOTS, type PrimitiveMaterialSpec } from '../materialRegistry';
 import { composeMaterial } from './composeMaterial';
@@ -149,6 +153,13 @@ export function primitiveMaterialSpec(
     transmission: compiled.transmission,
     thickness: compiled.thickness,
     wireframe: shading === 'wireframe',
+    // #532 — the render-mode flags the native build can honour. The spec speaks the
+    // build's vocabulary end to end, so `doubleSided` becomes `side` here rather than in
+    // the build: a field whose spec name did not match its material property is exactly
+    // what the build's enumeration cannot check. The mapping is shared with the glTF
+    // road (`threeSide.ts`). `vertexColors` is deliberately NOT here — see below.
+    alphaTest: compiled.alphaTest,
+    side: threeSideFor(compiled.doubleSided),
     uvTransform: compiled.uvTransform,
     // #550 — per-slot placement, already in THREE's vocabulary. OMITTED when the
     // compile produced none: the spec's content key is a generic walk over own
