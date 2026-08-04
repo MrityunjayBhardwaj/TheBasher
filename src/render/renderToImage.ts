@@ -212,15 +212,34 @@ export function createRenderScratch(width: number, height: number, samples: numb
  * canvas (encode the frame) BEFORE the next render call.
  */
 /**
- * Hide every editor-chrome object in `scene` and return exactly the ones flipped,
- * for the caller to restore. A render shows DAG content only (V37) — the parity
- * half of "what production sees".
+ * Run `render` with every editor-chrome object in `scene` hidden, then put the scene
+ * back exactly as it was. A render shows DAG content only (V37) — the parity half of
+ * "what production sees".
  *
  * Extracted from the render body for ONE reason: it is the render road's whole
  * enforcement of V37, and inside an async function that needs a live WebGL
  * context it had no tier that could reach it. Both output roads consume it — the
  * still (#168) and every animation frame (#189) — so this is the single place the
- * rule is applied, and now the single place it can be tested (#557).
+ * rule is applied, and the single place it can be tested (#557).
+ *
+ * ── WHY A SCOPE AND NOT A HIDE/RESTORE PAIR (#560) ──────────────────────────────
+ *
+ * This was a `hideEditorChrome(scene)` returning the flipped objects, with the
+ * restore left inline in the render body. Two failure modes came free with that
+ * shape, and both are silent: a caller can forget to restore at all, and a caller
+ * can restore by RE-DERIVING which objects are chrome instead of using the list —
+ * which switches on chrome the director had deliberately hidden. The second was
+ * measured: making exactly that mistake in the render body left the whole unit
+ * tier (3810 cases) and the p168 browser suite green, because the restore runs in
+ * a `finally` AFTER the pixels are captured and is therefore invisible to every
+ * pixel assertion by construction.
+ *
+ * A scope closes both. The flipped list never escapes, so there is nothing to
+ * re-derive and no second way to spell the restore; the `finally` here means chrome
+ * comes back even if the render throws, which the old shape only got right because
+ * its one caller happened to wrap it. What the CALLER still owns is its own
+ * resources — the scratch dispose stays in the render body, since its lifetime has
+ * nothing to do with chrome.
  *
  * The PREDICATE is shared (`isEditorChrome`, #546); the TRAVERSAL is deliberately
  * local and stays that way. Flipping `visible` per object lets three.js's own
@@ -228,10 +247,10 @@ export function createRenderScratch(width: number, height: number, samples: numb
  * subtree. This is not the beginning of folding traversal into the predicate —
  * `editorChrome.ts` states why the three consumers legitimately differ.
  *
- * Only objects actually flipped are returned, so an object the DIRECTOR hid stays
- * hidden after restore rather than being switched on by the render.
+ * Only objects actually flipped are restored, so an object the DIRECTOR hid stays
+ * hidden afterwards rather than being switched on by the render.
  */
-export function hideEditorChrome(scene: THREE.Object3D): THREE.Object3D[] {
+export function withEditorChromeHidden<T>(scene: THREE.Object3D, render: () => T): T {
   const hidden: THREE.Object3D[] = [];
   scene.traverse((o) => {
     if (isEditorChrome(o) && o.visible) {
@@ -239,7 +258,11 @@ export function hideEditorChrome(scene: THREE.Object3D): THREE.Object3D[] {
       hidden.push(o);
     }
   });
-  return hidden;
+  try {
+    return render();
+  } finally {
+    for (const o of hidden) o.visible = true;
+  }
 }
 
 export async function renderSceneToImageCanvas(
@@ -256,26 +279,28 @@ export async function renderSceneToImageCanvas(
   const sc = reuse ? scratch! : createRenderScratch(width, height, samples);
   const camera = buildRenderCamera(pose, width, height);
 
-  const hidden = hideEditorChrome(scene);
-
   try {
-    // Control pass (depth/normal) → material-override path into a raw target.
-    // Else: DoF on → postprocessing EffectComposer (bokeh matches the viewport,
-    // V37); DoF off → the fast manual MSAA path, byte-for-byte as before.
-    const pass = opts.pass ?? 'beauty';
-    const buf =
-      pass !== 'beauty'
-        ? renderViaPass(gl, scene, camera, width, height, pass, sc.readBuf, samples)
-        : opts.dof
-          ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
-          : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
-    const flipped = flipRowsY(buf, width, height);
-    // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
-    // 8MB ImageData allocation on the animation path.
-    sc.imageData.data.set(flipped);
-    sc.ctx.putImageData(sc.imageData, 0, 0);
+    // Chrome is hidden for exactly the span that reads pixels, and restored by the
+    // scope itself (#560) — the dispose below is the caller's own resource and is
+    // deliberately NOT part of that span.
+    withEditorChromeHidden(scene, () => {
+      // Control pass (depth/normal) → material-override path into a raw target.
+      // Else: DoF on → postprocessing EffectComposer (bokeh matches the viewport,
+      // V37); DoF off → the fast manual MSAA path, byte-for-byte as before.
+      const pass = opts.pass ?? 'beauty';
+      const buf =
+        pass !== 'beauty'
+          ? renderViaPass(gl, scene, camera, width, height, pass, sc.readBuf, samples)
+          : opts.dof
+            ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
+            : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
+      const flipped = flipRowsY(buf, width, height);
+      // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
+      // 8MB ImageData allocation on the animation path.
+      sc.imageData.data.set(flipped);
+      sc.ctx.putImageData(sc.imageData, 0, 0);
+    });
   } finally {
-    for (const o of hidden) o.visible = true;
     if (!reuse) sc.dispose();
   }
   return sc.canvas;

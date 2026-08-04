@@ -196,18 +196,51 @@ async function surveySelections(page: import('@playwright/test').Page) {
       });
       return { gizmo, chrome: chrome - gizmo };
     };
+    /**
+     * Let the affordances mount, then report what is there — waiting on the SCENE
+     * rather than on the clock (#562).
+     *
+     * This was a flat `setTimeout(250)`. Measured across 0 / 16 / 50 / 250 ms, the
+     * rows came back byte-identical every time, so the sleep was not buying
+     * correctness on this machine — it was buying insurance against a slower one,
+     * at ~4.5 s of wall clock per run and with no upper bound on how slow it would
+     * still cover. Settling on the observation instead is both faster and adapts
+     * upward under load, which is the direction a shared CI runner fails in.
+     *
+     * Two consecutive unchanged frames, not one: React commits the selection and
+     * mounts the affordances in a later frame than the store write, so a single
+     * sample can catch the scene mid-update. The rAF yield also guarantees at least
+     * one real frame has run before anything is believed. On timeout it returns the
+     * last reading rather than throwing — the callers all assert their precondition
+     * (a gizmo really mounted / something really added chrome), so an unsettled
+     * scene reddens THERE, with the counts in the message, instead of here with a
+     * bare timeout that says nothing about what was wrong.
+     */
+    const settled = async () => {
+      const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+      let prev = counts();
+      let stable = 0;
+      for (let i = 0; i < 120; i++) {
+        // ~2s at 60fps
+        await frame();
+        const now = counts();
+        stable = now.gizmo === prev.gizmo && now.chrome === prev.chrome ? stable + 1 : 0;
+        prev = now;
+        if (stable >= 2) break;
+      }
+      return prev;
+    };
+
     w.__basher_selection!.getState().select(null);
-    await new Promise((r) => setTimeout(r, 250));
-    const base = counts();
+    const base = await settled();
     const rows: { id: string; gizmo: number; extraChrome: number }[] = [];
     for (const id of Object.keys(w.__basher_dag!.getState().state.nodes ?? {})) {
       w.__basher_selection!.getState().select(id);
-      await new Promise((r) => setTimeout(r, 250)); // let the affordances mount
-      const c = counts();
+      const c = await settled();
       rows.push({ id, gizmo: c.gizmo, extraChrome: c.chrome - base.chrome });
     }
     w.__basher_selection!.getState().select(null);
-    await new Promise((r) => setTimeout(r, 250));
+    await settled();
     return rows;
   });
 }
@@ -246,11 +279,40 @@ async function framedContentNodeId(page: import('@playwright/test').Page) {
   });
 }
 
+/**
+ * Select a node and wait for the scene to stop changing — the same settle discipline
+ * as the survey (#562), on the same grounds: a fixed sleep is a bet about the slowest
+ * machine that will ever run this, and it is wrong in both directions at once.
+ *
+ * The signal here is the raw OBJECT COUNT rather than the chrome counts: selecting a
+ * node mounts and unmounts affordances, so the total moves and then holds. Counting is
+ * also deliberately the one question this helper asks — re-deriving "is this chrome"
+ * would be a second implementation of the predicate, which the gate would rightly
+ * accuse (#546/#561).
+ */
 async function select(page: import('@playwright/test').Page, id: string) {
-  await page.evaluate((id) => {
-    (window as unknown as BasherWindow).__basher_selection!.getState().select(id);
+  await page.evaluate(async (id) => {
+    const w = window as unknown as BasherWindow;
+    w.__basher_selection!.getState().select(id);
+    const scene = w.__basher_three!.getState().scene as {
+      traverse: (cb: (o: Record<string, unknown>) => void) => void;
+    };
+    const size = () => {
+      let n = 0;
+      scene.traverse(() => n++);
+      return n;
+    };
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+    let prev = size();
+    let stable = 0;
+    for (let i = 0; i < 120; i++) {
+      await frame();
+      const now = size();
+      stable = now === prev ? stable + 1 : 0;
+      prev = now;
+      if (stable >= 2) break;
+    }
   }, id);
-  await page.waitForTimeout(300);
 }
 
 test.describe('#168 render to image', () => {
