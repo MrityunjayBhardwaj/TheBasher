@@ -130,6 +130,13 @@ const CORPUS: readonly World[] = [
   world('emissive', { ir: irWith({ emission: { color: '#ff0000', luminance: 1 } }) }),
   world('emissiveIntensity', { ir: irWith({ emission: { color: '#ff0000', luminance: 5 } }) }),
   world('opacity+transparent', { ir: irWith({ geometry: { opacity: 0.4 } }) }),
+  // #532 — the three render-mode flags. Each has to reach the SPEC, not just the
+  // compile: the vacuity check below asserts every world produces a DIFFERENT spec, so
+  // a flag the spec drops makes its world a duplicate of `base` and reds there. That is
+  // the whole gate for the missing half — no separate assertion states it twice.
+  world('alphaTest', { ir: irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } }) }),
+  world('vertexColors', { ir: irWith({ geometry: { opacity: 1, vertexColors: true } }) }),
+  world('side (doubleSided)', { ir: irWith({ geometry: { opacity: 1, doubleSided: true } }) }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),

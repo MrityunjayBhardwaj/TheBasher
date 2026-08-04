@@ -39,6 +39,13 @@ const BASE: PrimitiveMaterialSpec = {
   transmission: 0.2,
   thickness: 0.5,
   wireframe: false,
+  // #532 — the three render-mode flags, every one authored AWAY from three's own
+  // default (`side` 0 / `alphaTest` 0 / `vertexColors` false). A spec value that equals
+  // the default would satisfy "the build applies it" on a build that ignores it, which
+  // is the vacuity this whole enumeration exists to avoid.
+  alphaTest: 0.25,
+  vertexColors: true,
+  side: THREE.DoubleSide,
   uvTransform: { tiling: [2, 3], offset: [0.1, 0.2], rotation: 0.5 },
   textures: {
     map: null,
@@ -178,7 +185,12 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     const scalars = leafPaths(BASE).filter(
       ([p]) => !p.startsWith('textures') && !p.startsWith('uvTransform'),
     );
-    expect(scalars.length).toBeGreaterThanOrEqual(13);
+    // EXACT, not a floor. The type already forces `BASE` to carry every REQUIRED spec
+    // field, so growth is handled by the compiler; what the compiler cannot see is a
+    // field turning optional and quietly leaving `BASE`, which would make both this gate
+    // and the key gate blind to it while staying green. The count is the guard for that
+    // direction, so it is meant to be edited deliberately.
+    expect(scalars.length).toBe(16);
     for (const [path, value] of scalars) {
       const applied = material[path as keyof THREE.MeshPhysicalMaterial];
       const actual = applied instanceof THREE.Color ? `#${applied.getHexString()}` : applied;
