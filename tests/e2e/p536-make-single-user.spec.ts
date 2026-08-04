@@ -83,9 +83,9 @@ async function boot(page: import('@playwright/test').Page) {
     const w = window as unknown as UiWindow;
     return Boolean(
       w.__basher_selection &&
-        w.__basher_mesh_material &&
-        w.__basher_dag &&
-        w.__basher_dag.getState().state.outputs.scene,
+      w.__basher_mesh_material &&
+      w.__basher_dag &&
+      w.__basher_dag.getState().state.outputs.scene,
     );
   });
 }

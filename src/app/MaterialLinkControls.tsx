@@ -9,9 +9,20 @@
 //
 // Before this row, "these three cubes share a material" was invisible: it was true, or
 // not, and nothing on screen distinguished the two. The user count is what makes sharing
-// a FACT the surface states rather than a coincidence the user has to remember. It is
-// read-only on purpose — the count is a property of the graph, and the way to change it
-// is to link or unlink, which is the rest of this row.
+// a FACT the surface states rather than a coincidence the user has to remember.
+//
+// ── AND THE COUNT IS ALSO THE WAY OUT OF THE SHARE (#536 S5) ───────────────────────
+//
+// The number is where Blender puts make-single-user, and the reason is that the count is
+// exactly what the director is looking at when they decide they want out: "three objects
+// would move if I edit this — not this one." Clicking it hands THIS node its own copy and
+// leaves the others linked. The count remains a derived fact, never written to: the click
+// dispatches an op that changes the GRAPH, and the number follows.
+//
+// Two rules shape it. It is the SAME builder the New button dispatches, because two roads
+// to one act is how they drift apart — they differ only in the undo label. And it is a
+// button only above one user: at one user the act would produce another single-user copy,
+// so an affordance there is a no-op the director has to learn to ignore.
 //
 // ── THE BASE ROWS BELOW IT STAY EDITABLE, AND THAT IS RULED ────────────────────────
 //
@@ -80,10 +91,15 @@ export function MaterialLinkControls({ nodeId }: { nodeId: string }) {
     );
   }
 
-  function onNew() {
+  // Mint a Material node holding what this node draws right now, and link it. ONE road,
+  // reached from two places: the New button, and the users count when there is a share to
+  // leave. They are the same act — Blender's New and its user-count click both hand this
+  // object its own copy — so they dispatch the same builder and differ only in the undo
+  // label, which is what the director will read back.
+  function mintOwnMaterial(label: string) {
     const res = buildNewMaterialOps(useDagStore.getState().state, nodeId);
     if (!res) return;
-    useDagStore.getState().dispatchAtomic(res.ops, 'user', 'new material');
+    useDagStore.getState().dispatchAtomic(res.ops, 'user', label);
   }
 
   function onUnlink() {
@@ -111,7 +127,12 @@ export function MaterialLinkControls({ nodeId }: { nodeId: string }) {
             </option>
           ))}
         </select>
-        <button type="button" className={BTN} data-testid="material-link-new" onClick={onNew}>
+        <button
+          type="button"
+          className={BTN}
+          data-testid="material-link-new"
+          onClick={() => mintOwnMaterial('new material')}
+        >
           New Material
         </button>
         {linkedId && (
@@ -137,7 +158,21 @@ export function MaterialLinkControls({ nodeId }: { nodeId: string }) {
           >
             {nodeDisplayName(linkedNode)}
           </button>{' '}
-          · <span data-testid="material-link-users">{users}</span> {users === 1 ? 'user' : 'users'}
+          ·{' '}
+          {users > 1 ? (
+            <button
+              type="button"
+              className="underline hover:text-accent"
+              data-testid="material-link-users"
+              onClick={() => mintOwnMaterial('make single user')}
+              title="Make single-user — give this object its own copy of the material"
+            >
+              {users}
+            </button>
+          ) : (
+            <span data-testid="material-link-users">{users}</span>
+          )}{' '}
+          {users === 1 ? 'user' : 'users'}
         </p>
       ) : (
         <p data-testid="material-link-status" className="px-1 text-fg/60">

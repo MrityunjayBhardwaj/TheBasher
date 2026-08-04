@@ -125,8 +125,9 @@ export function materialCandidates(state: DagState): MaterialCandidate[] {
  *
  * Counts CONSUMING NODES, not edges: a node that somehow bound the same material twice
  * is one user, because the number answers "who would be affected if I edit this?" and
- * that is a question about nodes. Read-only on the surface: the count is a fact about the
- * graph, and the way to change it is to link or unlink, which the row already offers.
+ * that is a question about nodes. Derived, never written to — the surface makes the
+ * number CLICKABLE above one user (#536 S5), but the click dispatches
+ * `buildNewMaterialOps` and the count follows the graph, as it always has.
  */
 export function materialUserCount(state: DagState, materialNodeId: string): number {
   let users = 0;
