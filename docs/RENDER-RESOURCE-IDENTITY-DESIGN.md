@@ -31,8 +31,12 @@ unchanged" — exercises a different override road and would have stayed green t
 name suggests.** This is the same failure as the `GeometryRef` analogy wearing different
 clothes: a claim about a neighbour taken as a claim about this case.
 
-One ⚠️ remains untouched by these rounds: §3 (Houdini at source tier). S3's — whether a
-syntactic sweep survives refactors — is now MEASURED, and the answer sharpened it: an
+**Update 2026-08-04 — the last ⚠️ is closed, and not by measuring.** §3's (Houdini at source
+tier) was the one premise no round had touched. S7 closed it by re-reading the deferral's own
+reopen trigger against the code and finding the clause had gone HALF-true — S3 climbed to rung
+3, which looks like the trigger firing and is not. A premise can also be retired by discovering
+nothing rests on it; what that costs is a sharper trigger, written down. S3's ⚠️ — whether a
+syntactic sweep survives refactors — is MEASURED, and the answer sharpened it: an
 import-clause sweep is complete only over a subject that cannot be imported as a namespace,
 so the gate refuses that form as its precondition. One new gap is now declared in S2: `ModifiedData` still
 carries no minted key, so half the registry's traffic re-derives identity at render.
@@ -137,9 +141,22 @@ lightweight reference to geometry plus a single transform, NOT a duplicate… Co
 packed prim copies the _reference_, not the data. **Packed primitives cannot be edited.**"
 To change one you unpack, which materialises your own copy.
 
-⚠️ **UNMEASURED / ungrounded at source tier.** No Houdini source is downloaded, and the
-HDK's `GU_DetailHandle` read/write lock discipline — the part closest to this design — is
-not covered by any reference doc we hold.
+**Ungrounded at source tier, and DECIDED rather than pending (S7, 2026-08-04).** No Houdini
+source is downloaded, and the HDK's `GU_DetailHandle` read/write lock discipline — the part
+closest to this design — is covered by no reference doc we hold; `ref/houdini/SOP.md` records
+it as checked-and-absent from five HDK/manual pages.
+
+This carried a ⚠️ through S0–S6 on the reading convention's terms: measure a premise before
+building the slice that rests on it. **No slice rested on it**, and S7 closed it by re-reading
+the reopen trigger rather than by measuring. That trigger — _"reopen when/if Basher decides to
+make the bad state unrepresentable rather than repairing it"_ — looked fired: S3 climbed to
+rung 3, and `overlayWithIdentity.ts` will no longer compile a bare value into the renderer. It
+is not fired, and the module's own declared limit is why: what became unrepresentable is a
+value **nobody decided about**, not the **write**. `identityIntact` records a caller's claim
+and cannot check one; we still repair. ⇒ the trigger never said which bad state, and a clause
+can go half-true, which reads like true. Sharpened to **rung 4** — the renderer taking the
+un-overlaid value and doing the overlay itself, so an unrepaired value cannot be constructed.
+Only there does "does acquiring a write lock make a private copy?" decide anything for us.
 
 ### What they give us
 
