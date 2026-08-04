@@ -31,8 +31,12 @@ unchanged" — exercises a different override road and would have stayed green t
 name suggests.** This is the same failure as the `GeometryRef` analogy wearing different
 clothes: a claim about a neighbour taken as a claim about this case.
 
-One ⚠️ remains untouched by these rounds: §3 (Houdini at source tier). S3's — whether a
-syntactic sweep survives refactors — is now MEASURED, and the answer sharpened it: an
+**Update 2026-08-04 — the last ⚠️ is closed, and not by measuring.** §3's (Houdini at source
+tier) was the one premise no round had touched. S7 closed it by re-reading the deferral's own
+reopen trigger against the code and finding the clause had gone HALF-true — S3 climbed to rung
+3, which looks like the trigger firing and is not. A premise can also be retired by discovering
+nothing rests on it; what that costs is a sharper trigger, written down. S3's ⚠️ — whether a
+syntactic sweep survives refactors — is MEASURED, and the answer sharpened it: an
 import-clause sweep is complete only over a subject that cannot be imported as a namespace,
 so the gate refuses that form as its precondition. One new gap is now declared in S2: `ModifiedData` still
 carries no minted key, so half the registry's traffic re-derives identity at render.
@@ -106,15 +110,26 @@ Rule, stated for the artist:
 
 ### Blender — MEASURED live (5.1.1, via MCP, scene restored afterwards)
 
+📎 **GROUNDED, S7 2026-08-04 — the probe/value tables live in
+`ref/GROUND_TRUTH_BLENDER_RENDER_RESOURCE_IDENTITY.md`.** What follows is the summary; that
+document is the citable one. It was **re-measured** rather than transcribed from this section,
+with a presence control in every round — and the re-measurement corrected one of the sentences
+below (see "What they give us") and turned up two instrument traps that each return a
+plausible wrong answer.
+
 **The authored layer is explicit, counted, breakable.** Two objects on one mesh
-datablock: `users == 2`, `a.data is b.data`. Editing the shared mesh moves **both** — the
-leak is the feature. "Make single user" (`.copy()`) drops users 2→1 and the two diverge
-from then on. The user count _is_ the button that breaks the link.
+datablock: `users == 2`, `a.data is b.data`. Editing the shared mesh moves **both** (extent
+2→7 each) and not the control — the leak is the feature. "Make single user" (`.copy()`)
+preserves the value, drops users 2→1, and the discriminator — edit the original _again_ —
+moves only the one still linked (9 vs 7). The user count _is_ the button that breaks the link.
 
 **The evaluated layer is a separate address space.** With an Array modifier on one
-sharer: original **4** verts, `A_eval` **12**, `B_eval` **4**, `users` still 2. All three
-are distinct meshes, and the evaluated mesh **is not in `bpy.data.meshes` at all**.
+sharer: authored **8** verts, `A_eval` **24**, `B_eval` **8**, `users` still 2. All three
+are distinct meshes, and **no datablock in `bpy.data.meshes` IS the evaluated one**.
 Writing to an evaluated mesh is _allowed_ and cannot reach the authored datablock.
+⚠️ State that membership claim by pointer, never by name: the evaluated mesh carries the
+**same name** as its authored datablock, so `ev.name in bpy.data.meshes` answers **True** and
+hands back the wrong object (8 verts vs 24).
 
 **Materials are shared across consumers exactly like our registry.** One material on two
 meshes, three objects: `A_eval_mat is B_eval_mat is C_eval_mat` → **True**, including
@@ -126,9 +141,15 @@ evaluated material.
 an unrelated object on a different mesh **saw the change**, and the authored datablock
 stayed clean. Blender has **no access control in the evaluated layer**.
 
-**How it avoids the bug.** Setting a slot's `link = 'OBJECT'` and pointing it at an
-override material: the other object still resolves the original, and the mesh datablock
-is untouched. Divergence is a **re-point**, never a write.
+**How it avoids the bug.** Setting a slot's `link = 'OBJECT'` (the default is `DATA`) and
+pointing it at an override material: the other object still resolves the original, the two
+still share **one instance with each other**, and the mesh datablock is untouched — it still
+names the shared material. Divergence is a **re-point**, never a write.
+⚠️ Read the effective material through `material_slots[n].material`, not
+`evaluated.data.materials[n]`: the latter is the datablock's own list, so it cannot see an
+`OBJECT`-linked slot — and it agrees with the correct read for every `DATA`-linked object, i.e.
+it is right until the case you are testing. It reported "the override did not take" during this
+very round.
 
 ### Houdini — docs tier only
 
@@ -137,20 +158,45 @@ lightweight reference to geometry plus a single transform, NOT a duplicate… Co
 packed prim copies the _reference_, not the data. **Packed primitives cannot be edited.**"
 To change one you unpack, which materialises your own copy.
 
-⚠️ **UNMEASURED / ungrounded at source tier.** No Houdini source is downloaded, and the
-HDK's `GU_DetailHandle` read/write lock discipline — the part closest to this design — is
-not covered by any reference doc we hold.
+**Ungrounded at source tier, and DECIDED rather than pending (S7, 2026-08-04).** No Houdini
+source is downloaded, and the HDK's `GU_DetailHandle` read/write lock discipline — the part
+closest to this design — is covered by no reference doc we hold; `ref/houdini/SOP.md` records
+it as checked-and-absent from five HDK/manual pages.
+
+This carried a ⚠️ through S0–S6 on the reading convention's terms: measure a premise before
+building the slice that rests on it. **No slice rested on it**, and S7 closed it by re-reading
+the reopen trigger rather than by measuring. That trigger — _"reopen when/if Basher decides to
+make the bad state unrepresentable rather than repairing it"_ — looked fired: S3 climbed to
+rung 3, and `overlayWithIdentity.ts` will no longer compile a bare value into the renderer. It
+is not fired, and the module's own declared limit is why: what became unrepresentable is a
+value **nobody decided about**, not the **write**. `identityIntact` records a caller's claim
+and cannot check one; we still repair. ⇒ the trigger never said which bad state, and a clause
+can go half-true, which reads like true. Sharpened to **rung 4** — the renderer taking the
+un-overlaid value and doing the overlay itself, so an unrepaired value cannot be constructed.
+Only there does "does acquiring a write lock make a private copy?" decide anything for us.
 
 ### What they give us
 
 Blender supplies the **principle** (divergence is a re-point; never write to shared).
 Houdini supplies the **enforcement** (the shared form cannot be edited).
 
-**We need both, and the reason is specific:** Blender's evaluated layer is rebuilt by the
-depsgraph, so a stray write is thrown away. Ours is **persistent and refcounted** — a
-stray write is permanent and inherited by every future consumer that keys the same. Our
-registry is _more_ dangerous than Blender's evaluated layer, which is why we cannot rely
-on Blender's discipline alone.
+**We need both, and the reason is specific — CORRECTED S7 2026-08-04, because the old form
+claimed more than the measurement supports.** This section used to say: _Blender's evaluated
+layer is rebuilt by the depsgraph, so a stray write is thrown away._ That asserts a difference
+of **kind**, and it is too strong. Measured: the evaluated layer is rebuilt **per datablock, on
+demand**. A stray write to a shared evaluated material **survived a proven full rebuild of the
+object's geometry** (array count 3→5, evaluated verts 24→40 as the control) and was discarded
+only by an authored edit to the material's _own_ datablock. Blender has a live leak window too.
+
+Ours is **persistent and refcounted** — a stray write is permanent and inherited by every
+future consumer that keys the same. So the conclusion stands and the argument is now honest: a
+difference of **duration, not of kind**, decisive because ours has no terminating event at all.
+We cannot rely on Blender's discipline alone.
+
+🔑 Worth noticing how this survived: the sentence was quoted through six slices as a
+description, and was an inference the entire time — this document's own stated failure mode,
+occurring inside the grounding section that exists to prevent it. Re-measuring is what caught
+it; re-reading would not have.
 
 ---
 
@@ -588,6 +634,48 @@ on the native road is one place. Cheapest after S1, not before.
   clone comment, which stated the rule correctly in one place and never generalised it).
 - The Blender measurements in §3 — the ownership boundary is currently ungrounded for
   both reference systems.
+
+**IN FLIGHT 2026-08-04.** Two of the three are done, and each one moved rather than being
+transcribed:
+
+- **The invariant** is catalogued, and its status line was **six slices stale** — it still
+  read "#530/#533 fixed the attach; #536 carries the rest". Re-derived per clause, because
+  the three clauses did not ship together and a lagging status is how a named gap gets read
+  as closed: identity is implemented for **1 of 6** value kinds with `ModifiedData` declared
+  absent (#545); ownership is at rung 3, refusing a value nobody decided about but not the
+  write; divergence is gated behaviourally, because no static key reaches a consumer defined
+  by what it POSSESSES.
+- **The error pattern** had two of its three sightings. The missing one is the interesting
+  one and it is not a defect — it is a **comment**. `materialRegistry.ts:255-259` states this
+  document's rule, correctly, for _textures_, inside the very module whose _materials_ were
+  then handed to an ownership-taking attach. ⇒ a correct "clone before mutating the shared X"
+  comment is a **detection signal, not reassurance**: it proves the module traffics in shared
+  resources and that someone already met the hazard at one scope. The narrow scope is the
+  camouflage — a reader looking for a missing rule finds a present one and moves on.
+- **A ninth observation target fell out of S6**, and it is the one this document's own gates
+  cannot supply. Every gate for all three clauses interrogates the SOURCE. #532's build left
+  the graph flawless and drew a **pure black box**; 3810 unit tests, every e2e assertion, the
+  compiler, the issue and the plan agreed with it. A screenshot was the only dissent — and
+  #535's target 3 had **declared exactly this residual one slice earlier**. The pixel tier
+  already exists here (`p57-bright-scene-contrast.spec.ts:93-98`) and no case at this
+  boundary uses it.
+- **✅ The Blender Ground Truth doc is written, and re-measuring rather than transcribing is
+  what earned it.** `ref/GROUND_TRUTH_BLENDER_RENDER_RESOURCE_IDENTITY.md` — nine sections,
+  probe/value tables, a presence control in every round, isolated rig removed and the scene's
+  inventory verified identical afterwards. It did not merely confirm §3. It produced:
+  - **A correction to the sentence this design leans on hardest** (see §3 "What they give us").
+    "Blender rebuilds the evaluated layer, so a stray write is discarded" claims a difference
+    of _kind_; the rebuild is **per datablock, on demand**, and a stray write survived a proven
+    geometry rebuild. Duration, not kind. Six slices had quoted it as description.
+  - **Two instrument traps, each returning a plausible wrong answer.** `name in bpy.data.meshes`
+    is a name lookup that says "present" and returns the authored datablock; and
+    `evaluated.data.materials[n]` cannot see an `OBJECT`-linked slot while agreeing with the
+    correct read everywhere else. The second one bit inside this round — it reported the
+    re-point had failed, contradicting its own sibling assertion, and that contradiction is
+    what exposed it.
+  - **Stronger versions of the claims that did hold**: the make-single-user round now carries
+    value-preservation and the edit-the-original discriminator, which is the same shape as our
+    own gate for the same reason.
 
 ---
 
