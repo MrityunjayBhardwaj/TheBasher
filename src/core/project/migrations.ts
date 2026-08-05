@@ -11,6 +11,7 @@
 // REF: THESIS.md §52, krama K5 step 7.
 
 import { getNodeType } from '../dag/registry';
+import { normalizeRetiredParams } from './retiredLadders';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
 
@@ -289,7 +290,6 @@ export function migrateFusedBoxToSplit(raw: unknown): unknown {
   const nodes = proj.state?.nodes;
   if (!nodes) return { ...proj, formatVersion: 3 };
 
-  const boxDef = getNodeType('BoxMesh');
   const objectVersion = getNodeType('Object')?.version ?? 1;
   const boxDataVersion = getNodeType('BoxData')?.version ?? 1;
 
@@ -302,17 +302,9 @@ export function migrateFusedBoxToSplit(raw: unknown): unknown {
     // Normalize the box through BoxMesh's OWN migration ladder first (reuse, not a
     // parallel copy), so an old-node-version box reaches the v4 shape — keeping its
     // material's byte-identical migrated look — BEFORE it is split.
-    let params: Record<string, unknown> = { ...(box.params ?? {}) };
-    if (boxDef) {
-      let v = typeof box.version === 'number' ? box.version : boxDef.version;
-      let safety = 64;
-      while (v < boxDef.version && safety-- > 0) {
-        const step = boxDef.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams('BoxMesh', box.version, {
+      ...(box.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, box.id);
     dataIdByBox.set(box.id, dataId);
@@ -374,7 +366,6 @@ export function migrateFusedSphereToSplit(raw: unknown): unknown {
   const nodes = proj.state?.nodes;
   if (!nodes) return { ...proj, formatVersion: 4 };
 
-  const sphereDef = getNodeType('SphereMesh');
   const objectVersion = getNodeType('Object')?.version ?? 1;
   const sphereDataVersion = getNodeType('SphereData')?.version ?? 1;
 
@@ -387,17 +378,9 @@ export function migrateFusedSphereToSplit(raw: unknown): unknown {
     // Normalize the sphere through SphereMesh's OWN migration ladder first (reuse, not
     // a parallel copy), so an old-node-version sphere reaches the v4 shape — keeping
     // its material's byte-identical migrated look — BEFORE it is split.
-    let params: Record<string, unknown> = { ...(sphere.params ?? {}) };
-    if (sphereDef) {
-      let v = typeof sphere.version === 'number' ? sphere.version : sphereDef.version;
-      let safety = 64;
-      while (v < sphereDef.version && safety-- > 0) {
-        const step = sphereDef.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams('SphereMesh', sphere.version, {
+      ...(sphere.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, sphere.id);
     dataIdBySphere.set(sphere.id, dataId);
@@ -466,7 +449,6 @@ export function migrateFusedCurveToSplit(raw: unknown): unknown {
   const nodes = proj.state?.nodes;
   if (!nodes) return { ...proj, formatVersion: 5 };
 
-  const curveDef = getNodeType('Curve');
   const objectVersion = getNodeType('Object')?.version ?? 1;
   const curveDataVersion = getNodeType('CurveData')?.version ?? 1;
 
@@ -479,17 +461,9 @@ export function migrateFusedCurveToSplit(raw: unknown): unknown {
     // Normalize the curve through Curve's OWN migration ladder first (reuse, not a
     // parallel copy), so a v1 bare-Vec3 curve reaches the v2 {id,co} shape — minting
     // the stable point ids — BEFORE it is split.
-    let params: Record<string, unknown> = { ...(curve.params ?? {}) };
-    if (curveDef) {
-      let v = typeof curve.version === 'number' ? curve.version : curveDef.version;
-      let safety = 64;
-      while (v < curveDef.version && safety-- > 0) {
-        const step = curveDef.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams('Curve', curve.version, {
+      ...(curve.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, curve.id);
     dataIdByCurve.set(curve.id, dataId);
@@ -632,18 +606,9 @@ export function migrateFusedLightToSplit(raw: unknown): unknown {
     // Normalize the light through its OWN migration ladder first (reuse, not a parallel
     // copy). All four posable kinds are v1 with no ladder steps today, but keep the
     // pattern so a future light-node version migrates BEFORE the split.
-    let params: Record<string, unknown> = { ...(light.params ?? {}) };
-    const def = getNodeType(light.type!);
-    if (def) {
-      let v = typeof light.version === 'number' ? light.version : def.version;
-      let safety = 64;
-      while (v < def.version && safety-- > 0) {
-        const step = def.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams(light.type!, light.version, {
+      ...(light.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, light.id);
     dataIdByLight.set(light.id, dataId);
@@ -793,18 +758,9 @@ export function migrateFusedCameraToSplit(raw: unknown): unknown {
     // parallel copy). Both camera kinds are v1 with no ladder steps today, but keep
     // the pattern so a future camera-node version migrates BEFORE the split —
     // splitting raw params before normalizing is the silent look-shift for old saves.
-    let params: Record<string, unknown> = { ...(camera.params ?? {}) };
-    const def = getNodeType(camera.type!);
-    if (def) {
-      let v = typeof camera.version === 'number' ? camera.version : def.version;
-      let safety = 64;
-      while (v < def.version && safety-- > 0) {
-        const step = def.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams(camera.type!, camera.version, {
+      ...(camera.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, camera.id);
     dataIdByCamera.set(camera.id, dataId);
@@ -913,18 +869,9 @@ export function migrateFusedBakedMeshToSplit(raw: unknown): unknown {
     // parallel copy). `BakedMesh` is v1 with no ladder steps today, but keep the pattern
     // so a future baked-node version migrates BEFORE the split — splitting raw params
     // before normalizing is the silent look-shift for old saves.
-    let params: Record<string, unknown> = { ...(baked.params ?? {}) };
-    const def = getNodeType('BakedMesh');
-    if (def) {
-      let v = typeof baked.version === 'number' ? baked.version : def.version;
-      let safety = 64;
-      while (v < def.version && safety-- > 0) {
-        const step = def.migrations?.[v];
-        if (!step) break;
-        params = step(params) as Record<string, unknown>;
-        v++;
-      }
-    }
+    const params = normalizeRetiredParams('BakedMesh', baked.version, {
+      ...(baked.params ?? {}),
+    });
 
     const dataId = freshDataId(nodes, baked.id);
     dataIdByBaked.set(baked.id, dataId);
