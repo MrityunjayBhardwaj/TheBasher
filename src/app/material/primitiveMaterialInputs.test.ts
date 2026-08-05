@@ -26,8 +26,11 @@
 //      tests/e2e/p536-override-band-instance-split.spec.ts (the same claim, in a browser);
 //      issues #530, #532, #536.
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type * as THREE from 'three';
+import { stripComments } from '../../test-utils/sourceScan';
 import { BoxDataNode, BoxDataParams } from '../../nodes/BoxData';
 import { hydrateInlineMaterial } from '../../nodes/materialSchema';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
@@ -295,5 +298,233 @@ describe('#536 S2 — the evaluator’s key is used, and the fallback is the sam
     });
     expect(keyOf(derive(a).spec)).toBe(keyOf(derive(b).spec));
     expect(derive(a).key).not.toBe(derive(b).key);
+  });
+});
+
+// ── #566 — THE OTHER DIRECTION: compiled → spec ────────────────────────────────────────
+//
+// `materialRegistry.test.ts` already enumerates spec → material ("specced but not
+// applied"). That is the mirror of this one and it is what made #532 findable ONCE the
+// fields were on the spec. The defect #532 actually was is upstream of it: `openpbrToThree`
+// compiled `alphaTest` / `doubleSided` / `vertexColors`, the native road's spec never
+// carried them, and the build could not apply what it never received. Every tier stayed
+// green, because no tier asked this question.
+//
+// ⚠️ THE TIER, stated the way the locality gate states its own. This reads the OBJECTS —
+// what the compile returns and what the assembly returns — never a picture. A field that is
+// carried under the right name and then applied to something the shader ignores is invisible
+// here by construction; that residual belongs to the browser tier.
+describe('#566 — every field the compile produces is carried on the spec, or excluded on the record', () => {
+  /**
+   * The declared correspondence, compiled field → spec field.
+   *
+   * DECLARED rather than name equality, and that is the whole design. Two of these land
+   * under a different name on purpose, so a name-equality gate would accuse `doubleSided`
+   * and `maps` while they are working correctly — and the cheapest way to silence a
+   * false accusation is to rename the field, which would undo the reason it was renamed
+   * (the spec speaks the BUILD's vocabulary, so the downstream enumeration can check it).
+   * A wrong gate that is easy to "fix" wrongly is worse than no gate.
+   */
+  const CARRIED: Readonly<Record<string, string>> = {
+    color: 'color',
+    roughness: 'roughness',
+    metalness: 'metalness',
+    opacity: 'opacity',
+    transparent: 'transparent',
+    alphaTest: 'alphaTest',
+    // #532 — boolean→enum at the spec assembly, so every spec field lands on the material
+    // under its own name and the downstream gate stays exact instead of needing an exemption.
+    doubleSided: 'side',
+    emissive: 'emissive',
+    emissiveIntensity: 'emissiveIntensity',
+    ior: 'ior',
+    clearcoat: 'clearcoat',
+    clearcoatRoughness: 'clearcoatRoughness',
+    transmission: 'transmission',
+    thickness: 'thickness',
+    // The compile emits map REFS; the seam suspends on them and hands the assembly decoded
+    // textures. Same information, one resolution step later, under the build's name.
+    maps: 'textures',
+    uvTransform: 'uvTransform',
+    mapUvTransforms: 'mapUvTransforms',
+  };
+
+  /**
+   * The closed exclusion set: compiled fields the native road deliberately does NOT honour.
+   *
+   * The reason travels with the member, because "which compiled fields does this road not
+   * honour, and why" was previously prose in three files and a comment in a fourth. One
+   * member today.
+   */
+  const EXCLUDED: Readonly<Record<string, string>> = {
+    vertexColors:
+      'asks the shader for a COLOR_0 attribute the GEOMETRY must supply, so a shared ' +
+      'material cannot answer it without knowing who is holding it (#532 — wiring it ' +
+      'through renders a native primitive pure black, observed in a browser)',
+  };
+
+  /**
+   * The fields the compile actually PRODUCES, unioned over several worlds.
+   *
+   * Runtime keys, not the interface's declarations: the question is what the assembly is
+   * handed, and an optional field is absent from the object when the IR does not populate
+   * it. Unioned over a corpus for exactly that reason — `mapUvTransforms` is ABSENT rather
+   * than undefined when no per-map placement exists, so a single-world enumeration would
+   * be blind to it and would report a stale CARRIED entry as correct.
+   */
+  const producedFields = (): string[] => {
+    const worlds: InlineMaterialSpec[] = [
+      BASE_IR,
+      irWith({ emission: { color: '#ff8800', intensity: 2 } }),
+      irWith({ geometry: { doubleSided: true, alphaCutoff: 0.5, vertexColors: true } }),
+      irWith({ mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0.1, 0], rotation: 0 } } }),
+    ];
+    const seen = new Set<string>();
+    for (const ir of worlds)
+      for (const k of Object.keys(compilePrimitiveMaterial(ir, undefined))) seen.add(k);
+    return [...seen].sort();
+  };
+
+  it('accounts for every produced field exactly once — carried, or excluded with a reason', () => {
+    for (const field of producedFields()) {
+      const carried = field in CARRIED;
+      const excluded = field in EXCLUDED;
+      expect(
+        carried || excluded,
+        `\`${field}\` is compiled but the spec neither carries nor excludes it — it will be ` +
+          `dropped on the floor exactly as #532's flags were, with every tier green`,
+      ).toBe(true);
+      expect(carried && excluded, `\`${field}\` is both carried and excluded`).toBe(false);
+    }
+  });
+
+  it('derives the counts rather than flooring them, so a field cannot leave quietly', () => {
+    // EXACT on both sides. A floor would pass a field that stopped being produced — which is
+    // the direction that looks like cleanup and silently removes a rendering lobe.
+    const produced = producedFields();
+    expect(produced.length).toBe(18);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(17);
+    expect(produced.filter((f) => f in EXCLUDED).length).toBe(1);
+  });
+
+  it('every CARRIED target really is a key of the assembled spec', () => {
+    // Guards the map itself. A stale entry — right-hand side renamed, or the field dropped
+    // from the assembly — would otherwise let the first case pass while nothing arrives.
+    const spec = primitiveMaterialSpec(
+      compilePrimitiveMaterial(
+        irWith({ mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } } }),
+        undefined,
+      ),
+      'flat',
+      NO_MAPS,
+    );
+    const produced = producedFields();
+    for (const [compiled, specField] of Object.entries(CARRIED)) {
+      // #570 — the map's LEFT-hand side needs the same guarantee its right-hand side has,
+      // and the same one every exclusion already has. Without this a carried entry naming a
+      // field the compile does not produce passes every case in this file (measured: adding
+      // one left 3820/3820 green), so the map can start describing a compile that no longer
+      // exists — the one thing a declared correspondence is here to prevent.
+      expect(
+        produced,
+        `CARRIED names \`${compiled}\`, which the compile does not produce in any world`,
+      ).toContain(compiled);
+      expect(
+        Object.prototype.hasOwnProperty.call(spec, specField),
+        `CARRIED says \`${compiled}\` → \`${specField}\`, but the spec has no such key`,
+      ).toBe(true);
+    }
+  });
+
+  /**
+   * #570 — THE CORPUS'S OWN OBLIGATION, read from the compile rather than from memory.
+   *
+   * Every case above is a statement about `producedFields()`, and `producedFields()` unions
+   * four HAND-PICKED worlds. `openpbrToThree` emits most of its keys unconditionally, but a
+   * conditional emission (`...(cond ? { field } : {})`) only appears when some world triggers
+   * `cond` — so a conditional field no world reaches is absent from the union, accounted for
+   * by nobody, and the count stays put. Measured: adding one left **3820/3820 green**, while
+   * the same field emitted unconditionally reddened exactly one file of 306. The condition
+   * was the entire difference.
+   *
+   * That is this file's own subject one level up — "the next field it learns to compile can
+   * be lost exactly the same way with every tier green" — so the corpus cannot stay a list
+   * somebody remembered to extend.
+   *
+   * ⚠️ STATED RESIDUAL: derivation B reads SYNTAX. A conditional emission written some other
+   * way (an `if` that assigns, a spread of a prebuilt object) is invisible to it, and if no
+   * world triggers that one either, derivation A cannot see it and the two agree vacuously.
+   * The pair narrows the gap to "a new conditional emission, in a new syntax, that nothing
+   * exercises"; it does not close it. Widen the pattern when the compile grows a second way
+   * of emitting conditionally, not before.
+   */
+  const COMPILER = 'src/app/material/openpbrToThree.ts';
+
+  /** Derivation B — the field named by each conditional spread in the compiler's source. */
+  const conditionallyEmittedInSource = (): string[] => {
+    const src = stripComments(readFileSync(join(__dirname, '..', '..', '..', COMPILER), 'utf8'));
+    const body = /export function openpbrToThree[\s\S]*?\n}/.exec(src);
+    if (!body) throw new Error('could not find the openpbrToThree body');
+    return [...body[0].matchAll(/\.\.\.\([^?]*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map((m) => m[1]);
+  };
+
+  /**
+   * Derivation A — the fields observed to be NON-universal: produced by some world in the
+   * corpus, absent from the leanest one. Runtime, so it owes nothing to the compiler's
+   * syntax, which is what makes it an independent check on B's regex rather than a restating
+   * of it.
+   */
+  const observedConditional = (): string[] => {
+    const always = new Set(Object.keys(compilePrimitiveMaterial(BASE_IR, undefined)));
+    return producedFields().filter((f) => !always.has(f));
+  };
+
+  it('every conditionally-emitted field is triggered by a world in the corpus', () => {
+    const declared = conditionallyEmittedInSource();
+    // Anti-vacuity: a regex that matched nothing would make this case green and meaningless,
+    // which is how a census dies quietly.
+    expect(
+      declared.length,
+      'the conditional-spread parse read nothing — this census would be vacuous',
+    ).toBeGreaterThan(0);
+    const produced = producedFields();
+    for (const field of declared) {
+      expect(
+        produced,
+        `\`${field}\` is emitted conditionally and NO world in the corpus triggers it, so ` +
+          `every case in this file is blind to it — add a world that populates its input`,
+      ).toContain(field);
+    }
+  });
+
+  it('reads the conditional set two independent ways — source syntax and runtime — and they agree', () => {
+    // If B's regex silently stops matching a form the compiler starts using, A still sees the
+    // field (some world triggers it) and the two disagree. That disagreement is the only
+    // signal that the source-text half has gone blind.
+    expect(conditionallyEmittedInSource().sort()).toEqual(observedConditional().sort());
+  });
+
+  it('every EXCLUSION is load-bearing — remove it and the first case must actually accuse', () => {
+    // An exemption that is not doing work reads as considered and is decoration; worse, if
+    // the field later DOES get carried, the stale entry keeps the census green while the
+    // reason beside it has become false. So: an excluded field must genuinely be absent
+    // from the spec, and must genuinely still be produced.
+    const spec = primitiveMaterialSpec(
+      compilePrimitiveMaterial(irWith({ geometry: { vertexColors: true } }), undefined),
+      'flat',
+      NO_MAPS,
+    );
+    const produced = producedFields();
+    for (const field of Object.keys(EXCLUDED)) {
+      expect(produced, `\`${field}\` is excluded but no longer produced`).toContain(field);
+      expect(
+        Object.prototype.hasOwnProperty.call(spec, field),
+        `\`${field}\` is listed as excluded but the spec carries it — the exclusion, and the ` +
+          `reason written beside it, are now false`,
+      ).toBe(false);
+      expect(EXCLUDED[field].length, `\`${field}\` is excluded without a reason`).toBeGreaterThan(
+        30,
+      );
+    }
   });
 });
