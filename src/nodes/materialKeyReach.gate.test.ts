@@ -39,6 +39,25 @@
 // this function by #536 S2), and no static key over this vocabulary would find it. That
 // residual belongs with #535's behavioural backstop.
 //
+// Case D has the same shape of residual, and it is worth stating exactly, because most of
+// what looks like an evasion is not one. MEASURED by perturbing the real call sites:
+//
+//   • a third call site added anywhere reds the parse count whatever it passes (3 ≠ 2);
+//   • the UNKEYED site's `null` re-spelled as a variable reds the unkeyed count (0 ≠ 1).
+//
+// TWO evasions stay silent, both measured green:
+//
+//   • a call made through a RENAMED import — `import { usePrimitiveMaterial as attach }`
+//     — is not seen at all, because the census keys on the callee's spelling;
+//   • the KEYED site's argument re-spelled as a variable that always resolves to null.
+//     The census reads argument TEXT, so that road reports as keyed while attaching with
+//     no identity. Observed: every assertion here stayed green under exactly that edit.
+//
+// Both are the SAME residual case C names — a static census sees spellings, not values —
+// and neither is closable by a wider regex. The behavioural backstop is #535's, and the
+// import side is `registryDoors.gate.test.ts`, which pins this module as the registry's
+// only attach consumer, so an aliased caller would still have to come through here.
+//
 // REF: docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 (the invariant and the reach paragraph
 //      this gate keeps honest); src/nodes/materialKey.ts (`materialKeyOf`);
 //      src/nodes/types.ts (the union and the one member carrying a key);
@@ -286,14 +305,19 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
 
     // Anti-vacuity, and it is not theoretical: a parser that found nothing would make every
     // assertion below green while counting an empty set.
-    expect(calls.length, 'the call-site parse read nothing — this census would be vacuous').toBe(2);
+    expect(
+      calls.length,
+      'the call-site parse does not read the two known calls — under-reading makes every ' +
+        'assertion below vacuous, and over-reading means a third road now attaches here',
+    ).toBe(2);
 
     // The type system already refuses an omitted argument. This re-checks it structurally,
     // because the way this gate dies is someone widening the parameter back to optional to
     // silence a red — at which point typecheck goes quiet and only this case still speaks.
     expect(
       calls.filter((c) => c.args.length !== 4).map((c) => c.path),
-      'a caller omits the minted-key argument — the omission is exactly what #545 closed',
+      'a caller does not pass exactly four arguments — an omitted minted key is exactly ' +
+        'what #545 closed, and a fifth argument means the parser mis-split this call',
     ).toEqual([]);
 
     const unkeyed = calls.filter((c) => c.args[3] === 'null');
