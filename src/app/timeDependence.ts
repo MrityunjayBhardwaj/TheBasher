@@ -51,6 +51,19 @@ interface Counters {
  * Note the channel NODE itself is not flagged by being a channel: its `evaluate` returns a
  * sampler whose value does not change per frame — the `t`-dependence lands on its TARGET,
  * which is what gets folded.
+ *
+ * ⚠️ THIS IS A SOUND OVER-APPROXIMATION, AND THE DIRECTION MATTERS TO ITS CONSUMER. The
+ * walk below is REACHABILITY, not a per-node transfer function: a node is flagged because
+ * something time-varying reaches it, even if that node discards the value it received. So
+ * the returned set can be larger than the truth and is never smaller.
+ *
+ * That is the safe side, because the asymmetry at the consumer is severe. `foldOverlays`
+ * treats a node outside this set as never needing to re-resolve, at any playhead. Naming a
+ * node that does not really vary costs a re-resolve that computes the same value; FAILING
+ * to name one that does freezes it at whatever frame it was first folded at, with no test
+ * at any tier able to see the difference. Tighten this only in the direction that keeps
+ * that property — and if a per-node transfer function is ever added, the gate to write
+ * first is the one that catches under-naming.
  */
 export function timeDependentNodes(state: DagState, counters?: Counters): Set<NodeId> {
   const seeds = new Set<NodeId>();
