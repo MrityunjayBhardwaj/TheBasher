@@ -7,7 +7,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag/ops';
-import { emptyDagState } from '../core/dag/state';
+import { edges, emptyDagState } from '../core/dag/state';
 import type { DagState, Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { timeDependentNodes } from './timeDependence';
@@ -131,38 +131,61 @@ describe('#578 — timeDependentNodes', () => {
   });
 
   it('CALL COUNT: the walk visits each node ONCE, not once per incoming edge', () => {
-    // A diamond: box0 → arr0, and a second consumer of box0 that also feeds arrB. arrB is
-    // reachable by two paths, so a walk that expands per-edge visits it twice. Value
-    // assertions cannot tell one traversal from a hundred — only a counter can.
-    const s = scene(1, [
-      { type: 'addNode', nodeId: 'arrX', nodeType: 'ArrayModifier', params: {} },
-      { type: 'addNode', nodeId: 'arrB', nodeType: 'ArrayModifier', params: {} },
+    // ⚠️ THE FIXTURE IS THE WHOLE DIFFICULTY HERE, and the first draft of it was VACUOUS.
+    // It built the diamond out of ArrayModifiers, whose `target` socket is
+    // `cardinality: 'single'` — so the second connect REPLACED the first instead of
+    // adding a second path (measured: the edges into the join node were `['b']`, not
+    // `['a','b']`). With no multi-path node in the graph, per-node and per-edge expansion
+    // are indistinguishable and the counter asserted nothing. Falsification is what
+    // surfaced it: removing the dedup left all seven cases green.
+    //
+    // `Group.children` is `cardinality: 'list'`, and Group emits SceneObject, so a chain
+    // of Groups gives a genuine diamond: g0 fans out to g1 and g2, which both feed g3.
+    let s = emptyDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'g0', nodeType: 'Group', params: {} },
+      { type: 'addNode', nodeId: 'g1', nodeType: 'Group', params: {} },
+      { type: 'addNode', nodeId: 'g2', nodeType: 'Group', params: {} },
+      { type: 'addNode', nodeId: 'g3', nodeType: 'Group', params: {} },
       {
         type: 'connect',
-        from: { node: 'box0', socket: 'out' },
-        to: { node: 'arrX', socket: 'target' },
+        from: { node: 'g0', socket: 'out' },
+        to: { node: 'g1', socket: 'children' },
       },
       {
         type: 'connect',
-        from: { node: 'arr0', socket: 'out' },
-        to: { node: 'arrB', socket: 'target' },
+        from: { node: 'g0', socket: 'out' },
+        to: { node: 'g2', socket: 'children' },
       },
       {
         type: 'connect',
-        from: { node: 'arrX', socket: 'out' },
-        to: { node: 'arrB', socket: 'target' },
+        from: { node: 'g1', socket: 'out' },
+        to: { node: 'g3', socket: 'children' },
       },
-      channelOp('ch', 'box0', 2),
-    ]);
+      {
+        type: 'connect',
+        from: { node: 'g2', socket: 'out' },
+        to: { node: 'g3', socket: 'children' },
+      },
+      channelOp('ch', 'g0', 2),
+    ] as Op[]) {
+      s = applyOp(s, op).next;
+    }
+
+    // The fixture's own precondition, asserted rather than assumed: g3 really does have
+    // TWO incoming edges. Without this the case can silently rot back to vacuous.
+    const intoG3 = [...edges(s)].filter((e) => e.consumer === 'g3').map((e) => e.producer.node);
+    expect(intoG3.sort()).toEqual(['g1', 'g2']);
 
     const counters = { visits: 0 };
     const flagged = timeDependentNodes(s, counters);
-    expect([...flagged].sort()).toEqual(['arr0', 'arrB', 'arrX', 'box0']);
-    // Exactly one visit per flagged node — 4, not 5 (arrB has two incoming paths).
+    expect([...flagged].sort()).toEqual(['g0', 'g1', 'g2', 'g3']);
+    // Exactly one visit per flagged node — 4, not 5. g3 is reachable by two paths, so a
+    // walk that expands per-edge dequeues it twice while producing the identical set.
     expect(counters.visits).toBe(4);
 
-    // The counter must be able to read ZERO, or a spy that silently failed to intercept
-    // would pass the case above for the wrong reason.
+    // The counter must be able to read ZERO, or a counter that silently failed to
+    // increment would pass the case above for the wrong reason.
     const empty = { visits: 0 };
     timeDependentNodes(scene(2), empty);
     expect(empty.visits).toBe(0);
