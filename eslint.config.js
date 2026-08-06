@@ -20,6 +20,13 @@ const PURE_FORBIDDEN = [
       'performance.now is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.',
   },
   {
+    // The constructor form reaches the same clock as `Date.now`, and was the one
+    // hole in this list (#576) — `new Date().getTime()` passed lint cleanly.
+    selector: "NewExpression[callee.name='Date']",
+    message:
+      'new Date() is forbidden inside `pure: true` node evaluators (V2/V3). Time enters via the `Time` socket.',
+  },
+  {
     selector: "MemberExpression[object.name='crypto'][property.name='randomUUID']",
     message:
       'crypto.randomUUID is forbidden inside `pure: true` node evaluators (V2). Use a deterministic id from (params, inputs).',
