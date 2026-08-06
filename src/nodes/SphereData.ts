@@ -43,6 +43,10 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: SphereDataParams,
+  // #524 — all three are folded into the `GeometryRef` and never reach the value, so an
+  // overlay applied downstream cannot move the sphere. `material` reaches the value under
+  // its own name and is deliberately NOT listed. See `NodeDefinition.cookParams`.
+  cookParams: ['radius', 'widthSegments', 'heightSegments'],
   inputs: {
     // #394 — the material can come from a Material node instead of this node's own
     // param. `list` cardinality is deliberate and the reason is in materialSocket.ts:

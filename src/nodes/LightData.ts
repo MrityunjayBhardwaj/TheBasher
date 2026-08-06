@@ -76,6 +76,11 @@ export const LightDataNode: NodeDefinition<LightDataParams, LightDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: LightDataParams,
+  // #524 — `lightKind` is the discriminator this evaluate switches on to pick the emitted
+  // light shape, and `tex` is consumed the same way; neither appears on the value. The
+  // shading params (intensity/color/…) all do, so the render seam reaches them and they are
+  // deliberately NOT listed. See `NodeDefinition.cookParams`.
+  cookParams: ['lightKind', 'tex'],
   inputs: {},
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // The DEFINING section — a light's substance is its shading. A data node owns no

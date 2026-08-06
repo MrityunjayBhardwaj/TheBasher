@@ -60,6 +60,10 @@ export const CurveDataNode: NodeDefinition<CurveDataParams, CurveDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: CurveDataParams,
+  // #524 — `resolution` is consumed into the sample count and never appears on the value.
+  // `points` and `closed` both survive onto it, so the render seam reaches them and they are
+  // deliberately NOT listed. See `NodeDefinition.cookParams`.
+  cookParams: ['resolution'],
   inputs: {},
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // The DEFINING section — a curve's substance is its points. A data node owns no

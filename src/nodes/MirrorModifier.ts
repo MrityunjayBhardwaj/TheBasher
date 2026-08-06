@@ -51,6 +51,9 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
   pure: true,
   cost: 'cheap',
   paramSchema: MirrorModifierParams,
+  // #524 — the same shape as ArrayModifier: every param is consumed into the geometry or the
+  // bypass branch and none survives onto the value. See `NodeDefinition.cookParams`.
+  cookParams: ['axis', 'offset', 'muted'],
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['modifier'],

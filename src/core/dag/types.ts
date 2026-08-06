@@ -186,6 +186,28 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * or via ctx for impure nodes only.
    */
   evaluate(params: P, inputs: ResolvedInputs, ctx: EvalCtx): O | Record<string, O>;
+  /**
+   * The params this node's `evaluate` CONSUMES — folded into something else (a
+   * `GeometryRef`, a sample count, a branch) rather than passed through onto the value.
+   *
+   * ⚠️ THIS IS NOT DOCUMENTATION. It decides where an overlay — a keyframe channel, an NLA
+   * strip, a driver — has to be applied for the picture to move, and getting it wrong is
+   * SILENT (#524). Overlays are folded at the read and render seams, onto the evaluated
+   * VALUE. That works for anything the renderer applies on the way out. It cannot work for
+   * a value the cook consumed to BUILD something: the geometry was already computed from
+   * the raw param, and the overlay's write lands on a field with no reader. Measured on a
+   * cube: a `size` channel makes the inspector read 1 → 5 and materialises
+   * `value.data.size = [5,5,5]`, while the geometry key stays `box|1,1,1` and the cube on
+   * screen never moves. Nothing throws, and undo records a perfectly good entry.
+   *
+   * A param listed here is folded BEFORE `evaluate` runs (`src/app/effectiveParams.ts`),
+   * so the cook sees the animated value. Listing one that is NOT consumed would apply the
+   * overlay twice — once here and once at the render seam — so the set is gated against a
+   * real evaluation rather than trusted: `src/app/effectiveParams.gate.test.ts` measures
+   * which params are absent from this node's own evaluated value and requires the two to
+   * agree in BOTH directions.
+   */
+  cookParams?: readonly string[];
   /** Optional migration ladder: version N → N+1. */
   migrations?: Record<number, (oldParams: unknown) => unknown>;
   /**

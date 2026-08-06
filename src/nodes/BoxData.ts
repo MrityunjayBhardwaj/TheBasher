@@ -37,6 +37,12 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: BoxDataParams,
+  // #524 — `size` is folded into the `GeometryRef` here and never appears on the value, so
+  // an overlay applied at the render seam writes a dead `value.data.size` and the cube keeps
+  // the geometry the raw param built. Listed here, it is folded BEFORE the cook instead.
+  // `material` is deliberately absent: it survives onto the value under its own name, so the
+  // render seam reaches it, and folding it here as well would apply an additive channel twice.
+  cookParams: ['size'],
   inputs: {
     // #394 — the material can come from a Material node instead of this node's own
     // param. `list` cardinality is deliberate and the reason is in materialSocket.ts:

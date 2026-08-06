@@ -58,6 +58,12 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   pure: true,
   cost: 'cheap',
   paramSchema: ArrayModifierParams,
+  // #524, the issue's own case. A modifier consumes ALL of its params to build its output —
+  // the value it emits is `{kind, geometry, material}` and carries none of them by name — so
+  // every one of them is unreachable by an overlay applied downstream. Measured before it was
+  // written down: a driver on `count` reported 9 while the cooked geometry stayed at 2.
+  // See `NodeDefinition.cookParams`.
+  cookParams: ['count', 'offset', 'muted'],
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   inspectorSections: ['modifier'],
