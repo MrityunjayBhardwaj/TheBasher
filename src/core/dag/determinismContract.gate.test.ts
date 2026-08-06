@@ -57,13 +57,17 @@ describe('#576 — the determinism contract is exact', () => {
     for (const t of actual) expect(requireNodeType(t).pure).toBe(false);
   });
 
-  it('LANE CENSUS: the corpus is non-empty and mostly pure (guards a vacuous pass)', () => {
-    const all = listNodeTypes();
-    const pure = all.filter((t) => requireNodeType(t).pure);
-    // If the registry ever fails to seed, every filter above returns [] and two of the
-    // three tests pass for free. This is the presence control.
-    expect(all.length).toBeGreaterThan(20);
-    expect(pure.length).toBeGreaterThan(all.length - IMPURE.length - 1);
+  it('LANE CENSUS: the corpus is non-empty (presence control)', () => {
+    // The two censuses above filter a list. Today an unseeded registry reds them both,
+    // because both expectations happen to be non-empty — but if STATEFUL were ever
+    // emptied deliberately, its census would pass against an unseeded registry. This
+    // floor is what stops that, and it is the ONLY claim here.
+    //
+    // ⚠️ An earlier draft also asserted `pure.length > all.length - IMPURE.length - 1`.
+    // That is EQUAL BY CONSTRUCTION: `pure` is the boolean complement of the impure set,
+    // so given the census above it always reduces to `all - 6 > all - 7`. No registry
+    // could fail it — decoration reading as coverage. Removed rather than left in.
+    expect(listNodeTypes().length).toBeGreaterThan(20);
   });
 
   it('CONTEXT SURFACE: EvalCtx exposes exactly { time }', () => {
