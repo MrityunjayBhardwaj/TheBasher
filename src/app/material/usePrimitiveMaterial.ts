@@ -49,10 +49,34 @@
 // the registry has to be told.
 // #536 S2 — `mintedKey` is `MeshDataValue.materialKey`, the identity the EVALUATOR
 // decided (the fold: param → socket → operator lane). Pass it and the renderer stops
-// re-deriving that half. It is optional because only `MeshData` carries one today:
-// `ModifiedMeshR`'s value kind has none, and a materialless data node draws the fallback
-// IR, which the evaluator never keyed. Both fall back to the SAME function the evaluator
-// used, never to a second spelling of identity.
+// re-deriving that half. Only `MeshData` carries one today: `ModifiedMeshR`'s value kind
+// has none, and a materialless data node draws the fallback IR, which the evaluator never
+// keyed. Both fall back to the SAME function the evaluator used, never to a second
+// spelling of identity.
+//
+// ── #545 — WHY THIS PARAMETER IS REQUIRED AND NOT OPTIONAL ────────────────────────────
+//
+// #545 asked whether `ModifiedData` should mint a key, and the answer measured out as NO:
+// the fallback IS the evaluator's own function over the evaluator's own IR, so there is no
+// second spelling that could drift. What that answer leaves behind is a scheduling hazard
+// rather than a defect. #545 names three conditions that would turn the fallback from
+// sufficient into wrong, and the third is "a second unkeyed road starts sharing the
+// registry" — which, while this argument was optional, a new road satisfied by simply not
+// writing it. An omission is not a decision, and it leaves no trace for anyone to review.
+//
+// It cannot be caught below the type system either, and that is the whole reason for the
+// climb. Omitting the argument yields `irKeyFor(ir, undefined) === materialKeyOf(ir)`,
+// which is exactly what a correct minted key equals today — so an omitting caller is
+// EQUAL BY CONSTRUCTION to a correct one, and no test at any tier can red on it. The
+// constraint has no runtime instrument available to hold it; the signature is the only
+// place it can live.
+//
+// Required, so every caller states which road it is on. `null` is the escape hatch, and
+// it is counted EXACTLY by `materialKeyReach.gate.test.ts` case D — a floor would let the
+// unkeyed set grow one quiet caller at a time, which is the failure this is here to stop.
+// Passing `null` is a claim: THIS road has no minted identity and the downstream fallback
+// is the right answer for it. Adding a second such caller must be an argument someone
+// makes, not a default they inherit.
 //
 // REF: src/app/materialRegistry.ts (the subject); src/app/registryDoors.gate.test.ts
 //      (the gate that keeps this the only accessor consumer);
@@ -73,7 +97,7 @@ export function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
-  mintedKey?: string | null,
+  mintedKey: string | null,
 ): THREE.MeshPhysicalMaterial {
   const compiled = compilePrimitiveMaterial(ir, override);
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-

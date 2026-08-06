@@ -2146,7 +2146,15 @@ function ModifiedMeshR({
   // nothing (surfaced below); drawing the baked material is the deferred follow-up.
   const mat = value.material;
   const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
-  const material = usePrimitiveMaterial(inlineMat, override, shading);
+  // #545 — `null`, stated rather than omitted, and this is the ONE caller entitled to it
+  // (counted exactly by `materialKeyReach.gate.test.ts` case D). `ModifiedDataValue` mints
+  // no `materialKey`, and #545 measured that as the right answer rather than a gap: the
+  // seam's fallback calls `materialKeyOf` — the same function the evaluator mints with,
+  // over the same IR — so this road shares the registry correctly without a second
+  // spelling of identity to drift from. What it must NOT be is an omission, because an
+  // omission computes the identical key and no tier below the signature can tell the two
+  // apart.
+  const material = usePrimitiveMaterial(inlineMat, override, shading, null);
   const geom = getForAttach(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
@@ -2337,7 +2345,11 @@ function ObjectMeshR({
     inlineMat,
     override,
     shading,
-    mat ? data?.materialKey : null,
+    // #545 — `?? null` resolves the absent case HERE rather than handing `undefined` down.
+    // `data?.materialKey` is `string | null | undefined`, and the seam now refuses the
+    // third: an absent key and a road that has none are different claims, and only the
+    // caller knows which one it is making.
+    mat ? (data?.materialKey ?? null) : null,
   );
   const geom = data ? getForAttach(data.geometry) : null;
   if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle

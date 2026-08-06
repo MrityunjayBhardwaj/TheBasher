@@ -100,11 +100,18 @@ export function compilePrimitiveMaterial(
 /**
  * The evaluated half of identity.
  *
- * `minted` is `MeshDataValue.materialKey`, handed down by the evaluator. It is absent for
- * value kinds S1 did not reach (`ModifiedDataValue`) and for the fallback material a
+ * `minted` is `MeshDataValue.materialKey`, handed down by the evaluator. There is none for
+ * value kinds S1 did not reach (`ModifiedDataValue`) or for the fallback material a
  * materialless data node draws, so it falls back to the SAME function the evaluator used
  * rather than to a second spelling of identity — a second spelling is how the two halves
  * would drift apart without any test noticing.
+ *
+ * #545 — the product now always STATES that absence as `null`: `usePrimitiveMaterial`'s
+ * parameter is required, so `undefined` can no longer arrive from any caller. The arm
+ * survives in the type because it is the equality this whole design rests on, and the
+ * cheapest place to keep saying so is a test that can still pass `undefined`
+ * (`primitiveMaterialInputs.test.ts` — `irKeyFor(ir, null) === irKeyFor(ir, undefined)`).
+ * Narrowing it would delete that control, which is worth more than the dead width costs.
  */
 export function irKeyFor(ir: InlineMaterialSpec, minted: string | null | undefined): string {
   return minted ?? materialKeyOf(ir);
