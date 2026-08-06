@@ -142,10 +142,48 @@ export interface TypeDescriptor {
 
 export type NodeCost = 'cheap' | 'medium' | 'expensive';
 
+// ---------------------------------------------------------------------------
+// THE DETERMINISM CONTRACT — three clauses, because the one-line version is false
+//
+// The sentence usually quoted is *same (inputs, params, time) → same output*. It is
+// true for the pure lane and FALSE for the other two, so stating it alone gets it
+// relied on where it does not hold. All three clauses:
+//
+//   1. PURE nodes (`pure: true`) — same (inputs, params, time) → same output.
+//      Time is an explicit term of the cook, not something excluded from it: it
+//      arrives as a typed `Time` socket value from TimeSource, so a pure consumer
+//      stays bit-exact given its arguments.
+//
+//   2. STATEFUL nodes (`stateful: true` — Lag, Solver) — deterministic given a SEED
+//      and an INTERVAL, not point-in-time. A single-frame evaluation of a lag is
+//      the wrong answer, not an imprecise one; the real value needs the previous
+//      output, produced by the replay seam. Determinism here is by contract, not
+//      by purity. (The reference substrate's stateful channel operators behave the
+//      same way, so this is a property of the problem, not of our implementation.)
+//
+//   3. GENERATIVE nodes (ComfyUIWorkflow) — deterministic given a PINNED SEED.
+//      ⚠️ NOT ACHIEVABLE TODAY: ComfyUIWorkflow carries no seed param, so the same
+//      tuple can produce different pixels. Stated as a known limitation rather than
+//      implied to hold. Giving it a seed is its own slice.
+//
+// WHY `EvalCtx` CARRIES ONLY `time`, and why that is load-bearing.
+// This is the one channel by which a nondeterministic term could reach a pure
+// evaluator without going through params or inputs — i.e. without entering the
+// cache key. Two fields were removed here (#576) precisely because they could:
+//   • `realTime` — wall-clock. Present since the original DAG core commit, never
+//     read by anything. Reading it would break clause 1 silently.
+//   • `seed` — worse than redundant. A pure node's cache key contains NO ctx term
+//     (see `evaluator.ts`, where `timePart` is added for impure nodes only), so a
+//     seed passed through the context would never enter the key and two different
+//     seeds would collide on one cache entry. A seed belongs in PARAMS, where it is
+//     hashed, saved and undoable — `ScatterNode` already does this correctly with
+//     `mulberry32(params.seed)`.
+// Adding a field here re-opens that hole, so the shape is pinned by
+// `determinismContract.gate.test.ts`.
+// ---------------------------------------------------------------------------
+
 export interface EvalCtx {
   time: { frame: number; seconds: number; normalized: number };
-  seed?: number;
-  realTime?: number;
 }
 
 export interface ResolvedInputs {
