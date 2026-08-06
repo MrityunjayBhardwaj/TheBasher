@@ -17,7 +17,7 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { stubEncoder } from './encoders/stubEncoder';
-import { runRenderJob } from './runRenderJob';
+import { runRenderJob, type PassEncoder } from './runRenderJob';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -200,5 +200,45 @@ describe('V8 — file-rooted dispatch rule (src/render/* must not emit Ops)', ()
   it('dryRun.ts does not import dag store or op machinery (P5 Wave A5)', () => {
     const file = readFileSync(path.resolve(__dirname, 'dryRun.ts'), 'utf-8');
     expect(file).not.toMatch(FORBIDDEN_IMPORTS);
+  });
+});
+
+describe('#524 — the render job cooks each frame with that frame’s overlaid params', () => {
+  it('renders the ANIMATED size, not the authored one', async () => {
+    // The cube's `size` is consumed inside `BoxData.evaluate` to build the geometry, so an
+    // overlay applied anywhere downstream of the cook cannot reach it. Before #524 this
+    // job wrote three frames of a 1×1×1 cube while the inspector read the animated value.
+    //
+    // Asserted on the SceneValue the encoder is handed — the job's actual product — rather
+    // than on the resolver, which reported the animated number the whole time the defect
+    // was live and would pass either way.
+    let state = buildJobState({ frameStart: 0, frameEnd: 2, fps: 1 });
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_size',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        target: 'box_data',
+        paramPath: 'size',
+        keyframes: [
+          { time: 0, value: [1, 1, 1] },
+          { time: 2, value: [3, 3, 3] },
+        ],
+      },
+    }).next;
+
+    const seen: string[] = [];
+    const capturing: PassEncoder = async (input) => {
+      const child = (
+        input.scene as unknown as { children?: { data?: { geometry?: { key?: string } } }[] }
+      ).children?.[0];
+      seen.push(child?.data?.geometry?.key ?? 'MISSING');
+      return stubEncoder(input);
+    };
+
+    await runRenderJob('job', state, { storage: new MemoryStorage(), encoder: capturing });
+
+    // fps 1, so frames 0/1/2 are seconds 0/1/2 — the channel's whole span.
+    expect(seen).toEqual(['box|1,1,1', 'box|2,2,2', 'box|3,3,3']);
   });
 });

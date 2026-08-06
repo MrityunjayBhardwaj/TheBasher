@@ -25,6 +25,9 @@
 // upgrade as Wave B.1 if perf demands").
 
 import { evaluate } from '../core/dag/evaluator';
+// #524 — a pure READER, which is what keeps this inside V8: it derives a state, it never
+// emits an Op and never touches the store.
+import { effectiveDagState } from '../app/effectiveParams';
 import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
@@ -101,8 +104,19 @@ export async function runRenderJob(
   for (let frame = meta.frames.start; frame <= meta.frames.end; frame++) {
     const seconds = frame / fps;
     const ctx = ctxForFrame(frame, fps);
+    // #524 — the cook's params for THIS frame. A keyframe on a cube's `size` or a driver on
+    // a modifier's `count` is consumed inside `evaluate` to build geometry, so no overlay
+    // applied downstream of the cook can reach it; folding here is what puts the animated
+    // value in front of the build. Every `evaluate` below reads `frameState`, not `state`,
+    // and that is the whole wiring — a call left on `state` renders the un-animated cook
+    // with nothing to show for it (`effectiveParams.gate.test.ts` counts them).
+    //
+    // Per frame rather than hoisted, because the fold is a function of `ctx.time`. It
+    // returns `state` itself when nothing is overlaid, so an un-animated job pays one pass
+    // over the node table and no rebuild.
+    const frameState = effectiveDagState(state, ctx);
     for (const ref of passRefs) {
-      const passResult = evaluate(state, ref.node, { ctx, socket: ref.socket });
+      const passResult = evaluate(frameState, ref.node, { ctx, socket: ref.socket });
       const pass = passResult.value as ImageValue;
       // Pass evaluators consume Scene + Camera via their own input
       // sockets — read those producers off the pass node's inputs so
@@ -115,13 +129,13 @@ export async function runRenderJob(
           `runRenderJob: pass "${ref.node}" missing single Scene or Camera input — cannot dispatch`,
         );
       }
-      const scene = evaluate(state, sceneRef.node, { ctx, socket: sceneRef.socket })
+      const scene = evaluate(frameState, sceneRef.node, { ctx, socket: sceneRef.socket })
         .value as SceneValue;
       // #387 — this is a RAW `evaluate` + cast, not a socket gather, so it is its own
       // road and needs the recompose in its own right: a split camera reaching the
       // encoder as an ObjectValue would hand it a struct with no `fov`/`lookAt` at all.
       // Fused → null → unchanged.
-      const cameraValue = evaluate(state, cameraRef.node, {
+      const cameraValue = evaluate(frameState, cameraRef.node, {
         ctx,
         socket: cameraRef.socket,
       }).value;
