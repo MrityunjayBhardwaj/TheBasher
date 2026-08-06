@@ -193,7 +193,10 @@ function sameValue(a: unknown, b: unknown): boolean {
  * `seconds`.
  *
  * @param authored    the state as the director wrote it (what the store holds).
- * @param seconds     the playhead.
+ * @param ctx         the evaluation context, playhead included. Taken from the caller
+ *                    rather than built here: deriving a frame number from `seconds` would
+ *                    mean picking an fps, and a fabricated frame is read by any node that
+ *                    consumes `ctx.time.frame` (the stateful replay seam does).
  * @param timeVarying nodes whose overlays vary over `t`, from `timeDependentNodes`. A
  *                    node outside it is folded once and never re-resolved, so the set is
  *                    TRUSTED: over-naming costs work, under-naming freezes a value. Omit
@@ -213,11 +216,11 @@ function sameValue(a: unknown, b: unknown): boolean {
  */
 export function foldOverlays(
   authored: DagState,
-  seconds: number,
+  ctx: EvalCtx,
   timeVarying?: ReadonlySet<NodeId>,
   opts?: { cache?: EvaluatorCache; fold?: FoldCache; counters?: FoldCounters },
 ): CookState {
-  const ctx: EvalCtx = { time: { frame: Math.round(seconds * 30), seconds, normalized: 0 } };
+  const seconds = ctx.time.seconds;
   const paths = overlaidPaths(authored, ctx, opts?.cache);
   if (paths.size === 0) return authored as unknown as CookState;
 
@@ -280,7 +283,13 @@ export function foldOverlays(
       continue;
     }
 
-    const folded = JSON.parse(JSON.stringify(node.params)) as Record<string, unknown>;
+    // `structuredClone`, NOT a JSON round-trip: JSON DROPS a key whose value is
+    // `undefined`, and an absent key hashes differently from a present-but-undefined one —
+    // so the clone alone could change a node's params hash without any value moving.
+    // Measured across every registered node type: none carries an explicit undefined in
+    // its defaults today and all of them clone, so this costs nothing and closes the trap
+    // before a param acquires one at runtime.
+    const folded = structuredClone(node.params) as Record<string, unknown>;
     for (const [paramPath, value] of values) writeAt(folded, paramPath, value);
     foldCache?.nodes.set(id, { authored: node.params as object, values, folded, seconds });
     nodes[id] = { ...node, params: folded };

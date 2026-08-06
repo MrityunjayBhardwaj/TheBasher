@@ -14,11 +14,17 @@
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
-import type { DagState, Op } from '../core/dag/types';
+import type { DagState, EvalCtx, Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { timeDependentNodes } from './timeDependence';
 import { createFoldCache, foldOverlays } from './cookState';
 import { useTransientEditStore } from './stores/transientEditStore';
+
+/** The test owns its clock. Production takes the ctx from its caller precisely so it does
+ *  not have to invent an fps here — see `foldOverlays`. */
+const at = (seconds: number): EvalCtx => ({
+  time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
+});
 
 /** `n` chains of BoxData → ArrayModifier, ids suffixed by index. */
 function scene(chains: number, extra: Op[] = []): DagState {
@@ -79,9 +85,9 @@ describe('#582 — foldOverlays', () => {
     const s = scene(1, [channelOp('ch', 'arr0', 2)]);
     expect(countOf(s, 'arr0')).toBe(3); // authored, unmoved
 
-    expect(countOf(foldOverlays(s, 0), 'arr0')).toBe(3);
-    expect(countOf(foldOverlays(s, 1), 'arr0')).toBe(4);
-    expect(countOf(foldOverlays(s, 0.5), 'arr0')).toBe(3.5);
+    expect(countOf(foldOverlays(s, at(0)), 'arr0')).toBe(3);
+    expect(countOf(foldOverlays(s, at(1)), 'arr0')).toBe(4);
+    expect(countOf(foldOverlays(s, at(0.5)), 'arr0')).toBe(3.5);
   });
 
   it('folds a HELD EDIT, which no time-varying set names — the #474 shape', () => {
@@ -92,12 +98,12 @@ describe('#582 — foldOverlays', () => {
     useTransientEditStore.getState().set('arr0', 'count', 9);
 
     expect(timeDependentNodes(s).has('arr0')).toBe(false); // the precondition, asserted
-    expect(countOf(foldOverlays(s, 0, timeDependentNodes(s)), 'arr0')).toBe(9);
+    expect(countOf(foldOverlays(s, at(0), timeDependentNodes(s)), 'arr0')).toBe(9);
   });
 
   it('leaves an un-overlaid node holding its ORIGINAL params object', () => {
     const s = scene(3, [channelOp('ch', 'arr0', 2)]);
-    const cooked = foldOverlays(s, 1);
+    const cooked = foldOverlays(s, at(1));
 
     expect(countOf(cooked, 'arr0')).toBe(4); // this one moved
     // …and the other two chains are the same objects, so their memo entries survive.
@@ -107,8 +113,8 @@ describe('#582 — foldOverlays', () => {
 
   it('returns the state BY REFERENCE when no overlay exists anywhere', () => {
     const s = scene(3);
-    expect(foldOverlays(s, 0)).toBe(s);
-    expect(foldOverlays(s, 7.5)).toBe(s);
+    expect(foldOverlays(s, at(0))).toBe(s);
+    expect(foldOverlays(s, at(7.5))).toBe(s);
   });
 
   it('re-folding at a playhead already folded at reuses the params object AND skips the work', () => {
@@ -116,14 +122,14 @@ describe('#582 — foldOverlays', () => {
     const fold = createFoldCache();
     const counters = { resolves: 0 };
 
-    const a = foldOverlays(s, 0.25, undefined, { fold, counters });
+    const a = foldOverlays(s, at(0.25), undefined, { fold, counters });
     expect(counters.resolves).toBe(1);
-    const b = foldOverlays(s, 0.25, undefined, { fold, counters });
+    const b = foldOverlays(s, at(0.25), undefined, { fold, counters });
     expect(b.nodes.arr0.params).toBe(a.nodes.arr0.params);
     expect(counters.resolves).toBe(1); // the skip, which no value assertion can see
 
     // A real move must NOT be papered over by the reuse.
-    const c = foldOverlays(s, 0.75, undefined, { fold, counters });
+    const c = foldOverlays(s, at(0.75), undefined, { fold, counters });
     expect(c.nodes.arr0.params).not.toBe(a.nodes.arr0.params);
     expect(countOf(c, 'arr0')).toBe(3.75);
     expect(counters.resolves).toBe(2);
@@ -153,8 +159,8 @@ describe('#582 — foldOverlays', () => {
     expect(varying.has('arr0')).toBe(true); // precondition: the skip is NOT what is at work
 
     const fold = createFoldCache();
-    const a = foldOverlays(s, 0, varying, { fold });
-    const b = foldOverlays(s, 1.5, varying, { fold });
+    const a = foldOverlays(s, at(0), varying, { fold });
+    const b = foldOverlays(s, at(1.5), varying, { fold });
     expect(countOf(b, 'arr0')).toBe(5);
     expect(b.nodes.arr0.params).toBe(a.nodes.arr0.params);
   });
@@ -166,7 +172,7 @@ describe('#582 — foldOverlays', () => {
     const fold = createFoldCache();
     const counters = { resolves: 0 };
 
-    for (const t of [0, 1, 2, 3]) foldOverlays(s, t, varying, { fold, counters });
+    for (const t of [0, 1, 2, 3]) foldOverlays(s, at(t), varying, { fold, counters });
     expect(counters.resolves).toBe(1); // the whole point of #578, counted
   });
 
@@ -178,14 +184,14 @@ describe('#582 — foldOverlays', () => {
     const fold = createFoldCache();
     const varying = timeDependentNodes(s);
 
-    foldOverlays(s, 0, varying, { fold });
+    foldOverlays(s, at(0), varying, { fold });
     const edited = applyOp(s, {
       type: 'setParam',
       nodeId: 'arr0',
       paramPath: 'count',
       value: 12,
     }).next;
-    expect(countOf(foldOverlays(edited, 0, varying, { fold }), 'arr0')).toBe(12);
+    expect(countOf(foldOverlays(edited, at(0), varying, { fold }), 'arr0')).toBe(12);
   });
 
   it('a SOUND time-varying set changes the work, never the values', () => {
@@ -196,8 +202,8 @@ describe('#582 — foldOverlays', () => {
     const varying = timeDependentNodes(s);
 
     for (const t of [0, 0.5, 1, 1.75, 2]) {
-      const withSet = foldOverlays(s, t, varying, { fold: createFoldCache() });
-      const withNone = foldOverlays(s, t, undefined, { fold: createFoldCache() });
+      const withSet = foldOverlays(s, at(t), varying, { fold: createFoldCache() });
+      const withNone = foldOverlays(s, at(t), undefined, { fold: createFoldCache() });
       expect(withSet.nodes).toEqual(withNone.nodes);
     }
   });
@@ -210,13 +216,13 @@ describe('#582 — foldOverlays', () => {
     const fold = createFoldCache();
     const lying = new Set<string>();
 
-    expect(countOf(foldOverlays(s, 0, lying, { fold }), 'arr0')).toBe(3);
-    expect(countOf(foldOverlays(s, 1, lying, { fold }), 'arr0')).toBe(3); // frozen
+    expect(countOf(foldOverlays(s, at(0), lying, { fold }), 'arr0')).toBe(3);
+    expect(countOf(foldOverlays(s, at(1), lying, { fold }), 'arr0')).toBe(3); // frozen
 
     // The same scrub with the honest set follows the channel.
     const honest = timeDependentNodes(s);
     const fold2 = createFoldCache();
-    expect(countOf(foldOverlays(s, 0, honest, { fold: fold2 }), 'arr0')).toBe(3);
-    expect(countOf(foldOverlays(s, 1, honest, { fold: fold2 }), 'arr0')).toBe(4);
+    expect(countOf(foldOverlays(s, at(0), honest, { fold: fold2 }), 'arr0')).toBe(3);
+    expect(countOf(foldOverlays(s, at(1), honest, { fold: fold2 }), 'arr0')).toBe(4);
   });
 });
