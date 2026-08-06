@@ -16,8 +16,8 @@ import type { Node, NodeId, NodeRef } from './types';
  * `CookState` are assignable to it, and it is assignable to neither, so taking it is a
  * statement that no param VALUE is read — not a way to accept either and hope.
  *
- * Who is allowed to take it is not a matter of taste: `src/app/paramsAtDecision.ts` names
- * every evaluator consumer and its reason, and a gate pins that list exactly.
+ * Who is allowed to take it is not a matter of taste: `src/app/paramsAt.gate.test.ts` names
+ * every evaluator consumer and its reason, and pins that list exactly.
  */
 export interface DagGraph {
   /** All nodes keyed by id. */
