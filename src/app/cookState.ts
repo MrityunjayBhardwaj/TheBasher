@@ -114,6 +114,12 @@ export function createFoldCache(): FoldCache {
   return { nodes: new Map() };
 }
 
+/** How much work the fold did. See `foldOverlays`' `opts.counters`. */
+export interface FoldCounters {
+  /** Calls into `resolveEvaluatedParam` — the expensive half (channel sampling, drivers). */
+  resolves: number;
+}
+
 /**
  * Every (nodeId, paramPath) an overlay is authored against.
  *
@@ -196,6 +202,10 @@ function sameValue(a: unknown, b: unknown): boolean {
  * @param opts.fold   cross-call memo; supply a stable one to keep params object identity
  *                    across frames, which is what keeps the evaluator's params-hash memo
  *                    alive.
+ * @param opts.counters
+ *                    counts calls into the resolver. The two skips above are FREQUENCY
+ *                    claims — they change how much work happens, never what comes out — so
+ *                    no value assertion can witness them and the gate needs a count.
  *
  * Returns `authored` BY REFERENCE when no overlay exists anywhere — with no overlays the
  * authored params already ARE the params at `t`, so the two states coincide and there is
@@ -205,7 +215,7 @@ export function foldOverlays(
   authored: DagState,
   seconds: number,
   timeVarying?: ReadonlySet<NodeId>,
-  opts?: { cache?: EvaluatorCache; fold?: FoldCache },
+  opts?: { cache?: EvaluatorCache; fold?: FoldCache; counters?: FoldCounters },
 ): CookState {
   const ctx: EvalCtx = { time: { frame: Math.round(seconds * 30), seconds, normalized: 0 } };
   const paths = overlaidPaths(authored, ctx, opts?.cache);
@@ -247,6 +257,7 @@ export function foldOverlays(
     // Resolve each overlaid path through the SAME resolver every read surface uses.
     const values = new Map<string, unknown>();
     for (const paramPath of overlaid) {
+      if (opts?.counters) opts.counters.resolves++;
       const resolved = resolveEvaluatedParam(authored, id, paramPath, ctx, opts?.cache);
       if (resolved) values.set(paramPath, resolved.value);
     }

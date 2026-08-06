@@ -111,18 +111,63 @@ describe('#582 — foldOverlays', () => {
     expect(foldOverlays(s, 7.5)).toBe(s);
   });
 
-  it('reuses last call’s params object when the folded value has not moved', () => {
+  it('re-folding at a playhead already folded at reuses the params object AND skips the work', () => {
     const s = scene(1, [channelOp('ch', 'arr0', 2)]);
     const fold = createFoldCache();
+    const counters = { resolves: 0 };
 
-    const a = foldOverlays(s, 0.25, undefined, { fold });
-    const b = foldOverlays(s, 0.25, undefined, { fold });
+    const a = foldOverlays(s, 0.25, undefined, { fold, counters });
+    expect(counters.resolves).toBe(1);
+    const b = foldOverlays(s, 0.25, undefined, { fold, counters });
     expect(b.nodes.arr0.params).toBe(a.nodes.arr0.params);
+    expect(counters.resolves).toBe(1); // the skip, which no value assertion can see
 
     // A real move must NOT be papered over by the reuse.
-    const c = foldOverlays(s, 0.75, undefined, { fold });
+    const c = foldOverlays(s, 0.75, undefined, { fold, counters });
     expect(c.nodes.arr0.params).not.toBe(a.nodes.arr0.params);
     expect(countOf(c, 'arr0')).toBe(3.75);
+    expect(counters.resolves).toBe(2);
+  });
+
+  it('a node that VARIES by declaration but has not actually moved keeps its params object', () => {
+    // Two keyframes of the SAME value: time-varying by declaration (so the set names it,
+    // and the same-playhead skip does not apply at a new t), yet the folded value never
+    // moves. This is the arm the over-approximation makes common — a node flagged because
+    // something upstream animates, whose own value sits still — and it is the one that
+    // decides whether the params-hash memo survives a scrub.
+    const flat: Op = {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        target: 'arr0',
+        paramPath: 'count',
+        keyframes: [
+          { time: 0, value: 5, interpolation: 'linear' },
+          { time: 2, value: 5, interpolation: 'linear' },
+        ],
+      },
+    };
+    const s = scene(1, [flat]);
+    const varying = timeDependentNodes(s);
+    expect(varying.has('arr0')).toBe(true); // precondition: the skip is NOT what is at work
+
+    const fold = createFoldCache();
+    const a = foldOverlays(s, 0, varying, { fold });
+    const b = foldOverlays(s, 1.5, varying, { fold });
+    expect(countOf(b, 'arr0')).toBe(5);
+    expect(b.nodes.arr0.params).toBe(a.nodes.arr0.params);
+  });
+
+  it('a STATIC overlay is resolved once and never again, at any playhead', () => {
+    const s = scene(1);
+    useTransientEditStore.getState().set('arr0', 'count', 9);
+    const varying = timeDependentNodes(s);
+    const fold = createFoldCache();
+    const counters = { resolves: 0 };
+
+    for (const t of [0, 1, 2, 3]) foldOverlays(s, t, varying, { fold, counters });
+    expect(counters.resolves).toBe(1); // the whole point of #578, counted
   });
 
   it('an authored edit under a cached fold is picked up, not served stale', () => {
