@@ -74,7 +74,7 @@ describe('hasMetaToShow', () => {
 describe('extractTimeRange', () => {
   it('returns null when no Op carries time data', () => {
     const ops: Op[] = [
-      { type: 'addNode', nodeId: 'box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
+      { type: 'addNode', nodeId: 'box', nodeType: 'BoxData', params: { size: [1, 1, 1] } },
     ];
     expect(extractTimeRange(ops)).toBeNull();
   });
