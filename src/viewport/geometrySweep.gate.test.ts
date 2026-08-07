@@ -16,7 +16,7 @@
 // use, the walk's is failing to see it — and a Set fixture would test only the first.
 
 import { describe, expect, it, beforeEach } from 'vitest';
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial, Scene } from 'three';
+import { BoxGeometry, Group, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, Scene } from 'three';
 import {
   clear,
   getForAttach,
@@ -168,6 +168,23 @@ describe('#587 — the sweep frees what nothing draws', () => {
     expect(result!.disposed).toBe(SWEEP_GROWTH_BUDGET);
     expect(result!.attached).toBe(1); // found at depth 7 — a shallow walk would report 0
     expect(collectAttachedGeometry(scene).has(kept!)).toBe(true);
+  });
+
+  it('spares a geometry drawn by a Line, which is not a Mesh', () => {
+    const kept = getForAttach(boxGeometryRef([7, 7, 7]));
+    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
+
+    const scene = new Scene();
+    scene.add(new Line(kept!, new LineBasicMaterial()));
+
+    const { result } = sweepNow(scene);
+
+    // An `isMesh` filter reports 0 attached here and disposes a geometry that is drawing.
+    // Nothing in the viewport feeds a registry instance to a <line> today; five objects
+    // that COULD are already there, and the symptom would be browser-only silence.
+    expect(result!.disposed).toBe(SWEEP_GROWTH_BUDGET);
+    expect(result!.attached).toBe(1);
+    expect(kept!.getAttribute('position')).toBeTruthy();
   });
 
   // ── THE CADENCE ──────────────────────────────────────────────────────────────────────

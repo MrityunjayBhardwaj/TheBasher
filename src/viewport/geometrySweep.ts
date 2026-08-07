@@ -45,7 +45,7 @@ import type { BufferGeometry, Mesh, Object3D } from 'three';
 import { sweep, size as registrySize, type GeometrySweepResult } from '../app/geometryRegistry';
 
 /**
- * Every `BufferGeometry` currently attached to a `Mesh` under `root`.
+ * Every `BufferGeometry` currently attached to ANY object under `root`.
  *
  * ⚠️ IT DOES NOT PRUNE EDITOR CHROME, and that is the one place this deliberately diverges
  * from `sceneBounds.ts:53`. Bounds want the authored scene, so chrome is noise there. A
@@ -53,12 +53,20 @@ import { sweep, size as registrySize, type GeometrySweepResult } from '../app/ge
  * symmetric: counting a chrome geometry that the registry does not own keeps an entry that
  * did not need keeping, while missing one disposes a geometry still on screen. Anything
  * this walk cannot see, it must not free.
+ *
+ * ⚠️ AND IT DOES NOT TEST `isMesh`, for the same reason. `Line`, `LineSegments` and `Points`
+ * hold a `geometry` and draw it, and this viewport has five such objects today
+ * (`CurveLine`, `LightHelpers`, `NullGlyph`, `DiffOverlay`, `CameraHelpers`). None of them
+ * take a registry instance right now — which is exactly the sort of fact that is true until
+ * someone adds the sixth, and the failure would be a line silently drawing nothing, in the
+ * browser only. The filter is "carries a geometry", because that is the question, and
+ * `isMesh` is merely the most common answer to it.
  */
 export function collectAttachedGeometry(root: Object3D): Set<BufferGeometry> {
   const live = new Set<BufferGeometry>();
   const walk = (o: Object3D): void => {
-    const mesh = o as Mesh;
-    if (mesh.isMesh && mesh.geometry) live.add(mesh.geometry);
+    const geom = (o as Partial<Mesh>).geometry;
+    if (geom) live.add(geom);
     for (const child of o.children) walk(child);
   };
   walk(root);
