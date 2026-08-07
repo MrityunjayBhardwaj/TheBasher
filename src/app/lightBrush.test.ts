@@ -11,16 +11,15 @@ import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildLightBrushOp } from './lightBrush';
+import { makeSplitLight } from '../test-utils/splitLight';
 
 type Vec3 = [number, number, number];
 
 function addRigLight(state: DagState, id: string, pos: Vec3): DagState {
-  let next = applyOp(state, {
-    type: 'addNode',
-    nodeId: id,
-    nodeType: 'AreaLight',
-    params: { position: pos },
-  }).next;
+  // A split area light: an Object at `pos` posing an Area LightData. `isAreaLightNode`
+  // reaches through `data` to recognise it (studioLightRig.ts:57), so the brush is being
+  // asked the question it faces in a real project.
+  let next = makeSplitLight(state, { objectId: id, lightKind: 'Area', position: pos }).state;
   next = applyOp(next, {
     type: 'addNode',
     nodeId: `${id}_tt`,
