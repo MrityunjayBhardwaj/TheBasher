@@ -396,6 +396,49 @@ export function size(): number {
 }
 
 /**
+ * Test/diagnostic seam (#588): how many bytes of typed-array storage the cache is holding.
+ *
+ * WHY A SECOND SIZE. {@link size} counts entries, and #587's declared limit is stated in
+ * entries — "up to one growth budget of dead ones waits for the next churn". That unit
+ * cannot decide anything: 64 leftover boxes are a rounding error and 64 leftover results of
+ * an array modifier over a dense mesh are not, because each of those is the MERGED geometry
+ * and scales with the modifier's count. Whether the residue is worth a second sweep cadence
+ * is a question about bytes, so this is the number that fork gets to be taken on.
+ *
+ * ⚠️ IT COUNTS EACH UNDERLYING `ArrayBuffer` ONCE, AT THE BUFFER'S FULL LENGTH — not each
+ * attribute, and not each view's length. Attributes routinely share one buffer (interleaved
+ * data, and `subarray`/`clone` views), and the two obvious shortcuts are wrong in opposite
+ * directions: summing per attribute double-counts storage that dropping an entry does not
+ * release, while deduping but adding the VIEW's length under-reports a buffer only partly
+ * viewed. Both are answers to a question nobody asked. What a residue costs is *how much
+ * storage goes away if all of this goes away*, so: distinct buffers, whole lengths.
+ *
+ * ⚠️ AND IT IS CPU-SIDE STORAGE, not VRAM. The two track each other for this geometry (every
+ * attribute gets uploaded) but they are not the same number, and only `dispose()` returns the
+ * GPU side — `renderer.info.memory.geometries` stays the instrument for THAT, as in #587.
+ * This one answers what the cache is holding, which is what a residue is made of.
+ */
+export function residentBytes(): number {
+  const seen = new Set<ArrayBufferLike>();
+  let bytes = 0;
+  const account = (attr: { array?: ArrayBufferView } | null): void => {
+    const array = attr?.array;
+    if (!array) return;
+    if (seen.has(array.buffer)) return;
+    seen.add(array.buffer);
+    bytes += array.buffer.byteLength;
+  };
+  for (const geom of cache.values()) {
+    for (const attr of Object.values(geom.attributes)) account(attr);
+    for (const targets of Object.values(geom.morphAttributes)) {
+      for (const attr of targets) account(attr);
+    }
+    account(geom.index);
+  }
+  return bytes;
+}
+
+/**
  * Test/diagnostic seam (#586): how many entries each origin INSERTED, cumulatively.
  *
  * Read the sum against {@link size} rather than assuming they agree — `prime` can replace

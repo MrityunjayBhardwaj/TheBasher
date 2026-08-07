@@ -153,8 +153,14 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
  *
  * `clear` is deliberately absent: it disposes every instance in the cache, which is an
  * ownership act of the most consequential kind, and no production file may import it.
+ *
+ * ⚠️ `residentBytes` (#588) is the closest any entry here sits to the line, and the reason is
+ * worth stating: it READS every cached instance's buffers, where the other three never touch
+ * an instance at all. It still qualifies — it hands back a number, so no caller can hold or
+ * free anything through it — but the rule this list encodes is about what comes OUT, not
+ * about what the binding looks at, and the next candidate may not clear it so easily.
  */
-const GEOMETRY_DIAGNOSTICS = ['size', 'growthBySource', 'resetGrowth'];
+const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetGrowth'];
 
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {

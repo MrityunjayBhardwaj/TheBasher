@@ -16,6 +16,7 @@ import { unionUVBounds } from './uvIslands';
 import {
   getForRead,
   growthBySource as geometryGrowthBySource,
+  residentBytes as geometryResidentBytes,
   resetGrowth as resetGeometryGrowth,
   size as geometrySize,
 } from './geometryRegistry';
@@ -713,8 +714,14 @@ export function boot(): Promise<void> {
       // Read-only + a counter reset. It deliberately does NOT expose `clear()`: disposing
       // live geometry mid-drag would give the harness a way to blank the viewport and call
       // it a measurement.
+      //
+      // `bytes` (#588) is `size` in the unit a decision can be taken in. #587's sweep leaves
+      // a bounded residue and stated that bound in ENTRIES, which cannot say whether the
+      // residue matters — an entry is a box or a merged array modifier over a dense mesh,
+      // and those differ by orders of magnitude. Same read-only shape as `size`.
       w.__basher_geometry_registry = {
         size: () => geometrySize(),
+        bytes: () => geometryResidentBytes(),
         growth: () => geometryGrowthBySource(),
         resetGrowth: () => resetGeometryGrowth(),
       };
