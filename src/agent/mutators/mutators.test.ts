@@ -1766,8 +1766,8 @@ describe('duplicate mutator', () => {
           },
           box: {
             id: 'box',
-            type: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [0, 0, 0] },
+            type: 'Object',
+            params: { position: [0, 0, 0] },
             inputs: {},
           },
           strip: {
