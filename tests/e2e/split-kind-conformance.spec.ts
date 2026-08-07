@@ -339,13 +339,18 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // same property that made `closed` the only sound choice for the read-equals-render
     // road, showing up here with the opposite sign.
     signature: curveVertexCount,
-    expectHeld: () => ({
-      reaches: false,
-      why:
-        'every input the curve renderer reads is derived at evaluate time (`samples` is ' +
-        'baked from closed/resolution/points), so a transient cannot reach it',
-      issue: '#474',
-    }),
+    // FLIPPED by #583, and the value is MEASURED against a control rather than derived.
+    // The curve's polyline drops 65 → 49 under a held edit on `closed`, and 49 is what a
+    // COMMITTED write of the same value draws — measured on the un-fixed tree too, where
+    // the held edit left it at 65 while the committed write already read 49. So this
+    // number is the picture `closed: false` has always produced; what changed is that the
+    // held edit now produces it as well.
+    //
+    // Note it is NOT the 64 issue #474 predicted. That figure was a guess written beside
+    // an observation of 65-before-and-after, never a measurement — closing this curve adds
+    // a whole segment, not a single repeated sample. Recorded here so the next reader does
+    // not "correct" a measured 49 back to a hypothesised 64.
+    expectHeld: () => ({ reaches: true, value: 49 }),
     // MEASURED at 65, and deliberately a LITERAL. The curve is the one kind whose probe
     // measures a different quantity than its observable param — vertices drawn versus the
     // boolean `closed` — so there is nothing to derive this from. Re-deriving it would mean
@@ -357,12 +362,18 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // stating precisely because the STIMULUS differs: an overlay writes `data.closed`,
     // and the renderer reads `data.samples`, which `CurveData.evaluate()` already baked.
     // A channel is committed state and still cannot reach a field nobody reads.
+    // STILL `reaches: false`, and deliberately NOT flipped alongside the held edit — the
+    // two are different stimuli and #583 only moved one of them. The tier the render root
+    // folds is held edits; a CHANNEL is left to the seams below, because folding one at
+    // the root would write its frame-0 sample into params and freeze it there. So a
+    // channel still cannot reach a field baked at evaluate time, and saying so keeps the
+    // cell reading "asked, answered no" instead of borrowing the row above's success.
     expectConstrained: {
       reaches: false,
       why:
         'the curve renderer reads `samples`, baked at evaluate time from ' +
-        'closed/resolution/points, so no post-evaluate overlay can reach it — channel ' +
-        'or transient alike',
+        'closed/resolution/points; #583 folds HELD EDITS before evaluate, but a channel ' +
+        'is not in that tier — the render root evaluates at a frozen playhead',
       issue: '#474',
     },
     what: 'the vertex count of the polyline the viewport draws',

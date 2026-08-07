@@ -234,6 +234,15 @@ export function overlayWithIdentity<T>(
  * lifetime question #535 already owns; it is not created by this repair, only made
  * reachable by it. Deliberately NOT fixed here (the alternative was a refcount touching
  * every attach site, i.e. a different slice).
+ *
+ * ⚠️ RE-MEASURED IN A BROWSER, AND THE FIGURE ABOVE UNDERSTATES IT (#586). The 121 came
+ * from a unit probe driving `getForAttach` directly, which sees only what a consumer asked
+ * for. Through the live path a MODIFIER doubles it: an `array`/`mirror` drag leaves 240
+ * entries for the same 121 frames, because `geometryRegistry.build` caches the source it
+ * recursed into as well as the merged result — and no consumer ever attaches that source.
+ * Both numbers and the full per-origin model live at the top of `geometryRegistry.ts`; the
+ * shape of the residual is unchanged, its size is twice what this paragraph implies for any
+ * object wearing a stack.
  */
 function rebuildInvalidatedHandles(
   band: OverlayBand,

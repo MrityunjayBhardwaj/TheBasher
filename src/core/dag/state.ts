@@ -8,12 +8,78 @@
 
 import type { Node, NodeId, NodeRef } from './types';
 
-export interface DagState {
+/**
+ * The graph WITHOUT any claim about what its params mean — ids, types, edges, outputs.
+ *
+ * This is the type for a reader that cannot care whether params are authored or evaluated
+ * at a time: a node listing, an ownership resolution, a cycle check. Both `DagState` and
+ * `CookState` are assignable to it, and it is assignable to neither, so taking it is a
+ * statement that no param VALUE is read — not a way to accept either and hope.
+ *
+ * Who is allowed to take it is not a matter of taste: `src/app/paramsAt.gate.test.ts` names
+ * every evaluator consumer and its reason, and pins that list exactly.
+ */
+export interface DagGraph {
   /** All nodes keyed by id. */
   nodes: Record<NodeId, Node>;
   /** Named output sockets exposed by the project (e.g. 'scene', 'render'). */
   outputs: Record<string, NodeRef>;
 }
+
+/**
+ * The graph with params exactly as the director authored them. The store holds this, ops
+ * read and write it, undo restores it, and an inspector showing a typed value reads it.
+ *
+ * ── WHY THIS IS A DISTINCT TYPE FROM `CookState`, AND WHY THE TYPE IS THE ONLY TIER ────
+ *
+ * A consumer that should have received params AT TIME t, and received authored params
+ * instead, computes THE SAME VALUE in every static scene. The two programs differ only
+ * part-way through an animation, at a value nobody wrote down. No unit assertion, no
+ * snapshot and no browser case reliably tells them apart — which is the condition under
+ * which a signature is the only place the constraint can live.
+ *
+ * The other direction is not documentation either, it is arithmetic. Overlay seams read
+ * the base value they are folding onto: `combine` blends against it, and `replace` lerps
+ * from it whenever influence < 1 (a weighted channel, a crossfading strip). So handing
+ * already-folded params to a seam that folds again is WRONG, not merely redundant. The
+ * one exception is a transient, which is a plain write and therefore idempotent — that
+ * exception is what lets the static tier of the fold reach the renderer safely, and it is
+ * stated at the fold rather than assumed here.
+ *
+ * `paramsAt` is a phantom: nothing ever writes it, it is optional so every existing value
+ * satisfies it, and it never reaches serialization. Its only job is to stop the two states
+ * being interchangeable.
+ */
+export interface DagState extends DagGraph {
+  readonly paramsAt?: 'authored';
+}
+
+/**
+ * The graph with every overlay folded into params — the value at *t*.
+ *
+ * Minted ONLY by `foldOverlays` (`src/app/cookState.ts`). A consumer that takes this must
+ * not fold again; see the arithmetic in `DagState` above for why that is a correctness
+ * rule and not a style one.
+ */
+export interface CookState extends DagGraph {
+  readonly paramsAt: 'cooked';
+}
+
+/**
+ * Either state — the signature for `evaluate` alone.
+ *
+ * ⚠️ THIS IS NOT A THIRD OPTION FOR CONSUMERS, AND WIDENING ANYTHING ELSE TO IT DEFEATS THE
+ * WALL. `evaluate` is pure over whatever params it is handed: it computes the value those
+ * params describe and has no way to know which the caller SHOULD have brought. That is the
+ * whole reason the census exists — the constraint lives at each consumer's own signature,
+ * where somebody has to decide, and there is nobody to decide at the bottom.
+ *
+ * Taking this type is therefore a statement that the decision was made ELSEWHERE, and the
+ * only function entitled to make it is the one every consumer already routes through.
+ * `src/app/paramsAt.gate.test.ts` pins the set of users so a second one cannot appear by
+ * quietly reaching for the convenient type.
+ */
+export type EvaluableState = DagState | CookState;
 
 export function emptyDagState(): DagState {
   return { nodes: {}, outputs: {} };

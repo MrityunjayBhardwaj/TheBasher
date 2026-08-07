@@ -13,7 +13,12 @@ import { resolveWorldTransform } from './resolveWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { unionUVBounds } from './uvIslands';
-import { getForRead } from './geometryRegistry';
+import {
+  getForRead,
+  growthBySource as geometryGrowthBySource,
+  resetGrowth as resetGeometryGrowth,
+  size as geometrySize,
+} from './geometryRegistry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -691,6 +696,27 @@ export function boot(): Promise<void> {
         if (!geom) return null; // registry miss (gltf/baked source) — not buildable here
         const pos = geom.getAttribute('position');
         return pos ? pos.count : null;
+      };
+      // #586 (P5a of #575) — the geometry registry's population, and WHERE it came from.
+      //
+      // `size()` has existed as a test seam since the registry was written, but only the
+      // unit tier could reach it, and the unit tier cannot stage a drag: the growth #544 is
+      // about is produced by a director's hand on a param, through the render root, the
+      // followers and the handle repair. So the number that decides the lifetime slice was
+      // measurable only in the one place it could not be measured.
+      //
+      // `growth` is the half that makes the number actionable rather than merely alarming —
+      // a refcount can only be placed on a door, and `internal` entries arrive through no
+      // door at all (`geometryRegistry.build` resolving an `array`/`mirror` source, which
+      // nothing attaches). Total growth cannot distinguish those; this can.
+      //
+      // Read-only + a counter reset. It deliberately does NOT expose `clear()`: disposing
+      // live geometry mid-drag would give the harness a way to blank the viewport and call
+      // it a measurement.
+      w.__basher_geometry_registry = {
+        size: () => geometrySize(),
+        growth: () => geometryGrowthBySource(),
+        resetGrowth: () => resetGeometryGrowth(),
       };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept

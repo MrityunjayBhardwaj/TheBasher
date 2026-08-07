@@ -68,6 +68,7 @@ import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
+import { createFoldCache, foldOverlays, type FoldCache } from '../app/cookState';
 import {
   repairInvalidatedIdentity,
   identityIntact,
@@ -198,6 +199,15 @@ const EMPTY_MEMBERSHIP: OverlayMembership = {
 };
 const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
 
+/**
+ * The context this component evaluates at — time FROZEN AT ZERO, by design (B13, #114).
+ *
+ * Named rather than repeated so the fold and the evaluate below cannot drift onto two
+ * different clocks: the fold's tier restriction is justified BY this ctx being frozen, and
+ * that argument only holds while they are the same object.
+ */
+const ROOT_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
+
 interface SceneFromDAGProps {
   /** Override the named output to render. Defaults to 'render'. */
   outputName?: string;
@@ -229,6 +239,40 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // React.memo on MeshChild to short-circuit per-fox reconciliation during
   // playback.
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+
+  // #583 — the fold's cross-call memo, long-lived for the same reason `cache` is: it is
+  // what keeps a folded node's params OBJECT stable between renders, and the evaluator's
+  // params-hash memo is keyed on that object rather than on its contents. Omitting it
+  // would be correct and would silently cost a rebuild per render for every folded node.
+  const foldCache = useMemo<FoldCache>(() => createFoldCache(), []);
+
+  // 🔴 AND THE ROOT HAS TO SUBSCRIBE TO HELD EDITS, OR THE FOLD BELOW RUNS ONCE AND NEVER
+  // AGAIN. This component re-renders only on `useDagStore.state` (the B13 change above),
+  // and a transient is not in that store — it is a separate one, deliberately, so that a
+  // drag never touches the document. Every existing consumer of transients reads them from
+  // a `useFrame` at its own cadence and so needs no subscription; this fold runs in the
+  // RENDER BODY and does. Without this line the whole slice is inert in exactly the way
+  // that looks like success: the fold is wired, the unit tier is green, and the viewport
+  // never repaints because nothing re-invokes it.
+  //
+  // The store mints a NEW Map on every write, so this is an identity subscription: one
+  // re-render per held-edit write, none at all when no drag is in flight.
+  //
+  // MEASURED, because this is the seam B13 was about and "it should be cheap" is not an
+  // answer here. Dragging `position` for 60 frames on a stress scene, against the un-fixed
+  // tree as control (which commits ZERO times — the drag rode entirely on the per-frame
+  // followers):
+  //
+  //     24 meshes /  27k tris → react p95 0.7 ms, eval p95 0.1 ms, cache misses 177
+  //     96 meshes / 106k tris → react p95 1.2 ms, eval p95 0.1 ms, cache misses 177
+  //
+  // The misses are FLAT across a 4× scene, which is the number that matters: only the
+  // dragged node re-resolves and rebuilds its params object, and the other 95 keep theirs,
+  // so they hit the evaluator's params-hash memo and the memoised children bail on
+  // references they already had. That is the identity discipline in `cookState.ts` doing
+  // the job it was built for, and it is what keeps this sublinear rather than per-object.
+  // For scale: the B13 regression this file's comments describe was react p95 24 ms.
+  useTransientEditStore((s) => s.edits);
 
   // Light helpers display only when shading isn't 'rendered'. Subscribed
   // here so the top-level result re-renders when the user toggles modes.
@@ -303,10 +347,27 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const target = state.outputs[outputName];
   if (!target) return null;
 
-  const result = evaluate(state, target.node, {
+  // #583 — the fold reaches the render root. `cooked` carries the held edits folded INTO
+  // params, so a param consumed at evaluate time (a curve's `closed`, baked into `samples`
+  // before any overlay exists) follows the director's hand instead of freezing (#474).
+  //
+  // 🔑 THE TIER IS `refoldSafe`, AND THE RESTRICTION IS THE CORRECTNESS ARGUMENT, NOT
+  // CAUTION. Two independent reasons, either alone sufficient:
+  //   • `ctx.time` here is frozen at zero by design (see the B13 note above). Folding a
+  //     time-varying path would write the FRAME-0 value into params and freeze it there
+  //     for the whole scrub — invisible to every tier, because a static scene computes the
+  //     same answer either way.
+  //   • Everything below this line folds overlays AGAIN, and a seam that folds again reads
+  //     the base it folds onto: `combine` blends against it, `replace` lerps from it below
+  //     full influence. Moving the base under such a seam does not double-apply the
+  //     overlay, it produces a third value that is neither.
+  // `refoldSafe` admits exactly the paths where neither applies — see `cookState.ts`.
+  const cooked = foldOverlays(state, ROOT_CTX, undefined, {
     cache,
-    ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    fold: foldCache,
+    only: 'refoldSafe',
   });
+  const result = evaluate(cooked, target.node, { cache, ctx: ROOT_CTX });
   const value = result.value as RenderOutputValue;
 
   // Map each top-level scene child to its producer nodeId so click-to-select

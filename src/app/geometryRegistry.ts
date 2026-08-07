@@ -38,6 +38,78 @@ import type { GeometryRef } from '../nodes/types';
 
 const cache = new Map<string, BufferGeometry>();
 
+// ── GROWTH ATTRIBUTION (#586, P5a) ────────────────────────────────────────────────────
+//
+// The population is one number and the fix candidates for #544 are not interchangeable, so
+// the total cannot decide between them: a refcount can only be placed on a door, and only
+// SOME of this cache's entries arrive through a door at all. Counting insertions per ORIGIN
+// is what turns "the registry grows" into "the registry grows HERE", which is the question
+// the lifetime slice actually has to answer.
+//
+// `internal` is the one that would otherwise be invisible: `build` resolves an `array` /
+// `mirror` source through `get` (:156, :176), so a modifier drag caches the SOURCE box
+// alongside the merged result — and nothing ever attaches that source. An attach-door
+// refcount would never see it, never count it, and never free it.
+//
+// Counted on INSERTION only, so the arithmetic sits next to a `new BoxGeometry`/`merge` that
+// costs orders of magnitude more; a hit costs nothing. Unconditional rather than DEV-gated
+// on purpose — a counter the unit tier cannot read is a counter the unit tier cannot gate,
+// and this one is the gate's subject.
+//
+// ── THE MEASURED GROWTH MODEL (browser, 121 transient writes per arm, #586) ────────────
+//
+//   arm                              Δ size   attach   read   internal
+//   idle, no writes (control)             0        0      0          0
+//   drag `size` on a plain box         +120      120      0          0
+//   the same drag through an Array     +240      120      0        120
+//   the same, over a third range       +240      120      0        120
+//   resolve an UNATTACHED object         +1        0      1          0   ← instrument control
+//
+// Read three ways:
+//
+//   1. A primitive drag is ENTIRELY the attach door. A refcount there bounds all of it.
+//   2. A MODIFIER drag is half attach and half `internal`, and that half is unreachable
+//      from any door: it is the source box, cached by `build` on the way to the merged
+//      result, released by nobody. The splice puts the modifier between the data and the
+//      Object, so the source is a scene child of nothing and no attach site ever names it —
+//      unless the same data node is ALSO drawn unmodified elsewhere, which the splice is
+//      precisely what removes. Every modifier drag leaves as many orphans as it leaves
+//      geometries someone asked for.
+//   3. The read doors inserted NO ENTRIES during a drag. Read that as growth and not as
+//      traffic: a reader that runs and HITS is invisible here by construction, since only
+//      insertions are counted, so this says the read doors are not a growth source on this
+//      path — not that no reader ran. The last row is why even that much is readable: the
+//      same counter moves on demand, so the zero is a fact about the drag rather than a
+//      dead instrument. And the scope is narrower than the path: the probed scene runs no
+//      sample source, no UV resolve and no apply-transform while the hand is down, and each
+//      of those opens the read door on a key the drag is minting fresh.
+//
+// (Δ is 120 rather than 121 because the drag's first value is the one the scene was already
+// built at — a hit. The unit gate, starting from an empty cache, sees the full 121. The
+// drag is driven by transient writes at frame cadence, which is the store a real pointer
+// grab is routed into, not a stand-in for it; what is NOT covered is the pointer half —
+// hit-testing and gizmo state — which cannot reach this cache.)
+export type GeometryGrowthSource = 'attach' | 'read' | 'internal' | 'prime';
+
+const growth: Record<GeometryGrowthSource, number> = {
+  attach: 0,
+  read: 0,
+  internal: 0,
+  prime: 0,
+};
+
+/**
+ * Keys the SWEEP may never evict (#587). See {@link sweep} for why this exists; what
+ * matters here is that membership is decided by the ROAD an entry arrived on, not by the
+ * shape of its key. `prime` is the async road's only insertion point and
+ * `bakedGeometryLoader` is its only caller — held closed by `registryDoors.gate.test.ts` —
+ * while `get` never inserts a baked entry at all (it returns null on a baked miss).
+ *
+ * A `key.startsWith('baked|')` test would have selected the same set today and would have
+ * been a naming tier, which is the mistake this module has already catalogued once.
+ */
+const primed = new Set<string>();
+
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
@@ -47,16 +119,23 @@ const cache = new Map<string, BufferGeometry>();
  * `prime`d (see header). Returns the SAME instance for repeated calls with an
  * identical key (cache hit).
  *
+ * `via` records which origin caused an INSERTION (see the block above). It is a
+ * diagnostic, never a behavioural input — the two doors resolve identically, and this
+ * parameter must not become the thing that makes them differ.
+ *
  * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
  * outside this module reaches the cache through one of them.
  */
-function get(ref: GeometryRef): BufferGeometry | null {
+function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
   if (ref.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
   if (ref.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
   const built = build(ref);
-  if (built) cache.set(ref.key, built);
+  if (built) {
+    cache.set(ref.key, built);
+    growth[via]++;
+  }
   return built;
 }
 
@@ -80,6 +159,12 @@ function get(ref: GeometryRef): BufferGeometry | null {
 // This is a naming tier, not a type tier: it makes intent reviewable and a new consumer's
 // door declared, and it stops there. #535 is the behavioural backstop that asks whether
 // anything actually leaked.
+//
+// ⚠️ The two doors now pass DIFFERENT `via` tags to `get`, and that is still not a type
+// tier — it is the same resolution with a label attached (#586). Reading the tag as
+// "so the doors are distinguishable after all" would re-open exactly the hole that made a
+// refcount here unsafe: the tag says which door a caller CHOSE, and the holder that
+// attaches through `bakedGeometryLoader` chose neither.
 
 /**
  * Take a shared geometry in order to ATTACH it to the scene graph — a share of ownership.
@@ -92,7 +177,7 @@ function get(ref: GeometryRef): BufferGeometry | null {
  * suspending and priming.
  */
 export function getForAttach(ref: GeometryRef): BufferGeometry | null {
-  return get(ref);
+  return get(ref, 'attach');
 }
 
 /**
@@ -120,7 +205,7 @@ export function getForAttach(ref: GeometryRef): BufferGeometry | null {
  * CONTENT sweep in `registryDoors.gate.test.ts` instead.
  */
 export function getForRead(ref: GeometryRef): BufferGeometry | null {
-  return get(ref);
+  return get(ref, 'read');
 }
 
 /**
@@ -136,7 +221,71 @@ export function prime(ref: GeometryRef, geom: BufferGeometry): BufferGeometry {
     return existing;
   }
   cache.set(ref.key, geom);
+  primed.add(ref.key); // exempt from the sweep — see `primed` and {@link sweep}
+  growth.prime++;
   return geom;
+}
+
+/** What one {@link sweep} did. Every field is a count so a gate can refuse to pass vacuously. */
+export interface GeometrySweepResult {
+  /** Entries in the cache when the sweep began. */
+  scanned: number;
+  /** Entries skipped because they are on the async road (see `primed`). */
+  exempt: number;
+  /** Entries found attached in the live set — kept. */
+  attached: number;
+  /** Entries evicted AND disposed. The only number that frees anything. */
+  disposed: number;
+}
+
+/**
+ * Evict and dispose every cached geometry that no live `Mesh` is drawing (#587, #544).
+ *
+ * THE RULE, and why it is a sweep rather than a refcount. An entry is garbage iff its
+ * INSTANCE is attached to nothing — a question about the object, not about which function
+ * a caller happened to import. That distinction is the whole design: `getForAttach` and
+ * `getForRead` are the same function, one real holder reaches an attached instance through
+ * neither (`bakedGeometryLoader` → `prime`), and half of a modifier drag's entries are minted
+ * by `build`'s own recursion, which no consumer calls at all (#586's model, above). A
+ * refcount can only ever see the doors. Attachment sees everything, and cannot be fooled by
+ * the route taken.
+ *
+ * ⚠️ `live` IS THE CALLER'S RESPONSIBILITY, AND IT IS THE DANGEROUS ARGUMENT. An empty set
+ * is indistinguishable here from "the scene is genuinely empty", and the two want opposite
+ * responses — dispose everything, versus refuse. This function cannot tell them apart and
+ * does not try: it has no access to a scene and no opinion about where the set came from.
+ * The guard lives at the only caller (`geometrySweep.ts`), which collects the set from a
+ * scene that R3F guarantees is mounted, so a null root is unrepresentable rather than
+ * checked.
+ *
+ * Disposal is immediate rather than deferred. `materialRegistry` defers to a microtask
+ * because a handoff looks like a drop THROUGH A COUNT (`materialRegistry.ts:55-59`) — one
+ * holder's cleanup runs before another's effect, and the count legitimately touches zero in
+ * between. There is no count here: the question is asked of the live scene at a moment when
+ * React has already committed, so a handoff's new holder is attached before the sweep can
+ * look. The precedent's reason does not transfer, and neither should its mechanism.
+ */
+export function sweep(live: ReadonlySet<BufferGeometry>): GeometrySweepResult {
+  const result: GeometrySweepResult = {
+    scanned: cache.size,
+    exempt: 0,
+    attached: 0,
+    disposed: 0,
+  };
+  for (const [key, geom] of Array.from(cache)) {
+    if (primed.has(key)) {
+      result.exempt++;
+      continue;
+    }
+    if (live.has(geom)) {
+      result.attached++;
+      continue;
+    }
+    cache.delete(key);
+    geom.dispose();
+    result.disposed++;
+  }
+  return result;
 }
 
 function build(ref: GeometryRef): BufferGeometry | null {
@@ -153,7 +302,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
     // mutate the cached source instance (other refs share it). A source that
     // can't build sync (gltf MISS / baked MISS → null) makes the whole array
     // unbuildable here — return null (a follow-up; the renderer renders nothing).
-    const source = get(d.source);
+    // `internal`: this caches the SOURCE box/sphere, which no consumer attaches (#586).
+    const source = get(d.source, 'internal');
     if (!source) return null;
     const copies: BufferGeometry[] = [];
     for (let i = 0; i < d.count; i++) {
@@ -173,7 +323,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
     // matrix), but the index winding would now disagree with those normals →
     // front-faces become back-faces (the mirrored half renders inside-out). Reverse
     // the reflected copy's winding so winding and normals agree again.
-    const source = get(d.source);
+    // `internal`: caches the SOURCE, which no consumer attaches (#586) — as `array` does.
+    const source = get(d.source, 'internal');
     if (!source) return null;
     // Reflection across the plane perpendicular to `axis` at `offset` along it:
     // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
@@ -235,9 +386,30 @@ function reverseWinding(geom: BufferGeometry): BufferGeometry {
 export function clear(): void {
   for (const geom of cache.values()) geom.dispose();
   cache.clear();
+  primed.clear();
+  resetGrowth();
 }
 
 /** Test/diagnostic seam: current number of cached geometries. */
 export function size(): number {
   return cache.size;
+}
+
+/**
+ * Test/diagnostic seam (#586): how many entries each origin INSERTED, cumulatively.
+ *
+ * Read the sum against {@link size} rather than assuming they agree — `prime` can replace
+ * nothing and `clear` resets both together, but a future eviction would separate them, and
+ * the gap is then the number of entries freed.
+ */
+export function growthBySource(): Readonly<Record<GeometryGrowthSource, number>> {
+  return { ...growth };
+}
+
+/** Test/diagnostic seam (#586): zero the counters WITHOUT touching the cache. */
+export function resetGrowth(): void {
+  growth.attach = 0;
+  growth.read = 0;
+  growth.internal = 0;
+  growth.prime = 0;
 }
