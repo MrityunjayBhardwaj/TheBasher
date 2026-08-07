@@ -43,8 +43,9 @@
 //      The CARRIER sweep widened; the SENTINEL derivation below did NOT. A retirement is
 //      something a relic declares in its own production source, so deriving the retired set
 //      from test files as well would let a test that merely quotes the sentinel enrol a type
-//      that no node ever retired — [[H292]] from the other side, a set gaining a non-member
-//      rather than missing one. Measured before the split: no test file matches the sentinel
+//      that no node ever retired — the same failure that made this issue 22 files instead of
+//      17, but from the other side: a set gaining a non-member rather than missing one.
+//      Measured before the split: no test file matches the sentinel
 //      pattern today, so the two lists agree right now and the separation is about what may
 //      happen next, not about a current disagreement.
 //
