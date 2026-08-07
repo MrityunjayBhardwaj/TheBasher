@@ -10,13 +10,13 @@
 // nothing left to re-index.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyOp } from '../core/dag/ops';
 import { useDagStore } from '../core/dag/store';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
+import { makeSplitCurve } from '../test-utils/splitCurve';
+import { dataIdFor } from '../test-utils/splitKinds';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { Vec3 } from '../nodes/types';
-import { withIds } from '../test-utils/curvePoints';
 import { curvePointEntriesOf, curvePointsOf, resolveCurvePointSelection } from './curvePoints';
 import {
   deleteCurvePoint,
@@ -29,6 +29,9 @@ import { activeCurvePoint } from './curvePointSelection';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { useNotificationStore } from './stores/notificationStore';
 
+/** The CurveData half of `seedCurve()`'s pair — where `points` and `closed` actually live. */
+const CURVE_DATA = dataIdFor('c1');
+
 const LINE: Vec3[] = [
   [0, 0, 0],
   [2, 0, 0],
@@ -36,12 +39,14 @@ const LINE: Vec3[] = [
 ];
 
 function seedCurve(points: Vec3[] = LINE, closed = false): DagState {
-  const state = applyOp(buildDefaultDagState(), {
-    type: 'addNode',
-    nodeId: 'c1',
-    nodeType: 'Curve',
-    params: { points: withIds(points), closed },
-  }).next;
+  // A split pair. The commands below still address 'c1' — the Object, which is what the
+  // director selects — and the point machinery resolves the OWNER from there
+  // (curvePoints.ts:56), so passing the Object id is the road under test, not a shortcut.
+  const { state } = makeSplitCurve(buildDefaultDagState(), {
+    objectId: 'c1',
+    points,
+    closed,
+  });
   useDagStore.setState({ state } as never);
   return state;
 }
@@ -77,12 +82,14 @@ describe('curvePointCommands — the edit', () => {
 
   it('toggles the loop closed and open again', () => {
     seedCurve();
+    // Toggled BY the Object id, read OFF the CurveData: the command resolves the owner, so
+    // the flag it flips is never on the node it was handed.
+    const closedFlag = () =>
+      (useDagStore.getState().state.nodes[CURVE_DATA].params as { closed: boolean }).closed;
     toggleCurveClosed('c1');
-    expect((useDagStore.getState().state.nodes.c1.params as { closed: boolean }).closed).toBe(true);
+    expect(closedFlag()).toBe(true);
     toggleCurveClosed('c1');
-    expect((useDagStore.getState().state.nodes.c1.params as { closed: boolean }).closed).toBe(
-      false,
-    );
+    expect(closedFlag()).toBe(false);
   });
 });
 
@@ -148,12 +155,10 @@ describe('curvePointCommands — the id-addressed selection rule', () => {
 
   it('an edit on ANOTHER curve never touches this curve’s selection', () => {
     seedCurve();
-    const two = applyOp(useDagStore.getState().state, {
-      type: 'addNode',
-      nodeId: 'c2',
-      nodeType: 'Curve',
-      params: { points: withIds(LINE) },
-    }).next;
+    const two = makeSplitCurve(useDagStore.getState().state, {
+      objectId: 'c2',
+      points: LINE,
+    }).state;
     useDagStore.setState({ state: two } as never);
     useCurveSelectionStore.getState().selectPoint('c1', 'cp2');
     insertCurvePoint('c2', 0);

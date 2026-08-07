@@ -33,13 +33,21 @@
 //      A gate that is red locally and green in CI gets switched off, so the subject has to be
 //      exactly what CI sees: `git ls-files`.
 //
-//   4. It scans `tests/**` and NON-TEST `src/**`, and deliberately NOT `src/**/*.test.ts`.
-//      Measured: 17 unit fixtures construct a relic to exercise graph plumbing (diffing,
-//      identify, tree walks) and never evaluate it, so the type string is inert there — and
-//      the throwing sentinel already covers any that do evaluate. They are stale rather than
-//      broken, they are a separate blast radius, and they are filed as #476. An end-to-end
-//      spec is different in kind: it drives the real application and asserts on UI behaviour,
-//      so a relic there means the assertion describes a shape the product cannot reach.
+//   4. It scans `tests/**` AND `src/**`, unit tests included. It did not always: unit
+//      fixtures were carved out because ~22 of them built a relic to exercise graph plumbing
+//      and never evaluated it, which made them stale rather than broken and a separate blast
+//      radius — filed as #476. #476 is done, so the carve-out went with it. Keeping it would
+//      have left the finished state indistinguishable from the debt: the gate would pass
+//      either way, and the next fixture to reach for a relic would be caught by nobody.
+//
+//      The CARRIER sweep widened; the SENTINEL derivation below did NOT. A retirement is
+//      something a relic declares in its own production source, so deriving the retired set
+//      from test files as well would let a test that merely quotes the sentinel enrol a type
+//      that no node ever retired — the same failure that made this issue 22 files instead of
+//      17, but from the other side: a set gaining a non-member rather than missing one.
+//      Measured before the split: no test file matches the sentinel
+//      pattern today, so the two lists agree right now and the separation is about what may
+//      happen next, not about a current disagreement.
 //
 // THE ALLOWLIST IS EMPTY, AND IT SHOULD STAY THAT WAY. An accepted carrier is how a gate
 // comes to excuse the very thing it was built to catch, so `ACCEPTED_CARRIERS` requires a
@@ -71,8 +79,37 @@ const REPO_ROOT = join(__dirname, '..', '..');
  * Empty on purpose. Adding an entry means the gate stops protecting that file, so each one
  * carries the reason and the issue that will remove it — and the assertion below treats this
  * as a set, so an entry that is no longer needed is reported rather than quietly kept.
+ *
+ * Distinct from `RELIC_IS_THE_SUBJECT` below: an entry here is DEBT with an expiry, and its
+ * issue number is the expiry. Those two are permanent and have no issue, because there is
+ * nothing to fix.
  */
 const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[] = [];
+
+/**
+ * The files that must construct a retired kind FOREVER, because the relic is their subject
+ * rather than their scaffolding. Not an allowlist — an allowlist excuses; this states a
+ * category, and the category has exactly two members.
+ *
+ * The distinction that decides membership: would the file still make its point if the relic
+ * were replaced by a live kind? For every fixture #476 retargeted, yes — the relic was a
+ * stand-in for "some node". For these two, no. A migration that does not build the
+ * pre-migration shape proves nothing, and a detector whose fixtures are not the thing it
+ * detects is testing a different regex.
+ *
+ * Asserted as a set below in BOTH directions, exactly like ACCEPTED_CARRIERS: a member that
+ * has stopped carrying a relic is reported, so this cannot quietly outlive its reason.
+ */
+const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
+  {
+    file: 'src/core/project/migrations.test.ts',
+    why: 'byte-identity fixtures for the load-migration — it must hand-build the PRE-migration shape, which is the fused kind, or it is not testing a migration',
+  },
+  {
+    file: 'src/test-utils/retiredKinds.gate.test.ts',
+    why: 'this file — its positive controls are relic constructions in string literals, and they are what prove the detector is not vacuous while its real subject is empty',
+  },
+];
 
 /**
  * Every node type the split has retired, derived from the kind descriptor rather than listed.
@@ -98,17 +135,25 @@ function carrierPattern(types: readonly string[]): RegExp {
   return new RegExp(`\\bnodeType\\s*:\\s*['"\`](${alt})['"\`]`);
 }
 
-/** Tracked `.ts`/`.tsx` under `tests/**` or NON-test `src/**` — exactly what CI sees. */
-function scannedFiles(): string[] {
+/** Every tracked `.ts`/`.tsx` under `src/` and `tests/` — exactly what CI sees. */
+function trackedFiles(): string[] {
   const out = execFileSync('git', ['ls-files', '-z', 'src', 'tests'], {
     cwd: REPO_ROOT,
     encoding: 'utf8',
     maxBuffer: 32 * 1024 * 1024,
   });
-  return out
-    .split('\0')
-    .filter((p) => /\.tsx?$/.test(p))
-    .filter((p) => !/\.test\.tsx?$/.test(p));
+  return out.split('\0').filter((p) => /\.tsx?$/.test(p));
+}
+
+/** Where a retirement is DECLARED: production source only. See note 4 in the header. */
+function sentinelFiles(): string[] {
+  return trackedFiles().filter((p) => !/\.test\.tsx?$/.test(p));
+}
+
+/** Where a relic may not be CONSTRUCTED: everything except the two files it is the subject of. */
+function scannedFiles(): string[] {
+  const subjects = new Set(RELIC_IS_THE_SUBJECT.map((s) => s.file));
+  return trackedFiles().filter((p) => !subjects.has(p));
 }
 
 interface Carrier {
@@ -146,7 +191,7 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     // `never` to close here; this equality is what substitutes for one.
     const sentinelRe = /['"](\w+) is retired[;,]/;
     const declared = new Set<string>();
-    for (const file of scannedFiles()) {
+    for (const file of sentinelFiles()) {
       // Comment-stripped for the same reason the carrier sweep is: prose that quotes the
       // sentinel while discussing a retirement would otherwise enrol a type here and break the
       // equality below from the wrong side. String contents survive stripping, and the real
@@ -160,7 +205,7 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     expect([...declared].sort()).toEqual(retired);
   });
 
-  it('no tracked end-to-end spec or production file constructs a retired node type', () => {
+  it('no tracked file constructs a retired node type, unit fixtures included', () => {
     const retired = retiredNodeTypes();
     const files = scannedFiles();
     // Guard-the-guard: if the tracked-file walk ever returns (nearly) nothing — no git, a
@@ -171,6 +216,11 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     // canary file, which would red this gate for the unrelated reason of a rename.
     expect(files.filter((f) => f.startsWith('tests/e2e/')).length).toBeGreaterThan(100);
     expect(files.filter((f) => f.startsWith('src/')).length).toBeGreaterThan(300);
+    // The third scope, and the reason it is counted separately: unit tests are the half this
+    // gate did NOT watch until #476 closed. A filter regression that dropped them again
+    // re-opens exactly the hole that was just shut, and it would clear both floors above on
+    // the surviving files alone. This is the assertion that says the carve-out is gone.
+    expect(files.filter((f) => /^src\/.*\.test\.tsx?$/.test(f)).length).toBeGreaterThan(250);
 
     const carriers = findCarriers(files, carrierPattern(retired));
     const accepted = new Map(ACCEPTED_CARRIERS.map((a) => [a.file, a]));
@@ -195,6 +245,19 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     expect(
       stale.map((s) => s.file),
       'accepted carriers no longer carrying a relic — remove these entries',
+    ).toEqual([]);
+
+    // Same discipline for the permanent category, which is excluded from the sweep and so
+    // could rot unnoticed: each member must still BE a carrier. A file listed here that has
+    // stopped building a relic has stopped needing the exemption, and leaving it listed hides
+    // that file from the gate for free.
+    const subjectRe = carrierPattern(retired);
+    const notCarrying = RELIC_IS_THE_SUBJECT.filter(
+      (s) => findCarriers([s.file], subjectRe).length === 0,
+    );
+    expect(
+      notCarrying.map((s) => s.file),
+      'listed as relic-is-the-subject but no longer constructs one — drop the entry and let the sweep cover the file',
     ).toEqual([]);
   });
 

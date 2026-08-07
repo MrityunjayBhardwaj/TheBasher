@@ -1,8 +1,14 @@
 // cameraNode — the possession-keyed camera predicates (#387 C4 slice 3).
 //
-// Every test here asserts BOTH forms: the split Object+CameraData AND the fused camera
-// that still exists until the fused types retire. A one-form test cannot tell a correct
-// coexistence predicate from one that answers for the form the fixture happens to build.
+// Written when both forms existed: every predicate asserted the split Object+CameraData AND
+// the fused camera, because a one-form test cannot tell a correct coexistence predicate from
+// one that answers for the form the fixture happens to build.
+//
+// #476 — the fused camera types have now retired, so the fused half of each pair described a
+// state the product cannot reach and has been removed rather than repaired. The discriminating
+// power did not live there in the end: what separates a real possession test from a type test
+// is the split BOX, which wears the identical node type 'Object' and must still read false.
+// That control stays, and it is what every predicate below is really pinned by.
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
@@ -52,15 +58,6 @@ function splitBox(): DagState {
   );
 }
 
-function fusedCamera(type = 'PerspectiveCamera'): DagState {
-  return applyOp(emptyDagState(), {
-    type: 'addNode',
-    nodeId: 'n_cam',
-    nodeType: type,
-    params: { fov: 28, position: [7, 1, -4], lookAt: [0, 1, 0] },
-  }).next;
-}
-
 describe('cameraNode — cameraDataOf', () => {
   // PINS the narrowing. Falsified: deleting the type test leaves the whole suite green,
   // because no other ObjectData kind declares a field named fov/near/far/lookAt/roll — so
@@ -73,17 +70,21 @@ describe('cameraNode — cameraDataOf', () => {
     expect(cameraDataOf(splitCamera(), 'n_cam')?.type).toBe('CameraData');
   });
 
-  it('is null for a fused camera (there is no data half) and for a missing node', () => {
-    expect(cameraDataOf(fusedCamera(), 'n_cam')).toBeNull();
+  it('is null for a missing node', () => {
     expect(cameraDataOf(emptyDagState(), 'nope')).toBeNull();
   });
 });
 
 describe('cameraNode — isCameraNode (possession, not identity)', () => {
-  it('accepts BOTH forms: the split Object and both fused types', () => {
-    expect(isCameraNode(splitCamera(), 'n_cam'), 'split').toBe(true);
-    expect(isCameraNode(fusedCamera('PerspectiveCamera'), 'n_cam'), 'fused persp').toBe(true);
-    expect(isCameraNode(fusedCamera('OrthographicCamera'), 'n_cam'), 'fused ortho').toBe(true);
+  it('accepts a split camera in either projection', () => {
+    // Both projections, because 'Object' is the node type either way — the projection is a
+    // field on the data half, so it is the only axis left that can distinguish them, and a
+    // predicate that keyed on the type would answer the same for both by accident.
+    expect(isCameraNode(splitCamera(), 'n_cam'), 'split perspective').toBe(true);
+    expect(
+      isCameraNode(splitCamera({ projection: 'Orthographic' }), 'n_cam'),
+      'split orthographic',
+    ).toBe(true);
   });
 
   // THE FAIL-OPEN CASE, and the reason this predicate exists at all: post-split a camera
@@ -109,11 +110,6 @@ describe('cameraNode — cameraProjectionOf', () => {
     );
   });
 
-  it('maps both fused types onto the same vocabulary', () => {
-    expect(cameraProjectionOf(fusedCamera('PerspectiveCamera'), 'n_cam')).toBe('Perspective');
-    expect(cameraProjectionOf(fusedCamera('OrthographicCamera'), 'n_cam')).toBe('Orthographic');
-  });
-
   it('is null for a non-camera', () => {
     expect(cameraProjectionOf(splitBox(), 'n_box')).toBeNull();
     expect(cameraProjectionOf(emptyDagState(), 'nope')).toBeNull();
@@ -128,12 +124,6 @@ describe('cameraNode — cameraLensParams', () => {
     // The bag is the lens, NOT the pose: `position` lives on the Object. A caller handed
     // the wrong bag would read `undefined` here and silently fall back to a default.
     expect(params).not.toHaveProperty('position');
-  });
-
-  it('returns the node itself for a fused camera, which owns everything', () => {
-    const params = cameraLensParams(fusedCamera(), 'n_cam');
-    expect(params?.fov).toBe(28);
-    expect(params?.position).toEqual([7, 1, -4]);
   });
 
   it('is null for a non-camera', () => {
@@ -158,13 +148,17 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
       nodeType: 'Group',
       params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_cam_fused',
-      nodeType: 'OrthographicCamera',
-      params: { zoom: 1, position: [0, 0, 5], lookAt: [0, 0, 0] },
-    }).next;
-    expect(enumerateCameraNodeIds(s)).toEqual(['n_cam', 'n_cam_fused']);
+    s = applyAll(
+      s,
+      splitOps(
+        'camera',
+        { objectId: 'n_cam_2' },
+        { data: { fov: 28, projection: 'Orthographic', zoom: 1 }, object: { position: [0, 0, 5] } },
+      ),
+    );
+    // The second camera is the OTHER projection, so the walk is asked to find two cameras
+    // that share a node type and differ only on the data half's discriminator.
+    expect(enumerateCameraNodeIds(s)).toEqual(['n_cam', 'n_cam_2']);
   });
 
   it('buildSetActiveCameraOps accepts a split camera as the target', () => {

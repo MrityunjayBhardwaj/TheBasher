@@ -659,7 +659,7 @@ describe('dag.inspect tool', () => {
 describe('dag.exec tool', () => {
   it('returns the ops unchanged in a tool result', () => {
     const ops: import('../../core/dag/types').Op[] = [
-      { type: 'addNode', nodeId: 'test', nodeType: 'BoxMesh', params: {} },
+      { type: 'addNode', nodeId: 'test', nodeType: 'Object', params: {} },
     ];
     const result = dagExecTool.handler(
       { description: 'add test cube', ops },

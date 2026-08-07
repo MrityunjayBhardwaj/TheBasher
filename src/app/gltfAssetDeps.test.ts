@@ -30,7 +30,9 @@ function buildScene(): DagState {
         scale: [1, 1, 1],
       },
     },
-    { type: 'addNode', nodeId: 'box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
+    // An unrelated node the asset selector must ignore, and whose `position` the second
+    // case edits — so it has to be the half that OWNS a transform, not the geometry half.
+    { type: 'addNode', nodeId: 'box', nodeType: 'Object', params: { position: [0, 0, 0] } },
   ];
   for (const op of ops) s = applyOp(s, op).next;
   return s;

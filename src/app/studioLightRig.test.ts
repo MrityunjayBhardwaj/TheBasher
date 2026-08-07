@@ -12,6 +12,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { enumerateStudioLights, resolveRigTarget } from './studioLightRig';
+import { makeSplitLight } from '../test-utils/splitLight';
 
 type Vec3 = [number, number, number];
 
@@ -27,16 +28,18 @@ function addAreaLight(
   pos: Vec3,
   opts: { aimPoint?: Vec3; tex?: string; name?: string } = {},
 ): DagState {
-  let next = applyOp(state, {
-    type: 'addNode',
-    nodeId: lightId,
-    nodeType: 'AreaLight',
-    params: {
-      position: pos,
+  // A split area light. `position` is the Object's; `tex` moved to the LightData, which is
+  // exactly the seam `buildStudioLightEntry` has to cross (studioLightRig.ts:93) — with a
+  // fused light both came off one node and the crossing was untestable.
+  let next = makeSplitLight(state, {
+    objectId: lightId,
+    lightKind: 'Area',
+    position: pos,
+    shading: {
       ...(opts.tex ? { tex: opts.tex } : {}),
       ...(opts.name ? { name: opts.name } : {}),
     },
-  }).next;
+  }).state;
   if (opts.aimPoint) {
     next = applyOp(next, {
       type: 'addNode',

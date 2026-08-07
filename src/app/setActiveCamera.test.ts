@@ -6,6 +6,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, type DagState } from '../core/dag';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildDefaultDagState } from '../core/project/default';
 import { selectActiveCameraNode } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
@@ -21,14 +22,12 @@ function applyAll(state: DagState, ops: ReturnType<typeof buildSetActiveCameraOp
   return s;
 }
 
-/** Default project (n_camera wired direct) + an Nth extra camera node (floating). */
+/** Default project (n_camera wired direct) + an Nth extra camera node (floating).
+ *  A split pair, so the extra camera wears node type 'Object' like everything else and the
+ *  rewire has to recognise it by possession rather than by type. */
 function addCamera(state: DagState, id: string, position: [number, number, number]): DagState {
-  return applyOp(state, {
-    type: 'addNode',
-    nodeId: id,
-    nodeType: 'PerspectiveCamera',
-    params: { position, lookAt: [0, 0, 0], fov: 50 },
-  }).next;
+  return makeSplitCamera(state, { objectId: id, fov: 50, position, lens: { lookAt: [0, 0, 0] } })
+    .state;
 }
 
 describe('buildSetActiveCameraOps', () => {

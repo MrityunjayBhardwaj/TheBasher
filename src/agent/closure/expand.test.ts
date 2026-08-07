@@ -13,6 +13,9 @@ import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { expandClosure, isFreshAddNode, opTargetNodeId } from './expand';
 import type { ClosureSpec } from './types';
 import type { Op } from '../../core/dag/types';
+import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitSphere } from '../../test-utils/splitSphere';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -21,19 +24,21 @@ beforeEach(() => {
 
 function buildBaseline(): DagState {
   // scene.children = [box, sphere];  scene.out → render.scene
+  //
+  // #365 Ph5a / #384 C1: box and sphere are the object↔data split — an Object owning the pose
+  // (this is the scene child) wired to a BoxData/SphereData owning the geometry. The data leaf
+  // is not incidental scenery here. It gives `box` a real edge on the PRODUCER side, which is
+  // the side the no-direction-mixing test below walks: with a fused mesh that walk had nothing
+  // to traverse, so "the sibling is not reached" was half-vacuous. It now has to refuse a
+  // sibling while genuinely traversing.
   let s = emptyDagState();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'sphere',
-    nodeType: 'SphereMesh',
-    params: { radius: 1, position: [2, 0, 0] },
-  }).next;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+  }).state;
+  s = makeSplitSphere(s, { objectId: 'sphere', radius: 1, position: [2, 0, 0] }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   s = applyOp(s, {
     type: 'addNode',
@@ -93,8 +98,8 @@ describe('expandClosure', () => {
       state,
     );
     // Each edge kind runs its own per-root BFS. parent: box → scene →
-    // render. children: box has no inputs → empty. Sibling is reachable
-    // only by parent ∘ children, which the gate refuses to do — that's
+    // render. children: box → its own BoxData and no further. Sibling is
+    // reachable only by parent ∘ children, which the gate refuses to do — that's
     // the V13 acceptance #2 guarantee ("rotate selected can NEVER produce
     // ops that mutate any other node").
     expect(closure.nodes.has('box')).toBe(true);
@@ -306,7 +311,7 @@ describe('opTargetNodeId', () => {
     const op: Op = {
       type: 'addNode',
       nodeId: 'newBox',
-      nodeType: 'BoxMesh',
+      nodeType: 'Object',
       params: {},
     };
     expect(opTargetNodeId(op)).toBe('newBox');
@@ -354,7 +359,7 @@ describe('isFreshAddNode', () => {
     const op: Op = {
       type: 'addNode',
       nodeId: 'fresh',
-      nodeType: 'BoxMesh',
+      nodeType: 'Object',
       params: {},
     };
     expect(isFreshAddNode(op, state)).toBe(true);
@@ -365,7 +370,7 @@ describe('isFreshAddNode', () => {
     const op: Op = {
       type: 'addNode',
       nodeId: 'box',
-      nodeType: 'BoxMesh',
+      nodeType: 'Object',
       params: {},
     };
     expect(isFreshAddNode(op, state)).toBe(false);
@@ -400,29 +405,20 @@ function buildPassBaseline(): DagState {
   // 'pass-input' socket — that arrives with RenderJob in Wave B.
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1] },
-  }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'cam', socket: 'out' },
-    to: { node: 'scene', socket: 'camera' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'box', socket: 'out' },
-    to: { node: 'scene', socket: 'children' },
-  }).next;
+  // #387 C4 / #365 Ph5a — cam and box are split pairs. The ids the assertions below name
+  // ('cam', 'box') stay the Object halves, which is what a scene socket consumes either way.
+  s = makeSplitCamera(s, {
+    objectId: 'cam',
+    fov: 45,
+    position: [0, 0, 5],
+    connectTo: { node: 'scene', socket: 'camera' },
+  }).state;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    connectTo: { node: 'scene', socket: 'children' },
+  }).state;
   s = applyOp(s, { type: 'addNode', nodeId: 'beauty', nodeType: 'BeautyPass', params: {} }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'idp', nodeType: 'IDPass', params: {} }).next;
   for (const passId of ['beauty', 'idp']) {
@@ -506,29 +502,18 @@ describe("P4 — 'pass-input' edge kind (Wave A — forward-declared, no live so
 function buildTwoJobsState(): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1] },
-  }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'cam', socket: 'out' },
-    to: { node: 'scene', socket: 'camera' },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'box', socket: 'out' },
-    to: { node: 'scene', socket: 'children' },
-  }).next;
+  s = makeSplitCamera(s, {
+    objectId: 'cam',
+    fov: 45,
+    position: [0, 0, 5],
+    connectTo: { node: 'scene', socket: 'camera' },
+  }).state;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    connectTo: { node: 'scene', socket: 'children' },
+  }).state;
   for (const passId of ['passA', 'passB']) {
     s = applyOp(s, { type: 'addNode', nodeId: passId, nodeType: 'BeautyPass', params: {} }).next;
     s = applyOp(s, {

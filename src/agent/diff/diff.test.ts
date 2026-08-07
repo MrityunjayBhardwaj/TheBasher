@@ -17,6 +17,17 @@ import { ClosurePreservationError } from '../closure/expand';
 import type { ClosureSpec } from '../closure/types';
 import type { Op } from '../../core/dag/types';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
+import { dataIdFor, splitOps } from '../../test-utils/splitKinds';
+
+/**
+ * The geometry half of the baseline `box`. Named because it is load-bearing rather than
+ * incidental: post object↔data split `position`/`rotation` are the Object's and `size` is the
+ * BoxData's, so an "edit the box" gesture emits ops against TWO nodes. Aiming a `size` write at
+ * the Object is not a harmless mislabel — `propose` flags it as a `stripped-write` reportable
+ * (#423), which is the check at the bottom of this file.
+ */
+const BOX_DATA = dataIdFor('box');
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -26,18 +37,18 @@ beforeEach(() => {
 
 function buildBaselineDag(): DagState {
   let state = emptyDagState();
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-  }).next;
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.1, far: 1000, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  }).next;
+  state = makeSplitCube(state, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+  }).state;
+  state = makeSplitCamera(state, {
+    objectId: 'cam',
+    fov: 45,
+    position: [3, 2, 3],
+    lens: { near: 0.1, far: 1000, lookAt: [0, 0, 0] },
+  }).state;
   // Wire scene
   state = applyOp(state, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
   state = applyOp(state, {
@@ -96,8 +107,8 @@ describe('createFork', () => {
       {
         type: 'addNode' as const,
         nodeId: 'new_box',
-        nodeType: 'BoxMesh',
-        params: { size: [2, 2, 2], position: [1, 0, 0], rotation: [0, 0, 0] },
+        nodeType: 'Object',
+        params: { position: [1, 0, 0], rotation: [0, 0, 0] },
       },
       {
         type: 'connect' as const,
@@ -151,7 +162,7 @@ describe('useDiffStore', () => {
     const state = buildBaselineDag();
     const ops = [
       { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-      { type: 'setParam', nodeId: 'box', paramPath: 'size', value: [3, 3, 3] },
+      { type: 'setParam', nodeId: BOX_DATA, paramPath: 'size', value: [3, 3, 3] },
     ];
     useDiffStore.getState().propose(state, ops, 'edit box');
     useDiffStore.getState().toggleOp(0);
@@ -162,7 +173,7 @@ describe('useDiffStore', () => {
     const state = buildBaselineDag();
     const ops = [
       { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-      { type: 'setParam', nodeId: 'box', paramPath: 'size', value: [3, 3, 3] },
+      { type: 'setParam', nodeId: BOX_DATA, paramPath: 'size', value: [3, 3, 3] },
     ];
     useDiffStore.getState().propose(state, ops, 'edit box');
     useDiffStore.getState().selectAll(false);
@@ -173,7 +184,7 @@ describe('useDiffStore', () => {
     const state = buildBaselineDag();
     const ops = [
       { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
-      { type: 'setParam', nodeId: 'box', paramPath: 'size', value: [3, 3, 3] },
+      { type: 'setParam', nodeId: BOX_DATA, paramPath: 'size', value: [3, 3, 3] },
     ];
     useDiffStore.getState().propose(state, ops, 'edit box');
     useDiffStore.getState().toggleOp(0); // deselect first
@@ -226,7 +237,7 @@ describe('useDiffStore', () => {
     const ops: Op[] = [
       { type: 'setParam', nodeId: 'box', paramPath: 'position', value: [2, 0, 0] },
       { type: 'setParam', nodeId: 'box', paramPath: 'rotation', value: [0, 1, 0] },
-      { type: 'setParam', nodeId: 'box', paramPath: 'size', value: [2, 2, 2] },
+      { type: 'setParam', nodeId: BOX_DATA, paramPath: 'size', value: [2, 2, 2] },
     ];
     // Intentionally reversed-alphabetical emission order.
     const opSources = ['agent:mutator.scale', 'agent:mutator.rotate', 'agent:mutator.duplicate'];
@@ -280,17 +291,13 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
     // Adds a sibling to the baseline so closure constraints have something
     // to reject against.
     let s = buildBaselineDag();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'sibling',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], position: [3, 0, 0], rotation: [0, 0, 0] },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'sibling', socket: 'out' },
-      to: { node: 'scene', socket: 'children' },
-    }).next;
+    s = makeSplitCube(s, {
+      objectId: 'sibling',
+      size: [1, 1, 1],
+      position: [3, 0, 0],
+      rotation: [0, 0, 0],
+      connectTo: { node: 'scene', socket: 'children' },
+    }).state;
     return s;
   }
 
@@ -369,8 +376,8 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
       {
         type: 'addNode',
         nodeId: 'newCube',
-        nodeType: 'BoxMesh',
-        params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+        nodeType: 'Object',
+        params: { position: [0, 0, 0], rotation: [0, 0, 0] },
       },
       // Wiring the new node into scene.children is fine: scene IS in
       // closure (box's parent), and connect's target is scene.
@@ -394,8 +401,8 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
       {
         type: 'addNode',
         nodeId: 'newCube',
-        nodeType: 'BoxMesh',
-        params: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
+        nodeType: 'Object',
+        params: { position: [0, 0, 0], rotation: [0, 0, 0] },
       },
       // setParam on the freshly-added id — must pass the gate even though
       // newCube isn't in the original closure expansion.
@@ -414,31 +421,46 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
     // gate. Post-fix, expansion runs against the post-fork state.
     const state = buildScene();
     const newSphereId = 'newSphere';
+    const newSphereData = dataIdFor(newSphereId);
+    // #384 C1 — mesh.add now spawns a PAIR: the SphereData, the Object, and the `data` edge
+    // between them. The color write lands on the DATA half, so the spec follows 'data' as well
+    // as 'parent', mirroring what the live `setMaterialColor` builder authors
+    // (src/agent/mutators/builders/setMaterialColor.ts:41).
+    //
+    // Measured, because the obvious reading is wrong: dropping 'data' from the spec does NOT
+    // red this test. The data node is introduced by an addNode in this same batch, so the
+    // fresh-id exemption — the rule the test directly above pins — already clears its write,
+    // and the 'data' edge never has to carry it. The edge is load-bearing only when the target
+    // ALREADY exists, which is the case this fixture is not. Kept faithful to the builder
+    // anyway; it just must not be read as coverage of the 'data' walk.
     const ops: Op[] = [
-      // mesh.add — spawn the sphere into scene.children.
-      {
-        type: 'addNode',
-        nodeId: newSphereId,
-        nodeType: 'SphereMesh',
-        params: { radius: 1, position: [0, 0, 0] },
-      },
+      ...(splitOps(
+        'sphere',
+        { objectId: newSphereId, dataId: newSphereData },
+        { data: { radius: 1 }, object: { position: [0, 0, 0] } },
+      ) as Op[]),
       {
         type: 'connect',
         from: { node: newSphereId, socket: 'out' },
         to: { node: 'scene', socket: 'children' },
       },
-      // mutator.setMaterialColor — target the fresh id, closure roots on it.
+      // mutator.setMaterialColor — target the fresh pair, closure roots on the Object.
       // The closure walker needs the connect-to-scene to be applied so the
       // parent walk from newSphereId reaches scene; otherwise scene is
       // outside closure and the connect op above would fail the gate.
-      { type: 'setParam', nodeId: newSphereId, paramPath: 'material.color', value: '#ffc0cb' },
+      {
+        type: 'setParam',
+        nodeId: newSphereData,
+        paramPath: 'material.base.color',
+        value: '#ffc0cb',
+      },
     ];
     const spec: ClosureSpec = {
       rootSelectors: [newSphereId],
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'data'],
     };
     const diff = useDiffStore.getState().propose(state, ops, 'spawn+color', undefined, spec);
-    expect(diff.ops).toHaveLength(3);
+    expect(diff.ops).toHaveLength(5);
     expect(diff.closure?.nodes.has(newSphereId)).toBe(true);
     expect(diff.closure?.nodes.has('scene')).toBe(true);
   });

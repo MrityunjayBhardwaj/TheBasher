@@ -10,6 +10,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { stripDriveRefusal } from './stripDrive';
+import { makeSplitCube } from '../test-utils/splitCube';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 import { stripTargetRows } from '../timeline/NlaAddStripPopover';
 
 beforeEach(() => {
@@ -21,28 +23,34 @@ beforeEach(() => {
 function buildScene(): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: { name: 'Box', size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'box', socket: 'out' },
-    to: { node: 'scene', socket: 'children' },
-  }).next;
+  // A real mesh, not a bare node: the first case's claim is "a MESH is drivable", so the
+  // subject has to be an Object that actually carries geometry.
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    connectTo: { node: 'scene', socket: 'children' },
+  }).state;
   s = { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
   return s;
 }
 
-function withCamera(s: DagState, id: string, type = 'PerspectiveCamera'): DagState {
-  return applyOp(s, {
-    type: 'addNode',
-    nodeId: id,
-    nodeType: type,
-    params: { fov: 28, position: [7, 1, -4], lookAt: [0, 0, 0] },
-  }).next;
+/**
+ * A split camera (Object → CameraData) at `id`.
+ *
+ * `projection` is the discriminator that carries this fixture's power. The fused types it
+ * replaces were two NODE TYPES; post-split there is one type and a discriminator, so
+ * "both camera forms are refused" is asserted over `projection` rather than over
+ * `nodeType` — which is the only road left, since a split camera's `type` is `'Object'`
+ * for both projections.
+ */
+function withCamera(s: DagState, id: string, projection = 'Perspective'): DagState {
+  return makeSplitCamera(s, {
+    objectId: id,
+    fov: 28,
+    position: [7, 1, -4],
+    lens: { projection, lookAt: [0, 0, 0] },
+  }).state;
 }
 
 describe('#479 — stripDriveRefusal (a strip must not be offered where it cannot drive)', () => {
@@ -50,15 +58,15 @@ describe('#479 — stripDriveRefusal (a strip must not be offered where it canno
     expect(stripDriveRefusal(buildScene(), 'box')).toBeNull();
   });
 
-  it('BOTH fused camera types are refused, with a reason that says why', () => {
-    for (const type of ['PerspectiveCamera', 'OrthographicCamera']) {
-      const s = withCamera(buildScene(), 'n_cam', type);
+  it('BOTH camera projections are refused, with a reason that says why', () => {
+    for (const projection of ['Perspective', 'Orthographic']) {
+      const s = withCamera(buildScene(), 'n_cam', projection);
       const reason = stripDriveRefusal(s, 'n_cam');
-      expect(reason, type).not.toBeNull();
-      expect(reason, type).toMatch(/camera/i);
+      expect(reason, projection).not.toBeNull();
+      expect(reason, projection).toMatch(/camera/i);
       // It must state the CONSEQUENCE, not just the verdict — this string is the
       // disabled button's whole explanation to the director.
-      expect(reason, type).toMatch(/delete/i);
+      expect(reason, projection).toMatch(/delete/i);
     }
   });
 

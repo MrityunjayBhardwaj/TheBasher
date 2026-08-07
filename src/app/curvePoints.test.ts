@@ -6,6 +6,8 @@ import { describe, expect, it, beforeAll } from 'vitest';
 import { applyOp } from '../core/dag/ops';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
+import { makeSplitCurve } from '../test-utils/splitCurve';
+import { dataIdFor } from '../test-utils/splitKinds';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { Vec3 } from '../nodes/types';
 import { withIds } from '../test-utils/curvePoints';
@@ -18,6 +20,9 @@ import {
   curvePointsOf,
 } from './curvePoints';
 
+/** The CurveData half of `withCurve()`'s pair — where `points` and `closed` actually live. */
+const CURVE_DATA = dataIdFor('c1');
+
 const LINE: Vec3[] = [
   [0, 0, 0],
   [2, 0, 0],
@@ -25,12 +30,9 @@ const LINE: Vec3[] = [
 ];
 
 function withCurve(points: Vec3[] = LINE, closed = false): DagState {
-  return applyOp(buildDefaultDagState(), {
-    type: 'addNode',
-    nodeId: 'c1',
-    nodeType: 'Curve',
-    params: { points: withIds(points), closed },
-  }).next;
+  // The Object half is 'c1'; the CurveData that actually owns `points` is 'c1_data'. The
+  // builders resolve the owner themselves, so 'c1' stays the id every case addresses.
+  return makeSplitCurve(buildDefaultDagState(), { objectId: 'c1', points, closed }).state;
 }
 
 /** Apply the builder's ops — proving they are VALID ops the store accepts (a whole-array
@@ -60,7 +62,10 @@ describe('curvePoints — whole-array edits', () => {
     const state = withCurve();
     const ops = buildSetCurvePointOps(state, 'c1', 1, [2, 5, 0])!;
     expect(ops).toHaveLength(1);
-    expect(ops[0]).toMatchObject({ type: 'setParam', nodeId: 'c1', paramPath: 'points' });
+    // The write lands on the CurveData, not the Object handed in. That IS the resolution
+    // under test: a `points` write aimed at the Object is silently dropped (the Object has
+    // no such param) and nothing on screen moves.
+    expect(ops[0]).toMatchObject({ type: 'setParam', nodeId: CURVE_DATA, paramPath: 'points' });
     expect((ops[0] as { value: Vec3[] }).value).toHaveLength(3);
   });
 
@@ -109,7 +114,7 @@ describe('curvePoints — whole-array edits', () => {
   it('toggles closed', () => {
     const state = withCurve();
     const next = apply(state, buildToggleCurveClosedOp(state, 'c1'));
-    expect((next.nodes.c1.params as { closed: boolean }).closed).toBe(true);
+    expect((next.nodes[CURVE_DATA].params as { closed: boolean }).closed).toBe(true);
   });
 
   it('refuses a non-Curve node and an out-of-range index', () => {

@@ -3,6 +3,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import type { Op } from '../core/dag/types';
 import { __reseedAllNodesForTests, registerAllNodes } from '../nodes/registerAll';
 import { buildSceneTreeRows } from './sceneTreeWalk';
+import { makeSplitCube } from '../test-utils/splitCube';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -35,21 +36,22 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
   it('walks Group children with parent linkage', () => {
     let state = buildSceneOnly();
     state = applyAll(state, [
-      { type: 'addNode', nodeId: 'box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
       { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'box', socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
-      },
       {
         type: 'connect',
         from: { node: 'grp', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
+    state = makeSplitCube(state, {
+      objectId: 'box',
+      size: [1, 1, 1],
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
     const rows = buildSceneTreeRows(state);
-    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'Group', 'BoxMesh']);
+    // Three rows, not four: the BoxData hangs off the Object's `data` socket, which is not a
+    // scene socket, so the walk must not surface it as a sibling row in the outliner.
+    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'Group', 'Object']);
     expect(rows[1].parent).toEqual({ nodeId: 'n_scene', socket: 'children', index: 0 });
     expect(rows[2].parent).toEqual({ nodeId: 'grp', socket: 'children', index: 0 });
   });
@@ -57,21 +59,20 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
   it('walks Transform → child via target socket', () => {
     let state = buildSceneOnly();
     state = applyAll(state, [
-      { type: 'addNode', nodeId: 'box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
       { type: 'addNode', nodeId: 'tx', nodeType: 'Transform', params: { position: [1, 0, 0] } },
-      {
-        type: 'connect',
-        from: { node: 'box', socket: 'out' },
-        to: { node: 'tx', socket: 'target' },
-      },
       {
         type: 'connect',
         from: { node: 'tx', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
+    state = makeSplitCube(state, {
+      objectId: 'box',
+      size: [1, 1, 1],
+      connectTo: { node: 'tx', socket: 'target' },
+    }).state;
     const rows = buildSceneTreeRows(state);
-    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'Transform', 'BoxMesh']);
+    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'Transform', 'Object']);
     expect(rows[2].parent).toEqual({ nodeId: 'tx', socket: 'target', index: 0 });
   });
 
@@ -140,39 +141,38 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
   });
 
   it('produces the same tree shape for two non-identical DAGs that evaluate the same hierarchy', () => {
-    // DAG A: Scene → Group → BoxMesh
+    // DAG A: Scene → Group → split cube
     let a = buildSceneOnly();
     a = applyAll(a, [
-      { type: 'addNode', nodeId: 'box', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
       { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'box', socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
-      },
       {
         type: 'connect',
         from: { node: 'grp', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
+    a = makeSplitCube(a, {
+      objectId: 'box',
+      size: [1, 1, 1],
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
     // DAG B: same shape but the Group has different params (passes through),
-    // and node ids differ. The TYPE sequence must match (projection equality).
+    // and node ids differ — including the DATA ids, which the walk must keep out of the
+    // projection entirely for the two type sequences to agree.
     let b = buildSceneOnly();
     b = applyAll(b, [
-      { type: 'addNode', nodeId: 'aa', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
       { type: 'addNode', nodeId: 'bb', nodeType: 'Group', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'aa', socket: 'out' },
-        to: { node: 'bb', socket: 'children' },
-      },
       {
         type: 'connect',
         from: { node: 'bb', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
+    b = makeSplitCube(b, {
+      objectId: 'aa',
+      size: [1, 1, 1],
+      connectTo: { node: 'bb', socket: 'children' },
+    }).state;
     const ta = buildSceneTreeRows(a).map((r) => `${r.depth}:${r.nodeType}`);
     const tb = buildSceneTreeRows(b).map((r) => `${r.depth}:${r.nodeType}`);
     expect(ta).toEqual(tb);
@@ -181,16 +181,12 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
 
 describe('buildSceneTreeRows — row.display identity (outliner labels)', () => {
   function sceneWithBox(): DagState {
-    let state = buildSceneOnly();
-    state = applyAll(state, [
-      { type: 'addNode', nodeId: 'n_box_2', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
-      {
-        type: 'connect',
-        from: { node: 'n_box_2', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-    ]);
-    return state;
+    const state = buildSceneOnly();
+    return makeSplitCube(state, {
+      objectId: 'n_box_2',
+      size: [1, 1, 1],
+      connectTo: { node: 'n_scene', socket: 'children' },
+    }).state;
   }
 
   function patchNode(state: DagState, id: string, patch: Record<string, unknown>): DagState {
@@ -198,11 +194,13 @@ describe('buildSceneTreeRows — row.display identity (outliner labels)', () => 
   }
 
   it('falls back to the node id (NOT the bare type) for an unnamed node', () => {
-    // Two unnamed BoxMesh used to both read "BoxMesh" — indistinct in the tree
-    // while the inspector showed "n_box_2". The label now carries identity.
+    // Two unnamed meshes used to both read their bare type — indistinct in the tree while
+    // the inspector showed "n_box_2". The label now carries identity. Post-split the bare
+    // type is 'Object', which every mesh, light and camera shares, so the failure this
+    // guards against is strictly worse than it was: EVERY scene row would read alike.
     const box = buildSceneTreeRows(sceneWithBox()).find((r) => r.nodeId === 'n_box_2');
     expect(box?.display).toBe('n_box_2');
-    expect(box?.display).not.toBe('BoxMesh');
+    expect(box?.display).not.toBe('Object');
   });
 
   it('prefers meta.name (matches the inspector identity)', () => {
@@ -214,7 +212,7 @@ describe('buildSceneTreeRows — row.display identity (outliner labels)', () => 
 
   it('uses params.name (Shot / AnimationClip / Character semantic label) over the id', () => {
     const box = buildSceneTreeRows(
-      patchNode(sceneWithBox(), 'n_box_2', { params: { size: [1, 1, 1], name: 'Intro' } }),
+      patchNode(sceneWithBox(), 'n_box_2', { params: { name: 'Intro' } }),
     ).find((r) => r.nodeId === 'n_box_2');
     expect(box?.display).toBe('Intro');
   });
@@ -223,7 +221,7 @@ describe('buildSceneTreeRows — row.display identity (outliner labels)', () => 
     const box = buildSceneTreeRows(
       patchNode(sceneWithBox(), 'n_box_2', {
         meta: { name: 'Hero' },
-        params: { size: [1, 1, 1], name: 'Intro' },
+        params: { name: 'Intro' },
       }),
     ).find((r) => r.nodeId === 'n_box_2');
     expect(box?.display).toBe('Hero');

@@ -49,7 +49,7 @@ describe('deriveConfidence (P-6 mitigation)', () => {
   it('exactly 1 candidate → 1.0', () => {
     expect(
       deriveConfidence({
-        candidates: [{ id: 'a', nodeType: 'BoxMesh' }],
+        candidates: [{ id: 'a', nodeType: 'Object' }],
         typeConsistent: true,
       }),
     ).toBe(1.0);
@@ -57,9 +57,9 @@ describe('deriveConfidence (P-6 mitigation)', () => {
 
   it('2-3 type-consistent candidates → 0.6', () => {
     const cs = [
-      { id: 'a', nodeType: 'BoxMesh' },
-      { id: 'b', nodeType: 'BoxMesh' },
-      { id: 'c', nodeType: 'BoxMesh' },
+      { id: 'a', nodeType: 'Object' },
+      { id: 'b', nodeType: 'Object' },
+      { id: 'c', nodeType: 'Object' },
     ];
     expect(deriveConfidence({ candidates: cs, typeConsistent: true })).toBe(0.6);
   });
@@ -67,15 +67,19 @@ describe('deriveConfidence (P-6 mitigation)', () => {
   it('>3 candidates → 0.3 even when type-consistent', () => {
     const cs = Array.from({ length: 5 }, (_, i) => ({
       id: `n${i}`,
-      nodeType: 'BoxMesh',
+      nodeType: 'Object',
     }));
     expect(deriveConfidence({ candidates: cs, typeConsistent: true })).toBe(0.3);
   });
 
   it('type-inconsistent candidates → 0.3', () => {
+    // Object vs Group, not cube vs sphere: post-split a cube-Object and a sphere-Object share
+    // nodeType 'Object', so that pair no longer makes a set inconsistent. The mixed sets the
+    // resolver can still produce are Object against the kinds that did NOT split — an empty
+    // (Group/Transform/Null) or AmbientLight — which is what this pair stands for.
     const cs = [
-      { id: 'a', nodeType: 'BoxMesh' },
-      { id: 'b', nodeType: 'SphereMesh' },
+      { id: 'a', nodeType: 'Object' },
+      { id: 'b', nodeType: 'Group' },
     ];
     expect(deriveConfidence({ candidates: cs, typeConsistent: false })).toBe(0.3);
   });

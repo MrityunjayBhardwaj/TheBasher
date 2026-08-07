@@ -19,6 +19,7 @@ import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';
+import { makeSplitCube } from '../test-utils/splitCube';
 
 beforeAll(() => {
   __reseedAllNodesForTests();
@@ -40,12 +41,11 @@ function buildScene(): DagState {
   )) {
     s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
   }
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_cube',
-    nodeType: 'BoxMesh',
-    params: { name: 'Cube', position: [2, 0, 0], size: [1, 1, 1] },
-  } as Parameters<typeof applyOp>[1]).next;
+  // The aim target is a split cube. `lookAtTargetOptions` keeps only nodes carrying a vec3
+  // `position` (CameraLookAtTarget.tsx:81), and a BoxData carries none — so the option list
+  // has to leave the data half out. With a fused mesh there was no second node for that
+  // filter to reject, and the exclusion was untested.
+  s = makeSplitCube(s, { objectId: 'n_cube', position: [2, 0, 0], size: [1, 1, 1] }).state;
   return s;
 }
 
@@ -134,32 +134,12 @@ describe('bindLookAtTargetOps', () => {
     expect(bindLookAtTargetOps(buildScene(), IDS, '', CTX).ops).toEqual([]);
   });
 
-  // Coexistence: until slice 7 flips creation, every camera in every project is still
-  // fused and both ids are the same node. That path must be byte-identical.
-  it('a FUSED camera (one id for both jobs) is unchanged', () => {
-    let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_fused',
-      nodeType: 'PerspectiveCamera',
-      params: { position: [7, 1, -4], lookAt: [0, 1, 0], fov: 28 },
-    } as Parameters<typeof applyOp>[1]).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_cube',
-      nodeType: 'BoxMesh',
-      params: { name: 'Cube', position: [2, 0, 0], size: [1, 1, 1] },
-    } as Parameters<typeof applyOp>[1]).next;
-
-    expect(lookAtTargetOptions(s.nodes, 'n_fused').map((o) => o.id)).toEqual(['n_cube']);
-    const { ops } = bindLookAtTargetOps(
-      s,
-      { nodeId: 'n_fused', poseNodeId: 'n_fused' },
-      'n_cube',
-      CTX,
-    );
-    const op = ops[0] as { params: Record<string, unknown> };
-    expect(op.params.target).toBe('n_fused');
-    expect(op.params.aimPoint).toEqual([0, 1, 0]);
-  });
+  // #476 — a coexistence case lived here: "a FUSED camera (one id for both jobs) is
+  // unchanged", asserting that the two-ids seam collapsed harmlessly when both ids named the
+  // same node. Its premise was "until slice 7 flips creation, every camera in every project
+  // is still fused". Slice 7 flipped and the fused types retired, so the one-id camera is not
+  // a state any project can hold. Deleted rather than retargeted: pointing it at a split pair
+  // would have made it a copy of the cases above. What it guarded — that a COLLAPSED pair
+  // misbehaves — is still covered, by the lens-half collapse case above it, which asserts the
+  // wrong collapse silently emits nothing.
 });

@@ -7,6 +7,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitSphere } from '../../test-utils/splitSphere';
+import { makeSplitLight } from '../../test-utils/splitLight';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
+import { dataIdFor } from '../../test-utils/splitKinds';
 import { buildDefaultDagState } from '../../core/project/default';
 import {
   __resetMutatorRegistryForTests,
@@ -47,13 +51,11 @@ beforeEach(() => {
 /**
  * A SPLIT scene: an `Object` (`box`) posing a `BoxData`, wired into a Scene aggregator.
  *
- * #415 — the modifier cases need this and `buildScene()` cannot give it. `buildScene`
- * still constructs fused `BoxMesh`/`SphereMesh` nodes, which are RETIRED relics whose
- * `evaluate` throws; they survive here because these mutator cases only ever wire and
- * inspect them, never evaluate them — the retired-type-as-fixture shape [[H219]] names,
- * and already tracked as #476. Moving the whole file onto split fixtures is that issue's
- * job, not this slice's. What this slice cannot do is leave the MODIFIER cases on a
- * fused node, because there is no data lane under one and the stack now lives there.
+ * #415 introduced this because `buildScene()` was still on fused `BoxMesh`/`SphereMesh`
+ * relics and a modifier stack has nowhere to live under one. #476 has since moved
+ * `buildScene()` onto split pairs too, so the two now differ only in POPULATION: this one is
+ * a single object, `buildScene()` adds a sibling cube and a sphere. Kept separate so the
+ * modifier cases state their own scene rather than inheriting neighbours they do not use.
  */
 function buildSplitScene(): { state: DagState; dataId: string } {
   let s = emptyDagState();
@@ -75,36 +77,30 @@ function buildSplitScene(): { state: DagState; dataId: string } {
 function buildScene(): DagState {
   // Two cubes and a sphere wired into a Scene aggregator. scene is the
   // anchor output for the project.
+  //
+  // #476 — split pairs, not fused meshes. This is not cosmetic for a MUTATOR fixture: every
+  // builder here routes a write through the ownership oracle (`resolveDataParamOwner` /
+  // `resolveExposedTarget`), and on a fused node that oracle answers "the node itself" for
+  // every property. So a fused fixture cannot tell a mutator that routes correctly from one
+  // that does not route at all — `material` and `size` land on the BoxData, `rotation` and
+  // `position` on the Object, and the randomize case below now pins exactly that.
   let s = emptyDagState();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', color: '#ff0000' },
-    },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'sibling',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [3, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', color: '#00ff00' },
-    },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'sphere',
-    nodeType: 'SphereMesh',
-    params: { radius: 1, position: [0, 2, 0] },
-  }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#ff0000',
+  }).state;
+  s = makeSplitCube(s, {
+    objectId: 'sibling',
+    size: [1, 1, 1],
+    position: [3, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#00ff00',
+  }).state;
+  s = makeSplitSphere(s, { objectId: 'sphere', radius: 1, position: [0, 2, 0] }).state;
   s = applyOp(s, {
     type: 'connect',
     from: { node: 'box', socket: 'out' },
@@ -1150,35 +1146,27 @@ function hexToHsl(hex: string): { h: number; s: number; l: number } {
   return { h, s, l };
 }
 
-// Local helper: scene with `box` (BoxMesh — material+rotation+size all
-// compatible) and `light` (DirectionalLight — has color + rotation +
+// Local helper: scene with `box` (a split cube — material+rotation+size all
+// compatible) and `light` (a split directional light — has color + rotation +
 // scale vec3, but NO `size` and NO `radius`, so `canScale` returns
 // false → mixed-compatibility scene exercises D-10 gate-4 reject).
 function buildSceneWithLight(): DagState {
   let s = emptyDagState();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', color: '#ff0000' },
-    },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'light',
-    nodeType: 'DirectionalLight',
-    params: {
-      intensity: 1,
-      position: [5, 5, 5],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      color: '#ffffff',
-    },
-  }).next;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#ff0000',
+  }).state;
+  s = makeSplitLight(s, {
+    objectId: 'light',
+    lightKind: 'Directional',
+    position: [5, 5, 5],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    shading: { intensity: 1, color: '#ffffff' },
+  }).state;
   return s;
 }
 
@@ -1220,13 +1208,18 @@ describe('randomize mutator', () => {
       if (op.type !== 'setParam') throw new Error('unexpected non-setParam op');
       return { nodeId: op.nodeId, paramPath: op.paramPath };
     });
+    // The nodeIds are the interesting half. Spec order still governs the SEQUENCE, but each
+    // op lands on the node that OWNS its property: material and size on the BoxData, rotation
+    // on the Object. On the fused fixture this file used to carry, all six read 'box'/'sibling'
+    // — so the assertion could not tell a builder that resolves ownership from one that just
+    // writes to the target it was handed.
     expect(opPairs).toEqual([
-      { nodeId: 'box', paramPath: 'material.base.color' },
+      { nodeId: dataIdFor('box'), paramPath: 'material.base.color' },
       { nodeId: 'box', paramPath: 'rotation' },
-      { nodeId: 'box', paramPath: 'size' },
-      { nodeId: 'sibling', paramPath: 'material.base.color' },
+      { nodeId: dataIdFor('box'), paramPath: 'size' },
+      { nodeId: dataIdFor('sibling'), paramPath: 'material.base.color' },
       { nodeId: 'sibling', paramPath: 'rotation' },
-      { nodeId: 'sibling', paramPath: 'size' },
+      { nodeId: dataIdFor('sibling'), paramPath: 'size' },
     ]);
   });
 
@@ -1368,19 +1361,20 @@ describe('randomize mutator', () => {
 
   // ---- #6 D-10 per-property precondition reject ----
   it('per-property precondition rejects the WHOLE call at gate 4 naming the incompatible (target, property) pair', () => {
-    // DirectionalLight has color + rotation but NO size and NO radius →
-    // canScale returns false → 'scale' is the incompatible property
-    // for the `light` target.
+    // A light has rotation but NO size and NO radius → canScale returns false → 'scale' is
+    // the incompatible property for the `light` target.
+    //
+    // 'color' is deliberately NOT in this spec, though it was before the fixtures moved to
+    // split pairs. On a split light the colour probe also fails — but wrongly, and for an
+    // unrelated reason: it reads `color` off the Object while the split put it on the
+    // LightData (#592). Leaving 'color' in would make this case reject on the FIRST
+    // incompatible property and quietly stop testing the one it names, and it would go green
+    // again the moment #592 is fixed. Scale is the durable claim, so scale is what it asks.
     const state = buildSceneWithLight();
     const spec = {
       targetSelectors: ['box', 'light'],
-      properties: ['color', 'rotation', 'scale'] as const,
+      properties: ['rotation', 'scale'] as const,
       ranges: {
-        color: {
-          h: [0, 360] as [number, number],
-          s: [0.5, 1] as [number, number],
-          l: [0.4, 0.6] as [number, number],
-        },
         rotation: { axis: 'y' as const, degRange: [0, 90] as [number, number] },
         scale: { factor: [0.5, 1.5] as [number, number] },
       },
@@ -1632,7 +1626,8 @@ describe('duplicate mutator', () => {
       const addNodes = result.ops
         .map((op, i) => ({ op, i }))
         .filter(({ op }) => op.type === 'addNode');
-      expect(addNodes).toHaveLength(2);
+      // 2 targets × 2 halves — each clone brings its data node with it.
+      expect(addNodes).toHaveLength(4);
 
       for (const { op, i: addIdx } of addNodes) {
         const cloneId = (op as { type: 'addNode'; nodeId: string }).nodeId;
@@ -1771,8 +1766,8 @@ describe('duplicate mutator', () => {
           },
           box: {
             id: 'box',
-            type: 'BoxMesh',
-            params: { size: [1, 1, 1], position: [0, 0, 0] },
+            type: 'Object',
+            params: { position: [0, 0, 0] },
             inputs: {},
           },
           strip: {
@@ -1827,7 +1822,10 @@ describe('duplicate mutator', () => {
     const cloneIds = result.ops
       .filter((o) => o.type === 'addNode')
       .map((o) => (o as { nodeId: string }).nodeId);
-    expect(cloneIds).toEqual(['box_copy', 'box_copy2']);
+    // Four ids, not two: duplicating a split cube clones BOTH halves, so the shared
+    // `reserved` set has to thread across the data ids as well as the Object ids. On the
+    // fused fixture this case only ever exercised two.
+    expect(cloneIds).toEqual(['box_copy', 'box_data_copy', 'box_copy2', 'box_data_copy2']);
     expect(new Set(cloneIds).size).toBe(cloneIds.length); // no collision
     // A collision would throw at the second addNode.
     let s = state;
@@ -1846,7 +1844,9 @@ describe('deleteNode mutator', () => {
       const disconnects = result.ops.filter((o) => o.type === 'disconnect');
       const removes = result.ops.filter((o) => o.type === 'removeNode');
       expect(disconnects.length).toBeGreaterThan(0);
-      expect(removes).toHaveLength(1);
+      // Two removals: deleting a split cube takes the Object AND the BoxData it posed.
+      // Leaving the data half behind would orphan it in the graph.
+      expect(removes).toHaveLength(2);
       // disconnect must come before removeNode (order matters for the Op layer)
       const lastDisIdx = result.ops.findLastIndex((o) => o.type === 'disconnect');
       const removeIdx = result.ops.findIndex((o) => o.type === 'removeNode');
@@ -1964,8 +1964,15 @@ describe('validatePlan — five gates', () => {
     const fakeMutator = {
       ...rotateMutator,
       build: () => [
-        // size must be positive — this should fail paramSchema.
-        { type: 'setParam' as const, nodeId: 'box', paramPath: 'size', value: [-1, -1, -1] },
+        // size must be positive — this should fail paramSchema. Aimed at the BoxData, which
+        // is where `size` and therefore its schema live; aimed at the Object there is no
+        // `size` param to have a schema, so gate 2 has nothing to check and the plan passes.
+        {
+          type: 'setParam' as const,
+          nodeId: dataIdFor('box'),
+          paramPath: 'size',
+          value: [-1, -1, -1],
+        },
       ],
     };
     const result = validatePlan(
@@ -2452,12 +2459,12 @@ describe('mutator.timeline.keyframe', () => {
 describe('mutator.shot.create', () => {
   function stateWithCamera() {
     let s = buildScene();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cam',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 45, near: 0.1, far: 100, position: [0, 0, 5], lookAt: [0, 0, 0] },
-    }).next;
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      fov: 45,
+      position: [0, 0, 5],
+      lens: { near: 0.1, far: 100, lookAt: [0, 0, 0] },
+    }).state;
     return s;
   }
 
@@ -2513,17 +2520,12 @@ import { addPassMutator } from './builders/addPass';
 
 function buildSceneWithJob(): DagState {
   let s = buildSceneWithTime();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [0, 0, 5] },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'cam', socket: 'out' },
-    to: { node: 'scene', socket: 'camera' },
-  }).next;
+  s = makeSplitCamera(s, {
+    objectId: 'cam',
+    fov: 45,
+    position: [0, 0, 5],
+    connectTo: { node: 'scene', socket: 'camera' },
+  }).state;
   s = applyOp(s, {
     type: 'addNode',
     nodeId: 'job',
@@ -2639,12 +2641,7 @@ describe('mutator.render.addPass', () => {
   it('rejects when no Scene exists (gate 4)', () => {
     let s = emptyDagState();
     s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'cam',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: 45, position: [0, 0, 5] },
-    }).next;
+    s = makeSplitCamera(s, { objectId: 'cam', fov: 45, position: [0, 0, 5] }).state;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'job',
