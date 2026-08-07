@@ -138,6 +138,20 @@ describe('#583 — the tier the render root may fold', () => {
     expect(countOf(foldAtRoot(s), 'arr')).toBe(3);
   });
 
+  it('REFUSES a TIME-VARYING path — the freeze this tier exists to prevent', () => {
+    // The case the issue asks for by name, because folding this path is the specific way
+    // the slice goes wrong QUIETLY. A two-key channel genuinely varies over t; the render
+    // root evaluates at a playhead frozen at zero. Fold it here and params carry the
+    // frame-0 sample forever — the object holds still through the entire scrub while every
+    // read surface reports it animating, and no static scene can tell the difference.
+    //
+    // Distinct from the single-key case below, which fails the same half for a different
+    // reason: that one is static and still refused for want of a held edit. This one would
+    // be refused even if the tier were the naive "fold what does not vary".
+    const s = scene([channelOp(2)]);
+    expect(countOf(foldAtRoot(s), 'arr')).toBe(3);
+  });
+
   it('REFUSES a path with no held edit, however static its channel is', () => {
     // Fails the transient half ONLY: a single-key channel at full influence is static AND
     // an overwrite, so `!readsBase` is satisfied and it is still not folded here. The
