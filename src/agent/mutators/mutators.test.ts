@@ -4,7 +4,14 @@
 // REF: P2.5.2 PLAN §5 Wave C; vyapti V13/V14.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  evaluate,
+  emptyDagState,
+  type DagState,
+} from '../../core/dag';
+import { recomposeLightObject } from '../../nodes/lightRecompose';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
@@ -1106,6 +1113,99 @@ describe('split-Object radius mutators reach the SphereData (#384)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #592 — the colour road reaches a split light's LightData
+//
+// Asked at the OBJECT throughout, because that is the half a director can name: `identify`
+// returns the Object for "the point light", so the Object is the only id these mutators are
+// ever handed in production. The LightData half was never broken and is not the claim.
+// ---------------------------------------------------------------------------
+
+describe('colour mutators reach a split light’s LightData (#592)', () => {
+  function sceneWithSplitLight(): DagState {
+    return makeSplitLight(emptyDagState(), {
+      objectId: 'light',
+      lightKind: 'Directional',
+      position: [5, 5, 5],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      shading: { intensity: 1, color: '#ffffff' },
+    }).state;
+  }
+
+  it('setMaterialColor writes color on the LightData, not the Object', () => {
+    const result = validatePlan(
+      setMaterialColorMutator,
+      { targetSelectors: ['light'], color: '#00ff00' },
+      sceneWithSplitLight(),
+      'paint',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ops).toHaveLength(1);
+    const op = result.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('light_data');
+    expect(op.paramPath).toBe('color');
+    expect(op.value).toBe('#00ff00');
+  });
+
+  it('randomize color emits against the LightData', () => {
+    const result = validatePlan(
+      randomizeMutator,
+      {
+        targetSelectors: ['light'],
+        properties: ['color'] as const,
+        ranges: {
+          color: {
+            h: [0, 360] as [number, number],
+            s: [0.5, 1] as [number, number],
+            l: [0.4, 0.6] as [number, number],
+          },
+        },
+        seed: 42,
+      },
+      sceneWithSplitLight(),
+      'r',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ops).toHaveLength(1);
+    const op = result.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('light_data');
+    expect(op.paramPath).toBe('color');
+  });
+
+  // The write must actually LAND. A gate that passes and an op that addresses a param the
+  // node does not have would satisfy both cases above and change nothing on screen — the
+  // shape #394 recorded (success reported, nothing done). Applying the op closes that.
+  it('the emitted op applies, and the LightData carries the new colour', () => {
+    const state = sceneWithSplitLight();
+    const result = validatePlan(
+      setMaterialColorMutator,
+      { targetSelectors: ['light'], color: '#123456' },
+      state,
+      'paint',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    let next = state;
+    for (const op of result.ops) next = applyOp(next, op).next;
+
+    expect((next.nodes.light_data.params as { color?: string }).color).toBe('#123456');
+    // And the Object did NOT grow a stray colour param on the way.
+    expect((next.nodes.light.params as { color?: string }).color).toBeUndefined();
+
+    // THEIR SIDE OF THE BOUNDARY. The param store landing is my side; what the renderer
+    // consumes is the recomposed flat LightValue, which is where a write that reached the
+    // right node but the wrong FIELD would still read as the old colour.
+    const light = recomposeLightObject(evaluate(next, 'light').value);
+    expect(light?.color).toBe('#123456');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // randomize mutator — P7.2 / issue #26 path B
 //
 // Per-target randomization across {color, rotation, scale}. ONE call emits
@@ -1365,11 +1465,12 @@ describe('randomize mutator', () => {
     // the incompatible property for the `light` target.
     //
     // 'color' is deliberately NOT in this spec, though it was before the fixtures moved to
-    // split pairs. On a split light the colour probe also fails — but wrongly, and for an
-    // unrelated reason: it reads `color` off the Object while the split put it on the
-    // LightData (#592). Leaving 'color' in would make this case reject on the FIRST
-    // incompatible property and quietly stop testing the one it names, and it would go green
-    // again the moment #592 is fixed. Scale is the durable claim, so scale is what it asks.
+    // split pairs. It was dropped because a split light's colour probe was ALSO failing then,
+    // wrongly and for an unrelated reason — it read `color` off the Object while the split put
+    // it on the LightData — so this case was rejecting on the first incompatible property and
+    // quietly not testing the one it names. #592 has since fixed that probe, and colour is now
+    // COMPATIBLE with a light, which is the second reason to leave it out: putting it back
+    // would assert nothing. Scale is the durable claim, so scale is what it asks.
     const state = buildSceneWithLight();
     const spec = {
       targetSelectors: ['box', 'light'],

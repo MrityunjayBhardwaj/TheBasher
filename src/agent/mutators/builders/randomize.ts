@@ -43,8 +43,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { mulberry32, randRange } from '../../../nodes/random';
 import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
-import { resolveExposedTarget } from '../../../app/exposeParams';
-import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
+import { resolveColorWriteTarget } from '../../../app/resolveColorWriteTarget';
 
 // ---------------------------------------------------------------------------
 // Sub-schemas (D-08 — bound discipline)
@@ -186,23 +185,23 @@ function sampleScaleFactor(rng: () => number, range: ScaleRangeT): number {
 }
 
 // ---------------------------------------------------------------------------
-// Capability probes — mirror existing builders verbatim (DO NOT re-derive)
-//   canColor:    setMaterialColor.ts:47-48
+// Capability probes.
+//   canColor:    SHARES setMaterialColor's resolver (resolveColorWriteTarget) — see #592
+//                below; the others still mirror their builder and must not be re-derived.
 //   canRotation: rotate.ts:49-50
 //   canScale:    scale.ts:46-47
 // ---------------------------------------------------------------------------
 
-// #365 Phase 5a — color/scale live on the BoxData a split Object points at, so these probes
-// resolve the true owner through `data` (a fused mesh owns them itself; a light owns `color`).
+// #365 Phase 5a — color/scale live on the data node a split Object points at, so these probes
+// resolve the true owner through `data`: a fused node owns them itself, a split mesh's colour
+// lives on its BoxData and a split light's on its LightData.
 // Rotation stays on the Object, so canRotation reads the target's own params.
 function canColor(state: DagState, id: string): boolean {
-  // #394 S3c — per FIELD, mirroring setMaterialColor.ts: with a material operator in the
-  // stack the authority for `color` is the topmost layer that forces it, not the param root.
-  // #394 P5 — through the projection, so the offer and the write cannot answer differently.
-  const hasMaterial = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color) !== null;
-  const hasColor =
-    typeof (state.nodes[id]?.params as Record<string, unknown> | undefined)?.color === 'string';
-  return hasMaterial || hasColor;
+  // #592 — the shared resolver, not a second spelling of setMaterialColor's probe. It carries
+  // the per-FIELD material reach (#394 S3c/P5: a material operator forces `color` over the
+  // param root) AND the split reach for a light's flat `color`, which the raw params read
+  // this replaced could not do for anything but a fused node.
+  return resolveColorWriteTarget(state, id) !== null;
 }
 
 function canRotation(params: Record<string, unknown> | undefined): boolean {
@@ -324,23 +323,16 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
 
       for (const prop of spec.properties) {
         if (prop === 'color') {
-          // mirror setMaterialColor.ts — the per-field owner + ITS path vs light `color`
+          // The same resolver `canColor` gated on, so a target the gate admitted cannot emit
+          // nothing here. The path rides with the owner: material.base.color on an IR node
+          // (v0.6 #2, #178), the flat `color` scalar on an override operator or a LightData.
           const hex = sampleHslToHex(rng, spec.ranges.color!);
-          const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
-          if (matOwner) {
+          const target = resolveColorWriteTarget(state, id);
+          if (target) {
             ops.push({
               type: 'setParam',
-              nodeId: matOwner.nodeId,
-              // The path rides with the owner: material.base.color on an IR node (v0.6 #2,
-              // #178), the flat `color` scalar on an override operator.
-              paramPath: matOwner.paramPath,
-              value: hex,
-            });
-          } else if (typeof params.color === 'string') {
-            ops.push({
-              type: 'setParam',
-              nodeId: id,
-              paramPath: 'color',
+              nodeId: target.nodeId,
+              paramPath: target.paramPath,
               value: hex,
             });
           }
