@@ -30,12 +30,34 @@
 // 50 units. That is the arm that matters — the two arms above sample after release, when the
 // object has snapped back to its authored size and "still drawing" would prove nothing.
 //
-// ⚠️ DECLARED LIMIT — this bounds GROWTH, it does not minimise the population. After a drag
-// ends nothing grows, so nothing is due, and up to one budget of dead entries sits there
-// until the next churn: both arms above settle above their starting size, on purpose. The
-// alternative is a quiet-period sweep, which is a cadence with its own failure modes for at
-// most `SWEEP_GROWTH_BUDGET` entries. Not built; recorded so nobody reads the residue as a
-// leak, and so the case for building it starts from this number.
+// ⚠️ THE LIMIT #587 DECLARED HERE IS NOW CLOSED (#588), and the way it closed is the point.
+// The budget bounds GROWTH and then stops: once a drag ends nothing grows, so nothing is due,
+// and up to one budget of dead entries used to sit there until the next churn — both arms
+// above settle above their starting size. That was recorded as a limit rather than fixed,
+// because it was stated in ENTRIES and no decision can be taken in that unit.
+//
+// Priced in bytes it decided itself. The same ~50-entry residue costs 0.05 MB on a plain box
+// and 12.5 MB on a 64×48 sphere through an ArrayModifier — 250× apart at equal entry count,
+// scaling with mesh density and modifier count, i.e. with the dials a user turns. Hence the
+// second trigger below (`SWEEP_QUIET_FRAMES`). See `geometryRegistry.residentBytes`.
+//
+// ── OBSERVED AFTER THE QUIET TRIGGER (one arm per page, so no arm inherits the last one's
+//    leftovers — the isolation the #587 run above lacked) ──
+//
+//   arm                        entries: before → peak → settle    residue      GPU geometries
+//   idle (control)                 1  →   1  →   1                0 / 840 B      flat
+//   plain box drag                 1  →  65  →   1                0 / 0.00 MB    7 → 71 → 7
+//   sphere 64×48 + Array(3)        2  →  66  →   2                0 / 0.00 MB   15 → 47 → 15
+//
+// Both arms return to their exact starting population, and the GPU column returns with them —
+// that number falls only on a real `dispose()`, so this is memory handed back rather than Map
+// keys deleted. The PEAKS are unchanged from #587 (64/66 → 65/66), which is the other half of
+// the claim: trigger 2 collects the residue without weakening trigger 1's bound during churn.
+//
+// ⚠️ WHAT IS STILL NOT CLAIMED: this bounds the population, it does not make the cache
+// minimal at every instant. Between the last write and the quiet sweep the residue is still
+// held, and a scene that never goes quiet never reaches trigger 2 — it stays bounded by the
+// budget, which is the guarantee that was always on offer.
 //
 // REF: src/app/geometryRegistry.ts (`sweep`, and the measured growth model); issues #587,
 //      #586, #544, #575; src/viewport/sceneBounds.ts (the walk precedent — note the
@@ -88,35 +110,100 @@ export function collectAttachedGeometry(root: Object3D): Set<BufferGeometry> {
  */
 export const SWEEP_GROWTH_BUDGET = 64;
 
+/**
+ * How many frames the population must sit UNCHANGED before the residue is collected (#588).
+ *
+ * WHY A SECOND TRIGGER AT ALL, and the number that bought it. The budget above bounds growth
+ * during churn and then, by construction, stops: once a drag ends nothing grows, so nothing
+ * is ever due again, and up to one budget of dead entries waits for the next churn. #587
+ * recorded that as a declared limit stated in ENTRIES — a unit that cannot decide anything.
+ * Priced in bytes (#588), the same ~50-entry residue costs **0.05 MB** on a plain box and
+ * **12.5 MB** on a 64×48 sphere through an ArrayModifier: a 250× spread at equal entry count,
+ * scaling with the two dials a user actually turns. 12.5 MB of VRAM held for nothing after
+ * every modifier drag is worth a second trigger; 0.05 MB would not have been.
+ *
+ * 30 frames is half a second at 60Hz. During a drag the population changes essentially every
+ * frame, so thirty unchanged ones mean churn has genuinely stopped rather than paused between
+ * two writes. A slower scene makes the wait longer in wall-clock terms, which is harmless:
+ * firing early is safe anyway, because the sweep checks attachment rather than trusting the
+ * cadence.
+ *
+ * ⚠️ PREMISE: THE CANVAS RUNS `frameloop="always"`. This counts frames, so on-demand
+ * rendering would stop the counter a frame or two after the last change and the quiet sweep
+ * would silently never fire — the residue would come back with no test going red. That is a
+ * property of a file this module does not own, so it is pinned by a gate rather than by this
+ * comment. See `geometrySweep.gate.test.ts`.
+ */
+export const SWEEP_QUIET_FRAMES = 30;
+
+/** Population at the end of the last sweep — the baseline the budget is measured from. */
 let lastSweptSize = 0;
+/** Population on the previous frame, so "did anything change?" is answerable. */
+let lastSeenSize = 0;
+/** Consecutive frames the population has not moved. */
+let quietFrames = 0;
 
 /**
- * Sweep if the population has grown past the budget since the last one; otherwise do
- * nothing and pay only a `Map.size` read.
+ * Sweep if either trigger is due; otherwise do nothing and pay only a `Map.size` read.
+ *
+ * TWO TRIGGERS, ANSWERING DIFFERENT QUESTIONS. The budget bounds the population *while* it
+ * grows — the difference between "VRAM settles when you let go" and "VRAM does not climb
+ * while you work". The quiet period collects what the budget leaves behind by design, which
+ * is everything under one budget's worth at the moment churn stops. Neither subsumes the
+ * other: the budget never fires on a settled scene, and the quiet period never fires during
+ * a drag.
  *
  * Returns the sweep's result, or `null` when no sweep was due — so a caller (or a gate) can
  * tell "swept and freed nothing" from "did not sweep", which are the two readings of an
  * unchanged population and mean opposite things.
  *
+ * ⚠️ IT CANNOT RE-FIRE ON A SETTLED SCENE, and that is the quiet trigger's whole risk. Each
+ * sweep re-marks `lastSweptSize` at the population it leaves behind, so the very next frame
+ * reads "nothing unverified" and returns before touching the scene. Without that the quiet
+ * path would walk the entire graph every frame forever, costing nothing visible — a full
+ * traversal produces the same correct population — which is exactly the kind of regression
+ * that survives review and has an arm on it below rather than a comment here.
+ *
  * ⚠️ SAFE TO CALL MID-DRAG, and it is meant to be. The instance the current frame is drawing
- * is attached by definition, so the check protects it; what the sweep collects is the 63
- * frames behind it, which is exactly the garbage. The one ordering this relies on is that
- * the caller runs AFTER React has committed — see the mount site.
+ * is attached by definition, so the check protects it; what the sweep collects is the frames
+ * behind it, which is exactly the garbage. The one ordering this relies on is that the caller
+ * runs AFTER React has committed — see the mount site.
  */
 export function sweepIfDue(root: Object3D): GeometrySweepResult | null {
   const current = registrySize();
-  if (current <= lastSweptSize + SWEEP_GROWTH_BUDGET) {
-    // A shrinking population (a project switch, a `clear()`) must lower the mark too, or the
-    // budget silently becomes "grow back to the old high-water mark first".
-    if (current < lastSweptSize) lastSweptSize = current;
+
+  // ── Trigger 1: unverified growth past the budget. Bounds the population DURING churn.
+  if (current > lastSweptSize + SWEEP_GROWTH_BUDGET) return runSweep(root);
+
+  // A shrinking population (a project switch, a `clear()`) must lower the mark too, or the
+  // budget silently becomes "grow back to the old high-water mark first".
+  if (current < lastSweptSize) lastSweptSize = current;
+
+  // ── Trigger 2: a quiet period. Collects the residue trigger 1 leaves once churn stops.
+  if (current !== lastSeenSize) {
+    lastSeenSize = current;
+    quietFrames = 0;
     return null;
   }
+  // Settled AND already swept down to here: nothing is unverified, so there is nothing a
+  // walk could discover. This is the latch that stops the quiet path re-firing forever.
+  if (current <= lastSweptSize) return null;
+  if (++quietFrames < SWEEP_QUIET_FRAMES) return null;
+  return runSweep(root);
+}
+
+/** Take the sweep and re-mark every cadence baseline from its result. */
+function runSweep(root: Object3D): GeometrySweepResult {
   const result = sweep(collectAttachedGeometry(root));
   lastSweptSize = registrySize();
+  lastSeenSize = lastSweptSize;
+  quietFrames = 0;
   return result;
 }
 
-/** Test seam: forget the last sweep's high-water mark. */
+/** Test seam: forget the last sweep's high-water mark and the quiet-period counter. */
 export function __resetSweepCadenceForTests(): void {
   lastSweptSize = 0;
+  lastSeenSize = 0;
+  quietFrames = 0;
 }

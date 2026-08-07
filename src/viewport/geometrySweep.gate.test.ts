@@ -16,6 +16,7 @@
 // use, the walk's is failing to see it — and a Set fixture would test only the first.
 
 import { describe, expect, it, beforeEach } from 'vitest';
+import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { BoxGeometry, Group, Line, LineBasicMaterial, Mesh, MeshBasicMaterial, Scene } from 'three';
 import {
   clear,
@@ -24,11 +25,14 @@ import {
   growthBySource,
   prime,
   size,
+  type GeometrySweepResult,
 } from '../app/geometryRegistry';
 import type { GeometryRef } from '../nodes/types';
+import { stripComments } from '../test-utils/sourceScan';
 import { arrayGeometryRef, boxGeometryRef } from '../app/modifierGeometry';
 import {
   SWEEP_GROWTH_BUDGET,
+  SWEEP_QUIET_FRAMES,
   __resetSweepCadenceForTests,
   collectAttachedGeometry,
   sweepIfDue,
@@ -283,5 +287,213 @@ describe('#587 — the sweep frees what nothing draws', () => {
     const result = sweepIfDue(scene);
     expect(result).not.toBeNull();
     expect(result!.disposed).toBe(SWEEP_GROWTH_BUDGET + 1);
+  });
+});
+
+// ── THE QUIET-PERIOD TRIGGER (#588) ─────────────────────────────────────────────────────
+//
+// The budget above bounds growth and then, by construction, stops. Once churn ends nothing
+// grows, so nothing is due, and the leftovers sit there. #587 declared that as a limit
+// because it was stated in ENTRIES; priced in bytes it was 12.5 MB on a modifier stack over
+// a mid-density mesh, which is what bought this trigger.
+//
+// The two failure modes are opposite and both have arms: it must FIRE once churn stops, and
+// it must NOT keep firing afterwards — an un-latched version walks the whole scene graph
+// every frame forever while producing an entirely correct population, so nothing observable
+// goes wrong and no ordinary test notices.
+describe('#588 — the quiet period collects what the budget leaves behind', () => {
+  /** Run `n` frames with no writes at all, returning every sweep that fired. */
+  function idleFrames(scene: Scene, n: number): GeometrySweepResult[] {
+    const swept: GeometrySweepResult[] = [];
+    for (let f = 0; f < n; f++) {
+      const r = sweepIfDue(scene);
+      if (r) swept.push(r);
+    }
+    return swept;
+  }
+
+  /** A drag that ends BELOW the budget, so trigger 1 can never fire and only trigger 2 can. */
+  function dragUnderBudget(scene: Scene, mesh: Mesh, frames: number) {
+    for (let f = 0; f < frames; f++) {
+      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f)))!;
+      sweepIfDue(scene); // the real per-frame cadence, not a forced sweep
+    }
+  }
+
+  it('frees the residue a drag leaves, which the budget alone never would', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+
+    const CHURN = SWEEP_GROWTH_BUDGET - 4; // deliberately under the budget
+    dragUnderBudget(scene, mesh, CHURN);
+
+    // The precondition, asserted rather than assumed: trigger 1 did NOT fire, so what
+    // follows is attributable to the quiet period and to nothing else.
+    expect(size()).toBe(CHURN);
+
+    const swept = idleFrames(scene, SWEEP_QUIET_FRAMES);
+
+    expect(swept).toHaveLength(1);
+    expect(swept[0].disposed).toBe(CHURN - 1); // every frame but the one on screen
+    expect(size()).toBe(1);
+    expect(mesh.geometry).toBe(getForRead(boxGeometryRef(dragSize(CHURN - 1))));
+  });
+
+  it('waits the full quiet period — it does not fire on the first settled frame', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+    dragUnderBudget(scene, mesh, SWEEP_GROWTH_BUDGET - 4);
+
+    // One frame short of the period: still nothing. A trigger that fired immediately would
+    // walk the scene on every frame that happened not to insert, which during a drag with
+    // any cache hit in it is most of them.
+    expect(idleFrames(scene, SWEEP_QUIET_FRAMES - 1)).toHaveLength(0);
+    expect(sweepIfDue(scene)).not.toBeNull(); // and on the very next one, it fires
+  });
+
+  // THE LATCH. This is the case the whole design risk sits in: an un-latched quiet trigger
+  // leaves the population exactly as correct as a latched one, so only a count of WALKS can
+  // tell them apart.
+  it('sweeps ONCE per quiet period, not once per frame, on a scene that has settled', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+    dragUnderBudget(scene, mesh, SWEEP_GROWTH_BUDGET - 4);
+
+    const swept = idleFrames(scene, SWEEP_QUIET_FRAMES * 5);
+
+    expect(swept).toHaveLength(1); // five periods' worth of frames, one walk
+    expect(size()).toBe(1);
+  });
+
+  // A scene loaded and then left alone still has entries the cadence has never verified, so
+  // one pass is correct — an entry inserted before any sweep is indistinguishable from
+  // residue until something looks. What must NOT happen is a second pass. Written the other
+  // way round first ("never fires with nothing to collect"), which was a claim about the
+  // design that the design does not make.
+  it('verifies a freshly loaded scene exactly once, then stops looking', () => {
+    const scene = new Scene();
+    const group = new Group();
+    scene.add(group);
+    for (let i = 0; i < 12; i++) {
+      const geom = getForAttach(boxGeometryRef([3 + i, 1, 1]));
+      group.add(new Mesh(geom!, new MeshBasicMaterial()));
+    }
+
+    const swept = idleFrames(scene, SWEEP_QUIET_FRAMES * 4);
+
+    expect(swept).toHaveLength(1); // four periods, one walk
+    expect(swept[0].attached).toBe(12); // it looked at the real scene…
+    expect(swept[0].disposed).toBe(0); // …and correctly freed nothing
+    expect(size()).toBe(12);
+  });
+
+  // Primed baked entries count toward the population but can never be disposed, so they are
+  // permanently "unverified growth" from the cadence's point of view. Without the latch
+  // being marked from the POST-sweep population, a scene holding one primed entry that
+  // nothing draws would walk the graph every quiet period forever, achieving nothing. The
+  // exemption is also the road that hangs the app if it is ever got wrong — the loader's
+  // promise cache is never cleared — so it is worth pinning against the new trigger too.
+  it('latches after sweeping a scene whose leftovers are all exempt', () => {
+    const ref: GeometryRef = {
+      key: 'baked|quiet-8',
+      kind: 'baked',
+      descriptor: { kind: 'baked', hash: 'quiet', vertexCount: 8 },
+    };
+    prime(ref, new BoxGeometry(1, 1, 1));
+
+    const scene = new Scene(); // nothing drawn at all
+    const swept = idleFrames(scene, SWEEP_QUIET_FRAMES * 4);
+
+    expect(swept).toHaveLength(1); // one walk, not one per period
+    expect(swept[0].exempt).toBe(1);
+    expect(swept[0].disposed).toBe(0);
+    expect(getForRead(ref)).not.toBeNull(); // and the primed entry survived
+  });
+
+  it('re-arms: a second burst of churn gets its own quiet sweep', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+
+    dragUnderBudget(scene, mesh, 20);
+    expect(idleFrames(scene, SWEEP_QUIET_FRAMES)).toHaveLength(1);
+    expect(size()).toBe(1);
+
+    // A second, disjoint burst — new keys, so this is real growth and not a cache hit.
+    for (let f = 0; f < 20; f++) {
+      mesh.geometry = getForAttach(boxGeometryRef([50 + f, 1, 1]))!;
+      sweepIfDue(scene);
+    }
+    expect(size()).toBe(21); // 20 new + the one still drawn from before
+
+    const second = idleFrames(scene, SWEEP_QUIET_FRAMES);
+    expect(second).toHaveLength(1);
+    expect(second[0].disposed).toBe(20);
+    expect(size()).toBe(1);
+  });
+
+  it('resets its counter when the population moves, so churn cannot age into a sweep', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+
+    // Insert once every few frames, forever short of the quiet period. The counter must
+    // restart on each insertion; if it merely accumulated, a slow drag would sweep mid-churn
+    // on a schedule nobody chose.
+    let swept = 0;
+    for (let burst = 0; burst < 6; burst++) {
+      mesh.geometry = getForAttach(boxGeometryRef([80 + burst, 1, 1]))!;
+      for (let f = 0; f < SWEEP_QUIET_FRAMES - 2; f++) if (sweepIfDue(scene)) swept++;
+    }
+    expect(swept).toBe(0);
+    expect(size()).toBe(6);
+  });
+
+  it('does not disturb the budget trigger — a drag past it still sweeps on growth', () => {
+    const scene = new Scene();
+    const mesh = new Mesh(undefined, new MeshBasicMaterial());
+    scene.add(mesh);
+
+    // Every frame inserts, so the population never sits still and trigger 2 can never fire.
+    // Anything that sweeps here is trigger 1, unchanged by this slice.
+    let swept = 0;
+    for (let f = 0; f < SWEEP_GROWTH_BUDGET * 2; f++) {
+      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f % DRAG_FRAMES)))!;
+      if (sweepIfDue(scene)) swept++;
+    }
+    expect(swept).toBeGreaterThan(0);
+    expect(size()).toBeLessThanOrEqual(SWEEP_GROWTH_BUDGET + 1);
+  });
+
+  // ⚠️ THE PREMISE, PINNED WHERE IT CAN BREAK. `SWEEP_QUIET_FRAMES` counts FRAMES, so the
+  // trigger exists only for as long as frames keep arriving after the last change. R3F's
+  // default is `frameloop="always"`; switching the Canvas to `"demand"` — a plausible battery
+  // optimisation, made in a different file for an unrelated reason — stops the loop a frame
+  // or two after the last invalidation, the counter never reaches 30, and the residue comes
+  // back with every test in this file still green. The failure is silent, remote, and
+  // invisible to any test of this module, which is exactly what makes it worth a census.
+  // ⚠️ IT IS DELIBERATELY BROADER THAN THE PREMISE. What the trigger actually needs is that
+  // the Canvas *`GeometryLifetime` is mounted in* keeps ticking; this asserts it of every
+  // Canvas in `src/`. There is exactly one today, so the two coincide — but a second one
+  // added later for its own reasons (a thumbnail renderer, an offscreen capture) could
+  // legitimately want `"demand"` and would red here. That red is the point: it is cheaper to
+  // be told "say which Canvas hosts the lifetime" than to have the trigger silently retire
+  // because the answer changed. The narrower check would need to know the mount site, which
+  // is a React fact this file cannot read.
+  it('the Canvas still runs an always-on frameloop, which the quiet trigger depends on', () => {
+    const canvases = sourceFiles().filter(([, src]) => /<Canvas[\s>]/.test(stripComments(src)));
+    // Assert the subject is non-empty before asserting anything about it: a census whose
+    // corpus silently emptied — a rename, a narrowed walk — would pass while checking nothing.
+    expect(canvases.length).toBeGreaterThan(0);
+
+    for (const [path, src] of canvases) {
+      const frameloop = /frameloop\s*=\s*\{?\s*['"]?(\w+)/.exec(stripComments(src));
+      // Either unset (R3F defaults to "always") or explicitly "always". Anything else stops
+      // the frame counter, and whoever changes it should land here rather than in a bug report.
+      expect(frameloop?.[1] ?? 'always', `${path} changed the frameloop`).toBe('always');
+    }
   });
 });
