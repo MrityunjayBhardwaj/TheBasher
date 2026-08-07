@@ -1465,11 +1465,12 @@ describe('randomize mutator', () => {
     // the incompatible property for the `light` target.
     //
     // 'color' is deliberately NOT in this spec, though it was before the fixtures moved to
-    // split pairs. On a split light the colour probe also fails — but wrongly, and for an
-    // unrelated reason: it reads `color` off the Object while the split put it on the
-    // LightData (#592). Leaving 'color' in would make this case reject on the FIRST
-    // incompatible property and quietly stop testing the one it names, and it would go green
-    // again the moment #592 is fixed. Scale is the durable claim, so scale is what it asks.
+    // split pairs. It was dropped because a split light's colour probe was ALSO failing then,
+    // wrongly and for an unrelated reason — it read `color` off the Object while the split put
+    // it on the LightData — so this case was rejecting on the first incompatible property and
+    // quietly not testing the one it names. #592 has since fixed that probe, and colour is now
+    // COMPATIBLE with a light, which is the second reason to leave it out: putting it back
+    // would assert nothing. Scale is the durable claim, so scale is what it asks.
     const state = buildSceneWithLight();
     const spec = {
       targetSelectors: ['box', 'light'],
