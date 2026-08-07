@@ -59,7 +59,11 @@ function scene(extra: Op[] = []): DagState {
       nodeType: 'ArrayModifier',
       params: { count: 3, offset: [2, 0, 0], muted: false },
     },
-    { type: 'connect', from: { node: 'box', socket: 'out' }, to: { node: 'arr', socket: 'target' } },
+    {
+      type: 'connect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'arr', socket: 'target' },
+    },
   ];
   for (const op of [...ops, ...extra]) state = applyOp(state, op).next;
   return state;
@@ -171,7 +175,9 @@ describe('#583 — the tier the render root may fold', () => {
     store.set('arr', 'count', 9);
     expect(countOf(foldOverlays(s, at(0), undefined, { fold, only: 'refoldSafe' }), 'arr')).toBe(9);
     store.set('arr', 'count', 11);
-    expect(countOf(foldOverlays(s, at(0), undefined, { fold, only: 'refoldSafe' }), 'arr')).toBe(11);
+    expect(countOf(foldOverlays(s, at(0), undefined, { fold, only: 'refoldSafe' }), 'arr')).toBe(
+      11,
+    );
     store.clearAll();
     expect(countOf(foldOverlays(s, at(0), undefined, { fold, only: 'refoldSafe' }), 'arr')).toBe(3);
   });

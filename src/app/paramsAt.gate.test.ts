@@ -81,7 +81,7 @@ type SplitReason =
    * second fold cannot change the answer, so the seams below still see the base they
    * expect. Everything outside that tier reaches them authored, as before.
    */
-  | 'evaluates-the-safe-tier-then-folds-the-rest';
+  'evaluates-the-safe-tier-then-folds-the-rest';
 
 type Decision =
   | { needs: 'cooked'; why: CookedReason }
