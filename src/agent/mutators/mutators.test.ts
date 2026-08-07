@@ -4,7 +4,14 @@
 // REF: P2.5.2 PLAN §5 Wave C; vyapti V13/V14.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  evaluate,
+  emptyDagState,
+  type DagState,
+} from '../../core/dag';
+import { recomposeLightObject } from '../../nodes/lightRecompose';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
@@ -1189,6 +1196,12 @@ describe('colour mutators reach a split light’s LightData (#592)', () => {
     expect((next.nodes.light_data.params as { color?: string }).color).toBe('#123456');
     // And the Object did NOT grow a stray colour param on the way.
     expect((next.nodes.light.params as { color?: string }).color).toBeUndefined();
+
+    // THEIR SIDE OF THE BOUNDARY. The param store landing is my side; what the renderer
+    // consumes is the recomposed flat LightValue, which is where a write that reached the
+    // right node but the wrong FIELD would still read as the old colour.
+    const light = recomposeLightObject(evaluate(next, 'light').value);
+    expect(light?.color).toBe('#123456');
   });
 });
 
