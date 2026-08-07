@@ -93,12 +93,19 @@ describe('#522 — the overlay reaches the whole lane', () => {
     expect(dataLaneNodeIds(state, 'obj')).toEqual(['obj_data', 'mod']);
   });
 
-  it('a fused node contributes nothing, so its overlay is untouched', () => {
+  it('a node with NO data lane contributes nothing, so its overlay is untouched', () => {
+    // #476 — this case used to build a fused `SphereMesh`. The retirement did not empty the
+    // class it stands for, so it retargets rather than being deleted: AmbientLight is the one
+    // scene kind that deliberately never split (ambient is a World datablock), so it is a
+    // live node with no `data` input and therefore the sharpest member of "no lane at all".
     const state = applyOps(emptyDagState(), [
-      { type: 'addNode', nodeId: 'fused', nodeType: 'SphereMesh', params: {} },
+      { type: 'addNode', nodeId: 'ambient', nodeType: 'AmbientLight', params: {} },
     ] as Op[]);
-    expect(dataLaneNodeIds(state, 'fused')).toEqual([]);
-    expect(dataLaneOverlaySources(state, 'fused')).toEqual([]);
+    // Guard-the-guard: an absent id returns [] just as happily, so the empty answer only
+    // means anything once the subject is known to be there.
+    expect(state.nodes['ambient']).toBeDefined();
+    expect(dataLaneNodeIds(state, 'ambient')).toEqual([]);
+    expect(dataLaneOverlaySources(state, 'ambient')).toEqual([]);
   });
 });
 

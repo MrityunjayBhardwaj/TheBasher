@@ -17,6 +17,11 @@ registerAllNodes();
 
 // Minimal fake DAG — the builders read only node.type / params / inputs and emit
 // ops; they don't validate schema, so a plain object suffices for unit coverage.
+//
+// #476 — the leaves are bare `Object`s carrying a transform, not fused meshes. They stand in
+// for "a scene child the children-walk has to copy or delete", and giving them a data half
+// would only restate what the dedicated split cases below already assert (the orphaned-BoxData
+// sweep and the independent-clone case each build their own real pair).
 function fakeState(): DagState {
   return {
     nodes: {
@@ -31,14 +36,14 @@ function fakeState(): DagState {
           ],
         },
       },
-      box: { id: 'box', type: 'BoxMesh', params: { size: [1, 1, 1] }, inputs: {} },
+      box: { id: 'box', type: 'Object', params: { position: [0, 0, 0] }, inputs: {} },
       grp: {
         id: 'grp',
         type: 'Group',
         params: { position: [5, 0, 0] },
         inputs: { children: [{ node: 'inner', socket: 'out' }] },
       },
-      inner: { id: 'inner', type: 'BoxMesh', params: { size: [2, 2, 2] }, inputs: {} },
+      inner: { id: 'inner', type: 'Object', params: { position: [0, 2, 0] }, inputs: {} },
     },
     outputs: { scene: { node: 'scene' } },
   } as unknown as DagState;
@@ -213,7 +218,7 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
           params: {},
           inputs: { target: { node: 'box', socket: 'out' } },
         },
-        box: { id: 'box', type: 'BoxMesh', params: { size: [1, 1, 1] }, inputs: {} },
+        box: { id: 'box', type: 'Object', params: { position: [0, 0, 0] }, inputs: {} },
       },
       outputs: { scene: { node: 'scene' } },
     }) as unknown as DagState;
@@ -265,7 +270,7 @@ describe('buildDeleteNodesOps — #432 wrapper splice-out', () => {
           params: {},
           inputs: { target: { node: 'box', socket: 'out' } },
         },
-        box: { id: 'box', type: 'BoxMesh', params: { size: [1, 1, 1] }, inputs: {} },
+        box: { id: 'box', type: 'Object', params: { position: [0, 0, 0] }, inputs: {} },
       },
       outputs: { scene: { node: 'scene' } },
     }) as unknown as DagState;
@@ -361,7 +366,7 @@ describe('buildDuplicateNodeOps', () => {
     const res = buildDuplicateNodeOps(fakeState(), 'box');
     expect(res?.newRootId).toBe('box_copy');
     expect(res?.ops).toEqual([
-      { type: 'addNode', nodeId: 'box_copy', nodeType: 'BoxMesh', params: { size: [1, 1, 1] } },
+      { type: 'addNode', nodeId: 'box_copy', nodeType: 'Object', params: { position: [0, 0, 0] } },
       {
         type: 'connect',
         from: { node: 'box_copy', socket: 'out' },
@@ -376,7 +381,12 @@ describe('buildDuplicateNodeOps', () => {
     expect(res?.newRootId).toBe('grp_copy');
     expect(res?.ops).toEqual([
       { type: 'addNode', nodeId: 'grp_copy', nodeType: 'Group', params: { position: [5, 0, 0] } },
-      { type: 'addNode', nodeId: 'inner_copy', nodeType: 'BoxMesh', params: { size: [2, 2, 2] } },
+      {
+        type: 'addNode',
+        nodeId: 'inner_copy',
+        nodeType: 'Object',
+        params: { position: [0, 2, 0] },
+      },
       // internal edge points at the CLONE child, not the original.
       {
         type: 'connect',
@@ -481,9 +491,9 @@ describe('buildDuplicateNodeOps', () => {
   it('cloned params are a deep copy (mutating the clone op does not touch the source)', () => {
     const state = fakeState();
     const res = buildDuplicateNodeOps(state, 'box')!;
-    const addOp = res.ops[0] as { params: { size: number[] } };
-    addOp.params.size[0] = 99;
-    expect((state.nodes.box.params as { size: number[] }).size[0]).toBe(1);
+    const addOp = res.ops[0] as { params: { position: number[] } };
+    addOp.params.position[0] = 99;
+    expect((state.nodes.box.params as { position: number[] }).position[0]).toBe(0);
   });
 
   // ── #434: duplicate now clones the WHOLE id-reference universe, not just channels ──
