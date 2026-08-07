@@ -82,9 +82,10 @@
 import type { CookState, DagState } from '../core/dag/state';
 import type { EvalCtx, Node, NodeId } from '../core/dag/types';
 import type { EvaluatorCache } from '../core/dag/evaluator';
+import type { KeyframeChannelValue } from '../nodes/types';
 import { writeAt } from '../nodes/overlayChannels';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
-import { stripChannelValuesForTarget } from './layeredChannels';
+import { layeredChannelValues, stripChannelValuesForTarget } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { useTransientEditStore } from './stores/transientEditStore';
@@ -97,8 +98,21 @@ interface FoldedNode {
   values: Map<string, unknown>;
   /** The params object handed out last time. Reused verbatim when nothing moved. */
   folded: Record<string, unknown>;
-  /** The playhead this was folded at — the only thing that can invalidate a static fold. */
+  /** The playhead this was folded at. */
   seconds: number;
+  /**
+   * The held-edit map this was folded against — an IDENTITY, because the store mints a new
+   * Map on every write.
+   *
+   * The third cache input, and the one the first draft of this module did not have. A
+   * transient is the only overlay whose value can move while the authored params object
+   * AND the playhead both stand still, so without this term the two skips below are keyed
+   * on an incomplete set of inputs. At the render root, where `seconds` is frozen at zero,
+   * that is not a near-miss: both arms fire on every frame of a drag and the object
+   * repaints once, then freezes under the director's hand, with the inspector still
+   * reporting the value it refuses to draw.
+   */
+  edits: ReadonlyMap<string, unknown>;
 }
 
 /**
@@ -121,25 +135,90 @@ export interface FoldCounters {
 }
 
 /**
- * Every (nodeId, paramPath) an overlay is authored against.
+ * What is authored against ONE `(node, paramPath)` — as much of it as a fold running
+ * BEFORE a seam that folds the same path AGAIN has to know.
+ */
+export interface PathOverlay {
+  /**
+   * A held edit targets this path. Two properties follow, and the tier below rests on
+   * both: `resolveEvaluatedParam` returns a transient WITHOUT sampling anything
+   * (`resolveEvaluatedParam.ts:76`), so its value is not a function of `t` at all; and
+   * `overlayTransients` applies it with a bare `writeAt`, so re-applying it downstream
+   * writes the identical value at the identical path.
+   */
+  transient: boolean;
+  /**
+   * Some contributor on this path BLENDS AGAINST the base rather than discarding it.
+   *
+   * This is the arithmetic that decides the whole tier, read off the reducer rather than
+   * assumed: `replaceBlend` returns the channel value outright at influence ≥ 1
+   * (`foldChannel.ts`), but LERPS FROM THE BASE below it; `combineBlend` always reads the
+   * base. So a contributor that reads the base sees a different answer when the base has
+   * already moved — which is precisely what folding this path early would do to it.
+   */
+  readsBase: boolean;
+}
+
+/**
+ * Does this contributor read the base it folds onto?
+ *
+ * A muted channel is dropped before the fold ever runs (`overlayChannels` filters it), so
+ * it reads nothing. A crossfade carries `influenceAt`, whose influence is a function of
+ * `t` and therefore below 1 somewhere — treated as reading the base at every `t` rather
+ * than sampled, because the point of the tier is to avoid depending on a playhead.
+ *
+ * `weight` is compared against 1 alone because the CALLER weight is 1 at every one of the
+ * nine `overlayChannels` call sites — censused below, so a caller that starts passing
+ * anything else reddens here instead of silently widening this predicate.
+ */
+function readsBase(ch: KeyframeChannelValue): boolean {
+  if (ch.mute) return false;
+  if (ch.influenceAt) return true;
+  if ((ch.blendMode ?? 'replace') === 'combine') return true;
+  return (ch.weight ?? 1) < 1;
+}
+
+/**
+ * Every (nodeId, paramPath) an overlay is authored against, each with what is authored
+ * against it.
  *
  * Enumerated from the graph rather than from a registry, because the overlay rail is
  * edge-less: a channel, strip or driver names its target in params, and a transient names
  * it in a store. Collecting the candidate TARGETS first keeps this one pass over the node
  * table plus one enumerator call per target that actually has an overlay — not a per-node
  * scan of the whole graph.
+ *
+ * ⚠️ THE CLASSIFICATION PASS NEVER ADDS A PATH, ONLY MARKS ONE. A channel value naming a
+ * path this enumeration did not already reach is ignored rather than folded, so the set of
+ * folded paths is exactly what it was before the tier existed and `refoldSafe` can only
+ * ever be a SUBSET of it. Marking-only is also what makes a filtered channel — muted, or
+ * silenced by another channel's solo — correctly harmless: it contributes nothing
+ * downstream, so it constrains nothing here.
  */
 function overlaidPaths(
   state: DagState,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
-): Map<NodeId, Set<string>> {
-  const out = new Map<NodeId, Set<string>>();
-  const add = (nodeId: string, paramPath: string) => {
-    if (!nodeId || !paramPath || !state.nodes[nodeId]) return;
-    const set = out.get(nodeId);
-    if (set) set.add(paramPath);
-    else out.set(nodeId, new Set([paramPath]));
+): Map<NodeId, Map<string, PathOverlay>> {
+  const out = new Map<NodeId, Map<string, PathOverlay>>();
+  const add = (nodeId: string, paramPath: string): PathOverlay | null => {
+    if (!nodeId || !paramPath || !state.nodes[nodeId]) return null;
+    let paths = out.get(nodeId);
+    if (!paths) {
+      paths = new Map();
+      out.set(nodeId, paths);
+    }
+    let overlay = paths.get(paramPath);
+    if (!overlay) {
+      overlay = { transient: false, readsBase: false };
+      paths.set(paramPath, overlay);
+    }
+    return overlay;
+  };
+  /** Mark an ALREADY-ENUMERATED path, never create one. See the header. */
+  const mark = (nodeId: string, ch: KeyframeChannelValue) => {
+    const overlay = out.get(nodeId)?.get(ch.paramPath);
+    if (overlay && readsBase(ch)) overlay.readsBase = true;
   };
 
   // Candidate targets: anything naming a target in params (channels, strips, drivers).
@@ -154,7 +233,8 @@ function overlaidPaths(
 
   // Held edits name their target directly and are the STATIC tier's whole reason to exist.
   for (const edit of useTransientEditStore.getState().edits.values()) {
-    add(edit.nodeId, edit.paramPath);
+    const overlay = add(edit.nodeId, edit.paramPath);
+    if (overlay) overlay.transient = true;
     targets.add(edit.nodeId);
   }
 
@@ -167,7 +247,40 @@ function overlaidPaths(
       add(targetId, v.paramPath);
   }
 
+  // Classify. Separate pass, and AFTER enumeration, so `mark` can refuse to invent a path:
+  // every contributor is weighed against the set the fold already had, never against a set
+  // this pass grew. `layeredChannelValues` is bare channels + strips through the render
+  // seam's own enumerator; drivers arrive as the same `KeyframeChannelValue` shape, so one
+  // predicate covers all three rails.
+  for (const targetId of out.keys()) {
+    for (const v of layeredChannelValues(state.nodes, targetId)) mark(targetId, v);
+    for (const v of driverChannelValuesForTarget(state, targetId, ctx, cache)) mark(targetId, v);
+  }
+
   return out;
+}
+
+/**
+ * May this path be folded BEFORE a seam that folds the same path again?
+ *
+ * Yes for a held edit whose every other contributor discards the base it folds onto. The
+ * two halves are separately load-bearing and each is asserted so in the gate:
+ *
+ *   • WITHOUT `transient` — the path's value would come from a channel sampled at the
+ *     caller's `ctx`, and the render root's `ctx.time` is frozen at zero by design. Folding
+ *     an animated path there writes the frame-0 value into params and freezes it.
+ *   • WITHOUT `!readsBase` — a `combine` contributor, or a `replace` below full influence,
+ *     recomputes downstream against a base this fold has already moved. The result is not
+ *     the authored answer applied twice; it is a different answer.
+ *
+ * Note what this admits that a bare "transient-only" rule would not: a path carrying BOTH a
+ * held edit and an ordinary full-influence channel. That combination is #474's reachable
+ * case — animate a param, then drag it — and it is safe for the reason the transient tier
+ * is safe at all: an overwrite contributor discards the base, so moving the base is
+ * invisible to it, and the transient is applied last and wins regardless.
+ */
+function refoldSafe(overlay: PathOverlay): boolean {
+  return overlay.transient && !overlay.readsBase;
 }
 
 /** Structural equality over ONE folded value (a scalar, a vec, a small record). */
@@ -209,6 +322,12 @@ function sameValue(a: unknown, b: unknown): boolean {
  *                    counts calls into the resolver. The two skips above are FREQUENCY
  *                    claims — they change how much work happens, never what comes out — so
  *                    no value assertion can witness them and the gate needs a count.
+ * @param opts.only   restrict the fold to a TIER of paths. `'refoldSafe'` folds only the
+ *                    paths a downstream seam can fold again without changing the answer —
+ *                    see {@link refoldSafe}. This is what a caller whose own seams still
+ *                    run must pass; the render root is the first such caller. Omitted, the
+ *                    fold takes every overlaid path, which is correct only for a caller
+ *                    that folds nothing afterwards.
  *
  * Returns `authored` BY REFERENCE when no overlay exists anywhere — with no overlays the
  * authored params already ARE the params at `t`, so the two states coincide and there is
@@ -218,9 +337,18 @@ export function foldOverlays(
   authored: DagState,
   ctx: EvalCtx,
   timeVarying?: ReadonlySet<NodeId>,
-  opts?: { cache?: EvaluatorCache; fold?: FoldCache; counters?: FoldCounters },
+  opts?: {
+    cache?: EvaluatorCache;
+    fold?: FoldCache;
+    counters?: FoldCounters;
+    only?: 'refoldSafe';
+  },
 ): CookState {
   const seconds = ctx.time.seconds;
+  // Read the held-edit map ONCE, so every node in this pass is cached against the same
+  // store snapshot — a store that changed mid-pass would otherwise leave half the nodes
+  // keyed on one map and half on another.
+  const edits = useTransientEditStore.getState().edits;
   const paths = overlaidPaths(authored, ctx, opts?.cache);
   if (paths.size === 0) return authored as unknown as CookState;
 
@@ -229,14 +357,29 @@ export function foldOverlays(
   const nodes: Record<NodeId, Node> = {};
 
   for (const [id, node] of Object.entries(authored.nodes)) {
-    const overlaid = paths.get(id);
-    if (!overlaid) {
+    // The TIER filter, applied here rather than at enumeration so that the paths a mode
+    // excludes are still classified and still visible to the gate. A node whose every path
+    // the mode excludes is indistinguishable from a node with no overlay at all — same
+    // arm, same params object kept, same memo entry preserved.
+    const classified = paths.get(id);
+    const selected = classified
+      ? [...classified].filter(([, o]) => opts?.only !== 'refoldSafe' || refoldSafe(o))
+      : [];
+    if (selected.length === 0) {
       nodes[id] = node; // untouched — keeps its params object, keeps its memo entry
       continue;
     }
+    const overlaid = selected.map(([path]) => path);
 
     const prev = foldCache?.nodes.get(id);
     const authoredUnchanged = prev !== undefined && prev.authored === node.params;
+    // 🔴 A HELD EDIT MOVES WITH THE AUTHORED PARAMS AND THE PLAYHEAD BOTH STANDING STILL —
+    // so a node carrying one must also match on the held-edit map. See `FoldedNode.edits`
+    // for what goes wrong without this term. Checked only where a transient is actually
+    // among the folded paths, so an unrelated drag elsewhere in the scene does not
+    // invalidate a channel node's cached fold.
+    const heldEditsMoved =
+      selected.some(([, o]) => o.transient) && prev !== undefined && prev.edits !== edits;
 
     // ── THE SKIP THE TIME-VARYING SET BUYS ──────────────────────────────────────────
     // A node the caller did NOT name as time-varying folds to a value that does not
@@ -251,7 +394,7 @@ export function foldOverlays(
     // different value. That is the common case during a paused re-render, where React
     // re-runs while nothing about time has moved.
     const staticHere = timeVarying !== undefined && !timeVarying.has(id);
-    if (authoredUnchanged && (prev.seconds === seconds || staticHere)) {
+    if (!heldEditsMoved && authoredUnchanged && (prev.seconds === seconds || staticHere)) {
       nodes[id] = { ...node, params: prev.folded };
       changedAny = true;
       continue;
@@ -274,6 +417,7 @@ export function foldOverlays(
     // memo survives. Compared over the folded PATHS only — hashing the params to decide
     // would cost exactly what the memo exists to avoid.
     const unchanged =
+      !heldEditsMoved &&
       authoredUnchanged &&
       prev.values.size === values.size &&
       [...values].every(([k, v]) => prev.values.has(k) && sameValue(prev.values.get(k), v));
@@ -291,7 +435,13 @@ export function foldOverlays(
     // before a param acquires one at runtime.
     const folded = structuredClone(node.params) as Record<string, unknown>;
     for (const [paramPath, value] of values) writeAt(folded, paramPath, value);
-    foldCache?.nodes.set(id, { authored: node.params as object, values, folded, seconds });
+    foldCache?.nodes.set(id, {
+      authored: node.params as object,
+      values,
+      folded,
+      seconds,
+      edits,
+    });
     nodes[id] = { ...node, params: folded };
     changedAny = true;
   }

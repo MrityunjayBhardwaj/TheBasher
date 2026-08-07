@@ -21,7 +21,7 @@
 
 import { hashString, hashValue, type ContentHash } from './hash';
 import { requireNodeType } from './registry';
-import type { DagState } from './state';
+import type { DagState, EvaluableState } from './state';
 import type { EvalCtx, NodeId, ResolvedInputs } from './types';
 
 export interface EvalResult<T = unknown> {
@@ -114,7 +114,7 @@ interface Frame {
 }
 
 export function evaluate(
-  state: DagState,
+  state: EvaluableState,
   nodeId: NodeId,
   options: EvaluateOptions = {},
 ): EvalResult {

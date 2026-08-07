@@ -65,6 +65,22 @@ export interface CookState extends DagGraph {
   readonly paramsAt: 'cooked';
 }
 
+/**
+ * Either state — the signature for `evaluate` alone.
+ *
+ * ⚠️ THIS IS NOT A THIRD OPTION FOR CONSUMERS, AND WIDENING ANYTHING ELSE TO IT DEFEATS THE
+ * WALL. `evaluate` is pure over whatever params it is handed: it computes the value those
+ * params describe and has no way to know which the caller SHOULD have brought. That is the
+ * whole reason the census exists — the constraint lives at each consumer's own signature,
+ * where somebody has to decide, and there is nobody to decide at the bottom.
+ *
+ * Taking this type is therefore a statement that the decision was made ELSEWHERE, and the
+ * only function entitled to make it is the one every consumer already routes through.
+ * `src/app/paramsAt.gate.test.ts` pins the set of users so a second one cannot appear by
+ * quietly reaching for the convenient type.
+ */
+export type EvaluableState = DagState | CookState;
+
 export function emptyDagState(): DagState {
   return { nodes: {}, outputs: {} };
 }
