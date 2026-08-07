@@ -99,6 +99,18 @@ const growth: Record<GeometryGrowthSource, number> = {
 };
 
 /**
+ * Keys the SWEEP may never evict (#587). See {@link sweep} for why this exists; what
+ * matters here is that membership is decided by the ROAD an entry arrived on, not by the
+ * shape of its key. `prime` is the async road's only insertion point and
+ * `bakedGeometryLoader` is its only caller — held closed by `registryDoors.gate.test.ts` —
+ * while `get` never inserts a baked entry at all (it returns null on a baked miss).
+ *
+ * A `key.startsWith('baked|')` test would have selected the same set today and would have
+ * been a naming tier, which is the mistake this module has already catalogued once.
+ */
+const primed = new Set<string>();
+
+/**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
  * Returns null for a `gltf` ref (the registry does not own loaded glTF geometry —
@@ -209,8 +221,71 @@ export function prime(ref: GeometryRef, geom: BufferGeometry): BufferGeometry {
     return existing;
   }
   cache.set(ref.key, geom);
+  primed.add(ref.key); // exempt from the sweep — see `primed` and {@link sweep}
   growth.prime++;
   return geom;
+}
+
+/** What one {@link sweep} did. Every field is a count so a gate can refuse to pass vacuously. */
+export interface GeometrySweepResult {
+  /** Entries in the cache when the sweep began. */
+  scanned: number;
+  /** Entries skipped because they are on the async road (see `primed`). */
+  exempt: number;
+  /** Entries found attached in the live set — kept. */
+  attached: number;
+  /** Entries evicted AND disposed. The only number that frees anything. */
+  disposed: number;
+}
+
+/**
+ * Evict and dispose every cached geometry that no live `Mesh` is drawing (#587, #544).
+ *
+ * THE RULE, and why it is a sweep rather than a refcount. An entry is garbage iff its
+ * INSTANCE is attached to nothing — a question about the object, not about which function
+ * a caller happened to import. That distinction is the whole design: `getForAttach` and
+ * `getForRead` are the same function, one real holder reaches an attached instance through
+ * neither (`bakedGeometryLoader` → `prime`), and half of a modifier drag's entries are minted
+ * by `build`'s own recursion, which no consumer calls at all (#586's model, above). A
+ * refcount can only ever see the doors. Attachment sees everything, and cannot be fooled by
+ * the route taken.
+ *
+ * ⚠️ `live` IS THE CALLER'S RESPONSIBILITY, AND IT IS THE DANGEROUS ARGUMENT. An empty set
+ * is indistinguishable here from "the scene is genuinely empty", and the two want opposite
+ * responses — dispose everything, versus refuse. This function cannot tell them apart and
+ * does not try: it has no access to a scene and no opinion about where the set came from.
+ * The guard lives at the only caller (`geometrySweep.ts`), which collects the set from a
+ * scene that R3F guarantees is mounted, so a null root is unrepresentable rather than
+ * checked.
+ *
+ * Disposal is immediate rather than deferred. `materialRegistry` defers to a microtask
+ * because a handoff looks like a drop THROUGH A COUNT (`materialRegistry.ts:55-59`) — one
+ * holder's cleanup runs before another's effect, and the count legitimately touches zero in
+ * between. There is no count here: the question is asked of the live scene at a moment when
+ * React has already committed, so a handoff's new holder is attached before the sweep can
+ * look. The precedent's reason does not transfer, and neither should its mechanism.
+ */
+export function sweep(live: ReadonlySet<BufferGeometry>): GeometrySweepResult {
+  const result: GeometrySweepResult = {
+    scanned: cache.size,
+    exempt: 0,
+    attached: 0,
+    disposed: 0,
+  };
+  for (const [key, geom] of Array.from(cache)) {
+    if (primed.has(key)) {
+      result.exempt++;
+      continue;
+    }
+    if (live.has(geom)) {
+      result.attached++;
+      continue;
+    }
+    cache.delete(key);
+    geom.dispose();
+    result.disposed++;
+  }
+  return result;
 }
 
 function build(ref: GeometryRef): BufferGeometry | null {
@@ -311,6 +386,7 @@ function reverseWinding(geom: BufferGeometry): BufferGeometry {
 export function clear(): void {
   for (const geom of cache.values()) geom.dispose();
   cache.clear();
+  primed.clear();
   resetGrowth();
 }
 

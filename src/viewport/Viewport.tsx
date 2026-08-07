@@ -29,6 +29,7 @@ import { useProjectStore } from '../core/project/store';
 import { useSelectionSummary } from '../app/hooks/useSelectionSummary';
 import { FpsMeter } from '../render/FpsMeter';
 import { GpuProbe, PerfBoundary } from '../perf/PerfProbe';
+import { GeometryLifetime } from './GeometryLifetime';
 import { EditorLights } from './EditorLights';
 import { EditorViewCamera } from './EditorViewCamera';
 import { BoxSelect } from './BoxSelectController';
@@ -271,6 +272,10 @@ export function Viewport() {
             <SceneFromDAG />
           </PerfBoundary>
           <GpuProbe />
+          {/* #587 — geometry's lifetime. Sits OUTSIDE <PerfBoundary> and after
+              <SceneFromDAG> deliberately: it must observe a committed scene, and its
+              cost is not SceneFromDAG's reconciliation cost to answer for. */}
+          <GeometryLifetime />
           <GroundClick />
           <Gizmo />
           {/* #322 — the selected Curve's control-point handles + the element gizmo that

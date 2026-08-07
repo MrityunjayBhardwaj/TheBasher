@@ -76,21 +76,24 @@ export function importsNamespace(src: string, module: string): boolean {
  * The binding names `src` imports from `module`, as WRITTEN IN THE REGISTRY — i.e. the
  * left-hand side of any `as`, so an alias cannot hide which door was opened.
  *
- * Returns [] when the module is not imported at all. A `type` qualifier is stripped so a
- * type-only import reads as the name it is, not as a door.
+ * Returns [] when the module is not imported at all.
+ *
+ * ⚠️ AN INLINE `type` SPECIFIER IS DROPPED, NOT NORMALISED (#587). It used to have its
+ * qualifier stripped, which the comment here described as making a type import "read as the
+ * name it is, not as a door" — while the code made it read as *exactly* a door, because the
+ * result was indistinguishable from a value import of the same name. The whole-clause form
+ * (`import type { X } from …`) never matched this regex at all, so the two spellings of the
+ * same thing disagreed. A type erases at compile time and can carry no instance, so no
+ * spelling of one opens a door.
  */
 export function importedDoors(src: string, module: string): string[] {
   const m = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"][^'"]*${module}['"]`).exec(src);
   if (!m) return [];
   return m[1]
     .split(',')
-    .map((part) =>
-      part
-        .trim()
-        .replace(/^type\s+/, '')
-        .split(/\s+as\s+/)[0]
-        .trim(),
-    )
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0 && !/^type\s+/.test(part))
+    .map((part) => part.split(/\s+as\s+/)[0].trim())
     .filter(Boolean);
 }
 
@@ -102,6 +105,8 @@ type Door =
   | 'read'
   /** Puts an instance in (the async baked road, after the OPFS read). */
   | 'produce'
+  /** Takes instances OUT and disposes them — the lifetime seam (#587). Exactly one file. */
+  | 'lifetime'
   /** Imports only the spec/type surface — opens no door on an instance at all. */
   | 'spec-only';
 
@@ -130,6 +135,11 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
 
   // PRODUCE — primes the cache after the async OPFS read, then reads back to check.
   'src/app/asset/bakedGeometryLoader.ts': 'produce',
+
+  // LIFETIME — the ONLY file that may take instances out and dispose them (#587). Its own
+  // arm below pins the count at one: a second disposer is a second answer to "is this still
+  // in use?", and the two would not have to agree.
+  'src/viewport/geometrySweep.ts': 'lifetime',
 };
 
 /**
@@ -151,6 +161,7 @@ const GEOMETRY_DOORS: Record<Door, string[]> = {
   attach: ['getForAttach'],
   read: ['getForRead'],
   produce: ['prime', 'getForRead'],
+  lifetime: ['sweep'],
   'spec-only': [],
 };
 
@@ -251,6 +262,21 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(importers).toEqual([]);
   });
 
+  // #587 — `sweep` disposes. `clear` is forbidden outright and `sweep` is allowed exactly
+  // once, and those are the same rule at two strengths: whoever may free a shared instance
+  // is answering "is this still in use?", and two answerers would not have to agree. The
+  // count is asserted rather than the membership alone, so a SECOND disposer reds even if it
+  // is added to the consumer table above with a straight face.
+  it('gives the geometry cache exactly one disposer, and names it', () => {
+    const disposers = sourceFiles()
+      .filter(([, src]) => importedDoors(src, 'geometryRegistry').includes('sweep'))
+      .map(([path]) => path)
+      .sort();
+
+    expect(disposers).toEqual(['src/viewport/geometrySweep.ts']);
+    expect(disposers).toHaveLength(1);
+  });
+
   it('lets only the material seam touch a material instance', () => {
     const touching = sourceFiles()
       .filter(([, src]) =>
@@ -303,13 +329,42 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(
       importedDoors(`import { getForAttach } from '../app/geometryRegistry';`, 'geometryRegistry'),
     ).toEqual(['getForAttach']);
+    // The spec-only shape: one value binding beside a type. It used to expect the type in
+    // this list too, which pinned the bug described on `importedDoors` — a type reported
+    // exactly as a door would be. Only the VALUE survives now. This changed no verdict for
+    // materials (the arm below keys on the three accessor names, and a type is not one),
+    // which is why the old expectation could sit here looking correct.
     expect(
       importedDoors(
         `import { MAP_SLOTS, type PrimitiveMaterialSpec } from '../materialRegistry';`,
         'materialRegistry',
       ),
-    ).toEqual(['MAP_SLOTS', 'PrimitiveMaterialSpec']);
+    ).toEqual(['MAP_SLOTS']);
     expect(importedDoors(`import { get } from './somethingElse';`, 'geometryRegistry')).toEqual([]);
+
+    // #587 — a type erases at compile time and can carry no instance, so neither spelling
+    // of a type import opens a door. The inline form used to be reported as one, which is
+    // a FALSE red on a consumer that took nothing, and the confusing kind: the fix that
+    // suggests itself is widening the allow-list, which then widens it for values too.
+    expect(
+      importedDoors(
+        `import { sweep, type GeometrySweepResult } from '../app/geometryRegistry';`,
+        'geometryRegistry',
+      ),
+    ).toEqual(['sweep']);
+    expect(
+      importedDoors(
+        `import { type GeometrySweepResult } from './geometryRegistry';`,
+        'geometryRegistry',
+      ),
+    ).toEqual([]);
+    // The whole-clause form was already invisible; pinned so the two spellings stay agreed.
+    expect(
+      importedDoors(
+        `import type { GeometrySweepResult } from './geometryRegistry';`,
+        'geometryRegistry',
+      ),
+    ).toEqual([]);
 
     expect(
       importsNamespace(
