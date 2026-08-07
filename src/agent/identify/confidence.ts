@@ -21,7 +21,7 @@ export interface ConfidenceInputs {
   candidates: Candidate[];
   /**
    * True when the query implied a specific node type and at least one
-   * candidate matches it (e.g. query "cube" + at least one BoxMesh).
+   * candidate matches it (e.g. query "cube" + at least one Object posing a BoxData).
    * False when no type was implied OR when all candidates are wrong-type.
    */
   typeConsistent: boolean;

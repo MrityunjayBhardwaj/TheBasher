@@ -54,22 +54,12 @@ describe('addChannel — data-param channel targets the owning half (#450)', () 
     expect(target).toBe(objectId);
   });
 
-  it('CONTROL: a fused node that owns material keeps its own id', () => {
-    let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_sphere',
-      nodeType: 'SphereMesh',
-      params: {},
-    }).next;
-    const target = channelTarget(state, {
-      target: 'n_sphere',
-      paramPath: 'material.base.color',
-      valueType: 'color',
-      initialKeyframe: { time: 0, value: '#00ff00' },
-    });
-    expect(target).toBe('n_sphere');
-  });
+  // #476 — a third case lived here: "CONTROL: a fused node that owns material keeps its own
+  // id", built on a fused `SphereMesh`. Its SUBJECT was the fused node, so with that kind
+  // retired it described no state the product can reach. Retargeting it onto a split pair
+  // would have made it a copy of the first case above, green about a shape that is gone.
+  // Deleted with its fixture rather than repaired. The two cases that remain still bracket
+  // the routing from both sides: a data param moves, a transform param does not.
 });
 
 // ── #519 — the same question, one layer finer ──────────────────────────────────────
