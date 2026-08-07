@@ -209,16 +209,60 @@ describe('#587 — the sweep frees what nothing draws', () => {
     expect(size()).toBeLessThanOrEqual(SWEEP_GROWTH_BUDGET + 1);
   });
 
-  it('lowers its mark when the population shrinks, so a cleared cache re-arms immediately', () => {
+  // A sweep that keeps everything must still COUNT as a sweep, or the budget is measured
+  // from the wrong baseline and a big static scene pays for a full traversal every frame
+  // forever. It costs nothing visible — the population is correct either way — which is
+  // exactly why it needs an arm rather than a comment.
+  it('stops walking a static scene after one pass, even when that pass freed nothing', () => {
     const scene = new Scene();
-    for (let f = 0; f <= SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
-    expect(sweepIfDue(scene)).not.toBeNull(); // marks at the post-sweep size
+    const group = new Group();
+    scene.add(group);
+    const BIG = SWEEP_GROWTH_BUDGET * 3;
+    for (let f = 0; f < BIG; f++) {
+      const geom = getForAttach(boxGeometryRef([200 + f, 1, 1]));
+      group.add(new Mesh(geom!, new MeshBasicMaterial()));
+    }
 
-    clear(); // a project switch
+    let sweeps = 0;
+    for (let frame = 0; frame < 10; frame++) if (sweepIfDue(scene)) sweeps++;
+
+    expect(sweeps).toBe(1); // ten frames, one walk
+    expect(size()).toBe(BIG); // and it kept the scene it is drawing
+  });
+
+  // The mark is an ABSOLUTE population, so it only means "budget since the last sweep"
+  // while the population is monotonic. A big scene leaves the mark high; empty that scene
+  // and the mark becomes a debt the next project has to grow back into before anything is
+  // ever swept again. Reaching that branch needs a sweep that KEEPS a lot — a first draft of
+  // this case swept an empty scene, which leaves the mark at 0 and tests nothing.
+  it('lowers its mark when a big scene goes away, instead of billing the next one for it', () => {
+    const scene = new Scene();
+    const group = new Group();
+    scene.add(group);
+
+    // A large scene, all of it drawn: the sweep keeps every entry and marks high.
+    const BIG = SWEEP_GROWTH_BUDGET * 3;
+    for (let f = 0; f < BIG; f++) {
+      const geom = getForAttach(boxGeometryRef([100 + f, 1, 1]));
+      group.add(new Mesh(geom!, new MeshBasicMaterial()));
+    }
+    const first = sweepIfDue(scene);
+    expect(first).not.toBeNull();
+    expect(first!.attached).toBe(BIG); // nothing freed — the mark is now BIG, not 0
+    expect(first!.disposed).toBe(0);
+
+    // The project closes: the meshes go, and the cache is dropped with them.
+    scene.remove(group);
+    clear();
+    expect(sweepIfDue(scene)).toBeNull(); // nothing due — and THIS is the call that must
+    // notice the population fell, and lower the mark to match.
+
+    // A new project, one budget's worth of churn.
     for (let f = 0; f <= SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
 
-    // Without the shrink handling, the mark would still sit at the old high-water figure
-    // and this second budget's worth would accumulate unswept.
+    // Without the shrink handling the mark still reads BIG, so this is 65 <= 192 + 64 and
+    // no sweep happens at all — the new project runs unbounded until it grows past the old
+    // one's high-water mark.
     const result = sweepIfDue(scene);
     expect(result).not.toBeNull();
     expect(result!.disposed).toBe(SWEEP_GROWTH_BUDGET + 1);
