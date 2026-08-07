@@ -8,8 +8,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { resolveExposedTarget } from '../../../app/exposeParams';
-import { MATERIAL_FIELD_IR_PATH } from '../../../app/resolveMaterialFieldOwner';
+import { resolveColorWriteTarget } from '../../../app/resolveColorWriteTarget';
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -45,19 +44,12 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
       if (!node) return { ok: false, reason: `Target "${id}" not in DAG.` };
-      // #365 Phase 5a — a split Object's material lives on the BoxData it points at, so resolve
-      // the true material owner (self for a fused mesh, the data node for a split Object).
-      // #394 S3c — and PER FIELD, because a material operator in the stack can force `color`
-      // over whatever the data node or the linked Material node says. Asking per param ROOT
-      // there writes a masked layer and reports success (PLAN-2 §5).
-      // #394 P5 — asked through the PROJECTION, which is the same answer the inspector's rows
-      // and the channel road get. The agent is the caller this query exists for: it names an
-      // aggregate and holds no row, so it is the one road where ownership still has to be
-      // resolved rather than carried.
-      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
-      const hasColor =
-        typeof (node.params as Record<string, unknown> | undefined)?.color === 'string';
-      if (!matOwner && !hasColor) {
+      // #365 Phase 5a / #394 / #592 — both colour roads reach through the split, and both are
+      // asked by ONE resolver so the offer here and the write below cannot answer differently.
+      // The mesh road goes per FIELD through the projection (a material operator can force
+      // `color` over the data node); the light road reaches `data` for a split light's flat
+      // `color`. Asking for that raw on the handed node is what #592 was.
+      if (!resolveColorWriteTarget(state, id)) {
         return {
           ok: false,
           reason: `Target "${id}" (${node.type}) has no material.base.color or color param.`,
@@ -69,27 +61,18 @@ export const setMaterialColorMutator: MutatorDefinition<SetMaterialColorSpec> = 
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const ops: Op[] = [];
     for (const id of spec.targetSelectors) {
-      const node = state.nodes[id];
-      // Material → the resolved per-field owner (the BoxData for a split Object, the linked
-      // Material node, or the topmost operator that forces `color`); light `color` → self.
-      const matOwner = resolveExposedTarget(state, id, MATERIAL_FIELD_IR_PATH.color);
-      if (matOwner) {
-        ops.push({
-          type: 'setParam',
-          nodeId: matOwner.nodeId,
-          // The path comes WITH the owner: an IR node stores this at material.base.color
-          // (v0.6 #2, #178), an override operator stores the flat scalar `color`.
-          paramPath: matOwner.paramPath,
-          value: spec.color,
-        });
-      } else if (typeof (node.params as Record<string, unknown>).color === 'string') {
-        ops.push({
-          type: 'setParam',
-          nodeId: id,
-          paramPath: 'color',
-          value: spec.color,
-        });
-      }
+      // The SAME question the precondition asked, so a target that passed the gate cannot
+      // silently emit nothing here. The path comes WITH the owner: an IR node stores colour
+      // at material.base.color (v0.6 #2, #178), an override operator the flat scalar
+      // `color`, and a light's LightData the flat `color` too.
+      const target = resolveColorWriteTarget(state, id);
+      if (!target) continue;
+      ops.push({
+        type: 'setParam',
+        nodeId: target.nodeId,
+        paramPath: target.paramPath,
+        value: spec.color,
+      });
     }
     return ops;
   },

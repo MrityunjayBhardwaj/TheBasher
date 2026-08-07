@@ -1106,6 +1106,93 @@ describe('split-Object radius mutators reach the SphereData (#384)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// #592 — the colour road reaches a split light's LightData
+//
+// Asked at the OBJECT throughout, because that is the half a director can name: `identify`
+// returns the Object for "the point light", so the Object is the only id these mutators are
+// ever handed in production. The LightData half was never broken and is not the claim.
+// ---------------------------------------------------------------------------
+
+describe('colour mutators reach a split light’s LightData (#592)', () => {
+  function sceneWithSplitLight(): DagState {
+    return makeSplitLight(emptyDagState(), {
+      objectId: 'light',
+      lightKind: 'Directional',
+      position: [5, 5, 5],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      shading: { intensity: 1, color: '#ffffff' },
+    }).state;
+  }
+
+  it('setMaterialColor writes color on the LightData, not the Object', () => {
+    const result = validatePlan(
+      setMaterialColorMutator,
+      { targetSelectors: ['light'], color: '#00ff00' },
+      sceneWithSplitLight(),
+      'paint',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ops).toHaveLength(1);
+    const op = result.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('light_data');
+    expect(op.paramPath).toBe('color');
+    expect(op.value).toBe('#00ff00');
+  });
+
+  it('randomize color emits against the LightData', () => {
+    const result = validatePlan(
+      randomizeMutator,
+      {
+        targetSelectors: ['light'],
+        properties: ['color'] as const,
+        ranges: {
+          color: {
+            h: [0, 360] as [number, number],
+            s: [0.5, 1] as [number, number],
+            l: [0.4, 0.6] as [number, number],
+          },
+        },
+        seed: 42,
+      },
+      sceneWithSplitLight(),
+      'r',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ops).toHaveLength(1);
+    const op = result.ops[0];
+    if (op.type !== 'setParam') throw new Error('expected setParam');
+    expect(op.nodeId).toBe('light_data');
+    expect(op.paramPath).toBe('color');
+  });
+
+  // The write must actually LAND. A gate that passes and an op that addresses a param the
+  // node does not have would satisfy both cases above and change nothing on screen — the
+  // shape #394 recorded (success reported, nothing done). Applying the op closes that.
+  it('the emitted op applies, and the LightData carries the new colour', () => {
+    const state = sceneWithSplitLight();
+    const result = validatePlan(
+      setMaterialColorMutator,
+      { targetSelectors: ['light'], color: '#123456' },
+      state,
+      'paint',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    let next = state;
+    for (const op of result.ops) next = applyOp(next, op).next;
+
+    expect((next.nodes.light_data.params as { color?: string }).color).toBe('#123456');
+    // And the Object did NOT grow a stray colour param on the way.
+    expect((next.nodes.light.params as { color?: string }).color).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // randomize mutator — P7.2 / issue #26 path B
 //
 // Per-target randomization across {color, rotation, scale}. ONE call emits
