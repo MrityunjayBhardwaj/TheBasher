@@ -31,6 +31,8 @@ import {
 } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
+import { makeSplitLight } from '../../test-utils/splitLight';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -40,6 +42,22 @@ function dataHalfOf(state: DagState, objectId: string) {
   const binding = state.nodes[objectId]?.inputs?.data;
   const ref = Array.isArray(binding) ? binding[0] : binding;
   return ref ? state.nodes[ref.node] : undefined;
+}
+
+/**
+ * The Objects that pose GEOMETRY — the population the bake assertions are about.
+ *
+ * They used to enumerate every Object, which was only equivalent while the scaffold's camera
+ * and light were fused kinds. Post-split those are Objects too and are permanent frame, not
+ * leftovers, so an unfiltered walk reports them as survivors of a bake they had nothing to do
+ * with. The claim being made is "the SOURCE mesh pair was retired and exactly one mesh Object
+ * remains", so the filter is on what the Object poses, not on its type.
+ */
+function meshObjectIds(state: DagState): string[] {
+  const MESH_DATA = new Set(['BoxData', 'SphereData', 'CurveData', 'BakedData']);
+  return Object.values(state.nodes)
+    .filter((n) => n.type === 'Object' && MESH_DATA.has(dataHalfOf(state, n.id)?.type ?? ''))
+    .map((n) => n.id);
 }
 
 const PRIM_ID = 'n_prim';
@@ -57,18 +75,21 @@ function buildSceneScaffold(): DagState {
   const add = (op: Op) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_camera',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  });
-  add({
-    type: 'addNode',
-    nodeId: 'n_light',
-    nodeType: 'DirectionalLight',
-    params: { intensity: 1.1, position: [5, 5, 3], color: '#ffffff' },
-  });
+  // The camera and the light are split pairs too — the scaffold is the frame the bake
+  // assertions count Objects against, so a fused one there would be an Object the split road
+  // never produces.
+  s = makeSplitCamera(s, {
+    objectId: 'n_camera',
+    fov: 45,
+    position: [3, 2, 3],
+    lens: { near: 0.01, far: 500, lookAt: [0, 0, 0] },
+  }).state;
+  s = makeSplitLight(s, {
+    objectId: 'n_light',
+    lightKind: 'Directional',
+    position: [5, 5, 3],
+    shading: { intensity: 1.1, color: '#ffffff' },
+  }).state;
   add({ type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} });
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
   add({
@@ -186,11 +207,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     // Exactly ONE Object, the baked one at the inherited id. This used to read "no Object
     // survives"; post-flip the bake's own product is an Object, so the assertion has to
     // name WHICH — a second one would mean the source pair was never retired.
-    expect(
-      Object.values(next.nodes)
-        .filter((n) => n.type === 'Object')
-        .map((n) => n.id),
-    ).toEqual([PRIM_ID]);
+    expect(meshObjectIds(next)).toEqual([PRIM_ID]);
     const baked = next.nodes[result.bakedId];
     expect(baked).toBeDefined();
     expect(baked.type).toBe('Object');
@@ -561,11 +578,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(dataHalfOf(next, cube.objectId)?.type).toBe('BakedData');
     expect(next.nodes[cube.dataId]).toBeUndefined();
     expect(Object.values(next.nodes).some((n) => n.type === 'BoxData')).toBe(false);
-    expect(
-      Object.values(next.nodes)
-        .filter((n) => n.type === 'Object')
-        .map((n) => n.id),
-    ).toEqual([cube.objectId]);
+    expect(meshObjectIds(next)).toEqual([cube.objectId]);
 
     // The pose baked INTO the geometry: the baked Object sits at identity, and the
     // geometry's bbox carries the source Object's +2 x-offset (bake-what-renders, not a

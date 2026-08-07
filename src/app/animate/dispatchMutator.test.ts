@@ -23,6 +23,8 @@ import {
 import { layeredChannelValues } from '../layeredChannels';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveCameraPoseAt } from '../activeCamera';
+import { makeSplitCube } from '../../test-utils/splitCube';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -35,24 +37,16 @@ beforeEach(() => {
 /** box → scene(children), time source seeded, scene as the anchor output. */
 function buildScene(): DagState {
   let s = emptyDagState();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'box',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', color: '#ff0000' },
-    },
-  }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'box', socket: 'out' },
-    to: { node: 'scene', socket: 'children' },
-  }).next;
+  s = makeSplitCube(s, {
+    objectId: 'box',
+    size: [1, 1, 1],
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    color: '#ff0000',
+    connectTo: { node: 'scene', socket: 'children' },
+  }).state;
   s = {
     ...s,
     outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } },
@@ -60,21 +54,15 @@ function buildScene(): DagState {
   return s;
 }
 
-/** scene with a PerspectiveCamera wired into scene.camera (the #190 shape). */
+/** scene with a split camera wired into scene.camera (the #190 shape). */
 function buildSceneWithCamera(): DagState {
-  let s = buildScene();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_cam',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_cam', socket: 'out' },
-    to: { node: 'scene', socket: 'camera' },
-  }).next;
-  return s;
+  return makeSplitCamera(buildScene(), {
+    objectId: 'n_cam',
+    fov: 45,
+    position: [3, 2, 3],
+    lens: { lookAt: [0, 0, 0] },
+    connectTo: { node: 'scene', socket: 'camera' },
+  }).state;
 }
 
 /** Seed a free-floating Vec3 channel (v0.7 #199 / V57 — no AnimationLayer) so the
