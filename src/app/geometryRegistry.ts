@@ -38,6 +38,32 @@ import type { GeometryRef } from '../nodes/types';
 
 const cache = new Map<string, BufferGeometry>();
 
+// ── GROWTH ATTRIBUTION (#586, P5a) ────────────────────────────────────────────────────
+//
+// The population is one number and the fix candidates for #544 are not interchangeable, so
+// the total cannot decide between them: a refcount can only be placed on a door, and only
+// SOME of this cache's entries arrive through a door at all. Counting insertions per ORIGIN
+// is what turns "the registry grows" into "the registry grows HERE", which is the question
+// the lifetime slice actually has to answer.
+//
+// `internal` is the one that would otherwise be invisible: `build` resolves an `array` /
+// `mirror` source through `get` (:156, :176), so a modifier drag caches the SOURCE box
+// alongside the merged result — and nothing ever attaches that source. An attach-door
+// refcount would never see it, never count it, and never free it.
+//
+// Counted on INSERTION only, so the arithmetic sits next to a `new BoxGeometry`/`merge` that
+// costs orders of magnitude more; a hit costs nothing. Unconditional rather than DEV-gated
+// on purpose — a counter the unit tier cannot read is a counter the unit tier cannot gate,
+// and this one is the gate's subject.
+export type GeometryGrowthSource = 'attach' | 'read' | 'internal' | 'prime';
+
+const growth: Record<GeometryGrowthSource, number> = {
+  attach: 0,
+  read: 0,
+  internal: 0,
+  prime: 0,
+};
+
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
@@ -47,16 +73,23 @@ const cache = new Map<string, BufferGeometry>();
  * `prime`d (see header). Returns the SAME instance for repeated calls with an
  * identical key (cache hit).
  *
+ * `via` records which origin caused an INSERTION (see the block above). It is a
+ * diagnostic, never a behavioural input — the two doors resolve identically, and this
+ * parameter must not become the thing that makes them differ.
+ *
  * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
  * outside this module reaches the cache through one of them.
  */
-function get(ref: GeometryRef): BufferGeometry | null {
+function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
   if (ref.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
   if (ref.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
   const built = build(ref);
-  if (built) cache.set(ref.key, built);
+  if (built) {
+    cache.set(ref.key, built);
+    growth[via]++;
+  }
   return built;
 }
 
@@ -80,6 +113,12 @@ function get(ref: GeometryRef): BufferGeometry | null {
 // This is a naming tier, not a type tier: it makes intent reviewable and a new consumer's
 // door declared, and it stops there. #535 is the behavioural backstop that asks whether
 // anything actually leaked.
+//
+// ⚠️ The two doors now pass DIFFERENT `via` tags to `get`, and that is still not a type
+// tier — it is the same resolution with a label attached (#586). Reading the tag as
+// "so the doors are distinguishable after all" would re-open exactly the hole that made a
+// refcount here unsafe: the tag says which door a caller CHOSE, and the holder that
+// attaches through `bakedGeometryLoader` chose neither.
 
 /**
  * Take a shared geometry in order to ATTACH it to the scene graph — a share of ownership.
@@ -92,7 +131,7 @@ function get(ref: GeometryRef): BufferGeometry | null {
  * suspending and priming.
  */
 export function getForAttach(ref: GeometryRef): BufferGeometry | null {
-  return get(ref);
+  return get(ref, 'attach');
 }
 
 /**
@@ -120,7 +159,7 @@ export function getForAttach(ref: GeometryRef): BufferGeometry | null {
  * CONTENT sweep in `registryDoors.gate.test.ts` instead.
  */
 export function getForRead(ref: GeometryRef): BufferGeometry | null {
-  return get(ref);
+  return get(ref, 'read');
 }
 
 /**
@@ -136,6 +175,7 @@ export function prime(ref: GeometryRef, geom: BufferGeometry): BufferGeometry {
     return existing;
   }
   cache.set(ref.key, geom);
+  growth.prime++;
   return geom;
 }
 
@@ -153,7 +193,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
     // mutate the cached source instance (other refs share it). A source that
     // can't build sync (gltf MISS / baked MISS → null) makes the whole array
     // unbuildable here — return null (a follow-up; the renderer renders nothing).
-    const source = get(d.source);
+    // `internal`: this caches the SOURCE box/sphere, which no consumer attaches (#586).
+    const source = get(d.source, 'internal');
     if (!source) return null;
     const copies: BufferGeometry[] = [];
     for (let i = 0; i < d.count; i++) {
@@ -173,7 +214,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
     // matrix), but the index winding would now disagree with those normals →
     // front-faces become back-faces (the mirrored half renders inside-out). Reverse
     // the reflected copy's winding so winding and normals agree again.
-    const source = get(d.source);
+    // `internal`: caches the SOURCE, which no consumer attaches (#586) — as `array` does.
+    const source = get(d.source, 'internal');
     if (!source) return null;
     // Reflection across the plane perpendicular to `axis` at `offset` along it:
     // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
@@ -235,9 +277,29 @@ function reverseWinding(geom: BufferGeometry): BufferGeometry {
 export function clear(): void {
   for (const geom of cache.values()) geom.dispose();
   cache.clear();
+  resetGrowth();
 }
 
 /** Test/diagnostic seam: current number of cached geometries. */
 export function size(): number {
   return cache.size;
+}
+
+/**
+ * Test/diagnostic seam (#586): how many entries each origin INSERTED, cumulatively.
+ *
+ * Read the sum against {@link size} rather than assuming they agree — `prime` can replace
+ * nothing and `clear` resets both together, but a future eviction would separate them, and
+ * the gap is then the number of entries freed.
+ */
+export function growthBySource(): Readonly<Record<GeometryGrowthSource, number>> {
+  return { ...growth };
+}
+
+/** Test/diagnostic seam (#586): zero the counters WITHOUT touching the cache. */
+export function resetGrowth(): void {
+  growth.attach = 0;
+  growth.read = 0;
+  growth.internal = 0;
+  growth.prime = 0;
 }

@@ -132,6 +132,20 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   'src/app/asset/bakedGeometryLoader.ts': 'produce',
 };
 
+/**
+ * Bindings that hand back NO INSTANCE, so importing one opens no door and answers no
+ * ownership question (#586). `size`, `growthBySource` and `resetGrowth` return numbers.
+ *
+ * Listed rather than pattern-matched, and subtracted BEFORE the door check rather than
+ * added to every class's allowance, so the census keeps its teeth in both directions: a new
+ * diagnostic must be named here, and a file that imports ONLY diagnostics still trips the
+ * "opens no named door" arm — it has no business in `GEOMETRY_CONSUMERS` at all.
+ *
+ * `clear` is deliberately absent: it disposes every instance in the cache, which is an
+ * ownership act of the most consequential kind, and no production file may import it.
+ */
+const GEOMETRY_DIAGNOSTICS = ['size', 'growthBySource', 'resetGrowth'];
+
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {
   attach: ['getForAttach'],
@@ -206,12 +220,35 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     for (const [path, src] of sourceFiles()) {
       const cls = GEOMETRY_CONSUMERS[path];
       if (!cls) continue;
-      const opened = importedDoors(src, 'geometryRegistry');
+      const opened = importedDoors(src, 'geometryRegistry').filter(
+        (b) => !GEOMETRY_DIAGNOSTICS.includes(b),
+      );
       const allowed = GEOMETRY_DOORS[cls];
       for (const door of opened) if (!allowed.includes(door)) wrong.push(`${path}: ${door}`);
       if (opened.length === 0) wrong.push(`${path}: opens no named door`);
     }
     expect(wrong).toEqual([]);
+  });
+
+  // #586 — the diagnostics carve-out above subtracts three bindings from the door check, so
+  // it is exactly the shape that could quietly swallow a real door. Two arms hold it shut:
+  // the list may only name bindings that return no instance, and the most dangerous export
+  // in the module must stay out of production entirely.
+  it('the diagnostic carve-out names only instance-free bindings, and `clear` is not one', () => {
+    expect(GEOMETRY_DIAGNOSTICS).not.toContain('clear');
+    for (const door of Object.values(GEOMETRY_DOORS).flat()) {
+      expect(GEOMETRY_DIAGNOSTICS).not.toContain(door);
+    }
+
+    // `clear()` disposes every cached geometry. A production importer of it could blank
+    // every mesh drawing a shared instance, which is [[H259]]'s symptom with a one-line
+    // cause. It is a TEST seam and the census is what keeps that true.
+    const importers = sourceFiles()
+      .filter(([, src]) => importedDoors(src, 'geometryRegistry').includes('clear'))
+      .map(([path]) => path)
+      .sort();
+
+    expect(importers).toEqual([]);
   });
 
   it('lets only the material seam touch a material instance', () => {
