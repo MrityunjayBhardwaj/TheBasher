@@ -55,6 +55,31 @@ const cache = new Map<string, BufferGeometry>();
 // costs orders of magnitude more; a hit costs nothing. Unconditional rather than DEV-gated
 // on purpose — a counter the unit tier cannot read is a counter the unit tier cannot gate,
 // and this one is the gate's subject.
+//
+// ── THE MEASURED GROWTH MODEL (browser, 121 transient writes per arm, #586) ────────────
+//
+//   arm                              Δ size   attach   read   internal
+//   idle, no writes (control)             0        0      0          0
+//   drag `size` on a plain box         +120      120      0          0
+//   the same drag through an Array     +240      120      0        120
+//   the same, over a third range       +240      120      0        120
+//   resolve an UNATTACHED object         +1        0      1          0   ← instrument control
+//
+// Read three ways:
+//
+//   1. A primitive drag is ENTIRELY the attach door. A refcount there bounds all of it.
+//   2. A MODIFIER drag is half attach and half `internal`, and that half is unreachable
+//      from any door: it is the source box, cached by `build` on the way to the merged
+//      result, attached by nobody, released by nobody. Every modifier drag leaves as many
+//      orphans as it leaves geometries anyone asked for.
+//   3. The six read doors contributed NOTHING during a drag — and the last row is why that
+//      zero is worth reading: the same counter moves on demand, so read=0 is a fact about
+//      this path and not a dead instrument. The caveat is scope, not confidence — the
+//      probed scene runs no sample source, no UV resolve and no apply-transform while the
+//      hand is down, and each of those opens the read door.
+//
+// (Δ is 120 rather than 121 because the drag's first value is the one the scene was already
+// built at — a hit. The unit gate, starting from an empty cache, sees the full 121.)
 export type GeometryGrowthSource = 'attach' | 'read' | 'internal' | 'prime';
 
 const growth: Record<GeometryGrowthSource, number> = {
