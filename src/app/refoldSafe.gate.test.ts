@@ -201,7 +201,10 @@ describe('#583 — the tier the render root may fold', () => {
     for (const [, src] of sourceFiles()) {
       for (const m of stripComments(src).matchAll(/overlayChannels\([^)]*\)/g)) calls.push(m[0]);
     }
-    expect(calls.length).toBeGreaterThan(0);
+    // EXACT, not a floor. A census whose subject can empty goes green by losing its
+    // corpus — a renamed helper, a narrowed file list — and reports the strongest possible
+    // result for having measured nothing at all.
+    expect(calls).toHaveLength(9);
     expect(calls.filter((c) => !/,\s*1,\s*/.test(c))).toEqual([]);
   });
 });

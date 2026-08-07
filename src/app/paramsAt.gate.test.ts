@@ -16,9 +16,12 @@
 // ── ⚠️ WHAT THIS IS AND IS NOT — THE HONEST LIMIT ─────────────────────────────────────
 //
 // This is a DECISION RECORD plus a census. It is not proof that any consumer's signature
-// matches its row. Nothing produces a `CookState` in production yet (`foldOverlays` has no
-// caller), so every consumer still takes `DagState` and every 'cooked' row below records
-// what that consumer SHOULD be handed once the fold is wired — the follow-up issue.
+// matches its row.
+//
+// #583 moved ONE row from record to fact: the render root now evaluates a `CookState`,
+// folded on the refold-safe tier. Every other consumer still takes `DagState`, and every
+// remaining 'cooked' row still records what that consumer SHOULD be handed rather than
+// what it takes today. Those rows are the work list for the slices after this one.
 //
 // The strengthening is real and it stops exactly there: the set is closed, each member has
 // an argued reason, and a new evaluator consumer cannot join silently. Claiming more —
@@ -70,13 +73,25 @@ type IndifferentReason =
   /** Imports the evaluator's instrumentation surface and never evaluates anything. */
   | 'never-reads-the-graph';
 
+/** Why a consumer needs BOTH, at two different seams inside itself. */
+type SplitReason =
+  /**
+   * Evaluates a state folded on the refold-safe tier, then applies the remaining overlays
+   * at its own seams. The two are not in tension: the tier admits exactly the paths whose
+   * second fold cannot change the answer, so the seams below still see the base they
+   * expect. Everything outside that tier reaches them authored, as before.
+   */
+  | 'evaluates-the-safe-tier-then-folds-the-rest';
+
 type Decision =
   | { needs: 'cooked'; why: CookedReason }
   | { needs: 'authored'; why: AuthoredReason }
+  | { needs: 'both'; why: SplitReason }
   | { needs: 'indifferent'; why: IndifferentReason };
 
 const cooked = (why: CookedReason): Decision => ({ needs: 'cooked', why });
 const authored = (why: AuthoredReason): Decision => ({ needs: 'authored', why });
+const both = (why: SplitReason): Decision => ({ needs: 'both', why });
 const indifferent = (why: IndifferentReason): Decision => ({ needs: 'indifferent', why });
 
 /**
@@ -101,8 +116,10 @@ const CONSUMERS: Record<string, Decision> = {
   'src/agent/tools/renderSummarizePass.ts': cooked('describes-a-frame'),
   'src/agent/tools/renderSummarizeStylized.ts': cooked('describes-a-frame'),
 
+  // ── BOTH — the one file with two seams and a different answer at each ─────────────
+  'src/viewport/SceneFromDAG.tsx': both('evaluates-the-safe-tier-then-folds-the-rest'),
+
   // ── AUTHORED — handing these folded params would double-apply or go circular ───────
-  'src/viewport/SceneFromDAG.tsx': authored('folds-its-own-overlays'),
   'src/app/Gizmo.tsx': authored('folds-its-own-overlays'),
   'src/app/boot.ts': authored('folds-its-own-overlays'),
   'src/app/activeCamera.ts': authored('folds-its-own-overlays'),
@@ -170,6 +187,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
       'edits-authored-values',
       'fixed-ctx-by-design',
       'mints-the-cooked-state',
+      'evaluates-the-safe-tier-then-folds-the-rest',
       'reads-no-param-value',
       'never-reads-the-graph',
     ];
@@ -189,6 +207,19 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
       'src/app/resolveMaterialFieldOwner.ts',
       'src/perf/frameProfiler.ts',
     ]);
+  });
+
+  it('the SPLIT answer is one file, named — not a category anyone may drift into', () => {
+    // 'both' is the weakest row in the table: it says a file is trusted to keep two
+    // different states straight inside itself, which is precisely what the two types exist
+    // to stop anyone having to be trusted with. It is earned here — the render root folds
+    // the refold-safe tier before `evaluate` and its own overlays after — and it must stay
+    // earned, so the membership is pinned by NAME. A second file wanting this answer has to
+    // come here and argue for it rather than discovering it as the convenient one.
+    const split = Object.entries(CONSUMERS)
+      .filter(([, d]) => d.needs === 'both')
+      .map(([path]) => path);
+    expect(split).toEqual(['src/viewport/SceneFromDAG.tsx']);
   });
 
   it('the fold is in the census as a CONSUMER of authored params, not as an exemption', () => {
