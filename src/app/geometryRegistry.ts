@@ -70,16 +70,25 @@ const cache = new Map<string, BufferGeometry>();
 //   1. A primitive drag is ENTIRELY the attach door. A refcount there bounds all of it.
 //   2. A MODIFIER drag is half attach and half `internal`, and that half is unreachable
 //      from any door: it is the source box, cached by `build` on the way to the merged
-//      result, attached by nobody, released by nobody. Every modifier drag leaves as many
-//      orphans as it leaves geometries anyone asked for.
-//   3. The six read doors contributed NOTHING during a drag — and the last row is why that
-//      zero is worth reading: the same counter moves on demand, so read=0 is a fact about
-//      this path and not a dead instrument. The caveat is scope, not confidence — the
-//      probed scene runs no sample source, no UV resolve and no apply-transform while the
-//      hand is down, and each of those opens the read door.
+//      result, released by nobody. The splice puts the modifier between the data and the
+//      Object, so the source is a scene child of nothing and no attach site ever names it —
+//      unless the same data node is ALSO drawn unmodified elsewhere, which the splice is
+//      precisely what removes. Every modifier drag leaves as many orphans as it leaves
+//      geometries someone asked for.
+//   3. The read doors inserted NO ENTRIES during a drag. Read that as growth and not as
+//      traffic: a reader that runs and HITS is invisible here by construction, since only
+//      insertions are counted, so this says the read doors are not a growth source on this
+//      path — not that no reader ran. The last row is why even that much is readable: the
+//      same counter moves on demand, so the zero is a fact about the drag rather than a
+//      dead instrument. And the scope is narrower than the path: the probed scene runs no
+//      sample source, no UV resolve and no apply-transform while the hand is down, and each
+//      of those opens the read door on a key the drag is minting fresh.
 //
 // (Δ is 120 rather than 121 because the drag's first value is the one the scene was already
-// built at — a hit. The unit gate, starting from an empty cache, sees the full 121.)
+// built at — a hit. The unit gate, starting from an empty cache, sees the full 121. The
+// drag is driven by transient writes at frame cadence, which is the store a real pointer
+// grab is routed into, not a stand-in for it; what is NOT covered is the pointer half —
+// hit-testing and gizmo state — which cannot reach this cache.)
 export type GeometryGrowthSource = 'attach' | 'read' | 'internal' | 'prime';
 
 const growth: Record<GeometryGrowthSource, number> = {
