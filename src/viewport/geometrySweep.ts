@@ -41,6 +41,19 @@
 // scaling with mesh density and modifier count, i.e. with the dials a user turns. Hence the
 // second trigger below (`SWEEP_QUIET_FRAMES`). See `geometryRegistry.residentBytes`.
 //
+// ── OBSERVED AFTER THE QUIET TRIGGER (one arm per page, so no arm inherits the last one's
+//    leftovers — the isolation the #587 run above lacked) ──
+//
+//   arm                        entries: before → peak → settle    residue      GPU geometries
+//   idle (control)                 1  →   1  →   1                0 / 840 B      flat
+//   plain box drag                 1  →  65  →   1                0 / 0.00 MB    7 → 71 → 7
+//   sphere 64×48 + Array(3)        2  →  66  →   2                0 / 0.00 MB   15 → 47 → 15
+//
+// Both arms return to their exact starting population, and the GPU column returns with them —
+// that number falls only on a real `dispose()`, so this is memory handed back rather than Map
+// keys deleted. The PEAKS are unchanged from #587 (64/66 → 65/66), which is the other half of
+// the claim: trigger 2 collects the residue without weakening trigger 1's bound during churn.
+//
 // ⚠️ WHAT IS STILL NOT CLAIMED: this bounds the population, it does not make the cache
 // minimal at every instant. Between the last write and the quiet sweep the residue is still
 // held, and a scene that never goes quiet never reaches trigger 2 — it stays bounded by the
