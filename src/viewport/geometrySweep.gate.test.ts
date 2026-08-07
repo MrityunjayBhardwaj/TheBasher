@@ -390,6 +390,29 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
     expect(size()).toBe(12);
   });
 
+  // Primed baked entries count toward the population but can never be disposed, so they are
+  // permanently "unverified growth" from the cadence's point of view. Without the latch
+  // being marked from the POST-sweep population, a scene holding one primed entry that
+  // nothing draws would walk the graph every quiet period forever, achieving nothing. The
+  // exemption is also the road that hangs the app if it is ever got wrong — the loader's
+  // promise cache is never cleared — so it is worth pinning against the new trigger too.
+  it('latches after sweeping a scene whose leftovers are all exempt', () => {
+    const ref: GeometryRef = {
+      key: 'baked|quiet-8',
+      kind: 'baked',
+      descriptor: { kind: 'baked', hash: 'quiet', vertexCount: 8 },
+    };
+    prime(ref, new BoxGeometry(1, 1, 1));
+
+    const scene = new Scene(); // nothing drawn at all
+    const swept = idleFrames(scene, SWEEP_QUIET_FRAMES * 4);
+
+    expect(swept).toHaveLength(1); // one walk, not one per period
+    expect(swept[0].exempt).toBe(1);
+    expect(swept[0].disposed).toBe(0);
+    expect(getForRead(ref)).not.toBeNull(); // and the primed entry survived
+  });
+
   it('re-arms: a second burst of churn gets its own quiet sweep', () => {
     const scene = new Scene();
     const mesh = new Mesh(undefined, new MeshBasicMaterial());
@@ -452,6 +475,14 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
   // or two after the last invalidation, the counter never reaches 30, and the residue comes
   // back with every test in this file still green. The failure is silent, remote, and
   // invisible to any test of this module, which is exactly what makes it worth a census.
+  // ⚠️ IT IS DELIBERATELY BROADER THAN THE PREMISE. What the trigger actually needs is that
+  // the Canvas *`GeometryLifetime` is mounted in* keeps ticking; this asserts it of every
+  // Canvas in `src/`. There is exactly one today, so the two coincide — but a second one
+  // added later for its own reasons (a thumbnail renderer, an offscreen capture) could
+  // legitimately want `"demand"` and would red here. That red is the point: it is cheaper to
+  // be told "say which Canvas hosts the lifetime" than to have the trigger silently retire
+  // because the answer changed. The narrower check would need to know the mount site, which
+  // is a React fact this file cannot read.
   it('the Canvas still runs an always-on frameloop, which the quiet trigger depends on', () => {
     const canvases = sourceFiles().filter(([, src]) => /<Canvas[\s>]/.test(stripComments(src)));
     // Assert the subject is non-empty before asserting anything about it: a census whose
