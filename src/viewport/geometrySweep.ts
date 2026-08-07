@@ -14,6 +14,29 @@
 // nothing, which no consumer ever calls for and no door could ever count. Attachment asks
 // the question directly and is immune to the route a holder took.
 //
+// ── OBSERVED IN A BROWSER (121 transient writes per arm, the same scene #586 measured) ──
+//
+//   arm                    registry: before → peak → after      GPU geometries
+//   drag a plain box            2  →  64  →  60                  15 → 77 → 73
+//   drag through an Array      60  →  66  →  37                  73 → 76 → 33
+//
+// Against P5a's un-swept numbers, the peaks are the finding: the same drags reached 122 and
+// 362. The GPU column is the one this feature does not compute — `renderer.info.memory
+// .geometries` counts live GPU allocations and falls only on a real `dispose()`, so the
+// array arm's 76 → 33 is memory actually returned rather than Map keys deleted.
+//
+// A third arm held the drag DOWN for 200 frames: a sweep ran mid-drag (the population fell
+// while the hand was still on the param) and the object went on drawing at the dragged size,
+// 50 units. That is the arm that matters — the two arms above sample after release, when the
+// object has snapped back to its authored size and "still drawing" would prove nothing.
+//
+// ⚠️ DECLARED LIMIT — this bounds GROWTH, it does not minimise the population. After a drag
+// ends nothing grows, so nothing is due, and up to one budget of dead entries sits there
+// until the next churn: both arms above settle above their starting size, on purpose. The
+// alternative is a quiet-period sweep, which is a cadence with its own failure modes for at
+// most `SWEEP_GROWTH_BUDGET` entries. Not built; recorded so nobody reads the residue as a
+// leak, and so the case for building it starts from this number.
+//
 // REF: src/app/geometryRegistry.ts (`sweep`, and the measured growth model); issues #587,
 //      #586, #544, #575; src/viewport/sceneBounds.ts (the walk precedent — note the
 //      difference in chrome handling, below).
