@@ -642,7 +642,7 @@ describe('dag.inspect tool', () => {
   it('returns types list for scope=types', () => {
     const result = dagInspectTool.handler({ scope: 'types' }, baseCtx);
     expect(result.ops).toHaveLength(0);
-    expect(result.text).toContain('BoxMesh');
+    expect(result.text).toContain('BoxData');
     expect(result.text).toContain('Scene');
   });
 
