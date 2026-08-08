@@ -2,8 +2,9 @@
 // Do not regenerate from the subject — see paramHome.gate.test.ts for why.
 //
 // The ONLY edit this file accepts is a DELETION, when a node type stops existing: #596
-// removed the seven fused relics' rows (410 cells → 361) and dropped GOLDEN_TOTALS by the
-// counts those rows recorded. Removing a row cannot launder a routing change, because the
+// removed the seven fused relics' rows (410 cells → 361) and #599 the last three — BakedMesh
+// (5 cells), Curve (6), PerspectiveCamera (11) — taking it to 339. Each dropped GOLDEN_TOTALS
+// by the counts those rows recorded. Removing a row cannot launder a routing change, because the
 // row being removed is itself the frozen record of what that type routed. Adding or editing
 // a row would launder one, which is why the rule is deletion-only.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
@@ -13,8 +14,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
-  BakedMesh:
-    '[mesh,transform,constraint,driver,material] geometry=(unrouted) position=transform rotation=transform scale=transform material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
   BoxData: '[mesh,material] size=mesh material=material',
@@ -30,8 +29,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[render] presetId=render graph=(unrouted) imageBindings=(unrouted) frameStart=render frameEnd=render lastGoodFrame=(unrouted) outputPath=render width=(unrouted) height=(unrouted)',
   Composition:
     '[layout] name=layout width=(unrouted) height=(unrouted) fps=(unrouted) durationFrames=(unrouted) background=(unrouted)',
-  Curve:
-    '[curve,transform,constraint,driver] position=transform rotation=transform scale=transform points=curve closed=curve resolution=curve',
   CurveData: '[curve] points=curve closed=curve resolution=curve',
   CurveRemap: '[] points=(unrouted)',
   Cut: '[layout] transitionFrame=(unrouted)',
@@ -89,8 +86,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[transform,constraint,driver,modifier] position=transform rotation=transform scale=transform',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
-  PerspectiveCamera:
-    '[camera,transform,constraint,driver] fov=camera sensorSize=camera near=camera far=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera position=transform lookAt=transform roll=transform',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
   PrevFrame: '[]',
   PrevFrameVec: '[] slot=(unrouted)',
@@ -126,4 +121,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   WalkPath: '[] from=(unrouted) to=(unrouted) sampleCount=(unrouted)',
 };
 
-export const GOLDEN_TOTALS = { types: 83, routed: 145, unrouted: 216 } as const;
+export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 215 } as const;

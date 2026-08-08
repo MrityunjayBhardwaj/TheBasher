@@ -2614,96 +2614,21 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
   });
 });
 
-describe('Curve v1 → v2: control points gain stable ids (#453/#454)', () => {
-  // NON-default coordinates on purpose: a dropped `co` would otherwise read the schema
-  // default and the golden would pass vacuously.
-  // formatVersion 7 (current): isolates the Curve NODE ladder (v1→v2 points get ids)
-  // from the v4→v5 FORMAT split. The two are orthogonal — the split's normalize step
-  // reuses this same node ladder — so stamping the current format keeps this a pure
-  // node-migration test (a v4 stamp would trip the 4→5 split and turn n_curve into an
-  // Object, hiding the very migration under test). This stamp tracks the CURRENT
-  // format on every bump, so no format pass runs at all here.
-  const V1_CURVE_PROJECT = {
-    formatVersion: 7,
-    id: 'p454-curve-ids',
-    name: 'pre-id curve',
-    createdAt: 0,
-    updatedAt: 0,
-    nodeVersions: { Curve: 1 },
-    state: {
-      nodes: {
-        n_curve: {
-          id: 'n_curve',
-          type: 'Curve',
-          version: 1,
-          params: {
-            position: [1, 0, -1],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            points: [
-              [1.3, 0.4, -0.7],
-              [-0.9, 1.1, 2.2],
-              [3.1, -0.5, 0.8],
-            ],
-            closed: false,
-            resolution: 8,
-          },
-          inputs: {},
-        },
-        // CONTROL: a curve already at v2 with CUSTOM ids — migrateOneNode's version gate
-        // skips it, so its ids are preserved untouched (never re-minted to cp0..).
-        n_curve2: {
-          id: 'n_curve2',
-          type: 'Curve',
-          version: 2,
-          params: {
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-            points: [
-              { id: 'kept-a', co: [5, 5, 5] },
-              { id: 'kept-b', co: [6, 6, 6] },
-            ],
-            closed: false,
-            resolution: 16,
-          },
-          inputs: {},
-        },
-      },
-      outputs: {},
-    },
-  };
-
-  it('migrates bare Vec3[] to {id,co}[] byte-identically, minting cp0..cpN in array order', () => {
-    const migrated = loadFromBytes(V1_CURVE_PROJECT);
-    const curve = migrated.state.nodes.n_curve;
-    expect(curve.version).toBe(2);
-    expect((curve.params as { points: unknown }).points).toEqual([
-      { id: 'cp0', co: [1.3, 0.4, -0.7] },
-      { id: 'cp1', co: [-0.9, 1.1, 2.2] },
-      { id: 'cp2', co: [3.1, -0.5, 0.8] },
-    ]);
-    // Every other param survives untouched.
-    const p = curve.params as Record<string, unknown>;
-    expect(p.position).toEqual([1, 0, -1]);
-    expect(p.resolution).toBe(8);
-    expect(p.closed).toBe(false);
-  });
-
-  it('is idempotent — re-loading the migrated project is a stable no-op', () => {
-    const once = loadFromBytes(V1_CURVE_PROJECT);
-    const twice = loadFromBytes(once);
-    expect(twice.state.nodes.n_curve).toEqual(once.state.nodes.n_curve);
-    expect(twice.state.nodes.n_curve.version).toBe(2);
-  });
-
-  it('control: an already-v2 curve is skipped, its custom ids preserved (not re-minted)', () => {
-    const migrated = loadFromBytes(V1_CURVE_PROJECT);
-    const ctrl = migrated.state.nodes.n_curve2;
-    expect(ctrl.version).toBe(2);
-    expect((ctrl.params as { points: unknown }).points).toEqual([
-      { id: 'kept-a', co: [5, 5, 5] },
-      { id: 'kept-b', co: [6, 6, 6] },
-    ]);
-  });
-});
+// The `Curve v1 → v2` describe block lived here until #599 deleted the fused `Curve`.
+//
+// It isolated the NODE ladder by stamping the CURRENT formatVersion on a fused Curve, which is
+// a state no save can be in once the definition is gone: a project containing a fused Curve is
+// at formatVersion 2-4, so the split pass consumes it before `migrateNodes` ever sees it, and
+// `migrateOneNode` resolves through the registry alone. Repairing it would have meant asserting
+// on a shape the product cannot produce.
+//
+// Its two substantive claims are covered on the REACHABLE road and were checked before it went:
+//   - minting cp0..cpN in array order from bare Vec3 points — 'normalizes a v1 bare-Vec3 curve
+//     through the node ladder BEFORE splitting', which runs the same ladder from formatVersion 2
+//   - custom ids preserved, not re-minted, on an already-v2 curve — the split fixture asserts
+//     the CurveData's points still equal CURVE_MIG_ENTRIES
+// What did NOT carry over is fused-node re-load idempotence; after the split the graph holds no
+// Curve to re-migrate, so the property that matters is the split's own idempotence.
+//
+// The ladder itself is untouched and still load-bearing — it lives in RETIRED_LADDERS and the
+// split's normalize step runs it.

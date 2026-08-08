@@ -127,7 +127,10 @@ describe('param->section routing is pinned cell by cell', () => {
 
 describe('the collisions that make per-node homes necessary', () => {
   // The measured reason PLAN-3 §3.4 gives for decentralizing: the same param key lands on
-  // DIFFERENT cards depending on the node. Three keys do this today.
+  // DIFFERENT cards depending on the node. TWO keys do this today — `lookAt` and `color`.
+  // It was three until #599 deleted the fused camera and left `roll` with a single owner;
+  // the count shrinks as the split completes, because a fused node routing a lens param to
+  // 'transform' was itself one half of most of these collisions.
   //
   // RE-ANCHORED AT P6b, AND STRICTER. These were written against hypothetical section
   // lists (`paramToSection('color', ['light'])`) — a shape that stopped existing when
@@ -137,19 +140,22 @@ describe('the collisions that make per-node homes necessary', () => {
   const routes = (nodeType: string, key: string) =>
     homeOf(nodeType, key, declaredSectionsOf(nodeType));
 
-  it('lookAt lands on three different cards, on three real nodes', () => {
-    // The fused AreaLight held the 'transform' corner until #365 Phase 5 deleted it.
-    // PerspectiveCamera is the last registered node that routes `lookAt` there, so when its
-    // own rehome lands this collision genuinely drops to two-way and this case goes with it —
-    // it is not a fixture to repair at that point.
-    expect(routes('PerspectiveCamera', 'lookAt')).toBe('transform');
+  it('lookAt lands on two different cards, on two real nodes', () => {
+    // This was a THREE-way collision, and it shrank exactly as the previous note here
+    // predicted. The fused AreaLight held the 'transform' corner until #365 Phase 5 deleted
+    // it; PerspectiveCamera was the last registered node routing `lookAt` there, and #599
+    // deleted that too. Two owners is the real count now, and re-inflating it to three would
+    // mean inventing a node to satisfy the fixture rather than recording the shipped tables.
+    // The claim the case exists to make survives at two: `lookAt` still lands on different
+    // cards on different nodes, so a per-node home is still what disambiguates it.
     expect(routes('CameraData', 'lookAt')).toBe('camera');
     expect(routes('LightData', 'lookAt')).toBe('light');
   });
-  it('roll lands on two different cards, on two real nodes', () => {
-    expect(routes('PerspectiveCamera', 'roll')).toBe('transform');
-    expect(routes('CameraData', 'roll')).toBe('camera');
-  });
+  // `roll` was the second collision, PerspectiveCamera('transform') against
+  // CameraData('camera'). With the fused camera deleted (#599), CameraData is its only owner
+  // — so `roll` does not collide at all any more and there is nothing left for a case to
+  // assert. It is dropped rather than reduced to a single-node routing check, which would be
+  // a weaker duplicate of the frozen golden row that already pins it.
   it('color lands on two different cards, on two real nodes', () => {
     expect(routes('MaterialOverride', 'color')).toBe('material');
     expect(routes('LightData', 'color')).toBe('light');

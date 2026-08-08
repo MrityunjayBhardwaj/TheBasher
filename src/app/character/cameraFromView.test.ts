@@ -9,34 +9,36 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
+import { applyOp, emptyDagState } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
+import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { snapshotCameraFromOrbit } from './cameraFromView';
 import { useThreeRef } from './threeRef';
 
 beforeEach(() => {
   registerAllNodes();
+  // The already-wired camera the macro has to disconnect from. It was a hand-written fused
+  // `PerspectiveCamera` state literal until #599 deleted that type; it is built through the
+  // canonical split helper now, which is not merely a substitution — an existing camera in a
+  // real project IS an Object → CameraData pair, and that is the shape the macro's disconnect
+  // arm actually meets. The macro's OUTPUT was already asserted to be a pair below, so the
+  // fixture and the subject now agree about what a camera is.
+  let seed = applyOp(emptyDagState(), {
+    type: 'addNode',
+    nodeId: 'scene',
+    nodeType: 'Scene',
+    params: {},
+  }).next;
+  seed = makeSplitCamera(seed, {
+    objectId: 'cam',
+    fov: 45,
+    position: [0, 0, 5],
+    lens: { near: 0.1, far: 1000, lookAt: [0, 0, 0] },
+    connectTo: { node: 'scene', socket: 'camera' },
+  }).state;
   useDagStore.getState().hydrate({
-    nodes: {
-      cam: {
-        id: 'cam',
-        type: 'PerspectiveCamera',
-        version: 1,
-        params: { fov: 45, near: 0.1, far: 1000, position: [0, 0, 5], lookAt: [0, 0, 0] },
-        inputs: {},
-      },
-      scene: {
-        id: 'scene',
-        type: 'Scene',
-        version: 1,
-        params: {},
-        inputs: {
-          camera: { node: 'cam', socket: 'out' },
-          children: [],
-          lights: [],
-        },
-      },
-    },
+    nodes: seed.nodes,
     outputs: { scene: { node: 'scene', socket: 'out' } },
   });
   const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);

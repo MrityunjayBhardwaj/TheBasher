@@ -249,19 +249,28 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     // enrolling in this gate, which is the blindness the equality used to buy.
     expect([...declared].sort()).toEqual(retired.filter((t) => registry[t] !== undefined));
 
-    // Guard-the-guard, and it is the assertion that keeps the disjunction honest: if EVERY
-    // relic were deleted the sentinel road above would be vacuous, and if none were the
-    // absence road would be. Both states are populated today (3 registered, 7 deleted), and
-    // this says so out loud so a future reader can see which arms are actually exercised.
+    // Which arms are actually exercised, said out loud.
+    //
+    // Until #599 this asserted that at least one relic was STILL REGISTERED, so the sentinel
+    // arm above could not be vacuous. That was true of a half-finished retirement (3
+    // registered / 7 deleted) and became false the moment the retirement completed — the
+    // guard-the-guard read as a veto on finishing, the same shape the disjunction itself was
+    // introduced to fix one level up.
+    //
+    // The sentinel arm SHOULD be vacuous when there is nothing left to sentinel. What would be
+    // dishonest is claiming coverage it no longer has, so the state is asserted directly
+    // instead: EVERY retired fused type is absent from the registry. That is not a vacuous
+    // claim — the subject floor above keeps `retired` non-empty, so this is an emptiness
+    // assertion over a populated set, and a type that came back registered fails it.
+    //
+    // The sentinel arm returns the next time a kind splits: a fresh retirement starts
+    // REGISTERED with a throwing sentinel and only earns deletion once nothing depends on its
+    // file. The disjunction is what will cover it then, unchanged.
     const stillRegistered = retired.filter((t) => registry[t] !== undefined);
     expect(
-      stillRegistered.length,
-      'no relic is still registered — the sentinel arm is vacuous',
-    ).toBeGreaterThan(0);
-    expect(
-      stillRegistered.length,
-      'every relic is still registered — the deletion arm is vacuous',
-    ).toBeLessThan(retired.length);
+      stillRegistered,
+      'a fused relic is registered again — either finish its retirement or revert it',
+    ).toEqual([]);
   });
 
   it('no tracked file constructs a retired node type, unit fixtures included', () => {

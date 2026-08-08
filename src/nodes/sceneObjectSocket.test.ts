@@ -21,17 +21,20 @@ beforeEach(() => {
   __reseedAllNodesForTests();
 });
 
-// The three node types below are deliberately DIFFERENT types, because that is the whole
-// claim: heterogeneous scene objects all emit 'SceneObject' and all fit one socket. The
-// fused posable lights and the fused BoxMesh used to play the light and the mesh here; both
-// were retired by the object↔data split (#365 Phase 5) and a posed mesh, light or camera is
-// now an `Object`. `AmbientLight` keeps the LIGHT case on a genuinely distinct node type —
-// ambient is a World datablock and was never split, so it is the one light that is still its
-// own type rather than an Object.
+// The node types below are deliberately DIFFERENT types, because that is the whole claim:
+// heterogeneous scene objects all emit 'SceneObject' and all fit one socket. The fused posable
+// lights, the fused BoxMesh and the fused PerspectiveCamera used to play the light, the mesh
+// and the camera here; all were retired by the object↔data split (#365 Phase 5 / #599) and a
+// posed mesh, light or camera is now an `Object`. `AmbientLight` keeps the LIGHT case on a
+// genuinely distinct node type — ambient is a World datablock and was never split, so it is
+// the one light that is still its own type rather than an Object.
+//
+// That leaves TWO distinct types, not three, and the shrinkage is honest: the socket really is
+// unified, so there are fewer distinct producers left to prove it with. Adding a third type
+// back for symmetry would be asserting about the fixture, not the product.
 const PARAMS: Record<string, Record<string, unknown>> = {
   Object: {},
   AmbientLight: { intensity: 1, color: '#ffffff' },
-  PerspectiveCamera: { fov: 45, near: 0.01, far: 1000, position: [0, 0, 5], lookAt: [0, 0, 0] },
   Group: {},
   Scene: {},
 };
@@ -53,17 +56,11 @@ describe('#231 Inc 1 — unified SceneObject socket', () => {
     expect(next.nodes.grp.inputs.children).toEqual([{ node: 'lt', socket: 'out' }]);
   });
 
-  it('a camera connects into Scene.children', () => {
-    let state = emptyDagState();
-    state = withNode(state, 'cam', 'PerspectiveCamera');
-    state = withNode(state, 'scn', 'Scene');
-    const { next } = applyOp(state, {
-      type: 'connect',
-      from: { node: 'cam', socket: 'out' },
-      to: { node: 'scn', socket: 'children' },
-    });
-    expect(next.nodes.scn.inputs.children).toEqual([{ node: 'cam', socket: 'out' }]);
-  });
+  // The CAMERA case stood here on the fused `PerspectiveCamera` until #599 deleted it. It is
+  // not retargeted, because a posed camera is now an `Object` — the very node the mesh case
+  // below already uses, so the retarget would produce a byte-identical duplicate that reads
+  // like coverage and adds none. The heterogeneity this describe block asserts is carried by
+  // the two node types that are still genuinely distinct: `AmbientLight` and `Object`.
 
   it('a mesh still connects into Scene.children (regression — the original capability)', () => {
     let state = emptyDagState();
