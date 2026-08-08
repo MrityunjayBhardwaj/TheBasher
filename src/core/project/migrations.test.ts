@@ -17,6 +17,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
+import { getNodeType } from '../dag/registry';
 import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
@@ -81,6 +82,112 @@ function loadFromBytes(obj: unknown): Project {
 
 function ctxAt(seconds: number) {
   return { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+}
+
+// ── Building a PRE-migration graph the way the subject receives it ──────────────────────
+//
+// The seven unentangled fused types are DELETED (#365 Phase 5), so `addNode`/`connect`
+// cannot mint them: both call `requireNodeType` (`ops.ts:145`/`:203-204`) and throw on a
+// type the registry lacks. That gate is the HARNESS's, not the subject's — `migrateProjectFormat`
+// reads raw JSON off disk and never consults the registry, which is exactly why a real project
+// containing a fused box still loads and still splits with the relics gone.
+//
+// Building these fixtures through `addNode` therefore imposed a precondition the code under
+// test does not have. It made this file read as the blocker for the deletion it exists to
+// license: delete the types, and thirty assertions light up in the one file whose whole job is
+// to prove old projects survive. Every one of them failed inside `buildFused*` — none inside a
+// migration.
+//
+// So the retired shapes are written out HERE, defaults included, exactly as `addNode` stored
+// them (it PARSES, so a saved project carries the fully-defaulted shape and the byte-identity
+// comparisons below depend on it). The material blob comes from the LIVE `openpbrMaterialSchema`
+// rather than a hand-copied literal — it is the same schema the relics' own `material` param
+// used, so it cannot drift from what a v2 save actually contained.
+//
+// ⚠️ The `type: '<relic>'` literals below are DELIBERATE, and are the one case where naming a
+// retired kind is the right tool rather than the hazard #594 tracks: this fixture's subject
+// genuinely IS a shape the product can no longer build. A migration that does not build the
+// pre-migration shape is not testing a migration. This file is listed in the retire-a-kind
+// gate's `RELIC_IS_THE_SUBJECT` for exactly that reason.
+//
+// The three types still on `addNode` below — Curve, PerspectiveCamera, BakedMesh — are still
+// REGISTERED, because each still hosts a live export that has not been rehomed yet. When that
+// lands they convert to `addRetiredNode` the same way; until then, going through the registry
+// is what the registry still supports.
+
+/** The transform triple every fused posable type defaulted to. */
+const FUSED_TRS = {
+  position: [0, 0, 0] as Vec3,
+  rotation: [0, 0, 0] as Vec3,
+  scale: [1, 1, 1] as Vec3,
+};
+
+/** The fully-defaulted inline material a fused mesh stored for an authored colour. */
+function fusedMaterial(color: string): InlineMaterialSpec {
+  return openpbrMaterialSchema().parse({
+    name: 'default',
+    base: { color },
+  }) as InlineMaterialSpec;
+}
+
+/**
+ * Insert a node of a type the registry no longer has.
+ *
+ * Mirrors `applyAddNode` (`ops.ts:142-165`) exactly, minus the `requireNodeType` lookup and
+ * the schema parse it feeds — the caller supplies the already-parsed params, because there is
+ * no schema left to parse against and a saved project carries the parsed shape anyway.
+ */
+function addRetiredNode(
+  s: DagState,
+  nodeId: string,
+  type: string,
+  version: number,
+  params: Record<string, unknown>,
+): DagState {
+  if (s.nodes[nodeId]) throw new Error(`addRetiredNode: id already exists: ${nodeId}`);
+  return {
+    ...s,
+    nodes: { ...s.nodes, [nodeId]: { id: nodeId, type, version, params, inputs: {} } },
+  };
+}
+
+/**
+ * Wire an edge whose PRODUCER is a retired type.
+ *
+ * `applyConnect` resolves both ends through the registry to compare socket types, so a live
+ * consumer cannot accept a relic either. The consumer here is always a live type (Scene,
+ * Group), so its cardinality is still looked up for real rather than passed in — asserted,
+ * so a future fixture that wires relic→relic fails loudly instead of guessing 'single'.
+ */
+function connectFromRetired(
+  s: DagState,
+  from: { node: string; socket: string },
+  to: { node: string; socket: string },
+): DagState {
+  const consumer = s.nodes[to.node];
+  if (!consumer) throw new Error(`connectFromRetired: no consumer ${to.node}`);
+  const def = getNodeType(consumer.type);
+  if (!def) {
+    throw new Error(
+      `connectFromRetired: consumer ${to.node} is itself a retired type (${consumer.type}) — ` +
+        `its socket cardinality cannot be looked up, so this helper cannot wire it`,
+    );
+  }
+  const desc = def.inputs[to.socket];
+  if (!desc) throw new Error(`connectFromRetired: ${consumer.type} has no input '${to.socket}'`);
+  const ref = { node: from.node, socket: from.socket };
+  const prior = consumer.inputs[to.socket];
+  const binding =
+    desc.cardinality === 'list'
+      ? [...(Array.isArray(prior) ? prior : prior ? [prior] : []), ref]
+      : ref;
+  return {
+    ...s,
+    nodes: {
+      ...s.nodes,
+      [to.node]: { ...consumer, inputs: { ...consumer.inputs, [to.socket]: binding } },
+    },
+  };
 }
 
 describe('v1 box → normalize + split to Object + BoxData (byte-identical render gate)', () => {
@@ -179,16 +286,10 @@ function buildFusedBoxDagState(): DagState {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_box',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', base: { color: FUSED_BOX_COLOR } },
-    },
+  s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+    size: [1, 1, 1],
+    ...FUSED_TRS,
+    material: fusedMaterial(FUSED_BOX_COLOR),
   });
   add({
     type: 'addNode',
@@ -203,11 +304,11 @@ function buildFusedBoxDagState(): DagState {
     nodeType: 'RenderOutput',
     params: { postFx: { tonemap: 'ACES', smaa: true } },
   });
-  add({
-    type: 'connect',
-    from: { node: 'n_box', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_box', socket: 'out' },
+    { node: 'n_scene', socket: 'children' },
+  );
   add({
     type: 'connect',
     from: { node: 'n_camera', socket: 'out' },
@@ -415,31 +516,19 @@ function buildFusedBoxSphereDagState(): DagState {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_sphere',
-    nodeType: 'SphereMesh',
-    params: {
-      radius: SPHERE_MIG_RADIUS,
-      widthSegments: SPHERE_MIG_WS,
-      heightSegments: SPHERE_MIG_HS,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      // AUTHORED, like the box below — this is a saved project, and a saved project
-      // records its colour. See SPHERE_MIG_SAVED_COLOR.
-      material: { name: 'default', base: { color: SPHERE_MIG_SAVED_COLOR } },
-    },
+  s = addRetiredNode(s, 'n_sphere', 'SphereMesh', 4, {
+    radius: SPHERE_MIG_RADIUS,
+    widthSegments: SPHERE_MIG_WS,
+    heightSegments: SPHERE_MIG_HS,
+    ...FUSED_TRS,
+    // AUTHORED, like the box below — this is a saved project, and a saved project
+    // records its colour. See SPHERE_MIG_SAVED_COLOR.
+    material: fusedMaterial(SPHERE_MIG_SAVED_COLOR),
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_box',
-    nodeType: 'BoxMesh',
-    params: {
-      size: [1, 1, 1],
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      material: { name: 'default', base: { color: '#5af07a' } },
-    },
+  s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+    size: [1, 1, 1],
+    ...FUSED_TRS,
+    material: fusedMaterial('#5af07a'),
   });
   add({
     type: 'addNode',
@@ -454,16 +543,16 @@ function buildFusedBoxSphereDagState(): DagState {
     nodeType: 'RenderOutput',
     params: { postFx: { tonemap: 'ACES', smaa: true } },
   });
-  add({
-    type: 'connect',
-    from: { node: 'n_sphere', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
-  add({
-    type: 'connect',
-    from: { node: 'n_box', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_sphere', socket: 'out' },
+    { node: 'n_scene', socket: 'children' },
+  );
+  s = connectFromRetired(
+    s,
+    { node: 'n_box', socket: 'out' },
+    { node: 'n_scene', socket: 'children' },
+  );
   add({
     type: 'connect',
     from: { node: 'n_camera', socket: 'out' },
@@ -888,52 +977,41 @@ function buildFusedLightsJson() {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_dir',
-    nodeType: 'DirectionalLight',
-    params: { intensity: 3.7, color: '#ffee00', position: [1, 2, 3], rotation: [0.1, 0, 0] },
+  s = addRetiredNode(s, 'n_dir', 'DirectionalLight', 1, {
+    ...FUSED_TRS,
+    intensity: 3.7,
+    color: '#ffee00',
+    position: [1, 2, 3],
+    rotation: [0.1, 0, 0],
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_point',
-    nodeType: 'PointLight',
-    params: {
-      intensity: 4.2,
-      color: '#00ff88',
-      position: [4, 5, 6],
-      distance: 12,
-      decay: 1.5,
-    },
+  s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
+    ...FUSED_TRS,
+    intensity: 4.2,
+    color: '#00ff88',
+    position: [4, 5, 6],
+    distance: 12,
+    decay: 1.5,
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_spot',
-    nodeType: 'SpotLight',
-    params: {
-      intensity: 5.5,
-      color: '#ff00aa',
-      position: [7, 8, 9],
-      target: [1, 1, 1],
-      angle: 0.5,
-      penumbra: 0.45,
-      distance: 8,
-      decay: 3,
-    },
+  s = addRetiredNode(s, 'n_spot', 'SpotLight', 1, {
+    ...FUSED_TRS,
+    intensity: 5.5,
+    color: '#ff00aa',
+    position: [7, 8, 9],
+    target: [1, 1, 1],
+    angle: 0.5,
+    penumbra: 0.45,
+    distance: 8,
+    decay: 3,
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_area',
-    nodeType: 'AreaLight',
-    params: {
-      intensity: 6.5,
-      color: '#0088ff',
-      position: [1, 0, 1],
-      width: 3.25,
-      height: 4.75,
-      lookAt: [2, 2, 2],
-      tex: 'assets/hdri.exr',
-    },
+  s = addRetiredNode(s, 'n_area', 'AreaLight', 1, {
+    ...FUSED_TRS,
+    intensity: 6.5,
+    color: '#0088ff',
+    position: [1, 0, 1],
+    width: 3.25,
+    height: 4.75,
+    lookAt: [2, 2, 2],
+    tex: 'assets/hdri.exr',
   });
   add({ type: 'addNode', nodeId: 'n_amb', nodeType: 'AmbientLight', params: { intensity: 0.7 } });
   add({
@@ -1135,11 +1213,10 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
     const add = (op: Parameters<typeof applyOp>[1]) => {
       s = applyOp(s, op).next;
     };
-    add({
-      type: 'addNode',
-      nodeId: 'n_box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+      size: [1, 1, 1],
+      ...FUSED_TRS,
+      material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
     add({
       type: 'addNode',
@@ -1152,11 +1229,13 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
         ],
       },
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_point',
-      nodeType: 'PointLight',
-      params: { intensity: 2.2, position: [0, 3, 0] },
+    s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
+      ...FUSED_TRS,
+      intensity: 2.2,
+      position: [0, 3, 0],
+      color: '#ffffff',
+      distance: 0,
+      decay: 2,
     });
     add({
       type: 'addNode',
@@ -1255,18 +1334,13 @@ function buildFusedCamerasJson() {
       roll: CAM_ROLL,
     },
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_ortho',
-    nodeType: 'OrthographicCamera',
-    params: {
-      zoom: 33,
-      near: 0.02,
-      far: CAM_FAR,
-      position: [-2, 6, 9],
-      lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
-    },
+  s = addRetiredNode(s, 'n_ortho', 'OrthographicCamera', 1, {
+    zoom: 33,
+    near: 0.02,
+    far: CAM_FAR,
+    position: [-2, 6, 9],
+    lookAt: CAM_LOOKAT,
+    roll: CAM_ROLL,
   });
   // A Scene consuming the perspective camera. This is the POINT of id inheritance:
   // the edge names `n_persp` and must still name it after the split, with no
@@ -1542,11 +1616,10 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     const add = (op: Parameters<typeof applyOp>[1]) => {
       s = applyOp(s, op).next;
     };
-    add({
-      type: 'addNode',
-      nodeId: 'n_box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+      size: [1, 1, 1],
+      ...FUSED_TRS,
+      material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
     for (const [id, path] of [
       ['n_stray_fov', 'fov'],
@@ -1597,11 +1670,10 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     const add = (op: Parameters<typeof applyOp>[1]) => {
       s = applyOp(s, op).next;
     };
-    add({
-      type: 'addNode',
-      nodeId: 'n_box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+      size: [1, 1, 1],
+      ...FUSED_TRS,
+      material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
     add({
       type: 'addNode',
@@ -1614,11 +1686,13 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
         ],
       },
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_point',
-      nodeType: 'PointLight',
-      params: { intensity: 2.2, position: [0, 3, 0] },
+    s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
+      ...FUSED_TRS,
+      intensity: 2.2,
+      position: [0, 3, 0],
+      color: '#ffffff',
+      distance: 0,
+      decay: 2,
     });
     add({
       type: 'addNode',
@@ -2041,17 +2115,17 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
     const add = (op: Parameters<typeof applyOp>[1]) => {
       s = applyOp(s, op).next;
     };
-    add({
-      type: 'addNode',
-      nodeId: 'n_box',
-      nodeType: 'BoxMesh',
-      params: { size: [1, 1, 1], material: { name: 'm', base: { color: '#123456' } } },
+    s = addRetiredNode(s, 'n_box', 'BoxMesh', 4, {
+      size: [1, 1, 1],
+      ...FUSED_TRS,
+      material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_sphere',
-      nodeType: 'SphereMesh',
-      params: { radius: 1.3 },
+    s = addRetiredNode(s, 'n_sphere', 'SphereMesh', 4, {
+      radius: 1.3,
+      widthSegments: 24,
+      heightSegments: 16,
+      ...FUSED_TRS,
+      material: fusedMaterial('#cccccc'),
     });
     add({
       type: 'addNode',
@@ -2064,11 +2138,13 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
         ],
       },
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_point',
-      nodeType: 'PointLight',
-      params: { intensity: 2.2, position: [0, 3, 0] },
+    s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
+      ...FUSED_TRS,
+      intensity: 2.2,
+      position: [0, 3, 0],
+      color: '#ffffff',
+      distance: 0,
+      decay: 2,
     });
     add({
       type: 'addNode',
