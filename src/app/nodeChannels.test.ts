@@ -176,7 +176,7 @@ describe('animatedAncestorSet — nodes under an animated ancestor (#242 / H132 
     params: {},
     inputs: { target: { node: target, socket: 'out' } },
   });
-  const leaf = (id: string) => ({ id, type: 'BoxMesh', params: {}, inputs: {} });
+  const leaf = (id: string) => ({ id, type: 'Object', params: {}, inputs: {} });
 
   it('marks a node whose parent Group is animated', () => {
     const nodes = {
