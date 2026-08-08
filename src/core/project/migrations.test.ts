@@ -107,13 +107,13 @@ function ctxAt(seconds: number) {
 // ⚠️ The `type: '<relic>'` literals below are DELIBERATE, and are the one case where naming a
 // retired kind is the right tool rather than the hazard #594 tracks: this fixture's subject
 // genuinely IS a shape the product can no longer build. A migration that does not build the
-// pre-migration shape is not testing a migration. This file is listed in the retire-a-kind
-// gate's `RELIC_IS_THE_SUBJECT` for exactly that reason.
+// pre-migration shape is not testing a migration.
 //
-// The three types still on `addNode` below — Curve, PerspectiveCamera, BakedMesh — are still
-// REGISTERED, because each still hosts a live export that has not been rehomed yet. When that
-// lands they convert to `addRetiredNode` the same way; until then, going through the registry
-// is what the registry still supports.
+// EVERY fused construction in this file now goes through `addRetiredNode` (#599 converted the
+// last three — Curve, PerspectiveCamera, BakedMesh — when their live exports were rehomed and
+// the definitions deleted). Nothing here reaches the registry for a relic any more, which is
+// also why the file is no longer listed in the retire-a-kind gate's `RELIC_IS_THE_SUBJECT`:
+// the exemption had stopped protecting anything the gate could see.
 
 /** The transform triple every fused posable type defaulted to. */
 const FUSED_TRS = {
@@ -121,6 +121,35 @@ const FUSED_TRS = {
   rotation: [0, 0, 0] as Vec3,
   scale: [1, 1, 1] as Vec3,
 };
+
+/**
+ * The fully-defaulted param bag a fused `PerspectiveCamera` stored, given what was authored.
+ *
+ * `addNode` PARSED against the node's schema, so every key the author left out still reached
+ * the save carrying its default — and once the definition is deleted there is no schema left
+ * to re-derive them from. Spelled ONCE rather than at each of the five call sites: five copies
+ * of a default set agree right up until one of them is edited.
+ */
+function fusedPerspectiveCamera(authored: Record<string, unknown>): Record<string, unknown> {
+  return {
+    sensorSize: 36,
+    near: 0.01,
+    far: 500,
+    dofEnabled: false,
+    focusDistance: 5,
+    fStop: 2.8,
+    focusOnTarget: false,
+    lookAt: [0, 0, 0],
+    roll: 0,
+    ...authored,
+  };
+}
+
+/** The same, for the fused `Curve` (#321) — TRS plus the closure/resolution pair. Every call
+ *  site authors `points`, which is why there is no default for it here. */
+function fusedCurve(authored: Record<string, unknown>): Record<string, unknown> {
+  return { ...FUSED_TRS, closed: false, resolution: 16, ...authored };
+}
 
 /** The fully-defaulted inline material a fused mesh stored for an authored colour. */
 function fusedMaterial(color: string): InlineMaterialSpec {
@@ -291,12 +320,13 @@ function buildFusedBoxDagState(): DagState {
     ...FUSED_TRS,
     material: fusedMaterial(FUSED_BOX_COLOR),
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_camera',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  });
+  s = addRetiredNode(
+    s,
+    'n_camera',
+    'PerspectiveCamera',
+    1,
+    fusedPerspectiveCamera({ fov: 45, near: 0.01, far: 500, position: [3, 2, 3] }),
+  );
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
   add({
     type: 'addNode',
@@ -309,11 +339,11 @@ function buildFusedBoxDagState(): DagState {
     { node: 'n_box', socket: 'out' },
     { node: 'n_scene', socket: 'children' },
   );
-  add({
-    type: 'connect',
-    from: { node: 'n_camera', socket: 'out' },
-    to: { node: 'n_scene', socket: 'camera' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_camera', socket: 'out' },
+    { node: 'n_scene', socket: 'camera' },
+  );
   add({
     type: 'connect',
     from: { node: 'n_scene', socket: 'out' },
@@ -530,12 +560,13 @@ function buildFusedBoxSphereDagState(): DagState {
     ...FUSED_TRS,
     material: fusedMaterial('#5af07a'),
   });
-  add({
-    type: 'addNode',
-    nodeId: 'n_camera',
-    nodeType: 'PerspectiveCamera',
-    params: { fov: 45, near: 0.01, far: 500, position: [3, 2, 3], lookAt: [0, 0, 0] },
-  });
+  s = addRetiredNode(
+    s,
+    'n_camera',
+    'PerspectiveCamera',
+    1,
+    fusedPerspectiveCamera({ fov: 45, near: 0.01, far: 500, position: [3, 2, 3] }),
+  );
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
   add({
     type: 'addNode',
@@ -553,11 +584,11 @@ function buildFusedBoxSphereDagState(): DagState {
     { node: 'n_box', socket: 'out' },
     { node: 'n_scene', socket: 'children' },
   );
-  add({
-    type: 'connect',
-    from: { node: 'n_camera', socket: 'out' },
-    to: { node: 'n_scene', socket: 'camera' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_camera', socket: 'out' },
+    { node: 'n_scene', socket: 'camera' },
+  );
   add({
     type: 'connect',
     from: { node: 'n_scene', socket: 'out' },
@@ -768,24 +799,19 @@ function buildV2FusedBoxSphereCurveJson() {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_curve',
-    nodeType: 'Curve',
-    params: {
-      position: [2, 0, -1],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      points: CURVE_MIG_ENTRIES,
-      closed: false,
-      resolution: CURVE_MIG_RESOLUTION,
-    },
+  s = addRetiredNode(s, 'n_curve', 'Curve', 2, {
+    position: [2, 0, -1],
+    rotation: [0, 0, 0],
+    scale: [1, 1, 1],
+    points: CURVE_MIG_ENTRIES,
+    closed: false,
+    resolution: CURVE_MIG_RESOLUTION,
   });
-  add({
-    type: 'connect',
-    from: { node: 'n_curve', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_curve', socket: 'out' },
+    { node: 'n_scene', socket: 'children' },
+  );
   add({
     type: 'addNode',
     nodeId: 'n_res',
@@ -1218,17 +1244,18 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       ...FUSED_TRS,
       material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_curve',
-      nodeType: 'Curve',
-      params: {
+    s = addRetiredNode(
+      s,
+      'n_curve',
+      'Curve',
+      2,
+      fusedCurve({
         points: [
           { id: 'cp0', co: [0, 0, 0] },
           { id: 'cp1', co: [1, 1, 1] },
         ],
-      },
-    });
+      }),
+    );
     s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
       ...FUSED_TRS,
       intensity: 2.2,
@@ -1316,23 +1343,18 @@ function buildFusedCamerasJson() {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_persp',
-    nodeType: 'PerspectiveCamera',
-    params: {
-      fov: CAM_PERSP_FOV,
-      near: 0.05,
-      far: CAM_FAR,
-      sensorSize: 24,
-      dofEnabled: true,
-      focusDistance: 7.5,
-      fStop: 1.4,
-      focusOnTarget: true,
-      position: CAM_POSITION,
-      lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
-    },
+  s = addRetiredNode(s, 'n_persp', 'PerspectiveCamera', 1, {
+    fov: CAM_PERSP_FOV,
+    near: 0.05,
+    far: CAM_FAR,
+    sensorSize: 24,
+    dofEnabled: true,
+    focusDistance: 7.5,
+    fStop: 1.4,
+    focusOnTarget: true,
+    position: CAM_POSITION,
+    lookAt: CAM_LOOKAT,
+    roll: CAM_ROLL,
   });
   s = addRetiredNode(s, 'n_ortho', 'OrthographicCamera', 1, {
     zoom: 33,
@@ -1346,11 +1368,11 @@ function buildFusedCamerasJson() {
   // the edge names `n_persp` and must still name it after the split, with no
   // re-pointing pass anywhere in the migration.
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
-  add({
-    type: 'connect',
-    from: { node: 'n_persp', socket: 'out' },
-    to: { node: 'n_scene', socket: 'camera' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_persp', socket: 'out' },
+    { node: 'n_scene', socket: 'camera' },
+  );
   add({
     type: 'addNode',
     nodeId: 'n_fov',
@@ -1675,17 +1697,18 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       ...FUSED_TRS,
       material: openpbrMaterialSchema().parse({ name: 'm', base: { color: '#123456' } }),
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_curve',
-      nodeType: 'Curve',
-      params: {
+    s = addRetiredNode(
+      s,
+      'n_curve',
+      'Curve',
+      2,
+      fusedCurve({
         points: [
           { id: 'cp0', co: [0, 0, 0] },
           { id: 'cp1', co: [1, 1, 1] },
         ],
-      },
-    });
+      }),
+    );
     s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
       ...FUSED_TRS,
       intensity: 2.2,
@@ -1694,12 +1717,18 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       distance: 0,
       decay: 2,
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_persp',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: CAM_PERSP_FOV, far: CAM_FAR, position: CAM_POSITION, lookAt: CAM_LOOKAT },
-    });
+    s = addRetiredNode(
+      s,
+      'n_persp',
+      'PerspectiveCamera',
+      1,
+      fusedPerspectiveCamera({
+        fov: CAM_PERSP_FOV,
+        far: CAM_FAR,
+        position: CAM_POSITION,
+        lookAt: CAM_LOOKAT,
+      }),
+    );
     // A light `intensity` channel — an EARLIER kind's data-param channel, routed by the
     // same shared predicate during a different pass.
     add({
@@ -1814,26 +1843,21 @@ function buildFusedBakedMeshJson() {
   const add = (op: Parameters<typeof applyOp>[1]) => {
     s = applyOp(s, op).next;
   };
-  add({
-    type: 'addNode',
-    nodeId: 'n_baked',
-    nodeType: 'BakedMesh',
-    params: {
-      geometry: BAKED_GEOMETRY,
-      position: BAKED_POSITION,
-      rotation: BAKED_ROTATION,
-      scale: BAKED_SCALE,
-      material: BAKED_MATERIAL,
-    },
+  s = addRetiredNode(s, 'n_baked', 'BakedMesh', 1, {
+    geometry: BAKED_GEOMETRY,
+    position: BAKED_POSITION,
+    rotation: BAKED_ROTATION,
+    scale: BAKED_SCALE,
+    material: BAKED_MATERIAL,
   });
   // A Scene consuming the baked mesh. This is the POINT of id inheritance: the edge
   // names `n_baked` and must still name it after the split, with no re-pointing pass.
   add({ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} });
-  add({
-    type: 'connect',
-    from: { node: 'n_baked', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
+  s = connectFromRetired(
+    s,
+    { node: 'n_baked', socket: 'out' },
+    { node: 'n_scene', socket: 'children' },
+  );
   // A full render root, because `resolveEvaluatedTransform` walks from `outputs.render`
   // and returns null without one — a legitimate null that reads exactly like a broken
   // pose carry. The camera is built SPLIT-NATIVE: this fixture is stamped v7, so the
@@ -2127,17 +2151,18 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       ...FUSED_TRS,
       material: fusedMaterial('#cccccc'),
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_curve',
-      nodeType: 'Curve',
-      params: {
+    s = addRetiredNode(
+      s,
+      'n_curve',
+      'Curve',
+      2,
+      fusedCurve({
         points: [
           { id: 'cp0', co: [0, 0, 0] },
           { id: 'cp1', co: [1, 1, 1] },
         ],
-      },
-    });
+      }),
+    );
     s = addRetiredNode(s, 'n_point', 'PointLight', 1, {
       ...FUSED_TRS,
       intensity: 2.2,
@@ -2146,23 +2171,24 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       distance: 0,
       decay: 2,
     });
-    add({
-      type: 'addNode',
-      nodeId: 'n_persp',
-      nodeType: 'PerspectiveCamera',
-      params: { fov: CAM_PERSP_FOV, far: CAM_FAR, position: CAM_POSITION, lookAt: CAM_LOOKAT },
-    });
-    add({
-      type: 'addNode',
-      nodeId: 'n_baked',
-      nodeType: 'BakedMesh',
-      params: {
-        geometry: BAKED_GEOMETRY,
-        position: BAKED_POSITION,
-        rotation: BAKED_ROTATION,
-        scale: BAKED_SCALE,
-        material: BAKED_MATERIAL,
-      },
+    s = addRetiredNode(
+      s,
+      'n_persp',
+      'PerspectiveCamera',
+      1,
+      fusedPerspectiveCamera({
+        fov: CAM_PERSP_FOV,
+        far: CAM_FAR,
+        position: CAM_POSITION,
+        lookAt: CAM_LOOKAT,
+      }),
+    );
+    s = addRetiredNode(s, 'n_baked', 'BakedMesh', 1, {
+      geometry: BAKED_GEOMETRY,
+      position: BAKED_POSITION,
+      rotation: BAKED_ROTATION,
+      scale: BAKED_SCALE,
+      material: BAKED_MATERIAL,
     });
     // A light `intensity` channel — an EARLIER kind's data-param channel, routed by the
     // same shared predicate during a different pass.

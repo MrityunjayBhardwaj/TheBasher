@@ -102,7 +102,7 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
 /**
  * The files that must construct a retired kind FOREVER, because the relic is their subject
  * rather than their scaffolding. Not an allowlist — an allowlist excuses; this states a
- * category, and the category has exactly two members.
+ * category, and the category has exactly one member (it had two until #599).
  *
  * The distinction that decides membership: would the file still make its point if the relic
  * were replaced by a live kind? For every fixture #476 retargeted, yes — the relic was a
@@ -114,16 +114,14 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
  * has stopped carrying a relic is reported, so this cannot quietly outlive its reason.
  */
 const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
-  {
-    file: 'src/core/project/migrations.test.ts',
-    why: 'byte-identity fixtures for the load-migration — it must hand-build the PRE-migration shape, which is the fused kind, or it is not testing a migration',
-    // ⚠️ BOOKED: this entry is asserted to still CARRY a `nodeType:` relic construction, and
-    // it currently does so only through Curve / PerspectiveCamera / BakedMesh, the three types
-    // still registered. #596 moved every deleted type's fixture to a raw state literal, which
-    // this pattern cannot see. When those three retire the file stops matching entirely and
-    // the "listed but no longer constructs one" assertion fires — correctly, and the fix then
-    // is to drop the entry, not to re-add a construction.
-  },
+  // `src/core/project/migrations.test.ts` used to be listed here, and its removal is what the
+  // booking written at #596 predicted (#599). The reason it was exempt is unchanged — a
+  // migration that does not hand-build the PRE-migration shape is not testing a migration —
+  // but the exemption is no longer load-bearing: with the last three relics retired, every
+  // fused construction in that file is a raw state literal, which this gate's `nodeType:`
+  // pattern cannot see anyway. Keeping the entry would hide the file from the sweep for
+  // nothing, so the sweep covers it now. Its raw literals remain deliberate and are #594's
+  // subject, not this gate's.
   {
     file: 'src/test-utils/retiredKinds.gate.test.ts',
     why: 'this file — its positive controls are relic constructions in string literals, and they are what prove the detector is not vacuous while its real subject is empty',
