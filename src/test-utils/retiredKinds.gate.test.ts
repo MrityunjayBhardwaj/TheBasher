@@ -54,10 +54,21 @@
 // reason and an issue number per entry and is asserted as a SET (a novel carrier fails; an
 // entry whose file is clean is reported as prunable) rather than consulted as a label.
 //
+//   5. The sentinel cross-check asserts a DISJUNCTION, not an equality (#596). A retirement
+//      has two end states — registered WITH a throwing sentinel, or deleted outright — and
+//      the second has no source and therefore no sentinel. Demanding the sentinel of every
+//      fused type made this gate read as a veto on the deletion it exists to make safe. What
+//      is actually forbidden is the third combination: REGISTERED WITHOUT A SENTINEL, i.e. a
+//      fused type that still evaluates for real. Both arms are guarded against vacuity, since
+//      a repo where every relic is deleted would pass the sentinel arm for free.
+//
 // WHAT IT CANNOT GUARD — stated because a gate that hides its blind spot reads as more
 // coverage than it has. A relic minted through a COMPUTED type (`nodeTypeFor(kind)`) is
 // invisible to any grep. That path is covered instead by the throwing sentinel plus the
 // registry: production code that computed its way to a relic would throw on first evaluate.
+// The second blind spot is the SPELLING: a fixture that writes a plain `type: '<relic>'` on a
+// state literal constructs the node without going near `nodeType:`, and is invisible here.
+// That is #594, and it is why the deletion had to sweep those sites by hand.
 //
 // REF: src/test-utils/splitKinds.ts (`fusedTypes` — the derived subject); src/a11y/grepGates.test.ts
 //      (the grep-gate-as-unit-test precedent this mirrors); .anvi/krama.md K23 finding 6 (the
@@ -106,6 +117,12 @@ const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
   {
     file: 'src/core/project/migrations.test.ts',
     why: 'byte-identity fixtures for the load-migration — it must hand-build the PRE-migration shape, which is the fused kind, or it is not testing a migration',
+    // ⚠️ BOOKED: this entry is asserted to still CARRY a `nodeType:` relic construction, and
+    // it currently does so only through Curve / PerspectiveCamera / BakedMesh, the three types
+    // still registered. #596 moved every deleted type's fixture to a raw state literal, which
+    // this pattern cannot see. When those three retire the file stops matching entirely and
+    // the "listed but no longer constructs one" assertion fires — correctly, and the fix then
+    // is to drop the entry, not to re-add a construction.
   },
   {
     file: 'src/test-utils/retiredKinds.gate.test.ts',

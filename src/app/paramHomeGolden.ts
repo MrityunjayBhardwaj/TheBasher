@@ -1,5 +1,11 @@
 // GENERATED ONCE (P6a) from the pre-P6 `paramToSection` if-chain, then FROZEN.
 // Do not regenerate from the subject — see paramHome.gate.test.ts for why.
+//
+// The ONLY edit this file accepts is a DELETION, when a node type stops existing: #596
+// removed the seven fused relics' rows (410 cells → 361) and dropped GOLDEN_TOTALS by the
+// counts those rows recorded. Removing a row cannot launder a routing change, because the
+// row being removed is itself the frozen record of what that type routed. Adding or editing
+// a row would launder one, which is why the rule is deletion-only.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
