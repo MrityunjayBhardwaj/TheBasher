@@ -23,15 +23,36 @@
 // with `?? default`, so a hand-authored or migrated param bag never yields
 // undefined geometry.
 //
-// REF: src/nodes/Curve.ts (the fused node + the shared CurvePoint schema);
-//      src/nodes/curveMath.ts (sampleCurve); src/viewport/CurveLine.tsx (the line);
-//      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issue #385.
+// REF: src/nodes/curveMath.ts (sampleCurve); src/viewport/CurveLine.tsx (the line);
+//      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issues #385, #599.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { CurveDataValue } from './types';
-import { CurvePointSchema, MIN_CURVE_POINTS, type CurvePoint } from './Curve';
+import type { CurveDataValue, Vec3 } from './types';
 import { sampleCurve } from './curveMath';
+
+const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
+
+// The curve-point vocabulary lives HERE, on the data half, and used to live on the fused
+// `Curve` (#599). It moved because the constraint it expresses is this node's: `CurveData`
+// is what declares `points` and enforces the floor, and the app's point editors enforce the
+// same floor against this node's params. A retired type is not the home of record for
+// vocabulary its own successor imports — the same correction the migration ladders got in
+// #571, one layer up.
+
+/** A path needs at least two points to exist. The viewport authoring tools (#322) enforce
+ *  the same floor when deleting, so a curve can never be emptied into a non-path. */
+export const MIN_CURVE_POINTS = 2;
+
+/** A control point: a stable `id` (epic #453 — so a selection/reference survives an
+ *  insert/delete/reorder/undo) paired with its LOCAL coordinates. The id is a reference key
+ *  only — it is never a `setParam` path (the array is always written whole). ids need only be
+ *  unique WITHIN one curve; a fresh curve and a migrated one share the `cp0, cp1, …` vocabulary
+ *  (`mintId(_, 'cp')`). */
+export const CurvePointSchema = z.object({ id: z.string(), co: Vec3Schema });
+/** The TS view uses `Vec3` (readonly) for `co` so it lines up with the rest of the curve code
+ *  (`curveMath`, the builders, `CurveDataValue`); the schema still validates a plain 3-tuple. */
+export type CurvePoint = { id: string; co: Vec3 };
 
 export const CurveDataParams = z.object({
   /** Control points, LOCAL to the owning Object's TRS. Each carries a stable id

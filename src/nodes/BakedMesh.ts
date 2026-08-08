@@ -27,58 +27,12 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { BakedMeshValue } from './types';
+// The geometry handle and material-face schemas moved to the data half in #599 — this
+// retired node borrows them back so its param shape keeps parsing until the definition
+// itself goes.
+import { BakedGeometryRefSchema, BakedMaterialSpecSchema } from './BakedData';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
-
-/** Zod for a `BakedTextureRef` (Wave 3 populates these; null for primitives). */
-const BakedTextureRefSchema = z.object({
-  hash: z.string(),
-  colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
-  flipY: z.boolean(),
-  wrapS: z.number(),
-  wrapT: z.number(),
-});
-
-/** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */
-export const BakedMaterialSpecSchema = z.object({
-  materialClass: z.enum(['standard', 'physical', 'basic']),
-  color: z.string(),
-  roughness: z.number(),
-  metalness: z.number(),
-  opacity: z.number(),
-  transparent: z.boolean(),
-  emissive: z.string(),
-  emissiveIntensity: z.number(),
-  map: BakedTextureRefSchema.nullable(),
-  normalMap: BakedTextureRefSchema.nullable(),
-  roughnessMap: BakedTextureRefSchema.nullable(),
-  metalnessMap: BakedTextureRefSchema.nullable(),
-  aoMap: BakedTextureRefSchema.nullable(),
-  emissiveMap: BakedTextureRefSchema.nullable(),
-  physical: z
-    .object({
-      clearcoat: z.number().optional(),
-      clearcoatRoughness: z.number().optional(),
-      transmission: z.number().optional(),
-      ior: z.number().optional(),
-      sheen: z.number().optional(),
-      specularIntensity: z.number().optional(),
-    })
-    .optional(),
-});
-
-/** Zod for the baked `GeometryRef` handle carried as a param. Shared with
- *  `BakedData`, the data half of the split (#388) — one spelling of the handle,
- *  so the pair cannot drift from the fused node while both exist. */
-export const BakedGeometryRefSchema = z.object({
-  key: z.string(),
-  kind: z.literal('baked'),
-  descriptor: z.object({
-    kind: z.literal('baked'),
-    hash: z.string(),
-    vertexCount: z.number(),
-  }),
-});
 
 export const BakedMeshParams = z.object({
   geometry: BakedGeometryRefSchema,

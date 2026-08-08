@@ -38,7 +38,7 @@ import {
   curvePointsOf,
 } from './curvePoints';
 import { mintId } from './identifiedArray';
-import { MIN_CURVE_POINTS } from '../nodes/Curve';
+import { MIN_CURVE_POINTS } from '../nodes/CurveData';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { useNotificationStore } from './stores/notificationStore';
 import type { Vec3 } from '../nodes/types';

@@ -5,7 +5,7 @@
 // vocabulary the schema default and the v1→v2 migration mint — so a fixture-built curve matches
 // a real one and `curvePointsOf` (which returns the bare co's) round-trips the input.
 
-import type { CurvePoint } from '../nodes/Curve';
+import type { CurvePoint } from '../nodes/CurveData';
 import type { Vec3 } from '../nodes/types';
 
 export function withIds(coords: readonly Vec3[]): CurvePoint[] {

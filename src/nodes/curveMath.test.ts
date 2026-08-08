@@ -3,7 +3,8 @@
 
 import { describe, expect, it, beforeAll } from 'vitest';
 import { sampleCurve } from './curveMath';
-import { CurveNode, MIN_CURVE_POINTS } from './Curve';
+import { CurveNode } from './Curve';
+import { MIN_CURVE_POINTS } from './CurveData';
 import { CurveDataNode, CurveDataParams } from './CurveData';
 import { isDefaultCollapsed } from '../app/inspectorSections';
 import { registerAllNodes } from './registerAll';
