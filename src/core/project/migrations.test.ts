@@ -1535,7 +1535,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
   });
 
   it('carries a MISSING perspective fov faithfully — it does NOT invent the 45 the pose road falls back to', () => {
-    // A hand-edited perspective camera with no stored fov. `PerspectiveCameraParams.fov`
+    // A hand-edited perspective camera with no stored fov. The fused schema's `fov`
     // is required so a real save always carries one; the point is the DECISION, which
     // CameraData.ts states: 45 is `DEFAULT_CAMERA_POSE.fov`, so hydrating it here would
     // make "the fov never arrived" indistinguishable from "framed at 45°" one layer

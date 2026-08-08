@@ -287,26 +287,27 @@ describe('activeCamera — cameraPoseFromPair', () => {
   });
 
   it('defends against missing params with the default pose values', () => {
-    const node = { id: 'c', type: 'PerspectiveCamera', params: {}, inputs: {} } as unknown as Node;
+    // Spelled `Object` since #599: the claim here is about DEFAULTING, not about a type, and
+    // the type it used to name no longer exists. The half-less arm it exercises is still live
+    // — it is what answers for an Object that poses no CameraData.
+    const node = { id: 'c', type: 'Object', params: {}, inputs: {} } as unknown as Node;
     const pose = cameraPoseFromPair(node, null);
     expect(pose).toEqual(DEFAULT_CAMERA_POSE);
   });
 
-  it('tags an OrthographicCamera node with the ortho kind', () => {
-    const node = {
-      id: 'c',
-      type: 'OrthographicCamera',
-      params: { position: [1, 2, 3], lookAt: [0, 1, 0], near: 0.5, far: 50 },
-      inputs: {},
-    } as unknown as Node;
-    const pose = cameraPoseFromPair(node, null);
-    expect(pose?.kind).toBe('OrthographicCamera');
-    expect(pose?.position).toEqual([1, 2, 3]);
-    expect(pose?.lookAt).toEqual([0, 1, 0]);
-  });
+  // A case tagging a raw `OrthographicCamera` node with the ortho kind stood here. It was the
+  // ONLY thing describing the fused projection branch in `cameraProjectionFromPair`, and #599
+  // deleted that branch along with both fused camera types (#597). The branch had become
+  // unreachable rather than merely unused: `addNode` resolves through the registry, so a node
+  // of a deleted type cannot be built, and the load migration converts any saved one before
+  // the state exists. This case reached it only by casting a hand-written literal past the
+  // type system, which is the tell that its subject was gone.
+  //
+  // Orthographic projection itself is untouched and covered on the live road — it is the
+  // `CameraData.projection` discriminator now, asserted in the split cases below.
 
-  // #387 — the split half of the same function. The fused cases above are the CONTROL:
-  // they must keep reading everything off one node, byte-identical to pre-split.
+  // #387 — the split half of the same function. The half-less case above is the CONTROL:
+  // a node with no data half must still default rather than throw.
   it('spans the pair — position off the Object, every lens field off the CameraData', () => {
     const object = {
       id: 'n_cam',

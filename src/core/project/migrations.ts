@@ -704,7 +704,7 @@ function cameraDataParamsFor(
         // returns when a read FAILS. A fallback here would make "this camera's fov
         // never arrived" indistinguishable from "this camera is framed at 45°",
         // which is precisely why `CameraData.fov` is required with no zod default.
-        // `PerspectiveCameraParams.fov` is itself required, so a saved project always
+        // The fused camera's own `fov` was itself required, so a saved project always
         // carries one; if a hand-edited file does not, the absence is carried
         // faithfully and stays loud rather than being papered over here.
         ...(params.fov !== undefined ? { fov: params.fov } : {}),

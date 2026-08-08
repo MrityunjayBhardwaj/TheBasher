@@ -11,10 +11,14 @@
 // recompose (`cameraRecompose.ts`). This is the ONE place the question is answered, so a
 // future camera form is added once rather than in ten call sites (V101, V119).
 //
-// COEXISTENCE-SAFE: a still-fused camera (a project that has not migrated yet, and every
-// project until slice 7 flips creation) is recognised too — every predicate accepts BOTH
-// the fused node and the split Object. Deleting the fused arm before the fused types
-// retire is the "live producer, removed consumer" violation.
+// THE FUSED ARM IS GONE (#597, with #599). Every predicate here used to accept BOTH a fused
+// `PerspectiveCamera`/`OrthographicCamera` node and the split Object, because deleting the
+// fused arm while a live producer could still emit one is the "removed consumer" violation.
+// That precondition is now met from the other end: both fused camera types are DELETED, so
+// `addNode` cannot build one and the load migration converts any saved one before the state
+// exists. The arm was unreachable, not merely unused — and an unreachable branch describing
+// how a fused camera resolves is worse than absent, because it reads as a supported form.
+// A camera is one thing here now: an Object posing a CameraData.
 //
 // ⚠️ IT MUST STAY IMPORT-LIGHT. `resolveWorldTransform.ts` keeps its camera arm inline
 // *because* importing `activeCamera` would cycle (activeCamera → nodeConstraints →
@@ -28,9 +32,6 @@
 import type { DagState } from '../core/dag/state';
 import type { Node } from '../core/dag/types';
 import { linkedDataNodeId } from './resolveDataParamOwner';
-
-/** The fused camera node types — the pre-split form, and the migration relics after. */
-const FUSED_CAMERA_TYPES = new Set(['PerspectiveCamera', 'OrthographicCamera']);
 
 /** A camera's projection, in the `CameraData.projection` vocabulary. The fused types are
  *  mapped onto it so one word answers for both forms. */
@@ -62,7 +63,7 @@ export function cameraDataOf(state: DagState, id: string): Node | null {
 export function isCameraNode(state: DagState, id: string): boolean {
   const node = state.nodes[id];
   if (!node) return false;
-  return FUSED_CAMERA_TYPES.has(node.type) || cameraDataOf(state, id) !== null;
+  return cameraDataOf(state, id) !== null;
 }
 
 /**
@@ -77,14 +78,10 @@ export function cameraProjectionFromPair(
   objectNode: Node | null,
   dataNode: Node | null,
 ): CameraProjection | null {
-  if (!objectNode) return null;
-  if (dataNode) {
-    return (dataNode.params as { projection?: unknown }).projection === 'Orthographic'
-      ? 'Orthographic'
-      : 'Perspective';
-  }
-  if (!FUSED_CAMERA_TYPES.has(objectNode.type)) return null;
-  return objectNode.type === 'OrthographicCamera' ? 'Orthographic' : 'Perspective';
+  if (!objectNode || !dataNode) return null;
+  return (dataNode.params as { projection?: unknown }).projection === 'Orthographic'
+    ? 'Orthographic'
+    : 'Perspective';
 }
 
 /** {@link cameraProjectionFromPair} applied to a node id — resolves the data half itself. */
@@ -106,6 +103,5 @@ export function cameraLensParams(state: DagState, id: string): Record<string, un
   const node = state.nodes[id];
   if (!node) return null;
   const data = cameraDataOf(state, id);
-  if (data) return data.params as Record<string, unknown>;
-  return FUSED_CAMERA_TYPES.has(node.type) ? (node.params as Record<string, unknown>) : null;
+  return data ? (data.params as Record<string, unknown>) : null;
 }
