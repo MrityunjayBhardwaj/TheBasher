@@ -49,12 +49,14 @@ import type {
   WalkPathValue,
 } from './types';
 
-// #365 Phase 5 — the seven unentangled fused relics (BoxMesh, SphereMesh, the four posable
-// lights, OrthographicCamera) were DELETED, so this list shrank by exactly seven: 90 → 83.
+// #365 Phase 5 — every fused relic is now DELETED. The seven unentangled ones went first
+// (BoxMesh, SphereMesh, the four posable lights, OrthographicCamera): 90 → 83. The last three
+// followed once their live exports were rehomed onto the data halves (#599) — Curve,
+// BakedMesh, PerspectiveCamera: 83 → 80, shrinking by exactly three.
 // The exact count is stated because the equality below goes green either way if the list and
 // the registry shrink together by mistake, and a floor would not catch an over-deletion.
-// Three fused types are still here — Curve, BakedMesh, PerspectiveCamera — because each still
-// hosts a live export that has not been rehomed yet; they retire with that rehome.
+// No fused scene-object type is registered any more; a saved project reaches the split pair
+// through the load migration, which reads raw JSON and never consults the registry.
 const ALL_TYPES = [
   'Action',
   'AmbientLight',
@@ -63,7 +65,6 @@ const ALL_TYPES = [
   // #388 (Stage C · C5) — the baked mesh's data half. Sorts before the fused node it
   // will retire, exactly as BoxData sorts before BoxMesh.
   'BakedData',
-  'BakedMesh',
   'BeautyPass',
   'BoneNameMap',
   'BoxData',
@@ -77,7 +78,6 @@ const ALL_TYPES = [
   'ColorCorrect',
   'ComfyUIWorkflow',
   'Composition',
-  'Curve',
   'CurveData',
   'CurveRemap',
   'Cut',
@@ -120,7 +120,6 @@ const ALL_TYPES = [
   'Null',
   'Object',
   'ParamDriver',
-  'PerspectiveCamera',
   'PosedSkeleton',
   'PrevFrame',
   'PrevFrameVec',
@@ -334,19 +333,14 @@ describe('retired migration relics — what is still registered, and what is gon
   // census above (exactly seven fewer types) and the retire-a-kind gate, which now requires
   // every fused type to be EITHER sentinel-declared and registered OR absent outright.
 
-  // #387 S8 — PerspectiveCamera is still REGISTERED, so its sentinel is still assertable and
-  // this is the case that keeps the sentinel road covered at all. Its twin OrthographicCamera
-  // was deleted with the others; a camera has no non-object survivor, so the pair is split
-  // here only by which one still hosts a live export (`PerspectiveCameraParams`). Note the
-  // WORDS 'PerspectiveCamera'/'OrthographicCamera' live on past all this — as
-  // `CameraValue.kind` and as Add-menu creation kinds — so only the NODE type is gone.
-  it.each([['PerspectiveCamera', { fov: 45, position: [0, 0, 5] }]])(
-    '%s.evaluate throws (retired; projects migrate to Object+CameraData on load)',
-    (type, params) => {
-      const state = buildOne(type, params);
-      expect(() => evaluate(state, 'n')).toThrow(/retired/);
-    },
-  );
+  // PerspectiveCamera was the last type held back, and #599 deleted it too — so there is no
+  // sentinel case left to assert here at all. The reason recorded for keeping it registered
+  // was that it "still hosts a live export (`PerspectiveCameraParams`)"; measured, nothing
+  // imported that symbol, so the justification had quietly stopped being true and nothing
+  // reddened when it did. Note the WORDS 'PerspectiveCamera'/'OrthographicCamera' live on past
+  // all this — as `CameraValue.kind` and as Add-menu creation kinds — so only the NODE type is
+  // gone. What carries the claim now is the registration census above (exactly three fewer)
+  // plus the retire-a-kind gate's absence arm.
 
   it('AmbientLight still evaluates (it does NOT split — ambient = a World datablock)', () => {
     const state = buildOne('AmbientLight', { intensity: 0.4 });

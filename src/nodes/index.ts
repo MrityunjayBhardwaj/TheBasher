@@ -11,7 +11,6 @@ export { GroupNode, GroupParams } from './Group';
 export { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
 export { MaterialOverrideNode, MaterialOverrideParams } from './MaterialOverride';
 export { NavmeshNode, NavmeshParams } from './Navmesh';
-export { PerspectiveCameraNode, PerspectiveCameraParams } from './PerspectiveCamera';
 export { PosedSkeletonNode, PosedSkeletonParams } from './PosedSkeleton';
 export { RenderOutputNode, RenderOutputParams } from './RenderOutput';
 export { ScatterNode, ScatterNodeParams, SCATTER_MAX } from './ScatterNode';

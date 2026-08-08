@@ -10,7 +10,6 @@ import { ArrayModifierNode } from './ArrayModifier';
 // P7.5 — glTF TRS animation extraction (issue #81). Imports stay
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
-import { BakedMeshNode } from './BakedMesh';
 import { BakedDataNode } from './BakedData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
@@ -61,7 +60,6 @@ import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
-import { PerspectiveCameraNode } from './PerspectiveCamera';
 import { PosedSkeletonNode } from './PosedSkeleton';
 import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
@@ -79,7 +77,6 @@ import { FollowPathNode } from './FollowPath';
 import { TransformClipNode } from './TransformClip';
 import { TransformNode } from './Transform';
 import { NullNode } from './Null';
-import { CurveNode } from './Curve';
 import { CurveDataNode } from './CurveData';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
@@ -88,13 +85,12 @@ const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
   TimeSourceNode as unknown as NodeDefinition,
   // Cameras
-  PerspectiveCameraNode as unknown as NodeDefinition,
   // #387 (Stage C · C4) — the camera's data half (the lens: projection + fov/zoom,
   // clip planes, sensor, DoF, plus the authored aim). ONE discriminated node
   // (projection enum) covering both fused kinds — the THIRD non-mesh ObjectData, and
   // the first whose renderer reads a pose built from RAW params rather than the
-  // evaluated value. Coexists with the fused Perspective/OrthographicCamera above;
-  // the split retires their fused evaluates in a later slice.
+  // evaluated value. Both fused camera types are DELETED (#599); a saved project
+  // reaches this node through the load migration.
   CameraDataNode as unknown as NodeDefinition,
   // Lights
   AmbientLightNode as unknown as NodeDefinition,
@@ -121,10 +117,6 @@ const ALL: NodeDefinition[] = [
   // non-producing addressing satellite; emitted one-per-child at import
   // (gltfImportChain). Must be registered before its addNode validates (V1).
   GltfChildNode as unknown as NodeDefinition,
-  // Phase 151 — the product of Apply-Transform (issue #151). A pure mesh
-  // producer carrying a baked GeometryRef handle + identity TRS + rich material.
-  // Registered in the Meshes block so its addNode validates at Apply time (V1).
-  BakedMeshNode as unknown as NodeDefinition,
   // #388 (Stage C · C5) — the baked mesh's data half (the OPFS handle + the captured
   // material, no transform). The first ObjectData whose geometry is ASYNCHRONOUS, so
   // it is its own union member rather than a second MeshData producer — reusing
@@ -135,8 +127,6 @@ const ALL: NodeDefinition[] = [
   TransformNode as unknown as NodeDefinition,
   // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
   NullNode as unknown as NodeDefinition,
-  // #321 — a Curve: a transformable PATH scene object (control points + Catmull-Rom).
-  CurveNode as unknown as NodeDefinition,
   // #385 (Stage C · C2) — the curve's data half (points/closed/resolution, no
   // transform). The FIRST non-mesh ObjectData. The fused Curve above is now a
   // retired migration relic (its CurveValue kind is unrepresentable at runtime).

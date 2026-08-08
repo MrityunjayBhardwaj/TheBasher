@@ -44,7 +44,7 @@ import { isCameraNode } from './cameraNode';
  * failure.
  *
  * The subject is deliberately UNNAMED: a camera node carries no `name` param (measured —
- * `PerspectiveCameraParams` has none, and `addNode` stores PARSED params, so one written
+ * the fused camera's schema had none, and `addNode` stores PARSED params, so one written
  * anyway is stripped), so templating a display name here would print the raw node id into
  * a button title. Callers that want to name the subject prefix it themselves.
  */

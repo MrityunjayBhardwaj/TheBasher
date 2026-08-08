@@ -42,7 +42,59 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { BakedDataValue } from './types';
-import { BakedGeometryRefSchema, BakedMaterialSpecSchema } from './BakedMesh';
+
+// The baked handle + material-face schemas live HERE, on the data half, and used to live on
+// the fused `BakedMesh` (#599). They moved because this is the node that owns them now: a
+// retired type is not the home of record for vocabulary its own successor imports.
+
+/** Zod for a `BakedTextureRef` (Wave 3 populates these; null for primitives). */
+const BakedTextureRefSchema = z.object({
+  hash: z.string(),
+  colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
+  flipY: z.boolean(),
+  wrapS: z.number(),
+  wrapT: z.number(),
+});
+
+/** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */
+export const BakedMaterialSpecSchema = z.object({
+  materialClass: z.enum(['standard', 'physical', 'basic']),
+  color: z.string(),
+  roughness: z.number(),
+  metalness: z.number(),
+  opacity: z.number(),
+  transparent: z.boolean(),
+  emissive: z.string(),
+  emissiveIntensity: z.number(),
+  map: BakedTextureRefSchema.nullable(),
+  normalMap: BakedTextureRefSchema.nullable(),
+  roughnessMap: BakedTextureRefSchema.nullable(),
+  metalnessMap: BakedTextureRefSchema.nullable(),
+  aoMap: BakedTextureRefSchema.nullable(),
+  emissiveMap: BakedTextureRefSchema.nullable(),
+  physical: z
+    .object({
+      clearcoat: z.number().optional(),
+      clearcoatRoughness: z.number().optional(),
+      transmission: z.number().optional(),
+      ior: z.number().optional(),
+      sheen: z.number().optional(),
+      specularIntensity: z.number().optional(),
+    })
+    .optional(),
+});
+
+/** Zod for the baked `GeometryRef` handle carried as a param — one spelling of the
+ *  handle, so the fused predecessor cannot drift from this node while both exist. */
+export const BakedGeometryRefSchema = z.object({
+  key: z.string(),
+  kind: z.literal('baked'),
+  descriptor: z.object({
+    kind: z.literal('baked'),
+    hash: z.string(),
+    vertexCount: z.number(),
+  }),
+});
 
 export const BakedDataParams = z.object({
   /** The OPFS handle. Required — see the hydrate-seam note above. */

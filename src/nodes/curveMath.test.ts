@@ -3,8 +3,7 @@
 
 import { describe, expect, it, beforeAll } from 'vitest';
 import { sampleCurve } from './curveMath';
-import { CurveNode, MIN_CURVE_POINTS } from './Curve';
-import { CurveDataNode, CurveDataParams } from './CurveData';
+import { CurveDataNode, CurveDataParams, MIN_CURVE_POINTS } from './CurveData';
 import { isDefaultCollapsed } from '../app/inspectorSections';
 import { registerAllNodes } from './registerAll';
 import type { CurveDataValue, Vec3 } from './types';
@@ -73,7 +72,8 @@ describe('sampleCurve — centripetal Catmull-Rom', () => {
 });
 
 // #385 S4 — the live curve is the CurveData half (points/closed/resolution → ObjectData); the
-// Object owns the pose. The fused Curve node is a retired migration relic (evaluate throws).
+// Object owns the pose. The fused Curve node is DELETED (#599); CurveData is also where the
+// point vocabulary (MIN_CURVE_POINTS / CurvePointSchema / CurvePoint) now lives.
 describe('CurveData node (the live curve data half)', () => {
   it('bakes its samples in evaluate and outputs ObjectData', () => {
     const params = CurveDataParams.parse({ points: withIds(SQUARE), resolution: 8 });
@@ -108,9 +108,10 @@ describe('CurveData node (the live curve data half)', () => {
     expect(params.points.length).toBeGreaterThanOrEqual(MIN_CURVE_POINTS);
   });
 
-  it('the fused Curve node is a retired relic — evaluate throws, migration data kept', () => {
-    expect(() => CurveNode.evaluate({} as never, {}, {} as never)).toThrow(/retired/);
-    expect(CurveNode.type).toBe('Curve'); // still registered so the load-migration can normalize
-    expect(CurveNode.migrations?.[1]).toBeTypeOf('function');
-  });
+  // The fused `Curve` sentinel case lived here until #599 deleted the definition. A throwing
+  // sentinel is the weaker of a retirement's two end states — it makes a wrong call throw,
+  // where deletion makes it unwritable — so there is nothing left to assert about a node type
+  // that no longer exists. Its migration ladder outlived it and is asserted where it now
+  // lives: `splitKinds.roads.test.ts` requires every fused predecessor to have a ladder in
+  // RETIRED_LADDERS, and the migration suite runs the curve's through the split.
 });

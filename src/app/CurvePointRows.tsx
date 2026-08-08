@@ -25,7 +25,7 @@ import { useDagStore } from '../core/dag/store';
 import { curvePointEntriesOf } from './curvePoints';
 import { deleteCurvePoint, insertCurvePoint, moveCurvePoint } from './curvePointCommands';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
-import { MIN_CURVE_POINTS } from '../nodes/Curve';
+import { MIN_CURVE_POINTS } from '../nodes/CurveData';
 import type { Vec3 } from '../nodes/types';
 
 const BTN =

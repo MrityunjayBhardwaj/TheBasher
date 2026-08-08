@@ -102,7 +102,7 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
 /**
  * The files that must construct a retired kind FOREVER, because the relic is their subject
  * rather than their scaffolding. Not an allowlist — an allowlist excuses; this states a
- * category, and the category has exactly two members.
+ * category, and the category has exactly one member (it had two until #599).
  *
  * The distinction that decides membership: would the file still make its point if the relic
  * were replaced by a live kind? For every fixture #476 retargeted, yes — the relic was a
@@ -114,16 +114,14 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
  * has stopped carrying a relic is reported, so this cannot quietly outlive its reason.
  */
 const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
-  {
-    file: 'src/core/project/migrations.test.ts',
-    why: 'byte-identity fixtures for the load-migration — it must hand-build the PRE-migration shape, which is the fused kind, or it is not testing a migration',
-    // ⚠️ BOOKED: this entry is asserted to still CARRY a `nodeType:` relic construction, and
-    // it currently does so only through Curve / PerspectiveCamera / BakedMesh, the three types
-    // still registered. #596 moved every deleted type's fixture to a raw state literal, which
-    // this pattern cannot see. When those three retire the file stops matching entirely and
-    // the "listed but no longer constructs one" assertion fires — correctly, and the fix then
-    // is to drop the entry, not to re-add a construction.
-  },
+  // `src/core/project/migrations.test.ts` used to be listed here, and its removal is what the
+  // booking written at #596 predicted (#599). The reason it was exempt is unchanged — a
+  // migration that does not hand-build the PRE-migration shape is not testing a migration —
+  // but the exemption is no longer load-bearing: with the last three relics retired, every
+  // fused construction in that file is a raw state literal, which this gate's `nodeType:`
+  // pattern cannot see anyway. Keeping the entry would hide the file from the sweep for
+  // nothing, so the sweep covers it now. Its raw literals remain deliberate and are #594's
+  // subject, not this gate's.
   {
     file: 'src/test-utils/retiredKinds.gate.test.ts',
     why: 'this file — its positive controls are relic constructions in string literals, and they are what prove the detector is not vacuous while its real subject is empty',
@@ -251,19 +249,28 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     // enrolling in this gate, which is the blindness the equality used to buy.
     expect([...declared].sort()).toEqual(retired.filter((t) => registry[t] !== undefined));
 
-    // Guard-the-guard, and it is the assertion that keeps the disjunction honest: if EVERY
-    // relic were deleted the sentinel road above would be vacuous, and if none were the
-    // absence road would be. Both states are populated today (3 registered, 7 deleted), and
-    // this says so out loud so a future reader can see which arms are actually exercised.
+    // Which arms are actually exercised, said out loud.
+    //
+    // Until #599 this asserted that at least one relic was STILL REGISTERED, so the sentinel
+    // arm above could not be vacuous. That was true of a half-finished retirement (3
+    // registered / 7 deleted) and became false the moment the retirement completed — the
+    // guard-the-guard read as a veto on finishing, the same shape the disjunction itself was
+    // introduced to fix one level up.
+    //
+    // The sentinel arm SHOULD be vacuous when there is nothing left to sentinel. What would be
+    // dishonest is claiming coverage it no longer has, so the state is asserted directly
+    // instead: EVERY retired fused type is absent from the registry. That is not a vacuous
+    // claim — the subject floor above keeps `retired` non-empty, so this is an emptiness
+    // assertion over a populated set, and a type that came back registered fails it.
+    //
+    // The sentinel arm returns the next time a kind splits: a fresh retirement starts
+    // REGISTERED with a throwing sentinel and only earns deletion once nothing depends on its
+    // file. The disjunction is what will cover it then, unchanged.
     const stillRegistered = retired.filter((t) => registry[t] !== undefined);
     expect(
-      stillRegistered.length,
-      'no relic is still registered — the sentinel arm is vacuous',
-    ).toBeGreaterThan(0);
-    expect(
-      stillRegistered.length,
-      'every relic is still registered — the deletion arm is vacuous',
-    ).toBeLessThan(retired.length);
+      stillRegistered,
+      'a fused relic is registered again — either finish its retirement or revert it',
+    ).toEqual([]);
   });
 
   it('no tracked file constructs a retired node type, unit fixtures included', () => {

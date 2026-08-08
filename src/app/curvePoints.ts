@@ -20,7 +20,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { MIN_CURVE_POINTS, type CurvePoint } from '../nodes/Curve';
+import { MIN_CURVE_POINTS, type CurvePoint } from '../nodes/CurveData';
 import type { Vec3 } from '../nodes/types';
 import { findById, mintId } from './identifiedArray';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
