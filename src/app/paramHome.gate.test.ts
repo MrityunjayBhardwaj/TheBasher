@@ -1,7 +1,7 @@
 // THE PARAM->SECTION ROUTING GATE (#394, PLAN-3 P6a).
 //
 // Every declared param of every registered node type, and the section it routes to.
-// 410 cells, frozen in `paramHomeGolden.ts`.
+// 361 cells, frozen in `paramHomeGolden.ts` (410 before #365 Phase 5 deleted seven fused types).
 //
 // ── WHY THIS GATE EXISTS ────────────────────────────────────────────────────────────
 //
@@ -138,7 +138,11 @@ describe('the collisions that make per-node homes necessary', () => {
     homeOf(nodeType, key, declaredSectionsOf(nodeType));
 
   it('lookAt lands on three different cards, on three real nodes', () => {
-    expect(routes('AreaLight', 'lookAt')).toBe('transform');
+    // The fused AreaLight held the 'transform' corner until #365 Phase 5 deleted it.
+    // PerspectiveCamera is the last registered node that routes `lookAt` there, so when its
+    // own rehome lands this collision genuinely drops to two-way and this case goes with it —
+    // it is not a fixture to repair at that point.
+    expect(routes('PerspectiveCamera', 'lookAt')).toBe('transform');
     expect(routes('CameraData', 'lookAt')).toBe('camera');
     expect(routes('LightData', 'lookAt')).toBe('light');
   });
@@ -155,7 +159,9 @@ describe('the collisions that make per-node homes necessary', () => {
     // The table answers it by absence — assert the absence is real, not accidental.
     expect(routes('ArrayModifier', 'color')).toBeNull();
     expect(routes('ArrayModifier', 'lookAt')).toBeNull();
-    expect(routes('AreaLight', 'color')).toBeNull(); // a FUSED light: color is unrouted
+    // AmbientLight declares `color` and no home for it — the surviving unsplit light, and a
+    // real node rather than a hypothetical section list.
+    expect(routes('AmbientLight', 'color')).toBeNull();
   });
 });
 

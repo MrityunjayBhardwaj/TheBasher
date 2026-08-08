@@ -18,12 +18,13 @@ function selectSubElements(): void {
 }
 
 /** Two unwired nodes via hydrate (bypasses op validation), so a `removeNode`
- *  gives us one clean undoable move without wrestling a mesh param schema. */
+ *  gives us one clean undoable move without wrestling a mesh param schema.
+ *  The type is a STAND-IN for "some node" — nothing here reads it. */
 function seedTwoNodes(): void {
   useDagStore.getState().hydrate({
     nodes: {
-      n_a: { id: 'n_a', type: 'BoxMesh', version: 1, params: { size: [1, 1, 1] }, inputs: {} },
-      n_b: { id: 'n_b', type: 'BoxMesh', version: 1, params: { size: [1, 1, 1] }, inputs: {} },
+      n_a: { id: 'n_a', type: 'Object', version: 1, params: {}, inputs: {} },
+      n_b: { id: 'n_b', type: 'Object', version: 1, params: {}, inputs: {} },
     },
     outputs: {},
   });

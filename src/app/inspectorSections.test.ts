@@ -45,8 +45,9 @@ describe('paramToSection — camera params route to the Camera section', () => {
     ]) {
       expect(homeOn('PerspectiveCamera', p), `PerspectiveCamera.${p}`).toBe('camera');
     }
-    // `zoom` is orthographic-only, so it is pinned on the node that actually declares it.
-    expect(homeOn('OrthographicCamera', 'zoom')).toBe('camera');
+    // `zoom` is orthographic-only. Post-split both projections are one CameraData, which
+    // is the node that actually declares it (the fused OrthographicCamera is retired).
+    expect(homeOn('CameraData', 'zoom')).toBe('camera');
   });
   it('#257 — focusOnTarget must NOT fall through to the unrouted bucket (duplicate toggle)', () => {
     // A camera claims it; a node with no camera lens does not (no spurious routing).
@@ -74,14 +75,15 @@ describe('paramToSection — light shading routes to the Light section (#386, H1
       expect(homeOn('LightData', p), `LightData.${p}`).toBe('light');
     }
   });
-  it('a FUSED light does NOT claim these params (no spurious routing)', () => {
-    // The H189 mechanism: with no light home, intensity/color route to null and the
-    // linked-data inspector drops them → empty panel. The split LightData above is the
-    // positive; here the negative, and it is a REAL node — the fused PointLight declares
-    // 'transform' and no 'light', so its shading params sit in the raw bucket, exactly as
-    // they did before the split.
-    expect(homeOn('PointLight', 'intensity')).toBeNull();
-    expect(homeOn('SpotLight', 'penumbra')).toBeNull();
+  it('a light that is NOT a LightData does not claim these params (no spurious routing)', () => {
+    // The mechanism: with no light home, intensity/color route to null and the linked-data
+    // inspector drops them → empty panel. The split LightData above is the positive; here
+    // the negative, and it is a REAL node. The fused posable lights used to play this part
+    // and are retired (#365 Phase 5); AmbientLight is the surviving unsplit light — ambient
+    // is a World datablock, so it declares only 'driver' and no 'light', and its shading
+    // params sit in the raw bucket exactly as the fused lights' did.
+    expect(homeOn('AmbientLight', 'intensity')).toBeNull();
+    expect(homeOn('AmbientLight', 'color')).toBeNull();
   });
   it('bare light color never collides with a mesh material colour', () => {
     // The collision `home` exists to resolve: one key, two cards, decided per node.

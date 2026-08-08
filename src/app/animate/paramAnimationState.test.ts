@@ -24,7 +24,7 @@ function stateWith(channel?: {
   keyframes: { time: number }[];
 }): DagState {
   const nodes: DagState['nodes'] = {
-    n_box: { id: 'n_box', type: 'BoxMesh', version: 1, params: {} },
+    n_box: { id: 'n_box', type: 'Object', version: 1, params: {} },
   };
   if (channel) {
     nodes.n_chan = {
@@ -207,7 +207,7 @@ describe('isKeyframeChannelNode (#419)', () => {
     // changed (and every one of the ~16 sites would start counting drivers).
     expect(isKeyframeChannelNode({ type: 'ParamDriver' })).toBe(false);
     // And a plainly non-channel node stays false.
-    expect(isKeyframeChannelNode({ type: 'BoxMesh' })).toBe(false);
+    expect(isKeyframeChannelNode({ type: 'Object' })).toBe(false);
   });
 
   it('is false for an absent node (undefined)', () => {

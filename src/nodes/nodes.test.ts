@@ -49,11 +49,16 @@ import type {
   WalkPathValue,
 } from './types';
 
+// #365 Phase 5 — the seven unentangled fused relics (BoxMesh, SphereMesh, the four posable
+// lights, OrthographicCamera) were DELETED, so this list shrank by exactly seven: 90 → 83.
+// The exact count is stated because the equality below goes green either way if the list and
+// the registry shrink together by mistake, and a floor would not catch an over-deletion.
+// Three fused types are still here — Curve, BakedMesh, PerspectiveCamera — because each still
+// hosts a live export that has not been rehomed yet; they retire with that rehome.
 const ALL_TYPES = [
   'Action',
   'AmbientLight',
   'AnimationClip',
-  'AreaLight',
   'ArrayModifier',
   // #388 (Stage C · C5) — the baked mesh's data half. Sorts before the fused node it
   // will retire, exactly as BoxData sorts before BoxMesh.
@@ -62,7 +67,6 @@ const ALL_TYPES = [
   'BeautyPass',
   'BoneNameMap',
   'BoxData',
-  'BoxMesh',
   // #387 (Stage C · C4) — the camera's data half. Every split kind adds its data type
   // here: BoxData, SphereData, CurveData, LightData, and now CameraData.
   'CameraData',
@@ -78,7 +82,6 @@ const ALL_TYPES = [
   'CurveRemap',
   'Cut',
   'DepthPass',
-  'DirectionalLight',
   'Fit',
   'FollowPath',
   'GltfAsset',
@@ -116,10 +119,8 @@ const ALL_TYPES = [
   'NormalPass',
   'Null',
   'Object',
-  'OrthographicCamera',
   'ParamDriver',
   'PerspectiveCamera',
-  'PointLight',
   'PosedSkeleton',
   'PrevFrame',
   'PrevFrameVec',
@@ -138,8 +139,6 @@ const ALL_TYPES = [
   'SolverInput',
   'SolverInputVec',
   'SphereData',
-  'SphereMesh',
-  'SpotLight',
   'Strip',
   'TimeSource',
   'Track',
@@ -326,28 +325,22 @@ describe('P1 new node types — pure twice-eval', () => {
   });
 });
 
-describe('retired migration relics — the posable lights (#386 S4) and both cameras (#387 S8)', () => {
-  it.each([
-    ['DirectionalLight', { intensity: 1, position: [5, 5, 3] }],
-    ['PointLight', { intensity: 1, position: [0, 2, 0] }],
-    ['SpotLight', { intensity: 1, position: [0, 5, 0] }],
-    ['AreaLight', { intensity: 5, position: [0, 5, 0], width: 2, height: 2 }],
-  ])(
-    '%s.evaluate throws (retired; projects migrate to Object+LightData on load)',
-    (type, params) => {
-      const state = buildOne(type, params);
-      expect(() => evaluate(state, 'n')).toThrow(/retired/);
-    },
-  );
+describe('retired migration relics — what is still registered, and what is gone', () => {
+  // The four posable lights and OrthographicCamera used to be pinned here as throwing
+  // sentinels. They are DELETED now (#365 Phase 5), which is the stronger statement the
+  // sentinel was standing in for: there is no definition left to evaluate, so the state
+  // these cases described is no longer reachable and repairing them would keep the suite
+  // green about a shape the product does not have. What replaces them is the registration
+  // census above (exactly seven fewer types) and the retire-a-kind gate, which now requires
+  // every fused type to be EITHER sentinel-declared and registered OR absent outright.
 
-  // #387 S8 — the two fused cameras, same shape. Both projections retire together: unlike
-  // the lights there is no partial-retirement survivor, because a camera has no non-object
-  // form. Note the WORDS 'PerspectiveCamera'/'OrthographicCamera' live on past this — as
+  // #387 S8 — PerspectiveCamera is still REGISTERED, so its sentinel is still assertable and
+  // this is the case that keeps the sentinel road covered at all. Its twin OrthographicCamera
+  // was deleted with the others; a camera has no non-object survivor, so the pair is split
+  // here only by which one still hosts a live export (`PerspectiveCameraParams`). Note the
+  // WORDS 'PerspectiveCamera'/'OrthographicCamera' live on past all this — as
   // `CameraValue.kind` and as Add-menu creation kinds — so only the NODE type is gone.
-  it.each([
-    ['PerspectiveCamera', { fov: 45, position: [0, 0, 5] }],
-    ['OrthographicCamera', { zoom: 50, position: [0, 0, 5] }],
-  ])(
+  it.each([['PerspectiveCamera', { fov: 45, position: [0, 0, 5] }]])(
     '%s.evaluate throws (retired; projects migrate to Object+CameraData on load)',
     (type, params) => {
       const state = buildOne(type, params);

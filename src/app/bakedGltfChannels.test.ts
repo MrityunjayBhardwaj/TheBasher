@@ -69,7 +69,7 @@ describe('bakedChannelSamplersForAsset', () => {
         paramPath: 'position',
         keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
       }),
-      nonChannel: { type: 'BoxMesh', params: { childName: 'bone_1' } },
+      nonChannel: { type: 'Object', params: { childName: 'bone_1' } },
     };
     expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP)).toEqual({});
   });

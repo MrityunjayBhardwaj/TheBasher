@@ -21,10 +21,16 @@ beforeEach(() => {
   __reseedAllNodesForTests();
 });
 
+// The three node types below are deliberately DIFFERENT types, because that is the whole
+// claim: heterogeneous scene objects all emit 'SceneObject' and all fit one socket. The
+// fused posable lights and the fused BoxMesh used to play the light and the mesh here; both
+// were retired by the object↔data split (#365 Phase 5) and a posed mesh, light or camera is
+// now an `Object`. `AmbientLight` keeps the LIGHT case on a genuinely distinct node type —
+// ambient is a World datablock and was never split, so it is the one light that is still its
+// own type rather than an Object.
 const PARAMS: Record<string, Record<string, unknown>> = {
-  BoxMesh: { size: [1, 1, 1], position: [0, 0, 0], rotation: [0, 0, 0] },
-  DirectionalLight: { intensity: 1, position: [0, 0, 0], color: '#ffffff' },
-  PointLight: { intensity: 1, position: [0, 0, 0], color: '#ffffff', distance: 0, decay: 2 },
+  Object: {},
+  AmbientLight: { intensity: 1, color: '#ffffff' },
   PerspectiveCamera: { fov: 45, near: 0.01, far: 1000, position: [0, 0, 5], lookAt: [0, 0, 0] },
   Group: {},
   Scene: {},
@@ -37,7 +43,7 @@ function withNode(state: DagState, nodeId: string, nodeType: string): DagState {
 describe('#231 Inc 1 — unified SceneObject socket', () => {
   it('a light connects into Group.children (was a type mismatch before #231)', () => {
     let state = emptyDagState();
-    state = withNode(state, 'lt', 'DirectionalLight');
+    state = withNode(state, 'lt', 'AmbientLight');
     state = withNode(state, 'grp', 'Group');
     const { next } = applyOp(state, {
       type: 'connect',
@@ -61,7 +67,7 @@ describe('#231 Inc 1 — unified SceneObject socket', () => {
 
   it('a mesh still connects into Scene.children (regression — the original capability)', () => {
     let state = emptyDagState();
-    state = withNode(state, 'bx', 'BoxMesh');
+    state = withNode(state, 'bx', 'Object');
     state = withNode(state, 'scn', 'Scene');
     const { next } = applyOp(state, {
       type: 'connect',
@@ -73,7 +79,7 @@ describe('#231 Inc 1 — unified SceneObject socket', () => {
 
   it('a light still connects into Scene.lights (the existing top-level band is unbroken)', () => {
     let state = emptyDagState();
-    state = withNode(state, 'lt', 'PointLight');
+    state = withNode(state, 'lt', 'AmbientLight');
     state = withNode(state, 'scn', 'Scene');
     const { next } = applyOp(state, {
       type: 'connect',
@@ -85,7 +91,7 @@ describe('#231 Inc 1 — unified SceneObject socket', () => {
 
   it('a SceneObject is STILL rejected by the strictly-typed lightRig socket — validation is not disabled', () => {
     let state = emptyDagState();
-    state = withNode(state, 'bx', 'BoxMesh');
+    state = withNode(state, 'bx', 'Object');
     state = withNode(state, 'scn', 'Scene');
     expect(() =>
       applyOp(state, {

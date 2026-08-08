@@ -54,10 +54,21 @@
 // reason and an issue number per entry and is asserted as a SET (a novel carrier fails; an
 // entry whose file is clean is reported as prunable) rather than consulted as a label.
 //
+//   5. The sentinel cross-check asserts a DISJUNCTION, not an equality (#596). A retirement
+//      has two end states — registered WITH a throwing sentinel, or deleted outright — and
+//      the second has no source and therefore no sentinel. Demanding the sentinel of every
+//      fused type made this gate read as a veto on the deletion it exists to make safe. What
+//      is actually forbidden is the third combination: REGISTERED WITHOUT A SENTINEL, i.e. a
+//      fused type that still evaluates for real. Both arms are guarded against vacuity, since
+//      a repo where every relic is deleted would pass the sentinel arm for free.
+//
 // WHAT IT CANNOT GUARD — stated because a gate that hides its blind spot reads as more
 // coverage than it has. A relic minted through a COMPUTED type (`nodeTypeFor(kind)`) is
 // invisible to any grep. That path is covered instead by the throwing sentinel plus the
 // registry: production code that computed its way to a relic would throw on first evaluate.
+// The second blind spot is the SPELLING: a fixture that writes a plain `type: '<relic>'` on a
+// state literal constructs the node without going near `nodeType:`, and is invisible here.
+// That is #594, and it is why the deletion had to sweep those sites by hand.
 //
 // REF: src/test-utils/splitKinds.ts (`fusedTypes` — the derived subject); src/a11y/grepGates.test.ts
 //      (the grep-gate-as-unit-test precedent this mirrors); .anvi/krama.md K23 finding 6 (the
@@ -68,6 +79,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { snapshotRegistry } from '../core/dag/registry';
+import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { stripComments } from './sourceScan';
 import { SPLIT_KINDS, SPLIT_KIND_NAMES } from './splitKinds';
 
@@ -104,6 +117,12 @@ const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
   {
     file: 'src/core/project/migrations.test.ts',
     why: 'byte-identity fixtures for the load-migration — it must hand-build the PRE-migration shape, which is the fused kind, or it is not testing a migration',
+    // ⚠️ BOOKED: this entry is asserted to still CARRY a `nodeType:` relic construction, and
+    // it currently does so only through Curve / PerspectiveCamera / BakedMesh, the three types
+    // still registered. #596 moved every deleted type's fixture to a raw state literal, which
+    // this pattern cannot see. When those three retire the file stops matching entirely and
+    // the "listed but no longer constructs one" assertion fires — correctly, and the fix then
+    // is to drop the entry, not to re-add a construction.
   },
   {
     file: 'src/test-utils/retiredKinds.gate.test.ts',
@@ -183,12 +202,24 @@ describe('retire-a-kind gate (#471 B-III)', () => {
     // 9 with the camera's two fused types (#387); 7 before it.
     expect(retired.length).toBeGreaterThanOrEqual(9);
 
-    // The independent cross-check, and the reason a forgotten retirement cannot slip through:
-    // a relic announces itself in its own source with the sentinel `'<Type> is retired;'`.
-    // That set and the descriptor's `fusedTypes` must be EQUAL in both directions — a kind
-    // retired without a descriptor entry leaves this gate blind to it, and a descriptor entry
-    // with no sentinel means the relic still evaluates. Node types are strings, so there is no
-    // `never` to close here; this equality is what substitutes for one.
+    // The independent cross-check, and the reason a forgotten retirement cannot slip through.
+    // A retirement has TWO end states and this asserts the disjunction of them, because
+    // asserting either one alone is wrong in the other's case:
+    //
+    //   REGISTERED + SENTINEL — the relic still exists as a node definition, and announces
+    //     itself in its own source with `'<Type> is retired;'`. This is where a type sits
+    //     while something still depends on its file: a live export awaiting a rehome, or a
+    //     ladder not yet moved.
+    //   ABSENT — the definition is DELETED (#365 Phase 5). No source, so no sentinel; the
+    //     type is simply not in the registry. This is the stronger state, and the one every
+    //     retirement should end in: a sentinel makes a wrong call throw, deletion makes the
+    //     call unwritable.
+    //
+    // Asserting only the sentinel would forbid the deletion — which is exactly what happened
+    // before #596, where this equality read as a veto on retiring the seven unentangled
+    // relics for good. Asserting only absence would forbid the intermediate state that three
+    // types are legitimately in today. What must NEVER hold is the third combination:
+    // REGISTERED with no sentinel, i.e. a fused type that still evaluates for real.
     const sentinelRe = /['"](\w+) is retired[;,]/;
     const declared = new Set<string>();
     for (const file of sentinelFiles()) {
@@ -202,7 +233,37 @@ describe('retire-a-kind gate (#471 B-III)', () => {
         if (m) declared.add(m[1]);
       }
     }
-    expect([...declared].sort()).toEqual(retired);
+
+    __reseedAllNodesForTests();
+    const registry = snapshotRegistry();
+    for (const type of retired) {
+      const isRegistered = registry[type] !== undefined;
+      expect(
+        { type, registered: isRegistered, sentinel: declared.has(type) },
+        `${type} is a retired fused type, so it must be EITHER registered with a throwing ` +
+          `sentinel in its own source OR absent from the registry entirely. Registered ` +
+          `without a sentinel means it still evaluates for real.`,
+      ).toEqual({ type, registered: isRegistered, sentinel: isRegistered });
+    }
+
+    // The other direction: nothing may declare the sentinel that the descriptor does not
+    // name as a fused predecessor. A stray declaration would mean a type retired without
+    // enrolling in this gate, which is the blindness the equality used to buy.
+    expect([...declared].sort()).toEqual(retired.filter((t) => registry[t] !== undefined));
+
+    // Guard-the-guard, and it is the assertion that keeps the disjunction honest: if EVERY
+    // relic were deleted the sentinel road above would be vacuous, and if none were the
+    // absence road would be. Both states are populated today (3 registered, 7 deleted), and
+    // this says so out loud so a future reader can see which arms are actually exercised.
+    const stillRegistered = retired.filter((t) => registry[t] !== undefined);
+    expect(
+      stillRegistered.length,
+      'no relic is still registered — the sentinel arm is vacuous',
+    ).toBeGreaterThan(0);
+    expect(
+      stillRegistered.length,
+      'every relic is still registered — the deletion arm is vacuous',
+    ).toBeLessThan(retired.length);
   });
 
   it('no tracked file constructs a retired node type, unit fixtures included', () => {

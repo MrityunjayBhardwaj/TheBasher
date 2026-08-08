@@ -42,7 +42,10 @@ describe('C2 — inspectorSections declarations', () => {
 
   it('mesh-primary nodes lead with section "mesh"', () => {
     const snap = snapshotRegistry();
-    const meshPrimary = ['BoxMesh', 'SphereMesh', 'GltfAsset', 'Scatter'];
+    // The box/sphere entries are the DATA halves: the fused BoxMesh/SphereMesh were
+    // retired by the object↔data split (#365 Phase 5) and geometry now lives on the data
+    // node, which is what makes it mesh-primary.
+    const meshPrimary = ['BoxData', 'SphereData', 'GltfAsset', 'Scatter'];
     for (const type of meshPrimary) {
       const def = snap[type];
       expect(def, `node type ${type} missing from registry`).toBeDefined();

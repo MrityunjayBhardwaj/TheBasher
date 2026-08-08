@@ -113,7 +113,7 @@ describe('collectChannelRows', () => {
   });
 
   it('ignores non-channel node types', () => {
-    const mesh = { id: 'm', type: 'BoxMesh', inputs: {}, params: {} } as unknown as Node;
+    const mesh = { id: 'm', type: 'Object', inputs: {}, params: {} } as unknown as Node;
     expect(collectChannelRows({ m: mesh })).toEqual([]);
   });
 
