@@ -5,8 +5,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
   AnimationClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
-  AreaLight:
-    '[transform,constraint,driver] intensity=(unrouted) position=transform color=(unrouted) width=(unrouted) height=(unrouted) lookAt=transform rotation=transform scale=transform tex=(unrouted)',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BakedMesh:
@@ -14,8 +12,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
   BoxData: '[mesh,material] size=mesh material=material',
-  BoxMesh:
-    '[mesh,transform,constraint,driver,material,modifier] size=mesh position=transform rotation=transform scale=transform material=material',
   CameraData:
     '[camera] projection=camera fov=camera zoom=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera lookAt=camera roll=camera',
   CameraSelect: '[layout] active=(unrouted)',
@@ -34,8 +30,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CurveRemap: '[] points=(unrouted)',
   Cut: '[layout] transitionFrame=(unrouted)',
   DepthPass: '[render] width=(unrouted) height=(unrouted)',
-  DirectionalLight:
-    '[transform,constraint,driver] intensity=(unrouted) position=transform rotation=transform scale=transform color=(unrouted)',
   Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted)',
   FollowPath:
     '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
@@ -87,14 +81,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
     '[transform,constraint,driver,modifier] position=transform rotation=transform scale=transform',
-  OrthographicCamera:
-    '[camera,transform,constraint,driver] zoom=camera near=camera far=camera position=transform lookAt=transform roll=transform',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PerspectiveCamera:
     '[camera,transform,constraint,driver] fov=camera sensorSize=camera near=camera far=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera position=transform lookAt=transform roll=transform',
-  PointLight:
-    '[transform,constraint,driver] intensity=(unrouted) position=transform rotation=transform scale=transform color=(unrouted) distance=(unrouted) decay=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
   PrevFrame: '[]',
   PrevFrameVec: '[] slot=(unrouted)',
@@ -115,10 +105,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   SolverInputVec: '[]',
   SphereData:
     '[mesh,material] radius=mesh widthSegments=mesh heightSegments=mesh material=material',
-  SphereMesh:
-    '[mesh,transform,constraint,driver,material,modifier] radius=mesh widthSegments=mesh heightSegments=mesh position=transform rotation=transform scale=transform material=material',
-  SpotLight:
-    '[transform,constraint,driver] intensity=(unrouted) position=transform target=(unrouted) rotation=transform scale=transform color=(unrouted) angle=(unrouted) penumbra=(unrouted) distance=(unrouted) decay=(unrouted)',
   Strip:
     '[layout] name=layout action=(unrouted) target=(unrouted) start=(unrouted) timeScale=(unrouted) repeat=(unrouted) reverse=(unrouted) extrapolate=(unrouted) blendMode=(unrouted) influence=(unrouted) blendIn=(unrouted) blendOut=(unrouted) muted=(unrouted)',
   TimeSource: '[]',
@@ -134,4 +120,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   WalkPath: '[] from=(unrouted) to=(unrouted) sampleCount=(unrouted)',
 };
 
-export const GOLDEN_TOTALS = { types: 90, routed: 176, unrouted: 234 } as const;
+export const GOLDEN_TOTALS = { types: 83, routed: 145, unrouted: 216 } as const;

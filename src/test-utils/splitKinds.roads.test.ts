@@ -31,8 +31,8 @@ import { applyOp } from '../core/dag/ops';
 import { emptyDagState, type DagState } from '../core/dag/state';
 import { evaluate } from '../core/dag/evaluator';
 import type { EvalCtx, Op } from '../core/dag/types';
-import { snapshotRegistry } from '../core/dag/registry';
 import { migrateProjectFormat } from '../core/project/migrations';
+import { RETIRED_LADDERS } from '../core/project/retiredLadders';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { resolveDataParamOwner } from '../app/resolveDataParamOwner';
@@ -285,17 +285,27 @@ describe('R9 — every kind owns its own step on the migration ladder', () => {
     expect(migrateProjectFormat(current)).toEqual(current);
   });
 
-  it('every fused predecessor a kind names is still a registered type', () => {
-    // The relics stay registered so old projects can be loaded and migrated at all. A
-    // descriptor naming a type that no longer exists would mean its migration source is
-    // unloadable — and nothing else would say so.
-    const snap = snapshotRegistry();
+  it('every fused predecessor a kind names has its ladder homed in RETIRED_LADDERS', () => {
+    // THIS CHECK USED TO ASK SOMETHING ELSE, AND THE REASON IT GAVE WAS FALSE. It asserted
+    // the fused predecessor was still a REGISTERED node type, "so old projects can be loaded
+    // and migrated at all". Measured (#596): the migrations read raw JSON off disk and never
+    // consult the registry, so a project containing a fused box loads and splits perfectly
+    // well with the relic deleted. Registration was never what made the source loadable —
+    // and while it was asserted here, it stood in the way of deleting ten dead node types,
+    // which is the cost of a guard whose stated reason is not its real one.
+    //
+    // What IS load-bearing is the ladder: a fused predecessor's params must be normalisable
+    // to the version it was retired at before its split pass runs, and that record lives in
+    // `RETIRED_LADDERS`. A descriptor naming a type absent from there means the split pass
+    // would normalise nothing and split params of an unknown vintage — silently, because the
+    // loop over an absent ladder simply does not execute. This holds whether or not the type
+    // is still registered, which is why it survives the deletion that broke the old form.
     for (const kind of SPLIT_KIND_NAMES) {
       for (const fused of SPLIT_KINDS[kind].fusedTypes) {
         expect(
-          snap[fused],
-          `${kind} migrates from "${fused}", which is not registered — a project ` +
-            `containing one could not be loaded to be migrated`,
+          RETIRED_LADDERS[fused],
+          `${kind} migrates from "${fused}", which has no ladder in RETIRED_LADDERS — a ` +
+            `project containing one would be split without being normalised first`,
         ).toBeDefined();
       }
     }

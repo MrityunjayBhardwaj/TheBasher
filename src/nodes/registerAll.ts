@@ -10,12 +10,10 @@ import { ArrayModifierNode } from './ArrayModifier';
 // P7.5 — glTF TRS animation extraction (issue #81). Imports stay
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
-import { AreaLightNode } from './AreaLight';
 import { BakedMeshNode } from './BakedMesh';
 import { BakedDataNode } from './BakedData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
-import { BoxMeshNode } from './BoxMesh';
 import { BoxDataNode } from './BoxData';
 import { MaterialNode } from './Material';
 import { SphereDataNode } from './SphereData';
@@ -40,7 +38,6 @@ import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
 import { DepthPassNode } from './DepthPass';
-import { DirectionalLightNode } from './DirectionalLight';
 import { GltfAssetNode } from './GltfAsset';
 import { GltfChildNode } from './GltfChild';
 import { GroupNode } from './Group';
@@ -63,10 +60,8 @@ import { SetMaterialOpNode } from './SetMaterialOp';
 import { MirrorModifierNode } from './MirrorModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
-import { OrthographicCameraNode } from './OrthographicCamera';
 import { ParamDriverNode } from './ParamDriver';
 import { PerspectiveCameraNode } from './PerspectiveCamera';
-import { PointLightNode } from './PointLight';
 import { PosedSkeletonNode } from './PosedSkeleton';
 import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
@@ -76,8 +71,6 @@ import { SceneNode } from './Scene';
 import { ShotNode } from './Shot';
 import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
-import { SpotLightNode } from './SpotLight';
-import { SphereMeshNode } from './SphereMesh';
 import { StripNode } from './Strip';
 import { TimeSourceNode } from './TimeSource';
 import { TrackNode } from './Track';
@@ -96,7 +89,6 @@ const ALL: NodeDefinition[] = [
   TimeSourceNode as unknown as NodeDefinition,
   // Cameras
   PerspectiveCameraNode as unknown as NodeDefinition,
-  OrthographicCameraNode as unknown as NodeDefinition,
   // #387 (Stage C · C4) — the camera's data half (the lens: projection + fov/zoom,
   // clip planes, sensor, DoF, plus the authored aim). ONE discriminated node
   // (projection enum) covering both fused kinds — the THIRD non-mesh ObjectData, and
@@ -105,11 +97,7 @@ const ALL: NodeDefinition[] = [
   // the split retires their fused evaluates in a later slice.
   CameraDataNode as unknown as NodeDefinition,
   // Lights
-  DirectionalLightNode as unknown as NodeDefinition,
   AmbientLightNode as unknown as NodeDefinition,
-  PointLightNode as unknown as NodeDefinition,
-  SpotLightNode as unknown as NodeDefinition,
-  AreaLightNode as unknown as NodeDefinition,
   // #386 (Stage C · C3) — the light's data half (shading: kind + intensity/colour/
   // falloff/aim, no transform). ONE discriminated node (lightKind enum) covering the
   // four posable kinds — the SECOND non-mesh ObjectData. Coexists with the fused
@@ -117,7 +105,6 @@ const ALL: NodeDefinition[] = [
   // in a later slice. AmbientLight stays fused (ambient = a World datablock).
   LightDataNode as unknown as NodeDefinition,
   // Meshes
-  BoxMeshNode as unknown as NodeDefinition,
   // #361 — object↔data split (Phase 1): the Object half (owns TRS, points at
   // data) + the BoxData half (geometry + material, no transform). Coexist with
   // the fused nodes; nothing migrates yet.
@@ -126,7 +113,6 @@ const ALL: NodeDefinition[] = [
   // #384 (Stage C · C1) — the sphere's data half. Coexists with the fused
   // SphereMesh below; the split retires the fused value kind in a later slice.
   SphereDataNode as unknown as NodeDefinition,
-  SphereMeshNode as unknown as NodeDefinition,
   // #394 — the material's own producer. Emits the finished OpenPBR IR as a tagged
   // value; nothing consumes it until the data nodes grow a `material` socket.
   MaterialNode as unknown as NodeDefinition,

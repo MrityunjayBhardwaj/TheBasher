@@ -14,7 +14,7 @@
 // multiplication is a render-side projection so the DAG stays the round-trip source of truth.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, getNodeType } from '../core/dag/registry';
+import { __resetRegistryForTests } from '../core/dag/registry';
 import { emptyDagState, evaluate } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
 import { makeSplitLight, type SplitLightKind } from '../test-utils/splitLight';
@@ -63,14 +63,11 @@ function recomposed(
 }
 
 describe('positional lights — scale param', () => {
-  it.each(POSITIONAL_LIGHTS)('%s schema defaults scale to [1,1,1]', (kind) => {
-    const def = getNodeType(kind)!;
-    const minimal: Record<string, unknown> = { intensity: 1, position: [0, 0, 0] };
-    if (kind === 'SpotLight') minimal.target = [0, 0, 0];
-    if (kind === 'AreaLight') minimal.lookAt = [0, 0, 0];
-    const params = def.paramSchema.parse(minimal);
-    expect((params as { scale: number[] }).scale).toEqual([1, 1, 1]);
-  });
+  // The fused light schemas' own `scale` default used to be asserted here. Those schemas are
+  // DELETED (#365 Phase 5) — a fused light cannot be built, so there is no schema to parse and
+  // nothing the assertion could describe. The Object half's default is what governs a real
+  // light now, and it is covered by the recompose cases below, which read `scale` off the
+  // value the renderer actually consumes rather than off a param shape.
 
   it.each(POSITIONAL_LIGHTS)('%s recomposed value carries scale through', (kind) => {
     const v = recomposed(kind, { intensity: 1, scale: [2, 3, 4] }) as { scale: number[] };

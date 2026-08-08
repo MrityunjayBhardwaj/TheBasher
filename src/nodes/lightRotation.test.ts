@@ -7,7 +7,7 @@
 // retired and never called.)
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, getNodeType } from '../core/dag/registry';
+import { __resetRegistryForTests } from '../core/dag/registry';
 import { emptyDagState, evaluate } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
 import { makeSplitLight, type SplitLightKind } from '../test-utils/splitLight';
@@ -42,14 +42,11 @@ function recomposed(kind: string, rotation?: [number, number, number]): LightVal
 }
 
 describe('positional lights — rotation param', () => {
-  it.each(POSITIONAL_LIGHTS)('%s schema defaults rotation to [0,0,0]', (kind) => {
-    const def = getNodeType(kind)!;
-    const minimal: Record<string, unknown> = { intensity: 1, position: [0, 0, 0] };
-    if (kind === 'SpotLight') minimal.target = [0, 0, 0];
-    if (kind === 'AreaLight') minimal.lookAt = [0, 0, 0];
-    const params = def.paramSchema.parse(minimal);
-    expect((params as { rotation: number[] }).rotation).toEqual([0, 0, 0]);
-  });
+  // The fused light schemas' own `rotation` default used to be asserted here. Those schemas are
+  // DELETED (#365 Phase 5) — a fused light cannot be built, so there is no schema to parse and
+  // nothing the assertion could describe. The Object half's default is what governs a real
+  // light now, and it is covered by the recompose cases below, which read `rotation` off the
+  // value the renderer actually consumes rather than off a param shape.
 
   it.each(POSITIONAL_LIGHTS)('%s recomposed value carries rotation through', (kind) => {
     const v = recomposed(kind, [0.1, 0.2, 0.3]) as { rotation: number[] };
