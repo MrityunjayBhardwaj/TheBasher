@@ -86,6 +86,8 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
   paramSchema: MaterialOverrideOpParams,
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
+  // #396 — the spine the material stack walks down (see SetMaterialOp).
+  chainInput: 'target',
   inspectorSections: ['material'],
   home: {
     color: 'material',

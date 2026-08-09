@@ -61,6 +61,8 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
   cost: 'cheap',
   paramSchema: MaterialOverrideParams,
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
+  // #396 — the spine of the scene-lane wrapper chain (see Transform).
+  chainInput: 'target',
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['material'],
   home: {

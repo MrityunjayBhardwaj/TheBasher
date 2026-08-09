@@ -219,6 +219,35 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   inputs: Record<SocketId, TypeDescriptor>;
   outputs: Record<SocketId, TypeDescriptor>;
   /**
+   * #396 — WHICH input carries the CHAIN: the spine a stack walks down, as opposed
+   * to an ARGUMENT the graph wires and the stack steps past. Absent = this node is
+   * not a chain node at all (a leaf producer, a poser, a sink).
+   *
+   * WHY IT HAS TO BE DECLARED RATHER THAN DERIVED. Basher is a Blender-shaped
+   * modifier stack over a Houdini-shaped network, and the two references answer this
+   * differently: Houdini makes input 0 the spine POSITIONALLY (inputs are ordered, so
+   * no declaration is needed), while Blender's geometry-node graph has no spine at all
+   * and its modifier stack is unary by construction — a second operand there is an
+   * OBJECT POINTER, never a stack member. Our sockets are a NAMED record, so the
+   * positional answer is unavailable, and we need the stack surface anyway. Naming the
+   * spine is the one form that serves both: the stack reads it, the graph ignores it.
+   *
+   * The concept already existed — it was just spelled five times and declared nowhere:
+   * `const TARGET = 'target'` in `operatorChain.ts` AND `operatorStack.ts`, a third
+   * shape test in `sceneNodeActions.ts` (`'target' in def.inputs && 'out' in
+   * def.outputs`), a fourth in `test-utils/splitKinds.ts`, and `exposeParams.ts`'s
+   * `CHAIN_SOCKETS`, which names the concept out loud. Each was independently correct
+   * while every operator happened to spell its spine `target`. The first operator with
+   * a second same-typed input breaks that coincidence silently: it registers, connects
+   * and evaluates, and every one of those five walkers keeps addressing whichever
+   * socket is called `target` — measured, not predicted (see the spec).
+   *
+   * The type rule rides on this too. "An operator's output type equals its input type"
+   * was only ever true of the SPINE; argument roles carry their own types and are
+   * exempt. Stating the spine is what makes that sentence checkable.
+   */
+  chainInput?: SocketId;
+  /**
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input
    * or via ctx for impure nodes only.

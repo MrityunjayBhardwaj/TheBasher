@@ -53,6 +53,8 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
   paramSchema: MirrorModifierParams,
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
+  // #396 — the spine the modifier stack walks down (see ArrayModifier).
+  chainInput: 'target',
   inspectorSections: ['modifier'],
   home: {
     offset: 'modifier',
