@@ -446,10 +446,9 @@ describe('driverBind — the Vector3 road (vec target drive)', () => {
     id: `out:${node}:out`,
     label: node,
     ref: { node, socket: 'out' },
-    socketType: 'Vector3',
   });
 
-  it('a Vector3 source binds through the driver `inVec` socket (not `in`)', () => {
+  it('a Vector3 source binds through the driver `in` socket, same as a Number (#609)', () => {
     const state = withNodes(addMakeVec3('mv1'));
     const res = buildBindDriverOps(state, {
       targetId: BOX_ID,
@@ -461,18 +460,21 @@ describe('driverBind — the Vector3 road (vec target drive)', () => {
     if (!res.ok) return;
     let next = state;
     for (const op of res.ops) next = applyOp(next, op).next;
-    expect(next.nodes.drvV.inputs.inVec).toEqual({ node: 'mv1', socket: 'out' });
-    expect(next.nodes.drvV.inputs.in).toBeUndefined();
+    // ONE socket for both roads: the bind no longer has to know the source's type to
+    // know where to wire it, which is the whole point of the collapse.
+    expect(next.nodes.drvV.inputs.in).toEqual({ node: 'mv1', socket: 'out' });
+    expect(next.nodes.drvV.inputs.inVec).toBeUndefined();
   });
 
   it("driverSourceOptions('vec3') offers Vector3 outputs and excludes scalar sources", () => {
     // A Vector3 producer (MakeVec3), a scalar producer (Clamp), and a numeric spare.
     const state = withNodes(addMakeVec3('mv1'), addClamp('c1'), addSpare('c1', 'knob', 3));
     const vecOpts = driverSourceOptions(state, BOX_ID, 'vec3');
-    // MakeVec3.out (Vector3) is offered, tagged for the inVec road…
+    // MakeVec3.out (Vector3) is offered. It carries no road TAG any more (#609): with
+    // one socket there is nothing left for a tag to select, so `targetKind` decides what
+    // is OFFERED and that is the end of it.
     const mv = vecOpts.find((o) => o.kind === 'output' && o.ref.node === 'mv1');
     expect(mv).toBeTruthy();
-    expect(mv?.kind === 'output' && mv.socketType).toBe('Vector3');
     // …and NO scalar source (Number output / spare) leaks into the vec picker.
     expect(vecOpts.some((o) => o.kind === 'output' && o.ref.node === 'c1')).toBe(false);
     expect(vecOpts.some((o) => o.kind === 'spare')).toBe(false);

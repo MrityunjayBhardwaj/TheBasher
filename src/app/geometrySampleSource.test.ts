@@ -108,7 +108,7 @@ describe('readTerrainSampleAt', () => {
 });
 
 describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
-  it('detects a SampleGeometry wired to a driver inVec, and parses its refs', () => {
+  it('detects a SampleGeometry wired to a driver `in`, and parses its refs', () => {
     let state = buildTerrainState([0, 5, 0]);
     state = applyOp(state, {
       type: 'addNode',
@@ -119,7 +119,7 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
     state = applyOp(state, {
       type: 'connect',
       from: { node: 'geo_sample', socket: 'out' },
-      to: { node: 'geo_drv', socket: 'inVec' },
+      to: { node: 'geo_drv', socket: 'in' },
     }).next;
 
     const src = geometrySampleSourceOf(state.nodes['geo_drv'], state);
@@ -133,7 +133,7 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
       orientation: 'forward',
       farthest: false,
     });
-    // A driver with nothing on inVec is not a geometry-sample source.
+    // A driver with nothing on `in` is not a geometry-sample source.
     expect(geometrySampleSourceOf(state.nodes['n_box'], state)).toBeNull();
   });
 
@@ -148,7 +148,7 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
     state = applyOp(state, {
       type: 'connect',
       from: { node: 'geo_sample', socket: 'normal' },
-      to: { node: 'geo_drv', socket: 'inVec' },
+      to: { node: 'geo_drv', socket: 'in' },
     }).next;
     expect(geometrySampleSourceOf(state.nodes['geo_drv'], state)?.socket).toBe('normal');
   });

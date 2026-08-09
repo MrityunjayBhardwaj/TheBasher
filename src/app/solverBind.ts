@@ -182,7 +182,7 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
         order: nextDriverOrder(state.nodes, targetId, paramPath),
       },
     },
-    wire({ node: id('solver'), socket: 'outVec' }, { node: id('driver'), socket: 'inVec' }),
+    wire({ node: id('solver'), socket: 'outVec' }, { node: id('driver'), socket: 'in' }),
   ];
   return { ok: true, ops };
 }

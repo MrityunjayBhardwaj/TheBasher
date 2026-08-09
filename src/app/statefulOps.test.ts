@@ -294,7 +294,7 @@ describe('the tuple-state Solver — a 2nd-order vec spring (S, #300)', () => {
     expect(Array.isArray(ch.sample(1))).toBe(true);
   });
 
-  it('statefulSourceOf detects a vec Solver wired to a driver inVec', () => {
+  it('statefulSourceOf detects a vec Solver wired to a driver `in` (#609)', () => {
     let { state } = buildSpringState();
     const { solverId } = buildSpringState();
     state = applyOp(state, {
@@ -306,7 +306,7 @@ describe('the tuple-state Solver — a 2nd-order vec spring (S, #300)', () => {
     state = applyOp(state, {
       type: 'connect',
       from: { node: solverId, socket: 'outVec' },
-      to: { node: 'n_vdrv', socket: 'inVec' },
+      to: { node: 'n_vdrv', socket: 'in' },
     } as Op).next;
     expect(statefulSourceOf(state.nodes['n_vdrv'], state)?.id).toBe(solverId);
   });

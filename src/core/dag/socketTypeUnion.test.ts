@@ -2,14 +2,19 @@
 // gate (#609).
 //
 // WHY THIS FILE HAD TO EXIST BEFORE THE GATE CHANGE COULD BE BELIEVED.
-// Replacing `inputDesc.type !== outputDesc.type` with `inputAccepts(...)` is invisible
-// to every other test in the suite: every input socket registered today declares
-// exactly ONE type, so membership and equality return the same answer on every fixture
-// that exists. The change ran the full unit tier and moved nothing — 315 files, 3864
-// tests, green before and after, three runs in a row. A green computed over a
-// population that is degenerate on the very axis under test licenses nothing, including
-// "the change is still there": nothing in the suite would notice the gate being
-// silently reverted to equality.
+// Replacing `inputDesc.type !== outputDesc.type` with `inputAccepts(...)` was invisible
+// to every other test in the suite at the time it landed: every input socket then
+// registered declared exactly ONE type, so membership and equality returned the same
+// answer on every fixture that existed. The change ran the full unit tier and moved
+// nothing — 315 files, 3864 tests, green before and after, three runs in a row. A green
+// computed over a population that is degenerate on the very axis under test licenses
+// nothing, including "the change is still there": nothing in the suite would have
+// noticed the gate being silently reverted to equality.
+//
+// `ParamDriver.in` has since become a real set-valued socket, so the population is no
+// longer degenerate. That does NOT retire this file — the synthetic pair below is still
+// the only thing that isolates the gate from everything else `ParamDriver` does, and the
+// census at the bottom is what keeps the adoption from silently going back to zero.
 //
 // So the discriminating perturbation is not "do connections still work". It is: two
 // node types byte-identical except that one input socket declares a SET, wired from the
@@ -146,18 +151,16 @@ describe('#609 — an input socket accepts a SET of types', () => {
     ]);
   });
 
-  it('the set of PRODUCTION input sockets declaring a union is EXACTLY empty today', () => {
-    // An EXACT census, not a floor, because the population grows: this feature ships
-    // with zero adopters, which is precisely the state in which a silent revert is
-    // invisible. Pinning it at empty means the FIRST production socket to declare a set
-    // has to come here and say so, where the author is present — rather than the feature
-    // quietly having no users forever, or quietly acquiring one nobody reviewed.
+  it('the set of PRODUCTION input sockets declaring a union is EXACTLY ParamDriver.in', () => {
+    // An EXACT census, not a floor, because the population grows: a new set-valued
+    // socket has to come here and say so, where the author is present, rather than being
+    // added by someone who has not read why acceptance is not coercion.
     //
-    // ⚠️ The known first adopter is `ParamDriver`, whose one role is spelled as two
-    // sockets (`in: Number` + `inVec: Vector3`). Collapsing it is NOT free — the socket
-    // id is a persisted binding key, so it needs a project-format migration — and is
-    // deliberately left out of this slice. When it lands, this list gains
-    // `ParamDriver.in` and the four folded readers below start earning their keep.
+    // It also carries the ADOPTION proof. `ParamDriver` is the reason this feature
+    // exists — one role ("the computed value this driver overlays") spelled as two
+    // sockets, `in: Number` + `inVec: Vector3`, because `Number | Vector3` was not
+    // sayable. If this list is ever empty again, the union has no production user and
+    // every membership check in the repo is running over a degenerate population.
     __resetRegistryForTests();
     __reseedAllNodesForTests();
 
@@ -169,6 +172,6 @@ describe('#609 — an input socket accepts a SET of types', () => {
         if (Array.isArray(desc.type)) unions.push(`${type}.${socket}`);
       }
     }
-    expect(unions.sort()).toEqual([]);
+    expect(unions.sort()).toEqual(['ParamDriver.in']);
   });
 });

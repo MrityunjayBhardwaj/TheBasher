@@ -4,7 +4,7 @@
 // Every other compute node reads numbers or transforms; this one reads GEOMETRY —
 // it drops a vertical ray onto a terrain mesh and outputs the ground point under a
 // query position (a controller Null's world XZ). Wire its `out` into a ParamDriver's
-// `inVec` and the driven object rides the surface as the Null moves across it.
+// `in` and the driven object rides the surface as the Null moves across it.
 //
 // WHY it is a SEAM-RESOLVED node (not a pure evaluate): the ground point needs the
 // terrain's WORLD-space triangles — the geometry registry (a runtime cache) AND the

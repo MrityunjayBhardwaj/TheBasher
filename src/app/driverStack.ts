@@ -74,9 +74,11 @@ export function driverSourceLabel(state: DagState, driver: Node): string {
   const spare = p.sourceSpare;
   if (spare?.node && spare.key) return `${nameOf(state, spare.node)}.${spare.key}`;
 
-  // The wired road (#293) — the compute node feeding `in` / `inVec` (a Lag, a Solver,
-  // a SampleGeometry, a Math chain…). Its own name is the most useful thing to show.
-  const binding = driver.inputs?.inVec ?? driver.inputs?.in;
+  // The wired road (#293) — the compute node feeding `in` (a Lag, a Solver, a
+  // SampleGeometry, a Math chain…). Its own name is the most useful thing to show.
+  // ONE socket since #609: `in` accepts Number or Vector3, so there is no second name
+  // to check and no precedence between them to get backwards.
+  const binding = driver.inputs?.in;
   const ref = (Array.isArray(binding) ? binding[0] : binding) as { node?: string } | undefined;
   if (ref?.node) return nameOf(state, ref.node);
 

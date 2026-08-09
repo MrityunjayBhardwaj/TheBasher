@@ -337,22 +337,21 @@ export function driverParamDeps(
     const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
     const lagXf = lag ? transformSourceOf(lag) : null;
     if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
-    // #300 follow-up — the geometry-sample road: driver → (wired `inVec` for out/normal, or
-    // `in` for distance) SampleGeometry → (param-ref) terrain + query controller. The
-    // driver→SampleGeometry edge is wired (the guard's input walk sees it); add the
-    // SampleGeometry→terrain/at param-ref hops so a bind whose query controller (transitively)
-    // reads the target is rejected as a cycle (G6).
-    for (const socket of ['inVec', 'in'] as const) {
-      const geoInRef = node.inputs?.[socket];
-      const geoSrcId = (Array.isArray(geoInRef) ? geoInRef[0] : geoInRef) as
-        | { node?: string }
-        | undefined;
-      const geoNode = geoSrcId?.node ? nodes[geoSrcId.node] : undefined;
-      const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
-      if (geoNode && geoRef) {
-        for (const id of [geoRef.geometry, geoRef.at]) {
-          if (id) (deps[geoNode.id] ??= []).push(id);
-        }
+    // #300 follow-up — the geometry-sample road: driver → (wired) SampleGeometry →
+    // (param-ref) terrain + query controller. The driver→SampleGeometry edge is wired (the
+    // guard's input walk sees it); add the SampleGeometry→terrain/at param-ref hops so a
+    // bind whose query controller (transitively) reads the target is rejected as a cycle
+    // (G6). ONE socket since #609 — this used to sweep `['inVec', 'in']` because the same
+    // producer could arrive on either, and missing one meant missing a cycle.
+    const geoInRef = node.inputs?.in;
+    const geoSrcId = (Array.isArray(geoInRef) ? geoInRef[0] : geoInRef) as
+      | { node?: string }
+      | undefined;
+    const geoNode = geoSrcId?.node ? nodes[geoSrcId.node] : undefined;
+    const geoRef = geoNode ? geometrySampleRefOf(geoNode) : null;
+    if (geoNode && geoRef) {
+      for (const id of [geoRef.geometry, geoRef.at]) {
+        if (id) (deps[geoNode.id] ??= []).push(id);
       }
     }
   }
@@ -384,7 +383,7 @@ export function driverChannelValuesForTarget(
         // #300 F2b — the VEC controller road ("Point controller"): read the controller's
         // WHOLE evaluated POSITION as a Vec3 (so a gizmo-dragged / animated controller
         // drives correctly) and fold it as a vec3 channel — the SAME fold a position
-        // keyframe rides, so it composes byte-identically with the wired inVec road.
+        // keyframe rides, so it composes byte-identically with the wired vec road.
         const value = readTransformPositionAt(state, transformVec.node, ctx, cache);
         out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
         continue;
@@ -417,8 +416,8 @@ export function driverChannelValuesForTarget(
           // the hit POINT (`out`) or surface NORMAL (`normal`) as a Vector3, or the hit
           // DISTANCE (`distance`) as a Number. Like the stateful road it can't be a pure
           // evaluate — it needs the terrain's world triangles (state) — so the seam computes
-          // it and folds the chosen output (by the wired socket) through the SAME builder the
-          // wired inVec / transform-channel roads use, so render == read (H40).
+          // it and folds the chosen output (by the PRODUCER's wired output socket) through
+          // the SAME builder the wired / transform-channel roads use, so render == read (H40).
           const ref = geometrySampleRefOf(geoSample.node);
           const s = ref ? readTerrainSampleAt(state, ref, ctx, cache) : null;
           if (geoSample.socket === 'distance') {

@@ -347,7 +347,7 @@ export function buildDuplicateNodeOps(
       nodeType: r.type,
       params: remapIdRefs(r, (id) => idMap.get(id) ?? id),
     });
-    // A ParamDriver carries a WIRED source edge (`in` / `inVec`); rewire it like any
+    // A ParamDriver carries a WIRED source edge (`in`); rewire it like any
     // other input — shared with the original unless it fell inside the clone. The
     // pure-sidecar referrers (channels, constraints, strips) have `inputs: {}`, so
     // this loop is empty for them.
