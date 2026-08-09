@@ -120,6 +120,24 @@ export function isDataLaneOperator(node: Node | undefined): boolean {
 }
 
 /**
+ * Is `node` a SCENE-lane wrapper — `SceneObject` in on its spine, `SceneObject` out?
+ * Transform and MaterialOverride today.
+ *
+ * Byte-identical in shape to {@link isDataLaneOperator}, one socket type up, and that
+ * is the point: the scene tree used to answer this with `node.type === 'Transform' ||
+ * node.type === 'MaterialOverride'` — a hardcoded type list, which is the drift the
+ * comment on `isDataLaneOperator` above already warns about, sitting in another file.
+ * A future scene-lane wrapper is covered the day it declares its spine.
+ */
+export function isSceneLaneWrapper(node: Node | undefined): boolean {
+  if (!node) return false;
+  const def = getNodeType(node.type);
+  const spine = def?.chainInput;
+  if (!def || !spine) return false;
+  return def.inputs[spine]?.type === 'SceneObject' && def.outputs[OUT]?.type === 'SceneObject';
+}
+
+/**
  * Is `node` a POSER — an object that wears data through a `data` input? Derived from
  * the registry (it declares a `data` input carrying the `ObjectData` socket), never
  * matched against `type === 'Object'`: a type list is exactly the drift #377 measured

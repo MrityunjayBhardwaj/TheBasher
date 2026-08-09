@@ -14,6 +14,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
+import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -106,14 +107,20 @@ function walkOneAsChild(
     }
     return;
   }
-  if (node.type === 'Transform' || node.type === 'MaterialOverride') {
+  // #396 — a scene-lane WRAPPER shows its subject as its child row. Derived from the
+  // registry (declares a `SceneObject` spine and a `SceneObject` out) rather than from
+  // the type list `Transform || MaterialOverride` this used to carry: a hardcoded list
+  // is what silently omits the next wrapper from the outliner, and the socket it
+  // descends is now the wrapper's own declaration rather than the name `target`.
+  const wrapperSpine = isSceneLaneWrapper(node) ? chainSocketOf(node) : null;
+  if (wrapperSpine) {
     pushRow(ctx, row);
-    const target = node.inputs.target;
+    const target = node.inputs[wrapperSpine];
     if (target && !Array.isArray(target)) {
       ctx.visited.delete(target.node);
       walkOneAsChild(ctx, target.node, depth + 1, row.key, {
         nodeId,
-        socket: 'target',
+        socket: wrapperSpine,
         index: 0,
       });
     }
