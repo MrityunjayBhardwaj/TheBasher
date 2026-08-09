@@ -37,9 +37,14 @@ import { recomposeLightObject } from '../nodes/lightRecompose';
 export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked';
 
 /** As much of a node definition as the data-lane predicates below read. Declared
- *  structurally so this module still never imports the registry (see the header). */
+ *  structurally so this module still never imports the registry (see the header).
+ *
+ *  #609 — the input side widened to `string | readonly string[]`, because a socket now
+ *  declares the SET of types it accepts. The membership test is re-spelled in
+ *  `isDataOperatorDef` rather than imported; see the note there for why that import is
+ *  not available to this module. */
 export interface DataLaneDef {
-  readonly inputs?: Record<string, { type?: string } | undefined>;
+  readonly inputs?: Record<string, { type?: string | readonly string[] } | undefined>;
   readonly outputs?: Record<string, { type?: string } | undefined>;
   /** #396 — the socket carrying the chain. Structural, like the rest of this shape, so
    *  the predicate below can read a real `NodeDefinition` without importing the registry. */
@@ -70,7 +75,20 @@ export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
   // three by construction instead of by everyone happening to pick the same name.
   const spine = def?.chainInput;
   if (!spine) return false;
-  return def?.inputs?.[spine]?.type === 'ObjectData' && def?.outputs?.out?.type === 'ObjectData';
+  // #609 — MEMBERSHIP, because a spine may now accept a SET of types, and a bare
+  // `=== 'ObjectData'` reads FALSE for such a socket while still compiling.
+  //
+  // ⚠️ THIS IS THE ONE PLACE THAT RE-SPELLS `inputAccepts` INSTEAD OF CALLING IT, and it
+  // is forced rather than chosen: the DAG's copy lives in `core/dag/types`, and the gate
+  // in this module's own spec forbids a VALUE import of `core/dag` here — an e2e spec
+  // importing this descriptor would otherwise drag the whole module graph into
+  // Playwright. Type-only imports are erased and stay allowed; a function is not. Kept
+  // to two lines so the duplication is visible rather than buried.
+  const spineType = def?.inputs?.[spine]?.type;
+  const spineAcceptsData = Array.isArray(spineType)
+    ? spineType.includes('ObjectData')
+    : spineType === 'ObjectData';
+  return spineAcceptsData && def?.outputs?.out?.type === 'ObjectData';
 }
 
 /**

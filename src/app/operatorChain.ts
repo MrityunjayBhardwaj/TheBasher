@@ -18,6 +18,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeRef, NodeTypeId, SocketId } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
+import { inputAccepts } from '../core/dag/types';
 
 const OUT = 'out';
 const DATA = 'data';
@@ -116,7 +117,7 @@ export function isDataLaneOperator(node: Node | undefined): boolean {
   // it IS on the lane. What changes is that the walk below then descends the right edge.
   const spine = def.chainInput;
   if (!spine) return false;
-  return def.inputs[spine]?.type === 'ObjectData' && def.outputs[OUT]?.type === 'ObjectData';
+  return inputAccepts(def.inputs[spine], 'ObjectData') && def.outputs[OUT]?.type === 'ObjectData';
 }
 
 /**
@@ -134,7 +135,7 @@ export function isSceneLaneWrapper(node: Node | undefined): boolean {
   const def = getNodeType(node.type);
   const spine = def?.chainInput;
   if (!def || !spine) return false;
-  return def.inputs[spine]?.type === 'SceneObject' && def.outputs[OUT]?.type === 'SceneObject';
+  return inputAccepts(def.inputs[spine], 'SceneObject') && def.outputs[OUT]?.type === 'SceneObject';
 }
 
 /**
@@ -146,7 +147,7 @@ export function isSceneLaneWrapper(node: Node | undefined): boolean {
  */
 export function isPoserNode(node: Node | undefined): boolean {
   if (!node) return false;
-  return getNodeType(node.type)?.inputs[DATA]?.type === 'ObjectData';
+  return inputAccepts(getNodeType(node.type)?.inputs[DATA], 'ObjectData');
 }
 
 /** The single ref a (possibly list) input binding holds for `socket`, or null. */

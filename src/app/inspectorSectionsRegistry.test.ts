@@ -14,6 +14,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
+import { inputAccepts } from '../core/dag/types';
 import { isSectionId, paramToSection } from './inspectorSections';
 import { DATA_DEPENDENT_SECTIONS } from './dataSectionCapability';
 import {
@@ -75,7 +76,7 @@ describe('C2 — inspectorSections declarations', () => {
     const snap = snapshotRegistry();
     const dataKinds = Object.entries(snap).filter(
       ([, def]) =>
-        def.outputs?.out?.type === 'ObjectData' && def.inputs?.target?.type !== 'ObjectData',
+        def.outputs?.out?.type === 'ObjectData' && !inputAccepts(def.inputs?.target, 'ObjectData'),
     );
     // Guard the guard: if the filter ever finds nothing, the walk has drifted and the
     // test would pass vacuously for every future data kind.

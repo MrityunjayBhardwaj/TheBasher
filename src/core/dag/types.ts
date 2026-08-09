@@ -160,9 +160,17 @@ export interface OutputDescriptor {
  * UNGROUNDED and is recorded as motivation, never as precedent.
  *
  * ⚠️ READ THIS THROUGH `inputAccepts`/`acceptedTypes`, NEVER `desc.type ===`.
- * A bare `=== 'ObjectData'` still COMPILES against the union and silently reads
- * false for a set-valued socket. There are zero such direct readers left; the
- * exact set is pinned by `socketTypeUnion.test.ts`.
+ * This is the one hazard the widening introduces and the compiler does NOT catch:
+ * `desc.type === 'ObjectData'` still type-checks against the union — the two sides
+ * overlap — and silently reads FALSE for a set-valued socket. Every predicate that
+ * asked the question that way has been folded onto these helpers, with two residuals
+ * that are deliberate:
+ *   • `test-utils/splitKinds.ts` re-spells the membership test inline. Forced, not
+ *     chosen — a gate in its own spec forbids a VALUE import of `core/dag` there, so
+ *     it cannot call this function. Documented at the site.
+ *   • three test assertions (`materialLink`, `ParamDriver` ×2) still compare `.type`
+ *     directly, because their job IS to pin a specific declared type. They should
+ *     fail loudly if the socket they name ever becomes a set.
  */
 export interface InputDescriptor {
   type: SocketTypeName | readonly SocketTypeName[];
@@ -177,8 +185,14 @@ export function acceptedTypes(desc: InputDescriptor): readonly SocketTypeName[] 
   return Array.isArray(desc.type) ? desc.type : [desc.type as SocketTypeName];
 }
 
-/** Does this input socket accept a producer emitting `produced`? */
-export function inputAccepts(desc: InputDescriptor, produced: SocketTypeName): boolean {
+/**
+ * Does this input socket accept a producer emitting `produced`? Takes `undefined` —
+ * an absent socket accepts nothing — because every caller is asking about a socket
+ * looked up by name, and `?.type === 'X'` is exactly the spelling that reads FALSE
+ * on a set-valued socket while still compiling.
+ */
+export function inputAccepts(desc: InputDescriptor | undefined, produced: SocketTypeName): boolean {
+  if (!desc) return false;
   return Array.isArray(desc.type) ? desc.type.includes(produced) : desc.type === produced;
 }
 

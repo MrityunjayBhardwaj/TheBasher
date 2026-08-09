@@ -29,6 +29,7 @@ import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op, SocketId } from '../core/dag/types';
+import { acceptedTypes, inputAccepts } from '../core/dag/types';
 import { chainSocketOf, isDataLaneOperator, resolveOperatorBase } from './operatorChain';
 import { enumerateModifierStack } from './operatorStack';
 
@@ -141,8 +142,14 @@ describe('#396 — the chain spine is declared, not named', () => {
         offenders.push(`${type}: declares a chainInput but has no 'out' output`);
         continue;
       }
-      if (inDesc.type !== outDesc.type) {
-        offenders.push(`${type}: spine '${spine}' is ${inDesc.type} but 'out' is ${outDesc.type}`);
+      // #609 — MEMBERSHIP: a spine may accept a SET of types, and the rule the census
+      // states is that the operator's own output type is one the spine takes. Equality
+      // here would read FALSE for a set-valued spine while still compiling, silently
+      // reporting every such operator as an offender.
+      if (!inputAccepts(inDesc, outDesc.type)) {
+        offenders.push(
+          `${type}: spine '${spine}' accepts ${acceptedTypes(inDesc).join('|')} but 'out' is ${outDesc.type}`,
+        );
       }
     }
     expect(offenders).toEqual([]);
