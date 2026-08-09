@@ -46,22 +46,25 @@
 // exactly the frozen-picture bug that function's own comment describes. Perturbing the
 // fixture instead would only have shown that this file reads its own inputs.
 //
-//   ARM 1 — it reds, at the CARRYING assertion.  The annulus at size 3 read
-//     (15.6, 16.0, 21.6) — the background, to within a pixel of the documented (16,16,22).
-//     The extent never moved. The failure frame is the subject assertion below, not a
-//     fixture or precondition frame, which is the difference between a red that means
-//     something and a red that means the harness broke.
+//   ARM 1 — IT REDS.  First measured at the annulus assertion, which read (15.6, 16.0, 21.6)
+//     — the background, within a pixel of the documented (16,16,22). Since #603 the cooked-
+//     width wait reaches that state FIRST and fails there instead, naming the cook directly.
+//     Earlier and more specific, and worth knowing that the two are not redundant: the wait
+//     reads the SCENE GRAPH, the annulus reads the PICTURE. A build that cooks width 3 and
+//     still draws the old buffers — the shared-instance class p530/p533 exists for — passes
+//     the wait and reds the annulus. Neither subsumes the other.
 //
-//   ARM 2 — the centre-point tier stays GREEN through the identical break.  Both presence
-//     assertions passed on that same run; execution reached the annulus line, which sits
-//     after them. So a centre-point-only gate certifies this broken build.
+//   ARM 2 — THE CENTRE-POINT TIER IS BLIND TO THE SAME EXTENT CHANGE, and this is the arm
+//     that matters: arm 1 alone proves only that the gate is connected to something.
+//     The standing proof is the `centreDelta` assertion below, which every passing run
+//     measures at 0.0 across a 1→3 extent change. That is asserted on every run rather than
+//     observed once, which is the strongest form this claim can take.
+//     ⚠️ It was previously argued from "both presence assertions passed under the break".
+//     That evidence is GONE — since #603 the run stops at the wait and never reaches them.
+//     The `centreDelta` assertion is the whole of arm 2 now; do not restate the old form.
 //
-// That pair is the whole claim. Arm 1 alone would only prove the gate is connected to
-// something; it is arm 2 that proves this tier is genuinely UNCOVERED rather than a second
-// copy of p568. Re-run both if this file's assertions are ever loosened.
-//
-// (Green → red → green on one tree, probe reverted by inverse edit; the passing runs either
-// side reported an identical 3028 changed pixels and a centre delta of 0.0.)
+// (Green → red → green on one tree each time, probe reverted by inverse edit; the passing
+// runs either side reported an identical 3028 changed pixels and a centre delta of 0.0.)
 //
 // REF: issue #581 (this gate), #575 (the thread it was started for), #568 / the file above
 //      (the tier this sits beside), `src/test-utils/splitKinds.ts` (why `size` is not
@@ -304,6 +307,66 @@ async function changedPixels(
 
 const isSubject = (c: RGB) => c.r > c.g + 40 && c.r > c.b + 40;
 
+/**
+ * Wait for the SUBJECT'S COOKED GEOMETRY to carry `want` as its built width (#603).
+ *
+ * Waiting on a clock guesses how long the app takes; this waits on the thing actually being
+ * waited for. A box built by the registry is a `BoxGeometry`, which records its build
+ * arguments on `parameters` — so the cooked extent can be read directly, exactly, and
+ * WITHOUT touching the instance.
+ *
+ * That last point is deliberate. The obvious alternative — compute a bounding box — writes a
+ * lazily-filled cache onto a geometry the registry SHARES between refs. `geometryRegistry`'s
+ * read door names three production sites that already do this and explains that they are
+ * benign only because `boundingBox` is an idempotent derived cache, which is a property of
+ * that field rather than of the door. A test has no business quietly becoming the fourth.
+ *
+ * The traverse filters on "carries a built width", not on `isMesh`: a holder is whatever
+ * holds the thing, and this file already says elsewhere why picking by node type is how a
+ * sibling gate came to certify a helper's child line.
+ */
+async function waitForCookedWidth(
+  page: import('@playwright/test').Page,
+  want: number,
+): Promise<void> {
+  try {
+    await page.waitForFunction(
+      ({ obj, w: target }) => {
+        const win = window as unknown as UiWindow;
+        const { scene } = win.__basher_three.getState() as {
+          scene: { getObjectByName: (n: string) => unknown } | null;
+        };
+        const grp = scene?.getObjectByName(obj) as
+          | { traverse: (cb: (o: unknown) => void) => void }
+          | undefined;
+        if (!grp) return false;
+        let hit = false;
+        grp.traverse((o) => {
+          const width = (o as { geometry?: { parameters?: { width?: number } } }).geometry
+            ?.parameters?.width;
+          if (typeof width === 'number' && Math.abs(width - target) < 1e-3) hit = true;
+        });
+        return hit;
+      },
+      { obj: OBJ, w: want },
+      { timeout: 15_000 },
+    );
+  } catch {
+    throw new Error(
+      `waited 15s for the subject's cooked geometry to reach width ${want} and it never did. Either the overlay is not reaching the cook, or the subject's geometry is no longer a BoxGeometry carrying build parameters (in which case this wait needs a new observable, not a longer timeout).`,
+    );
+  }
+  // The scene graph can hold the new geometry a frame before the canvas shows it. Two
+  // animation frames is a deterministic settle tied to the render loop rather than a guess
+  // at how long it takes.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+}
+
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
   const layout = page.getByTestId('layout');
@@ -335,13 +398,33 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
     },
     subjectOps(sceneNode) as unknown,
   );
-  await page.waitForTimeout(900);
+  // The subject's group must reach the live scene before anything is projected through it.
+  // Waiting for the group by NAME rather than for a duration also makes a fixture that
+  // silently failed to dispatch fail HERE, with a message, instead of downstream as a
+  // confusing null projection.
+  try {
+    await page.waitForFunction(
+      (obj) => {
+        const w = window as unknown as UiWindow;
+        const { scene } = w.__basher_three.getState() as {
+          scene: { getObjectByName: (n: string) => unknown } | null;
+        };
+        return Boolean(scene?.getObjectByName(obj));
+      },
+      OBJ,
+      { timeout: 15_000 },
+    );
+  } catch {
+    throw new Error(
+      `the fixture dispatched but no group named ${OBJ} ever reached the live scene — the subject was never built, so every assertion below would be about an empty frame.`,
+    );
+  }
 
-  const at = async (seconds: number) => {
+  const at = async (seconds: number, cookedWidth: number) => {
     await page.evaluate((s) => {
       (window as unknown as UiWindow).__basher_time.getState().setTime(s);
     }, seconds);
-    await page.waitForTimeout(600);
+    await waitForCookedWidth(page, cookedWidth);
 
     const centre = await projectWorld(page, [0, 0, 0]);
     const annulus = await projectWorld(page, [PROBE_D, 0, 0]);
@@ -364,8 +447,8 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
     };
   };
 
-  const small = await at(0);
-  const large = await at(2);
+  const small = await at(0, SIZE_SMALL);
+  const large = await at(2, SIZE_LARGE);
 
   // ── THE PRESENCE CONTROL, first, in the same case ────────────────────────────────────
   //
