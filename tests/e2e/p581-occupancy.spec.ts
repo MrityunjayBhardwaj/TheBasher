@@ -39,6 +39,30 @@
 // Measured while writing it: centre reads (144,0,6) at size 1 and (144,0,6) at size 3 —
 // identical — while the annulus probe goes (16,16,22) → (156,0,9).
 //
+// ── FALSIFIED AGAINST A BROKEN BUILD, and both arms came from ONE perturbation ─────────
+//
+// The perturbation was PRODUCTION, not the fixture: `overlayWithIdentity.ts` line ~272,
+// `rebuildGeometryRef(ref, written)` → `ref`, which neuters the handle repair and reproduces
+// exactly the frozen-picture bug that function's own comment describes. Perturbing the
+// fixture instead would only have shown that this file reads its own inputs.
+//
+//   ARM 1 — it reds, at the CARRYING assertion.  The annulus at size 3 read
+//     (15.6, 16.0, 21.6) — the background, to within a pixel of the documented (16,16,22).
+//     The extent never moved. The failure frame is the subject assertion below, not a
+//     fixture or precondition frame, which is the difference between a red that means
+//     something and a red that means the harness broke.
+//
+//   ARM 2 — the centre-point tier stays GREEN through the identical break.  Both presence
+//     assertions passed on that same run; execution reached the annulus line, which sits
+//     after them. So a centre-point-only gate certifies this broken build.
+//
+// That pair is the whole claim. Arm 1 alone would only prove the gate is connected to
+// something; it is arm 2 that proves this tier is genuinely UNCOVERED rather than a second
+// copy of p568. Re-run both if this file's assertions are ever loosened.
+//
+// (Green → red → green on one tree, probe reverted by inverse edit; the passing runs either
+// side reported an identical 3028 changed pixels and a centre delta of 0.0.)
+//
 // REF: issue #581 (this gate), #575 (the thread it was started for), #568 / the file above
 //      (the tier this sits beside), `src/test-utils/splitKinds.ts` (why `size` is not
 //      observable on the read side).
