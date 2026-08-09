@@ -152,12 +152,20 @@ export interface OutputDescriptor {
  * ⚠️ A SET IS NOT COERCION. `Number | Vector3` means the role receives whichever
  * was wired, UNCONVERTED — the consumer still discriminates at read time. It does
  * NOT mean a Number is broadcast to a Vector3. Conflating the two is how a type
- * system starts lying in a second way (#609 states this out of scope explicitly),
- * and the reference substrates are no help here: both were checked and BOTH avoid
- * the union by loosening the TYPE SYSTEM rather than the socket (Houdini gives SOP
- * inputs a single geometry class; Blender converts implicitly at link time). We
- * have no source for either node-socket type system downloaded, so that reading is
- * UNGROUNDED and is recorded as motivation, never as precedent.
+ * system starts lying in a second way, and #609 ruled it out of scope.
+ *
+ * THAT RULING NOW HAS A REASON FROM SOURCE (#616). Blender declares exactly ONE
+ * type per socket (`SocketDeclaration.socket_type`, a scalar enum) and solves this
+ * same problem — one role, several incoming types — by IMPLICIT CONVERSION at the
+ * link, with `float → float3` registered in its conversion table. So a set-valued
+ * socket has no Blender precedent and our divergence is deliberate: their
+ * conversions are lossy and directional (`float_to_bool`, `float_to_int`), and a
+ * driver that broadcast a Number to `[n, n, n]` would silently drive all three axes
+ * of a Vector3 target. We need to KNOW which type arrived. That is acceptance.
+ * ⚠️ `is_multi_input` in Blender is multiple LINKS, not multiple types — it is our
+ * `cardinality: 'list'`, and it is the thing a reader mistakes for a union.
+ * Houdini stays OPAQUE (no public source); any claim about it here is recall.
+ * Full trace with file:line: `ref/GROUND_TRUTH_BLENDER_NODE_SOCKET_TYPING.md`.
  *
  * ⚠️ READ THIS THROUGH `inputAccepts`/`acceptedTypes`, NEVER `desc.type ===`.
  * This is the one hazard the widening introduces and the compiler does NOT catch:
