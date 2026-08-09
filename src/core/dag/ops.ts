@@ -16,7 +16,7 @@ import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
 import type { InputBinding, Node, NodeRef, Op } from './types';
-import { OpSchema, SpareParamSchema } from './types';
+import { acceptedTypes, inputAccepts, OpSchema, SpareParamSchema } from './types';
 
 export class OpError extends Error {
   constructor(
@@ -211,9 +211,12 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   if (!outputDesc) {
     throw new OpError(`connect: ${producer.type} has no output socket '${op.from.socket}'`, op);
   }
-  if (inputDesc.type !== outputDesc.type) {
+  // #609 — MEMBERSHIP, not equality: an input socket may accept a SET of types.
+  // The message names the whole accepted set, so a rejection says what WOULD have
+  // been taken rather than only what was offered.
+  if (!inputAccepts(inputDesc, outputDesc.type)) {
     throw new OpError(
-      `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${inputDesc.type}`,
+      `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}`,
       op,
     );
   }
