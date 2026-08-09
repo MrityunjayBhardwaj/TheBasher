@@ -25,7 +25,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Node, NodeId } from '../../core/dag/types';
 import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
 import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
-import { isDataLaneOperator } from '../../app/operatorChain';
+import { chainSocketOf, isDataLaneOperator } from '../../app/operatorChain';
 
 const DEFAULT_MAX_DEPTH = 256;
 
@@ -215,7 +215,13 @@ function visitEdge(
  */
 function socketCarriesKind(socket: string, kind: EdgeKind, node: Node): boolean {
   if (socket === kind) return true;
-  return kind === 'data' && socket === 'target' && isDataLaneOperator(node);
+  // #396 — "the rest of the way down is spelled `target`" is now asked of the operator
+  // instead of assumed: the walk extends along the node's DECLARED chain socket. Still
+  // deliberately narrow — an operator's ARGUMENT (a cutter, a material) does NOT extend
+  // the closure, because a closure is a permission scope and widening it weakens the
+  // guard it exists to be. An argument that genuinely needs to be in scope is a separate
+  // decision with its own evidence, not a side effect of this change.
+  return kind === 'data' && socket === chainSocketOf(node) && isDataLaneOperator(node);
 }
 
 function enqueue(

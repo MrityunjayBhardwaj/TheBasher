@@ -64,6 +64,14 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     material: { type: 'Material', cardinality: 'list' },
   },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
+  // #396 — THE FIRST NODE WHERE THIS DECLARATION IS LOAD-BEARING RATHER THAN CEREMONIAL.
+  // This operator is already binary: `target` is the spine the stack walks, `material`
+  // is an ARGUMENT the graph wires and the stack steps past. Until now the walkers got
+  // that right by accident — `Material` is not `ObjectData`, so the argument was never
+  // a candidate for a walk that matched on the socket NAME. Declaring the spine is what
+  // makes it right on purpose, and what keeps it right for an argument that DOES share
+  // the spine's type (a boolean cutter, a capture-pose skeleton).
+  chainInput: 'target',
   // NO inspector section, and that is the reference's own answer rather than a gap.
   // Blender's Material Properties panel is Slot List → Data-Block row → Link selector
   // (`render/materials/assignment.rst:19-101`); its `Set Material` is a GEOMETRY NODES

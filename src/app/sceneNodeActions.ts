@@ -8,20 +8,24 @@ import type { DagState } from '../core/dag/state';
 import type { Node, NodeId, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { idRefSweep, subjectReferrersInto, remapIdRefs } from '../core/dag/idRefSweep';
+import { chainSocketOf } from './operatorChain';
 
 /**
- * #432 — a WRAPPER node consumes its subject through a `target` EDGE and re-exposes
- * it via `out`: Transform, MaterialOverride, ArrayModifier, MirrorModifier,
- * ColorCorrect. Derived from the registry (declares BOTH a `target` input and an
- * `out` output), NOT a hardcoded type list — a new wrapper is covered by declaring
- * those sockets, and the id-reference nodes (KeyframeChannel / TrackTo / … name their
- * target in `params.target`, no edge) plus any future edge-`target` constraint (no
- * `out`) are correctly excluded.
+ * #432 — a WRAPPER node consumes its subject through a chain EDGE and re-exposes it
+ * via `out`: Transform, MaterialOverride, ArrayModifier, MirrorModifier, ColorCorrect,
+ * SetMaterialOp, MaterialOverrideOp. Derived from the registry, NOT a hardcoded type
+ * list — the id-reference nodes (KeyframeChannel / TrackTo / … name their target in
+ * `params.target`, no edge) plus any future edge-target constraint (no `out`) are
+ * correctly excluded.
+ *
+ * #396 — it now asks for the node's DECLARED spine rather than testing for a socket
+ * literally named `target`. Same set today, because every wrapper spells its spine that
+ * way; the difference is which question is being asked, and only one of the two keeps
+ * meaning the right thing for a wrapper whose subject arrives on a differently-named
+ * socket — or which has a SECOND same-typed input that is an argument, not a subject.
  */
 function isTargetWrapperNode(node: Node | undefined): boolean {
-  if (!node) return false;
-  const def = getNodeType(node.type);
-  return !!def && 'target' in def.inputs && 'out' in def.outputs;
+  return !!chainSocketOf(node) && !!getNodeType(node!.type)?.outputs['out'];
 }
 
 /** First node+input-socket consuming `(producerId, 'out')`, or null. Linear-chain
@@ -170,7 +174,10 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   for (const nodeId of allIds) {
     const node = state.nodes[nodeId];
     if (!isTargetWrapperNode(node)) continue;
-    const subject = refsOf(node!.inputs?.target)[0];
+    // The SUBJECT rides the spine. Reading it by the name `target` would, on a wrapper
+    // with a second same-typed input, be a coin-flip between the subject and an
+    // argument — and reconnecting the wrong one is a silent rewire (#396).
+    const subject = refsOf(node!.inputs?.[chainSocketOf(node)!])[0];
     // Subject also being deleted → nothing to keep alive.
     if (!subject?.node || idSet.has(subject.node)) continue;
     const consumer = survivingConsumerAbove(state, nodeId, idSet);
@@ -340,7 +347,7 @@ export function buildDuplicateNodeOps(
       nodeType: r.type,
       params: remapIdRefs(r, (id) => idMap.get(id) ?? id),
     });
-    // A ParamDriver carries a WIRED source edge (`in` / `inVec`); rewire it like any
+    // A ParamDriver carries a WIRED source edge (`in`); rewire it like any
     // other input — shared with the original unless it fell inside the clone. The
     // pure-sidecar referrers (channels, constraints, strips) have `inputs: {}`, so
     // this loop is empty for them.

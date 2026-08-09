@@ -120,7 +120,7 @@ describe('buildSpringOps — the Spring preset (S, #300)', () => {
     // The vec driver targets the box position, wired to the Solver's outVec.
     const driver = next.nodes['sp_driver'];
     expect((driver.params as { target?: string; paramPath?: string }).target).toBe(BOX_ID);
-    expect(driver.inputs.inVec).toEqual({ node: 'sp_solver', socket: 'outVec' });
+    expect(driver.inputs.in).toEqual({ node: 'sp_solver', socket: 'outVec' });
     expect(driverNodesForTarget(next.nodes, BOX_ID).map((d) => d.id)).toContain('sp_driver');
   });
 

@@ -43,6 +43,9 @@ export const ColorCorrectNode: NodeDefinition<ColorCorrectParams, ImageValue> = 
   cost: 'cheap',
   paramSchema: ColorCorrectParams,
   inputs: { target: { type: 'Image', cardinality: 'single' } },
+  // #396 — the spine of the EFFECT chain. Third lane, third socket type, one concept:
+  // the effect stack walks this the way the modifier stack walks a modifier's.
+  chainInput: 'target',
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['effect'],
   evaluate(params, inputs): ImageValue {

@@ -131,9 +131,94 @@ export type SocketTypeName =
 
 export type Cardinality = 'single' | 'list';
 
-export interface TypeDescriptor {
+/**
+ * What a PRODUCER emits on an output socket: exactly one type. A producer that
+ * could emit either of two types is a different node, not a wider socket.
+ */
+export interface OutputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
+}
+
+/**
+ * What a CONSUMER accepts on an input socket: one type, or a SET of them (#609).
+ *
+ * WHY THE TWO DESCRIPTORS ARE NOT ONE. They were the same interface, so the
+ * connect gate was a SYMMETRIC comparison (`inputDesc.type !== outputDesc.type`)
+ * for a relation that is not symmetric. An output HAS a type; an input ACCEPTS
+ * types. Once that asymmetry is stated, "one role, several accepted types"
+ * becomes sayable and the gate becomes a membership test.
+ *
+ * ⚠️ A SET IS NOT COERCION. `Number | Vector3` means the role receives whichever
+ * was wired, UNCONVERTED — the consumer still discriminates at read time. It does
+ * NOT mean a Number is broadcast to a Vector3. Conflating the two is how a type
+ * system starts lying in a second way, and #609 ruled it out of scope.
+ *
+ * THAT RULING NOW HAS A REASON FROM SOURCE (#616). Blender declares exactly ONE
+ * type per socket (`SocketDeclaration.socket_type`, a scalar enum) and solves this
+ * same problem — one role, several incoming types — by IMPLICIT CONVERSION at the
+ * link, with `float → float3` registered in its conversion table. So a set-valued
+ * socket has no Blender precedent and our divergence is deliberate: their
+ * conversions are lossy and directional (`float_to_bool`, `float_to_int`), and a
+ * driver that broadcast a Number to `[n, n, n]` would silently drive all three axes
+ * of a Vector3 target. We need to KNOW which type arrived. That is acceptance.
+ * ⚠️ `is_multi_input` in Blender is multiple LINKS, not multiple types — it is our
+ * `cardinality: 'list'`, and it is the thing a reader mistakes for a union.
+ * Houdini stays OPAQUE (no public source); any claim about it here is recall.
+ * Full trace with file:line: `ref/GROUND_TRUTH_BLENDER_NODE_SOCKET_TYPING.md`.
+ *
+ * ⚠️ READ THIS THROUGH `inputAccepts`/`acceptedTypes`, NEVER `desc.type ===`.
+ * This is the one hazard the widening introduces and the compiler does NOT catch:
+ * `desc.type === 'ObjectData'` still type-checks against the union — the two sides
+ * overlap — and silently reads FALSE for a set-valued socket. Every predicate that
+ * asked the question that way has been folded onto these helpers, with two residuals
+ * that are deliberate:
+ *   • `test-utils/splitKinds.ts` re-spells the membership test inline. Forced, not
+ *     chosen — a gate in its own spec forbids a VALUE import of `core/dag` there, so
+ *     it cannot call this function. The two answers are held together by an AGREEMENT
+ *     gate in `splitKinds.registry.test.ts`, which runs both over synthetic set-valued
+ *     defs the registry does not contain (#615). Do not close the gap by widening the
+ *     import rule; it is load-bearing.
+ *   • three test assertions (`materialLink`, `ParamDriver` ×2) still compare `.type`
+ *     directly, because their job IS to pin a specific declared type. They should
+ *     fail loudly if the socket they name ever becomes a set.
+ */
+/**
+ * Two or more accepted types (#614). The TUPLE shape is the point: a set of one is a
+ * second spelling of the scalar form — identical behaviour, two ways to say it, which is
+ * how a declaration comes to be read one way and written the other — and a set of none is
+ * a socket nothing can ever wire, whose rejection message names no types at all. Both are
+ * COMPILE errors at the declaration site rather than a gate failing somewhere else.
+ *
+ * DISTINCTNESS cannot be said in the type, so it is checked at registration instead; see
+ * `assertInputDescriptors` in `registry.ts`. That check is not redundant with this type:
+ * every synthetic node definition in the suite is registered through an `as never` cast,
+ * which erases exactly this constraint, so the runtime check is what covers them.
+ */
+export type AcceptedTypeSet = readonly [SocketTypeName, SocketTypeName, ...SocketTypeName[]];
+
+export interface InputDescriptor {
+  type: SocketTypeName | AcceptedTypeSet;
+  cardinality: Cardinality;
+}
+
+/**
+ * The types an input socket accepts, always as a set (one-element for the
+ * ordinary single-type socket). The one place the two spellings collapse.
+ */
+export function acceptedTypes(desc: InputDescriptor): readonly SocketTypeName[] {
+  return Array.isArray(desc.type) ? desc.type : [desc.type as SocketTypeName];
+}
+
+/**
+ * Does this input socket accept a producer emitting `produced`? Takes `undefined` —
+ * an absent socket accepts nothing — because every caller is asking about a socket
+ * looked up by name, and `?.type === 'X'` is exactly the spelling that reads FALSE
+ * on a set-valued socket while still compiling.
+ */
+export function inputAccepts(desc: InputDescriptor | undefined, produced: SocketTypeName): boolean {
+  if (!desc) return false;
+  return Array.isArray(desc.type) ? desc.type.includes(produced) : desc.type === produced;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +301,37 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * defaulted P.
    */
   paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
-  inputs: Record<SocketId, TypeDescriptor>;
-  outputs: Record<SocketId, TypeDescriptor>;
+  inputs: Record<SocketId, InputDescriptor>;
+  outputs: Record<SocketId, OutputDescriptor>;
+  /**
+   * #396 — WHICH input carries the CHAIN: the spine a stack walks down, as opposed
+   * to an ARGUMENT the graph wires and the stack steps past. Absent = this node is
+   * not a chain node at all (a leaf producer, a poser, a sink).
+   *
+   * WHY IT HAS TO BE DECLARED RATHER THAN DERIVED. Basher is a Blender-shaped
+   * modifier stack over a Houdini-shaped network, and the two references answer this
+   * differently: Houdini makes input 0 the spine POSITIONALLY (inputs are ordered, so
+   * no declaration is needed), while Blender's geometry-node graph has no spine at all
+   * and its modifier stack is unary by construction — a second operand there is an
+   * OBJECT POINTER, never a stack member. Our sockets are a NAMED record, so the
+   * positional answer is unavailable, and we need the stack surface anyway. Naming the
+   * spine is the one form that serves both: the stack reads it, the graph ignores it.
+   *
+   * The concept already existed — it was just spelled five times and declared nowhere:
+   * `const TARGET = 'target'` in `operatorChain.ts` AND `operatorStack.ts`, a third
+   * shape test in `sceneNodeActions.ts` (`'target' in def.inputs && 'out' in
+   * def.outputs`), a fourth in `test-utils/splitKinds.ts`, and `exposeParams.ts`'s
+   * `CHAIN_SOCKETS`, which names the concept out loud. Each was independently correct
+   * while every operator happened to spell its spine `target`. The first operator with
+   * a second same-typed input breaks that coincidence silently: it registers, connects
+   * and evaluates, and every one of those five walkers keeps addressing whichever
+   * socket is called `target` — measured, not predicted (see the spec).
+   *
+   * The type rule rides on this too. "An operator's output type equals its input type"
+   * was only ever true of the SPINE; argument roles carry their own types and are
+   * exempt. Stating the spine is what makes that sentence checkable.
+   */
+  chainInput?: SocketId;
   /**
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input

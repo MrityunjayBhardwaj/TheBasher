@@ -19,8 +19,11 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, snapshotRegistry } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
+import { inputAccepts } from '../core/dag/types';
+import type { InputDescriptor } from '../core/dag/types';
 import {
   isDataKindDef,
+  isDataOperatorDef,
   OBJECT_SECTIONS,
   SPLIT_KINDS,
   SPLIT_KIND_NAMES,
@@ -112,10 +115,15 @@ describe('the split-kind registry gate', () => {
     const withBoth = {
       ...snapshotRegistry(),
       // A modifier-shaped node: the same socket type on both sides, which is exactly
-      // what makes it stackable and exactly why it is not a KIND of data.
+      // what makes it stackable and exactly why it is not a KIND of data. #396 — it
+      // must NOMINATE that socket as its chain; being shaped like an operator is no
+      // longer enough to be treated as one, and this fixture stating so is the point
+      // rather than a chore. A synthetic def that forgot to declare a spine is exactly
+      // the real-registry mistake the exact-set census in chainSpine.test.ts guards.
       SubdivideModifier: {
         inputs: { target: { type: 'ObjectData' } },
         outputs: { out: { type: 'ObjectData' } },
+        chainInput: 'target',
       },
       TeapotData: { outputs: { out: { type: 'ObjectData' } } },
     };
@@ -268,6 +276,88 @@ describe('the split-kind registry gate', () => {
           `pass this fixture`,
       ).not.toEqual(def);
     }
+  });
+
+  it("AGREEMENT: the inline membership test matches the DAG's `inputAccepts` (#615)", () => {
+    // "Does this input socket accept type T?" is answered in TWO places — `inputAccepts`
+    // in core/dag/types.ts, and two lines re-spelled inside `isDataOperatorDef`.
+    //
+    // THE SECOND COPY IS FORCED, NOT CHOSEN, and the reason is the gate directly below
+    // this one: `splitKinds.ts` may not VALUE-import `core/dag`, because e2e specs import
+    // that descriptor and doing so would drag the whole DAG module graph into Playwright.
+    // ⚠️ Do not "fix" the duplication by widening that rule — it is load-bearing. What was
+    // missing is anything that would notice the two answers drifting apart.
+    //
+    // A sweep over the registry ALONE cannot notice it. The only set-valued socket that
+    // exists is `ParamDriver.in`, which is not on the data lane and which this predicate
+    // never looks at — so both copies could stop handling sets entirely and every fixture
+    // in the suite would still agree. The synthetic defs below are the whole point: they
+    // are the population the registry does not contain.
+    const reference = (def: DataLaneDef): boolean => {
+      const spine = def?.chainInput;
+      if (!spine) return false;
+      return (
+        inputAccepts(def?.inputs?.[spine] as InputDescriptor | undefined, 'ObjectData') &&
+        def?.outputs?.out?.type === 'ObjectData'
+      );
+    };
+
+    const OUT_DATA = { out: { type: 'ObjectData' } };
+    const probes: { name: string; def: DataLaneDef }[] = [
+      // The shapes that exist today, so a drift on the ordinary road is caught too.
+      ...Object.entries(snapshotRegistry()).map(([name, def]) => ({
+        name,
+        def: def as unknown as DataLaneDef,
+      })),
+      // …and the set-valued shapes that do not.
+      {
+        name: 'synthetic: spine accepts a set INCLUDING ObjectData',
+        def: {
+          chainInput: 'target',
+          inputs: { target: { type: ['Mesh', 'ObjectData'] } },
+          outputs: OUT_DATA,
+        },
+      },
+      {
+        name: 'synthetic: spine accepts a set EXCLUDING ObjectData',
+        def: {
+          chainInput: 'target',
+          inputs: { target: { type: ['Mesh', 'SceneObject'] } },
+          outputs: OUT_DATA,
+        },
+      },
+      {
+        name: 'synthetic: ObjectData is the FIRST member',
+        def: {
+          chainInput: 'target',
+          inputs: { target: { type: ['ObjectData', 'Mesh'] } },
+          outputs: OUT_DATA,
+        },
+      },
+      {
+        name: 'synthetic: scalar spine, the ordinary form',
+        def: {
+          chainInput: 'target',
+          inputs: { target: { type: 'ObjectData' } },
+          outputs: OUT_DATA,
+        },
+      },
+      {
+        name: 'synthetic: spine names a socket that is not declared',
+        def: { chainInput: 'missing', inputs: {}, outputs: OUT_DATA },
+      },
+    ];
+
+    const disagreements = probes
+      .filter(({ def }) => isDataOperatorDef(def) !== reference(def))
+      .map(({ name }) => name);
+    expect(disagreements).toEqual([]);
+
+    // Guard the guard: the synthetic probes must actually EXERCISE both answers, or this
+    // agrees vacuously the way any two functions agree on an empty domain.
+    const synthetic = probes.filter((p) => p.name.startsWith('synthetic'));
+    expect(synthetic.filter((p) => isDataOperatorDef(p.def)).length).toBeGreaterThan(0);
+    expect(synthetic.filter((p) => !isDataOperatorDef(p.def)).length).toBeGreaterThan(0);
   });
 
   it('the descriptor stays free of the DAG graph so e2e specs can import it', () => {

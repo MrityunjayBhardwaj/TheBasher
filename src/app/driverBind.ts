@@ -34,10 +34,6 @@ export type DriverSource =
       id: string;
       label: string;
       ref: NodeRef;
-      /** The source socket's value type. Absent = 'Number' (the scalar road → driver
-       *  `in`, byte-identical). 'Vector3' → the vec road (driver `inVec`), for a
-       *  Vector3 target. */
-      socketType?: 'Number' | 'Vector3';
     }
   | { kind: 'spare'; id: string; label: string; node: string; key: string }
   // #296 — a transform CHANNEL of a controller (a Null): the primary controller road
@@ -171,9 +167,9 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
     // single-driver bind; the UI routes it there. Never bound through this builder.
     return { ok: false, reason: 'spring is authored via buildSpringOps' };
   }
-  // A Vector3 source drives a Vector3 target through the driver's `inVec` socket; a
-  // Number source through `in`. The driver's evaluate picks the road by which is wired.
-  const socket = source.socketType === 'Vector3' ? 'inVec' : 'in';
+  // #609 — ONE socket for both: `in` accepts Number or Vector3. The driver's evaluate
+  // picks the road by the resolved VALUE's shape, which is what decided it all along;
+  // the bind no longer has to know the source's type to know where to wire it.
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -184,7 +180,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
     {
       type: 'connect',
       from: source.ref,
-      to: { node: driverId, socket },
+      to: { node: driverId, socket: 'in' },
     },
   ];
   return { ok: true, ops };
@@ -257,7 +253,8 @@ export function driverSourceOptions(
   targetId: string,
   /** The target param's value type. 'number' (default) offers scalar sources (Number
    *  outputs + numeric spares + transform channels); 'vec3' offers Vector3 outputs (a
-   *  vector compute chain), which bind through the driver's `inVec` socket. */
+   *  vector compute chain). Both kinds bind through the driver's single `in` socket
+   *  since #609 — this selects what is OFFERED, no longer where it lands. */
   targetKind: 'number' | 'vec3' = 'number',
 ): DriverSource[] {
   const out: DriverSource[] = [];
@@ -274,7 +271,6 @@ export function driverSourceOptions(
           id: `out:${node.id}:${socket}`,
           label: `${label} (${node.type})`,
           ref: { node: node.id, socket },
-          ...(wantType === 'Vector3' ? { socketType: 'Vector3' as const } : {}),
         });
       }
     }

@@ -79,9 +79,10 @@ function singleInputRef(node: NodeLike, socket: string): { node?: string } | und
  * any future stateful op wired into a driver replays through the same path.
  */
 export function statefulSourceOf(driverNode: NodeLike, state: DagState): Node | null {
-  // A stateful op can drive a scalar target (wired `in`) OR a Vector3 target (wired
-  // `inVec`, S #300 — a vec Solver/spring driving a position). Check both roads.
-  const srcId = singleInputRef(driverNode, 'in')?.node ?? singleInputRef(driverNode, 'inVec')?.node;
+  // A stateful op can drive a scalar target OR a Vector3 target (S #300 — a vec
+  // Solver/spring driving a position). Both arrive on the same `in` socket since #609,
+  // so there is one road to check rather than two that had to be kept in sync.
+  const srcId = singleInputRef(driverNode, 'in')?.node;
   if (!srcId) return null;
   const src = state.nodes[srcId];
   if (!src) return null;

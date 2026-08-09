@@ -60,6 +60,10 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   paramSchema: ArrayModifierParams,
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
+  // #396 — the spine the modifier stack walks down. Unary today, so this names the
+  // only input; it is declared anyway because the walkers now READ it rather than
+  // assuming the name `target`.
+  chainInput: 'target',
   inspectorSections: ['modifier'],
   home: {
     count: 'modifier',

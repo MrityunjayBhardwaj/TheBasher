@@ -100,7 +100,7 @@ export const ParamDriverParams = z.object({
    *  a Vector3 target (an object's position, an aim). The scalar `sourceTransform` reads
    *  ONE channel; this reads the whole position vector. Resolved in the enumeration seam
    *  via `resolveEvaluatedTransform` (the EVALUATED position, so an animated / gizmo-
-   *  dragged controller drives correctly), NOT through `inVec`. Optional so other drivers
+   *  dragged controller drives correctly), NOT through the wired `in`. Optional so other drivers
    *  serialize byte-identical. */
   sourceTransformVec: z.object({ node: z.string() }).optional(),
 });
@@ -184,8 +184,9 @@ export function makeParamDriverVec3ChannelValue(
   return makeParamDriverVec3ChannelValueFn(params, () => value);
 }
 
-/** A runtime Vec3 guard for the `inVec` road (a wired Vector3 output resolves to a
- *  3-number array). Anything else falls through to the scalar `in` road. */
+/** A runtime Vec3 guard for the vec road (a wired Vector3 output resolves to a 3-number
+ *  array). Anything else falls through to the scalar road. This shape test was ALWAYS
+ *  the real discriminator — the second socket only ever agreed with it (#609). */
 function asVec3(v: unknown): Vec3 | null {
   return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number')
     ? [v[0], v[1], v[2]]
@@ -215,28 +216,41 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   // Track-To keeps the Constraints panel. Without this the stack would vanish the moment
   // you clicked a row in it.
   inspectorSections: ['driver'],
-  // Two wired source roads, discriminated by the target param's type: `in` (a scalar
-  // compute output) drives a Number param; `inVec` (a Vector3 compute output) drives a
-  // Vector3 param (a position / aim). A bind wires exactly one; evaluate picks by which
-  // is present. The edge-less spare/transform roads live in the seam, not here.
+  // ONE wired source road accepting EITHER type (#609). This was two sockets — `in:
+  // Number` and `inVec: Vector3` — for a single logical role: "the computed value this
+  // driver overlays". A bind wired exactly one, and `evaluate` picked whichever was
+  // present, so the pair was never two inputs; it was one input the socket model could
+  // not describe. The cost was not the two lines here, it was that this node REPORTED
+  // an arity of two to everything reasoning generically over inputs, and that the
+  // precedence rule ("the Vector3 road wins") had to be re-spelled at seven call sites
+  // that each had to know both names.
+  //
+  // The road is now chosen by the VALUE's shape, which is what actually decided it all
+  // along — `asVec3` was already the guard, and the socket merely agreed with it.
+  // Accepting two types is NOT coercion: a Number arrives a Number.
   inputs: {
-    in: { type: 'Number', cardinality: 'single' },
-    inVec: { type: 'Vector3', cardinality: 'single' },
+    in: { type: ['Number', 'Vector3'], cardinality: 'single' },
   },
   // Introspection-only output (like Constraint/Strip/Track): the driver is enumerated
   // + overlay-resolved by the target's followers, never wired into the render graph.
   outputs: { out: { type: 'Number', cardinality: 'single' } },
   evaluate: (params, inputs): KeyframeChannelValue => {
-    // The Vector3 road wins when `inVec` is wired (a Vec3 value) — it folds a vec3
+    // The Vector3 road wins when `in` resolved to a Vec3 value — it folds a vec3
     // channel onto a Vector3 target. Otherwise the scalar road: the evaluator resolves
     // `in` by walking the compute graph; an unbound driver reads 0 (parity with the
     // compute nodes' unconnected-input default). Constant over `t` for a stateless
     // compute leaf → H40. A spare/transform-sourced driver reads 0 HERE — its real
     // value is resolved in the paramDrivers seam (evaluate cannot see another node's
     // spare or a controller's evaluated transform).
-    const vec = asVec3(inputs.inVec);
+    const vec = asVec3(inputs.in);
     if (vec) return makeParamDriverVec3ChannelValue(params, vec);
-    const value = (inputs.in as number | undefined) ?? 0;
+    // NON-NUMERIC READS 0, and the guard is load-bearing since #609. While the vec road
+    // had its own socket, a malformed Vector3 left the scalar socket's real number to
+    // fall back to. With one socket there is nothing behind it, so an unrecognised
+    // payload would be cast straight to `number` and folded as garbage. Reading 0 is the
+    // convention the spare road already uses for the same situation.
+    const raw = inputs.in;
+    const value = typeof raw === 'number' && Number.isFinite(raw) ? raw : 0;
     return makeParamDriverChannelValue(params, value);
   },
 };

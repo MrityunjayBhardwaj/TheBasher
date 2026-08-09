@@ -60,6 +60,7 @@ import {
   type SectionCtx,
 } from './inspectorSectionBody';
 import {
+  chainSocketOf,
   isDataLaneOperator,
   isMaterialLaneOperator,
   isPoserNode,
@@ -466,9 +467,24 @@ function refKeysOf(node: Node): ReadonlySet<string> {
   return meta ? new Set(Object.keys(meta)) : new Set<string>();
 }
 
-/** The sockets that carry the chain itself, which must never be followed as if they were
- *  linked producers — they ARE the chain, and are walked as such. */
-const CHAIN_SOCKETS: ReadonlySet<string> = new Set(['data', 'target', 'out']);
+/** The POSER's chain socket (`data`) plus `out`, which must never be followed as if they
+ *  were linked producers — they ARE the chain, and are walked as such.
+ *
+ *  #396 — an OPERATOR's chain socket is no longer listed here, because it is no longer a
+ *  fixed name: it is whatever that node declares, and `isChainSocket` below asks it. This
+ *  set used to include `target`, which was the same claim made three files away from the
+ *  nodes it was about. What remains is the poser road, whose socket genuinely is a fixed
+ *  part of the object↔data shape rather than a per-operator choice. */
+const POSER_CHAIN_SOCKETS: ReadonlySet<string> = new Set(['data', 'out']);
+
+/** Does `socket` carry `node`'s chain (as opposed to an ARGUMENT wired into it)? The
+ *  distinction is the whole point: arguments ARE linked producers and must be followed;
+ *  the spine is the chain and must not be. Before the spine was declared these two were
+ *  told apart by name, so an operator's second same-typed input would have been dropped
+ *  from the inspector as if it were more chain. */
+function isChainSocket(node: Node, socket: string): boolean {
+  return POSER_CHAIN_SOCKETS.has(socket) || socket === chainSocketOf(node);
+}
 
 /** Producers wired into `node`'s non-chain input sockets, one hop.
  *
@@ -478,7 +494,7 @@ const CHAIN_SOCKETS: ReadonlySet<string> = new Set(['data', 'target', 'out']);
 function linkedProducers(state: DagState, node: Node): { node: Node; socket: string }[] {
   const out: { node: Node; socket: string }[] = [];
   for (const [socket, binding] of Object.entries((node.inputs ?? {}) as Record<string, unknown>)) {
-    if (CHAIN_SOCKETS.has(socket)) continue;
+    if (isChainSocket(node, socket)) continue;
     const refs = (Array.isArray(binding) ? binding : [binding]) as (NodeRef | undefined)[];
     for (const ref of refs) {
       const producer = ref?.node ? state.nodes[ref.node] : undefined;

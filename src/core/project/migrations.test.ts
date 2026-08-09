@@ -453,7 +453,7 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
     // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves)
     // → 6 (light pass, no lights) → 7 (camera split — this fixture HAS a camera)
     // → 8 (baked pass, no baked meshes).
-    expect(migrated.formatVersion).toBe(8);
+    expect(migrated.formatVersion).toBe(9);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -679,7 +679,7 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
     // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no
     // lights) → 7 (camera split — this fixture HAS a camera) → 8 (baked pass, none).
-    expect(migrated.formatVersion).toBe(8);
+    expect(migrated.formatVersion).toBe(9);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -868,7 +868,7 @@ describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#38
     const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
     // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights) → 7 (camera)
     // → 8 (baked pass, no baked meshes).
-    expect(migrated.formatVersion).toBe(8);
+    expect(migrated.formatVersion).toBe(9);
     const obj = migrated.state.nodes.n_curve;
     expect(obj.type).toBe('Object');
     const op = obj.params as Record<string, unknown>;
@@ -1098,7 +1098,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
     const m = loadFromBytes(buildFusedLightsJson());
     // 5 → 6 (light pass) → 7 (camera pass) → 8 (baked pass); this fixture has
     // neither a camera nor a baked mesh, so the last two steps are no-ops.
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
 
     // Directional → Object(pose) + LightData{lightKind, intensity, color}.
     const dir = m.state.nodes.n_dir;
@@ -1293,7 +1293,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       state: { nodes, outputs: s.outputs },
     };
     const m = loadFromBytes(mixed);
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
     // Control a — the curve split.
     expect(m.state.nodes.n_curve.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
@@ -1428,7 +1428,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     const m = loadFromBytes(buildFusedCamerasJson());
     // 6 → 7 (camera split) → 8 (baked pass, no baked meshes); this fixture has no
     // box/sphere/curve/light either.
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
 
     // Perspective → Object(pose only) + CameraData(the whole lens + the aim).
     const persp = m.state.nodes.n_persp;
@@ -1620,7 +1620,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
     };
     const m = loadFromBytes(strayOnNonCamera);
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
     expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
   });
 
@@ -1760,7 +1760,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
       state: { nodes, outputs: s.outputs },
     });
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
     // Controls — every earlier kind still splits.
     expect(m.state.nodes.n_box.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
@@ -1958,7 +1958,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
   it('splits the baked mesh: the Object inherits the id and the pose, the BakedData owns the buffer + material', () => {
     const m = loadFromBytes(buildFusedBakedMeshJson());
     // 7 → 8 (baked pass only; this fixture has no earlier fused kind).
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
 
     const obj = m.state.nodes.n_baked;
     expect(obj.type).toBe('Object');
@@ -2127,7 +2127,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       },
     };
     const m = loadFromBytes(strayOnNonBaked);
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
     expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
   });
 
@@ -2224,7 +2224,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       state: { nodes, outputs: s.outputs },
     });
     // The full chain: 2 → 3 → 4 → 5 → 6 → 7 → 8, every step doing real work.
-    expect(m.formatVersion).toBe(8);
+    expect(m.formatVersion).toBe(9);
     // Controls — every earlier kind still splits.
     expect(m.state.nodes.n_box.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
@@ -2404,7 +2404,7 @@ describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
     // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light → 7 camera → 8 baked.
-    expect(migrated.formatVersion).toBe(8);
+    expect(migrated.formatVersion).toBe(9);
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
@@ -2632,3 +2632,110 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
 //
 // The ladder itself is untouched and still load-bearing — it lives in RETIRED_LADDERS and the
 // split's normalize step runs it.
+
+// ---------------------------------------------------------------------------
+
+describe('ParamDriver v8 → v9: two source sockets collapse into one (#609)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    __reseedAllNodesForTests();
+  });
+
+  /** A v8 save whose vec driver is wired on the RETIRED `inVec` socket — the shape every
+   *  project saved before this collapse is in. `MakeVec3` is a real Vector3 producer, so
+   *  the migrated graph has to survive the connect gate as well as the schema. */
+  function buildV8VecDriverJson(): unknown {
+    return {
+      formatVersion: 8,
+      id: 'p609-migration',
+      name: 'pre-collapse vec driver',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { ParamDriver: 1, MakeVec3: 1 },
+      state: {
+        nodes: {
+          n_vec: { id: 'n_vec', type: 'MakeVec3', version: 1, params: {}, inputs: {} },
+          n_drv: {
+            id: 'n_drv',
+            type: 'ParamDriver',
+            version: 1,
+            params: { target: 'n_box', paramPath: 'position', blendMode: 'replace', order: 0 },
+            inputs: { inVec: { node: 'n_vec', socket: 'out' } },
+          },
+        },
+        outputs: {},
+      },
+    };
+  }
+
+  it('THE EDGE SURVIVES: an `inVec` binding lands on `in`, still naming the same producer', () => {
+    // The failure this prevents is silent and total. `inVec` is gone from the
+    // declaration, so without the migration the binding refers to a socket that does not
+    // exist — the edge vanishes on load, the driver reads 0, and the param simply stops
+    // being driven. Nothing throws.
+    const migrated = loadFromBytes(buildV8VecDriverJson());
+    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.state.nodes.n_drv.inputs.in).toEqual({ node: 'n_vec', socket: 'out' });
+    expect(migrated.state.nodes.n_drv.inputs.inVec).toBeUndefined();
+  });
+
+  it('the migrated edge is one the CURRENT gate would accept', () => {
+    // A migration can leave a binding the type gate would now refuse — the graph loads
+    // (load does not re-run `applyConnect`) and only breaks when something rewires it.
+    // Replaying the same connect against the live registry is what proves the shape is
+    // legal, not merely present.
+    const migrated = loadFromBytes(buildV8VecDriverJson());
+    const ref = migrated.state.nodes.n_drv.inputs.in;
+    expect(ref).toBeDefined();
+
+    let state: DagState = emptyDagState();
+    for (const n of Object.values(migrated.state.nodes)) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: n.id,
+        nodeType: n.type,
+        params: n.params,
+      } as never).next;
+    }
+    expect(() =>
+      applyOp(state, {
+        type: 'connect',
+        from: { node: 'n_vec', socket: 'out' },
+        to: { node: 'n_drv', socket: 'in' },
+      } as never),
+    ).not.toThrow();
+  });
+
+  it('IDEMPOTENT, and a scalar driver is untouched', () => {
+    // Re-loading a migrated save must not move anything, and a driver already on `in`
+    // (every scalar bind ever made) must not be disturbed by a pass that only looks for
+    // the retired key.
+    const once = loadFromBytes(buildV8VecDriverJson());
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes.n_drv.inputs).toEqual(once.state.nodes.n_drv.inputs);
+
+    const scalar = buildV8VecDriverJson() as {
+      state: { nodes: Record<string, { inputs: Record<string, unknown> }> };
+    };
+    scalar.state.nodes.n_drv.inputs = { in: { node: 'n_vec', socket: 'out' } };
+    const migratedScalar = loadFromBytes(scalar);
+    expect(migratedScalar.state.nodes.n_drv.inputs.in).toEqual({ node: 'n_vec', socket: 'out' });
+  });
+
+  it('a driver carrying BOTH keeps the vec binding — the precedence the old evaluate had', () => {
+    // Not a shape any bind produced, but the one case where the migration has to CHOOSE.
+    // The old evaluate took the Vector3 road whenever `inVec` was wired, so preserving
+    // that is what keeps a live driver pointed at the same source node. Picking `in`
+    // would silently re-point it at a different producer.
+    const both = buildV8VecDriverJson() as {
+      state: { nodes: Record<string, { inputs: Record<string, unknown> }> };
+    };
+    both.state.nodes.n_drv.inputs = {
+      in: { node: 'n_other', socket: 'out' },
+      inVec: { node: 'n_vec', socket: 'out' },
+    };
+    const migrated = loadFromBytes(both);
+    expect(migrated.state.nodes.n_drv.inputs.in).toEqual({ node: 'n_vec', socket: 'out' });
+    expect(migrated.state.nodes.n_drv.inputs.inVec).toBeUndefined();
+  });
+});

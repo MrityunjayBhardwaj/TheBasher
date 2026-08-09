@@ -1,6 +1,6 @@
 // geometrySampleSource — the driver-resolution seam for the SampleGeometry road
 // (#300 follow-up). The twin of transformChannelSource.ts, for GEOMETRY instead of a
-// transform channel: given a ParamDriver whose `inVec` is wired to a SampleGeometry
+// transform channel: given a ParamDriver whose `in` is wired to a SampleGeometry
 // node, compute the ground point under the query controller's world XZ and hand it to
 // the driver as a Vec3. Owns the parse + per-frame world read in ONE place so the
 // direct driver road (paramDrivers.ts) and any future replay call the same seam.
@@ -101,7 +101,7 @@ export function geometrySampleRefOf(node: NodeLike): GeometrySampleRef | null {
   };
 }
 
-/** The SampleGeometry node wired to a driver's `inVec` + the output socket the driver
+/** The SampleGeometry node wired to a driver's `in` + the output socket the driver
  *  reads ('out' = ground point, 'normal' = surface normal), or null. Mirrors
  *  `statefulSourceOf`: the driver names its source through a real wired edge, so the
  *  cycle guard + subscription input-walk already see the driver→SampleGeometry hop. */
@@ -109,8 +109,10 @@ export function geometrySampleSourceOf(
   driverNode: NodeLike,
   state: DagState,
 ): { node: Node; socket: string } | null {
-  // A vec target reads `out`/`normal` via `inVec`; a scalar target reads `distance` via `in`.
-  const ref = singleInputRef(driverNode, 'inVec') ?? singleInputRef(driverNode, 'in');
+  // ONE socket since #609. Which SampleGeometry output is read — `out`/`normal` (Vector3)
+  // vs `distance` (Number) — was never decided by the consumer socket anyway: it is
+  // `ref.socket`, the PRODUCER's output, returned below and switched on by the seam.
+  const ref = singleInputRef(driverNode, 'in');
   if (!ref) return null;
   const src = state.nodes[ref.node];
   return src && src.type === 'SampleGeometry' ? { node: src as Node, socket: ref.socket } : null;

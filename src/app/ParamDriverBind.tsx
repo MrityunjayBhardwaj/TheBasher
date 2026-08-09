@@ -56,7 +56,7 @@ export function ParamDriverBind({
   nodeId: string;
   paramPath: string;
   /** The target param's value type — selects which sources the picker offers (scalar
-   *  Number sources vs Vector3 compute outputs). Vec targets bind through `inVec`. */
+   *  Number sources vs Vector3 compute outputs). Both bind through `in` since #609. */
   targetKind?: 'number' | 'vec3';
 }) {
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
@@ -104,10 +104,8 @@ export function ParamDriverBind({
       const src = useDagStore.getState().state.nodes[spare.node];
       return `${src?.meta?.name?.trim() || spare.node} · ${spare.key}`;
     }
-    // The wired road: a Number source on `in` OR a Vector3 source on `inVec`.
-    const inBinding = (boundDriver.inputs?.inVec ?? boundDriver.inputs?.in) as
-      | { node?: string }
-      | undefined;
+    // The wired road: a Number OR Vector3 source, both on `in` since #609.
+    const inBinding = boundDriver.inputs?.in as { node?: string } | undefined;
     const srcId = inBinding?.node;
     if (!srcId) return 'unwired';
     const src = useDagStore.getState().state.nodes[srcId];

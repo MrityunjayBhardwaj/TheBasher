@@ -26,6 +26,9 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
   cost: 'cheap',
   paramSchema: TransformParams,
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
+  // #396 — the spine of the SCENE-lane wrapper chain. Same concept as the data lane's,
+  // one type up: what the tree walk descends through to reach the wrapped object.
+  chainInput: 'target',
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
   home: {

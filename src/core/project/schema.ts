@@ -42,7 +42,7 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // render geometry without riding the `MeshData` road (an OPFS-persisted buffer reached
 // asynchronously, not a recipe rebuilt from params). See migrations.ts
 // formatMigrations[7].
-export const PROJECT_FORMAT_VERSION = 8;
+export const PROJECT_FORMAT_VERSION = 9;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

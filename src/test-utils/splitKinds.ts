@@ -37,10 +37,18 @@ import { recomposeLightObject } from '../nodes/lightRecompose';
 export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked';
 
 /** As much of a node definition as the data-lane predicates below read. Declared
- *  structurally so this module still never imports the registry (see the header). */
+ *  structurally so this module still never imports the registry (see the header).
+ *
+ *  #609 — the input side widened to `string | readonly string[]`, because a socket now
+ *  declares the SET of types it accepts. The membership test is re-spelled in
+ *  `isDataOperatorDef` rather than imported; see the note there for why that import is
+ *  not available to this module. */
 export interface DataLaneDef {
-  readonly inputs?: Record<string, { type?: string } | undefined>;
+  readonly inputs?: Record<string, { type?: string | readonly string[] } | undefined>;
   readonly outputs?: Record<string, { type?: string } | undefined>;
+  /** #396 — the socket carrying the chain. Structural, like the rest of this shape, so
+   *  the predicate below can read a real `NodeDefinition` without importing the registry. */
+  readonly chainInput?: string;
 }
 
 /**
@@ -61,7 +69,31 @@ export interface DataLaneDef {
  * at all. Nothing here is matched against a type name.
  */
 export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
-  return def?.inputs?.target?.type === 'ObjectData' && def?.outputs?.out?.type === 'ObjectData';
+  // #396 — the same "declares the same socket type on both sides" test, asked of the
+  // input the operator NOMINATES as its chain rather than of one called `target`. This
+  // was the fourth independent spelling of that question; it now agrees with the other
+  // three by construction instead of by everyone happening to pick the same name.
+  const spine = def?.chainInput;
+  if (!spine) return false;
+  // #609 — MEMBERSHIP, because a spine may now accept a SET of types, and a bare
+  // `=== 'ObjectData'` reads FALSE for such a socket while still compiling.
+  //
+  // ⚠️ THIS IS THE ONE PLACE THAT RE-SPELLS `inputAccepts` INSTEAD OF CALLING IT, and it
+  // is forced rather than chosen: the DAG's copy lives in `core/dag/types`, and the gate
+  // in this module's own spec forbids a VALUE import of `core/dag` here — an e2e spec
+  // importing this descriptor would otherwise drag the whole module graph into
+  // Playwright. Type-only imports are erased and stay allowed; a function is not. Kept
+  // to two lines so the duplication is visible rather than buried.
+  //
+  // The two copies are held together by the AGREEMENT gate in `splitKinds.registry.test.ts`
+  // (#615), which runs both answers over synthetic set-valued defs — a sweep over the
+  // registry alone cannot catch the drift, because the only set-valued socket that exists
+  // is not on the data lane and this predicate never sees it.
+  const spineType = def?.inputs?.[spine]?.type;
+  const spineAcceptsData = Array.isArray(spineType)
+    ? spineType.includes('ObjectData')
+    : spineType === 'ObjectData';
+  return spineAcceptsData && def?.outputs?.out?.type === 'ObjectData';
 }
 
 /**

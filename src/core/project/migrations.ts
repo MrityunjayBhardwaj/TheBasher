@@ -48,6 +48,12 @@ const formatMigrations: Record<number, FormatMigration> = {
   // at v7 (post-camera-split) carrying a fused baked mesh would never re-run an earlier
   // pass, so its baked mesh would never split — a silent, permanent data loss.
   7: migrateFusedBakedMeshToSplit,
+  // v8 → v9 (#609): fold each ParamDriver's `inVec` binding onto its `in` socket.
+  // Its OWN format version rather than a fold into an earlier step, for the same reason
+  // every split above owns one: a project saved at v8 would never re-run an earlier
+  // pass, so its driver would keep a binding on a socket that no longer exists — the
+  // edge would simply vanish on load and the param would silently stop being driven.
+  8: migrateDriverInVecToIn,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -980,6 +986,40 @@ function migrateOneNode(node: Node): Node {
     };
   }
   return working;
+}
+
+// ── v8 → v9: ParamDriver's two source sockets become one (#609) ────────────
+// `in: Number` + `inVec: Vector3` were one logical role the socket model could not
+// describe, so a bind wired whichever matched the target's type. `in` now accepts
+// either, and `inVec` is gone from the declaration.
+//
+// A socket id is a PERSISTED binding key — unlike a `TypeDescriptor`, which is code —
+// so this cannot ride the per-node ladder: `def.migrations[v]` receives only
+// `oldParams` and has no way to reach `inputs`. It has to happen here, on raw JSON,
+// before `ProjectSchema.parse`.
+//
+// IDEMPOTENT and non-destructive: a driver with no `inVec` is untouched, and a driver
+// that somehow carries BOTH keeps `inVec` — that is the binding the old evaluate would
+// have chosen, since the Vector3 road won whenever it was wired. Preserving the old
+// precedence is the whole job; picking the other one would silently re-point a live
+// driver at a different source node.
+export function migrateDriverInVecToIn(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 9 };
+
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'ParamDriver' || !node.inputs) continue;
+    const vec = node.inputs['inVec'];
+    if (vec === undefined) continue;
+    node.inputs['in'] = vec;
+    delete node.inputs['inVec'];
+  }
+
+  return { ...proj, formatVersion: 9 };
 }
 
 function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string, number> {

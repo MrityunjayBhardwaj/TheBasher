@@ -184,7 +184,7 @@ describe('resolveEvaluatedTransform — driver-aware (#300 F2b)', () => {
       {
         type: 'connect',
         from: { node: 'n_mk', socket: 'out' },
-        to: { node: 'n_drv', socket: 'inVec' },
+        to: { node: 'n_drv', socket: 'in' },
       },
     ];
     for (const op of ops) state = applyOp(state, op).next;
