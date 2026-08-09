@@ -172,8 +172,22 @@ export interface OutputDescriptor {
  *     directly, because their job IS to pin a specific declared type. They should
  *     fail loudly if the socket they name ever becomes a set.
  */
+/**
+ * Two or more accepted types (#614). The TUPLE shape is the point: a set of one is a
+ * second spelling of the scalar form — identical behaviour, two ways to say it, which is
+ * how a declaration comes to be read one way and written the other — and a set of none is
+ * a socket nothing can ever wire, whose rejection message names no types at all. Both are
+ * COMPILE errors at the declaration site rather than a gate failing somewhere else.
+ *
+ * DISTINCTNESS cannot be said in the type, so it is checked at registration instead; see
+ * `assertInputDescriptors` in `registry.ts`. That check is not redundant with this type:
+ * every synthetic node definition in the suite is registered through an `as never` cast,
+ * which erases exactly this constraint, so the runtime check is what covers them.
+ */
+export type AcceptedTypeSet = readonly [SocketTypeName, SocketTypeName, ...SocketTypeName[]];
+
 export interface InputDescriptor {
-  type: SocketTypeName | readonly SocketTypeName[];
+  type: SocketTypeName | AcceptedTypeSet;
   cardinality: Cardinality;
 }
 

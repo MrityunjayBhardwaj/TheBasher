@@ -151,6 +151,41 @@ describe('#609 — an input socket accepts a SET of types', () => {
     ]);
   });
 
+  it('REGISTRATION REFUSES a degenerate set — the backstop for `as never` definitions (#614)', () => {
+    // `AcceptedTypeSet` makes a short set a COMPILE error, and both arms were verified by
+    // perturbing ParamDriver's real declaration. But every synthetic definition in this
+    // suite — including the two above — reaches the registry through an `as never` cast,
+    // which erases that constraint completely. So the type covers the ~80 hand-written
+    // production declarations and this covers everything the tests mint, which is where a
+    // malformed set is actually likely to appear.
+    const register = (nodeType: string, type: unknown) =>
+      registerNodeType({
+        type: nodeType,
+        version: 1,
+        pure: true,
+        cost: 'cheap',
+        paramSchema: NoParams,
+        inputs: { in: { type, cardinality: 'single' } },
+        outputs: { out: { type: 'Number', cardinality: 'single' } },
+        evaluate: () => undefined,
+      } as never);
+
+    // A set of one is the scalar form wearing a costume; a set of none can never be wired
+    // and its rejection message would name no types at all.
+    expect(() => register('TmpSetOfOne', ['Number'])).toThrow(/at least two members/);
+    expect(() => register('TmpSetOfNone', [])).toThrow(/at least two members/);
+    // Distinctness cannot be said in a type at all, so this is the ONLY thing checking it.
+    // A duplicate is invisible to `inputAccepts` and surfaces only as `Number|Number` in a
+    // rejection message — the kind of defect that otherwise survives indefinitely.
+    expect(() => register('TmpSetWithDupe', ['Number', 'Vector3', 'Number'])).toThrow(
+      /repeats Number/,
+    );
+    // The legitimate forms still register — a gate that refused everything would pass all
+    // three assertions above.
+    expect(() => register('TmpSetOk', ['Number', 'Vector3'])).not.toThrow();
+    expect(() => register('TmpScalarOk', 'Number')).not.toThrow();
+  });
+
   it('the set of PRODUCTION input sockets declaring a union is EXACTLY ParamDriver.in', () => {
     // An EXACT census, not a floor, because the population grows: a new set-valued
     // socket has to come here and say so, where the author is present, rather than being
