@@ -167,7 +167,10 @@ export interface OutputDescriptor {
  * that are deliberate:
  *   • `test-utils/splitKinds.ts` re-spells the membership test inline. Forced, not
  *     chosen — a gate in its own spec forbids a VALUE import of `core/dag` there, so
- *     it cannot call this function. Documented at the site.
+ *     it cannot call this function. The two answers are held together by an AGREEMENT
+ *     gate in `splitKinds.registry.test.ts`, which runs both over synthetic set-valued
+ *     defs the registry does not contain (#615). Do not close the gap by widening the
+ *     import rule; it is load-bearing.
  *   • three test assertions (`materialLink`, `ParamDriver` ×2) still compare `.type`
  *     directly, because their job IS to pin a specific declared type. They should
  *     fail loudly if the socket they name ever becomes a set.

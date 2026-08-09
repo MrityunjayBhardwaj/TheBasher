@@ -84,6 +84,11 @@ export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
   // importing this descriptor would otherwise drag the whole module graph into
   // Playwright. Type-only imports are erased and stay allowed; a function is not. Kept
   // to two lines so the duplication is visible rather than buried.
+  //
+  // The two copies are held together by the AGREEMENT gate in `splitKinds.registry.test.ts`
+  // (#615), which runs both answers over synthetic set-valued defs — a sweep over the
+  // registry alone cannot catch the drift, because the only set-valued socket that exists
+  // is not on the data lane and this predicate never sees it.
   const spineType = def?.inputs?.[spine]?.type;
   const spineAcceptsData = Array.isArray(spineType)
     ? spineType.includes('ObjectData')
