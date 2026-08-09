@@ -131,9 +131,55 @@ export type SocketTypeName =
 
 export type Cardinality = 'single' | 'list';
 
-export interface TypeDescriptor {
+/**
+ * What a PRODUCER emits on an output socket: exactly one type. A producer that
+ * could emit either of two types is a different node, not a wider socket.
+ */
+export interface OutputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
+}
+
+/**
+ * What a CONSUMER accepts on an input socket: one type, or a SET of them (#609).
+ *
+ * WHY THE TWO DESCRIPTORS ARE NOT ONE. They were the same interface, so the
+ * connect gate was a SYMMETRIC comparison (`inputDesc.type !== outputDesc.type`)
+ * for a relation that is not symmetric. An output HAS a type; an input ACCEPTS
+ * types. Once that asymmetry is stated, "one role, several accepted types"
+ * becomes sayable and the gate becomes a membership test.
+ *
+ * ⚠️ A SET IS NOT COERCION. `Number | Vector3` means the role receives whichever
+ * was wired, UNCONVERTED — the consumer still discriminates at read time. It does
+ * NOT mean a Number is broadcast to a Vector3. Conflating the two is how a type
+ * system starts lying in a second way (#609 states this out of scope explicitly),
+ * and the reference substrates are no help here: both were checked and BOTH avoid
+ * the union by loosening the TYPE SYSTEM rather than the socket (Houdini gives SOP
+ * inputs a single geometry class; Blender converts implicitly at link time). We
+ * have no source for either node-socket type system downloaded, so that reading is
+ * UNGROUNDED and is recorded as motivation, never as precedent.
+ *
+ * ⚠️ READ THIS THROUGH `inputAccepts`/`acceptedTypes`, NEVER `desc.type ===`.
+ * A bare `=== 'ObjectData'` still COMPILES against the union and silently reads
+ * false for a set-valued socket. There are zero such direct readers left; the
+ * exact set is pinned by `socketTypeUnion.test.ts`.
+ */
+export interface InputDescriptor {
+  type: SocketTypeName | readonly SocketTypeName[];
+  cardinality: Cardinality;
+}
+
+/**
+ * The types an input socket accepts, always as a set (one-element for the
+ * ordinary single-type socket). The one place the two spellings collapse.
+ */
+export function acceptedTypes(desc: InputDescriptor): readonly SocketTypeName[] {
+  return Array.isArray(desc.type) ? desc.type : [desc.type as SocketTypeName];
+}
+
+/** Does this input socket accept a producer emitting `produced`? */
+export function inputAccepts(desc: InputDescriptor, produced: SocketTypeName): boolean {
+  return Array.isArray(desc.type) ? desc.type.includes(produced) : desc.type === produced;
 }
 
 // ---------------------------------------------------------------------------
@@ -216,8 +262,8 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * defaulted P.
    */
   paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
-  inputs: Record<SocketId, TypeDescriptor>;
-  outputs: Record<SocketId, TypeDescriptor>;
+  inputs: Record<SocketId, InputDescriptor>;
+  outputs: Record<SocketId, OutputDescriptor>;
   /**
    * #396 — WHICH input carries the CHAIN: the spine a stack walks down, as opposed
    * to an ARGUMENT the graph wires and the stack steps past. Absent = this node is
