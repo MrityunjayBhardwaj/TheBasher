@@ -16,12 +16,32 @@
 //      src/app/resolveDataParamOwner.ts (the reach that needed it); issue #516.
 
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeRef } from '../core/dag/types';
+import type { Node, NodeRef, NodeTypeId, SocketId } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 
 const OUT = 'out';
-const TARGET = 'target';
 const DATA = 'data';
+
+/**
+ * The socket carrying `type`'s CHAIN — the spine a stack walks down — or null if this
+ * node type is not a chain node at all. Read from the node's own declaration
+ * (`NodeDefinition.chainInput`, #396); never guessed from a socket name.
+ *
+ * THE LITERAL IT REPLACES was `const TARGET = 'target'`, and it was right for as long
+ * as an operator had exactly one input. It stops being right the moment one has a
+ * second input of the SAME type — a boolean's cutter, a deform's capture pose — because
+ * then "the socket called `target`" and "the socket the stack descends" are two claims
+ * that can disagree while everything still registers, connects and evaluates. Reading
+ * the declaration is what makes the walk answer the second question.
+ */
+export function chainSocketOfType(type: NodeTypeId): SocketId | null {
+  return getNodeType(type)?.chainInput ?? null;
+}
+
+/** {@link chainSocketOfType} for a node instance. */
+export function chainSocketOf(node: Node | undefined): SocketId | null {
+  return node ? chainSocketOfType(node.type) : null;
+}
 
 /** The geometry-operator (SOP / modifier) node types the modifier stack manages. A node
  *  is a modifier iff its type is registered here — new modifiers (Mirror, Subdiv…)
@@ -89,7 +109,14 @@ export function isDataLaneOperator(node: Node | undefined): boolean {
   if (!node) return false;
   const def = getNodeType(node.type);
   if (!def) return false;
-  return def.inputs[TARGET]?.type === 'ObjectData' && def.outputs[OUT]?.type === 'ObjectData';
+  // #396 — ask the node which socket is its SPINE instead of assuming `target`. The
+  // question is still about SHAPE ("does `ObjectData` flow through this node?"), but it
+  // is now asked of the input the node itself nominates. An operator with a second
+  // `ObjectData` argument (a cutter) answers the same as a unary one, and correctly:
+  // it IS on the lane. What changes is that the walk below then descends the right edge.
+  const spine = def.chainInput;
+  if (!spine) return false;
+  return def.inputs[spine]?.type === 'ObjectData' && def.outputs[OUT]?.type === 'ObjectData';
 }
 
 /**
@@ -130,7 +157,12 @@ export function resolveOperatorBase(
   const seen = new Set<string>();
   while (isOp(state.nodes[cur]) && !seen.has(cur)) {
     seen.add(cur);
-    const up = singleRef(state.nodes[cur], TARGET);
+    // Each hop descends THAT node's declared spine, not a shared literal — so a chain
+    // of operators that name their spines differently still walks, and an operator's
+    // non-spine arguments are stepped past rather than mistaken for the chain.
+    const spine = chainSocketOf(state.nodes[cur]);
+    if (!spine) break;
+    const up = singleRef(state.nodes[cur], spine);
     if (!up) break; // dangling operator — treat it as the base
     cur = up.node;
   }

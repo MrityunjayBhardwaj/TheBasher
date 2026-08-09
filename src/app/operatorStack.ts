@@ -27,6 +27,8 @@ import type { Node, Op } from '../core/dag/types';
 import { canModifyGeometry, canWearMaterial } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
 import {
+  chainSocketOf,
+  chainSocketOfType,
   isDataLaneOperator,
   isEffectNode,
   isMaterialLaneOperator,
@@ -46,6 +48,8 @@ import {
 export {
   MODIFIER_NODE_TYPES,
   EFFECT_NODE_TYPES,
+  chainSocketOf,
+  chainSocketOfType,
   isModifierNode,
   isEffectNode,
   isDataLaneOperator,
@@ -63,7 +67,6 @@ export interface ModifierEntry {
 }
 
 const OUT = 'out';
-const TARGET = 'target';
 const DATA = 'data';
 
 /**
@@ -113,7 +116,10 @@ export function enumerateOperatorStack(
     const consumer = findConsumer(state, producer, OUT);
     if (!consumer) break;
     const node = state.nodes[consumer.node];
-    if (consumer.socket !== TARGET || seen.has(consumer.node)) break;
+    // The edge only continues the stack if it lands on the consumer's declared SPINE.
+    // An edge into one of its ARGUMENTS (a cutter, a material) is not the chain and
+    // must end the walk — which is the case the socket-name literal could not tell apart.
+    if (consumer.socket !== chainSocketOf(node) || seen.has(consumer.node)) break;
     const mine = isOp(node);
     // #526 — "not my kind" means END OF STACK on a lane only ONE kind occupies, and
     // KEEP LOOKING on a lane that is shared. Geometry modifiers and material operators
@@ -279,6 +285,13 @@ export function buildAddOperatorOps(
   passThrough?: OperatorPredicate,
 ): AddModifierResult | null {
   if (!state.nodes[baseNodeId]) return null;
+  // An operator that declares no spine cannot be spliced into a chain — there is no
+  // socket to feed. Refuse rather than wire to a guessed name (the same shape as the
+  // #498 refusal below: a stack op that cannot be built returns null, it does not
+  // improvise). This is unreachable for every operator registered today; it exists so
+  // the NEXT one fails loudly at the wiring step instead of silently mis-wiring.
+  const spine = chainSocketOfType(operatorType);
+  if (!spine) return null;
   const { lastProducer, consumer } = stackTail(state, baseNodeId, isOp, passThrough);
   // The UI lets the registry mint a random id; the agent passes a deterministic
   // one (the closure spec needs the id before build, and the LLM references it).
@@ -296,7 +309,7 @@ export function buildAddOperatorOps(
       {
         type: 'connect',
         from: { node: lastProducer, socket: OUT },
-        to: { node: modifierId, socket: TARGET },
+        to: { node: modifierId, socket: spine },
       },
       {
         type: 'connect',
@@ -309,7 +322,7 @@ export function buildAddOperatorOps(
     ops.push({
       type: 'connect',
       from: { node: lastProducer, socket: OUT },
-      to: { node: modifierId, socket: TARGET },
+      to: { node: modifierId, socket: spine },
     });
   }
   return { ops, modifierId };
@@ -425,7 +438,10 @@ export function buildRemoveOperatorOps(
 ): Op[] | null {
   const node = state.nodes[operatorId];
   if (!isOp(node)) return null;
-  const upstream = singleRef(node, TARGET); // producer feeding this operator
+  // Which edge feeds this operator is the operator's own declaration to make (#396).
+  const removedSpine = chainSocketOf(node);
+  if (!removedSpine) return null;
+  const upstream = singleRef(node, removedSpine); // producer feeding this operator
   const consumer = findConsumer(state, operatorId, OUT); // node consuming this operator
 
   const ops: Op[] = [];
@@ -433,7 +449,7 @@ export function buildRemoveOperatorOps(
     ops.push({
       type: 'disconnect',
       from: { node: upstream.node, socket: upstream.socket },
-      to: { node: operatorId, socket: TARGET },
+      to: { node: operatorId, socket: removedSpine },
     });
   }
   if (consumer) {
@@ -506,7 +522,9 @@ export function buildMoveOperatorOps(
   const inLane = (n: Node | undefined) => isOp(n) || Boolean(passThrough?.(n));
   let base = modifierId;
   for (;;) {
-    const up = singleRef(state.nodes[base], TARGET);
+    const baseSpine = chainSocketOf(state.nodes[base]);
+    if (!baseSpine) break; // not a chain node — it IS the base
+    const up = singleRef(state.nodes[base], baseSpine);
     if (!up || !inLane(state.nodes[up.node])) {
       base = up ? up.node : base;
       break;
@@ -523,7 +541,12 @@ export function buildMoveOperatorOps(
   // Normalise to (lower, upper) adjacent pair where lower.out → upper.target.
   const lowerId = stack[Math.min(idx, swapIdx)].nodeId;
   const upperId = stack[Math.max(idx, swapIdx)].nodeId;
-  const below = singleRef(state.nodes[lowerId], TARGET); // producer feeding `lower`
+  // The two neighbours are asked SEPARATELY which socket carries their chain (#396):
+  // this swap re-wires both, and nothing guarantees a pair spells its spine the same way.
+  const lowerSpine = chainSocketOf(state.nodes[lowerId]);
+  const upperSpine = chainSocketOf(state.nodes[upperId]);
+  if (!lowerSpine || !upperSpine) return null;
+  const below = singleRef(state.nodes[lowerId], lowerSpine); // producer feeding `lower`
   const above = findConsumer(state, upperId, OUT); // node consuming `upper`
   if (!below) return null;
   // #526 — this swap is a three-edge rewire that assumes `lower.out → upper.target`
@@ -533,7 +556,7 @@ export function buildMoveOperatorOps(
   // Reordering ACROSS a foreign operator is a real feature with its own question (does
   // the user see one lane or two?) and is deliberately not smuggled in here.
   const between = findConsumer(state, lowerId, OUT);
-  if (!between || between.node !== upperId || between.socket !== TARGET) return null;
+  if (!between || between.node !== upperId || between.socket !== upperSpine) return null;
 
   // Before: below → lower.target ; lower.out → upper.target ; upper.out → above
   // After:  below → upper.target ; upper.out → lower.target ; lower.out → above
@@ -541,12 +564,12 @@ export function buildMoveOperatorOps(
     {
       type: 'disconnect',
       from: { node: below.node, socket: below.socket },
-      to: { node: lowerId, socket: TARGET },
+      to: { node: lowerId, socket: lowerSpine },
     },
     {
       type: 'disconnect',
       from: { node: lowerId, socket: OUT },
-      to: { node: upperId, socket: TARGET },
+      to: { node: upperId, socket: upperSpine },
     },
   ];
   if (above) {
@@ -560,12 +583,12 @@ export function buildMoveOperatorOps(
     {
       type: 'connect',
       from: { node: below.node, socket: below.socket },
-      to: { node: upperId, socket: TARGET },
+      to: { node: upperId, socket: upperSpine },
     },
     {
       type: 'connect',
       from: { node: upperId, socket: OUT },
-      to: { node: lowerId, socket: TARGET },
+      to: { node: lowerId, socket: lowerSpine },
     },
   );
   if (above) {
