@@ -57,6 +57,11 @@ export const MediaClipNode: NodeDefinition<MediaClipParams, ImageValue> = {
   cost: 'cheap',
   paramSchema: MediaClipParams,
   inputs: {},
+  /** #608 — NO `role`, and that is the point rather than an omission. A media clip
+   *  is imported footage, not a pass rendered from the scene. It emits
+   *  `passKind: 'beauty'` below because the VALUE has to say what kind of image it
+   *  is for dispatch, and that tag is exactly why a reader trusting the value cannot
+   *  tell a clip from a beauty pass. The graph now can. */
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['layout'],
   home: {
