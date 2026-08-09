@@ -481,21 +481,40 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
 
   // ── THE TIER PROOF: the cheaper instrument is blind to all of the above ──────────────
   //
-  // If this ever reds, the honest reading is NOT "loosen the tolerance" — it is that the
+  // Stated RELATIVE to the probe rather than against an absolute bound (#604). Both deltas
+  // are measured from the same two renders on the same machine, so anything that shifts the
+  // whole picture — a different GPU path on CI, a driver's AA — lands in both terms and
+  // cancels. That is the same reasoning the changed-pixel counter above is built on; it just
+  // was not applied here. An absolute channel-sum is exactly the shape that does not travel.
+  //
+  // This is a STRONGER claim than the bound it replaces, not a looser one: "the centre barely
+  // moved compared to how far the probe moved, in this run" survives hardware nobody has
+  // tested on, where "moved less than 30" is a promise about one machine's numbers.
+  //
+  // If this ever reds, the honest reading is NOT "widen the ratio" — it is that the
   // centre-point tier has become able to see extent, and this file's reason for existing
   // needs re-stating.
-  const centreDelta =
-    Math.abs(small.centre.r - large.centre.r) +
-    Math.abs(small.centre.g - large.centre.g) +
-    Math.abs(small.centre.b - large.centre.b);
+  const delta = (a: RGB, b: RGB) => Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b);
+  const centreDelta = delta(small.centre, large.centre);
+  const annulusDelta = delta(small.annulus, large.annulus);
+
+  // The denominator has to be real for the ratio to mean anything. The carrying assertions
+  // above already force the probe to flip background→subject, so this cannot fail on its
+  // own today — it is here so the ratio stays non-vacuous if these blocks are ever reordered.
+  expect(
+    annulusDelta,
+    `the annulus barely moved (${annulusDelta.toFixed(1)}), so it is not a usable reference for the centre's blindness`,
+  ).toBeGreaterThan(60);
+
+  const BLINDNESS_RATIO = 0.1;
   expect(
     centreDelta,
-    `the centre pixel moved by ${centreDelta.toFixed(1)} across a ${SIZE_SMALL}→${SIZE_LARGE} extent change (${JSON.stringify(small.centre)} → ${JSON.stringify(large.centre)}). The centre-point tier is supposed to be BLIND here — that blindness is why this file exists.`,
-  ).toBeLessThan(30);
+    `the centre pixel moved by ${centreDelta.toFixed(1)} while the annulus moved ${annulusDelta.toFixed(1)} across a ${SIZE_SMALL}→${SIZE_LARGE} extent change (centre ${JSON.stringify(small.centre)} → ${JSON.stringify(large.centre)}). The centre-point tier is supposed to be BLIND here — that blindness is why this file exists.`,
+  ).toBeLessThan(annulusDelta * BLINDNESS_RATIO);
 
   // ── THE MAGNITUDE, recorded ──────────────────────────────────────────────────────────
   console.log(
-    `#581 occupancy: ${changed} pixels changed in the subject's neighbourhood across ${SIZE_SMALL}→${SIZE_LARGE}; centre delta ${centreDelta.toFixed(1)}`,
+    `#581 occupancy: ${changed} pixels changed in the subject's neighbourhood across ${SIZE_SMALL}→${SIZE_LARGE}; centre delta ${centreDelta.toFixed(1)} vs annulus delta ${annulusDelta.toFixed(1)} (ratio ${(centreDelta / annulusDelta).toFixed(3)}, must stay under ${BLINDNESS_RATIO})`,
   );
   expect(
     changed,
