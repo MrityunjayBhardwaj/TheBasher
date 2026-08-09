@@ -244,10 +244,19 @@ async function decodeAverage(page: import('@playwright/test').Page, buf: Buffer)
  *
  * RECORDED, not carrying: it is asserted only against a floor of zero, because the exact
  * count is a function of resolution and AA and pinning it would make this gate a baseline
- * by the back door. Its job is to give a future reader a MAGNITUDE next to the boolean, and
- * to catch the one failure the annulus point cannot report on its own — a probe point
- * placed somewhere the extent never reaches would pass the "nothing THERE" arm while this
- * number sat at zero.
+ * by the back door.
+ *
+ * ITS SECOND JOB IS TO DISAMBIGUATE A FAILING ANNULUS (#602). "The probe reads background at
+ * the large extent" has two causes that look identical at the probe point, and this number
+ * separates them, which is why it is computed BEFORE those assertions rather than after:
+ *
+ *   changed == 0  → the extent genuinely never moved. The overlay did not reach the cook.
+ *   changed  > 0  → the extent moved, but not where the probe is looking. PROBE_D is stale
+ *                   (the usual cause: the starter scene's camera moved).
+ *
+ * An earlier version of this comment claimed the zero case covered a stale probe. It does
+ * not — a misplaced probe still sees the extent move elsewhere in the clip, so that count is
+ * comfortably non-zero exactly when the claim needed it to be zero.
  */
 async function changedPixels(
   page: import('@playwright/test').Page,
@@ -371,6 +380,10 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
     `the subject is not drawn at the large extent (centre ${JSON.stringify(large.centre)})`,
   ).toBe(true);
 
+  // The magnitude is computed HERE, ahead of the assertions that use it to name their own
+  // cause (#602). See `changedPixels` for the two-case table.
+  const changed = await changedPixels(page, small.clip, large.clip);
+
   // ── THE CARRYING ASSERTION: something HERE, nothing THERE ────────────────────────────
   expect(
     isSubject(small.annulus),
@@ -378,7 +391,9 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
   ).toBe(false);
   expect(
     isSubject(large.annulus),
-    `at size ${SIZE_LARGE} the annulus probe still reads background (${JSON.stringify(large.annulus)}) — the overlay never reached the cooked geometry`,
+    changed > 0
+      ? `at size ${SIZE_LARGE} the annulus probe still reads background (${JSON.stringify(large.annulus)}), BUT ${changed} pixels changed elsewhere in the clip — so the extent DID move and the probe is looking in the wrong place. This is a stale PROBE_D (${PROBE_D}), not a broken overlay. Re-measure it against the current starter-scene camera; do not widen the colour test.`
+      : `at size ${SIZE_LARGE} the annulus probe still reads background (${JSON.stringify(large.annulus)}) and NOTHING in the clip changed — the extent never moved at all, so the overlay never reached the cooked geometry.`,
   ).toBe(true);
 
   // ── THE TIER PROOF: the cheaper instrument is blind to all of the above ──────────────
@@ -396,7 +411,6 @@ test('#581 — an overlay on a cook-consumed geometry param moves the object’s
   ).toBeLessThan(30);
 
   // ── THE MAGNITUDE, recorded ──────────────────────────────────────────────────────────
-  const changed = await changedPixels(page, small.clip, large.clip);
   console.log(
     `#581 occupancy: ${changed} pixels changed in the subject's neighbourhood across ${SIZE_SMALL}→${SIZE_LARGE}; centre delta ${centreDelta.toFixed(1)}`,
   );
