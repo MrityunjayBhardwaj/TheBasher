@@ -41,6 +41,9 @@ export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'b
 export interface DataLaneDef {
   readonly inputs?: Record<string, { type?: string } | undefined>;
   readonly outputs?: Record<string, { type?: string } | undefined>;
+  /** #396 — the socket carrying the chain. Structural, like the rest of this shape, so
+   *  the predicate below can read a real `NodeDefinition` without importing the registry. */
+  readonly chainInput?: string;
 }
 
 /**
@@ -61,7 +64,13 @@ export interface DataLaneDef {
  * at all. Nothing here is matched against a type name.
  */
 export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
-  return def?.inputs?.target?.type === 'ObjectData' && def?.outputs?.out?.type === 'ObjectData';
+  // #396 — the same "declares the same socket type on both sides" test, asked of the
+  // input the operator NOMINATES as its chain rather than of one called `target`. This
+  // was the fourth independent spelling of that question; it now agrees with the other
+  // three by construction instead of by everyone happening to pick the same name.
+  const spine = def?.chainInput;
+  if (!spine) return false;
+  return def?.inputs?.[spine]?.type === 'ObjectData' && def?.outputs?.out?.type === 'ObjectData';
 }
 
 /**

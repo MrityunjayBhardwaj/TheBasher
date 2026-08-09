@@ -112,10 +112,15 @@ describe('the split-kind registry gate', () => {
     const withBoth = {
       ...snapshotRegistry(),
       // A modifier-shaped node: the same socket type on both sides, which is exactly
-      // what makes it stackable and exactly why it is not a KIND of data.
+      // what makes it stackable and exactly why it is not a KIND of data. #396 — it
+      // must NOMINATE that socket as its chain; being shaped like an operator is no
+      // longer enough to be treated as one, and this fixture stating so is the point
+      // rather than a chore. A synthetic def that forgot to declare a spine is exactly
+      // the real-registry mistake the exact-set census in chainSpine.test.ts guards.
       SubdivideModifier: {
         inputs: { target: { type: 'ObjectData' } },
         outputs: { out: { type: 'ObjectData' } },
+        chainInput: 'target',
       },
       TeapotData: { outputs: { out: { type: 'ObjectData' } } },
     };
