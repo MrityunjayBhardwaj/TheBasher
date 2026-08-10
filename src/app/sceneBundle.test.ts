@@ -403,4 +403,48 @@ describe('bundleToProject', () => {
     });
     expect(() => bundleToProject(bundle, 'p', 1)).toThrow();
   });
+
+  // ── The INVERSE of #620 ────────────────────────────────────────────────────
+  //
+  // #620 fixed the seams that hand the store's records OUT. This is the other
+  // direction: `importSceneBundle` feeds `project.state.nodes` straight into
+  // `useDagStore.hydrate`, so if `bundleToProject` passed the caller's tables
+  // through by reference, the live store would adopt the CALLER's object and
+  // anything the caller did to its bundle afterwards would edit the open scene.
+  //
+  // Measured during the #620 census: it does NOT, and that is worth a test rather
+  // than a shrug, because nothing in the code says so. The detachment is a side
+  // effect of `ProjectSchema.parse` rebuilding what it validates. Retyping any of
+  // those fields to a pass-through (`z.any`, `z.custom`, a `.passthrough()` escape)
+  // would silently reopen the alias with every other test in this file still green
+  // — the aliasing version is value-identical, which is exactly what made the
+  // original #620 defect survive so long.
+  it('detaches an imported bundle from the project it becomes (#620, inverse direction)', () => {
+    const bundle = SceneBundleSchema.parse({
+      formatVersion: 1,
+      id: 'x',
+      name: 'imported',
+      state: {
+        nodes: { n1: { id: 'n1', type: 'MediaClip', version: 1, params: {}, inputs: {} } },
+        outputs: {},
+      },
+    });
+
+    const project = bundleToProject(bundle, 'p', 1);
+
+    expect(project.state.nodes).not.toBe(bundle.state.nodes);
+    expect(project.state.nodes.n1).not.toBe(bundle.state.nodes.n1);
+    expect(project.state.outputs).not.toBe(bundle.state.outputs);
+
+    // Stated as the failure it prevents: a caller that keeps its bundle and edits
+    // it after the import must not be writing into what the store just adopted.
+    (bundle.state.nodes as Record<string, unknown>).__late_write = {
+      id: '__late_write',
+      type: 'MediaClip',
+      version: 1,
+      params: {},
+      inputs: {},
+    };
+    expect('__late_write' in project.state.nodes).toBe(false);
+  });
 });
