@@ -686,8 +686,25 @@ export function boot(): Promise<void> {
       // node's EvaluatedMesh, build its (registry-cached) geometry, and return the
       // position-attribute count. For an ArrayModifier this is the merged array's
       // vertex count — the SAME geometryRegistry instance ModifiedMeshR rendered
-      // (side A reads it off the three scene). render-count == resolver-count proves
-      // the live render consumed the resolver's geometry handle (H40 one band, V37).
+      // (side A reads it off the three scene).
+      //
+      // ⚠️ THE CLAIM, SCOPED (#580). render-count == resolver-count proves the live
+      // render consumed the resolver's geometry handle (H40 one band, V37) — but ONLY
+      // when no overlay touches a geometry-building param. This comment used to state
+      // that conclusion unconditionally, and it was false under an overlay: measured
+      // on main with a driven array count, the scene drew 3825 vertices while this
+      // returned 1275.
+      //
+      // It is not a gap to patch here. `resolveEvaluatedMesh` takes `DagState`, which
+      // IS authored params by type (`paramsAt: 'authored'`); overlays live in
+      // `CookState`, which is not assignable to it. The render root folds, this road
+      // does not, so the two sides answer different questions by construction. The
+      // blindness is pinned by `resolveEvaluatedMesh.overlayBlind.gate.test.ts`, which
+      // also shows the resolver returns the FOLDED value when handed folded params —
+      // i.e. any fix belongs at the call site, not in the resolver.
+      //
+      // ⚠️ SO: do not lean on this instrument to verify anything under an overlay.
+      // Read vertex counts off the rendered scene directly for those cases.
       w.__basher_modified_vertex_count = (nodeId: NodeId, ctx?: EvalCtx): number | null => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
