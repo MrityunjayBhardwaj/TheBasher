@@ -146,8 +146,12 @@ describe('collectChannelRows', () => {
         keyframes: [{ time: 0 }],
       });
     const rows = collectChannelRows({
-      n_camera: node('n_camera', 'PerspectiveCamera', { fov: 45 }),
-      n_box: node('n_box', 'BoxMesh', {}),
+      // Both are `Object` nodes: post-split a camera and a box differ by the DATA
+      // hanging off them, not by node type. That makes the point sharper than the
+      // retired fused types these were written with — two same-typed owners really
+      // are indistinguishable until the row is qualified by owner identity.
+      n_camera: node('n_camera', 'Object', { fov: 45 }),
+      n_box: node('n_box', 'Object', {}),
       cam_pos_ch: ch('cam_pos_ch', 'n_camera'),
       box_pos_ch: ch('box_pos_ch', 'n_box'),
     });

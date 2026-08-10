@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import type { InputBinding, Node } from '../core/dag/types';
 import { getGltfClone } from './asset/gltfCloneRegistry';
+import { chainSocketOf } from './operatorChain';
 
 /**
  * Walk a MaterialOverride/Transform `target` chain to the `GltfAsset` it wraps
@@ -34,7 +35,13 @@ export function findTargetAssetRef(
       const ref = (cur.params as { assetRef?: unknown } | undefined)?.assetRef;
       return typeof ref === 'string' ? ref : null;
     }
-    const target: InputBinding | undefined = cur.inputs?.target;
+    // Step up the DECLARED chain socket (`chainInput`, #396), not the one named
+    // `target`. Every type that has a `target` input declares it as its spine today,
+    // so this walks the same edges — but a node that merely HAS a `target` (an
+    // argument socket, a constraint's aim) is no longer mistaken for a chain link,
+    // and the walk stops instead of wandering off the lane into an unrelated graph.
+    const spine = chainSocketOf(cur);
+    const target: InputBinding | undefined = spine ? cur.inputs?.[spine] : undefined;
     const nextId: string | undefined = target && !Array.isArray(target) ? target.node : undefined;
     cur = nextId ? nodes[nextId] : undefined;
   }

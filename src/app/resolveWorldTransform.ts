@@ -74,6 +74,7 @@ import { cameraLensParams, isCameraNode } from './cameraNode';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
+import { chainSocketOf } from './operatorChain';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -193,9 +194,18 @@ export function childEdges(
   switch (v.kind) {
     case 'Transform':
     case 'MaterialOverride': {
-      // Both wrap one child via the `target` input socket (Transform.ts:28,
-      // MaterialOverride.ts:63); the evaluated value field is `child`.
-      const childId = refNode(node.inputs.target);
+      // Both wrap one child via their DECLARED chain socket (`chainInput`, #396) —
+      // spelled `target` by Transform.ts:31 and MaterialOverride.ts:65 today. The
+      // evaluated value field is `child`.
+      //
+      // Read the declaration rather than the name: "the socket called `target`" and
+      // "the socket the wrap descends" agree for every type in the registry right
+      // now, and stop agreeing the moment a wrapper gains a second same-typed input
+      // (an argument, not a spine). At that point a by-name read still registers,
+      // still connects and still evaluates — it just descends the wrong edge, which
+      // here means a child that animates in the panel and freezes on screen.
+      const spine = chainSocketOf(node);
+      const childId = spine ? refNode(node.inputs[spine]) : null;
       if (!childId || !v.child) return [];
       return [{ id: childId, value: v.child }];
     }
