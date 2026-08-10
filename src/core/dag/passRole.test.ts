@@ -219,6 +219,29 @@ describe('#608 — a pass role is read from the declaration, not the value', () 
     expect(s.nodes.job.inputs['pass-input']).toEqual([{ node: 'd2', socket: 'out' }]);
   });
 
+  it('does NOT move any pass sourceHash — a role is a graph fact, never a hash input', () => {
+    // MEASURED, not assumed: these four values were produced by the same probe run
+    // against e6cde05 (the tree before any of #608 landed) and against this branch,
+    // and they agreed exactly. Pinning them here turns that one-off comparison into
+    // a standing gate — the next person to add a field near pass construction finds
+    // out here, rather than by every cached render silently re-minting.
+    const EXPECTED: Record<string, string> = {
+      BeautyPass: '9f0d51c2',
+      DepthPass: 'fe466925',
+      NormalPass: 'cc98ee0f',
+      IDPass: 'deb9b365',
+    };
+    for (const [type, hash] of Object.entries(EXPECTED)) {
+      let s = emptyDagState();
+      s = applyOp(s, { type: 'addNode', nodeId: 'p', nodeType: type, params: {} } as Op).next;
+      const value = evaluate(s, 'p', {
+        ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+        socket: 'out',
+      }).value as ImageValue;
+      expect(`${type}:${value.sourceHash}`).toBe(`${type}:${hash}`);
+    }
+  });
+
   it('passRoleOfType answers from the declaration for every production pass', () => {
     for (const [type, role] of DECLARED_ROLES) {
       expect(passRoleOfType(type, 'out')).toBe(role);
