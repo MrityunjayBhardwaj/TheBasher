@@ -42,7 +42,9 @@ export const DepthPassNode: NodeDefinition<DepthPassParams, ImageValue> = {
     camera: { type: 'SceneObject', cardinality: 'single' },
     time: { type: 'Time', cardinality: 'single' },
   },
-  outputs: { out: { type: 'Image', cardinality: 'single' } },
+  /** #608 — the ROLE is declared here, so a reader can answer "which socket is the
+   *  depth pass" from the graph alone, without evaluating the node. */
+  outputs: { out: { type: 'Image', cardinality: 'single', role: 'depth' } },
   inspectorSections: ['render'],
   evaluate(params, inputs: ResolvedInputs): ImageValue {
     const scene = inputs.scene as SceneValue | undefined;

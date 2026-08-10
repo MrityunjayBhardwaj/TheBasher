@@ -17,7 +17,10 @@
 //      failure this walk exists to prevent).
 //   3. bundleToProject — normalize the envelope into a fresh Project, running the
 //      EXACT load ladder loadProject uses (migrateProjectFormat → ProjectSchema
-//      .parse → migrateNodes) so versioning/migration round-trips.
+//      .parse → migrateNodes → repairAndWarn) so versioning/migration round-trips
+//      AND the semantic rules a shape check cannot express are re-asserted. This
+//      list is the contract: a rung added to loadProject and not to this one is
+//      how the two ladders drift (#619).
 //
 // The three OPFS-backed asset reference shapes (the complete span as of v0.6):
 //   - GltfAsset.assetRef         → a string under `user-imports/<folder>/...`
@@ -43,6 +46,7 @@ import type { DagState } from '../core/dag/state';
 import type { StorageCapability } from '../core/storage/StorageCapability';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from '../core/project/schema';
 import { migrateNodes, migrateProjectFormat } from '../core/project/migrations';
+import { repairAndWarn } from '../core/project/repairRoleBindings';
 import { USER_IMPORTS_ROOT, listFilesDeep } from './asset/importCommon';
 import { BAKED_GEOMETRY_ROOT, bakedGeometryPath } from './asset/bakedGeometryStore';
 import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
@@ -266,9 +270,16 @@ export function base64ToBytes(b64: string): Uint8Array {
  * Normalize a parsed envelope into a fresh {@link Project} under `newId`,
  * running the SAME ladder loadProject uses: format-migrate the raw payload, then
  * validate against the current ProjectSchema, then step each node to its
- * registered version. The result is a brand-new project (fresh timestamps), so
- * opening a `.basher` is non-destructive (it never collides with the file's
- * original id).
+ * registered version, then repair the bindings no shape check can judge. The
+ * result is a brand-new project (fresh timestamps), so opening a `.basher` is
+ * non-destructive (it never collides with the file's original id).
+ *
+ * #619 — the last rung is load-bearing and was missing. A `.basher` is a graph
+ * that arrives already assembled, exactly like a project file, so it never
+ * passed the connect-time gate either: without the repair here the one-role-per-
+ * socket rule would hold for files we OPEN and fail for files we IMPORT. "The
+ * same ladder as loadProject" has to stay literally true, or this function is a
+ * second spelling that drifts one rung at a time.
  *
  * `now` is injected (not read from Date.now) so the transform stays pure and
  * deterministically testable.
@@ -287,7 +298,7 @@ export function bundleToProject(bundle: SceneBundle, newId: string, now: number)
   };
   const migrated = migrateProjectFormat(normalized);
   const validated = ProjectSchema.parse(migrated);
-  return migrateNodes(validated);
+  return repairAndWarn(migrateNodes(validated));
 }
 
 /** True iff this bundle carries embedded assets (a self-contained file). */

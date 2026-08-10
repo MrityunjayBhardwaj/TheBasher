@@ -12,6 +12,7 @@
 // REF: THESIS.md §9 (five primitives), §50, App. B; krama K2 (op dispatch
 // lifecycle).
 
+import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
@@ -228,6 +229,28 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   const prior = consumer.inputs[op.to.socket];
   let nextBinding: InputBinding;
   let inverse: Op;
+
+  // #608 — AT MOST ONE PRODUCER PER ROLE on a list socket. A list is the right
+  // shape for "several passes feed this job" and the wrong shape for "two of them
+  // are the depth pass": the reader downstream then has to pick one and report the
+  // ambiguity, because nothing in the model ever said the role was unique. Refuse
+  // it here, where the author is present and the message can name the incumbent,
+  // rather than at read time when it is a mystery.
+  //
+  // Only ROLE-BEARING producers are constrained. A list of role-less images — the
+  // ordered frames VideoStitch encodes — stays unconstrained, which is what makes
+  // this a rule about roles rather than a cap on list length.
+  if (inputDesc.cardinality === 'list' && outputDesc.role !== undefined) {
+    const existing = Array.isArray(prior) ? prior : prior ? [prior] : [];
+    for (const held of existing) {
+      if (passRoleOf(state, held) !== outputDesc.role) continue;
+      throw new OpError(
+        `connect: ${consumer.type}.${op.to.socket} already holds a ${outputDesc.role} pass ` +
+          `("${held.node}"); a role may be bound once. Disconnect it first.`,
+        op,
+      );
+    }
+  }
 
   if (inputDesc.cardinality === 'list') {
     const existing = Array.isArray(prior) ? [...prior] : prior ? [prior] : [];

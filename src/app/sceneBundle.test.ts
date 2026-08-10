@@ -2,7 +2,7 @@
 // the base64 codec, the envelope schema (incl. legacy backward-compat), and the
 // envelope→Project load ladder.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DagState } from '../core/dag/state';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
@@ -310,6 +310,88 @@ describe('bundleToProject', () => {
     expect(carriedTypes).toContain('LightData');
     expect(carriedTypes).not.toContain('PerspectiveCamera');
     expect(project.state.outputs).toEqual(src.state.outputs);
+  });
+
+  // #619 — a `.basher` is a graph that arrives already assembled, so it never met
+  // the connect-time gate any more than a project file did. Before the fix the two
+  // ladders had drifted by one rung: loadProject repaired, bundleToProject did not,
+  // and the duplicate survived into both the hydrated store and the file the import
+  // wrote. Observed in the browser first (the import seam), pinned here.
+  //
+  // Built LITERALLY, because after the gate landed applyOp will not construct this
+  // graph at all — a hand-assembled envelope is the only thing that can carry one,
+  // and it is schema-VALID, which is exactly why the ProjectSchema rung above lets
+  // it through.
+  it('#619 — repairs a bundle that binds two producers of the SAME role', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bundle = SceneBundleSchema.parse({
+      formatVersion: PROJECT_FORMAT_VERSION,
+      id: 'dup',
+      name: 'two depth passes',
+      state: {
+        nodes: {
+          job: {
+            id: 'job',
+            type: 'RenderJob',
+            version: 1,
+            params: {},
+            inputs: {
+              'pass-input': [
+                { node: 'd1', socket: 'out' },
+                { node: 'd2', socket: 'out' },
+              ],
+            },
+          },
+          d1: { id: 'd1', type: 'DepthPass', version: 1, params: {}, inputs: {} },
+          d2: { id: 'd2', type: 'DepthPass', version: 1, params: {}, inputs: {} },
+        },
+        outputs: {},
+      },
+    });
+
+    const project = bundleToProject(bundle, 'p', 1);
+
+    expect(project.state.nodes.job.inputs['pass-input']).toEqual([{ node: 'd1', socket: 'out' }]);
+    // No silent loss — the drop names the node it dropped.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kept "d1", dropped "d2"'));
+    warn.mockRestore();
+  });
+
+  // The separating member: identical shape, role-LESS producers. If the repair ever
+  // grows into a cap on list length this stays green only while it is still a rule
+  // about ROLES — an ordered list of clips is not a role map.
+  it('#619 — leaves a bundle binding two role-LESS producers alone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bundle = SceneBundleSchema.parse({
+      formatVersion: PROJECT_FORMAT_VERSION,
+      id: 'clips',
+      name: 'two clips',
+      state: {
+        nodes: {
+          job: {
+            id: 'job',
+            type: 'RenderJob',
+            version: 1,
+            params: {},
+            inputs: {
+              'pass-input': [
+                { node: 'c1', socket: 'out' },
+                { node: 'c2', socket: 'out' },
+              ],
+            },
+          },
+          c1: { id: 'c1', type: 'MediaClip', version: 1, params: {}, inputs: {} },
+          c2: { id: 'c2', type: 'MediaClip', version: 1, params: {}, inputs: {} },
+        },
+        outputs: {},
+      },
+    });
+
+    const project = bundleToProject(bundle, 'p', 1);
+
+    expect(project.state.nodes.job.inputs['pass-input']).toHaveLength(2);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('throws on a structurally invalid node (the ProjectSchema gate bites)', () => {
