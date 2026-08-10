@@ -25,7 +25,7 @@
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { evaluate } from '../../core/dag/evaluator';
-import { passRoleOf } from '../../nodes/passes/passRole';
+import { passRoleOf } from '../../core/dag/passRole';
 import type { ImagePassKind, ImageValue, JobResultValue } from '../../nodes/types';
 
 const SummarizePassSchema = z.object({

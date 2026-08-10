@@ -13,11 +13,11 @@
 // which is exactly why a test that only sweeps the registry can prove nothing
 // about the difference between them.
 //
-// REF: issue #608; `src/core/dag/types.ts` (`PassRole`, `OutputDescriptor.role`).
+// REF: issue #608; `./types.ts` (`PassRole`, `OutputDescriptor.role`).
 
-import { getNodeType } from '../../core/dag/registry';
-import type { DagState } from '../../core/dag/state';
-import type { NodeRef, NodeTypeId, PassRole, SocketId } from '../../core/dag/types';
+import { getNodeType } from './registry';
+import type { DagState } from './state';
+import type { NodeRef, NodeTypeId, PassRole, SocketId } from './types';
 
 /** The role declared on `type`'s `socket` output, or undefined when it declares none. */
 export function passRoleOfType(type: NodeTypeId, socket: SocketId): PassRole | undefined {

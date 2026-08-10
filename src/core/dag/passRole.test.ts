@@ -14,14 +14,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { getNodeType, listNodeTypes, registerNodeType } from '../../core/dag/registry';
-import { evaluate } from '../../core/dag/evaluator';
-import { __reseedAllNodesForTests } from '../registerAll';
+import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from './index';
+import { getNodeType, listNodeTypes, registerNodeType } from './registry';
+import { evaluate } from './evaluator';
+import { __reseedAllNodesForTests } from '../../nodes/registerAll';
 import { renderSummarizePassTool } from '../../agent/tools/renderSummarizePass';
 import { passRoleOf, passRoleOfType } from './passRole';
-import { DEFAULT_IMAGE_DESCRIPTOR, type ImagePassKind, type ImageValue } from '../types';
-import type { Op, PassRole } from '../../core/dag/types';
+import { DEFAULT_IMAGE_DESCRIPTOR, type ImagePassKind, type ImageValue } from '../../nodes/types';
+import type { Op, PassRole } from './types';
 
 /** The exact set of role-declaring outputs, pinned by node type. */
 const DECLARED_ROLES: ReadonlyArray<readonly [string, PassRole]> = [
@@ -172,6 +172,51 @@ describe('#608 — a pass role is read from the declaration, not the value', () 
     // agree by construction, so on its own it would pass even if it compared nothing.
     registerLiar('LyingPass', 'normal', 'id');
     expect(roleTagDisagreements()).toEqual(['LyingPass.out: declares normal, emits id']);
+  });
+
+  it('THE GATE: a second depth pass is refused, and the message names the incumbent', () => {
+    expect(() =>
+      jobWith([
+        ['d1', 'DepthPass'],
+        ['d2', 'DepthPass'],
+      ]),
+    ).toThrow(/already holds a depth pass \("d1"\); a role may be bound once/);
+  });
+
+  it('the gate is per ROLE, not a cap on the list — different roles all fit', () => {
+    const s = jobWith([
+      ['b', 'BeautyPass'],
+      ['d', 'DepthPass'],
+      ['n', 'NormalPass'],
+      ['i', 'IDPass'],
+    ]);
+    expect((s.nodes.job.inputs['pass-input'] as unknown[]).length).toBe(4);
+  });
+
+  it('role-LESS producers stay unconstrained — the open-ended list survives', () => {
+    // VideoStitch's frames are an ordered sequence, not a role map. Constraining
+    // by role must not quietly become "one Image per list".
+    const s = jobWith([
+      ['clipA', 'MediaClip'],
+      ['clipB', 'MediaClip'],
+    ]);
+    expect((s.nodes.job.inputs['pass-input'] as unknown[]).length).toBe(2);
+  });
+
+  it('the gate does not wedge: disconnect frees the role again', () => {
+    let s = jobWith([['d1', 'DepthPass']]);
+    s = applyOp(s, {
+      type: 'disconnect',
+      from: { node: 'd1', socket: 'out' },
+      to: { node: 'job', socket: 'pass-input' },
+    } as Op).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'd2', nodeType: 'DepthPass', params: {} } as Op).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'd2', socket: 'out' },
+      to: { node: 'job', socket: 'pass-input' },
+    } as Op).next;
+    expect(s.nodes.job.inputs['pass-input']).toEqual([{ node: 'd2', socket: 'out' }]);
   });
 
   it('passRoleOfType answers from the declaration for every production pass', () => {
