@@ -18,6 +18,7 @@
 import type { DagState } from '../dag/state';
 import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
+import { repairAndWarn } from './repairRoleBindings';
 import { PROJECT_FILENAME, PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
 
 const encoder = new TextEncoder();
@@ -72,7 +73,11 @@ export async function loadProject(storage: StorageCapability, projectId: string)
   }
   const migrated = migrateProjectFormat(raw);
   const project = ProjectSchema.parse(migrated);
-  return migrateNodes(project);
+  // #608 — semantic repair AFTER the format ladder and the node ladder, so the
+  // graph being judged is the one the app will actually hydrate rather than the
+  // one on disk. The schema checks shapes; this checks a relationship between
+  // bindings, which no shape can express.
+  return repairAndWarn(migrateNodes(project));
 }
 
 export async function listProjects(storage: StorageCapability): Promise<string[]> {

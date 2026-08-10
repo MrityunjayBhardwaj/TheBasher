@@ -132,12 +132,45 @@ export type SocketTypeName =
 export type Cardinality = 'single' | 'list';
 
 /**
+ * #608 — the ROLE a render pass plays, as distinct from the TYPE it emits. All
+ * four passes emit `Image`; what separates them is what the image is OF.
+ *
+ * `'stylized'` is deliberately absent: it names an image that came out of a
+ * workflow, not a pass rendered from the scene, and the one reader that cares
+ * (`agent.render.summarizeStylized`) already asks a different question.
+ */
+export type PassRole = 'beauty' | 'depth' | 'normal' | 'id';
+
+/**
  * What a PRODUCER emits on an output socket: exactly one type. A producer that
  * could emit either of two types is a different node, not a wider socket.
+ *
+ * #608 — `role` states, ON THE DECLARATION, which render pass this socket
+ * produces. It is optional because most sockets have no role: absence means
+ * "this output plays no part in the pass lane", which is a fact, not a gap.
+ *
+ * WHY IT LIVES HERE AND NOT ON THE BINDING. The role belongs to the PRODUCER: a
+ * DepthPass is a depth pass wherever it is wired, so an edge-level role would be
+ * able to express a contradiction (bound as depth here, normal there) that has no
+ * meaning. One owner, one place it is stated.
+ *
+ * WHY IT IS FREE. A descriptor is CODE — recompiled from source on every load and
+ * present in no save file. The alternative designs both moved a SocketId, which is
+ * DATA: a producer's output socket id is persisted verbatim inside every binding
+ * that points at it (`{"node":"n_beauty","socket":"out"}`), so renaming outputs by
+ * role would have been a project-format migration. Measured, not assumed.
+ *
+ * ⚠️ THE ROLE IS NOT THE VALUE'S TAG. `ImageValue.passKind` still exists and still
+ * drives renderer dispatch, output-path naming and the content hash. This field is
+ * the GRAPH's answer to "which socket is the depth pass", readable without
+ * evaluating anything; that one is the VALUE's answer. They agree today on every
+ * producer, which is exactly why a test asserting agreement over the registry alone
+ * would prove nothing (#608 step 3 mints the disagreement).
  */
 export interface OutputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
+  role?: PassRole;
 }
 
 /**

@@ -6,10 +6,19 @@
 // renders without needing the actual pixels — vision-on-trigger reads the
 // stored bytes when describing visual content.
 //
-// Locating the pass: the tool walks the RenderJob's 'pass-input' bindings
-// looking for an attached pass node whose evaluator returns the requested
-// passKind. If multiple matches exist, the FIRST is returned (with a
-// note); the caller can disambiguate by passing a passId.
+// Locating the pass (#608): the tool walks the RenderJob's 'pass-input'
+// bindings and matches on the ROLE THE PRODUCER DECLARES — a graph fact,
+// resolved without evaluating anything. Only a matching pass is then
+// evaluated, for its descriptor and hash. Previously the match came from
+// `passKind` on the EVALUATED value, which meant every attached pass was
+// evaluated to answer a read-only question, and any node emitting that tag
+// (an imported MediaClip) passed for a beauty pass.
+//
+// There is no "multiple matches" case any more, and that is a fact about the
+// MODEL rather than a decision by this reader: a role can be bound once per
+// list socket, enforced at connect and re-asserted when a project is loaded.
+// The tool used to return `ambiguous` and take a `passId` to break ties; both
+// are gone, because the state they described is no longer constructible.
 //
 // REF: THESIS §43 ("Pass results stored such that agent can describe them"),
 // project_p4_prompt locked decisions, vyapti V7 (tools never dispatch).
@@ -17,6 +26,7 @@
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { evaluate } from '../../core/dag/evaluator';
+import { passRoleOf } from '../../core/dag/passRole';
 import type { ImagePassKind, ImageValue, JobResultValue } from '../../nodes/types';
 
 const SummarizePassSchema = z.object({
@@ -32,12 +42,6 @@ const SummarizePassSchema = z.object({
     .nonnegative()
     .default(0)
     .describe('Frame number to evaluate the pass at; default 0'),
-  passId: z
-    .string()
-    .optional()
-    .describe(
-      'Optional explicit pass node id when multiple passes of the same kind hang off the job',
-    ),
 });
 export type SummarizePassArgs = z.infer<typeof SummarizePassSchema>;
 
@@ -51,8 +55,6 @@ interface PassSummary {
   sourceHash: string;
   descriptor: { width: number; height: number; format: string };
   outputPath: string;
-  /** True when multiple passes of the requested kind exist on the job; FIRST returned. */
-  ambiguous: boolean;
 }
 
 export const renderSummarizePassTool: ToolDefinition<SummarizePassArgs> = {
@@ -61,8 +63,8 @@ export const renderSummarizePassTool: ToolDefinition<SummarizePassArgs> = {
     'Describe a render pass result by jobId + passKind + frame. Returns the ' +
     "pass's sourceHash, descriptor (width/height/format), and the storage path " +
     'the bytes write to (when the job runs). Read-only; evaluates the DAG at ' +
-    'the requested time to derive the deterministic pass handle. Pass passId ' +
-    'when multiple passes of the same kind hang off the job.',
+    'the requested time to derive the deterministic pass handle. A job holds at ' +
+    'most one pass of each kind, so jobId + passKind identifies it exactly.',
   paramSchema: SummarizePassSchema,
   handler(args: SummarizePassArgs, ctx: ToolContext): ToolResult {
     const { dagState } = ctx;
@@ -95,37 +97,44 @@ export const renderSummarizePassTool: ToolDefinition<SummarizePassArgs> = {
     const seconds = args.frame / fps;
     const evalCtx = { time: { frame: args.frame, seconds, normalized: 0 } };
 
-    const candidates: Array<{ passId: string; pass: ImageValue }> = [];
-    for (const ref of refs) {
-      const result = evaluate(dagState, ref.node, { ctx: evalCtx, socket: ref.socket });
-      const pass = result.value as ImageValue;
-      if (pass.kind !== 'Image') continue;
-      if (pass.passKind !== args.passKind) continue;
-      if (args.passId !== undefined && ref.node !== args.passId) continue;
-      candidates.push({ passId: ref.node, pass });
+    // #608 — the ROLE is read from the producer's DECLARATION, so which binding is
+    // the depth pass is settled before anything is evaluated. Evaluation is then
+    // only for the pass's own metadata (descriptor, hash), which genuinely does
+    // need the value. A node that declares no role — an imported clip, a workflow
+    // result — is not a pass and never matches, however its value tags itself.
+    // #608 — ONE binding can carry a given role, so this is a find rather than a
+    // collect-and-pick. The singular shape is the point: there is no runner-up to
+    // report, no first-wins rule to document and no `ambiguous` flag to return,
+    // because the graph can no longer hold the state those existed to describe.
+    const match = refs.find((ref) => passRoleOf(dagState, ref) === args.passKind);
+    if (!match) {
+      return {
+        ops: [],
+        text: `Error: no ${args.passKind} pass connected to job "${args.jobId}"`,
+      };
     }
 
-    if (candidates.length === 0) {
-      const detail = args.passId
-        ? `passId "${args.passId}" not in job's pass-input list`
-        : `no ${args.passKind} pass connected to job "${args.jobId}"`;
-      return { ops: [], text: `Error: ${detail}` };
+    const pass = evaluate(dagState, match.node, { ctx: evalCtx, socket: match.socket })
+      .value as ImageValue;
+    if (pass.kind !== 'Image') {
+      return {
+        ops: [],
+        text: `Error: "${match.node}" declares a ${args.passKind} pass but did not evaluate to an Image`,
+      };
     }
 
-    const winner = candidates[0];
     const padded = args.frame.toString().padStart(4, '0');
     const trimmedPath = meta.outputPath.replace(/\/+$/, '');
     const summary: PassSummary = {
       jobId: meta.jobId,
-      passId: winner.passId,
-      passKind: winner.pass.passKind,
+      passId: match.node,
+      passKind: pass.passKind,
       frame: args.frame,
       seconds,
       fps,
-      sourceHash: winner.pass.sourceHash,
-      descriptor: { ...winner.pass.descriptor },
-      outputPath: `${trimmedPath}/${winner.pass.passKind}_${padded}.png`,
-      ambiguous: candidates.length > 1,
+      sourceHash: pass.sourceHash,
+      descriptor: { ...pass.descriptor },
+      outputPath: `${trimmedPath}/${pass.passKind}_${padded}.png`,
     };
     return { ops: [], text: JSON.stringify(summary, null, 2) };
   },
