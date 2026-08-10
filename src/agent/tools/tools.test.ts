@@ -756,7 +756,9 @@ describe('agent.render.summarizePass tool', () => {
     expect(summary.descriptor.format).toBe('rgba8');
     expect(summary.outputPath).toBe('renders/jobA/beauty_0000.png');
     expect(summary.sourceHash).toMatch(/^[0-9a-f]{8}$/);
-    expect(summary.ambiguous).toBe(false);
+    // #608 — `ambiguous` is GONE, not merely false. A job can hold at most one
+    // pass of a role, so there is no ambiguity left for the reader to report.
+    expect(summary).not.toHaveProperty('ambiguous');
   });
 
   it('sourceHash flips between frames at different times', () => {
