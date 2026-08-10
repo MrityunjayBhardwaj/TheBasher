@@ -204,17 +204,17 @@ export interface OutputDescriptor {
  * This is the one hazard the widening introduces and the compiler does NOT catch:
  * `desc.type === 'ObjectData'` still type-checks against the union — the two sides
  * overlap — and silently reads FALSE for a set-valued socket. Every predicate that
- * asked the question that way has been folded onto these helpers, with two residuals
- * that are deliberate:
- *   • `test-utils/splitKinds.ts` re-spells the membership test inline. Forced, not
- *     chosen — a gate in its own spec forbids a VALUE import of `core/dag` there, so
- *     it cannot call this function. The two answers are held together by an AGREEMENT
- *     gate in `splitKinds.registry.test.ts`, which runs both over synthetic set-valued
- *     defs the registry does not contain (#615). Do not close the gap by widening the
- *     import rule; it is load-bearing.
- *   • three test assertions (`materialLink`, `ParamDriver` ×2) still compare `.type`
- *     directly, because their job IS to pin a specific declared type. They should
- *     fail loudly if the socket they name ever becomes a set.
+ * asked the question that way has been folded onto these helpers, with one residual
+ * that is deliberate: three test assertions (`materialLink`, `ParamDriver` ×2) still
+ * compare `.type` directly, because their job IS to pin a specific declared type. They
+ * should fail loudly if the socket they name ever becomes a set.
+ *
+ * `test-utils/splitKinds.ts` used to be a second residual, re-spelling the membership
+ * test inline because a gate in its own spec forbids a VALUE import of `core/dag` there.
+ * It now CALLS `inputAccepts` (#612), which was possible without touching that rule —
+ * the import ban was never about the path, it was about dragging the module graph into
+ * Playwright, and `socketMembership.ts` drags nothing. The rule stays exactly as
+ * load-bearing as it was; what changed is that one module can now satisfy it honestly.
  */
 /**
  * Two or more accepted types (#614). The TUPLE shape is the point: a set of one is a
@@ -235,24 +235,13 @@ export interface InputDescriptor {
   cardinality: Cardinality;
 }
 
-/**
- * The types an input socket accepts, always as a set (one-element for the
- * ordinary single-type socket). The one place the two spellings collapse.
- */
-export function acceptedTypes(desc: InputDescriptor): readonly SocketTypeName[] {
-  return Array.isArray(desc.type) ? desc.type : [desc.type as SocketTypeName];
-}
-
-/**
- * Does this input socket accept a producer emitting `produced`? Takes `undefined` —
- * an absent socket accepts nothing — because every caller is asking about a socket
- * looked up by name, and `?.type === 'X'` is exactly the spelling that reads FALSE
- * on a set-valued socket while still compiling.
- */
-export function inputAccepts(desc: InputDescriptor | undefined, produced: SocketTypeName): boolean {
-  if (!desc) return false;
-  return Array.isArray(desc.type) ? desc.type.includes(produced) : desc.type === produced;
-}
+// The two membership readers live in `socketMembership.ts` (#612) and are re-exported
+// here so every existing caller is unchanged. They were moved for ONE reason: that file
+// has no value imports, so a Playwright-reachable module can call them without dragging
+// the DAG module graph into a browser run — which is what forced `splitKinds.ts` to
+// re-spell the test inline. See that file's header for why the exemption is derived from
+// its leaf-ness rather than granted to its path.
+export { acceptedTypes, inputAccepts } from './socketMembership';
 
 // ---------------------------------------------------------------------------
 // Node definition (the contract every node-type implements)
