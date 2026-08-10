@@ -65,4 +65,19 @@ describe('detachGraph (#620)', () => {
     const copy = detachGraph(emptyDagState());
     expect(copy).toEqual({ nodes: {}, outputs: {} });
   });
+
+  it('detaches EVERY field, not just the two it knows by name', () => {
+    // The guarantee has to be total, or it is the original bug one level up: an
+    // implementation that spread the input and replaced `nodes`/`outputs` by name
+    // would pass every other assertion in this file while handing a future
+    // DagState field straight through as a live reference. This is the assertion
+    // that separates those two implementations.
+    const original = { ...graphWithOneNode(), extra: { deep: [1, 2, 3] } };
+    const copy = detachGraph(original);
+
+    expect(copy.extra).toEqual({ deep: [1, 2, 3] });
+    expect(copy.extra).not.toBe(original.extra);
+    copy.extra.deep[0] = 99;
+    expect(original.extra.deep[0]).toBe(1);
+  });
 });

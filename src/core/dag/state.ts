@@ -108,13 +108,17 @@ export function emptyDagState(): DagState {
  * because each envelope is serialised to JSON immediately afterwards — the copy
  * costs nothing the export was not already paying, and its JSON is byte-identical
  * to the alias's.
+ *
+ * It clones the graph WHOLESALE rather than field by field, deliberately. A
+ * version that spread the input and replaced `nodes` and `outputs` by name would
+ * be the same bug one level up: any field added to `DagState` later would pass
+ * through the spread as a live reference, and the guarantee this function exists
+ * to make would quietly become partial. Cloning the whole value keeps the claim
+ * total — every graph type here is serialisable by construction, because it is
+ * the on-disk save format.
  */
 export function detachGraph<G extends DagGraph>(graph: G): G {
-  return {
-    ...graph,
-    nodes: structuredClone(graph.nodes),
-    outputs: structuredClone(graph.outputs),
-  };
+  return structuredClone(graph);
 }
 
 export function getNode(state: DagState, id: NodeId): Node {
