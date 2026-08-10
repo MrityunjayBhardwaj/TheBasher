@@ -478,6 +478,26 @@ export type GeometryDescriptor =
 /** The axis a `mirror` modifier reflects across (the negated component). */
 export type MirrorAxis = 'x' | 'y' | 'z';
 
+/**
+ * A LOOKUP KEY into one process-wide, content-derived geometry cache — NOT a
+ * per-object container.
+ *
+ * #605 — nothing per-object may be attached here, and the reason is measurable
+ * rather than stylistic: two nodes with equal descriptors resolve to the SAME
+ * `BufferGeometry` instance (`geometryRegistry` caches on `key`, and
+ * `geometrySharing.gate.test.ts` pins the identity). So an attribute hung off
+ * this handle would be hung off something several objects hold at once. Material
+ * is the concrete case: two same-size boxes shaded differently would either
+ * collide, or force material into the key and shatter the sharing the cache
+ * exists to provide — a box per material instead of a box.
+ *
+ * This is why the reference-substrate move of carrying material as a
+ * primitive-class attribute riding along in the geometry container does not
+ * transfer as-is. There, the container is the object's own data; here it is a
+ * shared, content-addressed entry. Per-object substance belongs on the DATA half
+ * of the object/data pair (`BoxData` = geometry + material), which is already
+ * where it lives.
+ */
 export interface GeometryRef {
   readonly key: string;
   readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array' | 'mirror';
@@ -521,6 +541,31 @@ export interface EvaluatedUVs {
  * reads (M6, Phase 151): an `InlineMaterialSpec` for un-baked box/sphere, a rich
  * `BakedMaterialSpec` for a BakedMesh, or null (gltf). Widening to the union means
  * there is exactly ONE material shape consumers branch on, never a second path.
+ *
+ * ── #605: THE FOUR SIBLING FIELDS ARE A PROJECTION, NOT THE DATA MODEL ─────────
+ *
+ * These four being peers reads like material sitting BESIDE geometry rather than
+ * ON it. That is true of this shape and false of the substrate underneath, and the
+ * distinction is worth keeping straight before anyone re-flattens it differently:
+ *
+ *   - Material already lives WITH geometry at the authoring layer. The data half
+ *     of the object/data pair is exactly `{geometry, material}` and deliberately
+ *     carries no transform (see `BoxData.ts`). That IS the "on the geometry side"
+ *     placement — it is not missing, it is one layer down.
+ *   - It cannot move further, onto `GeometryRef` itself, because that handle is
+ *     shared and content-keyed. See the note at its declaration.
+ *   - This struct is the flat READ face over that pair, and the flatness is the
+ *     point: one material shape, one geometry handle, one transform, so no
+ *     consumer grows a second path.
+ *
+ * The two `null`s here do NOT share a cause, which is the part that misleads:
+ *   - `uvs: null` is a CAPABILITY limit — the geometry is async (clone / OPFS) and
+ *     this resolver is pure and sync. It is null for glTF AND for baked, and the
+ *     baked arm fills `material` right beside it.
+ *   - `material: null` happens for glTF ALONE, because glTF has no data half to
+ *     carry one; its material is already on the loaded clone. That is #389's
+ *     Object+data split, not a placement question.
+ * A change that moves fields around this struct addresses neither.
  */
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
