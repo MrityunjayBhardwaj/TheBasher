@@ -28,7 +28,7 @@ describe('idRefSweep — subject refs die with their referent', () => {
   it('sweeps a keyframe channel whose target is deleted', () => {
     const s = idRefSweep(
       nodes(
-        ['cube', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
         ['ch', 'KeyframeChannelVec3', { target: 'cube', paramPath: 'position' }],
       ),
       ['cube'],
@@ -39,7 +39,7 @@ describe('idRefSweep — subject refs die with their referent', () => {
   it('sweeps a constraint and a driver bound to the deleted object', () => {
     const s = idRefSweep(
       nodes(
-        ['cube', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
         ['tt', 'TrackTo', { target: 'cube', aimNode: '' }],
         ['drv', 'ParamDriver', { target: 'cube', paramPath: 'position' }],
       ),
@@ -51,8 +51,8 @@ describe('idRefSweep — subject refs die with their referent', () => {
   it('leaves an unrelated object and its channel completely alone', () => {
     const s = idRefSweep(
       nodes(
-        ['cube', 'BoxMesh', {}],
-        ['sphere', 'SphereMesh', {}],
+        ['cube', 'Object', {}],
+        ['sphere', 'Object', {}],
         ['chOther', 'KeyframeChannelVec3', { target: 'sphere', paramPath: 'position' }],
       ),
       ['cube'],
@@ -67,7 +67,7 @@ describe('idRefSweep — argument refs are cleared, never cascaded', () => {
     const s = idRefSweep(
       nodes(
         ['aimNull', 'Null', { position: [7, 7, 7] }],
-        ['cube', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
         ['tt', 'TrackTo', { target: 'cube', aimNode: 'aimNull' }],
       ),
       ['aimNull'],
@@ -90,7 +90,7 @@ describe('idRefSweep — argument refs are cleared, never cascaded', () => {
             sourceTransform: { node: 'ctrl', channel: 'ty' },
           },
         ],
-        ['cube', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
       ),
       ['ctrl'],
     );
@@ -111,8 +111,8 @@ describe('idRefSweep — argument refs are cleared, never cascaded', () => {
         ['walkAction', 'Action', { name: 'walk', channels: [] }],
         ['stripA', 'Strip', { target: 'cubeA', action: 'walkAction', start: 3 }],
         ['stripB', 'Strip', { target: 'cubeB', action: 'walkAction', start: 11 }],
-        ['cubeA', 'BoxMesh', {}],
-        ['cubeB', 'BoxMesh', {}],
+        ['cubeA', 'Object', {}],
+        ['cubeB', 'Object', {}],
       ),
       ['walkAction'],
     );
@@ -130,7 +130,7 @@ describe('idRefSweep — ownership in the downward direction', () => {
         ['s1', 'Strip', { target: 'cube', action: 'act', start: 3 }],
         ['s2', 'Strip', { target: 'cube', action: 'act', start: 9 }],
         ['act', 'Action', { name: 'walk', channels: [] }],
-        ['cube', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
       ),
       ['trk'],
     );
@@ -148,8 +148,8 @@ describe('idRefSweep — ownership in the downward direction', () => {
         ['s1', 'Strip', { target: 'cube', action: 'act', start: 3 }],
         ['sKeep', 'Strip', { target: 'other', action: 'act', start: 9 }],
         ['act', 'Action', { name: 'walk', channels: [] }],
-        ['cube', 'BoxMesh', {}],
-        ['other', 'BoxMesh', {}],
+        ['cube', 'Object', {}],
+        ['other', 'Object', {}],
       ),
       ['cube'],
     );
@@ -164,7 +164,7 @@ describe('findDanglingIdRef — the #435 final-state detector', () => {
     expect(
       findDanglingIdRef(
         nodes(
-          ['cube', 'BoxMesh', {}],
+          ['cube', 'Object', {}],
           ['ch', 'KeyframeChannelVec3', { target: 'cube', paramPath: 'position' }],
         ),
       ),

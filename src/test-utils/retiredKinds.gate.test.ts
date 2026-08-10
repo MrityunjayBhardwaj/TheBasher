@@ -14,13 +14,16 @@
 // WHAT IT IS SCOPED TO, and the reasoning is load-bearing — this gate's scope was MEASURED,
 // not assumed, and the measurement moved it twice:
 //
-//   1. It matches a CONSTRUCTION POSITION (`nodeType: '<relic>'`), never a bare name.
+//   1. It matches CONSTRUCTION POSITIONS — three of them since #594 — never a bare name.
 //      Necessary, because the relic names are OVERLOADED. `'DirectionalLight'` is
 //      simultaneously a retired node type AND a live `LightValue.kind` discriminator (the
 //      recompose target, src/nodes/types.ts:56) AND an Add-menu creation kind
-//      (src/app/addPrimitives.ts). A name-grep over src/ fires on ~20 files of permanent,
-//      correct code and would need an allowlist longer than the thing it guards. `nodeType:`
-//      is the one position that unambiguously means "mint a node of this type".
+//      (src/app/addPrimitives.ts). A name-grep over src/ + tests/ fires on 409 lines across
+//      109 files of permanent, correct code (re-measured at #594; the earlier estimate was
+//      "~20 files") and would need an allowlist far longer than the thing it guards. The
+//      three positions in `carrierPattern` are the ones that unambiguously mean "mint a
+//      node of this type" — see that function for each, and for the measurement that says
+//      they cost zero false positives.
 //
 //   2. It strips COMMENTS first. Four end-to-end specs name a relic in prose precisely to
 //      record that it is retired (`// The fused 'Curve' node type is retired.`). Those are
@@ -66,13 +69,34 @@
 // coverage than it has. A relic minted through a COMPUTED type (`nodeTypeFor(kind)`) is
 // invisible to any grep. That path is covered instead by the throwing sentinel plus the
 // registry: production code that computed its way to a relic would throw on first evaluate.
-// The second blind spot is the SPELLING: a fixture that writes a plain `type: '<relic>'` on a
-// state literal constructs the node without going near `nodeType:`, and is invisible here.
-// That is #594, and it is why the deletion had to sweep those sites by hand.
+//
+// The SPELLING blind spot was the second, and #594 closed most of it. The gate matched one
+// construction position (`nodeType:`) and therefore could not see a hand-built `type:
+// '<relic>'` on a state literal, nor a relic passed positionally to a fixture helper. Both
+// are now matched — see `carrierPattern`. What that sweep found, and what it cost:
+//
+//   - 12 carriers in `src/core/dag/idRefSweep.test.ts` (the tuple spelling) and 2 in
+//     `src/timeline/TimelineCanvas.test.tsx` (the helper-call spelling), every one a
+//     stand-in for "some node with an id", all retargeted onto live types.
+//   - 6 in `src/core/project/migrations.test.ts`, which are correct and are why that file
+//     is a RELIC_IS_THE_SUBJECT member again.
+//   - The issue's own table (10 sites across 7 files) had DECAYED: re-measuring found those
+//     seven files already clean, and two files it never named carrying 14 sites between
+//     them. Re-derive this census; do not inherit it.
+//
+// WHAT REMAINS UNCOVERED, with its count, because the honest move is to name it rather than
+// let the widening read as completeness: a relic reached through any position these three
+// patterns do not spell — a first or last positional argument, a variable holding the name,
+// a computed string. Measured on the current tree: a bare-name sweep returns 409 lines
+// across 109 files, and every one of them that is NOT caught above is live vocabulary, so
+// the residue is currently empty by inspection rather than by construction. The instrument
+// that would close it for good is not a grep at all — it is making a fixture's node type
+// unrepresentable unless the registry has it (validate in the shared builders), which is
+// filed rather than done here.
 //
 // REF: src/test-utils/splitKinds.ts (`fusedTypes` — the derived subject); src/a11y/grepGates.test.ts
 //      (the grep-gate-as-unit-test precedent this mirrors); .anvi/krama.md K23 finding 6 (the
-//      green-suite-proves-nothing case); issues #471, #462, #476.
+//      green-suite-proves-nothing case); issues #471, #462, #476, #594.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -114,14 +138,18 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
  * has stopped carrying a relic is reported, so this cannot quietly outlive its reason.
  */
 const RELIC_IS_THE_SUBJECT: readonly { file: string; why: string }[] = [
-  // `src/core/project/migrations.test.ts` used to be listed here, and its removal is what the
-  // booking written at #596 predicted (#599). The reason it was exempt is unchanged — a
-  // migration that does not hand-build the PRE-migration shape is not testing a migration —
-  // but the exemption is no longer load-bearing: with the last three relics retired, every
-  // fused construction in that file is a raw state literal, which this gate's `nodeType:`
-  // pattern cannot see anyway. Keeping the entry would hide the file from the sweep for
-  // nothing, so the sweep covers it now. Its raw literals remain deliberate and are #594's
-  // subject, not this gate's.
+  // BACK, and the round trip is the point. This entry was dropped at #599 on the reasoning
+  // that the file's fused constructions had all become raw `type:` literals, which the
+  // `nodeType:` pattern could not see anyway — so listing it hid the file from the sweep
+  // "for nothing". That was true of the gate as it stood and stopped being true the moment
+  // #594 taught the pattern to read raw literals: the sweep now sees all six, and without
+  // this entry the gate reds on the one file whose whole job is to build pre-migration
+  // shapes. The original reason was never wrong — a migration that does not hand-build the
+  // shape it migrates FROM is not testing a migration — it was only dormant.
+  {
+    file: 'src/core/project/migrations.test.ts',
+    why: 'the pre-migration shape IS the subject — a ladder test that builds the post-migration shape tests nothing. Its six raw `type:` literals are deliberate',
+  },
   {
     file: 'src/test-utils/retiredKinds.gate.test.ts',
     why: 'this file — its positive controls are relic constructions in string literals, and they are what prove the detector is not vacuous while its real subject is empty',
@@ -146,10 +174,52 @@ function retiredNodeTypes(): string[] {
 // the other gate) because `src/test-utils/*.ts` is typechecked against a tsconfig with no
 // `@types/node`, so a shared helper could not call `git ls-files`.
 
-/** The construction position: `nodeType: '<relic>'`, in any of the three quote styles. */
+/**
+ * The CONSTRUCTION POSITIONS — every spelling that unambiguously means "mint a node of
+ * this type", in any of the three quote styles. Three, not one (#594):
+ *
+ *   1. `nodeType: '<relic>'`   — an `addNode` op. The original, and the only one this
+ *      gate saw until #594.
+ *   2. `type: '<relic>'`       — a hand-built node object inside a `DagState` literal.
+ *      It never goes near `addNode`, never calls `requireNodeType`, and therefore never
+ *      touches the registry: DELETING the relic definition does not break it. That is
+ *      what makes this spelling worse than the first rather than merely different — the
+ *      fixture keeps asserting, green, about a shape the product can no longer build.
+ *   3. `, '<relic>', {`        — the positional `(id, TYPE, params)` argument of a local
+ *      fixture helper (`nodes(['cube','BoxMesh',{}])`, `node('n_cam','PerspectiveCamera',
+ *      {...})`). Same story as 2, one call deep.
+ *
+ * WHY NOT JUST GREP THE NAME, restated because the answer changed shape at #594 and the
+ * temptation comes back every time a new spelling is found. It was RE-MEASURED on the
+ * current tree rather than inherited: a bare-name sweep returns 409 lines across 109
+ * files, and the overwhelming majority are permanent, correct live vocabulary — the
+ * Add-menu creation kinds (`addPrimitives.ts`), the `CameraKind` union
+ * (`activeCamera.ts`), `LightValue.kind` discriminators, icon maps, and the node-type-keyed
+ * inspector-section store. An allowlist absorbing that is far longer than the thing it
+ * guards, and an allowlist grown to absorb noise is how a gate comes to excuse what it
+ * was written to catch.
+ *
+ * The three positions above were measured instead: together they return 12 lines across
+ * exactly 2 files, both of which are RELIC_IS_THE_SUBJECT members. Zero false positives
+ * over 1132 tracked files. Position 3 is deliberately anchored on a following `{` — the
+ * params object — because without that anchor it also catches
+ * `buildAddPrimitiveOps(state, 'PerspectiveCamera', [3,2,3])`, which passes an Add-menu
+ * kind to a live function and is not a construction at all.
+ */
 function carrierPattern(types: readonly string[]): RegExp {
   const alt = types.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-  return new RegExp(`\\bnodeType\\s*:\\s*['"\`](${alt})['"\`]`);
+  const q = `['"\`]`;
+  return new RegExp(
+    // positions 1 and 2 — `nodeType:` and a bare `type:` on a node literal
+    `\\b(?:node)?[Tt]ype\\s*:\\s*${q}(${alt})${q}` +
+      // position 3 — the (id, TYPE, params) helper argument, anchored on the params `{`
+      `|,\\s*${q}(${alt})${q}\\s*,\\s*\\{`,
+  );
+}
+
+/** The relic name a carrier line names, whichever of the pattern's groups matched. */
+function carrierType(m: RegExpExecArray): string {
+  return m[1] ?? m[2];
 }
 
 /** Every tracked `.ts`/`.tsx` under `src/` and `tests/` — exactly what CI sees. */
@@ -186,7 +256,7 @@ function findCarriers(files: readonly string[], re: RegExp): Carrier[] {
     const src = stripComments(readFileSync(join(REPO_ROOT, file), 'utf8'));
     src.split('\n').forEach((text, i) => {
       const m = re.exec(text);
-      if (m) hits.push({ file, line: i + 1, text: text.trim(), type: m[1] });
+      if (m) hits.push({ file, line: i + 1, text: text.trim(), type: carrierType(m) });
     });
   }
   return hits;
@@ -357,8 +427,32 @@ describe('retire-a-kind gate (#471 B-III)', () => {
       "case 'SpotLight':", // a switch over LightValue.kind
       "nodeType: 'Object',", // the surviving type
       "nodeType: 'SphereData',",
+      // #594 — the live vocabulary the two WIDER positions must still walk past. Each of
+      // these is a real line from the tree, and each is why a bare-name grep is not an
+      // option: they are permanent, correct code that names a relic for a different reason.
+      "export type CameraKind = 'PerspectiveCamera' | 'OrthographicCamera';", // activeCamera.ts
+      "  'AreaLight',", // an Add-menu kind in a list literal (addPrimitives.ts)
+      "    kind === 'SpotLight' ||", // a comparison, not a construction
+      'const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);', // the THREE class
+      "expect(iconKindForNode(state, 'x', 'SphereMesh')).toBe('mesh');", // a query, last arg
+      "useInspectorSectionsStore.getState().setCollapsed('BoxMesh', 'material', true);", // first arg
+      // The one that decides position 3's `{` anchor: an Add-menu kind passed to a live
+      // function, third argument an ARRAY. Without the anchor this reads as a construction.
+      "const r = buildAddPrimitiveOps(seedSceneState(), 'PerspectiveCamera', [3, 2, 3])!;",
     ]) {
       expect(fires(line), `must NOT be detected: ${line}`).toBe(false);
+    }
+
+    // #594 — the two spellings the gate was blind to until now, each asserted directly so a
+    // regression in either arm of the pattern is named rather than showing up as a silent
+    // widening of the blind spot.
+    for (const line of [
+      "  type: 'BoxMesh',", // a hand-built node object in a DagState literal
+      '    type: "PerspectiveCamera",',
+      "        ['cube', 'BoxMesh', {}],", // the (id, TYPE, params) tuple
+      "node('n_camera', 'PerspectiveCamera', { fov: 45 })", // the same, as a helper call
+    ]) {
+      expect(fires(line), `must be detected (#594 spelling): ${line}`).toBe(true);
     }
 
     // A carrier hiding behind a URL on the same line — the case that rules out the naive
