@@ -85,6 +85,38 @@ export function emptyDagState(): DagState {
   return { nodes: {}, outputs: {} };
 }
 
+/**
+ * A copy of the graph that OWNS its records — no field of the result is reachable
+ * from the store the original came from.
+ *
+ * ── WHY THIS EXISTS (#620) ─────────────────────────────────────────────────────
+ *
+ * Every builder that packages the DAG for something outside the store used to
+ * compose its envelope as `{ nodes: state.nodes, outputs: state.outputs }` — the
+ * store's OWN records under a new roof. The envelope reads as a self-contained
+ * snapshot and is not one: a caller that adjusts it before writing (strip a node,
+ * redact an asset) silently edits the open scene instead.
+ *
+ * This is latent rather than live ONLY because `applyOp` is copy-on-write — it
+ * replaces the node table and the touched node rather than writing through them
+ * (`ops.ts`), so an outside holder sees a correctly frozen table by accident of that
+ * discipline, not by construction. The moment anything mutates a record in place,
+ * every aliasing envelope moves with it. Detaching at the door removes the
+ * dependence on a discipline the recipient cannot see and never agreed to.
+ *
+ * The clone is `structuredClone`, and it is behaviour-preserving at these seams
+ * because each envelope is serialised to JSON immediately afterwards — the copy
+ * costs nothing the export was not already paying, and its JSON is byte-identical
+ * to the alias's.
+ */
+export function detachGraph<G extends DagGraph>(graph: G): G {
+  return {
+    ...graph,
+    nodes: structuredClone(graph.nodes),
+    outputs: structuredClone(graph.outputs),
+  };
+}
+
 export function getNode(state: DagState, id: NodeId): Node {
   const n = state.nodes[id];
   if (!n) throw new Error(`Node not found: ${id}`);

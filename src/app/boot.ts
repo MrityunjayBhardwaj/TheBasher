@@ -20,6 +20,7 @@ import {
   resetGrowth as resetGeometryGrowth,
   size as geometrySize,
 } from './geometryRegistry';
+import { detachGraph } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -1032,6 +1033,12 @@ export interface BuiltSceneBundle {
  * DAG state plus every OPFS-backed asset it references, embedded as base64. Pure
  * read (no mutation, no download). A referenced-but-unreadable asset is recorded
  * in `missingAssets` rather than silently dropped (V38).
+ *
+ * #620 — "self-contained" is now true of the RETURNED OBJECT and not merely of the
+ * file it becomes. This used to hand back `{ nodes: dag.nodes, outputs: dag.outputs }`,
+ * the store's own records, so a caller that trusted the sentence above and adjusted
+ * the bundle before writing it would silently edit the open scene. `detachGraph`
+ * makes the envelope own its records; the JSON is byte-identical either way.
  */
 export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
   const storage = await getStorage();
@@ -1055,13 +1062,14 @@ export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
     }
   }
 
+  const detached = detachGraph(dag);
   const bundle: SceneBundle = {
     formatVersion: meta.formatVersion ?? PROJECT_FORMAT_VERSION,
     bundleVersion: SCENE_BUNDLE_VERSION,
     id: meta.id,
     name: meta.name,
     exportedAt: Date.now(),
-    state: { nodes: dag.nodes, outputs: dag.outputs },
+    state: { nodes: detached.nodes, outputs: detached.outputs },
     assets: Object.keys(assets).length > 0 ? assets : undefined,
   };
   return { bundle, missingAssets };

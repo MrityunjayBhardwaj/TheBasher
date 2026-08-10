@@ -40,7 +40,24 @@ describe('buildDagExportPayload (#428)', () => {
     const payload = buildDagExportPayload({ id: 'abc', name: 'My Scene' }, dag, 1234);
     expect(payload.id).toBe('abc');
     expect(payload.name).toBe('My Scene');
-    expect(payload.state).toBe(dag);
+    // VALUE-unchanged, deliberately not the same object — see the #620 test below.
+    // This assertion read `toBe(dag)` until #620, which is to say the aliasing was
+    // pinned as intended behaviour by the test named "snapshot".
+    expect(payload.state).toEqual(dag);
     expect(payload.exportedAt).toBe(1234);
+  });
+
+  it('detaches the payload from the live DAG it was built from (#620)', () => {
+    const dag = emptyDagState();
+    const payload = buildDagExportPayload({ id: 'abc', name: 'My Scene' }, dag, 1234);
+
+    expect(payload.state).not.toBe(dag);
+    expect(payload.state.nodes).not.toBe(dag.nodes);
+    expect(payload.state.outputs).not.toBe(dag.outputs);
+
+    // The reachability property, stated as the failure it prevents: a caller that
+    // adjusts the payload before writing must not be editing the open scene.
+    (payload.state.nodes as Record<string, unknown>).stripped = { id: 'x' };
+    expect('stripped' in dag.nodes).toBe(false);
   });
 });

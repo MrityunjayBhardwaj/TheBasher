@@ -6,9 +6,15 @@
 // does NOT mutate. Reads useProjectStore for the current project name (or
 // falls back to "untitled") and useDagStore for the DAG snapshot.
 //
+// #620 — "snapshot" is now literal. `buildDagExportPayload` used to set
+// `state: dag`, i.e. the caller's own live object, so the payload was a live
+// VIEW of the store rather than a snapshot of it and a caller editing the
+// payload wrote straight through to the scene. It detaches now; see
+// `detachGraph` in core/dag/state.ts for why the whole class was latent.
+//
 // REF: docs/UI-SPEC.md §5.3 (TopToolbar Export button).
 
-import type { DagState } from '../core/dag/state';
+import { detachGraph, type DagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { useProjectStore } from '../core/project/store';
@@ -41,7 +47,7 @@ export function buildDagExportPayload(
     formatVersion: PROJECT_FORMAT_VERSION,
     id: project.id,
     name: project.name,
-    state: dag,
+    state: detachGraph(dag),
     exportedAt,
   };
 }
