@@ -15,7 +15,7 @@
 //
 // REF: THESIS.md §52, krama K5.
 
-import type { DagState } from '../dag/state';
+import { detachGraph, type DagState } from '../dag/state';
 import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { repairAndWarn } from './repairRoleBindings';
@@ -32,6 +32,29 @@ export interface ComposeProjectArgs {
   updatedAt?: number;
 }
 
+/**
+ * #624 — the composed project OWNS its graph. `saveCurrent` hands this the live DAG
+ * store's records and then puts the result into the project store, so without the
+ * detach one graph is held by two stores: `useProjectStore…current.state.nodes` IS
+ * `useDagStore…state.nodes`. It behaves correctly today only because `applyOp` is
+ * copy-on-write — a snapshot by accident of a discipline the project store cannot see.
+ *
+ * Detaching HERE rather than only in `saveCurrent` costs nothing extra (that is the
+ * one caller passing live store state; `default.ts` and `examples.ts` build their
+ * graph locally) and makes the contract total, so a later caller cannot reopen the
+ * seam by handing this live state.
+ *
+ * The cost was measured before choosing: against a whole `saveCurrent` in the browser
+ * — including the OPFS write and its read-back verify — the clone is 25% of the save
+ * at 200 objects (+0.7 ms), 44% at 1000 (+4.6 ms), 51% at 5000 (+23 ms). Autosave is
+ * idle-debounced 10 s after the last edit (`boot.ts`), so this lands in a window the
+ * save already waits for; nothing here is on an interactive path.
+ *
+ * `ProjectSchema.parse`, which `saveProject` runs next, is NOT a substitute even
+ * though it already builds a copy: `NodeSchema.params` is `z.unknown()`, so every
+ * params object — where the mutable arrays live — passes through by reference. It
+ * rebuilds the levels that were already safe and shares the one that is not.
+ */
 export function composeProject(args: ComposeProjectArgs): Project {
   const nodeVersions: Record<string, number> = {};
   for (const node of Object.values(args.state.nodes)) {
@@ -45,10 +68,10 @@ export function composeProject(args: ComposeProjectArgs): Project {
     createdAt: args.createdAt ?? now,
     updatedAt: args.updatedAt ?? now,
     nodeVersions,
-    state: {
+    state: detachGraph({
       nodes: args.state.nodes,
       outputs: args.state.outputs,
-    },
+    }),
   };
 }
 

@@ -104,10 +104,18 @@ export function emptyDagState(): DagState {
  * every aliasing envelope moves with it. Detaching at the door removes the
  * dependence on a discipline the recipient cannot see and never agreed to.
  *
- * The clone is `structuredClone`, and it is behaviour-preserving at these seams
- * because each envelope is serialised to JSON immediately afterwards — the copy
- * costs nothing the export was not already paying, and its JSON is byte-identical
+ * The clone is `structuredClone`, and it is behaviour-preserving at every seam here
+ * because each envelope is serialised to JSON afterwards — its JSON is byte-identical
  * to the alias's.
+ *
+ * It is NOT free everywhere, and the difference is the trigger, not the copy. At the
+ * export seams the envelope is stringified immediately, so the clone costs nothing the
+ * export was not already paying. At `composeProject` (#624) it sits on the save path,
+ * where the write dominates: measured in the browser against a whole `saveCurrent`
+ * including the OPFS write and its read-back verify, the clone is 25% of the save at
+ * 200 objects (+0.7 ms), 44% at 1000 (+4.6 ms) and 51% at 5000 (+23 ms) — paid in the
+ * idle window an autosave already waits 10 s for. Before adding a THIRD kind of caller,
+ * one on an interactive path, measure it there rather than inheriting this sentence.
  *
  * It clones the graph WHOLESALE rather than field by field, deliberately. A
  * version that spread the input and replaced `nodes` and `outputs` by name would
