@@ -8,14 +8,21 @@ import { idRefSweep, findDanglingIdRef } from './idRefSweep';
 import { getNodeType, listNodeTypes } from './registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { Op } from './types';
+import { testNode } from '../../test-utils/testNode';
 
 registerAllNodes();
 
 type FakeNodes = Record<string, { id: string; type: string; params: unknown }>;
 
+// #622 — built through `testNode`, so a type the registry does not have throws here
+// instead of quietly asserting forever. These fixtures are stand-ins for "some node with
+// an id"; twelve of them used to name retired kinds and stayed green because a hand-built
+// literal never touches the registry.
 function nodes(...defs: Array<[string, string, unknown]>): FakeNodes {
   const out: FakeNodes = {};
-  for (const [id, type, params] of defs) out[id] = { id, type, params };
+  for (const [id, type, params] of defs) {
+    out[id] = testNode(id, type, { params }) as unknown as FakeNodes[string];
+  }
   return out;
 }
 
