@@ -6,10 +6,18 @@
 // renders without needing the actual pixels — vision-on-trigger reads the
 // stored bytes when describing visual content.
 //
-// Locating the pass: the tool walks the RenderJob's 'pass-input' bindings
-// looking for an attached pass node whose evaluator returns the requested
-// passKind. If multiple matches exist, the FIRST is returned (with a
-// note); the caller can disambiguate by passing a passId.
+// Locating the pass (#608): the tool walks the RenderJob's 'pass-input'
+// bindings and matches on the ROLE THE PRODUCER DECLARES — a graph fact,
+// resolved without evaluating anything. Only a matching pass is then
+// evaluated, for its descriptor and hash. Previously the match came from
+// `passKind` on the EVALUATED value, which meant every attached pass was
+// evaluated to answer a read-only question, and any node emitting that tag
+// (an imported MediaClip) passed for a beauty pass.
+//
+// If multiple matches exist, the FIRST is returned (with a note); the caller
+// can disambiguate by passing a passId. That ambiguity is what #608 is
+// removing — the connect gate has not yet been taught to refuse a second
+// pass of the same role, so it remains reachable for now.
 //
 // REF: THESIS §43 ("Pass results stored such that agent can describe them"),
 // project_p4_prompt locked decisions, vyapti V7 (tools never dispatch).
@@ -17,6 +25,7 @@
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { evaluate } from '../../core/dag/evaluator';
+import { passRoleOf } from '../../nodes/passes/passRole';
 import type { ImagePassKind, ImageValue, JobResultValue } from '../../nodes/types';
 
 const SummarizePassSchema = z.object({
@@ -95,13 +104,18 @@ export const renderSummarizePassTool: ToolDefinition<SummarizePassArgs> = {
     const seconds = args.frame / fps;
     const evalCtx = { time: { frame: args.frame, seconds, normalized: 0 } };
 
+    // #608 — the ROLE is read from the producer's DECLARATION, so which binding is
+    // the depth pass is settled before anything is evaluated. Evaluation is then
+    // only for the pass's own metadata (descriptor, hash), which genuinely does
+    // need the value. A node that declares no role — an imported clip, a workflow
+    // result — is not a pass and never matches, however its value tags itself.
     const candidates: Array<{ passId: string; pass: ImageValue }> = [];
     for (const ref of refs) {
+      if (passRoleOf(dagState, ref) !== args.passKind) continue;
+      if (args.passId !== undefined && ref.node !== args.passId) continue;
       const result = evaluate(dagState, ref.node, { ctx: evalCtx, socket: ref.socket });
       const pass = result.value as ImageValue;
       if (pass.kind !== 'Image') continue;
-      if (pass.passKind !== args.passKind) continue;
-      if (args.passId !== undefined && ref.node !== args.passId) continue;
       candidates.push({ passId: ref.node, pass });
     }
 
