@@ -38,8 +38,12 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
+  BakedMaterialSpec,
   EvaluatedMesh,
   GeometryRef,
+  InlineMaterialSpec,
+  MaterialAssignment,
+  MeshDataValue,
   MeshTransform,
   ObjectData,
   ObjectValue,
@@ -48,12 +52,17 @@ import type {
 import { modifierDataSource } from './modifierGeometry';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { materialAssignmentOf, materialSlotsOf } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
-import { getForRead as getRegistryGeometry } from './geometryRegistry';
-import { extractUVIslands } from './uvIslands';
-import type { EvaluatedUVs } from '../nodes/types';
+import { readMeshUVs } from './uvAttributes';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
+
+/** No slot table and no per-face index — the answer for a road with no data half yet. */
+const EMPTY_ASSIGNMENT: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null> = {
+  slots: [],
+  indices: null,
+};
 
 /** The pose of a modifier chain nothing wears yet — a dangling stack has no Object to
  *  take one from, and inventing the source's would re-fuse what the split separated. */
@@ -65,17 +74,6 @@ const IDENTITY_TRANSFORM: MeshTransform = {
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
-}
-
-// v0.6 #3 (#181, W1) — real UV islands for the SYNC producers only (A-2). The
-// geometry registry builds box/sphere on demand (a few hundred verts — trivial,
-// and the resolver is on-demand, never per-frame). glTF/baked geometry is ASYNC
-// (asset clone / OPFS) and outside this pure sync resolver, so those branches
-// return uvs:null and UVEditor resolves them itself via the SAME extractUVIslands
-// (A-3). Mirrors the existing material:null-for-glTF contract.
-function resolveRegistryUVs(geometry: GeometryRef): EvaluatedUVs | null {
-  const g = getRegistryGeometry(geometry);
-  return g ? extractUVIslands(g) : null;
 }
 
 /**
@@ -98,6 +96,35 @@ function resolvePrimitiveTransform(
     return { position: walked.position, rotation: walked.rotation, scale: walked.scale };
   }
   return raw;
+}
+
+/**
+ * The `MeshData` → `EvaluatedMesh` projection, exported because it is the ONE place a
+ * mesh data value becomes a read face — and because it is the only way a test can hand the
+ * read side a value the real population cannot yet produce (a mesh assigning two materials
+ * across its faces). A projection nothing can call with a synthetic input is a projection
+ * whose interesting cases are unreachable.
+ */
+export function evaluatedMeshFromMeshData(
+  data: MeshDataValue,
+  transform: MeshTransform,
+): EvaluatedMesh {
+  // #634 — resolved THROUGH the attribute system rather than read off the sibling field.
+  // The data node's IR is the object's slot TABLE; the geometry's face attribute says which
+  // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
+  // which is the point: the read path moved first, while the answers still agreed.
+  const materials = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+  const uvRead = readMeshUVs(data.geometry);
+  return {
+    geometry: data.geometry,
+    uvRead,
+    // The WHOLE assignment: the object's slot table paired with the geometry's per-face
+    // index into it. Nothing is collapsed here — a consumer that can only carry one
+    // material opts into `primaryMaterial` at its own call site, where the narrowing is
+    // visible, rather than being handed a narrowed value it cannot tell from a full one.
+    materials,
+    transform,
+  };
 }
 
 /**
@@ -168,7 +195,15 @@ export function resolveEvaluatedMesh(
       };
     }
 
-    return { geometry, uvs: null, material: null, transform };
+    // glTF has no data half to carry a slot table — its materials live on the loaded
+    // clone (#389). An EMPTY table is the honest answer: not "one slot holding nothing".
+    const gltfUvs = readMeshUVs(geometry);
+    return {
+      geometry,
+      uvRead: gltfUvs,
+      materials: EMPTY_ASSIGNMENT,
+      transform,
+    };
   }
 
   // #388 — the fused `node.type === 'BakedMesh'` branch was HERE, and it is gone with the
@@ -211,13 +246,15 @@ export function resolveEvaluatedMesh(
     const transform = objectId
       ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
+    const modifierMaterials = materialAssignmentOf(null, [source.material]);
+    const modifierUvs = readMeshUVs(source.geometry);
     return {
       geometry: source.geometry,
       // The modified geometry is SYNC-buildable (box/sphere data), so its UVs (the
       // merged source islands) come from the SAME registry path as Box/Sphere (#209 UV
       // follow-up). Baked data is not sync-buildable → the registry misses → null.
-      uvs: resolveRegistryUVs(source.geometry),
-      material: source.material,
+      uvRead: modifierUvs,
+      materials: modifierMaterials,
       transform,
     };
   }
@@ -255,34 +292,36 @@ export function resolveEvaluatedMesh(
       // baked ref is not sync-buildable from the registry. Only the TRANSFORM differs
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
-      return { geometry: data.geometry, uvs: null, material: data.material, transform };
+      const bakedMaterials = materialAssignmentOf(null, [data.material]);
+      const bakedUvs = readMeshUVs(data.geometry);
+      return {
+        geometry: data.geometry,
+        uvRead: bakedUvs,
+        materials: bakedMaterials,
+        transform,
+      };
     }
     if (data.kind === 'ModifiedData') {
       // #415 — the Object half of a modifier pair. Same shape as the `MeshData` arm
       // below (the modifier's geometry IS a registry handle, so UVs resolve
-      // synchronously), and the material passes verbatim: `EvaluatedMesh.material`
-      // already carries the wide Inline|Baked union that `ModifiedDataValue` does,
-      // widened by #358 precisely so a baked-sourced modifier stops dropping its
-      // material here.
+      // synchronously), and the material passes verbatim into a ONE-slot table: the
+      // read side's slots carry the wide Inline|Baked union that `ModifiedDataValue`
+      // does, widened by #358 precisely so a baked-sourced modifier stops dropping its
+      // material here. `indices` is null — this road has no per-face attribute yet, and
+      // a synthesised array of zeros would claim otherwise.
       const modGeometry = data.geometry;
+      const modifiedMaterials = materialAssignmentOf(null, [data.material]);
+      const modifiedUvs = readMeshUVs(modGeometry);
       return {
         geometry: modGeometry,
-        uvs: resolveRegistryUVs(modGeometry),
-        material: data.material,
+        uvRead: modifiedUvs,
+        materials: modifiedMaterials,
         transform,
       };
     }
     const exhaustiveData: 'MeshData' = data.kind;
     void exhaustiveData;
-    const geometry = data.geometry;
-    return {
-      geometry,
-      uvs: resolveRegistryUVs(geometry),
-      // Already a complete IR (the data node hydrated it) — pass it verbatim so the
-      // read-side material is byte-identical to what ObjectR renders.
-      material: data.material,
-      transform,
-    };
+    return evaluatedMeshFromMeshData(data, transform);
   }
 
   return null; // identity-null: not a mesh producer

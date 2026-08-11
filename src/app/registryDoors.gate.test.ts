@@ -127,8 +127,13 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // whole exception set lives now that it is machine-checked rather than described.
   'src/app/boot.ts': 'read',
   'src/app/geometrySampleSource.ts': 'read',
-  'src/app/resolveEvaluatedMesh.ts': 'read',
-  'src/app/resolveMeshUVSpace.ts': 'read',
+  // #635 — `resolveEvaluatedMesh` used to be here and no longer opens a door itself: the UV
+  // read moved behind this module, which lifts the `uv` buffer off the built geometry as a
+  // corner-domain attribute and copies it. It takes no ownership and writes nothing back.
+  // …and `resolveMeshUVSpace` left with it, for the same reason: it now reads the typed UV
+  // answer off the resolved value and imports only the CLASSIFIER (`availabilityOf`), which
+  // hands back no instance and therefore opens no door. Two consumers became one.
+  'src/app/uvAttributes.ts': 'read',
   // Clones before it writes, so the shared instance is untouched — a reader that happens to
   // own a copy afterwards, which is the rule working rather than an exception to it.
   'src/app/animate/dispatchApplyTransform.ts': 'read',
@@ -162,11 +167,32 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
  */
 const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetGrowth'];
 
+/**
+ * Bindings that classify a `GeometryRef['kind']` and never reach the cache at all (#630).
+ *
+ * Kept SEPARATE from the diagnostics carve-out above rather than folded into it, because
+ * the two are exempt for different reasons and merging them would make the list's rule
+ * unreadable. A diagnostic looks at the cache and hands back a number. A classifier never
+ * looks at the cache: `availabilityOf` takes a kind and returns a label, so there is no
+ * instance for a caller to hold or free, and no door for it to be opening. It sits further
+ * from the line than `residentBytes` does, not closer.
+ *
+ * Why it is importable at all rather than duplicated per consumer: it is the answer to
+ * "what does a null from this registry MEAN", and the registry is the code that produces
+ * the null. A consumer keeping its own copy is a second spelling that agrees until someone
+ * adds a geometry kind — which is the shape `resolveMeshUVSpace.ts` was in before #630, and
+ * its own header records that defect biting.
+ */
+const GEOMETRY_CLASSIFIERS = ['availabilityOf'];
+
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {
   attach: ['getForAttach'],
-  read: ['getForRead'],
-  produce: ['prime', 'getForRead'],
+  // `readGeometry` (#630) is the same read with its absence typed — same cache, same
+  // instance, same no-write contract — so it belongs to this door rather than opening a
+  // new one. `getForRead` is defined in terms of it, not beside it.
+  read: ['getForRead', 'readGeometry'],
+  produce: ['prime', 'getForRead', 'readGeometry'],
   lifetime: ['sweep'],
   'spec-only': [],
 };
@@ -238,7 +264,7 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
       const cls = GEOMETRY_CONSUMERS[path];
       if (!cls) continue;
       const opened = importedDoors(src, 'geometryRegistry').filter(
-        (b) => !GEOMETRY_DIAGNOSTICS.includes(b),
+        (b) => !GEOMETRY_DIAGNOSTICS.includes(b) && !GEOMETRY_CLASSIFIERS.includes(b),
       );
       const allowed = GEOMETRY_DOORS[cls];
       for (const door of opened) if (!allowed.includes(door)) wrong.push(`${path}: ${door}`);
