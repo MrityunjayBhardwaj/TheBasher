@@ -387,13 +387,23 @@ geometry instance.
 geometry per object satisfies the first half and silently destroys the sharing the registry
 exists to provide.
 
-**Why this is a real boundary, not a sizing convenience.** Both references keep material
-assignment separable from geometry _specifically so variation is possible over shared
-geometry_ — Blender through `MaterialSlot.link` (`'OBJECT' | 'DATA'`, default `'DATA'`:
-_"the objects can have different materials and still share the same mesh"_), Houdini through a
-per-primitive material attribute, so one packed prim carries its own material. **The line both
-draw: the index is geometry, the table is object-level.** Phase 1 owns the index; Phase 1b owns
-the table and the draw.
+**What the references settle, and what they do not.** Both keep material assignment separable
+from geometry _specifically so variation is possible over shared geometry_ — Blender through
+`MaterialSlot.link` (`'OBJECT' | 'DATA'`, default `'DATA'`: _"the objects can have different
+materials and still share the same mesh"_), Houdini through a per-primitive material attribute,
+so one packed prim carries its own material. **The line both draw: the index is geometry, the
+table is object-level.**
+
+That settles a **data-model** question — where the index lives versus where the table lives —
+and it is what forbids folding material into `GeometryRef.key`. It does **not** by itself
+justify shipping the two as separate phases; no reference has a position on phase scheduling.
+The split rests on a separate, measured fact: Phase 1's original exit was unreachable from its
+own work, because the renderer never reads `EvaluatedMesh`. The reference makes the two levels
+**separable**; the measurement is why they are actually **separated**.
+
+Recorded at this precision deliberately — the earlier draft of this paragraph used the
+reference to carry the scheduling argument too, which is one claim more than the evidence
+supports.
 
 **Notes.** Design as a _domain_ model, not a "four-class" model — Blender's seven domains
 are the measured superset and curve/instance domains may matter later. Corner domain is
