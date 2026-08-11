@@ -293,59 +293,6 @@ export function mirrorGeometryRef(
 // descriptor and re-mint — through the builders above, so a key still has one spelling.
 
 /**
- * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
- * params alone.
- *
- * #633 — a face-domain attribute must carry exactly as many elements as the geometry has
- * faces, and the mint happens in a node's `evaluate()`: pure, synchronous, and with no
- * business building a `BufferGeometry`. So the count has to come from the descriptor.
- *
- * ⚠️ THIS IS A SECOND SPELLING OF THREE.JS'S TESSELLATION, and a second spelling that agrees
- * today is the whole hazard. It is made safe the only way that works: ONE function, plus
- * `faceCount.gate.test.ts`, which builds each sync-buildable descriptor through the registry
- * and asserts the built triangle count matches this — including at the clamp edges, where
- * three.js quietly raises a sphere's segments to its own minimum.
- *
- * The two `null` arms are the escape hatch and are censused exactly by that gate:
- *   `gltf`  — the buffers live in a loaded asset clone; nothing on the descriptor says how
- *             many triangles they hold.
- *   `baked` — the descriptor carries a vertex count, not a face count, and the authoritative
- *             bytes are in OPFS. Deriving faces from vertices would be a guess about
- *             indexing, which is exactly the kind of agrees-today arithmetic this comment
- *             exists to refuse.
- */
-export function faceCountOf(descriptor: GeometryDescriptor): number | null {
-  switch (descriptor.kind) {
-    case 'box':
-      // Six quads, two triangles each — independent of size, and independent of the
-      // segment counts the descriptor does not carry.
-      return 12;
-    case 'sphere': {
-      // three.js clamps to its own minimum before tessellating, so this clamps first too;
-      // the poles contribute one triangle per column instead of two, hence (h - 1).
-      const w = Math.max(3, Math.floor(descriptor.widthSegments));
-      const h = Math.max(2, Math.floor(descriptor.heightSegments));
-      return 2 * w * (h - 1);
-    }
-    case 'array': {
-      const source = faceCountOf(descriptor.source.descriptor);
-      return source === null ? null : source * Math.max(1, Math.floor(descriptor.count));
-    }
-    case 'mirror': {
-      const source = faceCountOf(descriptor.source.descriptor);
-      return source === null ? null : source * 2;
-    }
-    case 'gltf':
-    case 'baked':
-      return null;
-    default: {
-      const unreachable: never = descriptor;
-      throw new Error(`faceCountOf: undeclared descriptor kind ${JSON.stringify(unreachable)}`);
-    }
-  }
-}
-
-/**
  * The descriptor fields a node's PARAMS feed, i.e. the ones an animated channel can write.
  *
  * Derived from the descriptor itself rather than tabulated per kind, because a table would

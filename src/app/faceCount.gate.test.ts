@@ -15,18 +15,18 @@
 // The two non-derivable kinds are censused exactly rather than left implicit: an escape
 // hatch that is not counted is an escape hatch that widens.
 //
-// REF: src/app/modifierGeometry.ts (`faceCountOf`); src/app/geometryRegistry.ts (the build);
-//      issues #633, #395.
+// REF: src/app/faceCount.ts (`faceCountOf` — the leaf it now lives in);
+//      src/app/geometryRegistry.ts (the build); issues #633, #395, #638.
 
 import { describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
 import {
   arrayGeometryRef,
   boxGeometryRef,
-  faceCountOf,
   mirrorGeometryRef,
   sphereGeometryRef,
 } from './modifierGeometry';
+import { faceCountOf } from './faceCount';
 import { getForRead } from './geometryRegistry';
 
 /** Triangles in the BUILT geometry — the ground truth this gate compares against. */

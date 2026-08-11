@@ -24,11 +24,11 @@
 // the subject of a later phase; a fabricated count would be a length that agrees with
 // nothing.
 //
-// REF: src/app/modifierGeometry.ts (`faceCountOf` — the count, and why it is gated);
+// REF: src/app/faceCount.ts (`faceCountOf` — the count, why it is gated, and why it is a leaf);
 //      src/nodes/attributeKey.ts (`mintAttributes`); src/app/attributeStore.ts (the holder);
 //      issues #633, #634, #395.
 
-import { faceCountOf } from '../app/modifierGeometry';
+import { faceCountOf } from '../app/faceCount';
 import { insert } from '../app/attributeStore';
 import { MATERIAL_INDEX, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
