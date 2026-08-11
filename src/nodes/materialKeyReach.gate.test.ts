@@ -172,6 +172,14 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
   'src/nodes/types.ts': 'declares it — on MeshDataValue, and on no other union member',
   'src/nodes/BoxData.ts': 'mints it after the fold',
   'src/nodes/SphereData.ts': 'mints it after the fold',
+  // NOT a producer, and listed rather than excused. A fixture that builds a mesh data value
+  // by hand has to write every field the type declares, so it appears in a writer census
+  // that keys on the field name. Registering it keeps the census COMPLETE — the alternative
+  // was to re-spell the field so the sweep stops seeing it, which is precisely the evasion
+  // this gate's header says it cannot detect. It writes `null`: the fixture exists to
+  // exercise the ATTRIBUTE key, and mints no material identity at all.
+  'src/test-utils/twoMaterialMesh.ts':
+    'FIXTURE — writes null; the two-material read case (#634), not a producer',
 };
 
 /**

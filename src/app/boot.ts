@@ -7,6 +7,7 @@
 
 import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
+import { materialAssignmentReport } from './materialAssignment';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveWorldTransform } from './resolveWorldTransform';
@@ -580,6 +581,17 @@ export function boot(): Promise<void> {
       // assert rendered scale (side A, __basher_mesh_world_scale) ==
       // resolver scale (side B, here) at the same ctx.time. Lazy import keeps
       // boot's static graph lean.
+      // #634 — the read-side seam for the MATERIAL ASSIGNMENT. `__basher_evaluated_mesh`
+      // above carries a single `material` field, which cannot report a mesh whose faces
+      // use two slots — and that field is on its way out (#636). This reports the whole
+      // answer as numbers, so a driven browser observation can see two where the old seam
+      // could only ever see one.
+      w.__basher_material_assignment = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
+        return mesh ? materialAssignmentReport(mesh.materials) : null;
+      };
       w.__basher_evaluated_mesh = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };

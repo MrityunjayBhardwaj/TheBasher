@@ -38,8 +38,12 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
+  BakedMaterialSpec,
   EvaluatedMesh,
   GeometryRef,
+  InlineMaterialSpec,
+  MaterialAssignment,
+  MeshDataValue,
   MeshTransform,
   ObjectData,
   ObjectValue,
@@ -48,13 +52,19 @@ import type {
 import { modifierDataSource } from './modifierGeometry';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { materialAssignmentOf, primaryMaterial } from './materialAssignment';
+import { materialAssignmentOf, materialSlotsOf, primaryMaterial } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { getForRead as getRegistryGeometry } from './geometryRegistry';
 import { extractUVIslands } from './uvIslands';
 import type { EvaluatedUVs } from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
+
+/** No slot table and no per-face index — the answer for a road with no data half yet. */
+const EMPTY_ASSIGNMENT: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null> = {
+  slots: [],
+  indices: null,
+};
 
 /** The pose of a modifier chain nothing wears yet — a dangling stack has no Object to
  *  take one from, and inventing the source's would re-fuse what the split separated. */
@@ -99,6 +109,33 @@ function resolvePrimitiveTransform(
     return { position: walked.position, rotation: walked.rotation, scale: walked.scale };
   }
   return raw;
+}
+
+/**
+ * The `MeshData` → `EvaluatedMesh` projection, exported because it is the ONE place a
+ * mesh data value becomes a read face — and because it is the only way a test can hand the
+ * read side a value the real population cannot yet produce (a mesh assigning two materials
+ * across its faces). A projection nothing can call with a synthetic input is a projection
+ * whose interesting cases are unreachable.
+ */
+export function evaluatedMeshFromMeshData(
+  data: MeshDataValue,
+  transform: MeshTransform,
+): EvaluatedMesh {
+  // #634 — resolved THROUGH the attribute system rather than read off the sibling field.
+  // The data node's IR is the object's slot TABLE; the geometry's face attribute says which
+  // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
+  // which is the point: the read path moved first, while the answers still agreed.
+  const materials = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+  return {
+    geometry: data.geometry,
+    uvs: resolveRegistryUVs(data.geometry),
+    // ⚠️ Collapses to the lowest slot — this field can carry only one material, and it is
+    // the field #636 deletes. `materials` beside it carries the whole answer.
+    material: primaryMaterial(materials),
+    materials,
+    transform,
+  };
 }
 
 /**
@@ -169,7 +206,9 @@ export function resolveEvaluatedMesh(
       };
     }
 
-    return { geometry, uvs: null, material: null, transform };
+    // glTF has no data half to carry a slot table — its materials live on the loaded
+    // clone (#389). An EMPTY table is the honest answer: not "one slot holding nothing".
+    return { geometry, uvs: null, material: null, materials: EMPTY_ASSIGNMENT, transform };
   }
 
   // #388 — the fused `node.type === 'BakedMesh'` branch was HERE, and it is gone with the
@@ -212,13 +251,15 @@ export function resolveEvaluatedMesh(
     const transform = objectId
       ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
+    const modifierMaterials = materialAssignmentOf(null, [source.material]);
     return {
       geometry: source.geometry,
       // The modified geometry is SYNC-buildable (box/sphere data), so its UVs (the
       // merged source islands) come from the SAME registry path as Box/Sphere (#209 UV
       // follow-up). Baked data is not sync-buildable → the registry misses → null.
       uvs: resolveRegistryUVs(source.geometry),
-      material: source.material,
+      material: primaryMaterial(modifierMaterials),
+      materials: modifierMaterials,
       transform,
     };
   }
@@ -256,7 +297,14 @@ export function resolveEvaluatedMesh(
       // baked ref is not sync-buildable from the registry. Only the TRANSFORM differs
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
-      return { geometry: data.geometry, uvs: null, material: data.material, transform };
+      const bakedMaterials = materialAssignmentOf(null, [data.material]);
+      return {
+        geometry: data.geometry,
+        uvs: null,
+        material: primaryMaterial(bakedMaterials),
+        materials: bakedMaterials,
+        transform,
+      };
     }
     if (data.kind === 'ModifiedData') {
       // #415 — the Object half of a modifier pair. Same shape as the `MeshData` arm
@@ -266,32 +314,18 @@ export function resolveEvaluatedMesh(
       // widened by #358 precisely so a baked-sourced modifier stops dropping its
       // material here.
       const modGeometry = data.geometry;
+      const modifiedMaterials = materialAssignmentOf(null, [data.material]);
       return {
         geometry: modGeometry,
         uvs: resolveRegistryUVs(modGeometry),
-        material: data.material,
+        material: primaryMaterial(modifiedMaterials),
+        materials: modifiedMaterials,
         transform,
       };
     }
     const exhaustiveData: 'MeshData' = data.kind;
     void exhaustiveData;
-    const geometry = data.geometry;
-    return {
-      geometry,
-      uvs: resolveRegistryUVs(geometry),
-      // #634 — resolved THROUGH the attribute system rather than read off the sibling
-      // field. The data node's IR is the object's slot TABLE (one slot today); the
-      // geometry's face attribute says which slot each face uses. With every face on slot
-      // 0 this is byte-identically `data.material`, which is the point: the read path moves
-      // first, while the answers still agree, so the rewrite and the behaviour change do
-      // not arrive in the same commit.
-      //
-      // ⚠️ This field can carry only ONE material, so it collapses. A consumer that can
-      // report the whole assignment must call `assignedMaterials`; this one is the field
-      // #636 deletes.
-      material: primaryMaterial(materialAssignmentOf(data.attributeKey, [data.material])),
-      transform,
-    };
+    return evaluatedMeshFromMeshData(data, transform);
   }
 
   return null; // identity-null: not a mesh producer

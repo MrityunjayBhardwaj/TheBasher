@@ -425,6 +425,20 @@ export interface BakedMaterialSpec {
 // geometry registry (src/app/geometryRegistry.ts), NEVER inlined BufferGeometry
 // — heavy buffers stay out of Ops / undo / hashing.
 
+/**
+ * A mesh's material assignment: which slots the object declares, and which slot each face
+ * uses (#634).
+ *
+ * `indices` is `null` when the geometry carries no `material_index` attribute at all — a
+ * road with no data half yet (glTF / baked). That is NOT "every face uses slot 0"; it is
+ * "this geometry cannot say", and the difference is why it is a null rather than a
+ * synthesised array of zeros. The readers live in `src/app/materialAssignment.ts`.
+ */
+export interface MaterialAssignment<M> {
+  readonly slots: readonly M[];
+  readonly indices: ArrayLike<number> | null;
+}
+
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
   readonly position: Vec3;
@@ -571,6 +585,16 @@ export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
   readonly uvs: EvaluatedUVs | null;
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * #634 — the WHOLE material assignment: the object's slot table paired with the
+   * geometry's per-face index into it.
+   *
+   * This is what `material` above cannot express. A mesh whose faces point at two slots
+   * reports two here and collapses to one there, so a consumer that can carry the full
+   * answer reads this and a consumer that cannot reads that. `material` is on its way out
+   * (#636); this replaces it.
+   */
+  readonly materials: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null>;
   readonly transform: MeshTransform;
 }
 
@@ -1078,6 +1102,17 @@ export interface MeshDataValue {
    * it is re-derived from params on every evaluation, which is free under a content key.
    */
   readonly attributeKey: string | null;
+  /**
+   * #634 — the object-level material SLOT TABLE, when it has more than one entry.
+   *
+   * Absent is the common case and means "one slot: the `material` above". The table is
+   * object-level and the per-face index is geometry-level, which is the line both reference
+   * systems draw and the reason two objects can share one mesh and still look different.
+   *
+   * ⚠️ Read it through `materialSlotsOf`, never directly — one derivation site is what keeps
+   * this from becoming a second spelling of `material` that agrees today and diverges later.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | null)[];
 }
 
 /**

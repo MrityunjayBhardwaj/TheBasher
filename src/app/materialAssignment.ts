@@ -27,20 +27,8 @@
 //      src/app/resolveEvaluatedMesh.ts (the consumer); issues #634, #633, #638.
 
 import { MATERIAL_INDEX } from '../nodes/attributes';
+import type { InlineMaterialSpec, MaterialAssignment, MeshDataValue } from '../nodes/types';
 import { read } from './attributeStore';
-
-/**
- * A mesh's material assignment: which slots exist, and which slot each face uses.
- *
- * `indices` is `null` when the geometry carries no `material_index` attribute at all — a
- * road with no data half yet (glTF / baked). That is NOT the same as "every face uses slot
- * 0"; it is "this geometry cannot say", and the difference is why it is a null rather than a
- * synthesised array of zeros.
- */
-export interface MaterialAssignment<M> {
-  readonly slots: readonly M[];
-  readonly indices: ArrayLike<number> | null;
-}
 
 /**
  * Pair the geometry's face attribute with the object's slot table.
@@ -98,4 +86,31 @@ export function assignedMaterials<M>(assignment: MaterialAssignment<M>): readonl
  */
 export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null {
   return assignedMaterials(assignment)[0] ?? null;
+}
+
+/**
+ * The object's slot TABLE for a mesh data value — the ONE derivation, so the optional
+ * multi-slot field and the single `material` field can never be read as two answers.
+ */
+export function materialSlotsOf(
+  data: Pick<MeshDataValue, 'material' | 'materialSlots'>,
+): readonly (InlineMaterialSpec | null)[] {
+  return data.materialSlots ?? [data.material];
+}
+
+/**
+ * A flat, JSON-safe description of an assignment, for the diagnostic seam a driven browser
+ * observation reads. Numbers rather than specs: the question at that seam is "how many
+ * materials does this mesh use, and which slots", not "what are they made of".
+ */
+export function materialAssignmentReport<M>(assignment: MaterialAssignment<M>): {
+  readonly slotCount: number;
+  readonly assignedSlots: readonly number[];
+  readonly faces: number;
+} {
+  return {
+    slotCount: assignment.slots.length,
+    assignedSlots: assignedSlots(assignment),
+    faces: assignment.indices ? assignment.indices.length : 0,
+  };
 }
