@@ -205,7 +205,114 @@ export function getForAttach(ref: GeometryRef): BufferGeometry | null {
  * CONTENT sweep in `registryDoors.gate.test.ts` instead.
  */
 export function getForRead(ref: GeometryRef): BufferGeometry | null {
-  return get(ref, 'read');
+  const result = readGeometry(ref);
+  return result.status === 'ok' ? result.geometry : null;
+}
+
+// ── #630 — WHY THE ABSENCE HAS A REASON, AND WHY THE REASON LIVES HERE ─────────────────
+//
+// `get` returns null for THREE unrelated reasons, and which one it is changes what the
+// caller must do:
+//
+//   a `gltf` ref        → ALWAYS null. The registry does not own loaded glTF geometry; the
+//                         asset clone does. Null means LOOK ELSEWHERE.
+//   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
+//                         not happened yet. Null means WAIT — and it may well arrive.
+//   a procedural miss   → the registry builds procedural geometry synchronously on demand,
+//                         so a null here means `build` refused. Null means THERE GENUINELY
+//                         IS NONE, and waiting will not help.
+//
+// A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
+// `ref.kind` — which means the rule is restated at every call site, and every restatement is
+// a place it can be got wrong or quietly fall out of date when a kind is added. That is not
+// hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy of this exact
+// switch, and its own header records the defect biting before.
+//
+// The registry is the single producer of the ambiguity — it is the code that branches on
+// `ref.kind` and decides to return nothing — so it is the correct owner of the reason.
+// Consumers read it; nobody re-derives it.
+//
+// `getForRead` above stays as the narrowing view for callers that genuinely only need
+// "geometry or not", and it is DEFINED IN TERMS OF this function rather than beside it. One
+// implementation, one rule. A second null-producing path that agreed with this one today
+// would pass every behavioural test and diverge the first time a kind was added.
+
+/**
+ * How a geometry kind's underlying buffers BECOME available — which is what decides what a
+ * registry miss means for it.
+ *
+ *   'procedural' — the registry builds it synchronously on demand. A miss is a malformed
+ *                  descriptor, i.e. there genuinely is no geometry.
+ *   'primed'     — authoritative bytes live in OPFS and are primed after an async read.
+ *                  A miss is "not read yet".
+ *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
+ *                  An absent clone is "still loading the asset".
+ */
+export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
+
+/**
+ * The availability class of a geometry kind.
+ *
+ * Exhaustive, closed by a `never`. Adding a kind to `GeometryRef` without declaring how it
+ * becomes available is a COMPILE ERROR rather than a silent default — deliberately, because
+ * a default would pick one of the three meanings for the new kind and be right by accident
+ * at best.
+ */
+export function availabilityOf(kind: GeometryRef['kind']): GeometryAvailability {
+  switch (kind) {
+    case 'box':
+    case 'sphere':
+    case 'array':
+    case 'mirror':
+      return 'procedural';
+    case 'baked':
+      return 'primed';
+    case 'gltf':
+      return 'clone';
+    default: {
+      const unreachable: never = kind;
+      return unreachable;
+    }
+  }
+}
+
+/**
+ * The result of a read: either the geometry, or the reason there isn't one.
+ *
+ * Discriminated on `status` so a consumer cannot read a geometry off an empty result, and
+ * cannot treat "wait" as "none" without writing the word down.
+ */
+export type GeometryReadResult =
+  | { readonly status: 'ok'; readonly geometry: BufferGeometry }
+  /** Look elsewhere — this kind's buffers never live in the registry. */
+  | { readonly status: 'elsewhere'; readonly availability: GeometryAvailability }
+  /** Wait — the bytes exist but have not been read in yet. */
+  | { readonly status: 'pending'; readonly availability: GeometryAvailability }
+  /** There genuinely is none, and waiting will not help. */
+  | { readonly status: 'none'; readonly availability: GeometryAvailability };
+
+/**
+ * Read a geometry, or say why there isn't one. The reason-carrying door (#630).
+ *
+ * Same cache, same instance, same no-write contract as {@link getForRead} — this is not a
+ * second way to reach the resource, it is the same read with its absence typed.
+ */
+export function readGeometry(ref: GeometryRef): GeometryReadResult {
+  const availability = availabilityOf(ref.kind);
+  const geometry = get(ref, 'read');
+  if (geometry) return { status: 'ok', geometry };
+  switch (availability) {
+    case 'clone':
+      return { status: 'elsewhere', availability };
+    case 'primed':
+      return { status: 'pending', availability };
+    case 'procedural':
+      return { status: 'none', availability };
+    default: {
+      const unreachable: never = availability;
+      return unreachable;
+    }
+  }
 }
 
 /**

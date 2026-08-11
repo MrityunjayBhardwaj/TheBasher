@@ -42,7 +42,11 @@
 //
 // 3. A NEW GEOMETRY KIND IS A COMPILE ERROR, NOT A SILENT DEFAULT. `availabilityOf` is
 //    an exhaustive switch closed by a `never` check. Adding a kind to `GeometryRef`
-//    without declaring how it becomes available fails typecheck. This is deliberately a
+//    without declaring how it becomes available fails typecheck. It now lives in
+//    `geometryRegistry` (#630) rather than here: the registry is the code that decides to
+//    return nothing, so it owns the reason, and this file consumes it instead of keeping a
+//    private copy that agreed with it only for as long as nobody added a kind. This is
+//    deliberately a
 //    TYPE rather than a documented convention: a checklist a human must consult is not a
 //    mechanism, and the whole failure this module exists to end was a list nobody updated.
 //
@@ -75,7 +79,6 @@ import type {
   BakedMaterialSpec,
   BakedTextureRef,
   EvaluatedUVs,
-  GeometryRef,
   InlineMaterialSpec,
   UVIsland,
 } from '../nodes/types';
@@ -83,7 +86,7 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { extractUVIslands } from './uvIslands';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
-import { getForRead as getRegistryGeometry } from './geometryRegistry';
+import { availabilityOf, getForRead as getRegistryGeometry } from './geometryRegistry';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
 // the map binding is a material param, not a channel), so a zero ctx is exact for the
@@ -127,39 +130,6 @@ const TEX_LOADING: MeshTextureSource = { ...TEX_NONE, status: 'loading' };
 
 const SPACE_NONE: MeshUVSpace = { uvs: UV_NONE, texture: TEX_NONE };
 const SPACE_LOADING: MeshUVSpace = { uvs: UV_LOADING, texture: TEX_LOADING };
-
-/**
- * How a geometry kind's underlying buffers BECOME available — which is what decides what a
- * registry miss means for it (see header point 2).
- *
- *   'procedural' — the registry builds it synchronously on demand. A miss is a malformed
- *                  descriptor, i.e. there genuinely is no geometry → 'none'.
- *   'primed'     — authoritative bytes live in OPFS and are primed after an async read.
- *                  A miss is "not read yet" → 'loading'.
- *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
- *                  An absent clone is "still loading the asset" → 'loading'.
- */
-type Availability = 'procedural' | 'primed' | 'clone';
-
-function availabilityOf(kind: GeometryRef['kind']): Availability {
-  switch (kind) {
-    case 'box':
-    case 'sphere':
-    case 'array':
-    case 'mirror':
-      return 'procedural';
-    case 'baked':
-      return 'primed';
-    case 'gltf':
-      return 'clone';
-    default: {
-      // Exhaustiveness gate: a new GeometryRef kind must declare how it becomes
-      // available. Deliberately a compile error rather than a default — see header 3.
-      const unreachable: never = kind;
-      return unreachable;
-    }
-  }
-}
 
 /** First isMesh descendant's BufferGeometry under `root` (or root itself). */
 function firstMeshGeometry(root: Object3D | null | undefined): BufferGeometry | null {

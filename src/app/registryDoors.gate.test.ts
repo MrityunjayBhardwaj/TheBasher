@@ -162,11 +162,32 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
  */
 const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetGrowth'];
 
+/**
+ * Bindings that classify a `GeometryRef['kind']` and never reach the cache at all (#630).
+ *
+ * Kept SEPARATE from the diagnostics carve-out above rather than folded into it, because
+ * the two are exempt for different reasons and merging them would make the list's rule
+ * unreadable. A diagnostic looks at the cache and hands back a number. A classifier never
+ * looks at the cache: `availabilityOf` takes a kind and returns a label, so there is no
+ * instance for a caller to hold or free, and no door for it to be opening. It sits further
+ * from the line than `residentBytes` does, not closer.
+ *
+ * Why it is importable at all rather than duplicated per consumer: it is the answer to
+ * "what does a null from this registry MEAN", and the registry is the code that produces
+ * the null. A consumer keeping its own copy is a second spelling that agrees until someone
+ * adds a geometry kind — which is the shape `resolveMeshUVSpace.ts` was in before #630, and
+ * its own header records that defect biting.
+ */
+const GEOMETRY_CLASSIFIERS = ['availabilityOf'];
+
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {
   attach: ['getForAttach'],
-  read: ['getForRead'],
-  produce: ['prime', 'getForRead'],
+  // `readGeometry` (#630) is the same read with its absence typed — same cache, same
+  // instance, same no-write contract — so it belongs to this door rather than opening a
+  // new one. `getForRead` is defined in terms of it, not beside it.
+  read: ['getForRead', 'readGeometry'],
+  produce: ['prime', 'getForRead', 'readGeometry'],
   lifetime: ['sweep'],
   'spec-only': [],
 };
@@ -238,7 +259,7 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
       const cls = GEOMETRY_CONSUMERS[path];
       if (!cls) continue;
       const opened = importedDoors(src, 'geometryRegistry').filter(
-        (b) => !GEOMETRY_DIAGNOSTICS.includes(b),
+        (b) => !GEOMETRY_DIAGNOSTICS.includes(b) && !GEOMETRY_CLASSIFIERS.includes(b),
       );
       const allowed = GEOMETRY_DOORS[cls];
       for (const door of opened) if (!allowed.includes(door)) wrong.push(`${path}: ${door}`);
