@@ -212,8 +212,10 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     expect(resolved!.geometry.kind).toBe('array');
     // The modified geometry is sync-buildable → real UV islands (not null), so the
     // UV-editor backdrop works for a modifier (#209 follow-up).
-    expect(resolved!.uvs).not.toBeNull();
-    expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
+    expect(resolved!.uvRead.status).toBe('ok');
+    expect(
+      resolved!.uvRead.status === 'ok' && resolved!.uvRead.islands.islands.length,
+    ).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME sphere data with the same params.
     const evald = evalMod(

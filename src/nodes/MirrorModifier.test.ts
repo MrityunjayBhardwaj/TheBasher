@@ -143,8 +143,10 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
     expect(resolved).not.toBeNull();
     expect(resolved!.geometry.kind).toBe('mirror');
     // Sync-buildable modified geometry → real UV islands (not null) for the UV editor.
-    expect(resolved!.uvs).not.toBeNull();
-    expect(resolved!.uvs!.islands.length).toBeGreaterThan(0);
+    expect(resolved!.uvRead.status).toBe('ok');
+    expect(
+      resolved!.uvRead.status === 'ok' && resolved!.uvRead.islands.islands.length,
+    ).toBeGreaterThan(0);
 
     // The evaluate path projects the SAME sphere data with the same axis.
     const evald = evalMod({ axis: 'z', muted: false }, sphereData()) as ModifiedDataValue;

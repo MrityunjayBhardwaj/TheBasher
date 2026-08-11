@@ -8,6 +8,12 @@
 // nowhere else, minted at exactly two producers, while two other members carry a material
 // with no key at all.
 //
+// ⚠️ #633 WIDENED THE REACH, and this header says so rather than letting a count drift:
+// `MeshDataValue` now carries TWO minted identities, `materialKey` and `attributeKey`,
+// minted at the same seam by the same two producers. The union's other members carry
+// neither. The added case below derives that second count the same way the first is derived
+// — from the type, not from this sentence.
+//
 // That gap is not a bug today — §4's "How far this reaches" paragraph explains why each
 // unkeyed road is safe — but the explanation is prose about a measurable set, and prose
 // about a measurable set goes stale silently. A third minting producer, a fourth kind that
@@ -166,6 +172,14 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
   'src/nodes/types.ts': 'declares it — on MeshDataValue, and on no other union member',
   'src/nodes/BoxData.ts': 'mints it after the fold',
   'src/nodes/SphereData.ts': 'mints it after the fold',
+  // NOT a producer, and listed rather than excused. A fixture that builds a mesh data value
+  // by hand has to write every field the type declares, so it appears in a writer census
+  // that keys on the field name. Registering it keeps the census COMPLETE — the alternative
+  // was to re-spell the field so the sweep stops seeing it, which is precisely the evasion
+  // this gate's header says it cannot detect. It writes `null`: the fixture exists to
+  // exercise the ATTRIBUTE key, and mints no material identity at all.
+  'src/test-utils/twoMaterialMesh.ts':
+    'FIXTURE — writes null; the two-material read case (#634), not a producer',
 };
 
 /**
@@ -223,6 +237,29 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // The gap #542 exists to write down: two kinds hold a material with no minted identity.
     expect(carriesMaterial).toEqual(['MeshDataValue', 'BakedDataValue', 'ModifiedDataValue']);
     expect(carriesKey).toEqual(['MeshDataValue']);
+  });
+
+  it('carries a SECOND minted identity, on the same one kind (#633)', () => {
+    // ── THE REACH, RESTATED RATHER THAN RE-FLOORED ────────────────────────────────────
+    //
+    // This gate's header says `materialKey` is the one minted identity on the value union.
+    // #633 makes that two: `attributeKey` is minted at the SAME seam, by the same two
+    // producers, for the same reason — identity comes from evaluation, never from
+    // rediscovering it downstream. That is a widening of the reach, not a violation of it,
+    // and the honest response is to say so here rather than to notice a number move.
+    //
+    // What has NOT changed, and is the reason the two keys stay separate: neither enters
+    // `GeometryRef.key`. A shared, content-keyed handle cannot carry a per-object value,
+    // whether that value is a material or an attribute set. The four literal geometry key
+    // strings in `attributeKey.test.ts` are what enforce it.
+    const types = sourceFiles().find(([path]) => path === 'src/nodes/types.ts')?.[1] ?? '';
+    const members = unionMembers(types, 'ObjectData');
+    const carriesAttributeKey = members
+      .map((name) => [name, interfaceBody(types, name)] as const)
+      .filter(([, body]) => declaresField(body as string, 'attributeKey'))
+      .map(([name]) => name);
+
+    expect(carriesAttributeKey).toEqual(['MeshDataValue']);
   });
 
   it('re-derives the key in exactly one downstream place, through the same function', () => {

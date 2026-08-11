@@ -23,6 +23,7 @@ import { sphereGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
 import { materialKeyOf } from './materialKey';
+import { mintMeshAttributes } from './meshAttributes';
 
 // Match SphereMesh's default so an Object→SphereData look is byte-identical to a
 // fused sphere.
@@ -64,9 +65,10 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   },
   evaluate(params, inputs) {
     const material = resolveNodeMaterial(inputs.material, params.material);
+    const geometry = sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments);
     return {
       kind: 'MeshData',
-      geometry: sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments),
+      geometry,
       // A connected Material node SUPERSEDES the param, wholesale (#394 D3); with
       // nothing connected this is the param, hydrated exactly as before. The socket is
       // a FOURTH source of a material value, so it goes through the SAME hydrate seam
@@ -76,6 +78,9 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
       // keying the authored param instead would miss two objects that resolve to the
       // same material by different routes (one linked, one authored identically).
       materialKey: materialKeyOf(material),
+      // #633 — the attribute set's identity, minted at the same seam and for the same
+      // reason. A sphere has one material slot, so every face is derived onto slot 0.
+      attributeKey: mintMeshAttributes(geometry),
     };
   },
 };
