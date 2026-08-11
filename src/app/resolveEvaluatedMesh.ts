@@ -54,8 +54,7 @@ import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { materialAssignmentOf, materialSlotsOf, primaryMaterial } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
-import { getForRead as getRegistryGeometry } from './geometryRegistry';
-import { extractUVIslands } from './uvIslands';
+import { readMeshUVs, type MeshUVRead } from './uvAttributes';
 import type { EvaluatedUVs } from '../nodes/types';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
@@ -84,9 +83,13 @@ function isVec3(v: unknown): v is Vec3 {
 // (asset clone / OPFS) and outside this pure sync resolver, so those branches
 // return uvs:null and UVEditor resolves them itself via the SAME extractUVIslands
 // (A-3). Mirrors the existing material:null-for-glTF contract.
-function resolveRegistryUVs(geometry: GeometryRef): EvaluatedUVs | null {
-  const g = getRegistryGeometry(geometry);
-  return g ? extractUVIslands(g) : null;
+/**
+ * The islands a UV read carries, or null — the ONE place the four-way answer is narrowed to
+ * the single nullable field `uvs`, so nothing else has to know that a null there means three
+ * different things.
+ */
+function islandsOf(read: MeshUVRead): EvaluatedUVs | null {
+  return read.status === 'ok' ? read.islands : null;
 }
 
 /**
@@ -127,9 +130,11 @@ export function evaluatedMeshFromMeshData(
   // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
   // which is the point: the read path moved first, while the answers still agreed.
   const materials = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+  const uvRead = readMeshUVs(data.geometry);
   return {
     geometry: data.geometry,
-    uvs: resolveRegistryUVs(data.geometry),
+    uvs: islandsOf(uvRead),
+    uvRead,
     // ⚠️ Collapses to the lowest slot — this field can carry only one material, and it is
     // the field #636 deletes. `materials` beside it carries the whole answer.
     material: primaryMaterial(materials),
@@ -208,7 +213,15 @@ export function resolveEvaluatedMesh(
 
     // glTF has no data half to carry a slot table — its materials live on the loaded
     // clone (#389). An EMPTY table is the honest answer: not "one slot holding nothing".
-    return { geometry, uvs: null, material: null, materials: EMPTY_ASSIGNMENT, transform };
+    const gltfUvs = readMeshUVs(geometry);
+    return {
+      geometry,
+      uvs: islandsOf(gltfUvs),
+      uvRead: gltfUvs,
+      material: null,
+      materials: EMPTY_ASSIGNMENT,
+      transform,
+    };
   }
 
   // #388 — the fused `node.type === 'BakedMesh'` branch was HERE, and it is gone with the
@@ -252,12 +265,14 @@ export function resolveEvaluatedMesh(
       ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
     const modifierMaterials = materialAssignmentOf(null, [source.material]);
+    const modifierUvs = readMeshUVs(source.geometry);
     return {
       geometry: source.geometry,
       // The modified geometry is SYNC-buildable (box/sphere data), so its UVs (the
       // merged source islands) come from the SAME registry path as Box/Sphere (#209 UV
       // follow-up). Baked data is not sync-buildable → the registry misses → null.
-      uvs: resolveRegistryUVs(source.geometry),
+      uvs: islandsOf(modifierUvs),
+      uvRead: modifierUvs,
       material: primaryMaterial(modifierMaterials),
       materials: modifierMaterials,
       transform,
@@ -298,9 +313,11 @@ export function resolveEvaluatedMesh(
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
       const bakedMaterials = materialAssignmentOf(null, [data.material]);
+      const bakedUvs = readMeshUVs(data.geometry);
       return {
         geometry: data.geometry,
-        uvs: null,
+        uvs: islandsOf(bakedUvs),
+        uvRead: bakedUvs,
         material: primaryMaterial(bakedMaterials),
         materials: bakedMaterials,
         transform,
@@ -315,9 +332,11 @@ export function resolveEvaluatedMesh(
       // material here.
       const modGeometry = data.geometry;
       const modifiedMaterials = materialAssignmentOf(null, [data.material]);
+      const modifiedUvs = readMeshUVs(modGeometry);
       return {
         geometry: modGeometry,
-        uvs: resolveRegistryUVs(modGeometry),
+        uvs: islandsOf(modifiedUvs),
+        uvRead: modifiedUvs,
         material: primaryMaterial(modifiedMaterials),
         materials: modifiedMaterials,
         transform,

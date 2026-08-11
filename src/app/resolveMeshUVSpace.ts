@@ -27,25 +27,20 @@
 //    through the recursive resolver arms), anything else. There is no list to update,
 //    so there is no list to forget.
 //
-// 2. THE MISS RULE IS DERIVED FROM THE SOURCE'S AVAILABILITY MODEL, NOT GUESSED.
-//    `geometryRegistry.getForRead()` returns null for THREE different reasons, and collapsing
-//    them into one rule is wrong twice over (geometryRegistry.ts:41-59):
-//      - a `gltf` ref ALWAYS returns null — the registry does not own loaded glTF
-//        geometry, the asset clone does. Null means "look elsewhere", not "wait".
-//      - a `baked` MISS returns null because the bytes are in OPFS behind an async
-//        read. Null means "wait" → 'loading'.
-//      - a procedural ref BUILDS on miss. Null means the descriptor was malformed.
-//        Null means "there genuinely isn't one" → 'none'.
-//    So each geometry kind declares an AVAILABILITY CLASS, and both facets of the pair
-//    inherit the correct miss semantics from it. One place knows the rule; nothing
-//    re-derives it.
+// 2. THE MISS RULE IS INHERITED, NOT RESTATED. This paragraph used to spell out the three
+//    meanings of an empty registry read and which status each maps to. It no longer does,
+//    and the deletion is the point: prose describing a rule is a second copy of it, and the
+//    two agree only until someone changes one. The rule is now a TYPE — `readMeshUVs`
+//    returns ok / elsewhere / loading / none, inherited from the registry's own typed read
+//    (#630) — and this module consumes that answer instead of deriving one.
 //
 // 3. A NEW GEOMETRY KIND IS A COMPILE ERROR, NOT A SILENT DEFAULT. `availabilityOf` is
 //    an exhaustive switch closed by a `never` check. Adding a kind to `GeometryRef`
 //    without declaring how it becomes available fails typecheck. It now lives in
 //    `geometryRegistry` (#630) rather than here: the registry is the code that decides to
-//    return nothing, so it owns the reason, and this file consumes it instead of keeping a
-//    private copy that agreed with it only for as long as nobody added a kind. This is
+//    return nothing, so it owns the reason. This file no longer even calls it — #635 put a
+//    typed UV read between them, and the `never` chain runs unbroken from the geometry kind
+//    through that read into this module's own narrowing. This is
 //    deliberately a
 //    TYPE rather than a documented convention: a checklist a human must consult is not a
 //    mechanism, and the whole failure this module exists to end was a list nobody updated.
@@ -86,7 +81,8 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { extractUVIslands } from './uvIslands';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
-import { availabilityOf, getForRead as getRegistryGeometry } from './geometryRegistry';
+import { primaryMaterial } from './materialAssignment';
+import type { MeshUVRead } from './uvAttributes';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
 // the map binding is a material param, not a channel), so a zero ctx is exact for the
@@ -238,6 +234,29 @@ function textureFromMaterial(
  *
  * Pure and sync: no store reads, never throws, async sources report 'loading'.
  */
+/**
+ * Narrow the resolver's four-way UV answer into this module's own three-status facet.
+ *
+ * `elsewhere` cannot arrive here — the clone-backed arm above answers those from the asset
+ * itself — so it is mapped to `none` explicitly rather than by a default, which is what
+ * makes a fifth status a visible edit instead of a silent collapse into "no UVs".
+ */
+function uvSourceOf(read: MeshUVRead): UVSource {
+  switch (read.status) {
+    case 'ok':
+      return { uvs: read.islands, status: 'ok' };
+    case 'loading':
+      return UV_LOADING;
+    case 'elsewhere':
+    case 'none':
+      return UV_NONE;
+    default: {
+      const unreachable: never = read;
+      throw new Error(`uvSourceOf: undeclared UV read status ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
 export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace {
   const node = state.nodes[nodeId];
   if (!node) return SPACE_NONE;
@@ -264,33 +283,30 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
 
   const geometry = mesh.geometry;
 
-  switch (availabilityOf(geometry.kind)) {
-    case 'clone': {
-      // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED
-      // descriptor rather than the node's params — so any node that resolves to a
-      // gltf-kind geometry works, not just the GltfChild type.
-      const d = geometry.descriptor as { assetRef?: string; childName?: string };
-      const clone = d.assetRef ? getGltfClone(d.assetRef) : null;
-      if (!clone) return SPACE_LOADING;
-      const sub = d.childName ? clone.getObjectByName(d.childName) : clone;
-      const geo = firstMeshGeometry(sub);
-      return {
-        uvs: geo ? { uvs: extractUVIslands(geo), status: 'ok' } : UV_NONE,
-        texture: fromTexture(firstBaseColorMap(sub)) ?? TEX_NONE,
-      };
-    }
-    case 'primed':
-    case 'procedural': {
-      // Registry-backed geometry. The two classes share this arm because the LOOKUP is
-      // identical — they differ only in what a miss means, which is exactly what the
-      // availability class encodes.
-      const geo = getRegistryGeometry(geometry);
-      const uvs: UVSource = geo
-        ? { uvs: extractUVIslands(geo), status: 'ok' }
-        : availabilityOf(geometry.kind) === 'primed'
-          ? UV_LOADING // OPFS bytes not read yet
-          : UV_NONE; // malformed descriptor — nothing to build
-      return { uvs, texture: textureFromMaterial(mesh.material) };
-    }
+  // #635 — the branch is taken on the RESOLVER'S TYPED ANSWER, not on a re-derived
+  // availability class. `elsewhere` means exactly "these buffers live in a loaded asset
+  // clone, not in the registry", which is the glTF road and nothing else. This module
+  // therefore no longer imports the geometry registry at all: the rule it used to restate
+  // now reaches it as a type, through one read the resolver already made.
+  if (mesh.uvRead.status === 'elsewhere') {
+    // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED descriptor
+    // rather than the node's params — so any node that resolves to a gltf-kind geometry
+    // works, not just the GltfChild type.
+    const d = geometry.descriptor as { assetRef?: string; childName?: string };
+    const clone = d.assetRef ? getGltfClone(d.assetRef) : null;
+    if (!clone) return SPACE_LOADING;
+    const sub = d.childName ? clone.getObjectByName(d.childName) : clone;
+    const geo = firstMeshGeometry(sub);
+    return {
+      uvs: geo ? { uvs: extractUVIslands(geo), status: 'ok' } : UV_NONE,
+      texture: fromTexture(firstBaseColorMap(sub)) ?? TEX_NONE,
+    };
   }
+
+  // Registry-backed geometry. Procedural and primed share this arm because the resolver has
+  // ALREADY made the read and typed its absence — nothing here re-derives what a miss means.
+  return {
+    uvs: uvSourceOf(mesh.uvRead),
+    texture: textureFromMaterial(primaryMaterial(mesh.materials)),
+  };
 }

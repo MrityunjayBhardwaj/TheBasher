@@ -53,13 +53,17 @@ import type { AttributeSet } from '../nodes/attributes';
  * Which road grew the store.
  *
  * `evaluate` — a node minted a set from its params, synchronously, inside `evaluate()`.
+ * `read`     — a read-side consumer lifted a set off geometry the registry had ALREADY
+ *              built. Synchronous, and not the async road: the UV attribute arrives this
+ *              way, because UV values come from the tessellation and a pure `evaluate()`
+ *              has no business tessellating.
  * `prime`    — the async road filled a set after an OPFS / asset read completed, from a
  *              loader hook OUTSIDE the pure resolver. No producer yet; it exists so the
- *              first one has to declare itself rather than be counted as an evaluate.
+ *              first one has to declare itself rather than be counted as one of the above.
  */
-export type AttributeGrowthSource = 'evaluate' | 'prime';
+export type AttributeGrowthSource = 'evaluate' | 'read' | 'prime';
 
-const growth: Record<AttributeGrowthSource, number> = { evaluate: 0, prime: 0 };
+const growth: Record<AttributeGrowthSource, number> = { evaluate: 0, read: 0, prime: 0 };
 
 const entries = new Map<string, AttributeSet>();
 
@@ -104,5 +108,6 @@ export function growthBySource(): Readonly<Record<AttributeGrowthSource, number>
 /** Zero the growth counters. Does NOT evict — resident entries are unaffected (limit 1). */
 export function resetGrowth(): void {
   growth.evaluate = 0;
+  growth.read = 0;
   growth.prime = 0;
 }

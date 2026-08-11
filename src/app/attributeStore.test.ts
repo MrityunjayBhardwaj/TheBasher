@@ -29,7 +29,10 @@ const cornerUv = (data: number[]): AttributeData => ({
 });
 
 /** Mint, insert, and hand back the resident set — the shape a producer will use. */
-function put(entries: Record<string, AttributeData>, via: 'evaluate' | 'prime' = 'evaluate') {
+function put(
+  entries: Record<string, AttributeData>,
+  via: 'evaluate' | 'read' | 'prime' = 'evaluate',
+) {
   const minted = mintAttributes(entries);
   expect(minted).not.toBeNull();
   return insert(minted!.key, minted!.set, via);
@@ -69,12 +72,13 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
     put({ material_index: faceIndex([2, 3, 3]) }); // different content — must count
 
     expect(residentCount()).toBe(before + 2);
-    expect(growthBySource()).toEqual({ evaluate: 2, prime: 0 });
+    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0 });
   });
 
   it('has NO async producer yet, and says so as a number', () => {
-    // `prime` exists so the first async filler has to declare itself rather than be
-    // counted as an evaluate. Until then its count is zero, and that zero is the census.
+    // `prime` is the ASYNC road — a loader hook filling attributes after an OPFS read.
+    // Nothing does that yet, and that zero is the census: the UV attribute arrives on the
+    // synchronous `read` road instead, off geometry the registry had already built.
     put({ material_index: faceIndex([0]) });
     expect(growthBySource().prime).toBe(0);
   });
@@ -104,7 +108,7 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
 
     resetGrowth();
 
-    expect(growthBySource()).toEqual({ evaluate: 0, prime: 0 });
+    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0 });
     expect(residentCount()).toBe(resident);
   });
 });

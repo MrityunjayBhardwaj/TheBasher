@@ -439,6 +439,8 @@ export interface MaterialAssignment<M> {
   readonly indices: ArrayLike<number> | null;
 }
 
+import type { MeshUVRead } from '../app/uvAttributes';
+
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
   readonly position: Vec3;
@@ -584,6 +586,14 @@ export interface EvaluatedUVs {
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
   readonly uvs: EvaluatedUVs | null;
+  /**
+   * #635 — the UV read, with absence that says WHY: waiting, look-elsewhere, or genuinely
+   * none. `uvs` above is derived from this and collapses all three into one null, which is
+   * how an in-flight OPFS read becomes indistinguishable from a mesh that has no UVs. That
+   * collapse has already shipped a defect once; this field is what retires it, and `uvs`
+   * goes with #636.
+   */
+  readonly uvRead: MeshUVRead;
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
   /**
    * #634 — the WHOLE material assignment: the object's slot table paired with the

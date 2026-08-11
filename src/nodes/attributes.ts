@@ -135,6 +135,15 @@ export interface AttributeData {
 export const MATERIAL_INDEX = 'material_index';
 
 /**
+ * The corner-domain UV attribute. Blender's default name for the first UV layer, kept
+ * verbatim for the same reason `material_index` is.
+ *
+ * CORNER, not point: a UV seam is exactly a place where two faces meeting at one point
+ * disagree about where they are in texture space, so a per-point layout cannot express one.
+ */
+export const UV_MAP = 'UVMap';
+
+/**
  * The attributes a geometry value carries, keyed by name (`material_index`, `UVMap`, …).
  *
  * Names are data, exactly as domains are: this record is deliberately not a closed struct

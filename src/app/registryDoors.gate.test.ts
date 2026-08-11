@@ -127,8 +127,13 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // whole exception set lives now that it is machine-checked rather than described.
   'src/app/boot.ts': 'read',
   'src/app/geometrySampleSource.ts': 'read',
-  'src/app/resolveEvaluatedMesh.ts': 'read',
-  'src/app/resolveMeshUVSpace.ts': 'read',
+  // #635 — `resolveEvaluatedMesh` used to be here and no longer opens a door itself: the UV
+  // read moved behind this module, which lifts the `uv` buffer off the built geometry as a
+  // corner-domain attribute and copies it. It takes no ownership and writes nothing back.
+  // …and `resolveMeshUVSpace` left with it, for the same reason: it now reads the typed UV
+  // answer off the resolved value and imports only the CLASSIFIER (`availabilityOf`), which
+  // hands back no instance and therefore opens no door. Two consumers became one.
+  'src/app/uvAttributes.ts': 'read',
   // Clones before it writes, so the shared instance is untouched — a reader that happens to
   // own a copy afterwards, which is the rule working rather than an exception to it.
   'src/app/animate/dispatchApplyTransform.ts': 'read',
