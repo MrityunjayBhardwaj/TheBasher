@@ -125,6 +125,16 @@ export interface AttributeData {
 }
 
 /**
+ * The face-domain attribute naming which material SLOT each face uses. Blender's spelling,
+ * kept verbatim so an importer and an exporter agree with the reference rather than with us.
+ *
+ * ⚠️ The bare string also appears in the glTF importer, where it means an index into the
+ * glTF DOCUMENT's material array — a different concept entirely. A census on the string
+ * reports the union of the two; census the module.
+ */
+export const MATERIAL_INDEX = 'material_index';
+
+/**
  * The attributes a geometry value carries, keyed by name (`material_index`, `UVMap`, …).
  *
  * Names are data, exactly as domains are: this record is deliberately not a closed struct

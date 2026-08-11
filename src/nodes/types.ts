@@ -1063,6 +1063,21 @@ export interface MeshDataValue {
    * mint reds a test until that section is updated with it.
    */
   readonly materialKey: string | null;
+  /**
+   * #633 — the geometry's ATTRIBUTE SET identity, minted by evaluation alongside
+   * `materialKey`, null when this producer derives no attributes (glTF / baked, whose
+   * buffers this value never sees).
+   *
+   * A THIRD parallel key, deliberately not folded into `GeometryRef.key`: that handle is
+   * shared and content-keyed, so folding a per-object component into it would either
+   * collide two objects onto one entry or shatter the sharing the cache exists for. The
+   * argument, the four references that agree with it and the assertions enforcing it are in
+   * `attributeKey.ts` and `attributeKey.test.ts`.
+   *
+   * The set itself lives in `attributeStore`, keyed by this string. It is not serialized —
+   * it is re-derived from params on every evaluation, which is free under a content key.
+   */
+  readonly attributeKey: string | null;
 }
 
 /**

@@ -20,6 +20,7 @@ import { boxGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
 import { materialKeyOf } from './materialKey';
+import { mintMeshAttributes } from './meshAttributes';
 
 // Match BoxMesh's default so an Object→BoxData look is byte-identical to a box.
 
@@ -56,9 +57,10 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   },
   evaluate(params, inputs) {
     const material = resolveNodeMaterial(inputs.material, params.material);
+    const geometry = boxGeometryRef(params.size);
     return {
       kind: 'MeshData',
-      geometry: boxGeometryRef(params.size),
+      geometry,
       // A connected Material node SUPERSEDES the param, wholesale (#394 D3); with
       // nothing connected this is the param, hydrated exactly as before. The socket is
       // a FOURTH source of a material value, so it goes through the SAME hydrate seam
@@ -68,6 +70,10 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
       // keying the authored param instead would miss two objects that resolve to the
       // same material by different routes (one linked, one authored identically).
       materialKey: materialKeyOf(material),
+      // #633 — the attribute set's identity, minted at the same seam and for the same
+      // reason. A box has one material slot, so every face is derived onto slot 0; the
+      // param above stays the only place a material is authored.
+      attributeKey: mintMeshAttributes(geometry),
     };
   },
 };

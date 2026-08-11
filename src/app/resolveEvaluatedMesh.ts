@@ -48,6 +48,7 @@ import type {
 import { modifierDataSource } from './modifierGeometry';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { materialAssignmentOf, primaryMaterial } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { getForRead as getRegistryGeometry } from './geometryRegistry';
 import { extractUVIslands } from './uvIslands';
@@ -278,9 +279,17 @@ export function resolveEvaluatedMesh(
     return {
       geometry,
       uvs: resolveRegistryUVs(geometry),
-      // Already a complete IR (the data node hydrated it) — pass it verbatim so the
-      // read-side material is byte-identical to what ObjectR renders.
-      material: data.material,
+      // #634 — resolved THROUGH the attribute system rather than read off the sibling
+      // field. The data node's IR is the object's slot TABLE (one slot today); the
+      // geometry's face attribute says which slot each face uses. With every face on slot
+      // 0 this is byte-identically `data.material`, which is the point: the read path moves
+      // first, while the answers still agree, so the rewrite and the behaviour change do
+      // not arrive in the same commit.
+      //
+      // ⚠️ This field can carry only ONE material, so it collapses. A consumer that can
+      // report the whole assignment must call `assignedMaterials`; this one is the field
+      // #636 deletes.
+      material: primaryMaterial(materialAssignmentOf(data.attributeKey, [data.material])),
       transform,
     };
   }
