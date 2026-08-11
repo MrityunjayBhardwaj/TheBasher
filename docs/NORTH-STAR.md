@@ -359,9 +359,41 @@ domains.
 read through the attribute system by every consumer that reads them today. `EvaluatedMesh`
 no longer carries `uvs` and `material` as sibling fields.
 
-**Discriminating observation.** A geometry whose material assignment varies per face
-renders correctly _and_ survives an operator that changes topology. A model that only
-handles one material per object passes a naive test and fails this.
+**Discriminating observation.** A mesh whose face-domain `material_index` holds two
+distinct values is reported as two by every read-side consumer — inspector, UV editor,
+gizmo, apply-transform, agent — with the sibling fields gone. A model that only handles one
+material per object passes a naive test and fails this.
+
+> **Split, 2026-08-11 (measured).** This phase was originally stated to exit on _"a geometry
+> whose material assignment varies per face **renders correctly**."_ That is unreachable from
+> this phase's own work: the renderer never reads `EvaluatedMesh` — `ObjectMeshR` /
+> `BakedMeshR` / `ModifiedMeshR` read `MeshDataValue` / `BakedDataValue` / `ModifiedDataValue`
+> directly, and `resolveEvaluatedMesh` appears in `SceneFromDAG.tsx` only inside a comment at
+> line 594, with no import. Retiring the sibling fields changes the read paths and nothing
+> about the pixels. **The render half is now Phase 1b (#638)**, and the exit criterion above is
+> the read half only.
+
+### Phase 1b — The resolution level
+
+**Goal.** The per-face index reaches the pixel without shattering geometry sharing. Issue #638.
+
+**Entry.** Phase 1.
+
+**Exit.** A per-face material assignment renders, _and_ two same-size boxes with different
+assignments render differently while two boxes with the same assignment still share one
+geometry instance.
+
+**Discriminating observation.** The second half. Rendering per-face materials by cloning a
+geometry per object satisfies the first half and silently destroys the sharing the registry
+exists to provide.
+
+**Why this is a real boundary, not a sizing convenience.** Both references keep material
+assignment separable from geometry _specifically so variation is possible over shared
+geometry_ — Blender through `MaterialSlot.link` (`'OBJECT' | 'DATA'`, default `'DATA'`:
+_"the objects can have different materials and still share the same mesh"_), Houdini through a
+per-primitive material attribute, so one packed prim carries its own material. **The line both
+draw: the index is geometry, the table is object-level.** Phase 1 owns the index; Phase 1b owns
+the table and the draw.
 
 **Notes.** Design as a _domain_ model, not a "four-class" model — Blender's seven domains
 are the measured superset and curve/instance domains may matter later. Corner domain is
