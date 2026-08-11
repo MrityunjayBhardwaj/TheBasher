@@ -236,8 +236,12 @@ a content-derived key, referenced from the DAG by handle.
 - Minimum domains: **point, edge, face, corner.** Corner is not optional — UVs live there,
   and so do hard-edge normals.
 - The DAG carries the **handle**, never the buffers. This preserves the existing cost
-  model, which is load-bearing: the DAG state is the save format, and project save is
-  already O(scene).
+  model, which is load-bearing: what a project file persists is the DAG's **node params**,
+  and project save is already O(scene). Be precise about which half that is — a
+  `GeometryDescriptor` is never persisted. It is minted fresh from params at every
+  `evaluate()`, and `src/core/project/io.ts` has zero geometry hits. So widening the
+  descriptor does not by itself widen the save; what widens the save is widening a
+  **param**. That is the surface the O(scene) gate has to watch.
 - **The pattern already exists.** `BakedData` is an out-of-band buffer behind a
   content-addressed handle with a proper data half that rides the ordinary object/data
   road. Generalising it is the work; inventing it is not.
