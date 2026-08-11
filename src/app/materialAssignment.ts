@@ -77,12 +77,16 @@ export function assignedMaterials<M>(assignment: MaterialAssignment<M>): readonl
 }
 
 /**
- * The ONE material a single-material read face can carry, or `null`.
+ * The lowest-slot material, or `null` — an OPT-IN NARROWING, never the shape.
  *
- * ⚠️ COLLAPSES a multi-material assignment to its lowest slot, and that is a transitional
- * answer, not a correct one — it exists because `EvaluatedMesh.material` is still a single
- * field. Every consumer that can carry the full answer should call {@link assignedMaterials}
- * instead; this one is for the field that is on its way out.
+ * ⚠️ COLLAPSES a multi-material assignment to one material. That is lossy by construction,
+ * so it belongs at a call site that genuinely cannot carry more than one and has said so:
+ * a bake writes a single material spec, and `dispatchApplyTransform` refuses a
+ * multi-material mesh by name BEFORE narrowing rather than quietly dropping a slot here.
+ *
+ * The narrowing is deliberately not the default anywhere. `EvaluatedMesh` carries the whole
+ * {@link MaterialAssignment}; every consumer that can hold the full answer calls
+ * {@link assignedMaterials}. Reaching for this one is a decision a reader can see.
  */
 export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null {
   return assignedMaterials(assignment)[0] ?? null;

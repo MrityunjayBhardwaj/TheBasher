@@ -660,8 +660,9 @@ export interface ModifiedMeshValue {
   /**
    * Inherited from the source mesh: an inline OpenPBR IR (box/sphere/inline-data
    * source) or the rich baked spec a BakedMesh / baked-data source carries (#358).
-   * Widened to the same union the read side (`EvaluatedMesh.material`) already uses,
-   * so the evaluate road no longer silently drops a baked source's material.
+   * Widened to the union the read side carries in its material SLOTS (see
+   * {@link MaterialAssignment}), so the evaluate road no longer silently drops a baked
+   * source's material.
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
 }

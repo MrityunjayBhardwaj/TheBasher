@@ -581,11 +581,12 @@ export function boot(): Promise<void> {
       // assert rendered scale (side A, __basher_mesh_world_scale) ==
       // resolver scale (side B, here) at the same ctx.time. Lazy import keeps
       // boot's static graph lean.
-      // #634 — the read-side seam for the MATERIAL ASSIGNMENT. `__basher_evaluated_mesh`
-      // above carries a single `material` field, which cannot report a mesh whose faces
-      // use two slots — and that field is on its way out (#636). This reports the whole
-      // answer as numbers, so a driven browser observation can see two where the old seam
-      // could only ever see one.
+      // #634 — the read-side seam for the MATERIAL ASSIGNMENT, reported as NUMBERS.
+      // `__basher_evaluated_mesh` below hands back the whole mesh face, specs and all;
+      // the question at this seam is "how many materials does this mesh use, and which
+      // slots", which a driven browser observation can assert on directly without
+      // reaching into a material IR. It is the seam that can see TWO — the single
+      // `material` field it replaces (#636) could only ever report one.
       w.__basher_material_assignment = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };

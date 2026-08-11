@@ -76,12 +76,6 @@ function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }
 
-// v0.6 #3 (#181, W1) — real UV islands for the SYNC producers only (A-2). The
-// geometry registry builds box/sphere on demand (a few hundred verts — trivial,
-// and the resolver is on-demand, never per-frame). glTF/baked geometry is ASYNC
-// (asset clone / OPFS) and outside this pure sync resolver, so those branches
-// return uvs:null and UVEditor resolves them itself via the SAME extractUVIslands
-// (A-3). Mirrors the existing material:null-for-glTF contract.
 /**
  * The primitive (Box/Sphere) transform band (#153). Prefer the full evaluated
  * walk (`resolveEvaluatedTransform` overlays the free-floating direct channel, V57 — the
@@ -124,8 +118,10 @@ export function evaluatedMeshFromMeshData(
   return {
     geometry: data.geometry,
     uvRead,
-    // ⚠️ Collapses to the lowest slot — this field can carry only one material, and it is
-    // the field #636 deletes. `materials` beside it carries the whole answer.
+    // The WHOLE assignment: the object's slot table paired with the geometry's per-face
+    // index into it. Nothing is collapsed here — a consumer that can only carry one
+    // material opts into `primaryMaterial` at its own call site, where the narrowing is
+    // visible, rather than being handed a narrowed value it cannot tell from a full one.
     materials,
     transform,
   };
@@ -308,10 +304,11 @@ export function resolveEvaluatedMesh(
     if (data.kind === 'ModifiedData') {
       // #415 — the Object half of a modifier pair. Same shape as the `MeshData` arm
       // below (the modifier's geometry IS a registry handle, so UVs resolve
-      // synchronously), and the material passes verbatim: `EvaluatedMesh.material`
-      // already carries the wide Inline|Baked union that `ModifiedDataValue` does,
-      // widened by #358 precisely so a baked-sourced modifier stops dropping its
-      // material here.
+      // synchronously), and the material passes verbatim into a ONE-slot table: the
+      // read side's slots carry the wide Inline|Baked union that `ModifiedDataValue`
+      // does, widened by #358 precisely so a baked-sourced modifier stops dropping its
+      // material here. `indices` is null — this road has no per-face attribute yet, and
+      // a synthesised array of zeros would claim otherwise.
       const modGeometry = data.geometry;
       const modifiedMaterials = materialAssignmentOf(null, [data.material]);
       const modifiedUvs = readMeshUVs(modGeometry);
