@@ -549,60 +549,50 @@ export interface EvaluatedUVs {
 }
 
 /**
- * The uniform consumed mesh face. `uvs` carries the real UV layout for the SYNC
- * producers (box/sphere — geometry available in the registry); it is null for
- * glTF / GltfChild / BakedMesh, whose geometry is ASYNC (asset clone / OPFS) and
- * outside this pure sync resolver — UVEditor resolves those itself via the SAME
- * `extractUVIslands` (A-2/A-3). `material` is the ONE material face every consumer
- * reads (M6, Phase 151): an `InlineMaterialSpec` for un-baked box/sphere, a rich
- * `BakedMaterialSpec` for a BakedMesh, or null (gltf). Widening to the union means
- * there is exactly ONE material shape consumers branch on, never a second path.
+ * The uniform consumed mesh face — one shape every mesh-producing kind projects to, so no
+ * consumer grows a second path.
  *
- * ── #605: THE FOUR SIBLING FIELDS ARE A PROJECTION, NOT THE DATA MODEL ─────────
+ * ── #636: THE TWO SIBLING FIELDS ARE GONE, AND WHAT REPLACED THEM ─────────────────────
  *
- * These four being peers reads like material sitting BESIDE geometry rather than
- * ON it. That is true of this shape and false of the substrate underneath, and the
- * distinction is worth keeping straight before anyone re-flattens it differently:
+ * This struct used to carry `uvs: EvaluatedUVs | null` and `material: Spec | null` as peers
+ * of the geometry handle. Both are deleted, because both could hold exactly one value and a
+ * mesh has never been limited to one:
  *
- *   - Material already lives WITH geometry at the authoring layer. The data half
- *     of the object/data pair is exactly `{geometry, material}` and deliberately
- *     carries no transform (see `BoxData.ts`). That IS the "on the geometry side"
- *     placement — it is not missing, it is one layer down.
- *   - It cannot move further, onto `GeometryRef` itself, because that handle is
- *     shared and content-keyed. See the note at its declaration.
- *   - This struct is the flat READ face over that pair, and the flatness is the
- *     point: one material shape, one geometry handle, one transform, so no
- *     consumer grows a second path.
+ *   - `material` could name ONE material. A mesh whose faces are assigned across two slots
+ *     had no way to say so, which made a per-face assignment not merely unimplemented but
+ *     unrepresentable. {@link MaterialAssignment} replaces it: the object's slot table
+ *     paired with the geometry's per-face index into it. The INDEX belongs to the geometry
+ *     and the TABLE is object-level — the line both reference systems draw, and what lets
+ *     two objects share one mesh and still look different.
+ *   - `uvs: null` carried THREE situations with three different correct responses — bytes
+ *     in flight, buffers in a loaded asset clone, and no UV layer at all. `uvRead` replaces
+ *     it with an answer that says which, so a consumer can no longer render an untextured
+ *     mesh during a load and call it correct.
  *
- * The two `null`s here do NOT share a cause, which is the part that misleads:
- *   - `uvs: null` is a CAPABILITY limit — the geometry is async (clone / OPFS) and
- *     this resolver is pure and sync. It is null for glTF AND for baked, and the
- *     baked arm fills `material` right beside it.
- *   - `material: null` happens for glTF ALONE, because glTF has no data half to
- *     carry one; its material is already on the loaded clone. That is #389's
- *     Object+data split, not a placement question.
- * A change that moves fields around this struct addresses neither.
+ * Nothing has an escape hatch back to a single value. If one turns out to be needed it gets
+ * named, counted and justified on its own rather than left as the default shape.
+ *
+ * `geometry` is a {@link GeometryRef} HANDLE into the geometry registry, NEVER inlined
+ * buffers — heavy arrays stay out of Ops / undo / hashing. The attributes behind it live in
+ * the attribute store, reached by the content keys the producing node minted.
  */
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
-  readonly uvs: EvaluatedUVs | null;
   /**
-   * #635 — the UV read, with absence that says WHY: waiting, look-elsewhere, or genuinely
-   * none. `uvs` above is derived from this and collapses all three into one null, which is
-   * how an in-flight OPFS read becomes indistinguishable from a mesh that has no UVs. That
-   * collapse has already shipped a defect once; this field is what retires it, and `uvs`
-   * goes with #636.
+   * #635 — the UV read: the island projection when there is one, and otherwise WHICH kind
+   * of absence this is. Waiting, look-elsewhere and genuinely-none are three different
+   * answers requiring three different responses, and the single nullable field this
+   * replaced could carry only their union.
    */
   readonly uvRead: MeshUVRead;
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
   /**
    * #634 — the WHOLE material assignment: the object's slot table paired with the
    * geometry's per-face index into it.
    *
-   * This is what `material` above cannot express. A mesh whose faces point at two slots
-   * reports two here and collapses to one there, so a consumer that can carry the full
-   * answer reads this and a consumer that cannot reads that. `material` is on its way out
-   * (#636); this replaces it.
+   * A mesh whose faces point at two slots reports two, which is what the single `material`
+   * field this replaced could never do. Read it through `assignedMaterials` /
+   * `primaryMaterial` rather than by indexing, so "which materials is this made of" has one
+   * answer and not one per caller.
    */
   readonly materials: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null>;
   readonly transform: MeshTransform;

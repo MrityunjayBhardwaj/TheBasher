@@ -15,6 +15,7 @@
 //
 // REF: PLAN.md W1 (1.6); THESIS §52; vyapti V4/V10/V32; hetvabhasa H14/H25; #178.
 
+import { primaryMaterial } from '../../app/materialAssignment';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
 import { getNodeType } from '../dag/registry';
@@ -264,7 +265,7 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
     expect(mesh!.geometry.descriptor).toEqual({ kind: 'box', size: [2, 3, 4] });
     expect(mesh!.transform.scale).toEqual([1, 1, 1]); // identity → renderer no-op
     expect(mesh!.transform.position).toEqual([1, 0, -1]);
-    const mat = mesh!.material as InlineMaterialSpec;
+    const mat = primaryMaterial(mesh!.materials) as InlineMaterialSpec;
     expect(mat.base.color).toBe('#5af07a');
     expect(mat.specular.roughness).toBe(0.5); // MIGRATED box = current look
   });
@@ -276,7 +277,7 @@ describe('v1 box → normalize + split to Object + BoxData (byte-identical rende
     const fresh = buildDefaultDagState();
     const mesh = resolveEvaluatedMesh(fresh, 'n_box', ctxAt(0));
     expect(mesh).not.toBeNull();
-    const mat = mesh!.material as InlineMaterialSpec;
+    const mat = primaryMaterial(mesh!.materials) as InlineMaterialSpec;
     expect(mat.specular.roughness).toBe(0.3); // FRESH box = OpenPBR
     expect(mat.specular.roughness).not.toBe(CURRENT_LOOK_ROUGHNESS);
   });
@@ -479,7 +480,7 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
     expect(split).not.toBeNull();
     expect(fused).not.toBeNull();
     expect(split!.geometry.descriptor).toEqual(fused!.geometry.descriptor);
-    expect(split!.material).toEqual(fused!.material);
+    expect(primaryMaterial(split!.materials)).toEqual(primaryMaterial(fused!.materials));
     expect(split!.transform.position).toEqual(fused!.transform.position);
     expect(split!.transform.scale).toEqual(fused!.transform.scale);
   });
@@ -710,13 +711,15 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     const canonical = sphereGeometryRef(SPHERE_MIG_RADIUS, SPHERE_MIG_WS, SPHERE_MIG_HS);
     expect(split!.geometry.descriptor).toEqual(canonical.descriptor);
     // The saved colour survives the migration untouched — the literal, so this can fail.
-    expect((split!.material as InlineMaterialSpec).base.color).toBe(SPHERE_MIG_SAVED_COLOR);
+    expect((primaryMaterial(split!.materials) as InlineMaterialSpec).base.color).toBe(
+      SPHERE_MIG_SAVED_COLOR,
+    );
     // …and the rest of the IR is the canonical hydrated OpenPBR default.
     const expectedMaterial = hydrateInlineMaterial({
       ...openpbrMaterialSchema().parse(undefined),
       base: { color: SPHERE_MIG_SAVED_COLOR, metalness: 0 },
     });
-    expect(split!.material).toEqual(expectedMaterial);
+    expect(primaryMaterial(split!.materials)).toEqual(expectedMaterial);
     expect(split!.transform.position).toEqual([0, 0, 0]);
     expect(split!.transform.scale).toEqual([1, 1, 1]);
   });

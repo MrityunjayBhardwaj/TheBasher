@@ -20,7 +20,12 @@ import {
   twoMaterialMeshData,
 } from '../test-utils/twoMaterialMesh';
 import { evaluatedMeshFromMeshData } from './resolveEvaluatedMesh';
-import { assignedMaterials, assignedSlots, materialAssignmentReport } from './materialAssignment';
+import {
+  assignedMaterials,
+  assignedSlots,
+  materialAssignmentReport,
+  primaryMaterial,
+} from './materialAssignment';
 import { multiMaterialBakeRefusal } from './animate/dispatchApplyTransform';
 import { BoxDataNode, BoxDataParams } from '../nodes/BoxData';
 import type { MeshDataValue } from '../nodes/types';
@@ -54,11 +59,11 @@ describe('#634 a mesh assigning two materials across its faces reads as TWO', ()
     });
   });
 
-  it('still collapses to ONE through the single-material field, and that field is the lie', () => {
-    // `EvaluatedMesh.material` reports slot 0 and says nothing about slot 1. It is not
-    // wrong so much as unable to be right, which is why #636 deletes it rather than fixing
-    // it — and why the assignment above has to land BEFORE the deletion, not after.
-    expect(twoValued().material).toBe(SLOT_0_MATERIAL);
+  it('narrows to ONE only where a caller asks for one', () => {
+    // The single-material field is GONE (#636). What remains is an explicit narrowing a
+    // caller opts into by name, beside the full answer — not a shape that silently reports
+    // one material because it cannot hold two.
+    expect(primaryMaterial(twoValued().materials)).toBe(SLOT_0_MATERIAL);
   });
 });
 
@@ -72,7 +77,9 @@ describe('#634 the uniform case is unchanged by all of this', () => {
   it('answers the same material the single field always answered', () => {
     const params = BoxDataParams.parse({ size: [1, 1, 1], material: {} });
     const data = BoxDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
-    expect(evaluatedMeshFromMeshData(data, TWO_MATERIAL_TRANSFORM).material).toBe(data.material);
+    expect(primaryMaterial(evaluatedMeshFromMeshData(data, TWO_MATERIAL_TRANSFORM).materials)).toBe(
+      data.material,
+    );
   });
 
   it('covers all 12 of the box’s faces, so "uniform" is a measured answer', () => {

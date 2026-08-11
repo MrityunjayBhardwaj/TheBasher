@@ -52,10 +52,9 @@ import type {
 import { modifierDataSource } from './modifierGeometry';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { materialAssignmentOf, materialSlotsOf, primaryMaterial } from './materialAssignment';
+import { materialAssignmentOf, materialSlotsOf } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
-import { readMeshUVs, type MeshUVRead } from './uvAttributes';
-import type { EvaluatedUVs } from '../nodes/types';
+import { readMeshUVs } from './uvAttributes';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 
@@ -83,15 +82,6 @@ function isVec3(v: unknown): v is Vec3 {
 // (asset clone / OPFS) and outside this pure sync resolver, so those branches
 // return uvs:null and UVEditor resolves them itself via the SAME extractUVIslands
 // (A-3). Mirrors the existing material:null-for-glTF contract.
-/**
- * The islands a UV read carries, or null — the ONE place the four-way answer is narrowed to
- * the single nullable field `uvs`, so nothing else has to know that a null there means three
- * different things.
- */
-function islandsOf(read: MeshUVRead): EvaluatedUVs | null {
-  return read.status === 'ok' ? read.islands : null;
-}
-
 /**
  * The primitive (Box/Sphere) transform band (#153). Prefer the full evaluated
  * walk (`resolveEvaluatedTransform` overlays the free-floating direct channel, V57 — the
@@ -133,11 +123,9 @@ export function evaluatedMeshFromMeshData(
   const uvRead = readMeshUVs(data.geometry);
   return {
     geometry: data.geometry,
-    uvs: islandsOf(uvRead),
     uvRead,
     // ⚠️ Collapses to the lowest slot — this field can carry only one material, and it is
     // the field #636 deletes. `materials` beside it carries the whole answer.
-    material: primaryMaterial(materials),
     materials,
     transform,
   };
@@ -216,9 +204,7 @@ export function resolveEvaluatedMesh(
     const gltfUvs = readMeshUVs(geometry);
     return {
       geometry,
-      uvs: islandsOf(gltfUvs),
       uvRead: gltfUvs,
-      material: null,
       materials: EMPTY_ASSIGNMENT,
       transform,
     };
@@ -271,9 +257,7 @@ export function resolveEvaluatedMesh(
       // The modified geometry is SYNC-buildable (box/sphere data), so its UVs (the
       // merged source islands) come from the SAME registry path as Box/Sphere (#209 UV
       // follow-up). Baked data is not sync-buildable → the registry misses → null.
-      uvs: islandsOf(modifierUvs),
       uvRead: modifierUvs,
-      material: primaryMaterial(modifierMaterials),
       materials: modifierMaterials,
       transform,
     };
@@ -316,9 +300,7 @@ export function resolveEvaluatedMesh(
       const bakedUvs = readMeshUVs(data.geometry);
       return {
         geometry: data.geometry,
-        uvs: islandsOf(bakedUvs),
         uvRead: bakedUvs,
-        material: primaryMaterial(bakedMaterials),
         materials: bakedMaterials,
         transform,
       };
@@ -335,9 +317,7 @@ export function resolveEvaluatedMesh(
       const modifiedUvs = readMeshUVs(modGeometry);
       return {
         geometry: modGeometry,
-        uvs: islandsOf(modifiedUvs),
         uvRead: modifiedUvs,
-        material: primaryMaterial(modifiedMaterials),
         materials: modifiedMaterials,
         transform,
       };
