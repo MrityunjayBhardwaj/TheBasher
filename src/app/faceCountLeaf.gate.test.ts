@@ -16,6 +16,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { importsOf } from '../../tools/gates/moduleShape';
+import { sourceFiles } from '../../tools/gates/sourceFiles';
+import { stripComments } from '../test-utils/sourceScan';
 import { faceAttributeMismatch, faceCountMismatch, faceCountOf } from './faceCount';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
@@ -115,6 +117,26 @@ describe('#638 a count disagreement is refused by name', () => {
     expect(why).toContain('36');
     expect(why).toContain('12');
     expect(faceCountMismatch(box(), 36)).toBeNull();
+  });
+
+  it('and the mint-time half has NO production caller — stated in the module, checked here', () => {
+    // #654. Every mint site derives its element count from `faceCountOf` on the same
+    // descriptor, so a mint-time disagreement has no constructor and this guard would be
+    // comparing a number against itself. That is written into the module, and a claim
+    // about the code's shape decays unless something reads it: if a production caller
+    // ever appears, this reds and the paragraph gets rewritten in the same commit.
+    const files = sourceFiles();
+    const found = files
+      .filter(([path, src]) => {
+        if (path === 'src/app/faceCount.ts') return false; // where it is defined
+        return /\bfaceAttributeMismatch\s*\(/.test(stripComments(src));
+      })
+      .map(([path]) => path);
+
+    // `examined` beside `found`, so a walk that stopped descending cannot report an empty
+    // set over a smaller repo — a found of zero is only worth reading beside a denominator.
+    expect({ examined: files.length, found }).toEqual({ examined: files.length, found: [] });
+    expect(files.length).toBeGreaterThan(500);
   });
 
   it('has NO OBJECTION where there is nothing to compare, and the two cases are distinct', () => {

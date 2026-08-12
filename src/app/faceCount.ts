@@ -118,6 +118,19 @@ export function faceCountMismatch(
  * at mint time; that one compares the BUILT geometry against the descriptor at build time.
  * A single function taking both would let a caller pass one and default the other, which is
  * how a gate silently stops checking half of what it names.
+ *
+ * ⚠️ NO PRODUCTION CALLER TODAY, AND THAT IS SAID HERE RATHER THAN LEFT TO BE DISCOVERED
+ * (#654). Every mint site in this repo derives its element count from {@link faceCountOf} on
+ * the same descriptor, so a mint-time disagreement has no constructor — the guard would be
+ * comparing a number against itself. The disagreement that IS reachable arrives later, when a
+ * handle carries an attribute key its rebuilt or merged geometry no longer fits, and that one
+ * is caught by {@link faceCountMismatch} in the registry, against the geometry three.js
+ * actually built.
+ *
+ * So this is the arm for a producer that carries a count from somewhere else — an importer,
+ * or a stored set read back against a descriptor — and it stays here, tested, for the moment
+ * one exists. What it must NOT be read as is a live check on the mint: a named guard that
+ * never runs is worse than an open gap, because a reader who finds it stops looking.
  */
 export function faceAttributeMismatch(
   descriptor: GeometryDescriptor,
