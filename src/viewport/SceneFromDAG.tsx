@@ -738,9 +738,36 @@ function MeshScaleProbe() {
     // the lossless-material assertion from inference to observation: a baked
     // textured glTF child's reloaded BakedMesh must report map.image.width>0 +
     // srgb colorspace on the base map + the resolved color. Read-only (V8 clean).
+    // 🔴 #638 (ns-1b step 9) — WIDENED FOR A MULTI-MATERIAL MESH, AND THE SCALAR FIELDS
+    // BELOW NOW DESCRIBE **SLOT 0**, NOT "THE MATERIAL".
+    //
+    // What this used to do to a mesh drawn with an ARRAY: `mesh.material as THREE.Material`
+    // is a cast, an array is truthy so the `?? null` guard never fired, and every field
+    // read off it came back `null` / `false`.
+    //
+    // 🔴 EXCEPT ONE, AND IT IS WORSE THAN THE NULLS — MEASURED BY RE-NARROWING THIS BACK.
+    // `std.map` on an array resolves to **`Array.prototype.map`**, a function, which is
+    // truthy. So the probe reported `hasMap: true` for a mesh with no texture at all and
+    // then THREW on `map.repeat.x`, inside itself, at the caller's `page.evaluate`. An
+    // element-type field name colliding with an array method turns "the union was cast
+    // away" from a quiet wrong answer into a loud wrong diagnosis: a spec author reads
+    // "this mesh has a broken texture" for a mesh whose only unusual property is having
+    // two materials.
+    //
+    // Either way this is the instrument the whole browser tier reads material through, so
+    // the lie propagates to every spec that uses it, in the one phase that puts arrays on
+    // the road. Widening the standing instrument is the fix rather than exempting it: a new
+    // instrument disagreeing with a standing one is a claim about the instrument, so the
+    // standing one is the one to make true.
+    //
+    // `materialCount` is what lets a caller tell the two apart — 1 for a single material,
+    // N for an array — instead of inferring it from a null set. It is stated here and in
+    // the field's own name so the widened probe does not become a second lying label.
     w.__basher_mesh_material = (
       nodeId: string,
     ): {
+      /** 1 for a single material; N for an array. Every other field describes SLOT 0. */
+      materialCount: number;
       color: string | null;
       hasMap: boolean;
       mapImageOk: boolean;
@@ -764,13 +791,19 @@ function MeshScaleProbe() {
         if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
       });
       if (!target) return null;
-      const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
+      // The array is resolved to SLOT 0 rather than refused, so every existing spec keeps
+      // the meaning it had; a mesh drawn with one material is `materialCount: 1` and the
+      // slot-0 reading IS the whole reading.
+      const raw = (target as THREE.Mesh).material as THREE.Material | THREE.Material[] | null;
+      const materialCount = Array.isArray(raw) ? raw.length : 1;
+      const mat = (Array.isArray(raw) ? (raw[0] ?? null) : raw) ?? null;
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
       const phys = mat as THREE.MeshPhysicalMaterial;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
+        materialCount,
         type: mat.type ?? null, // v0.6 #2 (W2): 'MeshPhysicalMaterial' for primitives now
         color: std.color ? `#${std.color.getHexString()}` : null,
         hasMap: map !== null,

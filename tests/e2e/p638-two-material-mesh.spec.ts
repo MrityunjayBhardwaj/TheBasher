@@ -81,6 +81,9 @@ interface W {
   };
   __basher_geometry_registry: { size: () => number };
   __basher_render_png?: () => Promise<{ width: number; height: number; dataUrl: string } | null>;
+  __basher_mesh_material?: (
+    nodeId: string,
+  ) => { materialCount: number; type: string | null; color: string | null } | null;
 }
 
 /**
@@ -292,6 +295,19 @@ test('a box assigned two materials DRAWS with both, and can still be picked', as
     { start: 0, count: 6, materialIndex: 1 },
     { start: 6, count: 30, materialIndex: 0 },
   ]);
+
+  // THE STANDING PROBE, on the mesh that broke it. `__basher_mesh_material` is what the
+  // whole browser tier reads material through, and before it was widened it answered a
+  // multi-material mesh with a full set of plausible NULLS — a cast, an array that is
+  // truthy, and every field off it null. That reads as "no material yet", which is exactly
+  // what an ordinary async gap reads as. `materialCount` is the field that tells them apart.
+  const probe = await page.evaluate(() =>
+    (window as unknown as W).__basher_mesh_material!('n_box'),
+  );
+  expect(probe, 'the standing probe must not answer a two-material mesh with nulls').not.toBeNull();
+  expect(probe!.materialCount).toBe(2);
+  expect(probe!.type).not.toBeNull();
+  expect(probe!.color).not.toBeNull();
 
   // PIXELS — the real render, decoded and sampled. Falsifiable by construction: with the
   // resolved array discarded at the mesh the whole cube reads one colour, and the blue

@@ -246,4 +246,77 @@ describe('#638 who may speak of a material array', () => {
       callers: ['src/viewport/SceneFromDAG.tsx'],
     });
   });
+
+  // 🔴 THE INVERSE CENSUS — the one this phase actually needs (#638, ns-1b step 9).
+  //
+  // The census above counts array PRODUCERS. A phase that puts arrays on the DAG road has
+  // the opposite exposure: a reader that treats a mesh's `material` as a single object does
+  // not throw. It returns a plausible wrong answer, which is the shape that gets relied on.
+  //
+  // The measured instance, and the reason this gate exists rather than a note: the repo's
+  // standing "what material is on screen" probe read
+  // `((target as THREE.Mesh).material as THREE.Material) ?? null`. An array is truthy, so
+  // the `?? null` never fired, every field downstream came back `null`/`false`, and a
+  // null-valued material report is indistinguishable from an ordinary async gap — in the
+  // one instrument the whole browser tier reads material through.
+  //
+  // What is gated is the exact shape that produced it: casting a three.js `.material` read
+  // to a BARE single material type. A cast is how the union gets discarded silently; a
+  // branch (`Array.isArray(…)`) and an array-aware declared type both survive it.
+  const SINGLE_MATERIAL_CASTS: Record<string, string> = {
+    'src/app/Gizmo.tsx':
+      'a LINE the gizmo constructs itself and disposes — never a DAG mesh, and a Line has ' +
+      'no group layout to disagree with',
+  };
+
+  it('no production site casts a three.js `.material` read to a bare single material', () => {
+    const files = sourceFiles();
+    // `as THREE.Material)` / `as Material)` — and NOT `as THREE.Material | THREE.Material[]`,
+    // which is the array-aware form the widened probe now uses.
+    const cast = /\.material\s+as\s+(?:THREE\.)?Material\s*(?!\s*\|)/;
+    const found = files
+      .filter(([, src]) => cast.test(stripComments(src)))
+      .map(([path]) => path)
+      .sort();
+
+    expect({ examined: files.length, found }).toEqual({
+      examined: files.length,
+      found: Object.keys(SINGLE_MATERIAL_CASTS).sort(),
+    });
+  });
+
+  // 🔴 AND THE CAP IS PINNED AGAINST ITS OWN HOOK COUNT (#638, D5).
+  //
+  // `useSlotMaterials` calls `usePrimitiveMaterial` a FIXED number of times, written out
+  // rather than looped, because a hook count that varies with data is the one thing React
+  // forbids. That makes the module constant and the number of call sites two spellings of
+  // one fact — and the sibling reach gate counts the CALLS, so raising the constant alone
+  // moves nothing it can see. A table of ten against eight hydrated materials then leaves
+  // coverage short and degrades loudly rather than drawing wrong, but the degradation would
+  // be for a reason nobody chose.
+  it('the slot cap equals the number of hooks written out for it', () => {
+    const [, src] = sourceFiles().find(([p]) => p === 'src/app/material/useSlotMaterials.ts')!;
+    const body = stripComments(src);
+    const calls = body.match(/usePrimitiveMaterial\s*\(/g) ?? [];
+    const declared = body.match(/MAX_MATERIAL_SLOTS\s*=\s*(\d+)/);
+    expect(declared).not.toBeNull();
+    expect(calls.length).toBe(Number(declared![1]));
+    expect(calls.length).toBe(8);
+  });
+
+  it('sees the shape it claims to see, in both directions', () => {
+    const cast = /\.material\s+as\s+(?:THREE\.)?Material\s*(?!\s*\|)/;
+    // The exact line this phase found lying, before it was widened.
+    expect(
+      cast.test(`const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;`),
+    ).toBe(true);
+    // And the widened one, which keeps the union and therefore keeps the question askable.
+    expect(
+      cast.test(
+        `const raw = (target as THREE.Mesh).material as THREE.Material | THREE.Material[] | null;`,
+      ),
+    ).toBe(false);
+    // A branch is not a cast, and never was the failure.
+    expect(cast.test(`Array.isArray(mesh.material) ? mesh.material : [mesh.material]`)).toBe(false);
+  });
 });
