@@ -56,11 +56,32 @@ describe('#638 the count is a leaf', () => {
   it('leaves `geometryRegistry` at its declared import set', () => {
     // Not "at most three" — the exact set. A registry that quietly gains a heavy import is
     // the thing this holds; widening it is a deliberate one-line edit here, with a reason.
+    //
+    // 🔴 WIDENED at step 4, when `build()` started writing group layouts, and the reason is
+    // the whole point of the leaf move: every one of the four additions is itself a LEAF.
+    // `attributes` is a vocabulary, `attributeStore` imports one type, `faceCount` imports
+    // one type, and `materialGroups` imports nothing at all. That is the difference this
+    // gate exists to keep visible — importing the count from `modifierGeometry` instead
+    // would have dragged the evaluator, the node registry, `dataSectionCapability` and the
+    // hash into a module that had three imports.
     expect(importsOf('src/app/geometryRegistry.ts')).toEqual([
       'three',
       'three/examples/jsm/utils/BufferGeometryUtils.js',
       '../nodes/types',
+      '../nodes/attributes',
+      './attributeStore',
+      './faceCount',
+      './materialGroups',
     ]);
+  });
+
+  it('and every module it gained at step 4 is itself a leaf, which is why widening was safe', () => {
+    // The claim above, checked rather than asserted in prose. A leaf that stops being one
+    // re-opens the graph through the registry, and nothing else would notice.
+    expect(importsOf('src/app/materialGroups.ts')).toEqual([]);
+    expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
+    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types']);
+    expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
 });
 
