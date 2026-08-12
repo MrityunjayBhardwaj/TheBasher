@@ -24,7 +24,8 @@ import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import * as geometryRegistry from '../app/geometryRegistry';
-import { sphereGeometryRef } from '../app/modifierGeometry';
+import { sphereDescriptor, sphereGeometryRef } from '../app/modifierGeometry';
+import { mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial } from './materialSchema';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { buildAddModifierOps, resolveStackBase } from '../app/operatorStack';
@@ -45,7 +46,11 @@ const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 function sphereData(): MeshDataValue {
   return {
     kind: 'MeshData',
-    geometry: sphereGeometryRef(1, 8, 6),
+    // #638 — folded exactly as `SphereData.evaluate` folds it. An unfolded handle here
+    // would make the parity assertion below compare a folded read road against an
+    // unfolded fixture, so it would red for a reason that has nothing to do with the
+    // modifier — and, worse, would go green again the day the fold was removed.
+    geometry: sphereGeometryRef(1, 8, 6, mintMeshAttributes(sphereDescriptor(1, 8, 6))),
     material: hydrateInlineMaterial(null, '#888888'),
   };
 }

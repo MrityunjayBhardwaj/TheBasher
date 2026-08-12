@@ -15,6 +15,7 @@ import { faceCountOf } from './faceCount';
 import { coveredIndexCount, groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 import {
   arrayGeometryRef,
+  boxDescriptor,
   boxGeometryRef,
   mirrorGeometryRef,
   sphereGeometryRef,
@@ -91,10 +92,10 @@ describe('#638 the derivation refuses by name rather than guessing', () => {
 describe('#638 coverage, in the done-when clause 3 form, over all four sync-buildable kinds', () => {
   // Arm A of the clause (index === null) cannot arise here: all four of these build indexed.
   const kinds = [
-    ['box', boxGeometryRef([1, 1, 1])],
-    ['sphere', sphereGeometryRef(1, 8, 4)],
-    ['array', arrayGeometryRef(boxGeometryRef([1, 1, 1]), 2, [2, 0, 0])],
-    ['mirror', mirrorGeometryRef(boxGeometryRef([1, 1, 1]), 'x', 0)],
+    ['box', boxGeometryRef([1, 1, 1], null)],
+    ['sphere', sphereGeometryRef(1, 8, 4, null)],
+    ['array', arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0])],
+    ['mirror', mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0)],
   ] as const;
 
   for (const [name, ref] of kinds) {
@@ -139,7 +140,7 @@ describe('#638 pinned facts — measurements in the repo, not folklore in a plan
     // The fold puts the WHOLE attribute set into geometry identity, so growth in this set
     // silently widens what a geometry key distinguishes. A second member is a decision, and
     // this reds when one arrives.
-    const minted = uniformMaterialAttributes(boxGeometryRef([1, 1, 1]));
+    const minted = uniformMaterialAttributes(boxDescriptor([1, 1, 1]));
     expect(minted).not.toBeNull();
     expect(Object.keys(minted?.set ?? {})).toEqual([MATERIAL_INDEX]);
   });

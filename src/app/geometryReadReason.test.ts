@@ -53,7 +53,7 @@ describe('#630 — a registry read says WHY it is empty', () => {
   });
 
   it('reports the geometry when there is one', () => {
-    const result = readGeometry(boxGeometryRef([1, 1, 1]));
+    const result = readGeometry(boxGeometryRef([1, 1, 1], null));
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') throw new Error('unreachable');
     expect(result.geometry).toBeInstanceOf(BoxGeometry);
@@ -90,7 +90,7 @@ describe('#630 — a registry read says WHY it is empty', () => {
   });
 
   it('narrowing to a bare geometry agrees with the typed result, because one defines the other', () => {
-    const ref = boxGeometryRef([2, 2, 2]);
+    const ref = boxGeometryRef([2, 2, 2], null);
     const typed = readGeometry(ref);
     const bare = getForRead(ref);
     // Same cache, same instance — `getForRead` is a view of `readGeometry`, not a second

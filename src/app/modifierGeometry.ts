@@ -45,18 +45,79 @@ import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
 
 /**
+ * The box descriptor for a size — the ONE spelling of that literal.
+ *
+ * Exported because two things need it and neither may re-spell it: this module's
+ * {@link boxGeometryRef}, and the producer that has to mint the attribute set BEFORE
+ * the handle exists (`BoxData.evaluate`). A second literal in the producer would agree
+ * today and stop agreeing the first time the descriptor gains a field — with the face
+ * count then derived from an incomplete descriptor, silently.
+ */
+export function boxDescriptor(size: Vec3): Extract<GeometryDescriptor, { kind: 'box' }> {
+  return { kind: 'box', size };
+}
+
+/** The sphere descriptor — the ONE spelling, for the same reason as {@link boxDescriptor}. */
+export function sphereDescriptor(
+  radius: number,
+  widthSegments: number,
+  heightSegments: number,
+): Extract<GeometryDescriptor, { kind: 'sphere' }> {
+  return { kind: 'sphere', radius, widthSegments, heightSegments };
+}
+
+/**
+ * Fold an attribute component into a geometry key, or leave the key alone — the ONE
+ * place `GeometryRef.attributeKey` is written (#638, ns-1b step 3).
+ *
+ * ⚠️ `undefined` is REFUSED BY NAME, and that refusal is load-bearing rather than
+ * defensive. `attributeKey` is a required parameter on the two primitive builders, so
+ * production cannot omit it — but `npm run typecheck` does not see `*.test.*` and vitest
+ * does not typecheck at all, so a test call site that never answered would arrive here as
+ * `undefined`, take the fold branch, and produce a key ending `|a:undefined` beside a ref
+ * whose `attributeKey` field is present-and-`undefined`. That object hashes differently
+ * from one without the field, so every mesh value carrying it re-keys — a full cold start
+ * with no error anywhere. A caller that has no attributes says `null` and means it.
+ */
+function withAttributeComponent(
+  base: Omit<GeometryRef, 'attributeKey'>,
+  attributeKey: string | null,
+): GeometryRef {
+  if (attributeKey === undefined) {
+    throw new Error(
+      `geometryRef: '${base.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
+    );
+  }
+  // Absent, never present-and-undefined: the two are different objects to `Object.keys`
+  // and to the value hash, and only one of them means "this geometry has no attributes".
+  if (attributeKey === null) return base;
+  return { ...base, key: `${base.key}|a:${attributeKey}`, attributeKey };
+}
+
+/**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
  * descriptor). It was shared by the fused `BoxMesh`'s source projection and by
  * `BoxData`; the fused kind is retired, so `BoxData` (#361) is the only caller left
  * and the "one cached build, byte-identical geometry" claim (H40, no drift) is now
  * held by construction rather than by two roads agreeing.
+ *
+ * `attributeKey` is REQUIRED (#638). It is not defaulted, and the omission is what the
+ * requirement exists to make unconstructible: the cache keys on `key` (a string) while
+ * the group layout is derived from `attributeKey` (a sibling field), so correctness
+ * needs `key ⇒ attributeKey` to be a function. A two-field split enforces nothing on its
+ * own — any ref whose key carries a component its sibling does not, or the reverse,
+ * breaks it silently. Minting both in one expression, in a function that cannot be
+ * called without both, is the enforcement.
  */
-export function boxGeometryRef(size: Vec3): GeometryRef {
-  return {
-    key: `box|${size[0]},${size[1]},${size[2]}`,
-    kind: 'box',
-    descriptor: { kind: 'box', size },
-  };
+export function boxGeometryRef(size: Vec3, attributeKey: string | null): GeometryRef {
+  return withAttributeComponent(
+    {
+      key: `box|${size[0]},${size[1]},${size[2]}`,
+      kind: 'box',
+      descriptor: boxDescriptor(size),
+    },
+    attributeKey,
+  );
 }
 
 /**
@@ -72,12 +133,16 @@ export function sphereGeometryRef(
   radius: number,
   widthSegments: number,
   heightSegments: number,
+  attributeKey: string | null,
 ): GeometryRef {
-  return {
-    key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
-    kind: 'sphere',
-    descriptor: { kind: 'sphere', radius, widthSegments, heightSegments },
-  };
+  return withAttributeComponent(
+    {
+      key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
+      kind: 'sphere',
+      descriptor: sphereDescriptor(radius, widthSegments, heightSegments),
+    },
+    attributeKey,
+  );
 }
 
 /**
@@ -333,7 +398,9 @@ export function rebuildGeometryRef(
   const d = ref.descriptor;
   switch (d.kind) {
     case 'box':
-      return boxGeometryRef((values.size ?? d.size) as Vec3);
+      // ⚠️ CARRIES the component forward. Correct for a box — 12 faces at every size — and
+      // WRONG for a sphere, which is why step 3b replaces both arms with a re-mint.
+      return boxGeometryRef((values.size ?? d.size) as Vec3, ref.attributeKey ?? null);
     case 'sphere':
       // Each field falls back to what the descriptor already holds, so animating one of the
       // three does not reset the other two.
@@ -341,6 +408,7 @@ export function rebuildGeometryRef(
         (values.radius ?? d.radius) as number,
         (values.widthSegments ?? d.widthSegments) as number,
         (values.heightSegments ?? d.heightSegments) as number,
+        ref.attributeKey ?? null,
       );
     case 'array':
       return arrayGeometryRef(

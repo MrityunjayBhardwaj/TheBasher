@@ -89,8 +89,6 @@ export function nonAlignedMaterialMeshData(): MeshDataValue {
  * would do it, so a consumer resolving through `attributeKey` finds it the same way.
  */
 export function boxFromFaceIndices(indices: Int32Array): MeshDataValue {
-  const geometry = boxGeometryRef([1, 1, 1]);
-
   const materialIndex: AttributeData = {
     domain: 'face',
     type: 'int',
@@ -100,6 +98,15 @@ export function boxFromFaceIndices(indices: Int32Array): MeshDataValue {
   const minted = mintAttributes({ [MATERIAL_INDEX]: materialIndex });
   if (minted === null) throw new Error('boxFromFaceIndices: the fixture minted nothing');
   insert(minted.key, minted.set, 'evaluate');
+
+  // #638 — the mint comes FIRST and the key is folded in, exactly as a producer's
+  // `evaluate` now does it. This is not a detail of the fixture: an unfolded handle here
+  // would give the phase's own two-valued discriminator a bare `box|1,1,1` key, so the
+  // registry would write no groups, the stock six-side layout would survive, and a
+  // two-length material array would draw twelve of thirty-six triangles. The fixture
+  // would be the constructor for the exact failure it exists to detect. It cannot be
+  // built that way now — the builder does not compile without an answer.
+  const geometry = boxGeometryRef([1, 1, 1], minted.key);
 
   return {
     kind: 'MeshData',

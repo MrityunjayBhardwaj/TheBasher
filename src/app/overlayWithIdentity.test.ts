@@ -295,7 +295,7 @@ function boxValue() {
     position: [0, 0, 0],
     data: {
       kind: 'MeshData',
-      geometry: boxGeometryRef([1, 1, 1]),
+      geometry: boxGeometryRef([1, 1, 1], null),
       material: { base: { color: '#c81e5a' } },
       materialKey: 'MINTED-BY-EVALUATION',
     },
@@ -316,7 +316,7 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     // patched descriptor under the pre-edit key would hand back the pre-edit BufferGeometry —
     // the material bug (H261) arriving through the geometry door.
     expect(out.data.geometry.descriptor).toEqual({ kind: 'box', size: [4, 4, 4] });
-    expect(out.data.geometry.key).toBe(boxGeometryRef([4, 4, 4]).key);
+    expect(out.data.geometry.key).toBe(boxGeometryRef([4, 4, 4], null).key);
   });
 
   it('rebuilds through the SAME builder the evaluator uses, not a second spelling', () => {
@@ -330,7 +330,7 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
       NO_TRANSIENTS,
       0,
     );
-    expect(out.data.geometry).toEqual(boxGeometryRef([2, 3, 4]));
+    expect(out.data.geometry).toEqual(boxGeometryRef([2, 3, 4], null));
   });
 
   it('rebuilds a sphere from its three params, including a HELD edit', () => {
@@ -341,20 +341,20 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
       position: [0, 0, 0],
       data: {
         kind: 'MeshData',
-        geometry: sphereGeometryRef(1, 32, 16),
+        geometry: sphereGeometryRef(1, 32, 16, null),
         material: null,
         materialKey: null,
       },
     };
     const out = overlayWithIdentity('children', base, NODE, NO_CHANNELS, transient(RADIUS, 3), 0);
-    expect(out.data.geometry).toEqual(sphereGeometryRef(3, 32, 16));
+    expect(out.data.geometry).toEqual(sphereGeometryRef(3, 32, 16, null));
   });
 
   it('rebuilds a modifier handle from the modifier’s OWN param (`count`)', () => {
     // The subject the issue did not name and the browser found: an ArrayModifier's params
     // become fields of a RECURSIVE descriptor, so they take this road too. The nested
     // `source` handle must survive untouched — it is another producer's identity.
-    const source = boxGeometryRef([1, 1, 1]);
+    const source = boxGeometryRef([1, 1, 1], null);
     const base = {
       kind: 'SceneChild' as const,
       position: [0, 0, 0],
@@ -378,7 +378,7 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     // descriptor, so a rebuild that walked into `source` would happily re-mint the box from
     // a channel authored on a different node — silently repointing this modifier at geometry
     // its producer never agreed to.
-    const source = boxGeometryRef([1, 1, 1]);
+    const source = boxGeometryRef([1, 1, 1], null);
     const base = {
       kind: 'SceneChild' as const,
       position: [0, 0, 0],
@@ -429,7 +429,7 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     // today; if something did, it is handing over a whole ref and must not have it rebuilt
     // from a descriptor field named after it.
     const base = boxValue();
-    const replacement = boxGeometryRef([9, 9, 9]);
+    const replacement = boxGeometryRef([9, 9, 9], null);
     const out = overlayWithIdentity(
       'children',
       base,
@@ -489,7 +489,7 @@ describe('#537 — the handle repair mirrors the primitives it wraps', () => {
       0,
     );
     expect(out.position).toEqual([5, 0, 0]);
-    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1], null));
   });
 
   it("does NOT rebuild from ANOTHER node's held edit", () => {
@@ -504,6 +504,6 @@ describe('#537 — the handle repair mirrors the primitives it wraps', () => {
       transient(SIZE, [9, 9, 9], 'n_other'),
       0,
     );
-    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1]));
+    expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1], null));
   });
 });

@@ -32,7 +32,7 @@ import { faceCountOf } from '../app/faceCount';
 import { insert } from '../app/attributeStore';
 import { MATERIAL_INDEX, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
-import type { GeometryRef } from './types';
+import type { GeometryDescriptor } from './types';
 
 /**
  * The attribute set a primitive with ONE material slot carries: a face-domain
@@ -40,9 +40,13 @@ import type { GeometryRef } from './types';
  *
  * Returns `null` when the face count is not derivable from the descriptor — see the module
  * note. Pure: mints, stores nothing.
+ *
+ * ⚠️ Takes the DESCRIPTOR, not the handle, and #638 is what forced the narrowing: the
+ * attribute key is now folded into `GeometryRef.key`, so it has to exist BEFORE the handle
+ * does. Nothing was lost — this only ever read `geometry.descriptor`.
  */
-export function uniformMaterialAttributes(geometry: GeometryRef): MintedAttributes | null {
-  const faces = faceCountOf(geometry.descriptor);
+export function uniformMaterialAttributes(descriptor: GeometryDescriptor): MintedAttributes | null {
+  const faces = faceCountOf(descriptor);
   if (faces === null) return null;
 
   const materialIndex: AttributeData = {
@@ -62,8 +66,8 @@ export function uniformMaterialAttributes(geometry: GeometryRef): MintedAttribut
  * same set is a HIT, so this stays safe to run on every evaluation and the node stays pure
  * in the sense that matters: the same params produce the same value.
  */
-export function mintMeshAttributes(geometry: GeometryRef): string | null {
-  const minted = uniformMaterialAttributes(geometry);
+export function mintMeshAttributes(descriptor: GeometryDescriptor): string | null {
+  const minted = uniformMaterialAttributes(descriptor);
   if (minted === null) return null;
   insert(minted.key, minted.set, 'evaluate');
   return minted.key;

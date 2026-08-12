@@ -5,10 +5,13 @@
 // that a string produced by code this phase does NOT touch is still, byte for byte, the
 // string it produces today. Neither is a regression guard on unchanged code:
 //
-//   - The four GEOMETRY key literals enforce the phase's central deferral. The moment
-//     anyone folds an attribute component into `GeometryRef.key`, those four strings change,
-//     every existing geometry re-keys, and the render-side fork this phase deliberately did
-//     not open gets decided by accident. The four strings red first.
+//   - The four GEOMETRY key literals enforced ns-1's central deferral: the moment anyone
+//     folded an attribute component into `GeometryRef.key`, those four strings changed and
+//     the render-side fork ns-1 deliberately did not open would have been decided by
+//     accident. 🔴 #638 IS THE PHASE THAT OPENS IT, ON PURPOSE. The literals stay — as the
+//     BASE templates, asserted with the attribute question answered "none" — and the block
+//     below adds what the fold itself must satisfy. They no longer forbid the fold; they
+//     bound it to the one component that was decided.
 //   - The MATERIAL key literal covers the one measured re-mint hazard. `materialKeyOf` is a
 //     GENERIC key walk — a field added to the material IR joins the key automatically, which
 //     is the property it is built for and also the property that silently re-mints every
@@ -24,12 +27,16 @@ import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
 import {
   arrayGeometryRef,
+  boxDescriptor,
   boxGeometryRef,
   mirrorGeometryRef,
   sphereGeometryRef,
 } from '../app/modifierGeometry';
+import { mintMeshAttributes } from './meshAttributes';
+import { hashValue } from '../core/dag/hash';
+import { nonAlignedMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
 import { BoxDataNode, BoxDataParams } from './BoxData';
-import type { MeshDataValue } from './types';
+import type { GeometryRef, MeshDataValue, Vec3 } from './types';
 import { attributeKeyOf, mintAttributes } from './attributeKey';
 import type { AttributeData } from './attributes';
 
@@ -121,15 +128,105 @@ describe('#633 absent and empty', () => {
   });
 });
 
-describe('#633 byte identity — the geometry key is NOT touched by this phase', () => {
-  it('the four hand-built key templates still produce today’s exact strings', () => {
-    const box = boxGeometryRef([1, 1, 1]);
-    const sphere = sphereGeometryRef(1, 32, 16);
+describe('#638 the geometry key — the four BASE templates, and the ONE component that folds in', () => {
+  // 🔴 THIS BLOCK'S TITLE USED TO SAY "the geometry key is NOT touched by this phase", and
+  // #638 is the phase that touches it. The block is RESTATED rather than deleted or
+  // relaxed, because the property it guarded is still the one that matters — it has simply
+  // split in two. The four base templates must still produce today's exact strings, and
+  // the ONLY thing that may extend them is the attribute component, in the one shape below.
+  //
+  // ⚠️ The restatement is not cosmetic. Every assertion in the old block goes GREEN under
+  // the fold, because passing `null` reproduces the base string exactly — so left alone
+  // this block would have kept asserting a sentence that had stopped being true, and no
+  // test reads a title.
+
+  it('the four hand-built key templates still produce today’s exact strings unfolded', () => {
+    const box = boxGeometryRef([1, 1, 1], null);
+    const sphere = sphereGeometryRef(1, 32, 16, null);
 
     expect(box.key).toBe('box|1,1,1');
     expect(sphere.key).toBe('sphere|1|32|16');
     expect(arrayGeometryRef(box, 3, [2, 0, 0]).key).toBe('array|box|1,1,1|3|2,0,0');
     expect(mirrorGeometryRef(box, 'x', 0).key).toBe('mirror|box|1,1,1|x|0');
+  });
+
+  it('an unanswered attribute question is a NAMED refusal, not a silent undefined', () => {
+    // The requirement is a required parameter, which production cannot omit — but neither
+    // `npm run typecheck` nor vitest typechecks a `*.test.*` call site, so the only thing
+    // standing between a missed test call and a ref carrying `attributeKey: undefined` is
+    // this refusal. Such a ref hashes differently from one without the field, so it
+    // re-keys every mesh value in every project with no error anywhere.
+    expect(() =>
+      (boxGeometryRef as (s: Vec3, k?: string | null) => GeometryRef)([1, 1, 1]),
+    ).toThrow(/without answering the attribute question/);
+  });
+
+  it('answering “none” leaves the field ABSENT, not present-and-undefined', () => {
+    const box = boxGeometryRef([1, 1, 1], null);
+    expect('attributeKey' in box).toBe(false);
+    expect(Object.keys(box).sort()).toEqual(['descriptor', 'key', 'kind']);
+  });
+
+  it('the component extends the base template, and two indices give two keys', () => {
+    const uniform = mintMeshAttributes(boxDescriptor([1, 1, 1]))!;
+    const folded = boxGeometryRef([1, 1, 1], uniform);
+
+    expect(folded.key).toBe(`box|1,1,1|a:${uniform}`);
+    expect(folded.attributeKey).toBe(uniform);
+
+    // The point of the whole phase: same size, DIFFERENT per-face assignment ⇒ different
+    // geometry ⇒ a different cache key ⇒ two built instances that can carry two layouts.
+    const twoValued = new Int32Array(12);
+    twoValued.fill(1, 6);
+    const split = mintAttributes({
+      material_index: { domain: 'face', type: 'int', count: 12, data: twoValued },
+    })!;
+    expect(boxGeometryRef([1, 1, 1], split.key).key).not.toBe(folded.key);
+  });
+
+  it('equal size and equal assignment still give ONE key — the sharing the cache exists for', () => {
+    const a = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2])));
+    const b = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2])));
+    expect(a.key).toBe(b.key);
+
+    // …and the component is a function of the FACE COUNT, not of size: a box has twelve
+    // faces at every size, so the fold does not shatter sharing across sizes either.
+    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]))).toBe(
+      mintMeshAttributes(boxDescriptor([9, 9, 9])),
+    );
+  });
+
+  it('a glTF-sourced handle is byte-identical, and its value hash has not moved', () => {
+    // `faceCountOf` is null for gltf/baked, so neither can carry a component — which is
+    // what keeps a baked key (and the OPFS path it doubles as) from moving. Pinned as a
+    // HASH rather than by inspection: a field materialising as `undefined` would change
+    // the hash while leaving every structural assertion above green.
+    const gltf: GeometryRef = {
+      key: 'gltf|asset|child',
+      kind: 'gltf',
+      descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
+    };
+    expect('attributeKey' in gltf).toBe(false);
+    expect(hashValue(gltf)).toBe(
+      hashValue({
+        key: 'gltf|asset|child',
+        kind: 'gltf',
+        descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
+      }),
+    );
+    // The discriminator: the same handle WITH the field present-and-undefined is a
+    // different value to the hash, which is the failure this whole shape avoids.
+    expect(hashValue({ ...gltf, attributeKey: undefined })).not.toBe(hashValue(gltf));
+  });
+
+  it('the phase’s own two-valued fixture carries a component in its handle', () => {
+    // If this fixture were left unfolded it would be the constructor for the exact defect
+    // the phase exists to prevent: a bare key ⇒ no groups written ⇒ the stock six-side
+    // layout survives ⇒ a two-length material array draws twelve of thirty-six triangles.
+    const value = twoMaterialMeshData();
+    expect(value.geometry.attributeKey).toBe(value.attributeKey);
+    expect(value.geometry.key).toBe(`box|1,1,1|a:${value.attributeKey}`);
+    expect(value.geometry.key).not.toBe(nonAlignedMaterialMeshData().geometry.key);
   });
 
   it('the descriptor union has gained no attribute-bearing member', () => {

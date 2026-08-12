@@ -19,7 +19,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MeshDataValue } from './types';
-import { sphereGeometryRef } from '../app/modifierGeometry';
+import { sphereDescriptor, sphereGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
 import { materialKeyOf } from './materialKey';
@@ -65,7 +65,17 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   },
   evaluate(params, inputs) {
     const material = resolveNodeMaterial(inputs.material, params.material);
-    const geometry = sphereGeometryRef(params.radius, params.widthSegments, params.heightSegments);
+    // #638 — minted FIRST: the attribute key is folded into the geometry key, so it has to
+    // exist before the handle does. A sphere's face count moves with its segment counts, so
+    // this is also the arm where carrying a stale component forward would be wrong.
+    const descriptor = sphereDescriptor(params.radius, params.widthSegments, params.heightSegments);
+    const attributeKey = mintMeshAttributes(descriptor);
+    const geometry = sphereGeometryRef(
+      params.radius,
+      params.widthSegments,
+      params.heightSegments,
+      attributeKey,
+    );
     return {
       kind: 'MeshData',
       geometry,
@@ -80,7 +90,7 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
       materialKey: materialKeyOf(material),
       // #633 — the attribute set's identity, minted at the same seam and for the same
       // reason. A sphere has one material slot, so every face is derived onto slot 0.
-      attributeKey: mintMeshAttributes(geometry),
+      attributeKey,
     };
   },
 };
