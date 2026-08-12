@@ -413,6 +413,32 @@ own work, because the renderer never reads `EvaluatedMesh`. The reference makes 
 Groups are written inside `build()`, once, before the shared instance is ever handed out — never
 at attach, which would be a per-object write to a shared object.
 
+**Status: the exit is met, and it was watched rather than derived (2026-08-12).** In the running
+app, on one scene authored through the ops road: a box assigned a face range draws with two
+materials, its layout splitting at the triangle boundary; two boxes with the same assignment
+resolve to one `BufferGeometry`, and editing one leaves the other's instance and materials
+untouched; every mounted mesh is fully covered by the materials it resolves to; and a shared add
+costs nothing in either the registry's count or the renderer's allocated-geometry count while a
+distinct one costs exactly one in both.
+
+Three things this phase learned that outlive it:
+
+- **The last mile had no instrument below the browser.** With the resolution function still
+  called and its answer discarded at the mesh, the unit tier stayed green byte for byte — 338
+  files, 4059 tests. There is no React component test tier in this repo, so a mounted mesh's
+  props are not observable at any lower tier. Returning the `{geometry, material}` pair makes the
+  two halves impossible to source separately; it cannot make the pair impossible to ignore. That
+  gap is closed by a browser spec and by nothing else, which is why the spec is part of the work
+  rather than a check on it.
+- **Removing a whole road is now visible.** Reverting this phase's road reds 22 tests across 7
+  files, and every failure the plan named in advance fired exactly where it was predicted to.
+  The comparable measurement one phase earlier was zero.
+- **A shared instrument can lie in a new way the moment the shape it reads widens.** The repo's
+  standing "what material is on screen" probe cast an array to a single material; every field
+  came back null, and one — `.map`, which collides with `Array.prototype.map` — reported a
+  texture that was not there and then threw. The fix is to widen the standing instrument, never
+  to add a second one beside it.
+
 This **narrows** the rule recorded above rather than contradicting it. The prohibition that
 matters — and the one the geometry handle's own doc comment argues for — is on folding the
 **material**: two same-size boxes shaded differently must not become two geometries. That
