@@ -2589,6 +2589,25 @@ function MultiMaterialMeshR({
     return () => useAssetErrorStore.getState().clear(ref);
   }, [capRefusal, refusal, geomKey]);
   if (!draw) return null;
+  // 🔴 THE MEASURED BLIND SPOT, RECORDED BY NAME RATHER THAN COVERED (#638, ns-1b step 7).
+  //
+  // These two lines are the last mile of this phase, and NOTHING BELOW THE BROWSER CAN SEE
+  // THEM. Measured, not supposed: with `material={draw.material}` replaced by
+  // `material={materials[0]}` — the resolver still called, its answer discarded here — the
+  // unit tier is **338 files / 4059 tests green, byte for byte**. Reverting the call itself
+  // reds exactly ONE test, and that one is a source census over call sites, not an assertion
+  // about anything drawn.
+  //
+  // The reason is structural rather than an oversight: this repo has no React component test
+  // tier at all (no `@react-three/test-renderer`, no `@testing-library/react`, zero render
+  // tests), so a mounted mesh's props are not observable at any tier below Playwright. The
+  // resolver returning the PAIR is what makes the geometry and the material impossible to
+  // source from two places — it cannot make the pair impossible to ignore.
+  //
+  // So the instrument for this seam is the browser spec, and it is not optional decoration
+  // on top of a covered derivation: it is the ONLY thing standing between "the array is
+  // computed correctly" and "the mesh draws with it".
+  //
   // #530 / #533 — shared resources travel as PROPS, never through `<primitive>`, and a
   // material ARRAY does not change that: it is a list of registry-owned instances, every
   // one of them shared with whoever else holds the same key.
