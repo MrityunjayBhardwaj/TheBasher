@@ -27,7 +27,7 @@
 //      src/app/resolveEvaluatedMesh.ts (the consumer); issues #634, #633, #638.
 
 import { MATERIAL_INDEX } from '../nodes/attributes';
-import type { InlineMaterialSpec, MaterialAssignment, MeshDataValue } from '../nodes/types';
+import type { MaterialAssignment } from '../nodes/types';
 import { read } from './attributeStore';
 
 /**
@@ -93,12 +93,20 @@ export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null 
 }
 
 /**
- * The object's slot TABLE for a mesh data value — the ONE derivation, so the optional
- * multi-slot field and the single `material` field can never be read as two answers.
+ * The object's slot TABLE for a data value — the ONE derivation, so the optional multi-slot
+ * field and the single `material` field can never be read as two answers.
+ *
+ * Generic over the material type rather than widened to a union, and that is the difference
+ * between one derivation and two: `MeshDataValue` carries inline specs only while
+ * `ModifiedDataValue` carries the wider Inline|Baked union (a modifier over a baked source
+ * inherits one). A widened signature would hand every caller the wide union and push a
+ * narrowing back out to each of them; the generic gives each road its own type through the
+ * same single line of logic.
  */
-export function materialSlotsOf(
-  data: Pick<MeshDataValue, 'material' | 'materialSlots'>,
-): readonly (InlineMaterialSpec | null)[] {
+export function materialSlotsOf<M>(data: {
+  readonly material: M;
+  readonly materialSlots?: readonly M[];
+}): readonly M[] {
   return data.materialSlots ?? [data.material];
 }
 

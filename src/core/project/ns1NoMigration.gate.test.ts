@@ -78,7 +78,7 @@ const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  *  `baked` and `gltf`, so neither can carry an attribute component at all — but "safe by
  *  construction" is a claim, and this literal is what tests it. */
 const EXPECTED_GEOMETRY_KEYS: Record<string, string> = {
-  n_box: `box|1,1,1|a:${mintMeshAttributes(boxDescriptor([1, 1, 1]))}`,
+  n_box: `box|1,1,1|a:${mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')}`,
   n_ns1_sphere: 'baked|7e1cd74f-425',
 };
 

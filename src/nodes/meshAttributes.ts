@@ -35,6 +35,28 @@ import { mintAttributes, type MintedAttributes } from './attributeKey';
 import type { GeometryDescriptor } from './types';
 
 /**
+ * Refuse a mint that did not say where its growth belongs (#638, ns-1b step 6).
+ *
+ * ⚠️ THIS EXISTS BECAUSE THE REQUIRED PARAMETER WAS NOT ENOUGH, MEASURED RATHER THAN
+ * FEARED. `via` was made required at step 3b — and the tree still had SEVENTEEN call sites
+ * passing nothing, because `npm run typecheck` excludes `*.test.*` and vitest transpiles
+ * through esbuild without checking types at all. Both standing gates are blind to the same
+ * omission. What it does is silent and specific: `growth[undefined]++` writes `NaN` under a
+ * junk key, every assertion on `growthBySource().evaluate` still passes, and the attribution
+ * that the store ships INSTEAD of eviction quietly under-reports.
+ *
+ * A required parameter closes the omission where something typechecks. The tier that mints
+ * most often is not that tier, so the refusal has to be a runtime one.
+ */
+function refuseUnattributedGrowth(via: AttributeGrowthSource): void {
+  if (via === undefined) {
+    throw new Error(
+      'meshAttributes: an attribute set was minted without saying where its growth belongs — pass an AttributeGrowthSource',
+    );
+  }
+}
+
+/**
  * The attribute set a primitive with ONE material slot carries: a face-domain
  * `material_index` of all zeros, sized to the geometry's face count.
  *
@@ -77,7 +99,57 @@ export function mintMeshAttributes(
   descriptor: GeometryDescriptor,
   via: AttributeGrowthSource,
 ): string | null {
+  refuseUnattributedGrowth(via);
   const minted = uniformMaterialAttributes(descriptor);
+  if (minted === null) return null;
+  insert(minted.key, minted.set, via);
+  return minted.key;
+}
+
+/**
+ * The attribute set for a mesh whose faces in `[from, to]` use slot 1 and the rest slot 0
+ * (#638, ns-1b step 6) — the FIRST non-uniform assignment anything in this app can author.
+ *
+ * The bounds are clamped rather than refused: an authored range reaching past the end of a
+ * mesh is an ordinary state while a param is being dragged or a source is being resized, and
+ * a value that refuses to evaluate mid-drag is worse than one that assigns what exists. An
+ * INVERTED range (`from > to`) clamps to nothing and every face stays on slot 0 — which then
+ * resolves back to a single material, because the assignment reports one used slot. No arm
+ * is needed for it anywhere downstream; it simply is not a two-material mesh.
+ *
+ * Returns `null` when the face count is not derivable from the descriptor, exactly as
+ * {@link uniformMaterialAttributes} does — see the module note.
+ */
+export function faceRangeMaterialAttributes(
+  descriptor: GeometryDescriptor,
+  from: number,
+  to: number,
+): MintedAttributes | null {
+  const faces = faceCountOf(descriptor);
+  if (faces === null) return null;
+
+  const data = new Int32Array(faces);
+  const lo = Math.max(0, Math.trunc(from));
+  const hi = Math.min(faces - 1, Math.trunc(to));
+  for (let face = lo; face <= hi; face++) data[face] = 1;
+
+  const materialIndex: AttributeData = { domain: 'face', type: 'int', count: faces, data };
+  return mintAttributes({ [MATERIAL_INDEX]: materialIndex });
+}
+
+/**
+ * Derive a face-range assignment, store it, and hand back the key — the range sibling of
+ * {@link mintMeshAttributes}, with the same content-keyed idempotence and the same required
+ * `via`, for the same reasons.
+ */
+export function mintFaceRangeAttributes(
+  descriptor: GeometryDescriptor,
+  from: number,
+  to: number,
+  via: AttributeGrowthSource,
+): string | null {
+  refuseUnattributedGrowth(via);
+  const minted = faceRangeMaterialAttributes(descriptor, from, to);
   if (minted === null) return null;
   insert(minted.key, minted.set, via);
   return minted.key;

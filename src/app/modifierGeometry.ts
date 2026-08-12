@@ -96,6 +96,33 @@ function withAttributeComponent(
 }
 
 /**
+ * The same geometry, carrying a DIFFERENT attribute component (#638, ns-1b step 6).
+ *
+ * An operator that writes a per-face assignment onto a source's geometry has to hand
+ * downstream a handle whose key says so — otherwise two meshes with different assignments
+ * collide onto one cached `BufferGeometry` and the group layout of whichever built first
+ * wins. It cannot simply append: the source's key already carries ITS component (every
+ * primitive mints a uniform one), so appending would produce `…|a:x|a:y`, a key that no
+ * builder would ever mint and that names a geometry with two answers.
+ *
+ * The old component is removed by its own exact text rather than by parsing for `|a:` —
+ * the ref's sibling field says precisely what was folded, so there is nothing to guess at
+ * and no attribute key containing a delimiter can confuse it.
+ */
+export function refWithAttributeKey(ref: GeometryRef, attributeKey: string | null): GeometryRef {
+  const carried = ref.attributeKey;
+  const base =
+    carried === undefined
+      ? { key: ref.key, kind: ref.kind, descriptor: ref.descriptor }
+      : {
+          key: ref.key.slice(0, ref.key.length - `|a:${carried}`.length),
+          kind: ref.kind,
+          descriptor: ref.descriptor,
+        };
+  return withAttributeComponent(base, attributeKey);
+}
+
+/**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
  * descriptor). It was shared by the fused `BoxMesh`'s source projection and by
  * `BoxData`; the fused kind is retired, so `BoxData` (#361) is the only caller left
@@ -396,7 +423,7 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
  * They RE-MINT the attribute component from the REBUILT descriptor rather than carrying the
  * old one, which is the same rule the doc line above already states: re-mint through the
  * same builder the evaluator used. Under the required attribute parameter, the evaluator's
- * call is `boxGeometryRef(size, mintMeshAttributes(...))`, so doing anything else here would
+ * call is `boxGeometryRef(size, mintMeshAttributes(..., 'evaluate'))`, so doing anything else here would
  * be the exception. `rebuiltMeshAttributes` owns the three-arm decision and the reason it
  * reports; see it for why carrying forward is wrong for a sphere in particular.
  *

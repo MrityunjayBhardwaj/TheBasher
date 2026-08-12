@@ -92,7 +92,10 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     // identity showing through, which is what an `array` key is made of.
     expect(rendered.kind).toBe('ModifiedData');
     expect(read).not.toBeNull();
-    const sourceKey = boxGeometryRef([1, 1, 1], mintMeshAttributes(boxDescriptor([1, 1, 1]))).key;
+    const sourceKey = boxGeometryRef(
+      [1, 1, 1],
+      mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
+    ).key;
     expect((rendered as { geometry: { key: string } }).geometry.key).toBe(
       `array|${sourceKey}|4|2,0,0`,
     );

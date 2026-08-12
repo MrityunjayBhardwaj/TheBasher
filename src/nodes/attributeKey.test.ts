@@ -168,7 +168,7 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
   });
 
   it('the component extends the base template, and two indices give two keys', () => {
-    const uniform = mintMeshAttributes(boxDescriptor([1, 1, 1]))!;
+    const uniform = mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')!;
     const folded = boxGeometryRef([1, 1, 1], uniform);
 
     expect(folded.key).toBe(`box|1,1,1|a:${uniform}`);
@@ -185,14 +185,14 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
   });
 
   it('equal size and equal assignment still give ONE key — the sharing the cache exists for', () => {
-    const a = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2])));
-    const b = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2])));
+    const a = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2]), 'evaluate'));
+    const b = boxGeometryRef([2, 2, 2], mintMeshAttributes(boxDescriptor([2, 2, 2]), 'evaluate'));
     expect(a.key).toBe(b.key);
 
     // …and the component is a function of the FACE COUNT, not of size: a box has twelve
     // faces at every size, so the fold does not shatter sharing across sizes either.
-    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]))).toBe(
-      mintMeshAttributes(boxDescriptor([9, 9, 9])),
+    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')).toBe(
+      mintMeshAttributes(boxDescriptor([9, 9, 9]), 'evaluate'),
     );
   });
 

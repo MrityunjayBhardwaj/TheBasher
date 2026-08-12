@@ -43,22 +43,22 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
     // a fabricated count would be a length that agrees with nothing.
     const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'asset', childName: 'child' };
     expect(uniformMaterialAttributes(gltf)).toBeNull();
-    expect(mintMeshAttributes(gltf)).toBeNull();
+    expect(mintMeshAttributes(gltf, 'evaluate')).toBeNull();
   });
 
   it('puts the derived set in the store under the key it hands back', () => {
-    const key = mintMeshAttributes(boxDescriptor([3, 3, 3]));
+    const key = mintMeshAttributes(boxDescriptor([3, 3, 3]), 'evaluate');
     expect(key).not.toBeNull();
     expect(read(key!)?.[MATERIAL_INDEX].count).toBe(12);
   });
 
   it('is content-keyed, so two equal geometries converge on one key', () => {
-    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]))).toBe(
-      mintMeshAttributes(boxDescriptor([5, 5, 5])),
+    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')).toBe(
+      mintMeshAttributes(boxDescriptor([5, 5, 5]), 'evaluate'),
     );
     // …and a different face count does not.
-    expect(mintMeshAttributes(sphereDescriptor(1, 8, 4))).not.toBe(
-      mintMeshAttributes(boxDescriptor([1, 1, 1])),
+    expect(mintMeshAttributes(sphereDescriptor(1, 8, 4), 'evaluate')).not.toBe(
+      mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
     );
   });
 });

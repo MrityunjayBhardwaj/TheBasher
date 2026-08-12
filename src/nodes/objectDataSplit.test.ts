@@ -67,7 +67,7 @@ describe('object↔data split (#361) — Object+BoxData ≡ a fused BoxMesh', ()
     // `null` here would compare the producer's folded key against an unfolded one and red
     // for the fold rather than for drift; passing the mint keeps the assertion about what
     // it was always about — that there is ONE projection.
-    const canonicalRef = boxGeometryRef(SIZE, mintMeshAttributes(boxDescriptor(SIZE)));
+    const canonicalRef = boxGeometryRef(SIZE, mintMeshAttributes(boxDescriptor(SIZE), 'evaluate'));
     expect(data.geometry.key).toBe(canonicalRef.key);
     expect(data.geometry).toEqual(canonicalRef);
   });
@@ -145,7 +145,7 @@ describe('object↔data split (#384) — Object+SphereData ≡ a fused SphereMes
       RADIUS,
       WIDTH_SEGMENTS,
       HEIGHT_SEGMENTS,
-      mintMeshAttributes(sphereDesc),
+      mintMeshAttributes(sphereDesc, 'evaluate'),
     );
     expect(data.geometry.key).toBe(canonicalRef.key);
     expect(data.geometry).toEqual(canonicalRef);
@@ -159,7 +159,7 @@ describe('object↔data split (#384) — Object+SphereData ≡ a fused SphereMes
     // a literal, because that is the half a param change can break; the component is
     // asserted as the mint's own output rather than as a hash literal nobody can check.
     expect(data.geometry.key).toBe(
-      `sphere|0.5|24|16|a:${mintMeshAttributes(sphereDescriptor(0.5, 24, 16))}`,
+      `sphere|0.5|24|16|a:${mintMeshAttributes(sphereDescriptor(0.5, 24, 16), 'evaluate')}`,
     );
   });
 

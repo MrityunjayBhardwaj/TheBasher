@@ -37,7 +37,7 @@ function sphereData(): MeshDataValue {
     // would make the parity assertion below compare a folded read road against an
     // unfolded fixture, so it would red for a reason that has nothing to do with the
     // modifier — and, worse, would go green again the day the fold was removed.
-    geometry: sphereGeometryRef(1, 8, 6, mintMeshAttributes(sphereDescriptor(1, 8, 6))),
+    geometry: sphereGeometryRef(1, 8, 6, mintMeshAttributes(sphereDescriptor(1, 8, 6), 'evaluate')),
     material: hydrateInlineMaterial(null, '#888888'),
   };
 }

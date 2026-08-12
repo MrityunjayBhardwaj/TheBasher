@@ -696,6 +696,17 @@ export interface ModifiedMeshValue {
    * source's material.
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot table and its index, carried through the recomposition (#638, ns-1b step 6).
+   *
+   * This is the FLAT shape an `Object → …Op → ModifiedData` pair is recomposed into before
+   * it reaches the renderer, so these two fields have to exist here as well or the
+   * assignment is dropped at exactly the seam whose whole job is not to drop things — the
+   * mesh would draw one material and every count downstream would agree with itself.
+   * Same pairing rule as on {@link ModifiedDataValue}: both present, or neither.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  readonly attributeKey?: string;
 }
 
 /**
@@ -1321,6 +1332,25 @@ export interface ModifiedDataValue {
    * See docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 "How far this reaches today".
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot TABLE, when an operator wrote a per-face assignment (#638, ns-1b step 6).
+   *
+   * Absent means "one material", and that absence is the shipped behaviour rather than a
+   * missing feature: `SetMaterialOp` over a full face range REPLACES, exactly as it always
+   * has, and emits no table. A table appears only for a partial range — a state the node
+   * could not express before this phase — so no existing graph changes shape.
+   *
+   * ⚠️ Read through `materialSlotsOf`, never directly, so the single `material` field and
+   * this one cannot be read as two different answers to the same question.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  /**
+   * The content key of the geometry's attribute set — the INDEX half of the pair whose
+   * other half is `materialSlots` (#638). Present exactly when the table is, because
+   * neither half means anything alone: an index with no table points nowhere, and a table
+   * with no index has nothing selecting between its entries.
+   */
+  readonly attributeKey?: string;
 }
 
 /**

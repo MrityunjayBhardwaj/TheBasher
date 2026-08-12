@@ -259,7 +259,19 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
       .filter(([, body]) => declaresField(body as string, 'attributeKey'))
       .map(([name]) => name);
 
-    expect(carriesAttributeKey).toEqual(['MeshDataValue']);
+    // ⚠️ #638 (ns-1b step 6) — RESTATED: TWO kinds carry it now, and the second one is a
+    // real widening rather than a leak. `SetMaterialOp` over a partial face range is the
+    // first OPERATOR that writes a per-face assignment, and its output kind is
+    // `ModifiedData` — so the index has to ride on that value or the assignment it just
+    // authored is dropped one hop later. It stays paired with `materialSlots` (both
+    // present or neither), and it still does not enter `GeometryRef.key` by any road other
+    // than the single fold both builders go through.
+    //
+    // What has NOT widened, and is the reason this case still discriminates: `materialKey`
+    // is still on one kind. Identity for a MATERIAL and identity for an ATTRIBUTE SET are
+    // minted by different producers for different reasons, and this gate would have
+    // reported them as one movement had they been counted together.
+    expect(carriesAttributeKey).toEqual(['MeshDataValue', 'ModifiedDataValue']);
   });
 
   it('re-derives the key in exactly one downstream place, through the same function', () => {
