@@ -43,6 +43,7 @@ import { evaluate } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
+import { rebuiltMeshAttributes } from '../nodes/meshAttributes';
 
 /**
  * The box descriptor for a size — the ONE spelling of that literal.
@@ -389,7 +390,49 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
  * in OPFS, which is authoritative and not rebuildable from anything on the value. Minting a
  * key for either here would be a second spelling of a key this module does not own, and for
  * `baked` it would be a fabricated hash pointing at bytes that do not exist.
+ *
+ * ── #638 — THE BOX AND SPHERE ARMS NOW WRITE TO THE ATTRIBUTE STORE ───────────────────
+ *
+ * They RE-MINT the attribute component from the REBUILT descriptor rather than carrying the
+ * old one, which is the same rule the doc line above already states: re-mint through the
+ * same builder the evaluator used. Under the required attribute parameter, the evaluator's
+ * call is `boxGeometryRef(size, mintMeshAttributes(...))`, so doing anything else here would
+ * be the exception. `rebuiltMeshAttributes` owns the three-arm decision and the reason it
+ * reports; see it for why carrying forward is wrong for a sphere in particular.
+ *
+ * Three consequences, stated rather than left to be discovered:
+ *
+ *   1. THIS FUNCTION NOW HAS A SIDE EFFECT. `mintMeshAttributes` inserts into the attribute
+ *      store, and this runs per frame during a drag. The insert is content-keyed and
+ *      idempotent — a second insert of an equal set is a hit — so re-deriving per frame
+ *      costs nothing extra in the store. Safe is not the same as undocumented.
+ *   2. The insertions are tagged with their own growth origin (`overlay`), so the two
+ *      producers of a mesh attribute set stay countable apart. Growth here is bounded by
+ *      DISTINCT integer segment counts, not by frames: a 121-frame drag over
+ *      `widthSegments` 8→32 touches at most 25 distinct sets.
+ *   3. THE BY-REFERENCE CONTRACT IS UNCHANGED, and that was checked rather than assumed.
+ *      The only path that returns `ref` itself is the empty-`values` early return below,
+ *      which runs BEFORE any arm — so the insert only ever happens on paths that were
+ *      already minting a new object, and `rebuildInvalidatedHandles`'s `rebuilt !== ref`
+ *      test still means exactly what it meant.
  */
+/**
+ * Messages already reported, so a per-frame drag says a thing once instead of once per
+ * frame. Bounded by DISTINCT (old count → new count) pairs, which is the same bound the
+ * attribute store's own growth has — not by frames.
+ */
+const reportedRebinds = new Set<string>();
+
+/** The rebuilt handle's attribute key, reporting once if an assignment had to be dropped. */
+function reboundAttributeKey(ref: GeometryRef, rebuilt: GeometryDescriptor): string | null {
+  const { key, reason } = rebuiltMeshAttributes(ref.attributeKey, rebuilt);
+  if (reason !== null && !reportedRebinds.has(reason)) {
+    reportedRebinds.add(reason);
+    console.warn(reason);
+  }
+  return key;
+}
+
 export function rebuildGeometryRef(
   ref: GeometryRef,
   values: Readonly<Record<string, unknown>>,
@@ -397,19 +440,25 @@ export function rebuildGeometryRef(
   if (Object.keys(values).length === 0) return ref;
   const d = ref.descriptor;
   switch (d.kind) {
-    case 'box':
-      // ⚠️ CARRIES the component forward. Correct for a box — 12 faces at every size — and
-      // WRONG for a sphere, which is why step 3b replaces both arms with a re-mint.
-      return boxGeometryRef((values.size ?? d.size) as Vec3, ref.attributeKey ?? null);
-    case 'sphere':
+    case 'box': {
+      const size = (values.size ?? d.size) as Vec3;
+      return boxGeometryRef(size, reboundAttributeKey(ref, boxDescriptor(size)));
+    }
+    case 'sphere': {
       // Each field falls back to what the descriptor already holds, so animating one of the
       // three does not reset the other two.
-      return sphereGeometryRef(
+      const rebuilt = sphereDescriptor(
         (values.radius ?? d.radius) as number,
         (values.widthSegments ?? d.widthSegments) as number,
         (values.heightSegments ?? d.heightSegments) as number,
-        ref.attributeKey ?? null,
       );
+      return sphereGeometryRef(
+        rebuilt.radius,
+        rebuilt.widthSegments,
+        rebuilt.heightSegments,
+        reboundAttributeKey(ref, rebuilt),
+      );
+    }
     case 'array':
       return arrayGeometryRef(
         d.source,

@@ -14,7 +14,23 @@
 import { describe, expect, it } from 'vitest';
 import { repairInvalidatedIdentity, overlayWithIdentity } from './overlayWithIdentity';
 import { channelPathForBand } from './objectDataBand';
-import { arrayGeometryRef, boxGeometryRef, sphereGeometryRef } from './modifierGeometry';
+import {
+  arrayGeometryRef,
+  boxDescriptor,
+  boxGeometryRef,
+  sphereDescriptor,
+  sphereGeometryRef,
+} from './modifierGeometry';
+import { faceCountOf } from './faceCount';
+import { mintMeshAttributes, rebuiltMeshAttributes } from '../nodes/meshAttributes';
+import { mintAttributes } from '../nodes/attributeKey';
+import { MATERIAL_INDEX } from '../nodes/attributes';
+import {
+  growthBySource as attributeGrowthBySource,
+  insert as insertAttributes,
+  read as readAttributes,
+  resetGrowth as resetAttributeGrowth,
+} from './attributeStore';
 import type { KeyframeChannelValue } from '../nodes/types';
 import type { TransientEdit } from './stores/transientEditStore';
 
@@ -287,6 +303,7 @@ const SIZE = channelPathForBand('children', 'size');
 const RADIUS = channelPathForBand('children', 'radius');
 const COUNT = channelPathForBand('children', 'count');
 const GEOMETRY = channelPathForBand('children', 'geometry');
+const WIDTH_SEGMENTS = channelPathForBand('children', 'widthSegments');
 
 /** A split box whose geometry is a REAL handle, minted the way the evaluator mints it. */
 function boxValue() {
@@ -505,5 +522,129 @@ describe('#537 — the handle repair mirrors the primitives it wraps', () => {
       0,
     );
     expect(out.data.geometry).toEqual(boxGeometryRef([1, 1, 1], null));
+  });
+});
+
+describe('#638 D7 — the overlay RE-MINTS the attribute component, it never carries it', () => {
+  // ── WHY THE TWO ASSERTIONS BELOW ARE NOT THE SAME ASSERTION TWICE ───────────────────
+  //
+  // `rebuildInvalidatedHandles` walks `descriptorParamFields`, which for a sphere includes
+  // `widthSegments` / `heightSegments`. A sphere's face count is `2w(h−1)`, so an animated
+  // segment count changes how many faces exist while a CARRIED attribute key still names a
+  // set sized for the old count. The count gate then refuses it, no group layout is
+  // written, and under a multi-slot assignment the mesh gets a material array over an
+  // empty layout — which draws nothing, casts no shadow, and cannot be clicked.
+  //
+  // A box cannot detect that: it has twelve faces at every size, so carrying and re-minting
+  // are byte-identical for every box that will ever exist. That is exactly why the box
+  // assertion is here — as the CONTROL. Restoring carry-forward must red the sphere one and
+  // leave the box one green; if both red, the sphere case is not isolating what it claims.
+
+  const sphereBase = (attributeKey: string | null) => ({
+    kind: 'SceneChild' as const,
+    position: [0, 0, 0],
+    data: {
+      kind: 'MeshData',
+      geometry: sphereGeometryRef(1, 8, 4, attributeKey),
+      material: null,
+      materialKey: null,
+      attributeKey,
+    },
+  });
+
+  it('CONTROL — a box keeps the same component across a size write (12 faces at every size)', () => {
+    const attributeKey = mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate');
+    const base = {
+      kind: 'SceneChild' as const,
+      position: [0, 0, 0],
+      data: {
+        kind: 'MeshData',
+        geometry: boxGeometryRef([1, 1, 1], attributeKey),
+        material: null,
+        materialKey: null,
+        attributeKey,
+      },
+    };
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(SIZE, [5, 5, 5])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data.geometry.attributeKey).toBe(attributeKey);
+    expect(out.data.geometry.key).toBe(boxGeometryRef([5, 5, 5], attributeKey).key);
+  });
+
+  it('THE DETECTOR — a sphere re-derives its component at the REBUILT face count', () => {
+    const before = mintMeshAttributes(sphereDescriptor(1, 8, 4), 'evaluate')!;
+    const out = overlayWithIdentity(
+      'children',
+      sphereBase(before),
+      NODE,
+      [channel(WIDTH_SEGMENTS, 16)],
+      NO_TRANSIENTS,
+      0,
+    );
+
+    const rebuiltDescriptor = out.data.geometry.descriptor;
+    const rebuiltKey = out.data.geometry.attributeKey;
+    expect(rebuiltKey).not.toBeUndefined();
+
+    // The assertion that discriminates: the component's element count must equal the
+    // REBUILT descriptor's face count. "It still carries a component" is satisfied by a
+    // stale one, which is the whole failure — so the count is what is asserted.
+    expect(readAttributes(rebuiltKey!)![MATERIAL_INDEX].count).toBe(faceCountOf(rebuiltDescriptor));
+    expect(readAttributes(before)![MATERIAL_INDEX].count).toBe(
+      faceCountOf(sphereDescriptor(1, 8, 4)),
+    );
+    expect(rebuiltKey).not.toBe(before);
+  });
+
+  it('the re-mint is attributed to its OWN growth origin, not to the evaluator’s', () => {
+    // Two producers under one label is one number pretending to be two, and the store ships
+    // growth attribution by origin INSTEAD of eviction — so losing the attribution loses
+    // the only instrument that road has.
+    mintMeshAttributes(sphereDescriptor(1, 12, 7), 'evaluate');
+    const before = mintMeshAttributes(sphereDescriptor(1, 9, 5), 'evaluate')!;
+    resetAttributeGrowth();
+
+    overlayWithIdentity(
+      'children',
+      { ...sphereBase(before), data: { ...sphereBase(before).data } },
+      NODE,
+      [channel(WIDTH_SEGMENTS, 21)],
+      NO_TRANSIENTS,
+      0,
+    );
+
+    const growth = attributeGrowthBySource();
+    expect(growth.overlay).toBe(1);
+    expect(growth.evaluate).toBe(0);
+  });
+
+  it('drops a per-face assignment it cannot follow, rather than letting the mesh vanish', () => {
+    // Non-uniform at a CHANGED face count has no correct answer without a resampling policy
+    // this phase does not have. Degrading to one material is visible; an empty group layout
+    // under a material array is not — it removes the object.
+    const split = new Int32Array(48);
+    split.fill(1, 24);
+    const nonUniform = mintAttributes({
+      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 48, data: split },
+    })!;
+    insertAttributes(nonUniform.key, nonUniform.set, 'evaluate');
+
+    // Same face count → it still fits, so it is carried untouched.
+    expect(rebuiltMeshAttributes(nonUniform.key, sphereDescriptor(2, 8, 4))).toEqual({
+      key: nonUniform.key,
+      reason: null,
+    });
+
+    // Changed face count → dropped, WITH the reason. A silent null here is
+    // indistinguishable from a mesh that genuinely has one material.
+    const dropped = rebuiltMeshAttributes(nonUniform.key, sphereDescriptor(1, 16, 4));
+    expect(dropped.key).toBeNull();
+    expect(dropped.reason).toMatch(/48 faces cannot follow 'sphere' to 96 faces/);
   });
 });

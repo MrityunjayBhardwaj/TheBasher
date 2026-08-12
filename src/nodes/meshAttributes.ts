@@ -29,7 +29,7 @@
 //      issues #633, #634, #395.
 
 import { faceCountOf } from '../app/faceCount';
-import { insert } from '../app/attributeStore';
+import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
 import { MATERIAL_INDEX, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
 import type { GeometryDescriptor } from './types';
@@ -62,13 +62,90 @@ export function uniformMaterialAttributes(descriptor: GeometryDescriptor): Minte
 /**
  * Derive the set, put it in the store, and hand back the key a data value carries.
  *
- * Called from `evaluate()`. The insertion is content-keyed and idempotent — re-deriving the
- * same set is a HIT, so this stays safe to run on every evaluation and the node stays pure
- * in the sense that matters: the same params produce the same value.
+ * Called from `evaluate()` and, since #638, from the animation overlay's handle rebuild.
+ * The insertion is content-keyed and idempotent — re-deriving the same set is a HIT, so
+ * this stays safe to run on every evaluation and on every frame of a drag, and the node
+ * stays pure in the sense that matters: the same params produce the same value.
+ *
+ * `via` is REQUIRED, not defaulted, and the reason is the same rung of the same ladder the
+ * builders' attribute key sits on. The store ships growth attribution by origin INSTEAD of
+ * eviction, so a third producer silently counted as one of the first two would leave the
+ * total right and the attribution missing — and a missing attribution reads exactly like an
+ * attribution of zero. A new producer has to say who it is.
  */
-export function mintMeshAttributes(descriptor: GeometryDescriptor): string | null {
+export function mintMeshAttributes(
+  descriptor: GeometryDescriptor,
+  via: AttributeGrowthSource,
+): string | null {
   const minted = uniformMaterialAttributes(descriptor);
   if (minted === null) return null;
-  insert(minted.key, minted.set, 'evaluate');
+  insert(minted.key, minted.set, via);
   return minted.key;
+}
+
+/** What {@link rebuiltMeshAttributes} decided, and why — the reason is never dropped. */
+export interface RebuiltAttributes {
+  /** The key the rebuilt handle should carry, or `null` for "no attributes on this one". */
+  readonly key: string | null;
+  /** `null` when nothing was given up; otherwise what was dropped and why. */
+  readonly reason: string | null;
+}
+
+/**
+ * What attribute key a REBUILT geometry handle carries — the overlay road's answer (#638).
+ *
+ * ── WHY THE OVERLAY MAY NOT SIMPLY CARRY THE OLD KEY FORWARD ──────────────────────────
+ *
+ * The animation overlay rebuilds a handle whenever a channel writes one of its descriptor's
+ * param fields, and for a sphere those fields include `widthSegments` / `heightSegments`.
+ * A sphere's face count is `2w(h−1)`, so an animated segment count changes how many faces
+ * exist — while the carried key still names a set sized for the OLD count. That set then
+ * describes a different mesh: the count gate refuses it, no group layout is written, and
+ * under a multi-slot assignment the mesh is handed a material array over an empty layout,
+ * which in three.js draws nothing at all. The object disappears mid-animation, casts no
+ * shadow, and stops being clickable, with nothing logged.
+ *
+ * ⚠️ The previous shape of this defence — asserting the rebuilt key *still carries a
+ * component* — is satisfied by a STALE component, which is precisely the failure. Only the
+ * count discriminates.
+ *
+ * Three arms, and the middle one is the only one that carries:
+ *
+ *   uniform carried set        → RE-MINT at the rebuilt descriptor's face count. For a box
+ *                                this is a no-op by value (12 faces at every size), so the
+ *                                current population sees no change at all; for a sphere it
+ *                                is the correct new set.
+ *   non-uniform, count intact  → carry it. The assignment is authored data the overlay has
+ *                                no business re-deriving, and it still fits.
+ *   non-uniform, count changed → DROP it and say so. There is no correct answer without a
+ *                                resampling policy, and a visible degradation to one
+ *                                material is the honest failure; the invisible mesh is not.
+ */
+export function rebuiltMeshAttributes(
+  carriedKey: string | undefined,
+  rebuilt: GeometryDescriptor,
+): RebuiltAttributes {
+  if (carriedKey === undefined) return { key: null, reason: null };
+
+  const carried = read(carriedKey);
+  const index = carried?.[MATERIAL_INDEX];
+  // Nothing resident under the carried key, or nothing face-domain in it: re-derive rather
+  // than propagate a name the store cannot resolve.
+  if (index === undefined) return { key: mintMeshAttributes(rebuilt, 'overlay'), reason: null };
+
+  let uniform = true;
+  for (let i = 0; i < index.data.length; i++) {
+    if (index.data[i] !== index.data[0]) {
+      uniform = false;
+      break;
+    }
+  }
+  if (uniform) return { key: mintMeshAttributes(rebuilt, 'overlay'), reason: null };
+
+  const faces = faceCountOf(rebuilt);
+  if (faces === null || faces === index.count) return { key: carriedKey, reason: null };
+  return {
+    key: null,
+    reason: `meshAttributes: a per-face assignment over ${index.count} faces cannot follow '${rebuilt.kind}' to ${faces} faces — dropping it, so the mesh draws with one material rather than not at all`,
+  };
 }

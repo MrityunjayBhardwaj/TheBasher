@@ -72,7 +72,10 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
     put({ material_index: faceIndex([2, 3, 3]) }); // different content — must count
 
     expect(residentCount()).toBe(before + 2);
-    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0 });
+    // Restated, not floored, when #638 added the `overlay` origin: the whole record is
+    // compared rather than one field, so a NEW origin reds here and has to be answered for
+    // — which is the point. An origin nobody enumerates is an origin nobody counts.
+    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0, overlay: 0 });
   });
 
   it('has NO async producer yet, and says so as a number', () => {
@@ -108,7 +111,7 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
 
     resetGrowth();
 
-    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0 });
+    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0, overlay: 0 });
     expect(residentCount()).toBe(resident);
   });
 });

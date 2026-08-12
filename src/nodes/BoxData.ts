@@ -62,7 +62,7 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
     // different geometry and must not share one built instance; three.js has no
     // per-object group layout to vary instead.
     const descriptor = boxDescriptor(params.size);
-    const attributeKey = mintMeshAttributes(descriptor);
+    const attributeKey = mintMeshAttributes(descriptor, 'evaluate');
     const geometry = boxGeometryRef(params.size, attributeKey);
     return {
       kind: 'MeshData',

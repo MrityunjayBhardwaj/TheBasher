@@ -69,7 +69,7 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
     // exist before the handle does. A sphere's face count moves with its segment counts, so
     // this is also the arm where carrying a stale component forward would be wrong.
     const descriptor = sphereDescriptor(params.radius, params.widthSegments, params.heightSegments);
-    const attributeKey = mintMeshAttributes(descriptor);
+    const attributeKey = mintMeshAttributes(descriptor, 'evaluate');
     const geometry = sphereGeometryRef(
       params.radius,
       params.widthSegments,
