@@ -2513,7 +2513,7 @@ function ObjectMeshR({
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This
   // component is only mounted for a one-entry table (`ObjectR` dispatches the rest to
-  // `ObjectMultiMaterialMeshR`), so arm 1 fires on the first O(1) test and the current
+  // `MultiMaterialMeshR`), so arm 1 fires on the first O(1) test and the current
   // population pays nothing. If that dispatch ever drifts, a two-slot value arriving here
   // with one hydrated material leaves the coverage short and degrades loudly — where
   // synthesising the assignment would have hidden it.

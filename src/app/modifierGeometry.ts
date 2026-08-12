@@ -406,6 +406,23 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
 }
 
 /**
+ * Messages already reported, so a per-frame drag says a thing once instead of once per
+ * frame. Bounded by DISTINCT (old count → new count) pairs, which is the same bound the
+ * attribute store's own growth has — not by frames.
+ */
+const reportedRebinds = new Set<string>();
+
+/** The rebuilt handle's attribute key, reporting once if an assignment had to be dropped. */
+function reboundAttributeKey(ref: GeometryRef, rebuilt: GeometryDescriptor): string | null {
+  const { key, reason } = rebuiltMeshAttributes(ref.attributeKey, rebuilt);
+  if (reason !== null && !reportedRebinds.has(reason)) {
+    reportedRebinds.add(reason);
+    console.warn(reason);
+  }
+  return key;
+}
+
+/**
  * Re-mint `ref` with `values` folded into its descriptor, through the same builder the
  * evaluator used. Returns `ref` UNCHANGED (by reference) when `values` names nothing the
  * descriptor is built from — the caller uses that to avoid touching a handle a write never
@@ -443,23 +460,6 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
  *      already minting a new object, and `rebuildInvalidatedHandles`'s `rebuilt !== ref`
  *      test still means exactly what it meant.
  */
-/**
- * Messages already reported, so a per-frame drag says a thing once instead of once per
- * frame. Bounded by DISTINCT (old count → new count) pairs, which is the same bound the
- * attribute store's own growth has — not by frames.
- */
-const reportedRebinds = new Set<string>();
-
-/** The rebuilt handle's attribute key, reporting once if an assignment had to be dropped. */
-function reboundAttributeKey(ref: GeometryRef, rebuilt: GeometryDescriptor): string | null {
-  const { key, reason } = rebuiltMeshAttributes(ref.attributeKey, rebuilt);
-  if (reason !== null && !reportedRebinds.has(reason)) {
-    reportedRebinds.add(reason);
-    console.warn(reason);
-  }
-  return key;
-}
-
 export function rebuildGeometryRef(
   ref: GeometryRef,
   values: Readonly<Record<string, unknown>>,
