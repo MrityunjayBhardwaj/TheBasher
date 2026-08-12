@@ -28,7 +28,8 @@
 //                                       null geometry. The answer lives in the contract
 //                                       rather than in placement discipline.
 //   1. the table has ≤1 entry, or the faces use ≤1 slot
-//                                     → the single material. A 1-LENGTH ARRAY HAS NO
+//                                     → the single material — THE ONE THOSE FACES USE, which
+//                                       is not always slot 0. A 1-LENGTH ARRAY HAS NO
 //                                       CONSTRUCTOR: handed to a stock box it would draw six
 //                                       of thirty-six index elements with no error at all.
 //   2. geometry.index === null        → the single material. For a non-indexed geometry
@@ -101,13 +102,26 @@ export function resolveMeshMaterial(
     );
   }
   if (geometry === null) return null; // arm 0
-  const single: MeshDraw = { geometry, material: materials[0] };
   // Arm 1, cheapest test first and that ordering is load-bearing rather than tidy:
   // `assignedSlots` walks the whole face index, and every mesh in the app today has a
   // one-entry table, so the O(1) test keeps the per-render cost of this call at zero for
   // the entire current population.
-  if (assignment.slots.length <= 1) return single;
-  if (assignedSlots(assignment).length <= 1) return single;
+  if (assignment.slots.length <= 1) return { geometry, material: materials[0] };
+  const used = assignedSlots(assignment);
+  // ⚠️ THE SINGLE MATERIAL IS THE ONE THE FACES USE, WHICH IS NOT ALWAYS SLOT 0. A mesh
+  // whose every face sits on slot 1 uses ONE slot, so it takes this arm — and answering
+  // `materials[0]` there draws the wrong material with nothing reported, while the read
+  // road (`primaryMaterial`, the lowest USED slot) answers slot 1. Two roads, two answers
+  // to "what is this made of", which is the one thing the assignment module exists to
+  // prevent. Measured on a box with all twelve faces on slot 1: groups `[{0,36,1}]`, read
+  // road slot 1, render road slot 0, no refusal.
+  if (used.length <= 1) {
+    const slot = used[0] ?? 0;
+    // Bounded by what the caller hydrated, for the same reason the table is: a slot past
+    // the end has no material, and an undefined one draws in three.js's default white.
+    return { geometry, material: materials[slot] ?? materials[0] };
+  }
+  const single: MeshDraw = { geometry, material: materials[0] };
   if (meshMaterialRefusal(geometry, assignment, materials) !== null) return single; // arms 2, 3
   return { geometry, material: materialTable(assignment, materials) }; // arm 4
 }

@@ -19,11 +19,12 @@ import * as THREE from 'three';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
 import { clear, getForRead } from './geometryRegistry';
-import { materialAssignmentOf, materialSlotsOf } from './materialAssignment';
+import { materialAssignmentOf, materialSlotsOf, primaryMaterial } from './materialAssignment';
 import { meshMaterialRefusal, resolveMeshMaterial } from './resolveMeshMaterial';
 import { boxGeometryRef, boxDescriptor } from './modifierGeometry';
 import { mintMeshAttributes } from '../nodes/meshAttributes';
 import {
+  boxFromFaceIndices,
   nonAlignedMaterialMeshData,
   sparseSlotMaterialMeshData,
   twoMaterialMeshData,
@@ -162,6 +163,45 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
       false,
     );
     expect(meshMaterialRefusal(uniform, fourSlotsOneUsed, materials)).toBeNull();
+  });
+});
+
+describe('#651 the single material is the one the faces USE', () => {
+  it('a mesh whose every face sits on slot 1 draws slot 1, and both roads say so', () => {
+    // The two roads have to agree about what this mesh is made of. The read road answers
+    // the lowest USED slot; a render road answering `materials[0]` would draw the other
+    // material with nothing reported, and the built layout would say `materialIndex: 1`
+    // while a single material ignored it. Measured before the fix: groups [{0,36,1}],
+    // read road slot 1, render road slot 0, refusal null.
+    const indices = new Int32Array(12);
+    indices.fill(1);
+    const data = boxFromFaceIndices(indices);
+    const slots = materialSlotsOf(data);
+    const assignment = materialAssignmentOf(data.attributeKey, slots);
+    const geometry = getForRead(data.geometry)!;
+    const materials = hydrated(2);
+
+    // ONE used slot, so this is the single-material arm and not the array one.
+    expect(geometry.groups.map((g) => g.materialIndex)).toEqual([1]);
+    const draw = resolveMeshMaterial(geometry, assignment, materials);
+    expect(Array.isArray(draw!.material)).toBe(false);
+    expect(draw!.material).toBe(materials[1]);
+    // The read road's answer, on the same assignment — the agreement is the property.
+    expect(primaryMaterial(assignment)).toBe(slots[1]);
+    expect(meshMaterialRefusal(geometry, assignment, materials)).toBeNull();
+  });
+
+  it('falls back to slot 0 when the table reaches further than the caller hydrated', () => {
+    // A slot past the end has no material, and an undefined one draws in three.js's
+    // default white. The cap that produces this state reports separately.
+    const indices = new Int32Array(12);
+    indices.fill(3);
+    const data = boxFromFaceIndices(indices, [null, null, null, null]);
+    const assignment = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+    const geometry = getForRead(data.geometry)!;
+    const materials = hydrated(2);
+
+    expect(resolveMeshMaterial(geometry, assignment, materials)!.material).toBe(materials[0]);
   });
 });
 
