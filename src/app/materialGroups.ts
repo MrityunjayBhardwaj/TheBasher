@@ -103,8 +103,19 @@ export function groupsRefusal(
  * a naive equality passes on exactly the failure it exists to catch: an array minted over
  * the stock six, which draws twelve of thirty-six triangles.
  */
-export function coveredIndexCount(groups: readonly MaterialGroup[], resolvedSlots: number): number {
+export function coveredIndexCount(
+  groups: readonly { readonly count: number; readonly materialIndex?: number }[],
+  resolvedSlots: number,
+): number {
   let covered = 0;
-  for (const g of groups) if (g.materialIndex < resolvedSlots) covered += g.count;
+  for (const g of groups) {
+    // three.js declares `materialIndex` OPTIONAL on a built geometry's groups, and an absent
+    // one is not a zero: the renderer looks up `material[undefined]`, gets `undefined`, and
+    // skips that group exactly as it skips an out-of-range slot. Both are the same fact —
+    // this group resolves to no material — so both count as uncovered. Typing the parameter
+    // structurally is what lets this be asked of a live `BufferGeometry.groups` rather than
+    // only of the derivation's own output, which is the whole point of the property.
+    if (g.materialIndex !== undefined && g.materialIndex < resolvedSlots) covered += g.count;
+  }
   return covered;
 }

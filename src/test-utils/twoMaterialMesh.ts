@@ -82,13 +82,35 @@ export function nonAlignedMaterialMeshData(): MeshDataValue {
 }
 
 /**
- * The one builder both fixtures go through, so they cannot drift in how they mint, store or
- * describe an assignment — only in the indices they hand it.
+ * A box with faces on slots 0 and 3 over a table of FOUR — the SPARSE fixture (#638).
+ *
+ * ⚠️ THIS EXISTS TO CATCH THE MOST ATTRACTIVE WRONG LINE IN THE RESOLUTION STEP.
+ * `assignedMaterials()` maps the slots a mesh USES, so here it returns a length-TWO array:
+ * the material for slot 0 and the material for slot 3, compacted. Handed to a mesh whose
+ * groups say `materialIndex: 3`, `material[3]` is `undefined` and the renderer skips those
+ * groups with no error at all — a third of the box disappears. The helper is right there and
+ * its name reads correct, which is exactly why the discriminating case is a table with a
+ * HOLE in the middle rather than another dense one.
+ *
+ * The empty slots are real: an object may declare four slots and leave two unassigned.
+ */
+export function sparseSlotMaterialMeshData(): MeshDataValue {
+  const indices = new Int32Array(12);
+  indices.fill(3, 8);
+  return boxFromFaceIndices(indices, [SLOT_0_MATERIAL, null, null, SLOT_1_MATERIAL]);
+}
+
+/**
+ * The one builder every fixture here goes through, so they cannot drift in how they mint,
+ * store or describe an assignment — only in the indices and the table they hand it.
  *
  * The attribute is put in the store as a side effect, exactly as a producer's `evaluate`
  * would do it, so a consumer resolving through `attributeKey` finds it the same way.
  */
-export function boxFromFaceIndices(indices: Int32Array): MeshDataValue {
+export function boxFromFaceIndices(
+  indices: Int32Array,
+  slots: readonly (InlineMaterialSpec | null)[] = [SLOT_0_MATERIAL, SLOT_1_MATERIAL],
+): MeshDataValue {
   const materialIndex: AttributeData = {
     domain: 'face',
     type: 'int',
@@ -113,9 +135,9 @@ export function boxFromFaceIndices(indices: Int32Array): MeshDataValue {
     geometry,
     // The single field can only carry one, which is the limitation the fixture exists to
     // expose: it reports slot 0 and says nothing about slot 1.
-    material: SLOT_0_MATERIAL,
+    material: slots[0] ?? SLOT_0_MATERIAL,
     materialKey: null,
     attributeKey: minted.key,
-    materialSlots: [SLOT_0_MATERIAL, SLOT_1_MATERIAL],
+    materialSlots: slots,
   };
 }

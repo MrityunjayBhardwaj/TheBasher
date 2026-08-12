@@ -144,6 +144,12 @@ import { composeBakedMaterial } from '../app/material/composeMaterial';
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
 import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
+// #638 (ns-1b step 5) — the ONE function that decides array-or-single, and the fixed-count
+// hydration a multi-slot mesh needs. No renderer decides for itself: each one supplies the
+// geometry, the assignment and the hydrated table, and draws whatever comes back.
+import { meshMaterialRefusal, resolveMeshMaterial } from '../app/resolveMeshMaterial';
+import { useSlotMaterials } from '../app/material/useSlotMaterials';
+import { materialAssignmentOf, materialSlotsOf } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
 import type {
   AmbientLightValue,
@@ -2240,7 +2246,13 @@ function ModifiedMeshR({
     );
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
-  if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
+  // #638 (ns-1b step 5) — this renderer does not decide array-or-single either, even though
+  // its answer can only be single today: `ModifiedMeshValue` carries one material and no
+  // attribute key, so the assignment has one slot and arm 1 fires. Routing it through the
+  // one resolver anyway is what keeps the two roads from drifting when the modifier road
+  // grows a table — the alternative is a second place that knows how to make this decision.
+  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
+  if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
   // reconciler bookkeeping onto the object itself), so two meshes given one instance
@@ -2255,8 +2267,8 @@ function ModifiedMeshR({
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      material={material}
-      geometry={geom}
+      material={draw.material}
+      geometry={draw.geometry}
     />
   );
 }
@@ -2370,6 +2382,15 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     if (!modified) return null;
     return <ModifiedMeshR value={modified} override={override} />;
   }
+  // #638 (ns-1b step 5) — the 1↔N fork, taken HERE because this dispatcher has no hooks and
+  // may branch before delegating. The test is the TABLE's shape, not the assignment's: it is
+  // O(1), it reads no attribute and walks no face index, so every single-material mesh in
+  // the app pays nothing for this arm existing. It is also the stable one — a component-type
+  // change on "how many slots does this object declare" is a rare authoring edit, while a
+  // change on "how many slots do the faces currently use" would remount the mesh mid-drag.
+  if (data?.kind === 'MeshData' && materialSlotsOf(data).length > 1) {
+    return <ObjectMultiMaterialMeshR value={value} data={data} override={override} />;
+  }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
 
@@ -2413,7 +2434,21 @@ function ObjectMeshR({
     mat ? (data?.materialKey ?? null) : null,
   );
   const geom = data ? getForAttach(data.geometry) : null;
-  if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
+  // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
+  // REAL assignment is handed over rather than a synthesised single-slot one. This
+  // component is only mounted for a one-entry table (`ObjectR` dispatches the rest to
+  // `ObjectMultiMaterialMeshR`), so arm 1 fires on the first O(1) test and the current
+  // population pays nothing. If that dispatch ever drifts, a two-slot value arriving here
+  // with one hydrated material leaves the coverage short and degrades loudly — where
+  // synthesising the assignment would have hidden it.
+  const draw = resolveMeshMaterial(
+    geom,
+    data
+      ? materialAssignmentOf(data.attributeKey, materialSlotsOf(data))
+      : { slots: [], indices: null },
+    [material],
+  );
+  if (!draw) return null; // an Empty (no data) or a non-sync-buildable handle
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
   // reconciler bookkeeping onto the object itself), so two meshes given one instance
@@ -2428,8 +2463,83 @@ function ObjectMeshR({
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      material={material}
-      geometry={geom}
+      material={draw.material}
+      geometry={draw.geometry}
+    />
+  );
+}
+
+// #638 (ns-1b step 5) — THE MULTI-SLOT ARM: an Object whose data declares more than one
+// material slot.
+//
+// ── WHY A SEPARATE COMPONENT AND NOT A BRANCH ─────────────────────────────────────────
+//
+// `usePrimitiveMaterial` is a hook with six unconditional texture loads and a retain/release
+// pair inside it, so "one call per slot" is a hook count that varies with the data — which
+// React forbids. A separate COMPONENT TYPE is what makes the two hook counts never mix:
+// React unmounts one subtree and mounts the other across a component-type change, so the
+// 1↔N boundary is a remount rather than a hook-order corruption.
+//
+// The remount is safe for the shared material, and that is measured rather than hoped:
+// `materialRegistry.release` defers eviction to a microtask and re-checks the count, so a
+// mesh unmounting and another mounting in the same commit passes through zero as a HANDOFF.
+//
+// ── WHAT THIS COMPONENT DOES NOT DECIDE ───────────────────────────────────────────────
+//
+// Not whether to draw with an array. It supplies the geometry, the assignment and the
+// hydrated table, and `resolveMeshMaterial` decides — because the array is only correct
+// against the group layout of the instance this mesh actually mounts, and that pairing has
+// exactly one owner.
+function ObjectMultiMaterialMeshR({
+  value,
+  data,
+  override,
+}: {
+  value: ObjectValue;
+  data: MeshDataValue;
+  override?: MaterialValue;
+}) {
+  const shading = useViewportStore((s) => s.shading);
+  const slots = materialSlotsOf(data);
+  // Hooks first and unconditionally, exactly as the single-slot road does it: the geometry
+  // guard below is a plain branch with no hooks after it.
+  const { materials, capRefusal } = useSlotMaterials(
+    slots,
+    MODIFIED_FALLBACK_MATERIAL,
+    override,
+    shading,
+  );
+  const geom = getForAttach(data.geometry);
+  const assignment = materialAssignmentOf(data.attributeKey, slots);
+  const draw = resolveMeshMaterial(geom, assignment, materials);
+  const refusal = meshMaterialRefusal(geom, assignment, materials);
+  // A DEGRADATION IS REPORTED, NEVER SILENT. A mesh that should draw two materials and
+  // draws one is a lying label: the screen is plausible, nothing throws, and the wrong
+  // answer gets relied on. Keyed by the geometry key so a rebuilt or deleted object clears
+  // its own row, the same shape the modifier road's blank uses.
+  const geomKey = data.geometry.key;
+  useEffect(() => {
+    const store = useAssetErrorStore.getState();
+    const ref = `material-slots:${geomKey}`;
+    const why = capRefusal ?? refusal;
+    if (why === null) {
+      store.clear(ref);
+      return;
+    }
+    store.report(ref, why);
+    return () => useAssetErrorStore.getState().clear(ref);
+  }, [capRefusal, refusal, geomKey]);
+  if (!draw) return null;
+  // #530 / #533 — shared resources travel as PROPS, never through `<primitive>`, and a
+  // material ARRAY does not change that: it is a list of registry-owned instances, every
+  // one of them shared with whoever else holds the same key.
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+      material={draw.material}
+      geometry={draw.geometry}
     />
   );
 }
