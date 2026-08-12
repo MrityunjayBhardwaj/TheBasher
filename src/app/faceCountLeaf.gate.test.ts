@@ -26,7 +26,11 @@ const sphere = (w = 8, h = 4): GeometryDescriptor => ({
   widthSegments: w,
   heightSegments: h,
 });
-const refOf = (descriptor: GeometryDescriptor): GeometryRef => ({ key: 'k', descriptor });
+const refOf = (descriptor: GeometryDescriptor): GeometryRef => ({
+  key: 'k',
+  kind: descriptor.kind,
+  descriptor,
+});
 const mirror = (): GeometryDescriptor => ({
   kind: 'mirror',
   source: refOf(box()),
@@ -118,7 +122,7 @@ describe('#638 a count disagreement is refused by name', () => {
     // makes coverage undefined rather than violated) and is not this gate's to refuse.
     expect(faceCountMismatch(box(), null)).toBeNull();
     // A descriptor with no derivable count cannot disagree with anything.
-    const gltf: GeometryDescriptor = { kind: 'gltf', assetId: 'a', nodeName: 'n' };
+    const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'a', childName: 'n' };
     expect(faceCountOf(gltf)).toBeNull();
     expect(faceCountMismatch(gltf, 999)).toBeNull();
     expect(faceAttributeMismatch(gltf, 999)).toBeNull();

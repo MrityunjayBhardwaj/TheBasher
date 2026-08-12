@@ -36,8 +36,12 @@ import {
 } from './attributeStore';
 import { nonAlignedMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
 
+// `materialIndex` is OPTIONAL, because that is how three.js declares it on a live
+// `BufferGeometry.groups` — and this helper is asked about built instances, not only about
+// the derivation's own output. Requiring it here types the helper against a shape the
+// subject does not have, which is the same mistake the coverage predicate exists to avoid.
 const layoutOf = (geometry: {
-  groups: { start: number; count: number; materialIndex: number }[];
+  groups: { start: number; count: number; materialIndex?: number }[];
 }) => geometry.groups.map((g) => [g.start, g.count, g.materialIndex]);
 
 beforeEach(() => {
