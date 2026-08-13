@@ -47,8 +47,8 @@
 //
 // REF: THESIS.md §11, §15, §40; vyapti V1, V8; krama K7.
 
-import { TransformControls } from '@react-three/drei';
 import { useThree, useFrame, type ThreeEvent } from '@react-three/fiber';
+import { TransformGizmo } from './TransformGizmo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
@@ -212,7 +212,7 @@ function SingleGizmo() {
   // A bare useRef would silently break the deselect → re-select cycle:
   // groupRef.current goes null on unmount; the new ref attaches AFTER
   // the next render commits, but ref writes don't cause a re-render, so
-  // the conditional `<TransformControls>` block (which gates on the
+  // the conditional `<TransformGizmo>` block (which gates on the
   // ref) never re-evaluates. Using state closes that loop.
   const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
   const groupRefCb = useCallback((g: THREE.Group | null) => {
@@ -567,7 +567,7 @@ function SingleGizmo() {
     <>
       <group ref={groupRefCb} />
       {groupNode ? (
-        <TransformControls
+        <TransformGizmo
           object={groupNode}
           mode={effectiveMode}
           // #228 — Global/Local orientation (three ignores it for scale, which is
@@ -797,7 +797,7 @@ function MultiGizmo() {
     <>
       <group ref={groupRefCb} />
       {groupNode ? (
-        <TransformControls
+        <TransformGizmo
           object={groupNode}
           mode={mode}
           enabled={!playing}
@@ -1260,7 +1260,7 @@ function CameraGizmo() {
         color={bound ? RETICLE_BOUND_COLOR : RETICLE_COLOR}
       />
       {bodyNode ? (
-        <TransformControls
+        <TransformGizmo
           object={bodyNode}
           mode={bodyMode}
           space={orientation === 'local' ? 'local' : 'world'}

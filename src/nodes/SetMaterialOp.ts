@@ -34,6 +34,37 @@
 // mesh. That mirrors the mute-bypass immediately above it (V58) and the unwired-target
 // guard `ArrayModifier` already has.
 //
+// ── THE FACE RANGE, AND WHY IT DOES NOT CHANGE WHAT THIS NODE ALREADY MEANT (#638) ──
+//
+// Blender's `Set Material` takes a SELECTION and writes `material_index` on the selected
+// faces; ours took the whole mesh. `faceFrom`/`faceTo` complete this node against its own
+// stated reference rather than inventing a second one. Two arms, split on whether the range
+// covers every face:
+//
+//   full range (`faceTo === -1`, or [0, faceCount))  → REPLACE. Byte-identical to what this
+//       node emitted before the range existed: one material, no slot table, no index.
+//   partial range                                     → APPEND. The source's material keeps
+//       slot 0 for the faces outside the range, the wired one takes slot 1 inside it, and
+//       the geometry is re-minted with the index folded into its key.
+//
+// The append semantics reach ONLY a state this node could not previously express — there was
+// no parameter for a partial range — so no graph anyone has already built changes meaning.
+// That is what makes this an extension rather than a semantics change to a shipped node, and
+// it is also what keeps the value migration-free: a full-range op emits the old shape, so an
+// old save and a new save of the same authored state are the same bytes.
+//
+// TWO DECLARED LIMITS, both pinned by tests rather than left to be discovered:
+//
+//   1. ONLY THE LOWEST `SetMaterialOp` IN A STACK CONTRIBUTES A SLOT TABLE; a second one
+//      replaces it. `ModifierDataSource` carries `{geometry, material}` and nothing else, so
+//      the second op reads the first's single material field and never sees its table.
+//      Widening the data lane's source contract touches every operator on it and belongs
+//      with the selection system that would make three slots authorable in the first place.
+//   2. A LITERAL FACE RANGE, NOT A SELECTION FIELD. There is no selection or group concept
+//      in this codebase; a range is the crude precursor a field system supersedes.
+//   3. A source whose face count is not derivable from params (glTF, baked) cannot carry a
+//      range at all, and REPLACES instead. Those roads have no data half yet.
+//
 // REF: src/nodes/materialSocket.ts (the socket rule); src/app/modifierGeometry.ts
 //      (`modifierDataSource` — the shared classifier); src/nodes/MaterialOverrideOp.ts
 //      (the sparse sibling); docs/OPERATORS-AND-LIGHTING-DESIGN.md §5/§2.2; issue #394.
@@ -41,12 +72,23 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
-import { modifierDataSource } from '../app/modifierGeometry';
+import { modifierDataSource, refWithAttributeKey } from '../app/modifierGeometry';
+import { faceCountOf } from '../app/faceCount';
+import { mintFaceRangeAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
 
 export const SetMaterialOpParams = z.object({
   /** Stack mute-bypass (V58): true → pass the source through unchanged. */
   muted: z.boolean().default(false),
+  /**
+   * First face the wired material is written onto. `.default()` and not a bare
+   * `.optional()`, deliberately: an absent field and a present-but-undefined one are
+   * different objects to the value hash, so an old save and a new save of the SAME authored
+   * state would key differently and every downstream cache would cold-start on load.
+   */
+  faceFrom: z.number().int().default(0),
+  /** Last face, inclusive. **-1 means every face** — today's behaviour, and the default. */
+  faceTo: z.number().int().default(-1),
 });
 export type SetMaterialOpParams = z.infer<typeof SetMaterialOpParams>;
 
@@ -91,15 +133,52 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     // Non-mesh data (curve / light / camera) — nothing wears a material. Measured on
     // the same reference ground as the modifier's passthrough (GT_BLENDER_MODIFIER_DATA §9).
     if (!source) return src;
+    // Hydrated by the socket rule, so what leaves here is always a complete IR.
+    const wired = resolveNodeMaterial(inputs.material, undefined);
+    const faces = faceCountOf(source.geometry.descriptor);
+    const partial =
+      faces !== null &&
+      params.faceTo !== -1 &&
+      !(params.faceFrom <= 0 && params.faceTo >= faces - 1);
+
+    if (partial) {
+      // THE APPEND ARM. The source's own material stays on slot 0 for the faces outside
+      // the range, and the wired one takes slot 1 inside it. The geometry is re-minted with
+      // the new index folded into its key: two objects whose faces are assigned differently
+      // MUST NOT collide onto one cached instance, because the group layout lives on that
+      // instance and whichever built first would decide for both.
+      const attributeKey = mintFaceRangeAttributes(
+        source.geometry.descriptor,
+        params.faceFrom,
+        params.faceTo,
+        'evaluate',
+      );
+      if (attributeKey !== null) {
+        return {
+          kind: 'ModifiedData',
+          geometry: refWithAttributeKey(source.geometry, attributeKey),
+          material: wired,
+          materialSlots: [source.material, wired],
+          attributeKey,
+        };
+      }
+      // The face count is not derivable (a glTF or baked source — its buffers live in an
+      // asset clone or in OPFS), so there is no domain to write the range onto. Fall
+      // through to REPLACE rather than emit a table with no index behind it: a table
+      // whose index is missing reports one used slot anyway, so the wired material would
+      // silently vanish from a mesh the director just assigned it to. Declared limit,
+      // pinned by a test, and it lifts when those roads get a data half of their own.
+    }
     return {
       kind: 'ModifiedData',
-      // The geometry rides through UNTOUCHED — this operator has an opinion about the
-      // material only. It is `ModifiedData` rather than the source's own kind because
-      // that is the one member of the union produced BY an operator, and it is the one
-      // whose `material` carries the wide Inline|Baked union a chained source needs.
+      // THE REPLACE ARM — byte-identical to what this node has always emitted, so nothing
+      // a director has already built changes meaning. The geometry rides through UNTOUCHED:
+      // over a full range this operator still has an opinion about the material only. It is
+      // `ModifiedData` rather than the source's own kind because that is the one member of
+      // the union produced BY an operator, and the one whose `material` carries the wide
+      // Inline|Baked union a chained source needs.
       geometry: source.geometry,
-      // Hydrated by the socket rule, so what leaves here is always a complete IR.
-      material: resolveNodeMaterial(inputs.material, undefined),
+      material: wired,
     };
   },
 };

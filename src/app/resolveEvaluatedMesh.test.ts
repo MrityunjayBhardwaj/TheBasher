@@ -5,6 +5,7 @@
 //
 // REF: PLAN.md Wave 1 Task 2; hetvabhasa H40; vyapti V20.
 
+import { primaryMaterial } from './materialAssignment';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
@@ -38,11 +39,11 @@ describe('resolveEvaluatedMesh', () => {
     // pre-migration node has no scale param → identity default (C-1 guard).
     expect(mesh!.transform.scale).toEqual([1, 1, 1]);
     expect(mesh!.transform.position).toEqual([0, 0, 0]);
-    expect(mesh!.material).not.toBeNull();
+    expect(primaryMaterial(mesh!.materials)).not.toBeNull();
     // v0.6 #3 — box now carries REAL UV islands from the registry geometry (was
     // null pre-#3). BoxGeometry → 6 islands, each spanning the full [0,1] square.
-    expect(mesh!.uvs).not.toBeNull();
-    expect(mesh!.uvs!.islands).toHaveLength(6);
+    expect(mesh!.uvRead.status).toBe('ok');
+    expect(mesh!.uvRead.status === 'ok' && mesh!.uvRead.islands.islands).toHaveLength(6);
   });
 
   it('box geometry key is deterministic (same params → byte-identical key)', () => {
@@ -120,7 +121,7 @@ describe('resolveEvaluatedMesh', () => {
       assetRef: 'asset-1',
       childName: 'Mesh0',
     });
-    expect(mesh!.material).toBeNull(); // #2 fills it later
+    expect(primaryMaterial(mesh!.materials)).toBeNull(); // #2 fills it later
 
     // H40 — the resolver's transform.scale equals the ONE band's output for the
     // same inputs (no parallel walk, no drift).
@@ -173,10 +174,10 @@ describe('resolveEvaluatedMesh', () => {
     expect(pair!.geometry).toEqual(geometry);
     expect(pair!.geometry.kind).toBe('baked');
     // The captured spec rides through verbatim — the ONE rich material face (M6).
-    expect(pair!.material).toEqual(material);
+    expect(primaryMaterial(pair!.materials)).toEqual(material);
     // `uvs` is null for a baked ref — the bytes are not sync-buildable, so a non-null here
     // would mean the pair took the primitive registry path by mistake.
-    expect(pair!.uvs).toBeNull();
+    expect(pair!.uvRead.status).not.toBe('ok');
     // The pose is carried by the Object half, which is the whole point of the split.
     expect(pair!.transform.position).toEqual([3, -2, 5]);
     expect(pair!.transform.rotation).toEqual([0, 0, 0]);

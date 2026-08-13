@@ -1,0 +1,521 @@
+{
+  "formatVersion": 9,
+  "id": "default",
+  "name": "Untitled",
+  "createdAt": 1786436536759,
+  "updatedAt": 1786436538925,
+  "nodeVersions": {
+    "CameraData": 1,
+    "Object": 1,
+    "LightData": 1,
+    "BoxData": 1,
+    "TimeSource": 1,
+    "Scene": 1,
+    "RenderOutput": 2,
+    "BakedData": 1,
+    "GltfAsset": 1,
+    "GltfChild": 1,
+    "Group": 1
+  },
+  "state": {
+    "nodes": {
+      "n_camera_data": {
+        "id": "n_camera_data",
+        "type": "CameraData",
+        "version": 1,
+        "params": {
+          "projection": "Perspective",
+          "fov": 45,
+          "zoom": 50,
+          "near": 0.01,
+          "far": 500,
+          "sensorSize": 36,
+          "dofEnabled": false,
+          "focusDistance": 5,
+          "fStop": 2.8,
+          "focusOnTarget": false,
+          "lookAt": [
+            0,
+            0,
+            0
+          ],
+          "roll": 0
+        },
+        "inputs": {}
+      },
+      "n_camera": {
+        "id": "n_camera",
+        "type": "Object",
+        "version": 1,
+        "params": {
+          "position": [
+            3,
+            2,
+            3
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "inputs": {
+          "data": {
+            "node": "n_camera_data",
+            "socket": "out"
+          }
+        }
+      },
+      "n_light_data": {
+        "id": "n_light_data",
+        "type": "LightData",
+        "version": 1,
+        "params": {
+          "lightKind": "Directional",
+          "intensity": 1.1,
+          "color": "#ffffff",
+          "distance": 0,
+          "decay": 2,
+          "angle": 0.5235987755982988,
+          "penumbra": 0.1,
+          "width": 2,
+          "height": 2,
+          "target": [
+            0,
+            0,
+            0
+          ],
+          "lookAt": [
+            0,
+            0,
+            0
+          ]
+        },
+        "inputs": {}
+      },
+      "n_light": {
+        "id": "n_light",
+        "type": "Object",
+        "version": 1,
+        "params": {
+          "position": [
+            5,
+            5,
+            3
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "inputs": {
+          "data": {
+            "node": "n_light_data",
+            "socket": "out"
+          }
+        }
+      },
+      "n_box_data": {
+        "id": "n_box_data",
+        "type": "BoxData",
+        "version": 1,
+        "params": {
+          "size": [
+            1,
+            1,
+            1
+          ],
+          "material": {
+            "name": "default",
+            "base": {
+              "color": "#cccccc",
+              "metalness": 0
+            },
+            "specular": {
+              "roughness": 0.3,
+              "ior": 1.5
+            },
+            "coat": {
+              "weight": 0,
+              "roughness": 0
+            },
+            "transmission": {
+              "weight": 0
+            },
+            "emission": {
+              "color": "#000000",
+              "luminance": 0
+            },
+            "geometry": {
+              "opacity": 1
+            },
+            "maps": {
+              "albedo": null,
+              "normal": null,
+              "roughness": null,
+              "metalness": null,
+              "emissive": null,
+              "ao": null
+            },
+            "uvTransform": {
+              "tiling": [
+                1,
+                1
+              ],
+              "offset": [
+                0,
+                0
+              ],
+              "rotation": 0
+            }
+          }
+        },
+        "inputs": {}
+      },
+      "n_box": {
+        "id": "n_box",
+        "type": "Object",
+        "version": 1,
+        "params": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "inputs": {
+          "data": {
+            "node": "n_box_data",
+            "socket": "out"
+          }
+        }
+      },
+      "n_time": {
+        "id": "n_time",
+        "type": "TimeSource",
+        "version": 1,
+        "params": {},
+        "inputs": {}
+      },
+      "n_scene": {
+        "id": "n_scene",
+        "type": "Scene",
+        "version": 1,
+        "params": {
+          "envSource": {
+            "kind": "none"
+          },
+          "envIntensity": 1,
+          "envRotationY": 0,
+          "envBackground": false
+        },
+        "inputs": {
+          "camera": {
+            "node": "n_camera",
+            "socket": "out"
+          },
+          "lights": [
+            {
+              "node": "n_light",
+              "socket": "out"
+            }
+          ],
+          "children": [
+            {
+              "node": "n_box",
+              "socket": "out"
+            },
+            {
+              "node": "n_grp_f02f271d",
+              "socket": "out"
+            }
+          ]
+        }
+      },
+      "n_render": {
+        "id": "n_render",
+        "type": "RenderOutput",
+        "version": 2,
+        "params": {
+          "postFx": {
+            "tonemap": "ACES",
+            "smaa": true
+          },
+          "width": 1920,
+          "height": 1080
+        },
+        "inputs": {
+          "scene": {
+            "node": "n_scene",
+            "socket": "out"
+          }
+        }
+      },
+      "n_ns1_sphere__data": {
+        "id": "n_ns1_sphere__data",
+        "type": "BakedData",
+        "version": 1,
+        "params": {
+          "geometry": {
+            "key": "baked|7e1cd74f-425",
+            "kind": "baked",
+            "descriptor": {
+              "kind": "baked",
+              "hash": "7e1cd74f",
+              "vertexCount": 425
+            }
+          },
+          "material": {
+            "materialClass": "standard",
+            "color": "#cccccc",
+            "roughness": 0.5,
+            "metalness": 0,
+            "opacity": 1,
+            "transparent": false,
+            "emissive": "#000000",
+            "emissiveIntensity": 0,
+            "map": null,
+            "normalMap": null,
+            "roughnessMap": null,
+            "metalnessMap": null,
+            "aoMap": null,
+            "emissiveMap": null
+          }
+        },
+        "inputs": {}
+      },
+      "n_ns1_sphere": {
+        "id": "n_ns1_sphere",
+        "type": "Object",
+        "version": 1,
+        "params": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "inputs": {
+          "data": {
+            "node": "n_ns1_sphere__data",
+            "socket": "out"
+          }
+        }
+      },
+      "n_gltf_f02f271d": {
+        "id": "n_gltf_f02f271d",
+        "type": "GltfAsset",
+        "version": 1,
+        "params": {
+          "assetRef": "user-imports/ns1fixture/two-material-quad.gltf",
+          "nodeNameMap": {
+            "TwoMatQuad": "n_gltfChild_69948218"
+          },
+          "childHierarchy": {},
+          "skins": [],
+          "suppressedChildren": [],
+          "keyByGltfNodeIndex": {
+            "0": "TwoMatQuad"
+          }
+        },
+        "inputs": {}
+      },
+      "n_gltfChild_69948218": {
+        "id": "n_gltfChild_69948218",
+        "type": "GltfChild",
+        "version": 1,
+        "params": {
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "overridden": {
+            "position": false,
+            "rotation": false,
+            "scale": false
+          },
+          "assetRef": "user-imports/ns1fixture/two-material-quad.gltf",
+          "childName": "TwoMatQuad",
+          "materials": [
+            {
+              "name": "RedMat",
+              "base": {
+                "color": "#ff0000",
+                "metalness": 0
+              },
+              "specular": {
+                "roughness": 0.5,
+                "ior": 1.5
+              },
+              "coat": {
+                "weight": 0,
+                "roughness": 0
+              },
+              "transmission": {
+                "weight": 0
+              },
+              "emission": {
+                "color": "#000000",
+                "luminance": 1
+              },
+              "geometry": {
+                "opacity": 1
+              },
+              "maps": {
+                "albedo": null,
+                "normal": null,
+                "roughness": null,
+                "metalness": null,
+                "emissive": null,
+                "ao": null
+              },
+              "uvTransform": {
+                "tiling": [
+                  1,
+                  1
+                ],
+                "offset": [
+                  0,
+                  0
+                ],
+                "rotation": 0
+              }
+            },
+            {
+              "name": "BlueMat",
+              "base": {
+                "color": "#0000ff",
+                "metalness": 0
+              },
+              "specular": {
+                "roughness": 0.5,
+                "ior": 1.5
+              },
+              "coat": {
+                "weight": 0,
+                "roughness": 0
+              },
+              "transmission": {
+                "weight": 0
+              },
+              "emission": {
+                "color": "#000000",
+                "luminance": 1
+              },
+              "geometry": {
+                "opacity": 1
+              },
+              "maps": {
+                "albedo": null,
+                "normal": null,
+                "roughness": null,
+                "metalness": null,
+                "emissive": null,
+                "ao": null
+              },
+              "uvTransform": {
+                "tiling": [
+                  1,
+                  1
+                ],
+                "offset": [
+                  0,
+                  0
+                ],
+                "rotation": 0
+              }
+            }
+          ]
+        },
+        "inputs": {}
+      },
+      "n_grp_f02f271d": {
+        "id": "n_grp_f02f271d",
+        "type": "Group",
+        "version": 1,
+        "params": {
+          "position": [
+            0.5,
+            0.5,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ],
+          "pivot": [
+            0.5,
+            0.5,
+            0
+          ]
+        },
+        "inputs": {
+          "children": [
+            {
+              "node": "n_gltf_f02f271d",
+              "socket": "out"
+            }
+          ]
+        }
+      }
+    },
+    "outputs": {
+      "scene": {
+        "node": "n_scene",
+        "socket": "out"
+      },
+      "render": {
+        "node": "n_render",
+        "socket": "out"
+      }
+    }
+  }
+}
