@@ -567,17 +567,38 @@ test('the lifetime pair: a SHARED add costs nothing in either instrument, a DIST
       };
     });
 
+  // 🔴 SETTLE BY OBSERVING THE NUMBERS, NEVER BY WAITING A FIXED TIME — measured, not
+  // hypothetical. This read has to happen after the sweep has collected the plain box the
+  // assignment replaced, or the deltas below measure the COLLECTION instead of the adds.
+  // The first version of this test waited 2 s and passed locally; on CI's slower runner the
+  // baseline read `{registry: 2}` with that entry still resident, the shared add then grew
+  // the population, growth is what triggers a sweep, and the sweep collected it — so the
+  // delta came out −1 for an add that must cost 0. Both attempts failed with identical
+  // numbers, which is what said "timing assumption" rather than "flake".
+  //
+  // Stability is two consecutive equal readings of BOTH numbers: the sweep is not the only
+  // thing in flight — three.js disposes GL geometries on its own schedule, so `gl` can still
+  // be falling while `registry` has stopped.
+  const readSettled = async (label: string) => {
+    let last = await read();
+    for (let i = 0; i < 24; i++) {
+      await page.waitForTimeout(500);
+      const now = await read();
+      if (now.registry === last.registry && now.gl === last.gl) return now;
+      last = now;
+    }
+    throw new Error(
+      `${label}: the lifetime counters never settled — last read ${JSON.stringify(last)}`,
+    );
+  };
+
   await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
   await waitForTwoMaterialMesh(page, 'n_box');
-  // Settle first: the baseline has to be read after the sweep has collected the plain box
-  // the assignment replaced, or the deltas below measure the collection, not the adds.
-  await page.waitForTimeout(2_000);
-  const before = await read();
+  const before = await readSettled('baseline');
 
   await dispatch(page, secondBoxOps(sceneId, 2.5), 'shared add');
   await waitForTwoMaterialMesh(page, 'n_box2');
-  await page.waitForTimeout(2_000);
-  const shared = await read();
+  const shared = await readSettled('shared add');
   expect(shared.registry, JSON.stringify({ before, shared })).toBe(before.registry);
   expect(shared.gl, JSON.stringify({ before, shared })).toBe(before.gl);
 
@@ -585,8 +606,7 @@ test('the lifetime pair: a SHARED add costs nothing in either instrument, a DIST
   // this add and the one above is whether the key already exists.
   await dispatch(page, distinctBoxOps(sceneId, -2.5), 'distinct add');
   await waitForTwoMaterialMesh(page, 'n_box3');
-  await page.waitForTimeout(2_000);
-  const distinct = await read();
+  const distinct = await readSettled('distinct add');
   expect(distinct.registry, JSON.stringify({ shared, distinct })).toBe(shared.registry + 1);
   expect(distinct.gl, JSON.stringify({ shared, distinct })).toBe(shared.gl + 1);
 });
