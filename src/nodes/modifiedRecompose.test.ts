@@ -20,7 +20,7 @@ import type {
 // A REAL array-over-box handle from the same builder the modifier road uses, not a
 // hand-shaped literal — a fabricated descriptor would pass a structural comparison while
 // being something the registry could never build.
-const GEOM: GeometryRef = arrayGeometryRef(boxGeometryRef([1, 1, 1]), 3, [2, 0, 0]);
+const GEOM: GeometryRef = arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 3, [2, 0, 0]);
 
 // A trap colour: neither a primitive default nor `#808080`, the grey a material renders
 // as when it is mistaken for the wrong spec shape — so an assertion on it cannot pass

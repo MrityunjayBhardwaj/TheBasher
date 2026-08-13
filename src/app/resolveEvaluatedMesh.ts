@@ -307,10 +307,20 @@ export function resolveEvaluatedMesh(
       // synchronously), and the material passes verbatim into a ONE-slot table: the
       // read side's slots carry the wide Inline|Baked union that `ModifiedDataValue`
       // does, widened by #358 precisely so a baked-sourced modifier stops dropping its
-      // material here. `indices` is null — this road has no per-face attribute yet, and
-      // a synthesised array of zeros would claim otherwise.
+      // material here.
+      //
+      // #638 (ns-1b step 6) — the table and the index are read through the SAME pair of
+      // functions the `MeshData` arm uses, so the two roads cannot answer "what is this
+      // made of" differently. Both fields are absent on every value except a partial-range
+      // `SetMaterialOp`'s, and absent resolves to exactly what this arm returned before:
+      // one slot, `indices: null`. The previous comment said this road "has no per-face
+      // attribute yet" — it can have one now, and a synthesised array of zeros would still
+      // be a lie for the roads that do not.
       const modGeometry = data.geometry;
-      const modifiedMaterials = materialAssignmentOf(null, [data.material]);
+      const modifiedMaterials = materialAssignmentOf(
+        data.attributeKey ?? null,
+        materialSlotsOf(data),
+      );
       const modifiedUvs = readMeshUVs(modGeometry);
       return {
         geometry: modGeometry,

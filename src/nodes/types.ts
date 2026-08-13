@@ -513,11 +513,42 @@ export type MirrorAxis = 'x' | 'y' | 'z';
  * shared, content-addressed entry. Per-object substance belongs on the DATA half
  * of the object/data pair (`BoxData` = geometry + material), which is already
  * where it lives.
+ *
+ * ── #638 (ns-1b) — THE ONE THING THAT DOES RIDE ALONG, AND WHY IT IS NOT A
+ *    CONTRADICTION OF THE PARAGRAPHS ABOVE ─────────────────────────────────────
+ *
+ * The prohibition above is on the MATERIAL and on the object's SLOT TABLE. It is
+ * not on the per-face INDEX that says which slot each face uses.
+ *
+ * The distinction is the one both reference systems draw, and it is what makes
+ * variation over shared geometry possible at all: the table is object-level
+ * substance, the index is part of what the geometry IS. Two boxes pointing their
+ * faces at slots {0,1} in the same pattern are the same geometry however the two
+ * objects fill those slots, and they still share one `BufferGeometry`.
+ *
+ * It has to be here rather than beside the handle because the group layout that
+ * carries an index to the GPU lives on the `BufferGeometry` INSTANCE — three.js
+ * has no per-object group layout. Two objects needing different face→slot layouts
+ * would otherwise have to disagree about one shared array. That is unavailable,
+ * not merely expensive, and it is the whole reason the index enters identity.
+ *
+ * `attributeKey` is the content key of the geometry's own attribute set (see
+ * `src/nodes/attributeKey.ts`), and it is ABSENT — not `undefined` — when the
+ * geometry carries no attributes. The two states are kept distinct because
+ * `{field: undefined}` and a missing field hash differently, and a field that
+ * materialises as `undefined` re-keys every mesh value in every project with no
+ * error. The builders in `src/app/modifierGeometry.ts` are the only things that
+ * may write it, and they refuse an unanswered `undefined` by name.
  */
 export interface GeometryRef {
   readonly key: string;
   readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array' | 'mirror';
   readonly descriptor: GeometryDescriptor;
+  /**
+   * The content key of this geometry's own attribute set, folded into {@link key}.
+   * ABSENT when there is none — never present-and-`undefined`.
+   */
+  readonly attributeKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -665,6 +696,17 @@ export interface ModifiedMeshValue {
    * source's material.
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot table and its index, carried through the recomposition (#638, ns-1b step 6).
+   *
+   * This is the FLAT shape an `Object → …Op → ModifiedData` pair is recomposed into before
+   * it reaches the renderer, so these two fields have to exist here as well or the
+   * assignment is dropped at exactly the seam whose whole job is not to drop things — the
+   * mesh would draw one material and every count downstream would agree with itself.
+   * Same pairing rule as on {@link ModifiedDataValue}: both present, or neither.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  readonly attributeKey?: string;
 }
 
 /**
@@ -1290,6 +1332,25 @@ export interface ModifiedDataValue {
    * See docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 "How far this reaches today".
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot TABLE, when an operator wrote a per-face assignment (#638, ns-1b step 6).
+   *
+   * Absent means "one material", and that absence is the shipped behaviour rather than a
+   * missing feature: `SetMaterialOp` over a full face range REPLACES, exactly as it always
+   * has, and emits no table. A table appears only for a partial range — a state the node
+   * could not express before this phase — so no existing graph changes shape.
+   *
+   * ⚠️ Read through `materialSlotsOf`, never directly, so the single `material` field and
+   * this one cannot be read as two different answers to the same question.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  /**
+   * The content key of the geometry's attribute set — the INDEX half of the pair whose
+   * other half is `materialSlots` (#638). Present exactly when the table is, because
+   * neither half means anything alone: an index with no table points nowhere, and a table
+   * with no index has nothing selecting between its entries.
+   */
+  readonly attributeKey?: string;
 }
 
 /**

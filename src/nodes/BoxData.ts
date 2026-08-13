@@ -16,7 +16,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MeshDataValue } from './types';
-import { boxGeometryRef } from '../app/modifierGeometry';
+import { boxDescriptor, boxGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
 import { materialKeyOf } from './materialKey';
@@ -57,7 +57,13 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   },
   evaluate(params, inputs) {
     const material = resolveNodeMaterial(inputs.material, params.material);
-    const geometry = boxGeometryRef(params.size);
+    // #638 — the attribute set is minted FIRST, because its key is folded into the
+    // geometry key. Two boxes whose faces point at slots in different patterns are
+    // different geometry and must not share one built instance; three.js has no
+    // per-object group layout to vary instead.
+    const descriptor = boxDescriptor(params.size);
+    const attributeKey = mintMeshAttributes(descriptor, 'evaluate');
+    const geometry = boxGeometryRef(params.size, attributeKey);
     return {
       kind: 'MeshData',
       geometry,
@@ -73,7 +79,7 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
       // #633 — the attribute set's identity, minted at the same seam and for the same
       // reason. A box has one material slot, so every face is derived onto slot 0; the
       // param above stays the only place a material is authored.
-      attributeKey: mintMeshAttributes(geometry),
+      attributeKey,
     };
   },
 };

@@ -13,6 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { mintAttributes } from '../nodes/attributeKey';
 import type { AttributeData } from '../nodes/attributes';
 import { growthBySource, insert, read, residentCount, resetGrowth } from './attributeStore';
+import { coveredIndexCount, groupsFromMaterialIndex } from './materialGroups';
 
 const faceIndex = (values: number[]): AttributeData => ({
   domain: 'face',
@@ -72,7 +73,10 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
     put({ material_index: faceIndex([2, 3, 3]) }); // different content — must count
 
     expect(residentCount()).toBe(before + 2);
-    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0 });
+    // Restated, not floored, when #638 added the `overlay` origin: the whole record is
+    // compared rather than one field, so a NEW origin reds here and has to be answered for
+    // — which is the point. An origin nobody enumerates is an origin nobody counts.
+    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0, overlay: 0 });
   });
 
   it('has NO async producer yet, and says so as a number', () => {
@@ -108,7 +112,37 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
 
     resetGrowth();
 
-    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0 });
+    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0, overlay: 0 });
     expect(residentCount()).toBe(resident);
+  });
+});
+
+// #638 (ns-1b step 9) — THE STORED ARRAY IS NOT THE DERIVATION'S SCRATCH SPACE.
+//
+// The store's declared limit 3 is that nothing ENFORCES immutability of a resident set: a
+// reader gets the live `Int32Array`, and the content key was computed once, at insertion.
+// So a reader that sorted, coalesced or renumbered in place would corrupt the set for every
+// OTHER holder of that key — silently, since the key still names the old bytes, and the
+// corruption would surface in a different mesh entirely. This phase adds the first reader
+// that walks the whole face index on the render road, which is what makes the limit worth a
+// test rather than a sentence.
+describe('#638 a full render-side derivation leaves the stored bytes alone', () => {
+  it('the resident Int32Array is byte-identical after the group layout is derived from it', () => {
+    const values = [0, 0, 1, 1, 1, 0, 2, 2, 0, 0, 1, 0];
+    const set = put({ material_index: faceIndex(values) });
+    const stored = set.material_index.data as Int32Array;
+    const before = Array.from(stored);
+
+    // The derivation the renderer runs, over the resident bytes — not over a copy.
+    const groups = groupsFromMaterialIndex(stored, values.length * 3);
+    expect(groups).not.toBeNull();
+    expect(groups!.length).toBeGreaterThan(1); // it really did walk and coalesce
+    expect(coveredIndexCount(groups!, 3)).toBe(values.length * 3);
+
+    // Same object, same bytes: read back through the store rather than through the local
+    // reference, so a derivation that replaced the entry would also be caught.
+    const again = read(mintAttributes({ material_index: faceIndex(values) })!.key)!;
+    expect(again.material_index.data).toBe(stored);
+    expect(Array.from(again.material_index.data as Int32Array)).toEqual(before);
   });
 });

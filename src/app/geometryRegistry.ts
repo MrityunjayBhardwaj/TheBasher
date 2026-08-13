@@ -34,7 +34,11 @@
 
 import { BoxGeometry, Matrix4, SphereGeometry, type BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
+import { MATERIAL_INDEX } from '../nodes/attributes';
+import { read } from './attributeStore';
+import { faceCountMismatch } from './faceCount';
+import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -395,8 +399,69 @@ export function sweep(live: ReadonlySet<BufferGeometry>): GeometrySweepResult {
   return result;
 }
 
+/**
+ * Build the instance, then give it its group layout — the ONE place in this repo that
+ * calls `addGroup` or `clearGroups` (#638, ns-1b step 4).
+ *
+ * ── WHY HERE, AND WHY THAT MAKES THE COLLISION UNCONSTRUCTIBLE ────────────────────────
+ *
+ * A group layout lives on the `BufferGeometry` INSTANCE, and this cache hands ONE instance
+ * to every ref with the same key. Writing groups anywhere else — at attach, per object —
+ * would be a per-object write to a shared resource, which is the defect #530/#533 already
+ * cost this repo once. Written here it cannot be: groups are a pure function of the index,
+ * the index is in the key, the instance is keyed by that key, and the write happens before
+ * the instance has ever been handed to a caller. So the layout on a shared instance is
+ * correct for EVERY holder, by construction — no ordering discipline to remember, no
+ * clear-on-a-shared-instance hazard.
+ *
+ * ── WHY `clearGroups()` RUNS UNCONDITIONALLY ──────────────────────────────────────────
+ *
+ * A stock `BoxGeometry` arrives with SIX groups — one per cube side — and three.js honours
+ * them whether or not anything meant them as material slots. Clearing only when there is a
+ * layout to write would leave those six alive on exactly the refs most likely to be wrong:
+ * an unfolded handle, a store miss, a stale key. The difference matters: a box that keeps
+ * its stock six under a two-length material array draws TWELVE of thirty-six triangles —
+ * quiet, plausible, visible only in pixels — while one with no groups at all under the same
+ * array draws nothing, which is loud.
+ *
+ * Consequence, stated rather than discovered: a box's stock six-side layout is removed on
+ * every build. Nothing in this repo reads it, it encodes cube sides rather than materials,
+ * and removing it makes an unattributed box look exactly like a sphere — `groups.length`
+ * zero — so the heterogeneity that hid the granularity error is gone for every geometry the
+ * registry builds.
+ */
 function build(ref: GeometryRef): BufferGeometry | null {
-  const d = ref.descriptor;
+  const built = buildFromDescriptor(ref.descriptor);
+  if (built === null) return null;
+  built.clearGroups();
+
+  if (ref.attributeKey === undefined) return built;
+  const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
+  if (index === undefined) return built;
+
+  // Two refusals, both by name, because a silently skipped derivation is indistinguishable
+  // from a mesh that genuinely has one material — the two states this phase exists to tell
+  // apart. `faceCountMismatch` catches the BUILT geometry disagreeing with its descriptor;
+  // `groupsRefusal` (inside the derivation) catches the index disagreeing with the geometry,
+  // and declines a non-indexed geometry, where groups address a different buffer entirely.
+  const indexCount = built.getIndex()?.count ?? null;
+  const disagreement = faceCountMismatch(ref.descriptor, indexCount);
+  if (disagreement !== null) {
+    console.warn(disagreement);
+    return built;
+  }
+
+  const groups = groupsFromMaterialIndex(index.data, indexCount);
+  if (groups === null) {
+    const why = groupsRefusal(index.data, indexCount);
+    if (why !== null) console.warn(why);
+    return built;
+  }
+  for (const g of groups) built.addGroup(g.start, g.count, g.materialIndex);
+  return built;
+}
+
+function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
   if (d.kind === 'box') {
     return new BoxGeometry(d.size[0], d.size[1], d.size[2]);
   }

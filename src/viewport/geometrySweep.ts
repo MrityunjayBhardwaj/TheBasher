@@ -142,6 +142,32 @@ let lastSweptSize = 0;
 let lastSeenSize = 0;
 /** Consecutive frames the population has not moved. */
 let quietFrames = 0;
+/** Sweeps taken since the page loaded — monotonic, so "has one run yet?" is an EVENT. */
+let sweepsTaken = 0;
+/** Entries disposed across every sweep so far — monotonic, so a SPAN is a subtraction. */
+let disposedTotal = 0;
+
+/**
+ * What the cadence has actually done: how many sweeps ran, and what the last one freed.
+ *
+ * WHY THIS IS READ-ONLY STATE AND NOT A RETURN VALUE. `sweepIfDue` already returns the
+ * result "so a caller (or a gate) can tell 'swept and freed nothing' from 'did not sweep'",
+ * and the only caller — `GeometryLifetime` — discards it, because a component that renders
+ * nothing has nowhere to put it. The distinction the return value exists to draw is
+ * therefore unavailable to anyone, which is the gap #656 was diagnosed through.
+ *
+ * ⚠️ THE COUNTER IS THE PART THAT MATTERS, and a duration cannot substitute for it. The
+ * quiet trigger is denominated in FRAMES; every consumer that has tried to wait for it has
+ * been written in MILLISECONDS, and a population merely waiting out its thirty frames is
+ * indistinguishable from a settled one to any wall-clock observer. `sweeps` turns "the
+ * cache has been verified" from a duration you hope was long enough into an event you can
+ * wait for: after a sweep, every resident non-exempt entry has just been checked against
+ * attachment, and the latch in `sweepIfDue` guarantees none is collected until the
+ * population next grows.
+ */
+export function sweepStats(): { sweeps: number; disposed: number } {
+  return { sweeps: sweepsTaken, disposed: disposedTotal };
+}
 
 /**
  * Sweep if either trigger is due; otherwise do nothing and pay only a `Map.size` read.
@@ -195,6 +221,8 @@ export function sweepIfDue(root: Object3D): GeometrySweepResult | null {
 /** Take the sweep and re-mark every cadence baseline from its result. */
 function runSweep(root: Object3D): GeometrySweepResult {
   const result = sweep(collectAttachedGeometry(root));
+  sweepsTaken++;
+  disposedTotal += result.disposed;
   lastSweptSize = registrySize();
   lastSeenSize = lastSweptSize;
   quietFrames = 0;
@@ -206,4 +234,6 @@ export function __resetSweepCadenceForTests(): void {
   lastSweptSize = 0;
   lastSeenSize = 0;
   quietFrames = 0;
+  sweepsTaken = 0;
+  disposedTotal = 0;
 }

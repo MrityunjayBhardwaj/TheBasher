@@ -60,10 +60,24 @@ import type { AttributeSet } from '../nodes/attributes';
  * `prime`    — the async road filled a set after an OPFS / asset read completed, from a
  *              loader hook OUTSIDE the pure resolver. No producer yet; it exists so the
  *              first one has to declare itself rather than be counted as one of the above.
+ * `overlay`  — the animation overlay re-minted a set while rebuilding a geometry handle
+ *              whose descriptor a channel had written (#638). This is the SECOND producer
+ *              of a mesh attribute set, and it exists as its own origin for the reason the
+ *              limits above give: growth attribution by origin is what ships INSTEAD of
+ *              eviction, so two producers landing under one label would leave the
+ *              instrument reporting a real total with the attribution missing — and a
+ *              missing attribution looks exactly like an attribution of zero. It runs on
+ *              the animated path, per frame during a drag, which is precisely the road
+ *              worth being able to count on its own.
  */
-export type AttributeGrowthSource = 'evaluate' | 'read' | 'prime';
+export type AttributeGrowthSource = 'evaluate' | 'read' | 'prime' | 'overlay';
 
-const growth: Record<AttributeGrowthSource, number> = { evaluate: 0, read: 0, prime: 0 };
+const growth: Record<AttributeGrowthSource, number> = {
+  evaluate: 0,
+  read: 0,
+  prime: 0,
+  overlay: 0,
+};
 
 const entries = new Map<string, AttributeSet>();
 
@@ -110,4 +124,5 @@ export function resetGrowth(): void {
   growth.evaluate = 0;
   growth.read = 0;
   growth.prime = 0;
+  growth.overlay = 0;
 }

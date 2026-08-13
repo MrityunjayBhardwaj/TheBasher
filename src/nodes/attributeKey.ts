@@ -1,32 +1,45 @@
 // #633 (ns-1) — the content identity of an attribute set, and the ONE place a set is built.
 //
-// ── A THIRD PARALLEL KEY, AND WHY NOT A FOLD INTO THE GEOMETRY KEY ────────────────────
+// ── A CONTENT KEY OF ITS OWN — AND, SINCE #638, ALSO A COMPONENT OF THE GEOMETRY KEY ──
 //
-// `GeometryRef.key`, `geometryRegistry`'s cache key and `GeometryDescriptor` are NOT
-// touched by this phase. The attribute set gets its own independent content key, minted at
-// evaluate and carried on the data value ALONGSIDE `materialKey` — exactly the shape
-// `BoxData.evaluate` already ships, where a per-object material key sits beside a shared
-// geometry handle rather than inside it.
+// 🔴 THE PARAGRAPH THAT USED TO STAND HERE IS NOW FALSE, AND IT IS RESTATED RATHER THAN
+// DELETED, because the argument it made is still half true and the half that changed is
+// the whole subject of #638.
 //
-// Four independent lines say that is the right seam:
+// What it said: "`GeometryRef.key`, `geometryRegistry`'s cache key and
+// `GeometryDescriptor` are NOT touched by this phase" — true of ns-1, which deferred the
+// render half. ns-1b ends that deferral. `GeometryRef.key` and the registry's cache key
+// now carry an `|a:<key>` component; `GeometryDescriptor` is still untouched.
 //
-//   - This codebase already answered the identical question the other way and shipped it
-//     (`BoxData.ts` — `geometry` and `materialKey` as siblings).
-//   - `GeometryRef`'s own doc comment considered the fold and rejected it: folding a
-//     per-object value into a shared content key either collides or shatters the sharing
-//     the cache exists to provide — a box per material instead of a box.
-//   - Both reference systems separate material assignment from geometry SPECIFICALLY so
-//     that variation over SHARED geometry is possible (Blender's OBJECT/DATA material
-//     link; Houdini's per-primitive material attribute on a packed prim).
+// What survives unchanged, and what the four lines below were really about: the MATERIAL
+// and the object's SLOT TABLE still may not be folded in. Those are object-level substance
+// — two objects filling the same slots differently are the same geometry — and folding
+// either would shatter sharing into a box per material. The per-face INDEX is not that: it
+// is part of what the geometry IS.
+//
+//   - This codebase already answered the material question the other way and shipped it
+//     (`BoxData.ts` — `geometry` and `materialKey` as siblings). Still true; `materialKey`
+//     is still a sibling and always will be.
+//   - `GeometryRef`'s own doc comment rejected folding a PER-OBJECT value into a shared
+//     content key. Still true, and now stated with the index carved out explicitly.
+//   - Both reference systems separate material assignment from geometry so that variation
+//     over SHARED geometry is possible (Blender's OBJECT/DATA material link; Houdini's
+//     per-primitive material attribute on a packed prim). Still true — and note that both
+//     put the per-element INDEX on the geometry and the TABLE on the object. That split is
+//     what #638 implements, not a departure from it.
 //   - `GeometryRef.key` is four hand-built literal templates with no generic walk to join
-//     (`modifierGeometry.ts`), so folding means editing four functions — which is exactly
-//     the render-side work this phase defers.
+//     (`modifierGeometry.ts`), so folding means editing those functions — which is exactly
+//     the render-side work ns-1 deferred, and #638 does. The two primitive builders now
+//     take a REQUIRED attribute key; the two modifier builders still take none.
 //
-// THE COST, stated rather than discovered: a parallel key does NOT by itself let two
-// same-size boxes with different per-face assignments render differently — they still
-// resolve to one shared `BufferGeometry`. Making that reach pixels is the next phase's job
-// (#638), and `attributeKey.test.ts` pins the four geometry key strings verbatim so the
-// deferral cannot leak by someone quietly folding a component in.
+// THE COST ns-1 STATED, AND WHAT PAID IT: a parallel key alone did not let two same-size
+// boxes with different per-face assignments render differently — they resolved to one
+// shared `BufferGeometry`. The fold is what makes them different geometry. It has to be the
+// fold rather than a per-object override because the group layout lives on the
+// `BufferGeometry` INSTANCE: three.js has no per-object group layout, so two objects
+// needing different face→slot layouts would have to disagree about one shared array.
+// `attributeKey.test.ts` still pins the four key strings verbatim — now as BASE templates
+// plus an explicit component — so the fold cannot widen past what was decided.
 //
 // ── ABSENT vs EMPTY: ONE REPRESENTATION OF "NO ATTRIBUTES", NOT TWO ───────────────────
 //
