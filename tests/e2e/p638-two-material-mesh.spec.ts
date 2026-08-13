@@ -26,12 +26,18 @@
 // `renderer.info.render.calls`. `PerfProbe.tsx:15-19` documents it as under-reporting behind
 // the composer, which `SceneFromDAG.tsx` mounts unconditionally, so it would answer a
 // question about the composer while wearing the name of a question about draw groups.
-// `info.memory.geometries` (clause 4) counts allocated GL resources rather than per-frame
-// draws and is not affected.
+//
+// `renderer.info.memory.geometries` — and this one was USED by clause 4 until #657 measured
+// what it answers. It moves under three inputs this file does not control: GL upload is lazy,
+// so it under-reports what exists; it catches up on its own as the page finishes starting;
+// and one select/deselect cycle adds 17 to it that never come back. A number that moves for
+// reasons other than the change under test cannot carry an assertion about that change.
+// Clause 4 reads DISTINCT ATTACHED INSTANCES instead, which is the sharing property itself.
 //
 // REF: src/app/resolveMeshMaterial.ts (the one decision); src/app/geometryRegistry.ts
-//      (`build` — the only writer of the layout); src/nodes/SetMaterialOp.ts (the authoring
-//      surface); issues #638, #634, #530, #533.
+//      (`build` — the only writer of the layout); src/viewport/geometrySweep.ts (the cadence
+//      clause 4's baseline waits on); src/nodes/SetMaterialOp.ts (the authoring surface);
+//      issues #638, #634, #530, #533, #656, #657.
 
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -79,7 +85,11 @@ interface W {
   __basher_selection: {
     getState: () => { select: (id: string | null) => void; primaryNodeId: string | null };
   };
-  __basher_geometry_registry: { size: () => number };
+  __basher_geometry_registry: {
+    size: () => number;
+    sweeps: () => number;
+    disposed: () => number;
+  };
   __basher_render_png?: () => Promise<{ width: number; height: number; dataUrl: string } | null>;
   __basher_mesh_material?: (
     nodeId: string,
@@ -558,55 +568,118 @@ test('the lifetime pair: a SHARED add costs nothing in either instrument, a DIST
   const sceneId = await page.evaluate(
     () => (window as unknown as W).__basher_dag.getState().state.outputs.scene!.node,
   );
+  // 🔴 THE SECOND INSTRUMENT IS THE LIVE SCENE'S DISTINCT INSTANCES, NOT
+  // `renderer.info.memory.geometries` — replaced against measurement (#657), not weakened.
+  //
+  // The GL counter was chosen because it "counts allocated GL resources", and the reading
+  // this clause needs is a CLONE slipped in behind the registry. Measured, it cannot say
+  // that, because it moves for three reasons that have nothing to do with an add:
+  //
+  //   · it UNDER-reports — upload is lazy, so a geometry is registered only once the
+  //     renderer first draws it. At the baseline it reads 7 while 9 distinct geometries are
+  //     attached to this scene alone, and the renderer draws FIVE scenes holding 14.
+  //   · it catches up on its own — the same plain add reads 7 → 11 with the baseline taken
+  //     at once and 7 → 7 with a 1.5 s pre-wait. That delta is the page's startup upload
+  //     tail being charged to whatever happens next.
+  //   · it climbs on interaction — one select/deselect cycle costs 17 and never returns
+  //     them (#657), while this scene's geometry is unchanged throughout.
+  //
+  // A number that moves under inputs the test does not control cannot carry an assertion
+  // about the input it does. Distinct ATTACHED instances is the property itself: one cooked
+  // value with many holders is exactly what sharing means, and a clone is exactly one value
+  // becoming two — visible at every holder in the scene, where clause 2's uuid check sees
+  // only the pair it builds. What is no longer claimed, plainly: nothing here speaks about
+  // VRAM handed back. `disposed` below is the honest number for that, because it counts what
+  // was actually freed.
   const read = () =>
     page.evaluate(() => {
+      interface Obj {
+        children?: Obj[];
+        geometry?: { uuid: string };
+      }
       const w = window as unknown as W;
+      const scene = w.__basher_three.getState().scene as Obj | null;
+      const instances = new Set<string>();
+      const walk = (o: Obj): void => {
+        if (o.geometry) instances.add(o.geometry.uuid);
+        (o.children ?? []).forEach(walk);
+      };
+      if (scene) walk(scene);
       return {
         registry: w.__basher_geometry_registry.size(),
-        gl: w.__basher_three.getState().gl?.info.memory.geometries ?? -1,
+        distinct: instances.size,
+        sweeps: w.__basher_geometry_registry.sweeps(),
+        disposed: w.__basher_geometry_registry.disposed(),
       };
     });
 
-  // 🔴 SETTLE BY OBSERVING THE NUMBERS, NEVER BY WAITING A FIXED TIME — measured, not
-  // hypothetical. This read has to happen after the sweep has collected the plain box the
-  // assignment replaced, or the deltas below measure the COLLECTION instead of the adds.
-  // The first version of this test waited 2 s and passed locally; on CI's slower runner the
-  // baseline read `{registry: 2}` with that entry still resident, the shared add then grew
-  // the population, growth is what triggers a sweep, and the sweep collected it — so the
-  // delta came out −1 for an add that must cost 0. Both attempts failed with identical
-  // numbers, which is what said "timing assumption" rather than "flake".
+  // 🔴 THE BASELINE IS MADE CANONICAL BY AN EVENT, NEVER BY A DURATION — and the two earlier
+  // versions of this line are why the rule is written out here (#656).
   //
-  // Stability is two consecutive equal readings of BOTH numbers: the sweep is not the only
-  // thing in flight — three.js disposes GL geometries on its own schedule, so `gl` can still
-  // be falling while `registry` has stopped.
-  const readSettled = async (label: string) => {
-    let last = await read();
-    for (let i = 0; i < 24; i++) {
-      await page.waitForTimeout(500);
-      const now = await read();
-      if (now.registry === last.registry && now.gl === last.gl) return now;
-      last = now;
-    }
-    throw new Error(
-      `${label}: the lifetime counters never settled — last read ${JSON.stringify(last)}`,
+  // The deltas below are only the adds' own cost if nothing else is collected across them.
+  // What would be collected is the plain box's entry, which the material assignment replaced
+  // and which stays resident until the sweep next runs. So the baseline has to be read AFTER
+  // that collection, not merely after the numbers look calm.
+  //
+  // The first version waited a fixed 2 s. The second replaced that with "two equal readings
+  // 500 ms apart", which failed on the runner with output BYTE-IDENTICAL to the first — the
+  // tell that both had sampled before the same event rather than that the state was stable.
+  // Measured with a frame counter: the residue is collected about THIRTY FRAMES after the
+  // assignment (`registry` 2 → 1 across 29 frames), because the quiet
+  // trigger is denominated in frames while every wait written for it was denominated in
+  // milliseconds. A population merely counting out its thirty frames is indistinguishable
+  // from a settled one to any wall-clock observer, and a slower runner simply lands on the
+  // other side of it. Driving the same ORDERING locally — the add dispatched while the
+  // baseline is still pre-sweep — reproduces CI's numbers exactly.
+  //
+  // So this waits for the sweep COUNTER to advance instead. After a sweep, every resident
+  // non-exempt entry has just been checked against attachment, and `sweepIfDue`'s latch
+  // guarantees none is collected until the population next grows. That is canonical by
+  // construction, at any frame rate.
+  const readAfterSweep = async () => {
+    const from = (await read()).sweeps;
+    await page.waitForFunction(
+      (n) => (window as unknown as W).__basher_geometry_registry.sweeps() > n,
+      from,
+      { timeout: 30_000 },
     );
+    return read();
   };
 
   await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
   await waitForTwoMaterialMesh(page, 'n_box');
-  const before = await readSettled('baseline');
+  const before = await readAfterSweep();
+
+  // 🔴 THE CONFOUND IS ASSERTED AWAY, NOT HOPED AWAY. `disposed` is monotonic across every
+  // sweep, so "nothing was collected between these two reads" is a subtraction — and it
+  // stays true however many sweeps ran inside the span. Without this the two deltas below
+  // cannot tell an add that cost nothing from an add whose cost was cancelled by a
+  // collection of something else, which is the exact reading that made this clause report
+  // −1 for an add that must cost 0.
+  //
+  // Note the asymmetry, and it is the sweep's design rather than an oversight: a SHARED add
+  // does not grow the population, so `sweepIfDue`'s latch means no sweep is ever due after
+  // it and `disposed` cannot move. A DISTINCT add does grow it, so a sweep is due — and must
+  // find both entries attached and free nothing.
+  const nothingFreedSince = (from: { disposed: number }, to: { disposed: number }): number =>
+    to.disposed - from.disposed;
 
   await dispatch(page, secondBoxOps(sceneId, 2.5), 'shared add');
   await waitForTwoMaterialMesh(page, 'n_box2');
-  const shared = await readSettled('shared add');
+  const shared = await read();
+  expect(nothingFreedSince(before, shared), JSON.stringify({ before, shared })).toBe(0);
   expect(shared.registry, JSON.stringify({ before, shared })).toBe(before.registry);
-  expect(shared.gl, JSON.stringify({ before, shared })).toBe(before.gl);
+  // A second mesh now draws, and it must be drawing the SAME instance — a clone behind the
+  // registry is precisely this number rising while the one above stays flat.
+  expect(shared.distinct, JSON.stringify({ before, shared })).toBe(before.distinct);
 
   // The control: same operator, same range, DIFFERENT size — so the only difference between
-  // this add and the one above is whether the key already exists.
+  // this add and the one above is whether the key already exists. It proves the pair can
+  // still MOVE, which is what stops "both stayed flat" from passing a broken instrument.
   await dispatch(page, distinctBoxOps(sceneId, -2.5), 'distinct add');
   await waitForTwoMaterialMesh(page, 'n_box3');
-  const distinct = await readSettled('distinct add');
+  const distinct = await readAfterSweep();
+  expect(nothingFreedSince(shared, distinct), JSON.stringify({ shared, distinct })).toBe(0);
   expect(distinct.registry, JSON.stringify({ shared, distinct })).toBe(shared.registry + 1);
-  expect(distinct.gl, JSON.stringify({ shared, distinct })).toBe(shared.gl + 1);
+  expect(distinct.distinct, JSON.stringify({ shared, distinct })).toBe(shared.distinct + 1);
 });
