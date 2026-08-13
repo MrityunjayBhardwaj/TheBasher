@@ -144,13 +144,21 @@ import { composeBakedMaterial } from '../app/material/composeMaterial';
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
 import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
+// #638 (ns-1b step 5) — the ONE function that decides array-or-single, and the fixed-count
+// hydration a multi-slot mesh needs. No renderer decides for itself: each one supplies the
+// geometry, the assignment and the hydrated table, and draws whatever comes back.
+import { meshMaterialRefusal, resolveMeshMaterial } from '../app/resolveMeshMaterial';
+import { useSlotMaterials } from '../app/material/useSlotMaterials';
+import { materialAssignmentOf, materialSlotsOf } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
 import type {
   AmbientLightValue,
   AreaLightValue,
   BakedMeshValue,
+  BakedMaterialSpec,
   CharacterValue,
   DirectionalLightValue,
+  GeometryRef,
   GltfAssetValue,
   GroupValue,
   KeyframeChannelValue,
@@ -730,9 +738,36 @@ function MeshScaleProbe() {
     // the lossless-material assertion from inference to observation: a baked
     // textured glTF child's reloaded BakedMesh must report map.image.width>0 +
     // srgb colorspace on the base map + the resolved color. Read-only (V8 clean).
+    // 🔴 #638 (ns-1b step 9) — WIDENED FOR A MULTI-MATERIAL MESH, AND THE SCALAR FIELDS
+    // BELOW NOW DESCRIBE **SLOT 0**, NOT "THE MATERIAL".
+    //
+    // What this used to do to a mesh drawn with an ARRAY: `mesh.material as THREE.Material`
+    // is a cast, an array is truthy so the `?? null` guard never fired, and every field
+    // read off it came back `null` / `false`.
+    //
+    // 🔴 EXCEPT ONE, AND IT IS WORSE THAN THE NULLS — MEASURED BY RE-NARROWING THIS BACK.
+    // `std.map` on an array resolves to **`Array.prototype.map`**, a function, which is
+    // truthy. So the probe reported `hasMap: true` for a mesh with no texture at all and
+    // then THREW on `map.repeat.x`, inside itself, at the caller's `page.evaluate`. An
+    // element-type field name colliding with an array method turns "the union was cast
+    // away" from a quiet wrong answer into a loud wrong diagnosis: a spec author reads
+    // "this mesh has a broken texture" for a mesh whose only unusual property is having
+    // two materials.
+    //
+    // Either way this is the instrument the whole browser tier reads material through, so
+    // the lie propagates to every spec that uses it, in the one phase that puts arrays on
+    // the road. Widening the standing instrument is the fix rather than exempting it: a new
+    // instrument disagreeing with a standing one is a claim about the instrument, so the
+    // standing one is the one to make true.
+    //
+    // `materialCount` is what lets a caller tell the two apart — 1 for a single material,
+    // N for an array — instead of inferring it from a null set. It is stated here and in
+    // the field's own name so the widened probe does not become a second lying label.
     w.__basher_mesh_material = (
       nodeId: string,
     ): {
+      /** 1 for a single material; N for an array. Every other field describes SLOT 0. */
+      materialCount: number;
       color: string | null;
       hasMap: boolean;
       mapImageOk: boolean;
@@ -756,13 +791,19 @@ function MeshScaleProbe() {
         if (!target && (o as THREE.Mesh).isMesh) target = o as THREE.Mesh;
       });
       if (!target) return null;
-      const mat = ((target as THREE.Mesh).material as THREE.Material) ?? null;
+      // The array is resolved to SLOT 0 rather than refused, so every existing spec keeps
+      // the meaning it had; a mesh drawn with one material is `materialCount: 1` and the
+      // slot-0 reading IS the whole reading.
+      const raw = (target as THREE.Mesh).material as THREE.Material | THREE.Material[] | null;
+      const materialCount = Array.isArray(raw) ? raw.length : 1;
+      const mat = (Array.isArray(raw) ? (raw[0] ?? null) : raw) ?? null;
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
       const phys = mat as THREE.MeshPhysicalMaterial;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
+        materialCount,
         type: mat.type ?? null, // v0.6 #2 (W2): 'MeshPhysicalMaterial' for primitives now
         color: std.color ? `#${std.color.getHexString()}` : null,
         hasMap: map !== null,
@@ -1713,7 +1754,21 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
     case 'ModifiedMesh':
-      return <ModifiedMeshR value={value} override={override} />;
+      // #638 (ns-1b step 6) — the multi-slot fork, taken at every dispatcher that can
+      // reach this value shape, through the one shared test.
+      return needsMaterialSlots(value) ? (
+        <MultiMaterialMeshR
+          position={value.position}
+          rotation={value.rotation}
+          scale={value.scale}
+          geometry={value.geometry}
+          slots={materialSlotsOf(value)}
+          attributeKey={value.attributeKey ?? null}
+          override={override}
+        />
+      ) : (
+        <ModifiedMeshR value={value} override={override} />
+      );
     // #231 Inc 2 — a light nested in a Group. nodeId=null/constrained=false: the
     // nested light renders STATIC (it inherits the group's world transform from
     // GroupR's `<group>` for free), but does not yet carry its own direct-channel
@@ -2240,7 +2295,13 @@ function ModifiedMeshR({
     );
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
-  if (!geom) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
+  // #638 (ns-1b step 5) — this renderer does not decide array-or-single either, even though
+  // its answer can only be single today: `ModifiedMeshValue` carries one material and no
+  // attribute key, so the assignment has one slot and arm 1 fires. Routing it through the
+  // one resolver anyway is what keeps the two roads from drifting when the modifier road
+  // grows a table — the alternative is a second place that knows how to make this decision.
+  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
+  if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
   // reconciler bookkeeping onto the object itself), so two meshes given one instance
@@ -2255,8 +2316,8 @@ function ModifiedMeshR({
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      material={material}
-      geometry={geom}
+      material={draw.material}
+      geometry={draw.geometry}
     />
   );
 }
@@ -2368,7 +2429,43 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // modifier pair.
     const modified = recomposeModifiedObject(value);
     if (!modified) return null;
+    // #638 (ns-1b step 6) — the same 1↔N fork the MeshData arm takes, and it has to be
+    // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot
+    // table anywhere, and its output is a `ModifiedData`. Without this arm the op could
+    // author an assignment that nothing draws.
+    if (needsMaterialSlots(modified)) {
+      return (
+        <MultiMaterialMeshR
+          position={modified.position}
+          rotation={modified.rotation}
+          scale={modified.scale}
+          geometry={modified.geometry}
+          slots={materialSlotsOf(modified)}
+          attributeKey={modified.attributeKey ?? null}
+          override={override}
+        />
+      );
+    }
     return <ModifiedMeshR value={modified} override={override} />;
+  }
+  // #638 (ns-1b step 5) — the 1↔N fork, taken HERE because this dispatcher has no hooks and
+  // may branch before delegating. The test is the TABLE's shape, not the assignment's: it is
+  // O(1), it reads no attribute and walks no face index, so every single-material mesh in
+  // the app pays nothing for this arm existing. It is also the stable one — a component-type
+  // change on "how many slots does this object declare" is a rare authoring edit, while a
+  // change on "how many slots do the faces currently use" would remount the mesh mid-drag.
+  if (data?.kind === 'MeshData' && needsMaterialSlots(data)) {
+    return (
+      <MultiMaterialMeshR
+        position={value.position}
+        rotation={value.rotation}
+        scale={value.scale ?? [1, 1, 1]}
+        geometry={data.geometry}
+        slots={materialSlotsOf(data)}
+        attributeKey={data.attributeKey}
+        override={override}
+      />
+    );
   }
   return <ObjectMeshR value={value} data={data} override={override} />;
 }
@@ -2413,7 +2510,21 @@ function ObjectMeshR({
     mat ? (data?.materialKey ?? null) : null,
   );
   const geom = data ? getForAttach(data.geometry) : null;
-  if (!geom) return null; // an Empty (no data) or a non-sync-buildable handle
+  // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
+  // REAL assignment is handed over rather than a synthesised single-slot one. This
+  // component is only mounted for a one-entry table (`ObjectR` dispatches the rest to
+  // `MultiMaterialMeshR`), so arm 1 fires on the first O(1) test and the current
+  // population pays nothing. If that dispatch ever drifts, a two-slot value arriving here
+  // with one hydrated material leaves the coverage short and degrades loudly — where
+  // synthesising the assignment would have hidden it.
+  const draw = resolveMeshMaterial(
+    geom,
+    data
+      ? materialAssignmentOf(data.attributeKey, materialSlotsOf(data))
+      : { slots: [], indices: null },
+    [material],
+  );
+  if (!draw) return null; // an Empty (no data) or a non-sync-buildable handle
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
   // reconciler bookkeeping onto the object itself), so two meshes given one instance
@@ -2428,10 +2539,136 @@ function ObjectMeshR({
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
       scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      material={material}
-      geometry={geom}
+      material={draw.material}
+      geometry={draw.geometry}
     />
   );
+}
+
+// #638 (ns-1b step 5) — THE MULTI-SLOT ARM: an Object whose data declares more than one
+// material slot.
+//
+// ── WHY A SEPARATE COMPONENT AND NOT A BRANCH ─────────────────────────────────────────
+//
+// `usePrimitiveMaterial` is a hook with six unconditional texture loads and a retain/release
+// pair inside it, so "one call per slot" is a hook count that varies with the data — which
+// React forbids. A separate COMPONENT TYPE is what makes the two hook counts never mix:
+// React unmounts one subtree and mounts the other across a component-type change, so the
+// 1↔N boundary is a remount rather than a hook-order corruption.
+//
+// The remount is safe for the shared material, and that is measured rather than hoped:
+// `materialRegistry.release` defers eviction to a microtask and re-checks the count, so a
+// mesh unmounting and another mounting in the same commit passes through zero as a HANDOFF.
+//
+// ── WHAT THIS COMPONENT DOES NOT DECIDE ───────────────────────────────────────────────
+//
+// Not whether to draw with an array. It supplies the geometry, the assignment and the
+// hydrated table, and `resolveMeshMaterial` decides — because the array is only correct
+// against the group layout of the instance this mesh actually mounts, and that pairing has
+// exactly one owner.
+// It takes the PIECES rather than a value kind, and that is what lets one component serve
+// both roads: an `Object → MeshData` pair and an `Object → SetMaterialOp → ModifiedData`
+// pair carry the same three facts — a geometry handle, a slot table and the index into it —
+// under two different value shapes. A component per shape would be two places deciding how a
+// table becomes an array, which is the thing this whole step exists to have one of.
+function MultiMaterialMeshR({
+  position,
+  rotation,
+  scale,
+  geometry,
+  slots,
+  attributeKey,
+  override,
+}: {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  geometry: GeometryRef;
+  slots: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  attributeKey: string | null;
+  override?: MaterialValue;
+}) {
+  const shading = useViewportStore((s) => s.shading);
+  // A baked spec narrows to the fallback, the same narrowing `ModifiedMeshR` owns for the
+  // same union: this road renders the INLINE OpenPBR path, and a baked-sourced slot has no
+  // inline IR to compile. `base` is what distinguishes the two.
+  const inlineSlots = slots.map((slot) => (slot && 'base' in slot ? slot : null));
+  // Hooks first and unconditionally, exactly as the single-slot road does it: the geometry
+  // guard below is a plain branch with no hooks after it.
+  const { materials, capRefusal } = useSlotMaterials(
+    inlineSlots,
+    MODIFIED_FALLBACK_MATERIAL,
+    override,
+    shading,
+  );
+  const geom = getForAttach(geometry);
+  const assignment = materialAssignmentOf(attributeKey, slots);
+  const draw = resolveMeshMaterial(geom, assignment, materials);
+  const refusal = meshMaterialRefusal(geom, assignment, materials);
+  // A DEGRADATION IS REPORTED, NEVER SILENT. A mesh that should draw two materials and
+  // draws one is a lying label: the screen is plausible, nothing throws, and the wrong
+  // answer gets relied on. Keyed by the geometry key so a rebuilt or deleted object clears
+  // its own row, the same shape the modifier road's blank uses.
+  const geomKey = geometry.key;
+  useEffect(() => {
+    const store = useAssetErrorStore.getState();
+    const ref = `material-slots:${geomKey}`;
+    const why = capRefusal ?? refusal;
+    if (why === null) {
+      store.clear(ref);
+      return;
+    }
+    store.report(ref, why);
+    return () => useAssetErrorStore.getState().clear(ref);
+  }, [capRefusal, refusal, geomKey]);
+  if (!draw) return null;
+  // 🔴 THE MEASURED BLIND SPOT, RECORDED BY NAME RATHER THAN COVERED (#638, ns-1b step 7).
+  //
+  // These two lines are the last mile of this phase, and NOTHING BELOW THE BROWSER CAN SEE
+  // THEM. Measured, not supposed: with `material={draw.material}` replaced by
+  // `material={materials[0]}` — the resolver still called, its answer discarded here — the
+  // unit tier is **338 files / 4059 tests green, byte for byte**. Reverting the call itself
+  // reds exactly ONE test, and that one is a source census over call sites, not an assertion
+  // about anything drawn.
+  //
+  // The reason is structural rather than an oversight: this repo has no React component test
+  // tier at all (no `@react-three/test-renderer`, no `@testing-library/react`, zero render
+  // tests), so a mounted mesh's props are not observable at any tier below Playwright. The
+  // resolver returning the PAIR is what makes the geometry and the material impossible to
+  // source from two places — it cannot make the pair impossible to ignore.
+  //
+  // So the instrument for this seam is the browser spec, and it is not optional decoration
+  // on top of a covered derivation: it is the ONLY thing standing between "the array is
+  // computed correctly" and "the mesh draws with it".
+  //
+  // #530 / #533 — shared resources travel as PROPS, never through `<primitive>`, and a
+  // material ARRAY does not change that: it is a list of registry-owned instances, every
+  // one of them shared with whoever else holds the same key.
+  return (
+    <mesh
+      position={position as [number, number, number]}
+      rotation={degVec3ToRad(rotation as [number, number, number])}
+      scale={scale as [number, number, number]}
+      material={draw.material}
+      geometry={draw.geometry}
+    />
+  );
+}
+
+/**
+ * Does this value's slot table need the multi-slot road? (#638, ns-1b step 6)
+ *
+ * The ONE test, called from every dispatcher, because the fork is a component-type change:
+ * two dispatchers disagreeing about it would mount and unmount the same mesh on alternate
+ * renders. It reads the TABLE's shape only — O(1), no attribute read, no face walk — so the
+ * single-material population pays nothing for the fork existing, and it does not remount a
+ * mesh mid-drag when the faces' assignment changes without the table's shape changing.
+ */
+function needsMaterialSlots(value: {
+  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+}): boolean {
+  return materialSlotsOf(value).length > 1;
 }
 
 // Phase 151 — BakedMeshR, the renderer for the Apply-Transform product (#151).

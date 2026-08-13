@@ -708,7 +708,7 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     expect(split).not.toBeNull();
     // The geometry handle the renderer builds from is the canonical sphere handle —
     // Slice-4-durable: it compares against sphereGeometryRef, not a live fused resolve.
-    const canonical = sphereGeometryRef(SPHERE_MIG_RADIUS, SPHERE_MIG_WS, SPHERE_MIG_HS);
+    const canonical = sphereGeometryRef(SPHERE_MIG_RADIUS, SPHERE_MIG_WS, SPHERE_MIG_HS, null);
     expect(split!.geometry.descriptor).toEqual(canonical.descriptor);
     // The saved colour survives the migration untouched — the literal, so this can fail.
     expect((primaryMaterial(split!.materials) as InlineMaterialSpec).base.color).toBe(

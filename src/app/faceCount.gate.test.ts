@@ -15,18 +15,18 @@
 // The two non-derivable kinds are censused exactly rather than left implicit: an escape
 // hatch that is not counted is an escape hatch that widens.
 //
-// REF: src/app/modifierGeometry.ts (`faceCountOf`); src/app/geometryRegistry.ts (the build);
-//      issues #633, #395.
+// REF: src/app/faceCount.ts (`faceCountOf` — the leaf it now lives in);
+//      src/app/geometryRegistry.ts (the build); issues #633, #395, #638.
 
 import { describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
 import {
   arrayGeometryRef,
   boxGeometryRef,
-  faceCountOf,
   mirrorGeometryRef,
   sphereGeometryRef,
 } from './modifierGeometry';
+import { faceCountOf } from './faceCount';
 import { getForRead } from './geometryRegistry';
 
 /** Triangles in the BUILT geometry — the ground truth this gate compares against. */
@@ -37,18 +37,18 @@ function builtFaceCount(ref: GeometryRef): number {
   return index ? index.count / 3 : geom!.getAttribute('position').count / 3;
 }
 
-const box = boxGeometryRef([1, 1, 1]);
+const box = boxGeometryRef([1, 1, 1], null);
 
 const SYNC_BUILDABLE: readonly GeometryRef[] = [
   box,
-  boxGeometryRef([2, 3, 4]),
-  sphereGeometryRef(1, 32, 16),
-  sphereGeometryRef(1, 8, 4),
+  boxGeometryRef([2, 3, 4], null),
+  sphereGeometryRef(1, 32, 16, null),
+  sphereGeometryRef(1, 8, 4, null),
   // Clamp edges: three.js raises width to 3 and height to 2 without reporting it.
-  sphereGeometryRef(1, 1, 1),
-  sphereGeometryRef(0.5, 3, 2),
+  sphereGeometryRef(1, 1, 1, null),
+  sphereGeometryRef(0.5, 3, 2, null),
   arrayGeometryRef(box, 3, [2, 0, 0]),
-  arrayGeometryRef(sphereGeometryRef(1, 8, 4), 2, [0, 2, 0]),
+  arrayGeometryRef(sphereGeometryRef(1, 8, 4, null), 2, [0, 2, 0]),
   mirrorGeometryRef(box, 'x', 1),
   mirrorGeometryRef(arrayGeometryRef(box, 2, [2, 0, 0]), 'z', 0),
 ];

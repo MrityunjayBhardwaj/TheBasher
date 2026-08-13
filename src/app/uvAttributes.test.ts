@@ -40,7 +40,7 @@ function uvlessTriangle(): BufferGeometry {
 
 describe('#635 a built geometry yields a CORNER-domain UV attribute', () => {
   it('lifts the uv buffer off the tessellation, at the corner domain', () => {
-    const result = readMeshUVs(boxGeometryRef([1, 1, 1]));
+    const result = readMeshUVs(boxGeometryRef([1, 1, 1], null));
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
 
@@ -55,15 +55,15 @@ describe('#635 a built geometry yields a CORNER-domain UV attribute', () => {
   });
 
   it('still hands back the island projection the UV editor draws', () => {
-    const result = readMeshUVs(sphereGeometryRef(1, 8, 4));
+    const result = readMeshUVs(sphereGeometryRef(1, 8, 4, null));
     expect(result.status).toBe('ok');
     if (result.status !== 'ok') return;
     expect(result.islands.triangleCount).toBeGreaterThan(0);
   });
 
   it('keys two equal geometries onto one attribute entry', () => {
-    const a = readMeshUVs(boxGeometryRef([1, 1, 1]));
-    const b = readMeshUVs(boxGeometryRef([1, 1, 1]));
+    const a = readMeshUVs(boxGeometryRef([1, 1, 1], null));
+    const b = readMeshUVs(boxGeometryRef([1, 1, 1], null));
     expect(a.status === 'ok' && b.status === 'ok' && a.attributeKey === b.attributeKey).toBe(true);
   });
 });
@@ -101,7 +101,7 @@ describe('#635 absence says WHY', () => {
     // which would turn every read-side consumer into a suspense boundary. Every arm above
     // returned a value, not a promise; this states it as an assertion.
     for (const result of [
-      readMeshUVs(boxGeometryRef([2, 2, 2])),
+      readMeshUVs(boxGeometryRef([2, 2, 2], null)),
       readMeshUVs(bakedRef('never-primed')),
       readMeshUVs(gltfRef),
     ]) {

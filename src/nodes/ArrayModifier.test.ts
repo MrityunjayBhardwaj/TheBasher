@@ -24,7 +24,8 @@ import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import * as geometryRegistry from '../app/geometryRegistry';
-import { sphereGeometryRef } from '../app/modifierGeometry';
+import { sphereDescriptor, sphereGeometryRef } from '../app/modifierGeometry';
+import { mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial } from './materialSchema';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { buildAddModifierOps, resolveStackBase } from '../app/operatorStack';
@@ -45,7 +46,11 @@ const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 function sphereData(): MeshDataValue {
   return {
     kind: 'MeshData',
-    geometry: sphereGeometryRef(1, 8, 6),
+    // #638 — folded exactly as `SphereData.evaluate` folds it. An unfolded handle here
+    // would make the parity assertion below compare a folded read road against an
+    // unfolded fixture, so it would red for a reason that has nothing to do with the
+    // modifier — and, worse, would go green again the day the fold was removed.
+    geometry: sphereGeometryRef(1, 8, 6, mintMeshAttributes(sphereDescriptor(1, 8, 6), 'evaluate')),
     material: hydrateInlineMaterial(null, '#888888'),
   };
 }
@@ -243,5 +248,53 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
     const { state, id } = withMod(true);
     const resolved = resolveEvaluatedMesh(state, id, ctx);
     expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
+  });
+});
+
+// #638 (ns-1b step 9) — D6, PINNED AS A DECLARED BEHAVIOUR RATHER THAN LEFT TO BE
+// DISCOVERED. A modifier merges its source into one new geometry, and `mergeGeometries`
+// drops the source's groups — so an assignment cannot follow it. The decision is that the
+// modifier DROPS the per-face assignment and the result renders slot 0, not that it carries
+// a stale index onto a merged mesh: a 12-element index over a 24-face merge is refused by
+// the count gate, no layout is written, and under an array material that mesh would draw
+// NOTHING. A visible collapse to one material is the honest failure; an invisible mesh is
+// not. The limit lifts when the modifiers get a data half of their own, and until then it
+// is a test rather than a sentence.
+describe('#638 a modifier COLLAPSES a per-face assignment, visibly', () => {
+  it('an Array over a two-slot box emits no table and no attribute key', () => {
+    const src: MeshDataValue & { materialSlots?: unknown[] } = {
+      ...sphereData(),
+      materialSlots: [
+        hydrateInlineMaterial(null, '#ff0000'),
+        hydrateInlineMaterial(null, '#00ff00'),
+      ],
+    };
+    const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedDataValue & {
+      materialSlots?: unknown[];
+      attributeKey?: string | null;
+    };
+    // Slot 0 rides through as the single material; the table does not.
+    expect(out.material).toBe(src.material);
+    expect(out.materialSlots).toBeUndefined();
+    expect(out.attributeKey ?? null).toBeNull();
+  });
+
+  it('and the merged handle carries NO attribute component in its key or its sibling field', () => {
+    // The builder assertion, separate from the node's, because the key is what the cache
+    // reads: an `array` key that inherited its source's component would name a merged
+    // geometry by an index that describes only the source.
+    const out = evalMod(
+      { count: 3, offset: [2, 0, 0], muted: false },
+      sphereData(),
+    ) as ModifiedDataValue;
+    expect('attributeKey' in out.geometry).toBe(false);
+    expect(out.geometry.key.startsWith('array|')).toBe(true);
+    // 🔴 AND THE KNOWN COST, PINNED RATHER THAN HIDDEN (#649). An `array` key embeds its
+    // SOURCE's key verbatim, component and all, while the modifier drops the assignment —
+    // so two arrays over differently-assigned sources get distinct keys for byte-identical
+    // merged geometry. That cost was zero while every component was a function of face
+    // count alone; step 6 made assignments vary, so it is a real sharing loss now. This
+    // asserts the current behaviour so the fix shows up as a red rather than as nothing.
+    expect(out.geometry.key.includes('|a:')).toBe(true);
   });
 });

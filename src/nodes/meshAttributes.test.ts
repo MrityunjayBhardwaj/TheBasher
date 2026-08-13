@@ -8,17 +8,17 @@
 // REF: src/nodes/meshAttributes.ts; src/app/attributeStore.ts; issues #633, #634.
 
 import { describe, expect, it } from 'vitest';
-import { boxGeometryRef, sphereGeometryRef } from '../app/modifierGeometry';
+import { boxDescriptor, sphereDescriptor } from '../app/modifierGeometry';
 import { read } from '../app/attributeStore';
 import { MATERIAL_INDEX } from './attributes';
 import { mintMeshAttributes, uniformMaterialAttributes } from './meshAttributes';
 import { BoxDataNode, BoxDataParams } from './BoxData';
 import { SphereDataNode, SphereDataParams } from './SphereData';
-import type { GeometryRef, MeshDataValue } from './types';
+import type { GeometryDescriptor, MeshDataValue } from './types';
 
 describe('#634 a primitive derives a uniform face-domain material_index', () => {
   it('sizes the attribute to the geometry’s faces and puts every face on slot 0', () => {
-    const minted = uniformMaterialAttributes(boxGeometryRef([1, 1, 1]));
+    const minted = uniformMaterialAttributes(boxDescriptor([1, 1, 1]));
     expect(minted).not.toBeNull();
 
     const attribute = minted!.set[MATERIAL_INDEX];
@@ -30,10 +30,10 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
   });
 
   it('follows the geometry’s own tessellation rather than a fixed number', () => {
-    expect(uniformMaterialAttributes(sphereGeometryRef(1, 8, 4))!.set[MATERIAL_INDEX].count).toBe(
+    expect(uniformMaterialAttributes(sphereDescriptor(1, 8, 4))!.set[MATERIAL_INDEX].count).toBe(
       48,
     );
-    expect(uniformMaterialAttributes(sphereGeometryRef(1, 32, 16))!.set[MATERIAL_INDEX].count).toBe(
+    expect(uniformMaterialAttributes(sphereDescriptor(1, 32, 16))!.set[MATERIAL_INDEX].count).toBe(
       960,
     );
   });
@@ -41,28 +41,24 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
   it('derives NOTHING when the face count is not derivable from params', () => {
     // glTF and baked geometry keep their buffers elsewhere. Absence is the honest answer;
     // a fabricated count would be a length that agrees with nothing.
-    const gltf: GeometryRef = {
-      key: 'gltf|asset|child',
-      kind: 'gltf',
-      descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
-    };
+    const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'asset', childName: 'child' };
     expect(uniformMaterialAttributes(gltf)).toBeNull();
-    expect(mintMeshAttributes(gltf)).toBeNull();
+    expect(mintMeshAttributes(gltf, 'evaluate')).toBeNull();
   });
 
   it('puts the derived set in the store under the key it hands back', () => {
-    const key = mintMeshAttributes(boxGeometryRef([3, 3, 3]));
+    const key = mintMeshAttributes(boxDescriptor([3, 3, 3]), 'evaluate');
     expect(key).not.toBeNull();
     expect(read(key!)?.[MATERIAL_INDEX].count).toBe(12);
   });
 
   it('is content-keyed, so two equal geometries converge on one key', () => {
-    expect(mintMeshAttributes(boxGeometryRef([1, 1, 1]))).toBe(
-      mintMeshAttributes(boxGeometryRef([5, 5, 5])),
+    expect(mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')).toBe(
+      mintMeshAttributes(boxDescriptor([5, 5, 5]), 'evaluate'),
     );
     // …and a different face count does not.
-    expect(mintMeshAttributes(sphereGeometryRef(1, 8, 4))).not.toBe(
-      mintMeshAttributes(boxGeometryRef([1, 1, 1])),
+    expect(mintMeshAttributes(sphereDescriptor(1, 8, 4), 'evaluate')).not.toBe(
+      mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
     );
   });
 });

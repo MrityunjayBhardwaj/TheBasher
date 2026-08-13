@@ -80,7 +80,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     scene.add(mesh);
 
     for (let f = 0; f < DRAG_FRAMES; f++) {
-      const geom = getForAttach(boxGeometryRef(dragSize(f)));
+      const geom = getForAttach(boxGeometryRef(dragSize(f), null));
       mesh.geometry = geom!; // the same mounted mesh, a new instance each frame
     }
     expect(size()).toBe(DRAG_FRAMES); // the defect, reproduced first
@@ -90,7 +90,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     expect(result).not.toBeNull();
     expect(result!.disposed).toBe(DRAG_FRAMES - 1); // every frame but the one on screen
     expect(size()).toBe(1);
-    expect(mesh.geometry).toBe(getForRead(boxGeometryRef(dragSize(DRAG_FRAMES - 1))));
+    expect(mesh.geometry).toBe(getForRead(boxGeometryRef(dragSize(DRAG_FRAMES - 1), null)));
   });
 
   it('frees BOTH halves of a modifier drag — including the source no door can see', () => {
@@ -99,7 +99,9 @@ describe('#587 — the sweep frees what nothing draws', () => {
     scene.add(mesh);
 
     for (let f = 0; f < DRAG_FRAMES; f++) {
-      mesh.geometry = getForAttach(arrayGeometryRef(boxGeometryRef(dragSize(f)), 3, [1, 0, 0]))!;
+      mesh.geometry = getForAttach(
+        arrayGeometryRef(boxGeometryRef(dragSize(f), null), 3, [1, 0, 0]),
+      )!;
     }
     // 2N: the merged results plus the sources `build` recursed into (#586's measurement).
     expect(size()).toBe(2 * DRAG_FRAMES);
@@ -115,8 +117,8 @@ describe('#587 — the sweep frees what nothing draws', () => {
 
   // ── WHAT MUST SURVIVE ────────────────────────────────────────────────────────────────
   it('never disposes an attached instance, in a sweep that disposed plenty', () => {
-    const kept = getForAttach(boxGeometryRef([9, 9, 9]));
-    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    const kept = getForAttach(boxGeometryRef([9, 9, 9], null));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f), null));
     const scene = sceneDrawing(kept);
 
     const { result } = sweepNow(scene);
@@ -125,7 +127,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     expect(result!.attached).toBe(1); // …and this is what it spared
     expect(size()).toBe(1);
     // Identity, not just the count: the surviving entry IS the instance on the mesh.
-    expect(getForRead(boxGeometryRef([9, 9, 9]))).toBe(kept);
+    expect(getForRead(boxGeometryRef([9, 9, 9], null))).toBe(kept);
     // And it is still usable — a disposed BufferGeometry keeps its attributes, so the
     // count alone would not distinguish "spared" from "disposed but still in the Map".
     expect(kept!.getAttribute('position')).toBeTruthy();
@@ -138,7 +140,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
       descriptor: { kind: 'baked', hash: 'abc', vertexCount: 8 },
     };
     prime(ref, new BoxGeometry(1, 1, 1));
-    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     const { result } = sweepNow(new Scene()); // an EMPTY scene: nothing is attached at all
 
@@ -151,11 +153,11 @@ describe('#587 — the sweep frees what nothing draws', () => {
   });
 
   it('sees a mesh nested arbitrarily deep, not just the scene root’s children', () => {
-    const kept = getForAttach(boxGeometryRef([5, 5, 5]));
+    const kept = getForAttach(boxGeometryRef([5, 5, 5], null));
     // Enough unattached entries to make a sweep due — the cadence is a real precondition
     // here, not scaffolding, and a helper that forced past it would be testing a function
     // no caller can reach.
-    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     const scene = new Scene();
     let node: Group = new Group();
@@ -175,8 +177,8 @@ describe('#587 — the sweep frees what nothing draws', () => {
   });
 
   it('spares a geometry drawn by a Line, which is not a Mesh', () => {
-    const kept = getForAttach(boxGeometryRef([7, 7, 7]));
-    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    const kept = getForAttach(boxGeometryRef([7, 7, 7], null));
+    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     const scene = new Scene();
     scene.add(new Line(kept!, new LineBasicMaterial()));
@@ -194,14 +196,14 @@ describe('#587 — the sweep frees what nothing draws', () => {
   // ── THE CADENCE ──────────────────────────────────────────────────────────────────────
   it('does not walk the scene until the budget is exceeded', () => {
     const scene = new Scene();
-    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     // At the budget exactly: no sweep. `null` is not "swept and freed nothing" — the
     // distinction is the whole reason the return type is nullable.
     expect(sweepIfDue(scene)).toBeNull();
     expect(size()).toBe(SWEEP_GROWTH_BUDGET);
 
-    getForAttach(boxGeometryRef(dragSize(SWEEP_GROWTH_BUDGET))); // one past it
+    getForAttach(boxGeometryRef(dragSize(SWEEP_GROWTH_BUDGET), null)); // one past it
     const result = sweepIfDue(scene);
     expect(result).not.toBeNull();
     expect(result!.disposed).toBe(SWEEP_GROWTH_BUDGET + 1);
@@ -216,7 +218,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     let disposed = 0;
     // Four budgets' worth of drag, one write per frame, sweeping on the frame cadence.
     for (let f = 0; f < SWEEP_GROWTH_BUDGET * 4; f++) {
-      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f % DRAG_FRAMES)))!;
+      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f % DRAG_FRAMES), null))!;
       const r = sweepIfDue(scene);
       if (r) {
         sweeps++;
@@ -240,7 +242,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     scene.add(group);
     const BIG = SWEEP_GROWTH_BUDGET * 3;
     for (let f = 0; f < BIG; f++) {
-      const geom = getForAttach(boxGeometryRef([200 + f, 1, 1]));
+      const geom = getForAttach(boxGeometryRef([200 + f, 1, 1], null));
       group.add(new Mesh(geom!, new MeshBasicMaterial()));
     }
 
@@ -264,7 +266,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     // A large scene, all of it drawn: the sweep keeps every entry and marks high.
     const BIG = SWEEP_GROWTH_BUDGET * 3;
     for (let f = 0; f < BIG; f++) {
-      const geom = getForAttach(boxGeometryRef([100 + f, 1, 1]));
+      const geom = getForAttach(boxGeometryRef([100 + f, 1, 1], null));
       group.add(new Mesh(geom!, new MeshBasicMaterial()));
     }
     const first = sweepIfDue(scene);
@@ -279,7 +281,7 @@ describe('#587 — the sweep frees what nothing draws', () => {
     // notice the population fell, and lower the mark to match.
 
     // A new project, one budget's worth of churn.
-    for (let f = 0; f <= SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f <= SWEEP_GROWTH_BUDGET; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     // Without the shrink handling the mark still reads BIG, so this is 65 <= 192 + 64 and
     // no sweep happens at all — the new project runs unbounded until it grows past the old
@@ -315,7 +317,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
   /** A drag that ends BELOW the budget, so trigger 1 can never fire and only trigger 2 can. */
   function dragUnderBudget(scene: Scene, mesh: Mesh, frames: number) {
     for (let f = 0; f < frames; f++) {
-      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f)))!;
+      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f), null))!;
       sweepIfDue(scene); // the real per-frame cadence, not a forced sweep
     }
   }
@@ -337,7 +339,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
     expect(swept).toHaveLength(1);
     expect(swept[0].disposed).toBe(CHURN - 1); // every frame but the one on screen
     expect(size()).toBe(1);
-    expect(mesh.geometry).toBe(getForRead(boxGeometryRef(dragSize(CHURN - 1))));
+    expect(mesh.geometry).toBe(getForRead(boxGeometryRef(dragSize(CHURN - 1), null)));
   });
 
   it('waits the full quiet period — it does not fire on the first settled frame', () => {
@@ -378,7 +380,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
     const group = new Group();
     scene.add(group);
     for (let i = 0; i < 12; i++) {
-      const geom = getForAttach(boxGeometryRef([3 + i, 1, 1]));
+      const geom = getForAttach(boxGeometryRef([3 + i, 1, 1], null));
       group.add(new Mesh(geom!, new MeshBasicMaterial()));
     }
 
@@ -424,7 +426,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
 
     // A second, disjoint burst — new keys, so this is real growth and not a cache hit.
     for (let f = 0; f < 20; f++) {
-      mesh.geometry = getForAttach(boxGeometryRef([50 + f, 1, 1]))!;
+      mesh.geometry = getForAttach(boxGeometryRef([50 + f, 1, 1], null))!;
       sweepIfDue(scene);
     }
     expect(size()).toBe(21); // 20 new + the one still drawn from before
@@ -445,7 +447,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
     // on a schedule nobody chose.
     let swept = 0;
     for (let burst = 0; burst < 6; burst++) {
-      mesh.geometry = getForAttach(boxGeometryRef([80 + burst, 1, 1]))!;
+      mesh.geometry = getForAttach(boxGeometryRef([80 + burst, 1, 1], null))!;
       for (let f = 0; f < SWEEP_QUIET_FRAMES - 2; f++) if (sweepIfDue(scene)) swept++;
     }
     expect(swept).toBe(0);
@@ -461,7 +463,7 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
     // Anything that sweeps here is trigger 1, unchanged by this slice.
     let swept = 0;
     for (let f = 0; f < SWEEP_GROWTH_BUDGET * 2; f++) {
-      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f % DRAG_FRAMES)))!;
+      mesh.geometry = getForAttach(boxGeometryRef(dragSize(f % DRAG_FRAMES), null))!;
       if (sweepIfDue(scene)) swept++;
     }
     expect(swept).toBeGreaterThan(0);

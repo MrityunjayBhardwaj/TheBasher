@@ -50,7 +50,7 @@ describe('#586 — the growth law, per origin', () => {
 
   // ── SOURCE 1: the attach door ────────────────────────────────────────────────────────
   it('a 121-frame box drag through the attach door leaves exactly 121 entries, all attributed to attach', () => {
-    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     expect(size()).toBe(DRAG_FRAMES);
     expect(growthBySource()).toEqual({ ...ZERO, attach: DRAG_FRAMES });
@@ -60,10 +60,10 @@ describe('#586 — the growth law, per origin', () => {
   // of how many DISTINCT values were visited, never of how many times each was produced
   // ([[V163]]). Scrubbing back over the same frames must cost nothing at all.
   it('replaying the SAME frames adds no entry and no growth — the key is content-derived', () => {
-    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f), null));
     const afterFirstPass = size();
 
-    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForAttach(boxGeometryRef(dragSize(f), null));
 
     expect(size()).toBe(afterFirstPass);
     expect(growthBySource().attach).toBe(DRAG_FRAMES); // the replay contributed zero
@@ -75,15 +75,15 @@ describe('#586 — the growth law, per origin', () => {
   // A reader that runs during a drag therefore grows the registry with entries no attach
   // site ever asked for.
   it('a read caches on miss too, and is attributed to the read door', () => {
-    for (let f = 0; f < DRAG_FRAMES; f++) getForRead(boxGeometryRef(dragSize(f)));
+    for (let f = 0; f < DRAG_FRAMES; f++) getForRead(boxGeometryRef(dragSize(f), null));
 
     expect(size()).toBe(DRAG_FRAMES);
     expect(growthBySource()).toEqual({ ...ZERO, read: DRAG_FRAMES });
   });
 
   it('a read AFTER an attach of the same key is a hit — the two doors share one entry', () => {
-    getForAttach(boxGeometryRef([1, 1, 1]));
-    getForRead(boxGeometryRef([1, 1, 1]));
+    getForAttach(boxGeometryRef([1, 1, 1], null));
+    getForRead(boxGeometryRef([1, 1, 1], null));
 
     expect(size()).toBe(1);
     expect(growthBySource()).toEqual({ ...ZERO, attach: 1 });
@@ -92,7 +92,7 @@ describe('#586 — the growth law, per origin', () => {
   // ── SOURCE 3: build's own recursion — THE ONE A DOOR CANNOT SEE ──────────────────────
   it('an array drag leaves TWO entries per frame: the merged result, and a source nothing attaches', () => {
     for (let f = 0; f < DRAG_FRAMES; f++) {
-      getForAttach(arrayGeometryRef(boxGeometryRef(dragSize(f)), 3, [1, 0, 0]));
+      getForAttach(arrayGeometryRef(boxGeometryRef(dragSize(f), null), 3, [1, 0, 0]));
     }
 
     // 2N, not N. The attach door was called N times and is told about N.
@@ -106,7 +106,7 @@ describe('#586 — the growth law, per origin', () => {
 
   it('a mirror drag has the same shape — the recursion is a property of build, not of array', () => {
     for (let f = 0; f < DRAG_FRAMES; f++) {
-      getForAttach(mirrorGeometryRef(boxGeometryRef(dragSize(f)), 'x', 0));
+      getForAttach(mirrorGeometryRef(boxGeometryRef(dragSize(f), null), 'x', 0));
     }
 
     expect(size()).toBe(2 * DRAG_FRAMES);
@@ -120,7 +120,7 @@ describe('#586 — the growth law, per origin', () => {
   // The sharpest form of the same fact, stated as identity rather than as a count: the
   // source instance IS in the cache, reachable, and no consumer ever attached it.
   it('the source cached by build is the very instance a later read hits', () => {
-    const source = boxGeometryRef([2, 2, 2]);
+    const source = boxGeometryRef([2, 2, 2], null);
     getForAttach(arrayGeometryRef(source, 3, [1, 0, 0]));
     expect(growthBySource().internal).toBe(1);
 
@@ -152,16 +152,16 @@ describe('#586 — the growth law, per origin', () => {
   // the cache has no ceiling of any kind, which is precisely the thing P5b will change.
   it('nothing bounds the population — 500 distinct spheres leave 500 entries', () => {
     const N = 500;
-    for (let f = 0; f < N; f++) getForAttach(sphereGeometryRef(1 + f / N, 16, 8));
+    for (let f = 0; f < N; f++) getForAttach(sphereGeometryRef(1 + f / N, 16, 8, null));
 
     expect(size()).toBe(N);
     expect(growthBySource()).toEqual({ ...ZERO, attach: N });
   });
 
   it('the counters sum to the population while nothing evicts — and that identity is the check', () => {
-    getForAttach(boxGeometryRef([1, 1, 1]));
-    getForRead(boxGeometryRef([2, 2, 2]));
-    getForAttach(arrayGeometryRef(boxGeometryRef([3, 3, 3]), 2, [1, 0, 0]));
+    getForAttach(boxGeometryRef([1, 1, 1], null));
+    getForRead(boxGeometryRef([2, 2, 2], null));
+    getForAttach(arrayGeometryRef(boxGeometryRef([3, 3, 3], null), 2, [1, 0, 0]));
 
     const g = growthBySource();
     const inserted = g.attach + g.read + g.internal + g.prime;

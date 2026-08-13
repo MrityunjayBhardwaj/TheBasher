@@ -21,6 +21,7 @@ import {
   resetGrowth as resetGeometryGrowth,
   size as geometrySize,
 } from './geometryRegistry';
+import { sweepStats } from '../viewport/geometrySweep';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -732,11 +733,27 @@ export function boot(): Promise<void> {
       // a bounded residue and stated that bound in ENTRIES, which cannot say whether the
       // residue matters — an entry is a box or a merged array modifier over a dense mesh,
       // and those differ by orders of magnitude. Same read-only shape as `size`.
+      //
+      // `sweeps` / `disposed` (#656) answer the question the other four cannot: has the
+      // population been VERIFIED, or is it merely sitting still? The quiet trigger is
+      // denominated in FRAMES and every harness that has waited for it has been written in
+      // MILLISECONDS, so a cache waiting out its thirty frames reads as settled to any
+      // wall-clock observer — which is exactly how a lifetime assertion came to measure a
+      // collection and call it the cost of an add.
+      //
+      // Both are MONOTONIC, which is what makes them usable across a span rather than at an
+      // instant. `sweeps` turns "the cache has been verified" into an event to wait for.
+      // `disposed` totals what every sweep has freed, so "nothing was collected across my
+      // measurement" is a subtraction — and it stays true however many sweeps ran inside the
+      // span, which a last-result reading could not say. Read-only, like the rest of this
+      // surface: neither can make a sweep happen.
       w.__basher_geometry_registry = {
         size: () => geometrySize(),
         bytes: () => geometryResidentBytes(),
         growth: () => geometryGrowthBySource(),
         resetGrowth: () => resetGeometryGrowth(),
+        sweeps: () => sweepStats().sweeps,
+        disposed: () => sweepStats().disposed,
       };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept
