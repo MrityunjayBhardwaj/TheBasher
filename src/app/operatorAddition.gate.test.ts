@@ -126,17 +126,32 @@ const SURFACES: readonly Surface[] = [
     },
   },
   {
-    // The build switch. Probed through the registry's own read door with a handle whose
-    // descriptor carries the new kind — the loud site next door (`availabilityOf`, closed by
-    // a `never` over `GeometryDescriptor['kind']`) is a compile error, so the honest
-    // isolation of the silent one is an author who did the loud site and forgot this one.
+    // The build switch — the SECOND row this phase has closed, and like the bypass row the
+    // question changed when it closed (step 8b).
     //
-    // ⚠️ THIS PROBE USED TO SET A SECOND, DISAGREEING `ref.kind` and the note above used to
-    // count TWO loud sites. Both were true of the pre-D8 handle, which carried its kind
-    // twice; step 8 removed the outer field, so there is one loud site and the probe has
-    // nothing left to disagree with.
+    // Before: an if-chain whose terminal `return null` served two unrelated populations. For
+    // `gltf`/`baked` the null is the declared answer; for a kind nobody taught it about, the
+    // same null meant "no idea what this is". An author could add a union arm, satisfy the
+    // two dispatches that refuse to compile, and leave this one returning null forever — the
+    // renderer drawing nothing, and nothing anywhere saying why.
+    //
+    // Now it is a `switch` closed by a `never`, so a seventh descriptor kind is a compile
+    // error here as well, and the cast-built stand-in below is refused BY NAME. The row's
+    // subject was never "can it build an unknown kind" — it cannot, and should not — it was
+    // whether the author is TOLD. So that is what the probe asks.
+    //
+    // ⚠️ THIS PROBE USED TO SET A SECOND, DISAGREEING `ref.kind`, and the note here used to
+    // count TWO loud sites next door. Both were true of the pre-D8 handle, which carried its
+    // kind twice; step 8 removed the outer field, so the probe has nothing left to disagree
+    // with and the loud sites are counted honestly.
     name: 'buildFromDescriptor',
-    knows: (c) => readGeometry(c.geometry).status === 'ok',
+    // "Handles it, OR names its refusal." Both halves are needed and neither alone is the
+    // row: a surface that builds the candidate has nothing to tell the author, and one that
+    // cannot build it discharges the same duty by saying so with the kind in the message.
+    // Silence is the only failing answer, which is what this row was named for. The instrument
+    // control below takes the first half and the probe takes the second, so a regression to
+    // the if-chain reds this row through the probe while the control stays green.
+    knows: (c) => readGeometry(c.geometry).status === 'ok' || refusesByName(c),
   },
   {
     // The bypass — and this row is the first one the phase has CLOSED, so what it asks
@@ -163,6 +178,29 @@ const SURFACES: readonly Surface[] = [
     },
   },
 ];
+
+/**
+ * Does the registry NAME its refusal when handed a descriptor kind it has no arm for?
+ *
+ * Captured rather than asserted here, because this is a probe and not a test: it answers the
+ * silence question for the census above, and the census is what decides. A `null` would mean
+ * the probe could not read its own subject; there is no such case here, since the read door
+ * always returns and the spy always installs.
+ */
+function refusesByName(candidate: OperatorCandidate): boolean {
+  const said: string[] = [];
+  const spy = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+    said.push(args.map(String).join(' '));
+  });
+  try {
+    readGeometry(candidate.geometry);
+  } finally {
+    spy.mockRestore();
+  }
+  // BY NAME, not merely loudly: a message that does not carry the offending kind sends the
+  // author back to a bisect, which is most of what the silence cost in the first place.
+  return said.some((line) => line.includes(PROBE_DESCRIPTOR_KIND));
+}
 
 /** Which surfaces do not know about `candidate`, and which could not be read at all. */
 function surfacesBlindTo(candidate: OperatorCandidate): {
@@ -272,44 +310,57 @@ describe('ns-2 step 1 — the surfaces a new geometry operator is invisible to',
     // `chain.section`, and an operator that declares no section is not an operator of that
     // stack rather than a forgotten one.
     //
-    // 🔴 THE TWO THAT REMAIN ARE HONEST, NOT PENDING. The agent enum is a `z.enum` whose
+    // TWO -> ONE, at step 8b. `buildFromDescriptor` was an if-chain whose terminal `return
+    // null` could not tell a DECLARED null (`gltf`/`baked`, built elsewhere on purpose) from
+    // "no idea what this is". It is now a `switch` closed by a `never`, so the state this row
+    // described — an author adds a descriptor kind, this file says nothing, the renderer
+    // draws nothing — has no constructor: the union arm does not compile until it is taught.
+    //
+    // 🔴 THE ONE THAT REMAINS IS HONEST, NOT PENDING. The agent enum is a `z.enum` whose
     // literal tuple is what lets the mutator narrow per modifier type; deriving it yields
     // `string` and kills that narrowing, so it is KEPT and cross-checked exactly against the
     // derived set (with a minted liar) instead. A cross-check is LOUD IN CI, which is a real
     // improvement — and it is still not the same thing as unconstructible, so the row stays
     // here rather than being retired on the strength of a gate existing somewhere else.
-    expect(surfacesBlindTo(PROBE).blind).toEqual([
-      'ModifierType (agent enum)',
-      'buildFromDescriptor',
-    ]);
+    expect(surfacesBlindTo(PROBE).blind).toEqual(['ModifierType (agent enum)']);
   });
 
-  it('the build switch refuses SILENTLY — null, no throw, no warning', () => {
-    // This is what makes the row above a blindness rather than a bug report. The registry
-    // has a refusal vocabulary (`faceCountMismatch`, `groupsRefusal`) and warns through it;
-    // an unknown descriptor kind reaches none of it. The renderer gets no geometry and
-    // nothing anywhere says why.
-    //
-    // 🔴 THE SILENCE GOT WORSE AT STEP 8, AND THE ROW SAYS SO RATHER THAN RE-BASING QUIETLY.
-    // It used to answer `'none'` — "there genuinely is no geometry, waiting will not help" —
-    // a real member of the vocabulary. That answer was an ARTIFACT OF THE FIXTURE'S LIE:
-    // `availabilityOf` read the outer `kind: 'array'` and classified a descriptor it had
-    // never heard of as procedural. With one field there is nothing to lie with, so the
-    // untaught kind now falls off `availabilityOf`'s `never` and the status is `undefined` —
-    // outside the vocabulary entirely, which no consumer's switch handles. That is a truer
-    // report of the same blindness, not a new one, and it is step 8b's to close.
+  it('the build switch refuses BY NAME — the silence this row was named for is gone', () => {
+    // The registry has a refusal vocabulary — `faceCountMismatch` and `groupsRefusal`, both
+    // named, both spoken through the console. Until step 8b an unknown descriptor kind
+    // reached none of it: the renderer got no geometry and nothing anywhere said why. It now
+    // reaches that vocabulary, at a higher severity than its two neighbours on purpose —
+    // they report DATA disagreeing with data, which a scene can cause, while this reports a
+    // union that grew past its own switch, which only this file can cause.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const errors: string[] = [];
+    const error = vi.spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      errors.push(args.map(String).join(' '));
+    });
+    let result;
     try {
-      const result = readGeometry(PROBE.geometry);
-      // The claim of this row is the SILENCE; the status is what the silence returns.
-      expect(result.status).toBeUndefined();
-      expect(['ok', 'elsewhere', 'pending', 'none']).not.toContain(result.status);
-      expect(warn).not.toHaveBeenCalled();
-      expect(error).not.toHaveBeenCalled();
+      result = readGeometry(PROBE.geometry);
     } finally {
       warn.mockRestore();
       error.mockRestore();
     }
+
+    // BY NAME is the whole claim: a bare "something went wrong" would leave the author where
+    // the silence left them. The offending kind has to be IN the message.
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain(PROBE_DESCRIPTOR_KIND);
+    // It refuses without pretending to be a data disagreement — the two warn-level refusals
+    // are about the index and the face count, and neither applies to a kind nobody built.
+    expect(warn).not.toHaveBeenCalled();
+
+    // 🔴 WHAT STEP 8b DOES NOT CLOSE, RECORDED HERE RATHER THAN LEFT TO BE REDISCOVERED.
+    // The read still comes back with an out-of-vocabulary `undefined` status, and that is a
+    // DIFFERENT fall-through in the same file, one function upstream: `availabilityOf` and
+    // `readGeometry` each close on a `never` whose runtime arm returns the value it could not
+    // classify. Step 8 surfaced it (the status used to read `'none'`, but only because the
+    // pre-D8 fixture could lie about its kind). Closing it changes a read door's contract on
+    // the render path, which is not this step's to change — filed as #675, not absorbed.
+    expect(result.status).toBeUndefined();
+    expect(['ok', 'elsewhere', 'pending', 'none']).not.toContain(result.status);
   });
 });
