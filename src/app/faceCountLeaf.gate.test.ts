@@ -30,7 +30,6 @@ const sphere = (w = 8, h = 4): GeometryDescriptor => ({
 });
 const refOf = (descriptor: GeometryDescriptor): GeometryRef => ({
   key: 'k',
-  kind: descriptor.kind,
   descriptor,
 });
 const mirror = (): GeometryDescriptor => ({

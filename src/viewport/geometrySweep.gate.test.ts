@@ -136,7 +136,6 @@ describe('#587 — the sweep frees what nothing draws', () => {
   it('spares a primed baked entry that nothing is drawing — the exemption is load-bearing', () => {
     const ref: GeometryRef = {
       key: 'baked|abc-8',
-      kind: 'baked',
       descriptor: { kind: 'baked', hash: 'abc', vertexCount: 8 },
     };
     prime(ref, new BoxGeometry(1, 1, 1));
@@ -401,7 +400,6 @@ describe('#588 — the quiet period collects what the budget leaves behind', () 
   it('latches after sweeping a scene whose leftovers are all exempt', () => {
     const ref: GeometryRef = {
       key: 'baked|quiet-8',
-      kind: 'baked',
       descriptor: { kind: 'baked', hash: 'quiet', vertexCount: 8 },
     };
     prime(ref, new BoxGeometry(1, 1, 1));

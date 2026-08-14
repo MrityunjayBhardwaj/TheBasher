@@ -43,7 +43,9 @@
 //                 · the raw-read census over the operator category
 //   CONFIRMATION — green on the PRE-step tree and required to stay green:
 //                 · the five bypassed-output hashes, measured BEFORE the migration and
-//                   written here as literals
+//                   written here as literals (four were RE-BASED at step 8 when D8 changed
+//                   `GeometryRef`'s shape — see the note on `ROWS` for why that was owed
+//                   rather than optional)
 //                 · the second-road census over direct `evaluate` callers
 //
 // The five hashes are byte-identical across this step for one reason and it is worth
@@ -130,14 +132,33 @@ const WIRED_MATERIAL = {
 /**
  * The five operators that declare a passthrough bypass, each with a distinct source value
  * so that a row copy-pasted from its neighbour shows up as an equal hash rather than
- * hiding. `hash` was measured on the PRE-step tree, before a line of step 5 was written.
+ * hiding.
+ *
+ * `hash` was measured on the PRE-step tree, before a line of step 5 was written.
+ *
+ * 🔴 FOUR OF THE FIVE WERE RE-BASED AT STEP 8, AND THAT IS RECORDED RATHER THAN QUIETLY
+ * DONE. D8 removed `GeometryRef`'s hand-written `kind` field, so every value carrying a
+ * geometry handle hashes differently — `ArrayModifier`, `MaterialOverrideOp`,
+ * `MirrorModifier` and `SetMaterialOp` moved; `ColorCorrect` did not, because its value is
+ * an image and holds no handle. That split is the evidence the move was a shape change and
+ * not a behaviour change: a step-5 regression would not have spared the image row.
+ *
+ * ⚠️ RE-BASING WAS NOT OPTIONAL, AND THE REASON IS THE NEIGHBOUR. The row below these
+ * hashes asserts `not.toBe(row.hash)` for an UN-MUTED run — a control that exists so a
+ * fixture too thin to reach the operator's real work cannot pass the table vacuously. A
+ * stale literal reds the first assertion loudly and makes that control pass without
+ * examining anything, silently. The loud half is never the whole cost of a rotted literal.
+ *
+ * What is NOT re-based, because it never moved: every row's reference-identity assertion.
+ * That is the one carrying the step-5 claim — the spine input is handed back, not rebuilt —
+ * and it stayed green across the shape change, which is what a hash cannot show.
  */
 const ROWS = [
   {
     type: 'ArrayModifier',
     src: meshSrc('#111111'),
     params: { count: 3, offset: [2, 0, 0] },
-    hash: '48ef4bca',
+    hash: '1134277f',
   },
   {
     type: 'ColorCorrect',
@@ -149,20 +170,20 @@ const ROWS = [
     type: 'MaterialOverrideOp',
     src: meshSrc('#222222'),
     params: { color: '#00ff88', overridden: { color: true } },
-    hash: '836351bc',
+    hash: '6ab03ff1',
   },
   {
     type: 'MirrorModifier',
     src: meshSrc('#333333'),
     params: { axis: 'x', offset: 0 },
-    hash: 'd3e4947e',
+    hash: 'cfa3f1a7',
   },
   {
     type: 'SetMaterialOp',
     src: meshSrc('#444444'),
     params: { faceFrom: 0, faceTo: -1 },
     material: true,
-    hash: 'c026c06c',
+    hash: 'f35487f5',
   },
 ] as const;
 

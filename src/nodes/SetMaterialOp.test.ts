@@ -176,7 +176,6 @@ describe('#638 SetMaterialOp — a partial range APPENDS, which nothing could ex
       kind: 'MeshData',
       geometry: {
         key: 'gltf|asset-x|child-y',
-        kind: 'gltf',
         descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
       },
       material: SOURCE_MATERIAL,

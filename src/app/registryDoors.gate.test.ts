@@ -168,7 +168,11 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
 const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetGrowth'];
 
 /**
- * Bindings that classify a `GeometryRef['kind']` and never reach the cache at all (#630).
+ * Bindings that classify a `GeometryDescriptor['kind']` and never reach the cache (#630).
+ *
+ * (It read `GeometryRef['kind']` until ns-2 D8 removed that hand-written union; the two
+ * spellings were the point of the removal, and this comment was one of the places the dead
+ * one survived.)
  *
  * Kept SEPARATE from the diagnostics carve-out above rather than folded into it, because
  * the two are exempt for different reasons and merging them would make the list's rule

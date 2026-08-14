@@ -127,10 +127,14 @@ const SURFACES: readonly Surface[] = [
   },
   {
     // The build switch. Probed through the registry's own read door with a handle whose
-    // DESCRIPTOR carries the new kind while `ref.kind` stays a kind that already exists —
-    // because the two loud sites next door (`GeometryRef['kind']` and `availabilityOf`, both
-    // closed by a `never`) are compile errors, so the honest isolation of the silent one is
-    // an author who did the loud sites and forgot this one.
+    // descriptor carries the new kind — the loud site next door (`availabilityOf`, closed by
+    // a `never` over `GeometryDescriptor['kind']`) is a compile error, so the honest
+    // isolation of the silent one is an author who did the loud site and forgot this one.
+    //
+    // ⚠️ THIS PROBE USED TO SET A SECOND, DISAGREEING `ref.kind` and the note above used to
+    // count TWO loud sites. Both were true of the pre-D8 handle, which carried its kind
+    // twice; step 8 removed the outer field, so there is one loud site and the probe has
+    // nothing left to disagree with.
     name: 'buildFromDescriptor',
     knows: (c) => readGeometry(c.geometry).status === 'ok',
   },
@@ -184,9 +188,14 @@ const KNOWN_MEMBER: OperatorCandidate = {
 /** The minted operator. Its handle names a descriptor kind `buildFromDescriptor` has no arm for. */
 const PROBE: OperatorCandidate = {
   type: PROBE_TYPE,
+  // 🔴 THIS FIXTURE USED TO CARRY `kind: 'array'` BESIDE THE PROBE DESCRIPTOR, and that is
+  // worth recording because the fixture was itself an instance of the defect step 8 removed:
+  // a handle whose two kind fields DISAGREED, constructible only through the cast on the
+  // next line. It made `availabilityOf` answer for `array` while the build switch fell
+  // through on `ns2probe`. D8 deleted the outer field, so the disagreement has no
+  // constructor and the probe can no longer say two things about itself.
   geometry: {
     key: `${PROBE_DESCRIPTOR_KIND}|probe`,
-    kind: 'array',
     descriptor: { kind: PROBE_DESCRIPTOR_KIND },
   } as unknown as GeometryRef,
 };
@@ -280,11 +289,22 @@ describe('ns-2 step 1 — the surfaces a new geometry operator is invisible to',
     // has a refusal vocabulary (`faceCountMismatch`, `groupsRefusal`) and warns through it;
     // an unknown descriptor kind reaches none of it. The renderer gets no geometry and
     // nothing anywhere says why.
+    //
+    // 🔴 THE SILENCE GOT WORSE AT STEP 8, AND THE ROW SAYS SO RATHER THAN RE-BASING QUIETLY.
+    // It used to answer `'none'` — "there genuinely is no geometry, waiting will not help" —
+    // a real member of the vocabulary. That answer was an ARTIFACT OF THE FIXTURE'S LIE:
+    // `availabilityOf` read the outer `kind: 'array'` and classified a descriptor it had
+    // never heard of as procedural. With one field there is nothing to lie with, so the
+    // untaught kind now falls off `availabilityOf`'s `never` and the status is `undefined` —
+    // outside the vocabulary entirely, which no consumer's switch handles. That is a truer
+    // report of the same blindness, not a new one, and it is step 8b's to close.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const result = readGeometry(PROBE.geometry);
-      expect(result.status).toBe('none');
+      // The claim of this row is the SILENCE; the status is what the silence returns.
+      expect(result.status).toBeUndefined();
+      expect(['ok', 'elsewhere', 'pending', 'none']).not.toContain(result.status);
       expect(warn).not.toHaveBeenCalled();
       expect(error).not.toHaveBeenCalled();
     } finally {

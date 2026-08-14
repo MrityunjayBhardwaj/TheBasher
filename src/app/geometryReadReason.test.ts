@@ -28,17 +28,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { availabilityOf, clear, getForRead, prime, readGeometry } from './geometryRegistry';
 import { arrayGeometryRef, boxGeometryRef } from './modifierGeometry';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { BoxGeometry } from 'three';
 
 const gltfRef: GeometryRef = {
-  kind: 'gltf',
   key: 'gltf|asset-1|Mesh0',
   descriptor: { kind: 'gltf', assetRef: 'asset-1', childName: 'Mesh0' },
 };
 
 const bakedRef: GeometryRef = {
-  kind: 'baked',
   key: 'baked|hash-1',
   descriptor: { kind: 'baked', hash: 'hash-1', vertexCount: 24 },
 };
@@ -110,7 +108,7 @@ describe('#630 — a registry read says WHY it is empty', () => {
     expect(
       new Set(
         ['box', 'sphere', 'array', 'mirror', 'baked', 'gltf'].map((k) =>
-          availabilityOf(k as GeometryRef['kind']),
+          availabilityOf(k as GeometryDescriptor['kind']),
         ),
       ).size,
     ).toBe(3);

@@ -75,7 +75,6 @@ describe('#633 faceCountOf agrees with the built geometry', () => {
   it('propagates non-derivability through a modifier rather than guessing', () => {
     const gltf: GeometryRef = {
       key: 'gltf|asset|child',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
     };
     expect(faceCountOf(arrayGeometryRef(gltf, 3, [1, 0, 0]).descriptor)).toBeNull();

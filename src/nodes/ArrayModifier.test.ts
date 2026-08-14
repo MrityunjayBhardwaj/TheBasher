@@ -73,7 +73,7 @@ describe('ArrayModifier.evaluate', () => {
     const src = sphereData();
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedDataValue;
     expect(out.kind).toBe('ModifiedData');
-    expect(out.geometry.kind).toBe('array');
+    expect(out.geometry.descriptor.kind).toBe('array');
     expect(out.geometry.descriptor).toMatchObject({ kind: 'array', count: 3, offset: [2, 0, 0] });
     // INHERITED — the material rides through from the source data (#358).
     expect(out.material).toBe(src.material);
@@ -146,7 +146,6 @@ describe('ArrayModifier.evaluate', () => {
       kind: 'BakedData',
       geometry: {
         key: 'baked|deadbeef-8',
-        kind: 'baked',
         descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 8 },
       },
       material: {
@@ -168,7 +167,7 @@ describe('ArrayModifier.evaluate', () => {
     };
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, baked) as ModifiedDataValue;
     expect(out.kind).toBe('ModifiedData'); // real modified data (not a passthrough)
-    expect(out.geometry.kind).toBe('array');
+    expect(out.geometry.descriptor.kind).toBe('array');
     // #358 — the baked material rides through the modifier verbatim (it was silently
     // dropped to null before: a ModifiedMesh could not hold a BakedMaterialSpec).
     expect(out.material).toBe(baked.material);
@@ -225,7 +224,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
 
     const resolved = resolveEvaluatedMesh(state, id, ctx);
     expect(resolved).not.toBeNull();
-    expect(resolved!.geometry.kind).toBe('array');
+    expect(resolved!.geometry.descriptor.kind).toBe('array');
     // The modified geometry is sync-buildable → real UV islands (not null), so the
     // UV-editor backdrop works for a modifier (#209 follow-up).
     expect(resolved!.uvRead.status).toBe('ok');
@@ -258,7 +257,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
   it('a muted modifier resolves to the source mesh on the read side too', () => {
     const { state, id } = withMod(true);
     const resolved = resolveEvaluatedMesh(state, id, ctx);
-    expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
+    expect(resolved!.geometry.descriptor.kind).toBe('sphere'); // passthrough — the source's own handle
   });
 });
 

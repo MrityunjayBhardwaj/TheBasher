@@ -86,7 +86,7 @@ function withAttributeComponent(
 ): GeometryRef {
   if (attributeKey === undefined) {
     throw new Error(
-      `geometryRef: '${base.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
+      `geometryRef: '${base.descriptor.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
     );
   }
   // Absent, never present-and-undefined: the two are different objects to `Object.keys`
@@ -113,10 +113,9 @@ export function refWithAttributeKey(ref: GeometryRef, attributeKey: string | nul
   const carried = ref.attributeKey;
   const base =
     carried === undefined
-      ? { key: ref.key, kind: ref.kind, descriptor: ref.descriptor }
+      ? { key: ref.key, descriptor: ref.descriptor }
       : {
           key: ref.key.slice(0, ref.key.length - `|a:${carried}`.length),
-          kind: ref.kind,
           descriptor: ref.descriptor,
         };
   return withAttributeComponent(base, attributeKey);
@@ -141,7 +140,6 @@ export function boxGeometryRef(size: Vec3, attributeKey: string | null): Geometr
   return withAttributeComponent(
     {
       key: `box|${size[0]},${size[1]},${size[2]}`,
-      kind: 'box',
       descriptor: boxDescriptor(size),
     },
     attributeKey,
@@ -166,7 +164,6 @@ export function sphereGeometryRef(
   return withAttributeComponent(
     {
       key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
-      kind: 'sphere',
       descriptor: sphereDescriptor(radius, widthSegments, heightSegments),
     },
     attributeKey,
@@ -339,7 +336,6 @@ export function arrayGeometryRef(source: GeometryRef, count: number, offset: Vec
   const n = Math.max(1, Math.floor(count));
   return {
     key: `array|${source.key}|${n}|${offset[0]},${offset[1]},${offset[2]}`,
-    kind: 'array',
     descriptor: { kind: 'array', source, count: n, offset },
   };
 }
@@ -365,7 +361,6 @@ export function mirrorGeometryRef(
 ): GeometryRef {
   return {
     key: `mirror|${source.key}|${axis}|${offset}`,
-    kind: 'mirror',
     descriptor: { kind: 'mirror', source, axis, offset },
   };
 }

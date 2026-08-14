@@ -28,7 +28,6 @@ import type { GeometryRef } from '../nodes/types';
 function boxRef(size: [number, number, number]): GeometryRef {
   return {
     key: `box|${size.join(',')}`,
-    kind: 'box',
     descriptor: { kind: 'box', size },
   };
 }

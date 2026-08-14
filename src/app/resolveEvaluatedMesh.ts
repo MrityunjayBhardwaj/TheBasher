@@ -167,7 +167,6 @@ export function resolveEvaluatedMesh(
     }
     const geometry: GeometryRef = {
       key: `gltf|${p.assetRef}|${p.childName}`,
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: p.assetRef, childName: p.childName },
     };
 

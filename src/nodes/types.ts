@@ -539,10 +539,28 @@ export type MirrorAxis = 'x' | 'y' | 'z';
  * materialises as `undefined` re-keys every mesh value in every project with no
  * error. The builders in `src/app/modifierGeometry.ts` are the only things that
  * may write it, and they refuse an unanswered `undefined` by name.
+ *
+ * ── ns-2 (D8) — WHY THERE IS NO `kind` FIELD HERE ────────────────────────────
+ *
+ * There used to be one, hand-written beside `descriptor` and spelled as its own
+ * six-member union, and every construction site wrote the same word twice. What a
+ * handle IS, is what its descriptor says it is; a second field carrying that answer
+ * can only ever agree or be wrong, and nothing asserted it agreed. Read the kind off
+ * `ref.descriptor.kind` — one field, one answer, and a disagreement between them now
+ * has no constructor.
+ *
+ * 🔴 The duplicate's cost was not hypothetical, and it is recorded here because it was
+ * measured rather than argued. `availabilityOf` (`src/app/geometryRegistry.ts`) closes
+ * an exhaustive `switch` on a `never` and said so in capitals — *"adding a kind without
+ * declaring how it becomes available is a COMPILE ERROR"*. The `never` was honest, but
+ * it closed on the HAND-WRITTEN union, while a new geometry kind arrives in
+ * `GeometryDescriptor`, which is where the kind's data has to live. Measured by adding a
+ * seventh descriptor arm: `faceCountOf` and `rebuildGeometryRef` both failed to compile,
+ * and `availabilityOf` — the one whose comment promised it — compiled clean. **A `never`
+ * closed on a second spelling of its subject guards the spelling, not the subject.**
  */
 export interface GeometryRef {
   readonly key: string;
-  readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array' | 'mirror';
   readonly descriptor: GeometryDescriptor;
   /**
    * The content key of this geometry's own attribute set, folded into {@link key}.

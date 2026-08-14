@@ -64,7 +64,7 @@ describe('MirrorModifier.evaluate', () => {
     const src = sphereData();
     const out = evalMod({ axis: 'x', muted: false }, src) as ModifiedDataValue;
     expect(out.kind).toBe('ModifiedData');
-    expect(out.geometry.kind).toBe('mirror');
+    expect(out.geometry.descriptor.kind).toBe('mirror');
     expect(out.geometry.descriptor).toMatchObject({ kind: 'mirror', axis: 'x' });
     // INHERITED — the material rides through from the source data (#358).
     expect(out.material).toBe(src.material);
@@ -151,7 +151,7 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
 
     const resolved = resolveEvaluatedMesh(state, id, ctx);
     expect(resolved).not.toBeNull();
-    expect(resolved!.geometry.kind).toBe('mirror');
+    expect(resolved!.geometry.descriptor.kind).toBe('mirror');
     // Sync-buildable modified geometry → real UV islands (not null) for the UV editor.
     expect(resolved!.uvRead.status).toBe('ok');
     expect(
@@ -166,6 +166,6 @@ describe('MirrorModifier — read-side parity (boundary-pair)', () => {
   it('a muted modifier resolves to the source mesh on the read side too', () => {
     const { state, id } = withMod('x', true);
     const resolved = resolveEvaluatedMesh(state, id, ctx);
-    expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
+    expect(resolved!.geometry.descriptor.kind).toBe('sphere'); // passthrough — the source's own handle
   });
 });

@@ -25,14 +25,12 @@ afterEach(() => clear());
 
 const sphereRef = (key: string, w: number, h: number): GeometryRef => ({
   key,
-  kind: 'sphere',
   descriptor: { kind: 'sphere', radius: 1, widthSegments: w, heightSegments: h },
 });
 
 /** A ref that only ever reaches the cache through `prime`, so the test controls the bytes. */
 const primedRef = (key: string): GeometryRef => ({
   key,
-  kind: 'baked',
   descriptor: { kind: 'baked', hash: key, vertexCount: 0 },
 });
 

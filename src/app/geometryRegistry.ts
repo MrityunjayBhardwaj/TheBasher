@@ -131,10 +131,10 @@ const primed = new Set<string>();
  * outside this module reaches the cache through one of them.
  */
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
-  if (ref.kind === 'gltf') return null;
+  if (ref.descriptor.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
-  if (ref.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
+  if (ref.descriptor.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
   const built = build(ref);
   if (built) {
     cache.set(ref.key, built);
@@ -227,13 +227,13 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 //                         IS NONE, and waiting will not help.
 //
 // A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
-// `ref.kind` — which means the rule is restated at every call site, and every restatement is
-// a place it can be got wrong or quietly fall out of date when a kind is added. That is not
-// hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy of this exact
-// switch, and its own header records the defect biting before.
+// `ref.descriptor.kind` — which means the rule is restated at every call site, and every
+// restatement is a place it can be got wrong or quietly fall out of date when a kind is
+// added. That is not hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy
+// of this exact switch, and its own header records the defect biting before.
 //
 // The registry is the single producer of the ambiguity — it is the code that branches on
-// `ref.kind` and decides to return nothing — so it is the correct owner of the reason.
+// `ref.descriptor.kind` and decides to return nothing — so it is the correct owner of the reason.
 // Consumers read it; nobody re-derives it.
 //
 // `getForRead` above stays as the narrowing view for callers that genuinely only need
@@ -257,12 +257,22 @@ export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
 /**
  * The availability class of a geometry kind.
  *
- * Exhaustive, closed by a `never`. Adding a kind to `GeometryRef` without declaring how it
- * becomes available is a COMPILE ERROR rather than a silent default — deliberately, because
- * a default would pick one of the three meanings for the new kind and be right by accident
- * at best.
+ * Exhaustive, closed by a `never`. Adding an arm to `GeometryDescriptor` without declaring
+ * how it becomes available is a COMPILE ERROR rather than a silent default — deliberately,
+ * because a default would pick one of the three meanings for the new kind and be right by
+ * accident at best.
+ *
+ * 🔴 THAT SENTENCE USED TO NAME `GeometryRef`, AND IT WAS FALSE (ns-2 D8). The `never` was
+ * honest, but the parameter was typed `GeometryRef['kind']` — a hand-written six-member
+ * union sitting beside the descriptor and spelled independently of it. A new geometry kind
+ * does not arrive there; it arrives in `GeometryDescriptor`, which is where the kind's data
+ * has to live. Measured by adding a seventh descriptor arm before the field was removed:
+ * `faceCountOf` and `rebuildGeometryRef` both failed to compile and this function compiled
+ * clean, while its comment promised the opposite in capitals. The parameter is now
+ * `GeometryDescriptor['kind']`, so the guarantee holds for the first time — the fix was not
+ * to the `never`, which was always correct, but to the union it closed on.
  */
-export function availabilityOf(kind: GeometryRef['kind']): GeometryAvailability {
+export function availabilityOf(kind: GeometryDescriptor['kind']): GeometryAvailability {
   switch (kind) {
     case 'box':
     case 'sphere':
@@ -302,7 +312,7 @@ export type GeometryReadResult =
  * second way to reach the resource, it is the same read with its absence typed.
  */
 export function readGeometry(ref: GeometryRef): GeometryReadResult {
-  const availability = availabilityOf(ref.kind);
+  const availability = availabilityOf(ref.descriptor.kind);
   const geometry = get(ref, 'read');
   if (geometry) return { status: 'ok', geometry };
   switch (availability) {

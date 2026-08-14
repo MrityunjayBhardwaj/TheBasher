@@ -34,7 +34,7 @@ describe('resolveEvaluatedMesh', () => {
     const state = buildDefaultDagState();
     const mesh = resolveEvaluatedMesh(state, BOX_ID, ctxAt(0));
     expect(mesh).not.toBeNull();
-    expect(mesh!.geometry.kind).toBe('box');
+    expect(mesh!.geometry.descriptor.kind).toBe('box');
     expect(mesh!.geometry.descriptor).toEqual({ kind: 'box', size: [1, 1, 1] });
     // pre-migration node has no scale param → identity default (C-1 guard).
     expect(mesh!.transform.scale).toEqual([1, 1, 1]);
@@ -81,7 +81,7 @@ describe('resolveEvaluatedMesh', () => {
     });
     const mesh = resolveEvaluatedMesh(state, objectId, ctxAt(0));
     expect(mesh).not.toBeNull();
-    expect(mesh!.geometry.kind).toBe('sphere');
+    expect(mesh!.geometry.descriptor.kind).toBe('sphere');
     expect(mesh!.geometry.descriptor).toEqual({
       kind: 'sphere',
       radius: 0.5,
@@ -115,7 +115,7 @@ describe('resolveEvaluatedMesh', () => {
 
     const mesh = resolveEvaluatedMesh(state, GLTF_CHILD_ID, ctxAt(0));
     expect(mesh).not.toBeNull();
-    expect(mesh!.geometry.kind).toBe('gltf');
+    expect(mesh!.geometry.descriptor.kind).toBe('gltf');
     expect(mesh!.geometry.descriptor).toEqual({
       kind: 'gltf',
       assetRef: 'asset-1',
@@ -153,7 +153,6 @@ describe('resolveEvaluatedMesh', () => {
     __reseedAllNodesForTests();
     const geometry = {
       key: 'baked|pair-8',
-      kind: 'baked' as const,
       descriptor: { kind: 'baked' as const, hash: 'pairhash', vertexCount: 8 },
     };
     const material = { ...(rowDataParams('baked').material as Record<string, unknown>) };
@@ -172,7 +171,7 @@ describe('resolveEvaluatedMesh', () => {
     // The handle is returned VERBATIM — no parallel walk, no re-derivation. The bytes are
     // authoritative in OPFS, keyed by content hash.
     expect(pair!.geometry).toEqual(geometry);
-    expect(pair!.geometry.kind).toBe('baked');
+    expect(pair!.geometry.descriptor.kind).toBe('baked');
     // The captured spec rides through verbatim — the ONE rich material face (M6).
     expect(primaryMaterial(pair!.materials)).toEqual(material);
     // `uvs` is null for a baked ref — the bytes are not sync-buildable, so a non-null here
