@@ -74,7 +74,7 @@ import { cameraLensParams, isCameraNode } from './cameraNode';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
-import { chainSocketOf } from './operatorChain';
+import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
 import { useTransientEditStore } from './stores/transientEditStore';
 
 type Vec3 = [number, number, number];
@@ -204,15 +204,22 @@ export function childEdges(
       // (an argument, not a spine). At that point a by-name read still registers,
       // still connects and still evaluates — it just descends the wrong edge, which
       // here means a child that animates in the panel and freezes on screen.
-      const spine = chainSocketOf(node);
-      const childId = spine ? refNode(node.inputs[spine]) : null;
+      // #621 — the socket comes from `sceneHierarchy`, the one place that says which
+      // sockets make a scene-graph parent. It resolves to the declared `chainInput`
+      // for these two, so this is the same read #610 introduced; it is now shared with
+      // the two scan sites below instead of being restated by each of them.
+      const socket = hierarchySocketForKind(v.kind, node);
+      const childId = socket ? refNode(node.inputs[socket]) : null;
       if (!childId || !v.child) return [];
       return [{ id: childId, value: v.child }];
     }
     case 'Group': {
-      // Group aggregates via the `children` list socket (Group.ts:19); index i in
-      // the value's `children` corresponds to index i in `inputs.children`.
-      const refs = node.inputs.children;
+      // Group aggregates via its list socket (Group.ts:19); index i in the value's
+      // `children` corresponds to index i in the binding. Read by INDEX rather than
+      // through `hierarchyChildIds`, which compacts: an unbound entry must consume its
+      // slot here or every later child would pair with the wrong value.
+      const socket = hierarchySocketForKind(v.kind, node);
+      const refs = socket ? node.inputs[socket] : undefined;
       const list = Array.isArray(refs) ? refs : refs ? [refs] : [];
       const kids = v.children ?? [];
       const out: Array<{ id: string; value: SceneChild }> = [];
@@ -468,29 +475,22 @@ export function resolveParentWorldMatrix(
   // the walk returns null → byte-identical to the old flat short-circuit. A
   // top-level light is likewise flat (scene.lights) and the walk returns null.
   //
-  // PERF — a node referenced by NO HIERARCHY socket (`children` for Group/Scene,
-  // `target` for Transform/MaterialOverride — the exact sockets `childEdges`
-  // descends) cannot be a scene-graph descendant, so it has no parent world: return
-  // null WITHOUT the render-root evaluate. This restores the old flat-camera/light
-  // fast path generally (a top-level camera/light is wired to scene.camera/.lights,
-  // NOT children/target), while a NESTED node (Group child OR Transform target)
-  // still walks. Cheap O(N) scan, no evaluate — matters for the uncached per-frame
-  // render-export pose resolve. MUST mirror childEdges' socket set or a genuinely
-  // nested node would be wrongly short-circuited to null (a Transform-nested mesh
-  // is referenced by `target`, not `children`).
-  let nested = false;
-  for (const n of Object.values(state.nodes)) {
-    for (const socket of ['children', 'target'] as const) {
-      const b = n.inputs[socket];
-      const refs = Array.isArray(b) ? b : b ? [b] : [];
-      if (refs.some((r) => (r as NodeRef | undefined)?.node === selectedId)) {
-        nested = true;
-        break;
-      }
-    }
-    if (nested) break;
-  }
-  if (!nested) return null;
+  // PERF — a node held as a child by NO scene-graph parent cannot be a scene-graph
+  // descendant, so it has no parent world: return null WITHOUT the render-root
+  // evaluate. This restores the old flat-camera/light fast path generally (a top-level
+  // camera/light is wired to scene.camera/.lights, not held as a child), while a
+  // NESTED node (Group child OR Transform target) still walks. Cheap O(N) scan, no
+  // evaluate — matters for the uncached per-frame render-export pose resolve.
+  //
+  // #621 — the socket set is no longer restated here. It used to be a literal
+  // `['children','target']` scanned across EVERY node regardless of type, with a
+  // comment saying it must mirror childEdges; `hasHierarchyParent` is that mirror,
+  // mechanically. The scan is now type-aware, which NARROWS it: a mesh that merely
+  // feeds an ArrayModifier is no longer counted as nested. That reaches the same
+  // answer faster rather than a different answer — childEdges does not descend a
+  // modifier, so the walk this fast path was skipping could never have found it and
+  // returned null at the end anyway.
+  if (!hasHierarchyParent(Object.values(state.nodes), selectedId)) return null;
 
   const target = state.outputs.render;
   if (!target) return null;

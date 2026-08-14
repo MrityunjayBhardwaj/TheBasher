@@ -30,6 +30,12 @@
 //      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issues #471, #387.
 
 import type { SplitBand } from '../app/objectDataBand';
+// The ONE value import of `core/dag` this module makes, and it is permitted because that
+// module has no value imports of its own — see `isDataOperatorDef` and the derived gate
+// in `splitKinds.registry.test.ts`. Importing `inputAccepts` from `core/dag/types` (which
+// re-exports it) would drag the graph and must stay forbidden.
+import { inputAccepts } from '../core/dag/socketMembership';
+import type { InputDescriptor } from '../core/dag/types';
 import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 
@@ -78,22 +84,16 @@ export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
   // #609 — MEMBERSHIP, because a spine may now accept a SET of types, and a bare
   // `=== 'ObjectData'` reads FALSE for such a socket while still compiling.
   //
-  // ⚠️ THIS IS THE ONE PLACE THAT RE-SPELLS `inputAccepts` INSTEAD OF CALLING IT, and it
-  // is forced rather than chosen: the DAG's copy lives in `core/dag/types`, and the gate
-  // in this module's own spec forbids a VALUE import of `core/dag` here — an e2e spec
-  // importing this descriptor would otherwise drag the whole module graph into
-  // Playwright. Type-only imports are erased and stay allowed; a function is not. Kept
-  // to two lines so the duplication is visible rather than buried.
-  //
-  // The two copies are held together by the AGREEMENT gate in `splitKinds.registry.test.ts`
-  // (#615), which runs both answers over synthetic set-valued defs — a sweep over the
-  // registry alone cannot catch the drift, because the only set-valued socket that exists
-  // is not on the data lane and this predicate never sees it.
-  const spineType = def?.inputs?.[spine]?.type;
-  const spineAcceptsData = Array.isArray(spineType)
-    ? spineType.includes('ObjectData')
-    : spineType === 'ObjectData';
-  return spineAcceptsData && def?.outputs?.out?.type === 'ObjectData';
+  // This used to re-spell `inputAccepts` inline (#615) because the gate in this module's
+  // own spec forbids a VALUE import of `core/dag` here — an e2e spec importing this
+  // descriptor would drag the whole module graph into Playwright. That rule is unchanged
+  // and still load-bearing. What changed (#612) is that the reader now lives in
+  // `core/dag/socketMembership`, a module with no value imports of its own, so calling it
+  // drags nothing; the spec's gate checks that leaf-ness rather than trusting the path.
+  return (
+    inputAccepts(def?.inputs?.[spine] as InputDescriptor | undefined, 'ObjectData') &&
+    def?.outputs?.out?.type === 'ObjectData'
+  );
 }
 
 /**
