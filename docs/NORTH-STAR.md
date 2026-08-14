@@ -473,10 +473,26 @@ non-negotiable.
 
 **Goal.** An operator applies to a named subset of components.
 
+**The framing, and it is deductive rather than empirical.** The question is not _which
+operators should get a group parameter_ — that answers case by case, and every answer is a
+special case. Scoping is a **property of the operator skeleton**: it follows from what an
+operator is, not from a judgement about each one. Houdini confirms it and sharpens it — its
+generators take a group too, and they carry a _separate_ output-group vocabulary, which
+would be redundant if the input group scoped the output. Copy to Points takes two group
+parameters, one per input it reads, so scope belongs to the **input role**, not to the
+operator.
+
+**Consequence for sequencing.** The operator category has no base today: operator-ness is
+declared once (`chainInput`) and everything else — bypass, membership — is spelled per
+member, across seven membership lists with no gate relating them. Adding scope per-operator
+would make it the next copy. So **the operator base lands first and scope is its first new
+field** (#660), rather than scope landing now and the base being promised later.
+
 **Entry.** Phase 1 (groups are attributes or are addressed by them).
 
 **Exit.** An existing modifier can be scoped to a group and demonstrably affects only that
-group.
+group. Face is the only domain in v1 — a decision, not an omission: points are seam-split
+(a box has 24, not 8) and there is no edge buffer at all.
 
 **Discriminating observation.** The unscoped case and the scoped-to-everything case
 produce byte-identical geometry, _and_ a scoped-to-half case differs from both. Only the
