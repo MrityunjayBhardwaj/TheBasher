@@ -40,6 +40,8 @@ import { foldOverlays } from './cookState';
 import { timeDependentNodes } from './timeDependence';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { boxDescriptor } from './modifierGeometry';
+import { mintMeshAttributes } from '../nodes/meshAttributes';
 import type { EvalCtx } from '../core/dag/types';
 
 const OBJECT_ID = 'n_box';
@@ -128,7 +130,18 @@ describe('#580 — the resolver does not see overlays, by type', () => {
     // is content-derived, so an authored descriptor means an authored BUFFER — the
     // count side B reports is the authored one, which is the reported symptom.
     const mesh = resolveEvaluatedMesh(authored, OBJECT_ID, at(0));
-    expect(mesh!.geometry.key).toBe('box|1,1,1');
-    expect(mesh!.geometry.key).not.toBe('box|3,1,1');
+
+    // The SIZE half stays a literal, because it is the whole subject: authored
+    // `1,1,1` against the overlay's `3,1,1`. The ATTRIBUTE half is derived through
+    // the same mint the key uses, following `ns1NoMigration.gate.test.ts` — pinning
+    // that hash would pin a number nobody can verify and would red on any unrelated
+    // attribute change. Deriving the discriminating half would make the assertion
+    // vacuous; deriving this one does not, because it is not what is being claimed.
+    const attributes = mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate');
+    expect(mesh!.geometry.key).toBe(`box|1,1,1|a:${attributes}`);
+    // Written as a PREFIX, not as `not.toBe('box|3,1,1')`: once the key carries an
+    // attribute component no whole-key equality against a bare descriptor can ever
+    // hold, so the inequality would pass without examining anything.
+    expect(mesh!.geometry.key.startsWith('box|3,1,1')).toBe(false);
   });
 });
