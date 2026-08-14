@@ -7,6 +7,7 @@
 
 import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
+import { materialAssignmentReport } from './materialAssignment';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveWorldTransform } from './resolveWorldTransform';
@@ -20,6 +21,7 @@ import {
   resetGrowth as resetGeometryGrowth,
   size as geometrySize,
 } from './geometryRegistry';
+import { sweepStats } from '../viewport/geometrySweep';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -580,6 +582,18 @@ export function boot(): Promise<void> {
       // assert rendered scale (side A, __basher_mesh_world_scale) ==
       // resolver scale (side B, here) at the same ctx.time. Lazy import keeps
       // boot's static graph lean.
+      // #634 — the read-side seam for the MATERIAL ASSIGNMENT, reported as NUMBERS.
+      // `__basher_evaluated_mesh` below hands back the whole mesh face, specs and all;
+      // the question at this seam is "how many materials does this mesh use, and which
+      // slots", which a driven browser observation can assert on directly without
+      // reaching into a material IR. It is the seam that can see TWO — the single
+      // `material` field it replaces (#636) could only ever report one.
+      w.__basher_material_assignment = (nodeId: NodeId, ctx?: EvalCtx) => {
+        const state = useDagStore.getState().state;
+        const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
+        const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
+        return mesh ? materialAssignmentReport(mesh.materials) : null;
+      };
       w.__basher_evaluated_mesh = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -736,11 +750,27 @@ export function boot(): Promise<void> {
       // a bounded residue and stated that bound in ENTRIES, which cannot say whether the
       // residue matters — an entry is a box or a merged array modifier over a dense mesh,
       // and those differ by orders of magnitude. Same read-only shape as `size`.
+      //
+      // `sweeps` / `disposed` (#656) answer the question the other four cannot: has the
+      // population been VERIFIED, or is it merely sitting still? The quiet trigger is
+      // denominated in FRAMES and every harness that has waited for it has been written in
+      // MILLISECONDS, so a cache waiting out its thirty frames reads as settled to any
+      // wall-clock observer — which is exactly how a lifetime assertion came to measure a
+      // collection and call it the cost of an add.
+      //
+      // Both are MONOTONIC, which is what makes them usable across a span rather than at an
+      // instant. `sweeps` turns "the cache has been verified" into an event to wait for.
+      // `disposed` totals what every sweep has freed, so "nothing was collected across my
+      // measurement" is a subtraction — and it stays true however many sweeps ran inside the
+      // span, which a last-result reading could not say. Read-only, like the rest of this
+      // surface: neither can make a sweep happen.
       w.__basher_geometry_registry = {
         size: () => geometrySize(),
         bytes: () => geometryResidentBytes(),
         growth: () => geometryGrowthBySource(),
         resetGrowth: () => resetGeometryGrowth(),
+        sweeps: () => sweepStats().sweeps,
+        disposed: () => sweepStats().disposed,
       };
       // Perf scene-scale stress seam (issue #114). Dispatches `meshes`
       // SphereMesh nodes at `segments` tessellation in a compact grid (kept

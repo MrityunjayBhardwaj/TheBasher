@@ -8,6 +8,12 @@
 // nowhere else, minted at exactly two producers, while two other members carry a material
 // with no key at all.
 //
+// ⚠️ #633 WIDENED THE REACH, and this header says so rather than letting a count drift:
+// `MeshDataValue` now carries TWO minted identities, `materialKey` and `attributeKey`,
+// minted at the same seam by the same two producers. The union's other members carry
+// neither. The added case below derives that second count the same way the first is derived
+// — from the type, not from this sentence.
+//
 // That gap is not a bug today — §4's "How far this reaches" paragraph explains why each
 // unkeyed road is safe — but the explanation is prose about a measurable set, and prose
 // about a measurable set goes stale silently. A third minting producer, a fourth kind that
@@ -166,6 +172,14 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
   'src/nodes/types.ts': 'declares it — on MeshDataValue, and on no other union member',
   'src/nodes/BoxData.ts': 'mints it after the fold',
   'src/nodes/SphereData.ts': 'mints it after the fold',
+  // NOT a producer, and listed rather than excused. A fixture that builds a mesh data value
+  // by hand has to write every field the type declares, so it appears in a writer census
+  // that keys on the field name. Registering it keeps the census COMPLETE — the alternative
+  // was to re-spell the field so the sweep stops seeing it, which is precisely the evasion
+  // this gate's header says it cannot detect. It writes `null`: the fixture exists to
+  // exercise the ATTRIBUTE key, and mints no material identity at all.
+  'src/test-utils/twoMaterialMesh.ts':
+    'FIXTURE — writes null; the two-material read case (#634), not a producer',
 };
 
 /**
@@ -223,6 +237,41 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // The gap #542 exists to write down: two kinds hold a material with no minted identity.
     expect(carriesMaterial).toEqual(['MeshDataValue', 'BakedDataValue', 'ModifiedDataValue']);
     expect(carriesKey).toEqual(['MeshDataValue']);
+  });
+
+  it('carries a SECOND minted identity, on the same one kind (#633)', () => {
+    // ── THE REACH, RESTATED RATHER THAN RE-FLOORED ────────────────────────────────────
+    //
+    // This gate's header says `materialKey` is the one minted identity on the value union.
+    // #633 makes that two: `attributeKey` is minted at the SAME seam, by the same two
+    // producers, for the same reason — identity comes from evaluation, never from
+    // rediscovering it downstream. That is a widening of the reach, not a violation of it,
+    // and the honest response is to say so here rather than to notice a number move.
+    //
+    // What has NOT changed, and is the reason the two keys stay separate: neither enters
+    // `GeometryRef.key`. A shared, content-keyed handle cannot carry a per-object value,
+    // whether that value is a material or an attribute set. The four literal geometry key
+    // strings in `attributeKey.test.ts` are what enforce it.
+    const types = sourceFiles().find(([path]) => path === 'src/nodes/types.ts')?.[1] ?? '';
+    const members = unionMembers(types, 'ObjectData');
+    const carriesAttributeKey = members
+      .map((name) => [name, interfaceBody(types, name)] as const)
+      .filter(([, body]) => declaresField(body as string, 'attributeKey'))
+      .map(([name]) => name);
+
+    // ⚠️ #638 (ns-1b step 6) — RESTATED: TWO kinds carry it now, and the second one is a
+    // real widening rather than a leak. `SetMaterialOp` over a partial face range is the
+    // first OPERATOR that writes a per-face assignment, and its output kind is
+    // `ModifiedData` — so the index has to ride on that value or the assignment it just
+    // authored is dropped one hop later. It stays paired with `materialSlots` (both
+    // present or neither), and it still does not enter `GeometryRef.key` by any road other
+    // than the single fold both builders go through.
+    //
+    // What has NOT widened, and is the reason this case still discriminates: `materialKey`
+    // is still on one kind. Identity for a MATERIAL and identity for an ATTRIBUTE SET are
+    // minted by different producers for different reasons, and this gate would have
+    // reported them as one movement had they been counted together.
+    expect(carriesAttributeKey).toEqual(['MeshDataValue', 'ModifiedDataValue']);
   });
 
   it('re-derives the key in exactly one downstream place, through the same function', () => {
@@ -296,20 +345,48 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     'src/viewport/SceneFromDAG.tsx':
       'ModifiedMeshR — ModifiedDataValue mints no materialKey, and #545 measured the ' +
       'downstream fallback as the right permanent answer for it rather than as a gap',
+    // ⚠️ #638 (ns-1b step 5) — RESTATED, NOT FLOORED. This is one ROAD that costs EIGHT
+    // call sites, and the two numbers below say so separately for that reason.
+    //
+    // The road: a mesh whose object declares a material SLOT TABLE hydrates the table and
+    // draws with a material array. The evaluator mints exactly one `materialKey` per mesh
+    // data value and it describes the single `material` field — not the table — so a slot
+    // has no minted identity because NOTHING MINTS ONE. #545's argument therefore applies
+    // to every slot, unchanged and for the same reason it applies to `ModifiedData`: the
+    // downstream fallback calls `materialKeyOf`, the evaluator's own function, over the
+    // evaluator's own IR. One function, one answer, no second spelling to drift from.
+    //
+    // Passing `data.materialKey` for slot 0 would be WORSE than passing nothing, and that
+    // is why this road is unkeyed by decision rather than by omission: the table's slot 0
+    // need not be the same IR as the `material` field, and attaching one IR under another
+    // IR's identity is precisely the defect this epic exists to prevent — it would hand
+    // two different materials the same registry entry.
+    //
+    // The eight sites are one road because a hook count may not vary with the data: N slots
+    // means N calls, and React requires N to be a constant. Whether the AUTHORING surface
+    // should mint a key per slot is a real question, and it belongs to the step that builds
+    // one — filed rather than answered here.
+    'src/app/material/useSlotMaterials.ts':
+      'the slot table — one road, eight fixed call sites (#638); a slot carries no minted ' +
+      'identity because nothing mints one, so the #545 fallback is the right answer for it',
   };
 
-  it('attaches to the shared registry without a minted key in exactly one place', () => {
+  it('attaches to the shared registry without a minted key in exactly two places', () => {
     const calls = sourceFiles().flatMap(([path, src]) =>
       callArgsOf(src, 'usePrimitiveMaterial').map((args) => ({ path, args })),
     );
 
     // Anti-vacuity, and it is not theoretical: a parser that found nothing would make every
     // assertion below green while counting an empty set.
+    //
+    // TEN: the two single-material components, plus the slot table's eight fixed calls
+    // (#638). The number is restated rather than relaxed — a floor would let the set grow
+    // one quiet caller at a time, which is the failure this whole case exists to stop.
     expect(
       calls.length,
-      'the call-site parse does not read the two known calls — under-reading makes every ' +
-        'assertion below vacuous, and over-reading means a third road now attaches here',
-    ).toBe(2);
+      'the call-site parse does not read the ten known calls — under-reading makes every ' +
+        'assertion below vacuous, and over-reading means a further road now attaches here',
+    ).toBe(10);
 
     // The type system already refuses an omitted argument. This re-checks it structurally,
     // because the way this gate dies is someone widening the parameter back to optional to
@@ -321,12 +398,19 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     ).toEqual([]);
 
     const unkeyed = calls.filter((c) => c.args[3] === 'null');
+    // NINE calls, TWO roads — and both numbers are asserted because they answer different
+    // questions. The call count catches a ninth site appearing inside an existing road (a
+    // wider cap, a copied line); the module set below catches a THIRD road joining, which
+    // is #545's actual reopen condition. Collapsing them to one number would hide whichever
+    // was not chosen.
     expect(
       unkeyed.length,
-      'a second road now attaches with no minted key — #545 reopen condition 3. The ' +
-        'fallback is only safe while this set has one member; decide, do not drift',
-    ).toBe(1);
-    expect([...new Set(unkeyed.map((c) => c.path))]).toEqual(Object.keys(UNKEYED_ATTACH_CALLERS));
+      'a further call now attaches with no minted key — #545 reopen condition 3. The ' +
+        'fallback is only safe while this set is the two decided roads; decide, do not drift',
+    ).toBe(9);
+    expect([...new Set(unkeyed.map((c) => c.path))].sort()).toEqual(
+      Object.keys(UNKEYED_ATTACH_CALLERS).sort(),
+    );
   });
 
   it('guards case D — the call parser reads arguments, not prose or definitions', () => {

@@ -16,10 +16,11 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MeshDataValue } from './types';
-import { boxGeometryRef } from '../app/modifierGeometry';
+import { boxDescriptor, boxGeometryRef } from '../app/modifierGeometry';
 import { openpbrMaterialSchema } from './materialSchema';
 import { resolveNodeMaterial } from './materialSocket';
 import { materialKeyOf } from './materialKey';
+import { mintMeshAttributes } from './meshAttributes';
 
 // Match BoxMesh's default so an Object→BoxData look is byte-identical to a box.
 
@@ -56,9 +57,16 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   },
   evaluate(params, inputs) {
     const material = resolveNodeMaterial(inputs.material, params.material);
+    // #638 — the attribute set is minted FIRST, because its key is folded into the
+    // geometry key. Two boxes whose faces point at slots in different patterns are
+    // different geometry and must not share one built instance; three.js has no
+    // per-object group layout to vary instead.
+    const descriptor = boxDescriptor(params.size);
+    const attributeKey = mintMeshAttributes(descriptor, 'evaluate');
+    const geometry = boxGeometryRef(params.size, attributeKey);
     return {
       kind: 'MeshData',
-      geometry: boxGeometryRef(params.size),
+      geometry,
       // A connected Material node SUPERSEDES the param, wholesale (#394 D3); with
       // nothing connected this is the param, hydrated exactly as before. The socket is
       // a FOURTH source of a material value, so it goes through the SAME hydrate seam
@@ -68,6 +76,10 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
       // keying the authored param instead would miss two objects that resolve to the
       // same material by different routes (one linked, one authored identically).
       materialKey: materialKeyOf(material),
+      // #633 — the attribute set's identity, minted at the same seam and for the same
+      // reason. A box has one material slot, so every face is derived onto slot 0; the
+      // param above stays the only place a material is authored.
+      attributeKey,
     };
   },
 };

@@ -43,6 +43,84 @@ import { evaluate } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
+import { rebuiltMeshAttributes } from '../nodes/meshAttributes';
+
+/**
+ * The box descriptor for a size — the ONE spelling of that literal.
+ *
+ * Exported because two things need it and neither may re-spell it: this module's
+ * {@link boxGeometryRef}, and the producer that has to mint the attribute set BEFORE
+ * the handle exists (`BoxData.evaluate`). A second literal in the producer would agree
+ * today and stop agreeing the first time the descriptor gains a field — with the face
+ * count then derived from an incomplete descriptor, silently.
+ */
+export function boxDescriptor(size: Vec3): Extract<GeometryDescriptor, { kind: 'box' }> {
+  return { kind: 'box', size };
+}
+
+/** The sphere descriptor — the ONE spelling, for the same reason as {@link boxDescriptor}. */
+export function sphereDescriptor(
+  radius: number,
+  widthSegments: number,
+  heightSegments: number,
+): Extract<GeometryDescriptor, { kind: 'sphere' }> {
+  return { kind: 'sphere', radius, widthSegments, heightSegments };
+}
+
+/**
+ * Fold an attribute component into a geometry key, or leave the key alone — the ONE
+ * place `GeometryRef.attributeKey` is written (#638, ns-1b step 3).
+ *
+ * ⚠️ `undefined` is REFUSED BY NAME, and that refusal is load-bearing rather than
+ * defensive. `attributeKey` is a required parameter on the two primitive builders, so
+ * production cannot omit it — but `npm run typecheck` does not see `*.test.*` and vitest
+ * does not typecheck at all, so a test call site that never answered would arrive here as
+ * `undefined`, take the fold branch, and produce a key ending `|a:undefined` beside a ref
+ * whose `attributeKey` field is present-and-`undefined`. That object hashes differently
+ * from one without the field, so every mesh value carrying it re-keys — a full cold start
+ * with no error anywhere. A caller that has no attributes says `null` and means it.
+ */
+function withAttributeComponent(
+  base: Omit<GeometryRef, 'attributeKey'>,
+  attributeKey: string | null,
+): GeometryRef {
+  if (attributeKey === undefined) {
+    throw new Error(
+      `geometryRef: '${base.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
+    );
+  }
+  // Absent, never present-and-undefined: the two are different objects to `Object.keys`
+  // and to the value hash, and only one of them means "this geometry has no attributes".
+  if (attributeKey === null) return base;
+  return { ...base, key: `${base.key}|a:${attributeKey}`, attributeKey };
+}
+
+/**
+ * The same geometry, carrying a DIFFERENT attribute component (#638, ns-1b step 6).
+ *
+ * An operator that writes a per-face assignment onto a source's geometry has to hand
+ * downstream a handle whose key says so — otherwise two meshes with different assignments
+ * collide onto one cached `BufferGeometry` and the group layout of whichever built first
+ * wins. It cannot simply append: the source's key already carries ITS component (every
+ * primitive mints a uniform one), so appending would produce `…|a:x|a:y`, a key that no
+ * builder would ever mint and that names a geometry with two answers.
+ *
+ * The old component is removed by its own exact text rather than by parsing for `|a:` —
+ * the ref's sibling field says precisely what was folded, so there is nothing to guess at
+ * and no attribute key containing a delimiter can confuse it.
+ */
+export function refWithAttributeKey(ref: GeometryRef, attributeKey: string | null): GeometryRef {
+  const carried = ref.attributeKey;
+  const base =
+    carried === undefined
+      ? { key: ref.key, kind: ref.kind, descriptor: ref.descriptor }
+      : {
+          key: ref.key.slice(0, ref.key.length - `|a:${carried}`.length),
+          kind: ref.kind,
+          descriptor: ref.descriptor,
+        };
+  return withAttributeComponent(base, attributeKey);
+}
 
 /**
  * The ONE place a box `size` becomes a box `GeometryRef` (deterministic key +
@@ -50,13 +128,24 @@ import { dataSectionCapability } from './dataSectionCapability';
  * `BoxData`; the fused kind is retired, so `BoxData` (#361) is the only caller left
  * and the "one cached build, byte-identical geometry" claim (H40, no drift) is now
  * held by construction rather than by two roads agreeing.
+ *
+ * `attributeKey` is REQUIRED (#638). It is not defaulted, and the omission is what the
+ * requirement exists to make unconstructible: the cache keys on `key` (a string) while
+ * the group layout is derived from `attributeKey` (a sibling field), so correctness
+ * needs `key ⇒ attributeKey` to be a function. A two-field split enforces nothing on its
+ * own — any ref whose key carries a component its sibling does not, or the reverse,
+ * breaks it silently. Minting both in one expression, in a function that cannot be
+ * called without both, is the enforcement.
  */
-export function boxGeometryRef(size: Vec3): GeometryRef {
-  return {
-    key: `box|${size[0]},${size[1]},${size[2]}`,
-    kind: 'box',
-    descriptor: { kind: 'box', size },
-  };
+export function boxGeometryRef(size: Vec3, attributeKey: string | null): GeometryRef {
+  return withAttributeComponent(
+    {
+      key: `box|${size[0]},${size[1]},${size[2]}`,
+      kind: 'box',
+      descriptor: boxDescriptor(size),
+    },
+    attributeKey,
+  );
 }
 
 /**
@@ -72,12 +161,16 @@ export function sphereGeometryRef(
   radius: number,
   widthSegments: number,
   heightSegments: number,
+  attributeKey: string | null,
 ): GeometryRef {
-  return {
-    key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
-    kind: 'sphere',
-    descriptor: { kind: 'sphere', radius, widthSegments, heightSegments },
-  };
+  return withAttributeComponent(
+    {
+      key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
+      kind: 'sphere',
+      descriptor: sphereDescriptor(radius, widthSegments, heightSegments),
+    },
+    attributeKey,
+  );
 }
 
 /**
@@ -313,6 +406,23 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
 }
 
 /**
+ * Messages already reported, so a per-frame drag says a thing once instead of once per
+ * frame. Bounded by DISTINCT (old count → new count) pairs, which is the same bound the
+ * attribute store's own growth has — not by frames.
+ */
+const reportedRebinds = new Set<string>();
+
+/** The rebuilt handle's attribute key, reporting once if an assignment had to be dropped. */
+function reboundAttributeKey(ref: GeometryRef, rebuilt: GeometryDescriptor): string | null {
+  const { key, reason } = rebuiltMeshAttributes(ref.attributeKey, rebuilt);
+  if (reason !== null && !reportedRebinds.has(reason)) {
+    reportedRebinds.add(reason);
+    console.warn(reason);
+  }
+  return key;
+}
+
+/**
  * Re-mint `ref` with `values` folded into its descriptor, through the same builder the
  * evaluator used. Returns `ref` UNCHANGED (by reference) when `values` names nothing the
  * descriptor is built from — the caller uses that to avoid touching a handle a write never
@@ -324,6 +434,31 @@ export function descriptorParamFields(descriptor: GeometryDescriptor): readonly 
  * in OPFS, which is authoritative and not rebuildable from anything on the value. Minting a
  * key for either here would be a second spelling of a key this module does not own, and for
  * `baked` it would be a fabricated hash pointing at bytes that do not exist.
+ *
+ * ── #638 — THE BOX AND SPHERE ARMS NOW WRITE TO THE ATTRIBUTE STORE ───────────────────
+ *
+ * They RE-MINT the attribute component from the REBUILT descriptor rather than carrying the
+ * old one, which is the same rule the doc line above already states: re-mint through the
+ * same builder the evaluator used. Under the required attribute parameter, the evaluator's
+ * call is `boxGeometryRef(size, mintMeshAttributes(..., 'evaluate'))`, so doing anything else here would
+ * be the exception. `rebuiltMeshAttributes` owns the three-arm decision and the reason it
+ * reports; see it for why carrying forward is wrong for a sphere in particular.
+ *
+ * Three consequences, stated rather than left to be discovered:
+ *
+ *   1. THIS FUNCTION NOW HAS A SIDE EFFECT. `mintMeshAttributes` inserts into the attribute
+ *      store, and this runs per frame during a drag. The insert is content-keyed and
+ *      idempotent — a second insert of an equal set is a hit — so re-deriving per frame
+ *      costs nothing extra in the store. Safe is not the same as undocumented.
+ *   2. The insertions are tagged with their own growth origin (`overlay`), so the two
+ *      producers of a mesh attribute set stay countable apart. Growth here is bounded by
+ *      DISTINCT integer segment counts, not by frames: a 121-frame drag over
+ *      `widthSegments` 8→32 touches at most 25 distinct sets.
+ *   3. THE BY-REFERENCE CONTRACT IS UNCHANGED, and that was checked rather than assumed.
+ *      The only path that returns `ref` itself is the empty-`values` early return below,
+ *      which runs BEFORE any arm — so the insert only ever happens on paths that were
+ *      already minting a new object, and `rebuildInvalidatedHandles`'s `rebuilt !== ref`
+ *      test still means exactly what it meant.
  */
 export function rebuildGeometryRef(
   ref: GeometryRef,
@@ -332,16 +467,25 @@ export function rebuildGeometryRef(
   if (Object.keys(values).length === 0) return ref;
   const d = ref.descriptor;
   switch (d.kind) {
-    case 'box':
-      return boxGeometryRef((values.size ?? d.size) as Vec3);
-    case 'sphere':
+    case 'box': {
+      const size = (values.size ?? d.size) as Vec3;
+      return boxGeometryRef(size, reboundAttributeKey(ref, boxDescriptor(size)));
+    }
+    case 'sphere': {
       // Each field falls back to what the descriptor already holds, so animating one of the
       // three does not reset the other two.
-      return sphereGeometryRef(
+      const rebuilt = sphereDescriptor(
         (values.radius ?? d.radius) as number,
         (values.widthSegments ?? d.widthSegments) as number,
         (values.heightSegments ?? d.heightSegments) as number,
       );
+      return sphereGeometryRef(
+        rebuilt.radius,
+        rebuilt.widthSegments,
+        rebuilt.heightSegments,
+        reboundAttributeKey(ref, rebuilt),
+      );
+    }
     case 'array':
       return arrayGeometryRef(
         d.source,

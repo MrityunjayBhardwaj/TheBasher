@@ -58,9 +58,14 @@ export const ProfilesFileSchema = z.object({
 });
 export type ProfilesFileJson = z.infer<typeof ProfilesFileSchema>;
 
+// #625 — COPY on the success path. A composed profile is a portable snapshot, so it
+// must not hand back the live params array it read: a caller nudging a light or
+// rounding coordinates before writing the file would be editing the live scene. The
+// fallback path is already safe (each call site passes a fresh literal), which is what
+// made the seam awkward — the alias appears exactly when the data is VALID.
 function vec3(v: unknown, fallback: Vec3): Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number')
-    ? (v as Vec3)
+    ? ([...v] as Vec3)
     : fallback;
 }
 

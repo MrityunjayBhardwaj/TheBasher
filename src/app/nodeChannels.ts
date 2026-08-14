@@ -23,6 +23,7 @@
 import { getNodeType } from '../core/dag/registry';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
+import { hierarchyChildIds } from './sceneHierarchy';
 
 /** Minimal node shape this enumerator reads (a DagState node subset). */
 interface NodeLike {
@@ -146,30 +147,34 @@ export function directChannelTargetSet(
  * followed by that resolver, so it is intentionally excluded (a documented narrow
  * limitation — a position-keyed Track-To'd ancestor is still caught via its channels).
  *
- * The hierarchy socket set (`children` for Group/Scene, `target` for
- * Transform/MaterialOverride) MUST mirror `childEdges` / `resolveParentWorldMatrix`'s
- * walk in resolveWorldTransform.ts — the source of truth for what counts as a
- * scene-graph parent. Built in ~O(N) (one parent-map pass + a bounded walk up per
- * node, cycle-guarded) and tested by membership, so the renderer stays O(N) (B13).
+ * The hierarchy socket set is READ from `sceneHierarchy`, which `childEdges` and
+ * `resolveParentWorldMatrix` read too — so this no longer MIRRORS the source of truth,
+ * it shares it (#621). The three used to restate the set by hand and each carried a
+ * comment promising to mirror the others; `sceneHierarchy.mirrorsChildEdges` in the test
+ * suite is what now checks the promise. Built in ~O(N) (one parent-map pass + a bounded
+ * walk up per node, cycle-guarded) and tested by membership, so the renderer stays
+ * O(N) (B13).
  */
 export function animatedAncestorSet(
   nodes: Readonly<Record<string, NodeLike & { id: string }>>,
   animatedSet: ReadonlySet<string>,
 ): Set<string> {
   // child id -> its parent ids (multi-valued for safety, though scene hierarchy is a
-  // tree in practice). Only the `children`/`target` sockets count as parent edges.
+  // tree in practice).
+  //
+  // #621 — which sockets count as parent edges is `sceneHierarchy`'s answer, not a
+  // literal restated here. It used to be `['children','target']` scanned across every
+  // node regardless of type, which also matched a MODIFIER's spine: an animated
+  // ArrayModifier counted as an animated ancestor of its target mesh. That was
+  // conservative rather than wrong — over-marking costs re-renders, it cannot produce a
+  // wrong transform — but it was not the set this comment claimed, and a set nobody can
+  // state is a set nobody can check.
   const parents = new Map<string, string[]>();
   for (const node of Object.values(nodes)) {
-    for (const socket of ['children', 'target'] as const) {
-      const b = node.inputs?.[socket];
-      const refs = Array.isArray(b) ? b : b ? [b] : [];
-      for (const r of refs) {
-        const childId = (r as { node?: string } | undefined)?.node;
-        if (typeof childId !== 'string' || !childId) continue;
-        const list = parents.get(childId);
-        if (list) list.push(node.id);
-        else parents.set(childId, [node.id]);
-      }
+    for (const childId of hierarchyChildIds(node)) {
+      const list = parents.get(childId);
+      if (list) list.push(node.id);
+      else parents.set(childId, [node.id]);
     }
   }
   const out = new Set<string>();

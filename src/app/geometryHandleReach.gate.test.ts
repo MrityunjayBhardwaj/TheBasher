@@ -66,16 +66,16 @@ const HANDLE_KINDS: Record<
   string,
   { readonly producer: string | null; readonly ref: GeometryRef; readonly probe: unknown }
 > = {
-  box: { producer: 'BoxData', ref: boxGeometryRef([1, 1, 1]), probe: [2, 2, 2] },
-  sphere: { producer: 'SphereData', ref: sphereGeometryRef(1, 16, 12), probe: 7 },
+  box: { producer: 'BoxData', ref: boxGeometryRef([1, 1, 1], null), probe: [2, 2, 2] },
+  sphere: { producer: 'SphereData', ref: sphereGeometryRef(1, 16, 12, null), probe: 7 },
   array: {
     producer: 'ArrayModifier',
-    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1]), 2, [2, 0, 0]),
+    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0]),
     probe: 9,
   },
   mirror: {
     producer: 'MirrorModifier',
-    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1]), 'x', 0),
+    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0),
     probe: 3,
   },
   gltf: {
@@ -191,6 +191,6 @@ describe('#537 — every param that feeds a geometry handle can reach it', () =>
     expect(rebuildGeometryRef(ref, {})).toBe(ref);
     // A written param that is real but feeds a DIFFERENT descriptor kind must not fold in
     // either: `radius` is nothing to a box.
-    expect(rebuildGeometryRef(ref, { radius: 5 })).toEqual(boxGeometryRef([1, 1, 1]));
+    expect(rebuildGeometryRef(ref, { radius: 5 })).toEqual(boxGeometryRef([1, 1, 1], null));
   });
 });

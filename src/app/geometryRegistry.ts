@@ -34,7 +34,11 @@
 
 import { BoxGeometry, Matrix4, SphereGeometry, type BufferGeometry } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
+import { MATERIAL_INDEX } from '../nodes/attributes';
+import { read } from './attributeStore';
+import { faceCountMismatch } from './faceCount';
+import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -205,7 +209,114 @@ export function getForAttach(ref: GeometryRef): BufferGeometry | null {
  * CONTENT sweep in `registryDoors.gate.test.ts` instead.
  */
 export function getForRead(ref: GeometryRef): BufferGeometry | null {
-  return get(ref, 'read');
+  const result = readGeometry(ref);
+  return result.status === 'ok' ? result.geometry : null;
+}
+
+// ── #630 — WHY THE ABSENCE HAS A REASON, AND WHY THE REASON LIVES HERE ─────────────────
+//
+// `get` returns null for THREE unrelated reasons, and which one it is changes what the
+// caller must do:
+//
+//   a `gltf` ref        → ALWAYS null. The registry does not own loaded glTF geometry; the
+//                         asset clone does. Null means LOOK ELSEWHERE.
+//   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
+//                         not happened yet. Null means WAIT — and it may well arrive.
+//   a procedural miss   → the registry builds procedural geometry synchronously on demand,
+//                         so a null here means `build` refused. Null means THERE GENUINELY
+//                         IS NONE, and waiting will not help.
+//
+// A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
+// `ref.kind` — which means the rule is restated at every call site, and every restatement is
+// a place it can be got wrong or quietly fall out of date when a kind is added. That is not
+// hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy of this exact
+// switch, and its own header records the defect biting before.
+//
+// The registry is the single producer of the ambiguity — it is the code that branches on
+// `ref.kind` and decides to return nothing — so it is the correct owner of the reason.
+// Consumers read it; nobody re-derives it.
+//
+// `getForRead` above stays as the narrowing view for callers that genuinely only need
+// "geometry or not", and it is DEFINED IN TERMS OF this function rather than beside it. One
+// implementation, one rule. A second null-producing path that agreed with this one today
+// would pass every behavioural test and diverge the first time a kind was added.
+
+/**
+ * How a geometry kind's underlying buffers BECOME available — which is what decides what a
+ * registry miss means for it.
+ *
+ *   'procedural' — the registry builds it synchronously on demand. A miss is a malformed
+ *                  descriptor, i.e. there genuinely is no geometry.
+ *   'primed'     — authoritative bytes live in OPFS and are primed after an async read.
+ *                  A miss is "not read yet".
+ *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
+ *                  An absent clone is "still loading the asset".
+ */
+export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
+
+/**
+ * The availability class of a geometry kind.
+ *
+ * Exhaustive, closed by a `never`. Adding a kind to `GeometryRef` without declaring how it
+ * becomes available is a COMPILE ERROR rather than a silent default — deliberately, because
+ * a default would pick one of the three meanings for the new kind and be right by accident
+ * at best.
+ */
+export function availabilityOf(kind: GeometryRef['kind']): GeometryAvailability {
+  switch (kind) {
+    case 'box':
+    case 'sphere':
+    case 'array':
+    case 'mirror':
+      return 'procedural';
+    case 'baked':
+      return 'primed';
+    case 'gltf':
+      return 'clone';
+    default: {
+      const unreachable: never = kind;
+      return unreachable;
+    }
+  }
+}
+
+/**
+ * The result of a read: either the geometry, or the reason there isn't one.
+ *
+ * Discriminated on `status` so a consumer cannot read a geometry off an empty result, and
+ * cannot treat "wait" as "none" without writing the word down.
+ */
+export type GeometryReadResult =
+  | { readonly status: 'ok'; readonly geometry: BufferGeometry }
+  /** Look elsewhere — this kind's buffers never live in the registry. */
+  | { readonly status: 'elsewhere'; readonly availability: GeometryAvailability }
+  /** Wait — the bytes exist but have not been read in yet. */
+  | { readonly status: 'pending'; readonly availability: GeometryAvailability }
+  /** There genuinely is none, and waiting will not help. */
+  | { readonly status: 'none'; readonly availability: GeometryAvailability };
+
+/**
+ * Read a geometry, or say why there isn't one. The reason-carrying door (#630).
+ *
+ * Same cache, same instance, same no-write contract as {@link getForRead} — this is not a
+ * second way to reach the resource, it is the same read with its absence typed.
+ */
+export function readGeometry(ref: GeometryRef): GeometryReadResult {
+  const availability = availabilityOf(ref.kind);
+  const geometry = get(ref, 'read');
+  if (geometry) return { status: 'ok', geometry };
+  switch (availability) {
+    case 'clone':
+      return { status: 'elsewhere', availability };
+    case 'primed':
+      return { status: 'pending', availability };
+    case 'procedural':
+      return { status: 'none', availability };
+    default: {
+      const unreachable: never = availability;
+      return unreachable;
+    }
+  }
 }
 
 /**
@@ -288,8 +399,69 @@ export function sweep(live: ReadonlySet<BufferGeometry>): GeometrySweepResult {
   return result;
 }
 
+/**
+ * Build the instance, then give it its group layout — the ONE place in this repo that
+ * calls `addGroup` or `clearGroups` (#638, ns-1b step 4).
+ *
+ * ── WHY HERE, AND WHY THAT MAKES THE COLLISION UNCONSTRUCTIBLE ────────────────────────
+ *
+ * A group layout lives on the `BufferGeometry` INSTANCE, and this cache hands ONE instance
+ * to every ref with the same key. Writing groups anywhere else — at attach, per object —
+ * would be a per-object write to a shared resource, which is the defect #530/#533 already
+ * cost this repo once. Written here it cannot be: groups are a pure function of the index,
+ * the index is in the key, the instance is keyed by that key, and the write happens before
+ * the instance has ever been handed to a caller. So the layout on a shared instance is
+ * correct for EVERY holder, by construction — no ordering discipline to remember, no
+ * clear-on-a-shared-instance hazard.
+ *
+ * ── WHY `clearGroups()` RUNS UNCONDITIONALLY ──────────────────────────────────────────
+ *
+ * A stock `BoxGeometry` arrives with SIX groups — one per cube side — and three.js honours
+ * them whether or not anything meant them as material slots. Clearing only when there is a
+ * layout to write would leave those six alive on exactly the refs most likely to be wrong:
+ * an unfolded handle, a store miss, a stale key. The difference matters: a box that keeps
+ * its stock six under a two-length material array draws TWELVE of thirty-six triangles —
+ * quiet, plausible, visible only in pixels — while one with no groups at all under the same
+ * array draws nothing, which is loud.
+ *
+ * Consequence, stated rather than discovered: a box's stock six-side layout is removed on
+ * every build. Nothing in this repo reads it, it encodes cube sides rather than materials,
+ * and removing it makes an unattributed box look exactly like a sphere — `groups.length`
+ * zero — so the heterogeneity that hid the granularity error is gone for every geometry the
+ * registry builds.
+ */
 function build(ref: GeometryRef): BufferGeometry | null {
-  const d = ref.descriptor;
+  const built = buildFromDescriptor(ref.descriptor);
+  if (built === null) return null;
+  built.clearGroups();
+
+  if (ref.attributeKey === undefined) return built;
+  const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
+  if (index === undefined) return built;
+
+  // Two refusals, both by name, because a silently skipped derivation is indistinguishable
+  // from a mesh that genuinely has one material — the two states this phase exists to tell
+  // apart. `faceCountMismatch` catches the BUILT geometry disagreeing with its descriptor;
+  // `groupsRefusal` (inside the derivation) catches the index disagreeing with the geometry,
+  // and declines a non-indexed geometry, where groups address a different buffer entirely.
+  const indexCount = built.getIndex()?.count ?? null;
+  const disagreement = faceCountMismatch(ref.descriptor, indexCount);
+  if (disagreement !== null) {
+    console.warn(disagreement);
+    return built;
+  }
+
+  const groups = groupsFromMaterialIndex(index.data, indexCount);
+  if (groups === null) {
+    const why = groupsRefusal(index.data, indexCount);
+    if (why !== null) console.warn(why);
+    return built;
+  }
+  for (const g of groups) built.addGroup(g.start, g.count, g.materialIndex);
+  return built;
+}
+
+function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
   if (d.kind === 'box') {
     return new BoxGeometry(d.size[0], d.size[1], d.size[2]);
   }

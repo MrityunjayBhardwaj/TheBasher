@@ -48,5 +48,12 @@ export function recomposeModifiedObject(value: unknown): ModifiedMeshValue | nul
     rotation: obj.rotation,
     scale,
     material: obj.data.material,
+    // #638 (ns-1b step 6) — the assignment travels with the value it belongs to. Spread
+    // conditionally rather than written as `?? undefined`: a field that is present and
+    // undefined hashes differently from an absent one, so writing it unconditionally would
+    // re-key every recomposed value in every project for nothing.
+    ...(obj.data.materialSlots === undefined
+      ? {}
+      : { materialSlots: obj.data.materialSlots, attributeKey: obj.data.attributeKey }),
   };
 }

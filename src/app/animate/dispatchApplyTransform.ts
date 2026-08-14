@@ -41,6 +41,8 @@ import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/ty
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
+import { assignedMaterials, primaryMaterial } from '../materialAssignment';
+import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
@@ -192,6 +194,28 @@ function bakedSpecFromMeshMaterial(
 ): BakedMaterialSpec {
   if (material && 'materialClass' in material) return material;
   return bakedSpecFromInline(material);
+}
+
+/**
+ * Why this Apply must be refused when the mesh assigns more than one material, or `null`
+ * when it assigns one (the whole population today).
+ *
+ * #634 — a bake collapses a mesh to ONE material spec. Flattening a two-material mesh into
+ * its lowest slot would be data loss with better manners: nothing errors, the object keeps
+ * rendering, and the second material is simply gone from a file the director now believes is
+ * saved. Refusing by name is the honest answer, and it names the ATTRIBUTE so the message
+ * points at the thing to change rather than at the operation that stopped.
+ *
+ * Exported because it is the decision, not the plumbing: the real resolver cannot yet
+ * produce a multi-material mesh, so this is the only seam a test can hand one to.
+ */
+export function multiMaterialBakeRefusal(
+  selectedId: string,
+  materials: EvaluatedMesh['materials'],
+): string | null {
+  const assigned = assignedMaterials(materials);
+  if (assigned.length <= 1) return null;
+  return `Apply: "${selectedId}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
 }
 
 /**
@@ -382,7 +406,9 @@ export async function dispatchApplyTransform(
   // This is also the rule the object↔data split already chose — the load migration has the
   // Object inherit the fused node's id for exactly this reason (§5 id-stability).
   const bakedId = selectedId;
-  const spec = bakedSpecFromMeshMaterial(mesh.material);
+  const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
+  if (refusal) return { ok: false, reason: refusal };
+  const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
   // `connect` splice-INSERTS at min(index, len). Removing our bindings shifts the

@@ -17,7 +17,13 @@ import { describe, it, expect } from 'vitest';
 import { applyOp, emptyDagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import { registerAllNodes } from './registerAll';
-import { boxGeometryRef, sphereGeometryRef } from '../app/modifierGeometry';
+import {
+  boxDescriptor,
+  boxGeometryRef,
+  sphereDescriptor,
+  sphereGeometryRef,
+} from '../app/modifierGeometry';
+import { mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 import type { DagState, Op } from '../core/dag/types';
 import type { MeshDataValue, ObjectValue } from './types';
@@ -56,7 +62,12 @@ describe('object↔data split (#361) — Object+BoxData ≡ a fused BoxMesh', ()
     // boxGeometryRef is the ONE box→handle projection the renderer/registry builds from —
     // the same one the retired fused box used. Identical key ⇒ one shared registry build ⇒
     // byte-identical BufferGeometry.
-    const canonicalRef = boxGeometryRef(SIZE);
+    // #638 — the canonical handle now folds the attribute component in, so the canonical
+    // call has to answer the attribute question the same way the producer does. Passing
+    // `null` here would compare the producer's folded key against an unfolded one and red
+    // for the fold rather than for drift; passing the mint keeps the assertion about what
+    // it was always about — that there is ONE projection.
+    const canonicalRef = boxGeometryRef(SIZE, mintMeshAttributes(boxDescriptor(SIZE), 'evaluate'));
     expect(data.geometry.key).toBe(canonicalRef.key);
     expect(data.geometry).toEqual(canonicalRef);
   });
@@ -128,7 +139,14 @@ describe('object↔data split (#384) — Object+SphereData ≡ a fused SphereMes
     // sphereGeometryRef is the ONE sphere→handle projection the renderer/registry builds
     // from — the same one the fused sphere + the read road use. Identical key ⇒ one shared
     // registry build ⇒ byte-identical BufferGeometry (H40, no drift).
-    const canonicalRef = sphereGeometryRef(RADIUS, WIDTH_SEGMENTS, HEIGHT_SEGMENTS);
+    // #638 — folded, for the reason spelled out on the box case above.
+    const sphereDesc = sphereDescriptor(RADIUS, WIDTH_SEGMENTS, HEIGHT_SEGMENTS);
+    const canonicalRef = sphereGeometryRef(
+      RADIUS,
+      WIDTH_SEGMENTS,
+      HEIGHT_SEGMENTS,
+      mintMeshAttributes(sphereDesc, 'evaluate'),
+    );
     expect(data.geometry.key).toBe(canonicalRef.key);
     expect(data.geometry).toEqual(canonicalRef);
   });
@@ -136,8 +154,13 @@ describe('object↔data split (#384) — Object+SphereData ≡ a fused SphereMes
   it('a default SphereData yields the canonical default sphere handle key', () => {
     const dataState = build([{ type: 'addNode', nodeId: 'd', nodeType: 'SphereData', params: {} }]);
     const data = evaluate(dataState, 'd').value as MeshDataValue;
-    // The defaults SphereMesh always shipped: radius 0.5, 24×16 segments.
-    expect(data.geometry.key).toBe('sphere|0.5|24|16');
+    // The defaults SphereMesh always shipped: radius 0.5, 24×16 segments — and, since
+    // #638, the attribute component the producer folds in. The BASE is still asserted as
+    // a literal, because that is the half a param change can break; the component is
+    // asserted as the mint's own output rather than as a hash literal nobody can check.
+    expect(data.geometry.key).toBe(
+      `sphere|0.5|24|16|a:${mintMeshAttributes(sphereDescriptor(0.5, 24, 16), 'evaluate')}`,
+    );
   });
 
   it('the Object→SphereData material is the canonical OpenPBR default', () => {
