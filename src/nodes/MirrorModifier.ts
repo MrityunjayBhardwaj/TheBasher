@@ -19,8 +19,9 @@
 //
 // Non-destructive (V58): the geometry is a rebuildable `GeometryRef` handle
 // (geometryRegistry builds the `mirror` descriptor on demand). `muted` bypasses
-// the operator: evaluate returns the source UNCHANGED, byte-identical to no
-// modifier. v1 scope: box/sphere data (sync registry build); baked data passes its
+// the operator, byte-identical to no modifier — DECLARED in `chain.bypass` below and
+// honoured by the evaluator, which hands the spine value back without calling
+// `evaluate`. v1 scope: box/sphere data (sync registry build); baked data passes its
 // material through but is not sync-buildable (async geometry — a clean follow-up),
 // and non-mesh data (curve/light/camera) passes THROUGH unchanged.
 //
@@ -40,7 +41,11 @@ export const MirrorModifierParams = z.object({
    *  mirror (Blender's default); a non-zero value separates the halves (useful for
    *  v1's geometry-centered primitives, which an origin mirror would overlap). */
   offset: z.number().default(0),
-  /** Stack mute-bypass (V58): true → pass the source through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
 });
 export type MirrorModifierParams = z.infer<typeof MirrorModifierParams>;
@@ -70,8 +75,6 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
     if (!src) return src as unknown as ObjectData;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no modifier.
-    if (params.muted) return src;
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — pass through unchanged.
     if (!source) return src;

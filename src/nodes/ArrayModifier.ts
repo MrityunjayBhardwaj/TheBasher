@@ -23,8 +23,11 @@
 // Non-destructive (V58): geometry is a rebuildable `GeometryRef` handle
 // (geometryRegistry builds the `array` descriptor on demand). The renderer reads
 // the EVALUATED mesh — same band as primitives (H40), never a re-walk. `muted`
-// bypasses the operator: evaluate returns the source UNCHANGED (the stack's
-// mute-bypass, V58), so a muted modifier is byte-identical to no modifier.
+// bypasses the operator (the stack's mute-bypass, V58), so a muted modifier is
+// byte-identical to no modifier. That bypass is DECLARED in `chain.bypass` below and
+// honoured by the evaluator, which hands the spine value straight back — `evaluate`
+// does not run and does not read the field. Being bypassable belongs to the operator
+// CATEGORY, not to this node.
 //
 // v1 scope: box/sphere data builds sync. Baked data produces real `ModifiedData` that
 // INHERITS the baked material (#358), but its array geometry is not sync-buildable yet
@@ -47,7 +50,11 @@ export const ArrayModifierParams = z.object({
   count: z.number().int().min(1).default(3),
   /** Per-copy translation in the source's LOCAL space (copy i sits at i*offset). */
   offset: z.tuple([z.number(), z.number(), z.number()]).default([2, 0, 0]),
-  /** Stack mute-bypass (V58): true → pass the source through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
 });
 export type ArrayModifierParams = z.infer<typeof ArrayModifierParams>;
@@ -81,8 +88,6 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
     if (!src) return src as unknown as ObjectData;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no modifier.
-    if (params.muted) return src;
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — pass through unchanged.
     if (!source) return src;

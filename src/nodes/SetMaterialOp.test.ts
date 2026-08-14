@@ -17,6 +17,8 @@
 //      src/app/attributeStore.ts (the growth counters); issues #638, #394.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { __reseedAllNodesForTests } from './registerAll';
 import { SetMaterialOpNode } from './SetMaterialOp';
 import { boxDescriptor, boxGeometryRef, sphereDescriptor } from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
@@ -72,6 +74,10 @@ const evalOp = (
 // measurement would be about test ORDER rather than about the fold.
 beforeEach(() => {
   resetGrowth();
+  // The mute is honoured by the evaluator now (ns-2 step 5), and the evaluator resolves
+  // the definition through the registry — so this file needs the registry seeded, which
+  // a definition-only test never did before.
+  __reseedAllNodesForTests();
 });
 
 describe('#638 SetMaterialOp — the full range still REPLACES, byte for byte', () => {
@@ -100,7 +106,17 @@ describe('#638 SetMaterialOp — the full range still REPLACES, byte for byte', 
 
   it('mute and an unwired socket are untouched by the range existing', () => {
     const src = boxData();
-    expect(evalOp({ muted: true, faceFrom: 0, faceTo: 1 }, src)).toBe(src);
+    // The mute goes THROUGH THE EVALUATOR (ns-2 step 5, #660): it is declared in
+    // `chain.bypass` and honoured by the machinery, so `evaluate` never runs when muted.
+    // The unwired-socket arm below is the operator's OWN guard and stays a direct call —
+    // the two used to sit side by side and are now genuinely different kinds of claim.
+    expect(
+      evaluateNodeAlone(
+        'SetMaterialOp',
+        { muted: true, faceFrom: 0, faceTo: 1 },
+        { target: src, material: WIRED },
+      ),
+    ).toBe(src);
     expect(
       SetMaterialOpNode.evaluate(
         { muted: false, faceFrom: 0, faceTo: 1 },

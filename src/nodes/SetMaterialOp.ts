@@ -31,8 +31,9 @@
 //
 // UNWIRED IS TRANSPARENT, not empty: with nothing connected this operator passes its
 // source through unchanged, so an op added before its material is picked never blanks a
-// mesh. That mirrors the mute-bypass immediately above it (V58) and the unwired-target
-// guard `ArrayModifier` already has.
+// mesh. That mirrors the unwired-target guard `ArrayModifier` already has. It used to
+// mirror a mute-bypass sitting immediately above it too; that guard is gone, because the
+// bypass is now DECLARED in `chain.bypass` and honoured once, by the evaluator (V58).
 //
 // ── THE FACE RANGE, AND WHY IT DOES NOT CHANGE WHAT THIS NODE ALREADY MEANT (#638) ──
 //
@@ -78,7 +79,11 @@ import { mintFaceRangeAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
 
 export const SetMaterialOpParams = z.object({
-  /** Stack mute-bypass (V58): true → pass the source through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
   /**
    * First face the wired material is written onto. `.default()` and not a bare
@@ -131,8 +136,6 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to write onto.
     if (!src) return src as unknown as ObjectData;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no operator.
-    if (params.muted) return src;
     // No material picked yet — transparent, never a blanked mesh.
     if (!isMaterialLinked(inputs.material)) return src;
     const source = modifierDataSource(src);

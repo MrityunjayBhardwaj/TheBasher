@@ -34,6 +34,14 @@
 //                              2 more are the timeline. Both lanes are out of scope, and
 //                              are pinned here so that stays visible.
 //
+// 🔄 THE THREE FIGURES ABOVE ARE STEP 3's, AND ONE OF THEM HAS SINCE MOVED. Step 5
+// migrated the operator lane's honouring: the one unchecked cast and the one typed read
+// are now a single checked read in `src/core/dag/chainBypass.ts`, and the five per-operator
+// `evaluate` guards are gone. The constraint/driver and timeline lanes are untouched and
+// their counts are unchanged, which is what the cast assertion below now says. The table
+// above is left as written because it records what was measured and when — but nothing in
+// it should be read as describing the tree today.
+//
 // ── WHAT THE LAST ASSERTION IS FOR ────────────────────────────────────────────────────
 //
 // `chainInput`-declarers minus `muted`-declarers is the whole defect in one line. Being an
@@ -207,26 +215,45 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     ).toEqual([]);
   });
 
-  it('the bypass is READ BACK per lane, and this phase owns exactly one of the lanes', () => {
+  it('the bypass is READ BACK per lane, and this phase has now migrated exactly one of them', () => {
     // The unchecked cast — `(node.params as {muted?: unknown}).muted === true` — which
     // cannot tell "declared and false" from "never declared".
     const casts = FILES.filter(([, src]) => /as\s*\{[^}]*mute[dD]?\??:[^}]*\}/.test(src))
       .map(([path, src]) => [path, (src.match(/as\s*\{[^}]*mute[dD]?\??:[^}]*\}/g) ?? []).length])
       .sort();
+    // 🔄 ns-2 step 5: `src/app/operatorStack.ts` LEFT this list. It is the operator lane's
+    // only cast and it is now one checked read through `chain.bypass`. The three lanes
+    // that remain are the ones §11 scopes out, and they stay pinned here for the reason
+    // they always were — a count that can only be read next to its neighbours is the count
+    // nobody can quietly re-scope. Their numbers are UNCHANGED across step 5, which is
+    // itself the assertion that this step stayed inside its lane.
     expect(casts).toEqual([
-      ['src/app/constraintStack.ts', 1], // constraint / driver lane — OUT of this phase
-      ['src/app/nodeConstraints.ts', 2], // constraint / driver lane — OUT of this phase
-      ['src/app/operatorStack.ts', 1], // THE operator lane's only cast — this phase's
+      ['src/app/constraintStack.ts', 1], // constraint / driver lane — OUT of this phase (#673)
+      ['src/app/nodeConstraints.ts', 2], // constraint / driver lane — OUT of this phase (#673)
       ['src/timeline/TimelineDrawer.tsx', 2], // timeline lane — OUT of this phase
     ]);
 
-    // The second honouring site in this phase's lane, and it is not a cast at all — which
-    // is why a syntax census of casts could not see it. Left alone by a consolidation, it
-    // keeps reading the raw field after the field has stopped being the declaration: the
-    // "stops one lane short" failure this phase exists to end.
+    // The second honouring site in this phase's lane, and it was not a cast at all — which
+    // is why a syntax census of casts could not see it, and why it would have survived the
+    // consolidation reading the raw field after the field stopped being the declaration.
+    //
+    // Asserted POSITIVELY, on what it does now rather than on what it no longer says. The
+    // obvious edit here was to flip the old `toContain('params.muted === true')` to a
+    // `not.toContain`, and that assertion would pass on a file that had been emptied, or
+    // renamed, or that spelled the raw read one space differently — it examines nothing.
+    // Naming the shared predicate reds if the raw read comes back under any spelling.
     const owner = FILES.find(([p]) => p === 'src/app/resolveMaterialFieldOwner.ts')?.[1];
     expect(owner).toBeDefined();
-    expect(owner).toContain('params.muted === true');
+    expect(owner).toContain('isBypassed(');
+
+    // The arithmetic, restated in the open and by the minimum: `3 → 1`, never `3 → 0`.
+    // One read survives, in `chainBypass.ts`, and what makes it CHECKED rather than merely
+    // fewer is that the field name comes from the declaration and registration has already
+    // refused a declaration whose named param the schema does not declare as a boolean.
+    const stack = FILES.find(([p]) => p === 'src/app/operatorStack.ts')?.[1];
+    expect(stack).toBeDefined();
+    expect(stack).toContain('isBypassed(');
+    expect(stack).toContain('bypassParamOf(');
   });
 
   it('THE DEFECT IN ONE LINE: being an operator and being bypassable are remembered separately', () => {

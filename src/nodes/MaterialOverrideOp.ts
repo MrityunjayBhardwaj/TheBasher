@@ -52,7 +52,11 @@ export const MaterialOverrideOpParams = z.object({
   // re-declared, so the two hosts of this rule cannot drift in their vocabulary any
   // more than they can in their composition.
   overridden: MaterialOverriddenSet,
-  /** Stack mute-bypass (V58): true → pass the source through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
 });
 export type MaterialOverrideOpParams = z.infer<typeof MaterialOverrideOpParams>;
@@ -107,8 +111,6 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to compose onto.
     if (!src) return src as unknown as ObjectData;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no operator.
-    if (params.muted) return src;
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — nothing wears a material.
     if (!source) return src;

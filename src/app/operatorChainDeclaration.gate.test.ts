@@ -64,7 +64,7 @@ function where(pred: (chain: ChainDeclaration) => boolean): string[] {
 }
 
 /** A minimal well-formed operator definition, for the refusal controls to break one field of. */
-function probeDef(chain: unknown): unknown {
+function probeDef(chain: unknown, overrides: Record<string, unknown> = {}): unknown {
   return {
     type: 'TmpChainProbe',
     version: 1,
@@ -75,6 +75,7 @@ function probeDef(chain: unknown): unknown {
     outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
     chain,
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
+    ...overrides,
   };
 }
 
@@ -186,6 +187,83 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
         }) as never,
       ),
     ).toThrow(/names param 'bypassed', which this node's paramSchema does not declare/);
+  });
+
+  // ── ns-2 step 5 ADDED TWO MORE, and both back the single application site ──────────
+  //
+  // Step 5 moved the bypass out of the five operators and into the evaluator, which reads
+  // `params[chain.bypass.param]` strictly and hands back `resolved[chain.input]`. Those two
+  // lines rest on two properties step 4 asserted in prose and did not enforce. Enforcing
+  // them here is what makes the surviving read a CHECKED read rather than one more guess.
+
+  it('REFUSAL 3: a spine that is not a declared SINGLE input is refused, by name', () => {
+    // A bypass hands back "the value that arrived on the spine". A spine naming a socket
+    // the node does not declare has no value to hand back, and a LIST socket would hand
+    // back an array where the output promises one value — a shape nothing downstream
+    // branches on, so it would travel a long way before anyone noticed.
+    expect(() =>
+      registerNodeType(
+        probeDef({
+          input: 'nonesuch',
+          scope: { kind: 'source' },
+          bypass: { kind: 'passthrough', param: 'muted' },
+          section: 'modifier',
+        }) as never,
+      ),
+    ).toThrow(/names socket 'nonesuch', which this node does not declare as an input/);
+
+    expect(() =>
+      registerNodeType(
+        probeDef(
+          {
+            input: 'target',
+            scope: { kind: 'source' },
+            bypass: { kind: 'passthrough', param: 'muted' },
+            section: 'modifier',
+          },
+          { inputs: { target: { type: 'ObjectData', cardinality: 'list' } } },
+        ) as never,
+      ),
+    ).toThrow(/which has 'list' cardinality/);
+  });
+
+  it('REFUSAL 4: a bypass naming a NON-BOOLEAN param is refused, by name', () => {
+    // Step 4's refusal 2 checked only that the name EXISTS. A param declared under the
+    // right name holding something other than a boolean would type-check, register
+    // cleanly, and never bypass — because the application site reads it strictly. That is
+    // the same silent failure refusal 2 closed, one field over, and it was reachable until
+    // this line existed.
+    //
+    // Asked BEHAVIOURALLY — does the field accept both booleans and reject a non-boolean —
+    // rather than by reading zod's internals, which are private and change between
+    // versions. A `.default(false)` wraps the boolean schema, so a typeName check would
+    // have to know that; `safeParse` does not care.
+    expect(() =>
+      registerNodeType(
+        probeDef(
+          {
+            input: 'target',
+            scope: { kind: 'source' },
+            bypass: { kind: 'passthrough', param: 'muted' },
+            section: 'modifier',
+          },
+          { paramSchema: z.object({ muted: z.number().default(0) }) },
+        ) as never,
+      ),
+    ).toThrow(/does not declare as a boolean/);
+
+    // THE CONTROL: the same probe with a real boolean registers. Without this row the
+    // assertion above would pass on a refusal that rejected every declaration.
+    expect(() =>
+      registerNodeType(
+        probeDef({
+          input: 'target',
+          scope: { kind: 'source' },
+          bypass: { kind: 'passthrough', param: 'muted' },
+          section: 'modifier',
+        }) as never,
+      ),
+    ).not.toThrow();
   });
 
   it('ONE spelling: `chainInput` survives only in prose about what it was', () => {

@@ -14,6 +14,7 @@
 //      src/app/resolveEvaluatedMesh.ts (the modifier branch); vyapti V58; issue #415.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
@@ -85,9 +86,13 @@ describe('MirrorModifier.evaluate', () => {
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
+    // THROUGH THE EVALUATOR, not through `evaluate` (ns-2 step 5, #660) — the bypass is
+    // declared and honoured by the machinery, so a muted operator's `evaluate` never runs.
     const src = sphereData();
-    const out = evalMod({ axis: 'x', muted: true }, src);
+    const out = evaluateNodeAlone('MirrorModifier', { axis: 'x', muted: true }, { target: src });
     expect(out).toBe(src); // same reference — no ModifiedData produced
+    // And the operator itself is now blind to the field: its work is its work.
+    expect(evalMod({ axis: 'x', muted: true }, src)).not.toBe(src);
   });
 
   it('non-mesh data (a curve) passes through unchanged — nothing to reshape', () => {

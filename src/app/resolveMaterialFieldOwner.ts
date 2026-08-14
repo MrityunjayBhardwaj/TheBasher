@@ -47,6 +47,8 @@ import type { MaterialOverrideField, ObjectData } from '../nodes/types';
 import type { MaterialOverrideOpParams } from '../nodes/MaterialOverrideOp';
 import { overrideValueOf } from '../nodes/MaterialOverrideOp';
 import { evaluate } from '../core/dag/evaluator';
+import { requireNodeType } from '../core/dag/registry';
+import { isBypassed } from '../core/dag/chainBypass';
 import {
   isDataLaneOperator,
   isMaterialLaneOperator,
@@ -143,8 +145,16 @@ function maskedFieldsOf(
   const node = state.nodes[opId];
   if (!node) return {};
   const params = node.params as Record<string, unknown>;
-  // A muted layer is byte-identically no layer (V58) — it masks nothing.
-  if (params.muted === true) return {};
+  // A bypassed layer is byte-identically no layer (V58) — it masks nothing.
+  //
+  // This was `(node.params as Record<string, unknown>).muted === true` — the SECOND
+  // honouring site in the operator lane, and the one a census of unchecked casts could
+  // not see, because it is not a cast: it reads a typed record under a literal field
+  // name. That is what made it survive the consolidation that introduced `chainInput`
+  // and would have made it survive this one — a walker still reading the raw field after
+  // the field stopped being the declaration is exactly the "stops one lane short" shape
+  // ns-2 exists to end, and it is silent, because the two spellings agree today.
+  if (isBypassed(requireNodeType(node.type), node.params)) return {};
 
   const out: Partial<Record<MaterialOverrideField, MaterialFieldOwner>> = {};
   switch (node.type as MaterialLaneType) {

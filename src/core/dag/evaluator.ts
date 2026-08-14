@@ -19,6 +19,7 @@
 //
 // REF: THESIS.md §10, §51, vyapti V2 (purity), krama K2 step 6 (invalidate).
 
+import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
 import { requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
@@ -187,8 +188,20 @@ export function evaluate(
       }
     }
 
+    // THE OPERATOR BYPASS, APPLIED ONCE (ns-2 step 5, #660). Being bypassable is true of
+    // the operator CATEGORY, so it is honoured by the machinery that runs operators rather
+    // than re-decided inside each one. A bypassed operator's `evaluate` does not run at
+    // all: the value that arrived on its declared spine is handed straight back, by
+    // reference, which is byte-identical to what the five per-operator guards produced
+    // because none of them did anything observable before bypassing.
+    //
+    // Deliberately AFTER the cache lookup and inside the same cache entry: the bypass
+    // param is part of `node.params`, so it is already in `cacheKey`, and a muted and an
+    // un-muted cook are distinct entries with no extra bookkeeping.
+    const bypassSpine = bypassSpineOf(def, node.params);
     const evalStart = evalPerfHook ? performance.now() : 0;
-    const out = def.evaluate(node.params, resolved, ctx);
+    const out =
+      bypassSpine === null ? def.evaluate(node.params, resolved, ctx) : resolved[bypassSpine];
     if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
     const hash = hashString(cacheKey);
     const result: EvalResult = { value: out, hash };

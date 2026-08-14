@@ -12,7 +12,9 @@
 // and folds the colour params into the `sourceHash` (so a param change invalidates
 // the cached frame, and the agent can describe the graded result by its handle).
 // `muted` bypasses (passes the source through unchanged) — the V58 stack mute,
-// byte-identical to no effect, exactly like a muted modifier.
+// byte-identical to no effect, exactly like a muted modifier. DECLARED in
+// `chain.bypass` below and honoured by the evaluator, which hands the spine value back
+// without calling `evaluate`; nothing in this file reads the field.
 //
 // REF: docs/COMPOSITOR-DESIGN.md §5 (effects = operators); src/app/operatorStack.ts
 //      (the shared sub-chain — EFFECT_NODE_TYPES); src/nodes/ArrayModifier.ts (the
@@ -31,7 +33,11 @@ export const ColorCorrectParams = z.object({
   contrast: z.number().min(0).default(1),
   /** Saturation multiplier (1 = identity, 0 = greyscale). Maps to `saturate()`. */
   saturation: z.number().min(0).default(1),
-  /** Stack mute-bypass (V58): true → pass the source Image through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
 });
 export type ColorCorrectParams = z.infer<typeof ColorCorrectParams>;
@@ -59,8 +65,6 @@ export const ColorCorrectNode: NodeDefinition<ColorCorrectParams, ImageValue> = 
     const src = inputs.target as ImageValue | undefined;
     // Unwired (transient authoring state) — nothing to grade; stay transparent.
     if (!src) return src as unknown as ImageValue;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no effect.
-    if (params.muted) return src;
     // Pure metadata: same descriptor, sourceHash folds in the colour params so the
     // graded frame is content-addressed distinctly from the ungraded source.
     return {

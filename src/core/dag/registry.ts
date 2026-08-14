@@ -82,6 +82,30 @@ function assertChainDeclaration(def: NodeDefinition): void {
     );
   }
 
+  // THE THIRD REFUSAL (ns-2 step 5) — the spine must name a declared input of SINGLE
+  // cardinality. A bypass hands back "the value that arrived on the spine", so a spine
+  // naming a socket the node does not declare has no value to hand back, and one of list
+  // cardinality would hand back an ARRAY where the output socket promises one value. Both
+  // are silent: the first passes `undefined` downstream, the second a shape nothing
+  // branches on. This is the precondition the single application site rests on, so it is
+  // enforced here rather than assumed there.
+  const spine = (def.inputs as Record<string, { cardinality?: string } | undefined> | undefined)?.[
+    chain.input
+  ];
+  if (spine === undefined) {
+    throw new Error(
+      `registerNodeType(${def.type}): chain.input names socket '${chain.input}', which this ` +
+        `node does not declare as an input. A stack walking that spine finds nothing.`,
+    );
+  }
+  if (spine.cardinality !== 'single') {
+    throw new Error(
+      `registerNodeType(${def.type}): chain.input names socket '${chain.input}', which has ` +
+        `'${spine.cardinality}' cardinality. A spine carries ONE value — it is what a bypass ` +
+        `hands back and what a stack walks down — so it cannot be a list socket.`,
+    );
+  }
+
   if (chain.bypass.kind !== 'passthrough') return;
   const param = chain.bypass.param;
   const shape = (def.paramSchema as unknown as { shape?: Record<string, unknown> }).shape;
@@ -96,6 +120,26 @@ function assertChainDeclaration(def: NodeDefinition): void {
       `registerNodeType(${def.type}): chain.bypass names param '${param}', which this node's ` +
         `paramSchema does not declare. A bypass reading an absent param reads undefined, ` +
         `which is falsy — the operator would simply never bypass, silently.`,
+    );
+  }
+  // AND IT MUST BE A BOOLEAN (ns-2 step 5). Step 4 checked only that the NAME exists,
+  // while step 5's single application site reads it strictly (`=== true`) — so a param
+  // declared under the right name holding, say, a string would type-check, register
+  // cleanly, and never bypass. The same silent failure the name check closed, one field
+  // over. Asked BEHAVIOURALLY rather than by reading zod's internals, which are a private
+  // shape that changes between versions: does this field accept both booleans and reject
+  // something that is not one?
+  const field = shape[param] as { safeParse?: (v: unknown) => { success: boolean } } | undefined;
+  const boolean =
+    typeof field?.safeParse === 'function' &&
+    field.safeParse(true).success &&
+    field.safeParse(false).success &&
+    !field.safeParse('not-a-boolean').success;
+  if (!boolean) {
+    throw new Error(
+      `registerNodeType(${def.type}): chain.bypass names param '${param}', which this node's ` +
+        `paramSchema does not declare as a boolean. The bypass is read strictly, so a ` +
+        `non-boolean param would register cleanly and never bypass, silently.`,
     );
   }
 }
