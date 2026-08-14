@@ -48,12 +48,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, registerNodeType } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
-import { MODIFIER_NODE_TYPES } from './operatorChain';
+import { isModifierNode, operatorTypesInSection } from './operatorChain';
+import { addableOperators } from './operatorMenu';
 import { arrayGeometryRef, boxGeometryRef } from './modifierGeometry';
 import { readGeometry } from './geometryRegistry';
 import { addModifierMutator } from '../agent/mutators/builders/addModifier';
-import { stripComments } from '../test-utils/sourceScan';
-import { sourceFiles } from '../../tools/gates/sourceFiles';
 import type { GeometryRef } from '../nodes/types';
 
 /** The node type minted for this gate. Registered by `beforeEach`, nowhere else. */
@@ -82,38 +81,38 @@ interface Surface {
   knows(candidate: OperatorCandidate): boolean | null;
 }
 
-/** A file's contents, comment-stripped, from the one enumeration the repo's gates walk. */
-function strippedSource(path: string): string | null {
-  const entry = sourceFiles().find(([p]) => p === path);
-  return entry ? stripComments(entry[1]) : null;
-}
-
-/**
- * The literal array body of `const <name> = [ … ];` in an already-stripped source.
- *
- * Returns `null` when the declaration cannot be found — the difference between "this menu
- * does not offer the operator" and "this probe is aimed at a block that no longer exists".
- */
-function arrayLiteralBody(stripped: string | null, name: string): string | null {
-  if (stripped === null) return null;
-  const match = new RegExp(`const ${name}\\b[^=]*=\\s*\\[([\\s\\S]*?)\\]\\s*;`).exec(stripped);
-  return match ? match[1] : null;
-}
-
 const SURFACES: readonly Surface[] = [
   {
-    // A `ReadonlySet` of type strings. Nothing derives it and nothing checks it; a modifier
-    // missing from it is not a modifier as far as the stack walker is concerned.
-    name: 'MODIFIER_NODE_TYPES',
-    knows: (c) => (MODIFIER_NODE_TYPES.size === 0 ? null : MODIFIER_NODE_TYPES.has(c.type)),
+    // WAS a `ReadonlySet` of type strings that nothing derived and nothing checked, so a
+    // modifier missing from it was not a modifier as far as the stack walker was concerned.
+    // ns-2 step 7 DELETED it: membership is `chain.section`, read from the operator's own
+    // declaration. The surface still exists — something still has to answer "is this a
+    // modifier?" — but it can no longer disagree with the operator about it.
+    name: 'the modifier membership set',
+    knows: (c) => {
+      // 🔴 ASKED THROUGH `isModifierNode`, THE PREDICATE THE STACK WALKERS ACTUALLY CALL —
+      // not through `operatorTypesInSection` directly. The first version of this row asked
+      // the derivation, and a perturbation caught it: restoring a hand-maintained list
+      // BEHIND the predicate left this census, and every other gate, entirely green. The
+      // set was only ever a backing store for the predicate, so the predicate is the
+      // surface; probing the derivation instead measures the wrong side of the very
+      // substitution the row exists to detect.
+      const readable = operatorTypesInSection('modifier');
+      if (readable.length === 0) return null;
+      return isModifierNode({ id: 'n_probe', type: c.type, params: {}, inputs: {} } as never);
+    },
   },
   {
-    // The "+ Add" menu. NOT exported, so this is a source census — hence the `null` arm,
-    // which fires if the declaration is ever renamed or reshaped out from under the regex.
-    name: 'ADDABLE (modifier)',
+    // The "+ Add" menu. Asked through the panel's OWN road (`addableOperators`) rather than
+    // by censusing a literal, because there is no longer a literal to census — step 7 split
+    // the menu into derived membership plus a label map, and only the labels are written
+    // down. An empty label map is passed deliberately: labels change the WORDING of an
+    // entry and can never remove one, which is the property that made the split worth
+    // making, and it is asserted directly in `operatorMembership.gate.test.ts`.
+    name: 'the modifier "+ Add" menu',
     knows: (c) => {
-      const body = arrayLiteralBody(strippedSource('src/app/ModifierStackControls.tsx'), 'ADDABLE');
-      return body === null ? null : body.includes(`'${c.type}'`);
+      const offered = addableOperators('modifier', {});
+      return offered.length === 0 ? null : offered.some((o) => o.type === c.type);
     },
   },
   {
@@ -247,19 +246,30 @@ describe('ns-2 step 1 — the surfaces a new geometry operator is invisible to',
     expect(surfacesBlindTo(PROBE).unreadable).toEqual([]);
   });
 
-  it('THE PIN: adding one geometry operator is invisible to exactly four surfaces', () => {
+  it('THE PIN: adding one geometry operator is invisible to exactly two surfaces', () => {
     // The phase's first exit clause is that this array becomes empty. Until then it is the
     // measurement, and it RATCHETS: it opened at five and each closed row leaves it, so the
     // list is the phase's progress rather than a description of it.
     //
-    // FIVE -> FOUR, at step 4: `the bypass declaration` left. Being an operator is now one
+    // FIVE -> FOUR, at step 4: `the bypass declaration` left. Being an operator became one
     // declaration carrying four fields instead of four things to remember separately, and
     // registration refuses a chain record that omits any of them — so an operator that
-    // forgot its bypass has no constructor. That is why this row cannot come back by
-    // someone simply not noticing; it can only come back by deleting a refusal.
+    // forgot its bypass has no constructor.
+    //
+    // FOUR -> TWO, at step 7. Both remaining spellings of MEMBERSHIP left together, and
+    // they had to: `MODIFIER_NODE_TYPES` and the "+ Add" menu are now the same declaration
+    // read twice, so the state each row described — a registered geometry operator absent
+    // from the set, or absent from the menu — has no constructor either. Membership is
+    // `chain.section`, and an operator that declares no section is not an operator of that
+    // stack rather than a forgotten one.
+    //
+    // 🔴 THE TWO THAT REMAIN ARE HONEST, NOT PENDING. The agent enum is a `z.enum` whose
+    // literal tuple is what lets the mutator narrow per modifier type; deriving it yields
+    // `string` and kills that narrowing, so it is KEPT and cross-checked exactly against the
+    // derived set (with a minted liar) instead. A cross-check is LOUD IN CI, which is a real
+    // improvement — and it is still not the same thing as unconstructible, so the row stays
+    // here rather than being retired on the strength of a gate existing somewhere else.
     expect(surfacesBlindTo(PROBE).blind).toEqual([
-      'MODIFIER_NODE_TYPES',
-      'ADDABLE (modifier)',
       'ModifierType (agent enum)',
       'buildFromDescriptor',
     ]);

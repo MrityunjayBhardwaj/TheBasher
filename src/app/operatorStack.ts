@@ -47,9 +47,15 @@ import {
 // and modifierGeometry, and sceneTreeWalk -> activeCamera -> resolveDataParamOwner
 // closes a cycle — can still share one walk (#516). Re-exported here so this stays
 // the address every existing caller already knows.
+// ns-2 step 7 — `MODIFIER_NODE_TYPES` and `EFFECT_NODE_TYPES` are GONE, not moved. Both
+// were hand-maintained sets that nothing derived and nothing checked; membership is now
+// `chain.section`, read through the predicates below and through
+// `operatorTypesInSection` for the surfaces that need the whole set (the two "+ Add"
+// menus). A caller that wants "is this a modifier?" asks `isModifierNode`; a caller that
+// wants "which modifiers are there?" asks the derivation, and gets an answer that cannot
+// be one entry short.
 export {
-  MODIFIER_NODE_TYPES,
-  EFFECT_NODE_TYPES,
+  operatorTypesInSection,
   chainSocketOf,
   chainSocketOfType,
   isModifierNode,

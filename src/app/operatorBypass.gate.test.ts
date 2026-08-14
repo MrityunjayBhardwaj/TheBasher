@@ -59,6 +59,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { stripComments } from '../test-utils/sourceScan';
+import { operatorTypesInSection } from './operatorChain';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 
 /** Every non-test source file, comment-stripped. Prose that QUOTES a pattern is not a use. */
@@ -276,17 +277,34 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     expect(chainMinusMuted).toEqual(['MaterialOverride', 'Transform']);
   });
 
-  it('SEVEN hand-maintained membership lists, contents pinned as literals', () => {
-    // Four lists spell two sets of two, one spells a set of one, and each pair agrees only
-    // because both halves were typed by the same hand on the same afternoon.
-    expect(
-      listBody('src/app/operatorChain.ts', /MODIFIER_NODE_TYPES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/),
-    ).toBe("'ArrayModifier', 'MirrorModifier',");
-    expect(
-      listBody('src/app/ModifierStackControls.tsx', /const ADDABLE\b[^=]*=\s*\[([\s\S]*?)\]\s*;/),
-    ).toBe(
-      "{ type: 'ArrayModifier', label: 'Array' }, { type: 'MirrorModifier', label: 'Mirror' },",
-    );
+  it('THREE membership lists remain, each with a reason it cannot be derived', () => {
+    // ns-2 step 7 — SEVEN became THREE. What follows is the arithmetic, in the file, with
+    // both halves stated: what went, and why what stayed had to.
+    //
+    // GONE (four), all derived from `chain.section`, which registration refuses to omit:
+    //   `MODIFIER_NODE_TYPES` · `EFFECT_NODE_TYPES` · the modifier "+ Add" menu ·
+    //   the material "+ Add" menu.
+    // Asserted as ABSENT below — and absence is only meaningful next to the derivation
+    // being non-empty, otherwise a rename reads exactly like a retirement.
+    for (const [file, pattern] of [
+      ['src/app/operatorChain.ts', /MODIFIER_NODE_TYPES/],
+      ['src/app/operatorChain.ts', /EFFECT_NODE_TYPES/],
+      ['src/app/ModifierStackControls.tsx', /const ADDABLE\b/],
+      ['src/app/MaterialStackControls.tsx', /const ADDABLE\b/],
+    ] as const) {
+      const body = FILES.find(([p]) => p === file)?.[1];
+      expect(body, `${file} must still be readable`).toBeDefined();
+      expect(pattern.test(body as string), `${file} still spells ${pattern}`).toBe(false);
+    }
+    // The derivation those four now go through, non-empty, so the zeros above are
+    // retirements rather than a census that lost its subject.
+    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
+    expect(operatorTypesInSection('effect')).toEqual(['ColorCorrect']);
+
+    // STAYS (1/3) — the agent's vocabulary. `z.enum` needs a literal tuple to produce a
+    // literal union, and the mutator narrows on it to scope each modifier's params. A
+    // derived set yields `string` and kills the narrowing.
     expect(
       listBody(
         'src/agent/mutators/builders/addModifier.ts',
@@ -294,21 +312,15 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       ),
     ).toBe("'ArrayModifier', 'MirrorModifier'");
 
+    // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines
+    // `MaterialLaneType`, and the per-field ownership switch closes on a `never` over it. A
+    // runtime derivation cannot buy back a compile-time exhaustiveness check.
     expect(listBody('src/app/operatorChain.ts', /MATERIAL_LANE_TYPES[^=]*=\s*\[([\s\S]*?)\]/)).toBe(
       "'SetMaterialOp', 'MaterialOverrideOp'",
     );
-    expect(
-      listBody('src/app/MaterialStackControls.tsx', /const ADDABLE\b[^=]*=\s*\[([\s\S]*?)\]\s*;/),
-    ).toBe(
-      "{ type: 'SetMaterialOp', label: 'Set Material' }, { type: 'MaterialOverrideOp', label: 'Override' },",
-    );
 
-    expect(
-      listBody('src/app/operatorChain.ts', /EFFECT_NODE_TYPES[^=]*=\s*new Set\(\[([\s\S]*?)\]\)/),
-    ).toBe("'ColorCorrect'");
-
-    // The seventh is `ALL` in `registerAll.ts` — the import door, not a membership claim,
-    // and the one list this phase keeps for a structural reason rather than deriving.
+    // STAYS (3/3) — `ALL` in `registerAll.ts`. The import door, not a membership claim:
+    // something has to name the modules, or nothing registers at all.
     const registerAll = FILES.find(([p]) => p === 'src/nodes/registerAll.ts')?.[1];
     expect(registerAll).toBeDefined();
     expect(registerAll).toContain('const ALL');

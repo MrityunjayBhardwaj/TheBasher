@@ -4,7 +4,8 @@
 // REF: THESIS.md §6 ("Eighty percent of Basher is node definitions"), §20
 // (tool surface).
 
-import type { NodeDefinition, NodeTypeId } from './types';
+import type { NodeDefinition, NodeTypeId, OperatorSection, SocketTypeName } from './types';
+import { operatorLaneOf } from './operatorLane';
 
 const registry = new Map<NodeTypeId, NodeDefinition>();
 
@@ -67,6 +68,19 @@ function assertInputDescriptors(def: NodeDefinition): void {
  * the name against the schema at registration is what lets the single application site
  * downstream read the field as a CHECKED read rather than an unchecked cast.
  */
+/**
+ * The LANE each offered stack runs on. `'none'` is absent deliberately: it means no stack
+ * offers this operator, which constrains nothing about the type flowing through it — the
+ * two scene-lane wrappers declare it and stand on `SceneObject`, and a future unoffered
+ * operator could stand anywhere. Constraining `'none'` would be inventing a rule to make a
+ * table look complete.
+ */
+const SECTION_LANE: Readonly<Partial<Record<OperatorSection, SocketTypeName>>> = {
+  modifier: 'ObjectData',
+  material: 'ObjectData',
+  effect: 'Image',
+};
+
 function assertChainDeclaration(def: NodeDefinition): void {
   const chain = def.chain;
   if (chain === undefined) return; // not an operator — the one legal way to say nothing
@@ -104,6 +118,35 @@ function assertChainDeclaration(def: NodeDefinition): void {
         `'${spine.cardinality}' cardinality. A spine carries ONE value — it is what a bypass ` +
         `hands back and what a stack walks down — so it cannot be a list socket.`,
     );
+  }
+
+  // THE FIFTH REFUSAL (ns-2 step 7) — an offered SECTION must match the operator's LANE.
+  //
+  // This is what lets `section` be the SOLE membership claim. Step 7 deletes
+  // `MODIFIER_NODE_TYPES`, `EFFECT_NODE_TYPES` and both "+ Add" menus and derives all four
+  // from this one field, so the field now decides which stack offers an operator — and a
+  // stack that offers a member it cannot actually carry is the lying label this project has
+  // paid for three times. `EFFECT_NODE_TYPES`'s own comment already asserted the rule in
+  // prose (*"a typed `target: Image` / `out: Image` operator"*); nothing enforced it.
+  //
+  // 🔴 IT IS A REFUSAL AND NOT A CONJUNCT ON THE PREDICATE, AND THAT IS THE WHOLE POINT.
+  // Writing `section === 'effect' && lane === 'Image'` into `isEffectNode` would make a
+  // mis-declared operator fall silently out of its own stack — the same silent omission,
+  // moved one file over, which is exactly what disqualified deriving membership from
+  // `inspectorSections`. Refused here, the author is told at the one moment they are
+  // present, and every reader downstream may trust the field alone.
+  const expectedLane = SECTION_LANE[chain.section];
+  if (expectedLane !== undefined) {
+    const lane = operatorLaneOf(def);
+    if (lane !== expectedLane) {
+      throw new Error(
+        `registerNodeType(${def.type}): chain.section is '${chain.section}', which is offered ` +
+          `by a stack that carries '${expectedLane}', but this operator's lane is ` +
+          `${lane === null ? 'undefined (its spine and its `out` socket disagree)' : `'${lane}'`}. ` +
+          `A stack cannot offer a member it cannot carry — declare the matching sockets, or ` +
+          `declare section 'none' if no stack should offer it.`,
+      );
+    }
   }
 
   if (chain.bypass.kind !== 'passthrough') return;

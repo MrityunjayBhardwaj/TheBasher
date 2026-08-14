@@ -49,19 +49,19 @@ import { registerNodeType } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { operatorLaneOf } from '../core/dag/operatorLane';
 import {
-  EFFECT_NODE_TYPES,
   MATERIAL_LANE_TYPES,
-  MODIFIER_NODE_TYPES,
   isDataLaneOperator,
   isEffectNode,
   isMaterialLaneOperator,
+  isModifierNode,
   isSceneLaneWrapper,
   operatorLane,
+  operatorTypesInSection,
 } from './operatorChain';
 import { stripComments } from '../test-utils/sourceScan';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { importsOf } from '../../tools/gates/moduleShape';
-import type { Node, SocketTypeName } from '../core/dag/types';
+import type { Node, OperatorSection, SocketTypeName } from '../core/dag/types';
 
 /** A node instance, as every predicate here sees one: a type id and nothing else. */
 function nodeOfType(type: string): Node {
@@ -101,7 +101,12 @@ function laneMembers(lane: SocketTypeName): string[] {
  * `beforeEach` and red every row in the file at once, which is a blast radius that says
  * nothing about any of them.
  */
-function registerLaneOp(name: string, lane: SocketTypeName, out: SocketTypeName = lane): void {
+function registerLaneOp(
+  name: string,
+  lane: SocketTypeName,
+  out: SocketTypeName = lane,
+  section: OperatorSection = 'none',
+): void {
   registerNodeType({
     type: name,
     version: 1,
@@ -114,7 +119,7 @@ function registerLaneOp(name: string, lane: SocketTypeName, out: SocketTypeName 
       input: 'target',
       scope: { kind: 'source' },
       bypass: { kind: 'passthrough', param: 'muted' },
-      section: 'modifier',
+      section,
     },
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
   } as never);
@@ -203,7 +208,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'MirrorModifier',
       'SetMaterialOp',
     ]);
-    expect([...MODIFIER_NODE_TYPES].sort()).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
     expect(laneMembers('Image')).toEqual(['ColorCorrect']);
   });
@@ -225,9 +230,14 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     ]);
     expect(isDataLaneOperator(nodeOfType('Ns2SyntheticDataOp'))).toBe(true);
 
-    // And the list next door did not move. That asymmetry is the phase's whole subject.
-    expect(MODIFIER_NODE_TYPES.size).toBe(2);
-    expect(MODIFIER_NODE_TYPES.has('Ns2SyntheticDataOp')).toBe(false);
+    // AND THE SECTION DERIVATION DID NOT MOVE — because the synthetic declares
+    // `section: 'none'`. The two derivations read the same registry and answer different
+    // questions, and this is where that is asserted rather than described: standing on the
+    // data lane does not put an operator in the modifier stack, and step 7 kept it that way
+    // when it retired the lists (a member joins a stack by declaring the section, never by
+    // having the right sockets).
+    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(isModifierNode(nodeOfType('Ns2SyntheticDataOp'))).toBe(false);
   });
 
   it('AN OPERATOR ON A LANE NOBODY HAS USED YET GETS A NAMED ANSWER, NOT undefined', () => {
@@ -273,17 +283,25 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
   });
 });
 
-describe('ns-2 step 6 — the lane conjunct on the two list-backed predicates is real', () => {
+describe('ns-2 step 6/7 — the lane conjunct on the surviving list is real', () => {
   // These re-register a SHIPPED type name on the WRONG lane, which means the registry is
   // reset and NOT reseeded: `registerNodeType` refuses a duplicate, so the only way to ask
-  // "what if this member left its lane?" is to be the one who registers it. The lists
-  // themselves are module constants and still name the type throughout — that is exactly the
-  // point. Before this step the predicate would have said yes on the strength of the name.
+  // "what if this member left its lane?" is to be the one who registers it.
+  //
+  // 🔴 THE SECTION IS DELIBERATELY `'none'` HERE, and that is not a detail. Step 7 added a
+  // registration refusal — an offered section must match the lane its stack carries — so a
+  // synthetic that kept `section: 'material'` on the Image lane would now THROW instead of
+  // registering, and this row would be measuring the refusal rather than the predicate. The
+  // two are tested separately, and this is the seam where they would have silently merged.
   beforeEach(() => {
     __resetRegistryForTests();
   });
 
   it('a material operator that stops standing on the data lane stops being one', () => {
+    // `MATERIAL_LANE_TYPES` is the ONE membership list step 7 left standing (its tuple
+    // closes the ownership switch's `never`, which no runtime derivation can buy back). So
+    // this conjunct still has a list to narrow, and still has to be shown to do work: the
+    // name is in the tuple throughout, and the predicate says no anyway.
     registerLaneOp('SetMaterialOp', 'Image');
 
     expect((MATERIAL_LANE_TYPES as readonly string[]).includes('SetMaterialOp')).toBe(true);
@@ -291,21 +309,26 @@ describe('ns-2 step 6 — the lane conjunct on the two list-backed predicates is
     expect(isMaterialLaneOperator(nodeOfType('SetMaterialOp'))).toBe(false);
   });
 
-  it('an effect that stops standing on the Image lane stops being one', () => {
-    registerLaneOp('ColorCorrect', 'ObjectData');
-
-    expect(EFFECT_NODE_TYPES.has('ColorCorrect')).toBe(true);
-    expect(operatorLane(nodeOfType('ColorCorrect'))).toBe('ObjectData');
-    expect(isEffectNode(nodeOfType('ColorCorrect'))).toBe(false);
-  });
-
-  it('the positive control: on their own lane, both still answer yes', () => {
-    // Without this the two rows above pass just as well if the predicates were broken to
-    // return false always.
-    registerLaneOp('SetMaterialOp', 'ObjectData');
-    registerLaneOp('ColorCorrect', 'Image');
+  it('the positive control: on its own lane it still answers yes', () => {
+    // Without this the row above passes just as well if the predicate were broken to return
+    // false always.
+    registerLaneOp('SetMaterialOp', 'ObjectData', 'ObjectData', 'material');
 
     expect(isMaterialLaneOperator(nodeOfType('SetMaterialOp'))).toBe(true);
+  });
+
+  it('an effect off the Image lane is REFUSED at registration, not quietly excluded', () => {
+    // This is what `isEffectNode`'s lane conjunct became at step 7, and the move is the
+    // point. `EFFECT_NODE_TYPES` is gone; membership is `chain.section` alone. Had the lane
+    // check stayed a conjunct on the predicate, a mis-declared effect would drop silently
+    // out of its own stack — the identical silent omission, one file over. As a refusal it
+    // is impossible to register and the author is told which two declarations disagree.
+    expect(() => registerLaneOp('ColorCorrect', 'ObjectData', 'ObjectData', 'effect')).toThrow(
+      /chain.section is 'effect'.*lane is 'ObjectData'/s,
+    );
+
+    // And the honest positive control: on the Image lane the same declaration registers.
+    registerLaneOp('ColorCorrect', 'Image', 'Image', 'effect');
     expect(isEffectNode(nodeOfType('ColorCorrect'))).toBe(true);
   });
 });

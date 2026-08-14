@@ -21,8 +21,10 @@
 //      src/nodes/ArrayModifier.ts; src/app/NPanel.tsx (renders this in the 'modifier'
 //      section); vyapti V58.
 
+import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
+import { addableOperators } from './operatorMenu';
 import { canModifyGeometry, resolveDataKind } from './modifierGeometry';
 import { dataSectionCapability } from './dataSectionCapability';
 import { OperatorStackRows } from './OperatorStackRows';
@@ -35,12 +37,31 @@ import {
   resolveStackBase,
 } from './operatorStack';
 
-/** The modifiers the user can add from the "+ Add" menu. New modifiers join here
- *  + MODIFIER_NODE_TYPES + the agent ModifierType enum + registerAll. */
-const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
-  { type: 'ArrayModifier', label: 'Array' },
-  { type: 'MirrorModifier', label: 'Mirror' },
-];
+/**
+ * PRESENTATION ONLY — the menu wording and the order it reads in. **Not membership.**
+ *
+ * ns-2 step 7: this used to be `ADDABLE`, a hand-maintained list of the modifiers the menu
+ * offered, and forgetting to add a new modifier to it meant the operator existed, evaluated
+ * and rendered while being unreachable from the panel — silently, because a menu that is
+ * missing an entry looks exactly like a menu that is complete. Membership now comes from
+ * `operatorTypesInSection('modifier')`, derived from each node's own declaration.
+ *
+ * What is left here is what a registry genuinely cannot answer: that `ArrayModifier` reads
+ * "Array" to a user. Deriving THAT from the type name was measured and rejected —
+ * `SetMaterialOp` → "Set Material" works and `MaterialOverrideOp` → "Material Override"
+ * does not, and the material menu says "Override". A label wrong for a quarter of its
+ * population is the lying-label shape, so labels stay written down, exactly as
+ * `AddMenu.tsx` already writes down all eighty of them.
+ *
+ * 🔑 THE FAILURE MODE IS NOW VISIBLE INSTEAD OF SILENT. A modifier missing from this map is
+ * still OFFERED — it appears under a fallback label derived from its type. The user sees a
+ * clumsy name; they do not lose the operator. That asymmetry is the entire retirement:
+ * omission used to remove a capability, and now it costs a word.
+ */
+const LABELS: Readonly<Record<string, string>> = {
+  ArrayModifier: 'Array',
+  MirrorModifier: 'Mirror',
+};
 
 /** #498 — a module constant, not a fresh `[]` per render, so the rows keep a stable
  *  prop identity on the refused path exactly as they do on the offered one. */
@@ -76,7 +97,11 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   // add that `buildAddModifierOps` would refuse is not shown at all, so the panel cannot
   // advertise an action that silently does nothing.
   const canAdd = canModifyGeometry(state, base);
-  const addable = canAdd ? ADDABLE : EMPTY_ADDABLE;
+  // Derived once per mount, not per render: the registry is filled at boot and does not
+  // move afterwards, so this keeps #498's stable prop identity while the MEMBERSHIP still
+  // comes from the declarations rather than from a list beside the menu.
+  const offered = useMemo(() => addableOperators('modifier', LABELS), []);
+  const addable = canAdd ? offered : EMPTY_ADDABLE;
 
   // The three-state answer, which `canModifyGeometry` alone cannot give: it is false for
   // a curve, a light and a camera alike, and those do not deserve the same sentence. A
