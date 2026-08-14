@@ -1,0 +1,15 @@
+diff --git a/src/core/dag/ops.ts b/src/core/dag/ops.ts
+index 7774ff3..0160d83 100644
+--- a/src/core/dag/ops.ts
++++ b/src/core/dag/ops.ts
+@@ -215,7 +215,9 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
+   // #609 — MEMBERSHIP, not equality: an input socket may accept a SET of types.
+   // The message names the whole accepted set, so a rejection says what WOULD have
+   // been taken rather than only what was offered.
+-  if (!inputAccepts(inputDesc, outputDesc.type)) {
++  // DISCARD HARNESS: the answer is computed, then thrown away at the point of use.
++  inputAccepts(inputDesc, outputDesc.type);
++  if (false as boolean) {
+     throw new OpError(
+       `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}`,
+       op,
