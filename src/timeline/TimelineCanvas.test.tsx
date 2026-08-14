@@ -41,6 +41,7 @@ import {
 import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import type { Node } from '../core/dag/types';
+import { testNode } from '../test-utils/testNode';
 
 // --- helpers ---------------------------------------------------------
 
@@ -136,8 +137,10 @@ describe('collectChannelRows', () => {
     // dispatchDirectFirstKey sets name === paramPath ("position"). Post-#199 the
     // camera, the box, every node animates via free-floating channels in ONE flat
     // list — so two "position" rows are indistinguishable until qualified by owner.
+    // #622 — `testNode` validates the type against the registry, so this fixture cannot
+    // drift back onto a retired kind the way it had (it built two until #594).
     const node = (id: string, type: string, params: Record<string, unknown>) =>
-      ({ id, type, inputs: {}, params }) as unknown as Node;
+      testNode(id, type, { params });
     const ch = (id: string, target: string) =>
       node(id, 'KeyframeChannelVec3', {
         name: 'position',

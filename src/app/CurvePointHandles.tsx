@@ -37,8 +37,8 @@
 //      src/app/curvePointSelection.ts (the one accessor); src/app/Gizmo.tsx (the gate, the
 //      undo bracket, and the pick technique this mirrors); issue #322.
 
-import { TransformControls } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { TransformGizmo } from './TransformGizmo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useDagStore } from '../core/dag/store';
@@ -264,7 +264,7 @@ export function CurvePointHandles() {
           the object gizmo, which returns the moment the point selection clears). */}
       <group ref={proxyRefCb} />
       {active && proxy ? (
-        <TransformControls
+        <TransformGizmo
           object={proxy}
           mode="translate"
           enabled={!playing}

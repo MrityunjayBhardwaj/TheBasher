@@ -9,6 +9,17 @@
 // rendered). Equal → the live render consumed the resolver's geometry handle, no
 // drift between the render road and the read-side road.
 //
+// ⚠️ SCOPE OF THAT CONCLUSION (#580): it holds because every fixture in this file
+// carries NO OVERLAY on a geometry-building param. Side B reads authored params by
+// type (`resolveEvaluatedMesh` takes `DagState`), while the render root folds, so
+// under a driven/held `count` the two sides diverge and the equality below would be
+// asserting something it cannot prove. That divergence is real and measured — it is
+// the subject of #580, not a latent risk here.
+//
+// So: a case added to this file MUST stay overlay-free, or it must stop using side B
+// and read both counts off the rendered scene. Adding a driven-count case to the
+// existing helper would go red for the right reason and be read as the wrong one.
+//
 // FALSIFICATION (guards a vacuous pass): muting the modifier (the stack
 // mute-bypass, V58) collapses the output back to the source's vertex count — so it
 // is the operator that produced the extra geometry, not a stray mesh. The active

@@ -278,102 +278,119 @@ describe('the split-kind registry gate', () => {
     }
   });
 
-  it("AGREEMENT: the inline membership test matches the DAG's `inputAccepts` (#615)", () => {
-    // "Does this input socket accept type T?" is answered in TWO places — `inputAccepts`
-    // in core/dag/types.ts, and two lines re-spelled inside `isDataOperatorDef`.
+  it('SET-VALUED SPINES: a spine is on the data lane iff its declared set contains ObjectData', () => {
+    // `isDataOperatorDef` now CALLS `inputAccepts` (#612) rather than re-spelling it, so
+    // the old AGREEMENT check between the two copies (#615) would compare a function with
+    // itself. What that check was really protecting is kept here: the set-valued
+    // population, which the registry does not contain.
     //
-    // THE SECOND COPY IS FORCED, NOT CHOSEN, and the reason is the gate directly below
-    // this one: `splitKinds.ts` may not VALUE-import `core/dag`, because e2e specs import
-    // that descriptor and doing so would drag the whole DAG module graph into Playwright.
-    // ⚠️ Do not "fix" the duplication by widening that rule — it is load-bearing. What was
-    // missing is anything that would notice the two answers drifting apart.
-    //
-    // A sweep over the registry ALONE cannot notice it. The only set-valued socket that
+    // A sweep over the registry ALONE cannot exercise it. The only set-valued socket that
     // exists is `ParamDriver.in`, which is not on the data lane and which this predicate
-    // never looks at — so both copies could stop handling sets entirely and every fixture
-    // in the suite would still agree. The synthetic defs below are the whole point: they
-    // are the population the registry does not contain.
-    const reference = (def: DataLaneDef): boolean => {
-      const spine = def?.chainInput;
-      if (!spine) return false;
-      return (
-        inputAccepts(def?.inputs?.[spine] as InputDescriptor | undefined, 'ObjectData') &&
-        def?.outputs?.out?.type === 'ObjectData'
-      );
-    };
-
+    // never looks at — so the reader could stop handling sets entirely and every fixture
+    // in the suite would still pass. These synthetic defs are the population that says no.
     const OUT_DATA = { out: { type: 'ObjectData' } };
-    const probes: { name: string; def: DataLaneDef }[] = [
-      // The shapes that exist today, so a drift on the ordinary road is caught too.
-      ...Object.entries(snapshotRegistry()).map(([name, def]) => ({
-        name,
-        def: def as unknown as DataLaneDef,
-      })),
-      // …and the set-valued shapes that do not.
+    const cases: { name: string; def: DataLaneDef; expected: boolean }[] = [
       {
-        name: 'synthetic: spine accepts a set INCLUDING ObjectData',
+        name: 'spine accepts a set INCLUDING ObjectData',
         def: {
           chainInput: 'target',
           inputs: { target: { type: ['Mesh', 'ObjectData'] } },
           outputs: OUT_DATA,
         },
+        expected: true,
       },
       {
-        name: 'synthetic: spine accepts a set EXCLUDING ObjectData',
+        name: 'spine accepts a set EXCLUDING ObjectData',
         def: {
           chainInput: 'target',
           inputs: { target: { type: ['Mesh', 'SceneObject'] } },
           outputs: OUT_DATA,
         },
+        expected: false,
       },
       {
-        name: 'synthetic: ObjectData is the FIRST member',
+        name: 'ObjectData is the FIRST member',
         def: {
           chainInput: 'target',
           inputs: { target: { type: ['ObjectData', 'Mesh'] } },
           outputs: OUT_DATA,
         },
+        expected: true,
       },
       {
-        name: 'synthetic: scalar spine, the ordinary form',
+        name: 'scalar spine, the ordinary form',
         def: {
           chainInput: 'target',
           inputs: { target: { type: 'ObjectData' } },
           outputs: OUT_DATA,
         },
+        expected: true,
       },
       {
-        name: 'synthetic: spine names a socket that is not declared',
+        name: 'spine names a socket that is not declared',
         def: { chainInput: 'missing', inputs: {}, outputs: OUT_DATA },
+        expected: false,
       },
     ];
 
-    const disagreements = probes
-      .filter(({ def }) => isDataOperatorDef(def) !== reference(def))
+    const wrong = cases
+      .filter(({ def, expected }) => isDataOperatorDef(def) !== expected)
       .map(({ name }) => name);
-    expect(disagreements).toEqual([]);
+    expect(wrong).toEqual([]);
+    // Both answers are exercised, so this cannot pass by always returning one of them.
+    expect(cases.filter((c) => c.expected).length).toBeGreaterThan(0);
+    expect(cases.filter((c) => !c.expected).length).toBeGreaterThan(0);
 
-    // Guard the guard: the synthetic probes must actually EXERCISE both answers, or this
-    // agrees vacuously the way any two functions agree on an empty domain.
-    const synthetic = probes.filter((p) => p.name.startsWith('synthetic'));
-    expect(synthetic.filter((p) => isDataOperatorDef(p.def)).length).toBeGreaterThan(0);
-    expect(synthetic.filter((p) => !isDataOperatorDef(p.def)).length).toBeGreaterThan(0);
+    // And the shared reader agrees on the ordinary registry road too — the same call the
+    // predicate makes, over every registered def, so a drift there is not invisible.
+    for (const [name, def] of Object.entries(snapshotRegistry())) {
+      const d = def as unknown as DataLaneDef;
+      const spine = d?.chainInput;
+      if (!spine) continue;
+      expect(
+        isDataOperatorDef(d),
+        `${name}: the predicate and a direct \`inputAccepts\` read disagree`,
+      ).toBe(
+        inputAccepts(d?.inputs?.[spine] as InputDescriptor | undefined, 'ObjectData') &&
+          d?.outputs?.out?.type === 'ObjectData',
+      );
+    }
   });
 
-  it('the descriptor stays free of the DAG graph so e2e specs can import it', () => {
+  it('the descriptor drags no module graph into Playwright — checked, not allowlisted', () => {
     // Both tiers share ONE descriptor. That only holds while it is importable from a
     // Playwright spec without dragging the graph in — the moment it needs `applyOp` or
     // `DagState`, the e2e tier needs its own second copy and the duplication this
     // module removed comes straight back. Cheaper to assert than to rediscover.
+    //
+    // #612 — this used to forbid every VALUE import of `core/dag` outright, which is what
+    // forced `isDataOperatorDef` to re-spell the membership test. The rule was never
+    // really about the path; it was about what the import DRAGS. So it is now derived:
+    // a value import of `core/dag` is allowed only from a module that is itself leaf —
+    // zero value imports of its own, therefore nothing to pull in. Widening this to a
+    // path allowlist would let the exemption outlive the property that justified it; the
+    // moment `socketMembership.ts` gains a value import, this fails.
+    const valueImports = (source: string): string[] =>
+      [...source.matchAll(/^import\s+(?!type\s)[^;]*?from\s+'([^']+)';/gms)].map((m) => m[1]);
+
     const source = readFileSync(join(__dirname, 'splitKinds.ts'), 'utf8');
-    // Only VALUE imports matter — `import type` is erased and drags nothing.
-    const graphImports = [...source.matchAll(/^import\s+(?!type\s)[^;]*?from\s+'([^']+)';/gms)]
-      .map((m) => m[1])
-      .filter((spec) => spec.includes('core/dag'));
+    const dagImports = valueImports(source).filter((spec) => spec.includes('core/dag'));
+
+    const notLeaf: string[] = [];
+    for (const spec of dagImports) {
+      const path = join(__dirname, `${spec.replace(/^\.\.\//, '../')}.ts`);
+      const dragged = valueImports(readFileSync(path, 'utf8'));
+      if (dragged.length > 0) notLeaf.push(`${spec} → ${dragged.join(', ')}`);
+    }
     expect(
-      graphImports,
-      `splitKinds.ts must not import the DAG graph — an e2e spec importing it would pull ` +
-        `the whole module graph into Playwright: ${graphImports.join(', ')}`,
+      notLeaf,
+      `splitKinds.ts may value-import a DAG module only while that module drags nothing — ` +
+        `an e2e spec importing this descriptor would otherwise pull the whole module graph ` +
+        `into Playwright: ${notLeaf.join(' | ')}`,
     ).toEqual([]);
+
+    // Guard the guard: if nothing matched, the loop above proved nothing. The one import
+    // that is expected to be here today is the membership reader.
+    expect(dagImports).toContain('../core/dag/socketMembership');
   });
 });

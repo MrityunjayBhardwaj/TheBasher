@@ -98,6 +98,42 @@ describe('studioProfileIO (#208)', () => {
     expect(names).toContain('Key (2)');
   });
 
+  // #625 — the composed profile is a PORTABLE snapshot, so none of its number
+  // triples may be the live params array they were read from. Each field below is
+  // seeded with a value that differs from the helper's fallback, so a copy that
+  // silently degrades to the fallback fails this too (a `toEqual` + `not.toBe`
+  // pair on a value equal to the fallback would pass vacuously).
+  it('detaches every vec3 it emits from the live params arrays', () => {
+    let state = sceneWithKeyProfile();
+    const rigId = resolveActiveRigNode(state)!;
+    const lightId = (state.nodes[rigId].inputs.lights as { node: string }[])[0].node;
+    state = apply(state, [
+      { type: 'setParam', nodeId: lightId, paramPath: 'rotation', value: [0.1, 0.2, 0.3] },
+      { type: 'setParam', nodeId: lightId, paramPath: 'scale', value: [2, 3, 4] },
+    ]);
+
+    const lp = state.nodes[lightId].params as Record<string, [number, number, number]>;
+    const rp = state.nodes[rigId].params as Record<string, [number, number, number]>;
+    const json = composeProfile(state, rigId)!;
+
+    // Read the authored value (not the fallback) ...
+    expect(json.lights[0].position).toEqual(lp.position);
+    expect(json.lights[0].rotation).toEqual([0.1, 0.2, 0.3]);
+    expect(json.lights[0].scale).toEqual([2, 3, 4]);
+    expect(json.center).toEqual([1, 0, 0]);
+    // ... through a copy.
+    expect(json.lights[0].position).not.toBe(lp.position);
+    expect(json.lights[0].rotation).not.toBe(lp.rotation);
+    expect(json.lights[0].scale).not.toBe(lp.scale);
+    expect(json.center).not.toBe(rp.center);
+
+    // Editing the emitted profile leaves the scene alone.
+    json.lights[0].position[0] = 999;
+    json.center[2] = -7;
+    expect(lp.position[0]).not.toBe(999);
+    expect(rp.center[2]).toBe(0);
+  });
+
   it('rejects a malformed file', () => {
     expect(() => parseProfilesFile({ nope: true })).toThrow();
     expect(() => parseProfilesFile({ format: PROFILES_FORMAT, version: 1 })).toThrow();

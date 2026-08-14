@@ -10,6 +10,12 @@ public/fixtures/multifile/
 # (the FBX especially must not be reflowed — FBXLoader parses a fixed
 # structure), and prettier cannot infer a parser for .bvh/.fbx anyway.
 public/fixtures/anim/
+# Pre-phase project fixtures — captured output, not authored source. Each is the
+# exact byte payload the running app wrote through `saveCurrent()`, kept so a later
+# phase's shape change can be tested against a save that predates it. Reflowing them
+# would make the bytes ours rather than the app's, and the save-size gate (#631)
+# measures the real payload length. Same rationale as public/fixtures/ above.
+src/core/project/__fixtures__/
 # Vendored Draco / Basis (KTX2) decoders — third-party JS+WASM wrappers
 # copied from three-stdlib (`node_modules/three/examples/jsm/libs/...`).
 # Not ours; do not reformat. See #80 / src/viewport/gltfLoaderConfig.ts.

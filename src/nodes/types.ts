@@ -425,6 +425,22 @@ export interface BakedMaterialSpec {
 // geometry registry (src/app/geometryRegistry.ts), NEVER inlined BufferGeometry
 // — heavy buffers stay out of Ops / undo / hashing.
 
+/**
+ * A mesh's material assignment: which slots the object declares, and which slot each face
+ * uses (#634).
+ *
+ * `indices` is `null` when the geometry carries no `material_index` attribute at all — a
+ * road with no data half yet (glTF / baked). That is NOT "every face uses slot 0"; it is
+ * "this geometry cannot say", and the difference is why it is a null rather than a
+ * synthesised array of zeros. The readers live in `src/app/materialAssignment.ts`.
+ */
+export interface MaterialAssignment<M> {
+  readonly slots: readonly M[];
+  readonly indices: ArrayLike<number> | null;
+}
+
+import type { MeshUVRead } from '../app/uvAttributes';
+
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
   readonly position: Vec3;
@@ -478,10 +494,61 @@ export type GeometryDescriptor =
 /** The axis a `mirror` modifier reflects across (the negated component). */
 export type MirrorAxis = 'x' | 'y' | 'z';
 
+/**
+ * A LOOKUP KEY into one process-wide, content-derived geometry cache — NOT a
+ * per-object container.
+ *
+ * #605 — nothing per-object may be attached here, and the reason is measurable
+ * rather than stylistic: two nodes with equal descriptors resolve to the SAME
+ * `BufferGeometry` instance (`geometryRegistry` caches on `key`, and
+ * `geometrySharing.gate.test.ts` pins the identity). So an attribute hung off
+ * this handle would be hung off something several objects hold at once. Material
+ * is the concrete case: two same-size boxes shaded differently would either
+ * collide, or force material into the key and shatter the sharing the cache
+ * exists to provide — a box per material instead of a box.
+ *
+ * This is why the reference-substrate move of carrying material as a
+ * primitive-class attribute riding along in the geometry container does not
+ * transfer as-is. There, the container is the object's own data; here it is a
+ * shared, content-addressed entry. Per-object substance belongs on the DATA half
+ * of the object/data pair (`BoxData` = geometry + material), which is already
+ * where it lives.
+ *
+ * ── #638 (ns-1b) — THE ONE THING THAT DOES RIDE ALONG, AND WHY IT IS NOT A
+ *    CONTRADICTION OF THE PARAGRAPHS ABOVE ─────────────────────────────────────
+ *
+ * The prohibition above is on the MATERIAL and on the object's SLOT TABLE. It is
+ * not on the per-face INDEX that says which slot each face uses.
+ *
+ * The distinction is the one both reference systems draw, and it is what makes
+ * variation over shared geometry possible at all: the table is object-level
+ * substance, the index is part of what the geometry IS. Two boxes pointing their
+ * faces at slots {0,1} in the same pattern are the same geometry however the two
+ * objects fill those slots, and they still share one `BufferGeometry`.
+ *
+ * It has to be here rather than beside the handle because the group layout that
+ * carries an index to the GPU lives on the `BufferGeometry` INSTANCE — three.js
+ * has no per-object group layout. Two objects needing different face→slot layouts
+ * would otherwise have to disagree about one shared array. That is unavailable,
+ * not merely expensive, and it is the whole reason the index enters identity.
+ *
+ * `attributeKey` is the content key of the geometry's own attribute set (see
+ * `src/nodes/attributeKey.ts`), and it is ABSENT — not `undefined` — when the
+ * geometry carries no attributes. The two states are kept distinct because
+ * `{field: undefined}` and a missing field hash differently, and a field that
+ * materialises as `undefined` re-keys every mesh value in every project with no
+ * error. The builders in `src/app/modifierGeometry.ts` are the only things that
+ * may write it, and they refuse an unanswered `undefined` by name.
+ */
 export interface GeometryRef {
   readonly key: string;
   readonly kind: 'box' | 'sphere' | 'gltf' | 'baked' | 'array' | 'mirror';
   readonly descriptor: GeometryDescriptor;
+  /**
+   * The content key of this geometry's own attribute set, folded into {@link key}.
+   * ABSENT when there is none — never present-and-`undefined`.
+   */
+  readonly attributeKey?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -513,19 +580,52 @@ export interface EvaluatedUVs {
 }
 
 /**
- * The uniform consumed mesh face. `uvs` carries the real UV layout for the SYNC
- * producers (box/sphere — geometry available in the registry); it is null for
- * glTF / GltfChild / BakedMesh, whose geometry is ASYNC (asset clone / OPFS) and
- * outside this pure sync resolver — UVEditor resolves those itself via the SAME
- * `extractUVIslands` (A-2/A-3). `material` is the ONE material face every consumer
- * reads (M6, Phase 151): an `InlineMaterialSpec` for un-baked box/sphere, a rich
- * `BakedMaterialSpec` for a BakedMesh, or null (gltf). Widening to the union means
- * there is exactly ONE material shape consumers branch on, never a second path.
+ * The uniform consumed mesh face — one shape every mesh-producing kind projects to, so no
+ * consumer grows a second path.
+ *
+ * ── #636: THE TWO SIBLING FIELDS ARE GONE, AND WHAT REPLACED THEM ─────────────────────
+ *
+ * This struct used to carry `uvs: EvaluatedUVs | null` and `material: Spec | null` as peers
+ * of the geometry handle. Both are deleted, because both could hold exactly one value and a
+ * mesh has never been limited to one:
+ *
+ *   - `material` could name ONE material. A mesh whose faces are assigned across two slots
+ *     had no way to say so, which made a per-face assignment not merely unimplemented but
+ *     unrepresentable. {@link MaterialAssignment} replaces it: the object's slot table
+ *     paired with the geometry's per-face index into it. The INDEX belongs to the geometry
+ *     and the TABLE is object-level — the line both reference systems draw, and what lets
+ *     two objects share one mesh and still look different.
+ *   - `uvs: null` carried THREE situations with three different correct responses — bytes
+ *     in flight, buffers in a loaded asset clone, and no UV layer at all. `uvRead` replaces
+ *     it with an answer that says which, so a consumer can no longer render an untextured
+ *     mesh during a load and call it correct.
+ *
+ * Nothing has an escape hatch back to a single value. If one turns out to be needed it gets
+ * named, counted and justified on its own rather than left as the default shape.
+ *
+ * `geometry` is a {@link GeometryRef} HANDLE into the geometry registry, NEVER inlined
+ * buffers — heavy arrays stay out of Ops / undo / hashing. The attributes behind it live in
+ * the attribute store, reached by the content keys the producing node minted.
  */
 export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
-  readonly uvs: EvaluatedUVs | null;
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * #635 — the UV read: the island projection when there is one, and otherwise WHICH kind
+   * of absence this is. Waiting, look-elsewhere and genuinely-none are three different
+   * answers requiring three different responses, and the single nullable field this
+   * replaced could carry only their union.
+   */
+  readonly uvRead: MeshUVRead;
+  /**
+   * #634 — the WHOLE material assignment: the object's slot table paired with the
+   * geometry's per-face index into it.
+   *
+   * A mesh whose faces point at two slots reports two, which is what the single `material`
+   * field this replaced could never do. Read it through `assignedMaterials` /
+   * `primaryMaterial` rather than by indexing, so "which materials is this made of" has one
+   * answer and not one per caller.
+   */
+  readonly materials: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null>;
   readonly transform: MeshTransform;
 }
 
@@ -591,10 +691,22 @@ export interface ModifiedMeshValue {
   /**
    * Inherited from the source mesh: an inline OpenPBR IR (box/sphere/inline-data
    * source) or the rich baked spec a BakedMesh / baked-data source carries (#358).
-   * Widened to the same union the read side (`EvaluatedMesh.material`) already uses,
-   * so the evaluate road no longer silently drops a baked source's material.
+   * Widened to the union the read side carries in its material SLOTS (see
+   * {@link MaterialAssignment}), so the evaluate road no longer silently drops a baked
+   * source's material.
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot table and its index, carried through the recomposition (#638, ns-1b step 6).
+   *
+   * This is the FLAT shape an `Object → …Op → ModifiedData` pair is recomposed into before
+   * it reaches the renderer, so these two fields have to exist here as well or the
+   * assignment is dropped at exactly the seam whose whole job is not to drop things — the
+   * mesh would draw one material and every count downstream would agree with itself.
+   * Same pairing rule as on {@link ModifiedDataValue}: both present, or neither.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  readonly attributeKey?: string;
 }
 
 /**
@@ -1018,6 +1130,32 @@ export interface MeshDataValue {
    * mint reds a test until that section is updated with it.
    */
   readonly materialKey: string | null;
+  /**
+   * #633 — the geometry's ATTRIBUTE SET identity, minted by evaluation alongside
+   * `materialKey`, null when this producer derives no attributes (glTF / baked, whose
+   * buffers this value never sees).
+   *
+   * A THIRD parallel key, deliberately not folded into `GeometryRef.key`: that handle is
+   * shared and content-keyed, so folding a per-object component into it would either
+   * collide two objects onto one entry or shatter the sharing the cache exists for. The
+   * argument, the four references that agree with it and the assertions enforcing it are in
+   * `attributeKey.ts` and `attributeKey.test.ts`.
+   *
+   * The set itself lives in `attributeStore`, keyed by this string. It is not serialized —
+   * it is re-derived from params on every evaluation, which is free under a content key.
+   */
+  readonly attributeKey: string | null;
+  /**
+   * #634 — the object-level material SLOT TABLE, when it has more than one entry.
+   *
+   * Absent is the common case and means "one slot: the `material` above". The table is
+   * object-level and the per-face index is geometry-level, which is the line both reference
+   * systems draw and the reason two objects can share one mesh and still look different.
+   *
+   * ⚠️ Read it through `materialSlotsOf`, never directly — one derivation site is what keeps
+   * this from becoming a second spelling of `material` that agrees today and diverges later.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | null)[];
 }
 
 /**
@@ -1194,6 +1332,25 @@ export interface ModifiedDataValue {
    * See docs/RENDER-RESOURCE-IDENTITY-DESIGN.md §4 "How far this reaches today".
    */
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The slot TABLE, when an operator wrote a per-face assignment (#638, ns-1b step 6).
+   *
+   * Absent means "one material", and that absence is the shipped behaviour rather than a
+   * missing feature: `SetMaterialOp` over a full face range REPLACES, exactly as it always
+   * has, and emits no table. A table appears only for a partial range — a state the node
+   * could not express before this phase — so no existing graph changes shape.
+   *
+   * ⚠️ Read through `materialSlotsOf`, never directly, so the single `material` field and
+   * this one cannot be read as two different answers to the same question.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  /**
+   * The content key of the geometry's attribute set — the INDEX half of the pair whose
+   * other half is `materialSlots` (#638). Present exactly when the table is, because
+   * neither half means anything alone: an index with no table points nowhere, and a table
+   * with no index has nothing selecting between its entries.
+   */
+  readonly attributeKey?: string;
 }
 
 /**

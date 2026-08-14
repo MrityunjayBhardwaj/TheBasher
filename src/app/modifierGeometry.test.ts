@@ -38,7 +38,14 @@ import { evaluate } from '../core/dag/evaluator';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
-import { canModifyGeometry, modifierDataSource, resolveDataKind } from './modifierGeometry';
+import {
+  boxDescriptor,
+  boxGeometryRef,
+  canModifyGeometry,
+  modifierDataSource,
+  resolveDataKind,
+} from './modifierGeometry';
+import { mintMeshAttributes } from '../nodes/meshAttributes';
 import { buildDefaultDagState } from '../core/project/default';
 import { buildAddModifierOps, resolveStackBase } from './operatorStack';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
@@ -77,10 +84,20 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
 
     // Before the fix the render road returned the source VERBATIM (geometry
     // 'box|1,1,1') while the read road returned the array.
+    //
+    // #638 — the source box's key now carries an attribute component, and an `array` key
+    // embeds its source's key verbatim, so the component rides along. The modifier itself
+    // gains no assignment (D6 — a merged geometry's faces are not the source's faces), and
+    // the `array` builder still takes no attribute key of its own; this is the SOURCE's
+    // identity showing through, which is what an `array` key is made of.
     expect(rendered.kind).toBe('ModifiedData');
     expect(read).not.toBeNull();
+    const sourceKey = boxGeometryRef(
+      [1, 1, 1],
+      mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
+    ).key;
     expect((rendered as { geometry: { key: string } }).geometry.key).toBe(
-      'array|box|1,1,1|4|2,0,0',
+      `array|${sourceKey}|4|2,0,0`,
     );
     // The one band: both roads build the identical deterministic key.
     expect((rendered as { geometry: { key: string } }).geometry.key).toBe(read!.geometry.key);

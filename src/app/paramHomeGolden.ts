@@ -7,6 +7,20 @@
 // by the counts those rows recorded. Removing a row cannot launder a routing change, because the
 // row being removed is itself the frozen record of what that type routed. Adding or editing
 // a row would launder one, which is why the rule is deletion-only.
+//
+// ── ONE NARROW AMENDMENT, STATED RATHER THAN TAKEN QUIETLY (#638, ns-1b step 6) ───────
+//
+// The deletion-only rule has no arm for a NEW PARAM ON A SHIPPED NODE, and this phase adds
+// two (`SetMaterialOp.faceFrom` / `faceTo`). Something has to give, so it gives in the
+// smallest place with the reason written down: a row may be APPENDED TO, never rewritten.
+//
+// Why that is still safe against the failure the rule exists to prevent. The laundering
+// this file guards against is a RE-HOME — an existing param quietly changing which section
+// owns it. Every row is compared as ONE STRING, cell for cell, so an existing cell that
+// changed value shows up as a changed cell in the diff whether or not anything was
+// appended. What an append adds is a cell that had no previous value to launder. The rule
+// is therefore: existing cells are frozen; new cells may join, in the same commit as the
+// param they record, and never with an edit to a cell already there.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
@@ -98,7 +112,11 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
     '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment',
-  SetMaterialOp: '[] muted=(unrouted)',
+  // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
+  // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
+  // reference authors this node in the graph editor and a titled empty card is the shape
+  // the reachability gate exists to catch. `muted`'s cell is unchanged.
+  SetMaterialOp: '[] muted=(unrouted) faceFrom=(unrouted) faceTo=(unrouted)',
   Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
@@ -121,4 +139,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   WalkPath: '[] from=(unrouted) to=(unrouted) sampleCount=(unrouted)',
 };
 
-export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 215 } as const;
+// 215 → 217 at #638: the two appended `SetMaterialOp` cells, both unrouted. `routed` is
+// unchanged, which is the number that would have moved had anything been re-homed.
+export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 217 } as const;
