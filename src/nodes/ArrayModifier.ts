@@ -63,7 +63,14 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   // #396 — the spine the modifier stack walks down. Unary today, so this names the
   // only input; it is declared anyway because the walkers now READ it rather than
   // assuming the name `target`.
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // A generator: the selection names which faces it GENERATES FROM. It preserves its
+    // whole input and replicates the subset.
+    scope: { kind: 'source' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'modifier',
+  },
   inspectorSections: ['modifier'],
   home: {
     count: 'modifier',

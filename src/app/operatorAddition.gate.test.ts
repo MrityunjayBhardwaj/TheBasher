@@ -136,18 +136,27 @@ const SURFACES: readonly Surface[] = [
     knows: (c) => readGeometry(c.geometry).status === 'ok',
   },
   {
-    // The bypass. There is no declaration of it anywhere in the category — each operator
-    // spells `muted` into its own param schema, and `operatorStack` reads it back through a
-    // cast that cannot tell "declared and false" from "never declared". Read off the zod
-    // shape, which is where the declaration actually lives; a definition that is missing or
-    // whose schema has no `shape` is unreadable, not un-muted.
+    // The bypass — and this row is the first one the phase has CLOSED, so what it asks
+    // changed with it (step 4).
+    //
+    // Before: there was no declaration of a bypass anywhere in the category. Each operator
+    // spelled `muted` into its own param schema and `operatorStack` read it back through a
+    // cast that could not tell "declared and set false" from "never declared at all", so
+    // the honest probe was "does this node's schema happen to carry the field?".
+    //
+    // Now the chain record carries a `bypass`, it is refused at registration if absent, and
+    // the `passthrough` arm is refused unless the schema really declares a boolean of the
+    // name it gives. So the question is no longer whether an author remembered a field — it
+    // is whether the operator declared one, and a registered operator that did not declare
+    // one has no constructor. The probe asks the real question; the answer being
+    // structurally unable to come back `false` is the row closing, not the probe going soft.
     name: 'the bypass declaration',
     knows: (c) => {
       const def = getNodeType(c.type);
       if (!def) return null;
-      const shape = (def.paramSchema as unknown as { shape?: Record<string, unknown> }).shape;
-      if (!shape || typeof shape !== 'object') return null;
-      return Object.prototype.hasOwnProperty.call(shape, 'muted');
+      // Not an operator at all — a different answer from "an operator with no bypass".
+      if (!def.chain) return null;
+      return def.chain.bypass !== undefined;
     },
   },
 ];
@@ -197,12 +206,20 @@ function registerProbeOperator(): void {
     version: 1,
     pure: true,
     cost: 'cheap',
-    paramSchema: z.object({ turns: z.number().int().min(1).default(2) }),
+    paramSchema: z.object({
+      turns: z.number().int().min(1).default(2),
+      muted: z.boolean().default(false),
+    }),
     inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
     outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
-    chainInput: 'target',
+    chain: {
+      input: 'target',
+      scope: { kind: 'source' },
+      bypass: { kind: 'passthrough', param: 'muted' },
+      section: 'modifier',
+    },
     inspectorSections: ['modifier'],
-    home: { turns: 'modifier' },
+    home: { turns: 'modifier', muted: 'modifier' },
     evaluate: (_p: unknown, inputs: Record<string, unknown>) => inputs.target,
   } as never);
 }
@@ -230,16 +247,21 @@ describe('ns-2 step 1 — the surfaces a new geometry operator is invisible to',
     expect(surfacesBlindTo(PROBE).unreadable).toEqual([]);
   });
 
-  it('THE PIN: adding one geometry operator is invisible to exactly five surfaces', () => {
+  it('THE PIN: adding one geometry operator is invisible to exactly four surfaces', () => {
     // The phase's first exit clause is that this array becomes empty. Until then it is the
-    // measurement, and it is ordered as the cost curve reads: the four SILENT rows, then
-    // the one that is silent when forgotten and loud in every other respect.
+    // measurement, and it RATCHETS: it opened at five and each closed row leaves it, so the
+    // list is the phase's progress rather than a description of it.
+    //
+    // FIVE -> FOUR, at step 4: `the bypass declaration` left. Being an operator is now one
+    // declaration carrying four fields instead of four things to remember separately, and
+    // registration refuses a chain record that omits any of them — so an operator that
+    // forgot its bypass has no constructor. That is why this row cannot come back by
+    // someone simply not noticing; it can only come back by deleting a refusal.
     expect(surfacesBlindTo(PROBE).blind).toEqual([
       'MODIFIER_NODE_TYPES',
       'ADDABLE (modifier)',
       'ModifierType (agent enum)',
       'buildFromDescriptor',
-      'the bypass declaration',
     ]);
   });
 

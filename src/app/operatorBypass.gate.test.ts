@@ -103,9 +103,7 @@ function unreadableSchemas(): string[] {
 /** The registered types declaring a chain spine — the operator category, as it stands today. */
 function chainInputDeclarers(): string[] {
   return listNodeTypes()
-    .filter(
-      (type) => (getNodeType(type) as unknown as { chainInput?: string })?.chainInput !== undefined,
-    )
+    .filter((type) => getNodeType(type)?.chain?.input !== undefined)
     .sort();
 }
 

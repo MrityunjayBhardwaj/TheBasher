@@ -1,9 +1,9 @@
 // chainSocketWalks — the scene-lane walkers read the DECLARED chain socket
-// (`NodeDefinition.chainInput`, #396), never the socket spelled `target`.
+// (`NodeDefinition.chain.input`, #396), never the socket spelled `target`.
 //
 // WHY THESE TESTS LOOK ARTIFICIAL, AND WHY THEY HAVE TO. A registry census taken
 // while writing #610 found SEVEN node types with a `target` input socket and
-// ALL SEVEN declaring it as their `chainInput` — zero divergence. So every test
+// ALL SEVEN declaring it as their chain spine — zero divergence. So every test
 // written against the shipped registry passes identically whether the walker reads
 // the declaration or the name, and reverting the fold reddens nothing. A suite like
 // that measures agreement between two spellings, not the rule.
@@ -14,7 +14,7 @@
 // second same-typed input (a boolean's cutter, a deform's capture pose) will have.
 // A by-name walker follows the decoy; a declaration-reading walker follows the spine.
 //
-// REF: src/app/operatorChain.ts (chainSocketOf); src/core/dag/types.ts (chainInput);
+// REF: src/app/operatorChain.ts (chainSocketOf); src/core/dag/types.ts (`ChainDeclaration`);
 //      issues #396, #610.
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -39,7 +39,13 @@ const SpineWrapper: NodeDefinition<Record<string, never>, unknown> = {
     spine: { type: 'SceneObject', cardinality: 'single' },
     target: { type: 'SceneObject', cardinality: 'single' },
   },
-  chainInput: 'spine',
+  chain: {
+    input: 'spine',
+    // A scene-lane wrapper: no components on the spine value, nothing to bypass.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    bypass: { kind: 'none' },
+    section: 'none',
+  },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   evaluate: () => ({ kind: 'Transform', child: null }),
 };
@@ -88,7 +94,7 @@ describe('childEdges descends the declared spine, not the socket named `target`'
       },
     } as unknown as DagState;
 
-    // BoxData is a leaf producer: it declares no `chainInput`, so even a `target`
+    // BoxData is a leaf producer: it declares no chain, so even a `target`
     // binding must not be mistaken for a scene-graph edge.
     const edges = childEdges(state, 'n_leaf', {
       kind: 'Transform',

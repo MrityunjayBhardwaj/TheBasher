@@ -54,7 +54,13 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // #396 — the spine the modifier stack walks down (see ArrayModifier).
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // As ArrayModifier: reflect the selected faces, keep the whole original.
+    scope: { kind: 'source' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'modifier',
+  },
   inspectorSections: ['modifier'],
   home: {
     offset: 'modifier',

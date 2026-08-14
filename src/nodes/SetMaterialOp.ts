@@ -113,7 +113,13 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
   // a candidate for a walk that matched on the socket NAME. Declaring the spine is what
   // makes it right on purpose, and what keeps it right for an argument that DOES share
   // the spine's type (a boolean cutter, a capture-pose skeleton).
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // A writer: the selection names which faces RECEIVE the assignment.
+    scope: { kind: 'target' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'material',
+  },
   // NO inspector section, and that is the reference's own answer rather than a gap.
   // Blender's Material Properties panel is Slot List → Data-Block row → Link selector
   // (`render/materials/assignment.rst:19-101`); its `Set Material` is a GEOMETRY NODES

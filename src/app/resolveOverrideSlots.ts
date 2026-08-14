@@ -35,7 +35,7 @@ export function findTargetAssetRef(
       const ref = (cur.params as { assetRef?: unknown } | undefined)?.assetRef;
       return typeof ref === 'string' ? ref : null;
     }
-    // Step up the DECLARED chain socket (`chainInput`, #396), not the one named
+    // Step up the DECLARED chain socket (`chain.input`, #396), not the one named
     // `target`. Every type that has a `target` input declares it as its spine today,
     // so this walks the same edges — but a node that merely HAS a `target` (an
     // argument socket, a constraint's aim) is no longer mistaken for a chain link,

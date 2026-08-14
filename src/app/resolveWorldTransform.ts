@@ -194,7 +194,7 @@ export function childEdges(
   switch (v.kind) {
     case 'Transform':
     case 'MaterialOverride': {
-      // Both wrap one child via their DECLARED chain socket (`chainInput`, #396) —
+      // Both wrap one child via their DECLARED chain socket (`chain.input`, #396) —
       // spelled `target` by Transform.ts:31 and MaterialOverride.ts:65 today. The
       // evaluated value field is `child`.
       //
@@ -205,7 +205,7 @@ export function childEdges(
       // still connects and still evaluates — it just descends the wrong edge, which
       // here means a child that animates in the panel and freezes on screen.
       // #621 — the socket comes from `sceneHierarchy`, the one place that says which
-      // sockets make a scene-graph parent. It resolves to the declared `chainInput`
+      // sockets make a scene-graph parent. It resolves to the declared `chain.input`
       // for these two, so this is the same read #610 introduced; it is now shared with
       // the two scan sites below instead of being restated by each of them.
       const socket = hierarchySocketForKind(v.kind, node);

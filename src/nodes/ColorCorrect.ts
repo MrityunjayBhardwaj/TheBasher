@@ -45,7 +45,14 @@ export const ColorCorrectNode: NodeDefinition<ColorCorrectParams, ImageValue> = 
   inputs: { target: { type: 'Image', cardinality: 'single' } },
   // #396 — the spine of the EFFECT chain. Third lane, third socket type, one concept:
   // the effect stack walks this the way the modifier stack walks a modifier's.
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // The image lane. An Image has no components, so no selection is resolvable against
+    // it — a fact about the value, not a decision anyone took.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'effect',
+  },
   outputs: { out: { type: 'Image', cardinality: 'single' } },
   inspectorSections: ['effect'],
   evaluate(params, inputs): ImageValue {

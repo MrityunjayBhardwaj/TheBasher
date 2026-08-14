@@ -28,7 +28,17 @@ export const TransformNode: NodeDefinition<TransformParams, TransformValue> = {
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
   // #396 — the spine of the SCENE-lane wrapper chain. Same concept as the data lane's,
   // one type up: what the tree walk descends through to reach the wrapped object.
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // The scene lane: the spine carries a SceneObject, which has no components, so
+    // nothing is resolvable against it.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    // DECLARED, not accidental. This wrapper has nothing to bypass, and saying so is
+    // what tells 'declared and set false' apart from 'never declared at all'.
+    bypass: { kind: 'none' },
+    // Not a member of any offered stack — see OperatorSection.
+    section: 'none',
+  },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver'],
   home: {

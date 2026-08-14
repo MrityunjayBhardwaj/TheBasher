@@ -1,9 +1,8 @@
 // chainSpine — the test that can tell a DECLARATION from a socket NAME (#396).
 //
 // WHY THIS FILE HAD TO EXIST BEFORE THE REFACTOR COULD BE BELIEVED.
-// Replacing `const TARGET = 'target'` with `def.chainInput` is invisible to every
-// other test in the suite: all seven operators registered today declare `chainInput:
-// 'target'`, so a walk that reads the declaration and a walk that matches the name
+// Replacing `const TARGET = 'target'` with the node's own chain declaration is invisible to every
+// other test in the suite: all seven operators registered today declare `target` as their spine, so a walk that reads the declaration and a walk that matches the name
 // return the SAME answer on every fixture that exists. The refactor ran the full unit
 // tier and moved nothing — 314 files, 3860 tests, green before and after. A green like
 // that licenses nothing.
@@ -19,7 +18,7 @@
 // operands — observed, not predicted.
 //
 // REF: src/app/operatorChain.ts (`chainSocketOf`, `resolveOperatorBase`);
-//      src/core/dag/types.ts (`NodeDefinition.chainInput`); issue #396.
+//      src/core/dag/types.ts (`NodeDefinition.chain`); issue #396.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
@@ -48,7 +47,13 @@ function registerBinaryOp(type: string, spine: SocketId): void {
     paramSchema: BinaryParams,
     inputs: { target: ObjectDataSocket, cutter: ObjectDataSocket },
     outputs: { out: ObjectDataSocket },
-    chainInput: spine,
+    chain: {
+      input: spine,
+      // A data-lane geometry operator: the selection would name what it reads.
+      scope: { kind: 'source' },
+      bypass: { kind: 'passthrough', param: 'muted' },
+      section: 'modifier',
+    },
     evaluate: (_p, inputs) => inputs[spine],
   } as never);
 }
@@ -130,16 +135,16 @@ describe('#396 — the chain spine is declared, not named', () => {
     const offenders: string[] = [];
     for (const type of listNodeTypes()) {
       const def = getNodeType(type);
-      const spine = def?.chainInput;
+      const spine = def?.chain?.input;
       if (!def || !spine) continue;
       const inDesc = def.inputs[spine];
       if (!inDesc) {
-        offenders.push(`${type}: chainInput '${spine}' is not one of its inputs`);
+        offenders.push(`${type}: chain.input '${spine}' is not one of its inputs`);
         continue;
       }
       const outDesc = def.outputs['out'];
       if (!outDesc) {
-        offenders.push(`${type}: declares a chainInput but has no 'out' output`);
+        offenders.push(`${type}: declares a chain but has no 'out' output`);
         continue;
       }
       // #609 — MEMBERSHIP: a spine may accept a SET of types, and the rule the census
@@ -161,7 +166,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     // to it — silently, because a node with no spine simply is not a chain node. Making
     // the census exact turns that into a failing test at the moment of registration,
     // where the author is present to decide.
-    const declared = listNodeTypes().filter((t) => getNodeType(t)?.chainInput);
+    const declared = listNodeTypes().filter((t) => getNodeType(t)?.chain);
     expect(declared.sort()).toEqual([
       'ArrayModifier', // data lane — geometry
       'ColorCorrect', // effect lane

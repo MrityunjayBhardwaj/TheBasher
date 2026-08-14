@@ -87,7 +87,13 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // #396 — the spine the material stack walks down (see SetMaterialOp).
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // A writer, as SetMaterialOp: the selection names which faces the override lands on.
+    scope: { kind: 'target' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'material',
+  },
   inspectorSections: ['material'],
   home: {
     color: 'material',

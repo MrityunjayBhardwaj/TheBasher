@@ -26,7 +26,7 @@ const DATA = 'data';
 /**
  * The socket carrying `type`'s CHAIN — the spine a stack walks down — or null if this
  * node type is not a chain node at all. Read from the node's own declaration
- * (`NodeDefinition.chainInput`, #396); never guessed from a socket name.
+ * (`NodeDefinition.chain.input`, #396 / ns-2); never guessed from a socket name.
  *
  * THE LITERAL IT REPLACES was `const TARGET = 'target'`, and it was right for as long
  * as an operator had exactly one input. It stops being right the moment one has a
@@ -36,7 +36,7 @@ const DATA = 'data';
  * the declaration is what makes the walk answer the second question.
  */
 export function chainSocketOfType(type: NodeTypeId): SocketId | null {
-  return getNodeType(type)?.chainInput ?? null;
+  return getNodeType(type)?.chain?.input ?? null;
 }
 
 /** {@link chainSocketOfType} for a node instance. */
@@ -115,7 +115,7 @@ export function isDataLaneOperator(node: Node | undefined): boolean {
   // is now asked of the input the node itself nominates. An operator with a second
   // `ObjectData` argument (a cutter) answers the same as a unary one, and correctly:
   // it IS on the lane. What changes is that the walk below then descends the right edge.
-  const spine = def.chainInput;
+  const spine = def.chain?.input;
   if (!spine) return false;
   return inputAccepts(def.inputs[spine], 'ObjectData') && def.outputs[OUT]?.type === 'ObjectData';
 }
@@ -133,7 +133,7 @@ export function isDataLaneOperator(node: Node | undefined): boolean {
 export function isSceneLaneWrapper(node: Node | undefined): boolean {
   if (!node) return false;
   const def = getNodeType(node.type);
-  const spine = def?.chainInput;
+  const spine = def?.chain?.input;
   if (!def || !spine) return false;
   return inputAccepts(def.inputs[spine], 'SceneObject') && def.outputs[OUT]?.type === 'SceneObject';
 }

@@ -45,11 +45,67 @@ function assertInputDescriptors(def: NodeDefinition): void {
   }
 }
 
+/**
+ * Refuse a partial or unbacked chain declaration at the moment of registration (ns-2).
+ *
+ * ── WHY AT RUNTIME, WHEN THE FIELDS ARE ALREADY REQUIRED BY THE TYPE ──────────────────
+ *
+ * Measured, and it has bitten twice in two consecutive steps of one earlier wave: a
+ * required parameter closes the omission only in PRODUCTION. `npm run typecheck` excludes
+ * `*.test.ts`, vitest strips types without checking them, and every synthetic definition
+ * in the suite reaches this function through an `as never` that erases the interface
+ * entirely. So the ~80 hand-written declarations are covered by the type and everything
+ * the tests mint — which is where a malformed declaration is actually likely to appear —
+ * is covered by nothing at all unless it is refused here.
+ *
+ * ── THE SECOND REFUSAL IS THE ONE THAT MAKES `bypass.param` MEAN ANYTHING ─────────────
+ *
+ * A `passthrough` naming a param no schema declares is precisely the failure this phase
+ * exists to end, one level up: a declaration that reads correctly and is honoured by
+ * nobody, because the read of `params[name]` comes back `undefined` and `undefined` is
+ * falsy, so the operator is simply never bypassed and nothing anywhere says so. Checking
+ * the name against the schema at registration is what lets the single application site
+ * downstream read the field as a CHECKED read rather than an unchecked cast.
+ */
+function assertChainDeclaration(def: NodeDefinition): void {
+  const chain = def.chain;
+  if (chain === undefined) return; // not an operator — the one legal way to say nothing
+
+  const missing = (['input', 'scope', 'bypass', 'section'] as const).filter(
+    (field) => chain[field] === undefined,
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `registerNodeType(${def.type}): chain declaration is missing ${missing.join(', ')}. ` +
+        `A chain is optional to declare and TOTAL once declared — being an operator is one ` +
+        `claim, not four independent ones.`,
+    );
+  }
+
+  if (chain.bypass.kind !== 'passthrough') return;
+  const param = chain.bypass.param;
+  const shape = (def.paramSchema as unknown as { shape?: Record<string, unknown> }).shape;
+  if (!shape || typeof shape !== 'object') {
+    throw new Error(
+      `registerNodeType(${def.type}): chain.bypass names param '${param}', but this node's ` +
+        `paramSchema is not an object schema, so nothing can carry it.`,
+    );
+  }
+  if (!Object.prototype.hasOwnProperty.call(shape, param)) {
+    throw new Error(
+      `registerNodeType(${def.type}): chain.bypass names param '${param}', which this node's ` +
+        `paramSchema does not declare. A bypass reading an absent param reads undefined, ` +
+        `which is falsy — the operator would simply never bypass, silently.`,
+    );
+  }
+}
+
 export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
   if (registry.has(def.type)) {
     throw new Error(`Node type already registered: ${def.type}`);
   }
   assertInputDescriptors(def as unknown as NodeDefinition);
+  assertChainDeclaration(def as unknown as NodeDefinition);
   registry.set(def.type, def as unknown as NodeDefinition);
 }
 
