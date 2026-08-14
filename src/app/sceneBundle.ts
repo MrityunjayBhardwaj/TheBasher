@@ -283,6 +283,15 @@ export function base64ToBytes(b64: string): Uint8Array {
  *
  * `now` is injected (not read from Date.now) so the transform stays pure and
  * deterministically testable.
+ *
+ * #620 — the ladder also DETACHES, and that is load-bearing rather than incidental.
+ * `importSceneBundle` feeds this result straight into `useDagStore.hydrate`, so if
+ * the returned project carried the envelope's own tables the live store would adopt
+ * the caller's object and every later edit to that bundle would write into the open
+ * scene. Nothing here does that today only because `ProjectSchema.parse` rebuilds
+ * what it validates — so retyping any of those fields to a pass-through (`z.any`,
+ * `z.custom`, a `.passthrough()` escape) would reopen the alias silently, with every
+ * behavioural test still green. `sceneBundle.test.ts` pins the detachment directly.
  */
 export function bundleToProject(bundle: SceneBundle, newId: string, now: number): Project {
   const normalized = {

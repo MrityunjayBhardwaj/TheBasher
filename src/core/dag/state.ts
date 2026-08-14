@@ -85,6 +85,50 @@ export function emptyDagState(): DagState {
   return { nodes: {}, outputs: {} };
 }
 
+/**
+ * A copy of the graph that OWNS its records — no field of the result is reachable
+ * from the store the original came from.
+ *
+ * ── WHY THIS EXISTS (#620) ─────────────────────────────────────────────────────
+ *
+ * Every builder that packages the DAG for something outside the store used to
+ * compose its envelope as `{ nodes: state.nodes, outputs: state.outputs }` — the
+ * store's OWN records under a new roof. The envelope reads as a self-contained
+ * snapshot and is not one: a caller that adjusts it before writing (strip a node,
+ * redact an asset) silently edits the open scene instead.
+ *
+ * This is latent rather than live ONLY because `applyOp` is copy-on-write — it
+ * replaces the node table and the touched node rather than writing through them
+ * (`ops.ts`), so an outside holder sees a correctly frozen table by accident of that
+ * discipline, not by construction. The moment anything mutates a record in place,
+ * every aliasing envelope moves with it. Detaching at the door removes the
+ * dependence on a discipline the recipient cannot see and never agreed to.
+ *
+ * The clone is `structuredClone`, and it is behaviour-preserving at every seam here
+ * because each envelope is serialised to JSON afterwards — its JSON is byte-identical
+ * to the alias's.
+ *
+ * It is NOT free everywhere, and the difference is the trigger, not the copy. At the
+ * export seams the envelope is stringified immediately, so the clone costs nothing the
+ * export was not already paying. At `composeProject` (#624) it sits on the save path,
+ * where the write dominates: measured in the browser against a whole `saveCurrent`
+ * including the OPFS write and its read-back verify, the clone is 25% of the save at
+ * 200 objects (+0.7 ms), 44% at 1000 (+4.6 ms) and 51% at 5000 (+23 ms) — paid in the
+ * idle window an autosave already waits 10 s for. Before adding a THIRD kind of caller,
+ * one on an interactive path, measure it there rather than inheriting this sentence.
+ *
+ * It clones the graph WHOLESALE rather than field by field, deliberately. A
+ * version that spread the input and replaced `nodes` and `outputs` by name would
+ * be the same bug one level up: any field added to `DagState` later would pass
+ * through the spread as a live reference, and the guarantee this function exists
+ * to make would quietly become partial. Cloning the whole value keeps the claim
+ * total — every graph type here is serialisable by construction, because it is
+ * the on-disk save format.
+ */
+export function detachGraph<G extends DagGraph>(graph: G): G {
+  return structuredClone(graph);
+}
+
 export function getNode(state: DagState, id: NodeId): Node {
   const n = state.nodes[id];
   if (!n) throw new Error(`Node not found: ${id}`);

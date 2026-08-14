@@ -52,6 +52,42 @@ describe('Project save/load round-trip', () => {
     expect(loaded.state.outputs.scene).toEqual({ node: 'n1', socket: 'out' });
   });
 
+  // #624 — `saveCurrent` composes from the LIVE dag store and puts the result into the
+  // project store, so a composed project that aliased its input would leave one graph
+  // held by two stores. The reach test runs through `params`, because that is the level
+  // `ProjectSchema.parse` does NOT rebuild (`NodeSchema.params` is `z.unknown()`) — a
+  // future "the parse already copies it, drop the detach" would pass a table-level
+  // check and fail this one.
+  it('composes a project that OWNS its graph, down to the params', async () => {
+    let state = emptyDagState();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n1',
+      nodeType: 'TN',
+      params: { value: 42 },
+    }).next;
+    state = { ...state, outputs: { scene: { node: 'n1', socket: 'out' } } };
+
+    const project = composeProject({ id: 'p1', name: 'demo', state });
+    expect(project.state.nodes).not.toBe(state.nodes);
+    expect(project.state.outputs).not.toBe(state.outputs);
+    expect(project.state.nodes.n1.params).not.toBe(state.nodes.n1.params);
+    expect(project.state.nodes.n1.params).toEqual({ value: 42 });
+
+    // Editing the composed project leaves the graph it was composed from alone ...
+    (project.state.nodes.n1.params as { value: number }).value = 7;
+    delete project.state.outputs.scene;
+    expect((state.nodes.n1.params as { value: number }).value).toBe(42);
+    expect(state.outputs.scene).toEqual({ node: 'n1', socket: 'out' });
+
+    // ... and the detached graph still saves and loads as the same project.
+    const storage = new MemoryStorage();
+    await saveProject(storage, composeProject({ id: 'p1', name: 'demo', state }));
+    const loaded = await loadProject(storage, 'p1');
+    expect(loaded.state.nodes.n1.params).toEqual({ value: 42 });
+    expect(loaded.state.outputs.scene).toEqual({ node: 'n1', socket: 'out' });
+  });
+
   it('migration runner: per-node version step-up', async () => {
     __resetRegistryForTests();
     registerNodeType<{ v: number }, number>({
