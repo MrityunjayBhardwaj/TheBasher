@@ -16,11 +16,11 @@
 //      src/app/resolveDataParamOwner.ts (the reach that needed it); issue #516.
 
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeRef, NodeTypeId, SocketId } from '../core/dag/types';
+import type { Node, NodeRef, NodeTypeId, SocketId, SocketTypeName } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { inputAccepts } from '../core/dag/types';
+import { operatorLaneOf } from '../core/dag/operatorLane';
 
-const OUT = 'out';
 const DATA = 'data';
 
 /**
@@ -42,6 +42,21 @@ export function chainSocketOfType(type: NodeTypeId): SocketId | null {
 /** {@link chainSocketOfType} for a node instance. */
 export function chainSocketOf(node: Node | undefined): SocketId | null {
   return node ? chainSocketOfType(node.type) : null;
+}
+
+/**
+ * The LANE `node` stands on — the socket type flowing through its chain — or null if it is
+ * not an operator. The registry lookup, and `operatorLaneOf` does the deriving (ns-2 step 6).
+ *
+ * THIS IS THE ONLY PLACE IN `src/app` THAT ANSWERS THE LANE QUESTION. Every predicate below
+ * is one comparison against it, which is what makes them a family rather than four sets of
+ * conditions that happen to agree. Before this, two of them re-derived the lane inline from
+ * `chain.input` and `outputs.out.type`, and the comment on the second one apologised for
+ * being byte-identical to the first — so the shape was already known and only the third
+ * copy was missing.
+ */
+export function operatorLane(node: Node | undefined): SocketTypeName | null {
+  return node ? operatorLaneOf(getNodeType(node.type)) : null;
 }
 
 /** The geometry-operator (SOP / modifier) node types the modifier stack manages. A node
@@ -68,28 +83,52 @@ export const MODIFIER_NODE_TYPES: ReadonlySet<string> = new Set([
 export const MATERIAL_LANE_TYPES = ['SetMaterialOp', 'MaterialOverrideOp'] as const;
 export type MaterialLaneType = (typeof MATERIAL_LANE_TYPES)[number];
 
+/**
+ * The lane factor is asked FIRST and the list only narrows within it — the tuple's own
+ * comment above calls these "the material half of the data lane", and this is that sentence
+ * made checkable rather than left as prose. The conjunct cannot create a false positive (a
+ * narrowing never widens); what it buys is that a member which stops standing on
+ * `ObjectData` stops being a material operator, instead of staying one by virtue of its
+ * name still appearing in a literal.
+ */
 export function isMaterialLaneOperator(node: Node | undefined): node is Node & {
   type: MaterialLaneType;
 } {
-  return !!node && (MATERIAL_LANE_TYPES as readonly string[]).includes(node.type);
+  if (!node || operatorLane(node) !== 'ObjectData') return false;
+  return (MATERIAL_LANE_TYPES as readonly string[]).includes(node.type);
 }
 
 /** The video-effect (Image→Image) node types — the lift to the Image socket
  *  (epic #235 / spine 1e+). An effect is a typed `target: Image`/`out: Image`
  *  operator on the SAME sub-chain engine as a geometry modifier; new effects
- *  register by adding their type here, nothing else. The stack helpers are socket-
- *  agnostic (they re-wire `target`/`out` edges) — only this predicate differs. */
+ *  register by adding their type here AND by standing on the Image lane, which
+ *  {@link isEffectNode} now checks rather than trusts (ns-2 step 6 — the sentence
+ *  above was previously enforced by nobody). The stack helpers are socket-agnostic
+ *  (they re-wire `target`/`out` edges) — only this predicate differs. */
 export const EFFECT_NODE_TYPES: ReadonlySet<string> = new Set(['ColorCorrect']);
 
 /** Predicate over the set of node types an OperatorStack instance manages. */
 export type OperatorPredicate = (node: Node | undefined) => boolean;
 
+/**
+ * THE ONE PREDICATE HERE THAT REALLY IS A LIST, AND IT KEEPS ITS LIST ON PURPOSE.
+ *
+ * It is deliberately NOT given the lane conjunct its three siblings now carry, because it
+ * is the subject of the standing blindness measurement: `operatorAddition.gate.test.ts`
+ * names `MODIFIER_NODE_TYPES` as one of the four surfaces a new geometry operator is
+ * invisible to. Touching the predicate at this step would move the census's own subject in
+ * the step that must not move the pin. The list is retired where it is answered rather than
+ * decorated — from `chain.section`, at step 7.
+ */
 export function isModifierNode(node: Node | undefined): boolean {
   return !!node && MODIFIER_NODE_TYPES.has(node.type);
 }
 
+/** Lane first, list second — see {@link isMaterialLaneOperator} for the argument; the set
+ *  above already defines an effect as an `Image`-in/`Image`-out operator, and this is where
+ *  that definition stops being a sentence only a reader enforces. */
 export function isEffectNode(node: Node | undefined): boolean {
-  return !!node && EFFECT_NODE_TYPES.has(node.type);
+  return !!node && operatorLane(node) === 'Image' && EFFECT_NODE_TYPES.has(node.type);
 }
 
 /**
@@ -107,35 +146,24 @@ export function isEffectNode(node: Node | undefined): boolean {
  * missed a live one at once.
  */
 export function isDataLaneOperator(node: Node | undefined): boolean {
-  if (!node) return false;
-  const def = getNodeType(node.type);
-  if (!def) return false;
-  // #396 — ask the node which socket is its SPINE instead of assuming `target`. The
-  // question is still about SHAPE ("does `ObjectData` flow through this node?"), but it
-  // is now asked of the input the node itself nominates. An operator with a second
-  // `ObjectData` argument (a cutter) answers the same as a unary one, and correctly:
-  // it IS on the lane. What changes is that the walk below then descends the right edge.
-  const spine = def.chain?.input;
-  if (!spine) return false;
-  return inputAccepts(def.inputs[spine], 'ObjectData') && def.outputs[OUT]?.type === 'ObjectData';
+  return operatorLane(node) === 'ObjectData';
 }
 
 /**
  * Is `node` a SCENE-lane wrapper — `SceneObject` in on its spine, `SceneObject` out?
  * Transform and MaterialOverride today.
  *
- * Byte-identical in shape to {@link isDataLaneOperator}, one socket type up, and that
- * is the point: the scene tree used to answer this with `node.type === 'Transform' ||
- * node.type === 'MaterialOverride'` — a hardcoded type list, which is the drift the
- * comment on `isDataLaneOperator` above already warns about, sitting in another file.
- * A future scene-lane wrapper is covered the day it declares its spine.
+ * ONE SOCKET TYPE APART FROM {@link isDataLaneOperator}, AND THAT IS NOW ALL IT IS. The
+ * scene tree used to answer this with `node.type === 'Transform' || node.type ===
+ * 'MaterialOverride'` — a hardcoded type list — and the fix for that was a second copy of
+ * the derivation, which this comment used to describe as "byte-identical in shape, one
+ * socket type up". Two copies of a derivation are a list waiting to happen by another
+ * route: they drift the moment one of them learns something the other does not, and
+ * nothing anywhere compares them. A future scene-lane wrapper is covered the day it
+ * declares its spine, and now so is a future lane nobody has thought of.
  */
 export function isSceneLaneWrapper(node: Node | undefined): boolean {
-  if (!node) return false;
-  const def = getNodeType(node.type);
-  const spine = def?.chain?.input;
-  if (!def || !spine) return false;
-  return inputAccepts(def.inputs[spine], 'SceneObject') && def.outputs[OUT]?.type === 'SceneObject';
+  return operatorLane(node) === 'SceneObject';
 }
 
 /**
