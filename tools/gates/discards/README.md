@@ -37,20 +37,51 @@ command line _does_ error with "no parser could be inferred", so don't do that.)
 
 ## The patches
 
-| name           | subject                                                    | why it is here                                                                                                                                                                                                  |
-| -------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `null`         | nothing (the file is empty)                                | The null control. `red` must be **0** and the tree byte-identical, and `{files, tests}` must equal the standing tier's own numbers — that is what proves the harness's reporter changed nothing about what ran. |
-| `inputAccepts` | `src/core/dag/ops.ts` — the connect-time socket type check | The positive control, on a road that has nothing to do with the phase being built. `inputAccepts` is still called; its verdict is discarded. Something must red, with names.                                    |
-
-| `scopeHandOff` | `src/core/dag/evaluator.ts` — the component-scope hand-off (ns-2 step 9b) | This phase's own road, first patchable point. `scopeFor` is still called and its answer is thrown away at the `evaluate` call, so the import, the resolver and every source census stay exactly as they are and only the operator's fourth argument changes. |
+| name                  | subject                                                                   | why it is here                                                                                                                                                                                                                                                                                        |
+| --------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `null`                | nothing (the file is empty)                                               | The null control. `red` must be **0** and the tree byte-identical, and `{files, tests}` must equal the standing tier's own numbers — that is what proves the harness's reporter changed nothing about what ran.                                                                                       |
+| `inputAccepts`        | `src/core/dag/ops.ts` — the connect-time socket type check                | The positive control, on a road that has nothing to do with the phase being built. `inputAccepts` is still called; its verdict is discarded. Something must red, with names.                                                                                                                          |
+| `scopeHandOff`        | `src/core/dag/evaluator.ts` — the component-scope hand-off (ns-2 step 9b) | This phase's own road, first patchable point. `scopeFor` is still called and its answer is thrown away at the `evaluate` call, so the import, the resolver and every source census stay exactly as they are and only the operator's fourth argument changes.                                          |
+| `scopeNeverResolved`  | `src/core/dag/evaluator.ts` — the same line, one step further             | The resolver is never CALLED. `scopeFor` stays defined and imported, so every census still passes; what disappears is the parse. It exists because the difference between it and `scopeHandOff` is the whole question of whether anything observes the resolution as opposed to merely permitting it. |
+| `scopeValueCorrupted` | `src/nodes/componentSelection.ts` — the degenerate arm                    | The answer is shape-correct and content-wrong: a total selection of the wrong LENGTH. Nothing throws and no call site moves, so only a reader of the VALUE can notice.                                                                                                                                |
+| `scopeRoadRemoved`    | the evaluator's hand-off + the operator's runtime refusal                 | The whole scope road, gone, while still compiling and still passing every source census. The ns-1b analogue of this patch is what redded 22 of 4059.                                                                                                                                                  |
 
 A positive control on a **foreign** road is deliberate. A harness validated only against
 the road it was built to measure is validated by its own author's belief that the road
 works.
 
-**Still owed, and step 9b narrows it rather than closing it.** `scopeHandOff` patches the
-hand-off, which is discard point (a). Point (b) — discarding the selection **inside a
-consumer** — cannot be written yet, because no operator reads one: step 10 derives on the
-degenerate population and step 12 is where `SetMaterialOp` first consumes it. Until (b) has
+## What they measured (ns-2 step 11, on the DEGENERATE population)
+
+[[K32]] step 4: record the number before believing any green. Measured on `27aeba7`,
+tier **354 files / 4217 tests**, every run reverted byte-identical.
+
+| patch                 | red   | files red | what redded                                                         |
+| --------------------- | ----- | --------- | ------------------------------------------------------------------- |
+| `null`                | **0** | 0         | the control; `{files, tests}` equal the standing tier's own numbers |
+| `scopeHandOff`        | **3** | 1         | all three are rows of the MINTED recorder                           |
+| `scopeNeverResolved`  | **4** | 2         | the same three, plus step 10's parser-reachability row              |
+| `scopeValueCorrupted` | **5** | 2         | every name asserts the resolver's own answer                        |
+| `scopeRoadRemoved`    | **6** | 2         | ns-1b's analogue redded **22 of 4059 across 7 files**               |
+
+🔴 **THE FINDING, AND IT IS NOT THE COUNTS.** Not one of those six is a test that predates
+this phase's wave 2. Removing the entire component-scope road — resolver, hand-off, runtime
+refusal — is invisible to **all 4209 tests that existed before wave 2 wrote its own**. The
+nonzero numbers are this phase measuring its own instruments, which is exactly what a census
+over call sites does: it bounds who may speak, never that anyone listened.
+
+That is expected and it is not a defect: on a degenerate population every selection is
+total, so discarding it changes no output anyone can see. The rewrite and the behaviour
+change deliberately do not land in one commit. But it means **no green on this road is
+evidence of anything until step 12 ships a consumer**, and any reading that treats `red > 0`
+here as coverage is reading the instrument, not the road.
+
+🔑 **The one thing step 10 bought, visible as a single test.** `scopeHandOff` (resolver runs,
+answer discarded) and `scopeNeverResolved` (resolver never runs) differ by **exactly one**
+red — step 10's row asserting a malformed query still throws through the evaluator. Before
+that row existed the tier could not tell those two trees apart at all.
+
+**Still owed, and steps 9b–11 narrow it rather than closing it.** The patches above all
+target discard point (a), the hand-off. Point (b) — discarding the selection **inside a
+consumer** — cannot be written until an operator reads one, which is step 12. Until (b) has
 been observed naming a behavioural assertion, a `red > 0` from this phase's own discard
 still cannot be told apart from a harness that silently no-ops on a road nobody drives.
