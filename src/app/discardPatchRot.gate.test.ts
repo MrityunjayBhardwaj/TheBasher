@@ -67,6 +67,12 @@ const REQUIRED_PATCHES = [
   'scopeNeverResolved',
   'scopeRoadRemoved',
   'scopeValueCorrupted',
+  // 🔴 DISCARD POINT (b), AND THE CONTROL THIS HARNESS HAS OWED SINCE STEP 2. Every patch
+  // above it discards at the hand-off; this one discards the selection INSIDE the consumer,
+  // which could not be written until an operator read one (step 12). Until it had been
+  // observed naming a behavioural assertion, a `red > 0` from this phase's own discard could
+  // not be told apart from a harness silently no-opping on a road nobody drives.
+  'scopeConsumed',
 ].sort();
 
 describe('ns-2 step 11 — the discard harness’s patches have not rotted', () => {

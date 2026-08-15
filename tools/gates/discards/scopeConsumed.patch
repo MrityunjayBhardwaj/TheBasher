@@ -1,0 +1,17 @@
+diff --git a/src/nodes/SetMaterialOp.ts b/src/nodes/SetMaterialOp.ts
+index 3934f9b..8eaa854 100644
+--- a/src/nodes/SetMaterialOp.ts
++++ b/src/nodes/SetMaterialOp.ts
+@@ -204,7 +204,11 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData>
+     // delete. "Does this assignment reach every face?" is the question both inputs answer.
+     const targeted = mintTargetedAttributes(
+       source.geometry.descriptor,
+-      selection,
++      // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE — at
++      // the point of use, inside the consumer. Every call stays, the import stays, the
++      // required fourth argument stays, and every source census stays green. Only the
++      // ANSWER stops mattering: the range alone decides, exactly as it did before step 12.
++      null,
+       params.faceFrom,
+       params.faceTo,
+       'evaluate',

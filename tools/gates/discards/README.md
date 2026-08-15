@@ -45,6 +45,7 @@ command line _does_ error with "no parser could be inferred", so don't do that.)
 | `scopeNeverResolved`  | `src/core/dag/evaluator.ts` — the same line, one step further             | The resolver is never CALLED. `scopeFor` stays defined and imported, so every census still passes; what disappears is the parse. It exists because the difference between it and `scopeHandOff` is the whole question of whether anything observes the resolution as opposed to merely permitting it. |
 | `scopeValueCorrupted` | `src/nodes/componentSelection.ts` — the degenerate arm                    | The answer is shape-correct and content-wrong: a total selection of the wrong LENGTH. Nothing throws and no call site moves, so only a reader of the VALUE can notice.                                                                                                                                |
 | `scopeRoadRemoved`    | the evaluator's hand-off + the operator's runtime refusal                 | The whole scope road, gone, while still compiling and still passing every source census. The ns-1b analogue of this patch is what redded 22 of 4059.                                                                                                                                                  |
+| `scopeConsumed`       | `src/nodes/SetMaterialOp.ts` — the first consumer's read (ns-2 step 12)   | 🔴 Discard point **(b)**, and the control this harness owed from step 2. The selection is resolved, handed over and thrown away INSIDE the consumer, so the literal range alone decides. The first patch here whose reds are behavioural — see the calibration below.                                 |
 
 A positive control on a **foreign** road is deliberate. A harness validated only against
 the road it was built to measure is validated by its own author's belief that the road
@@ -80,8 +81,33 @@ answer discarded) and `scopeNeverResolved` (resolver never runs) differ by **exa
 red — step 10's row asserting a malformed query still throws through the evaluator. Before
 that row existed the tier could not tell those two trees apart at all.
 
-**Still owed, and steps 9b–11 narrow it rather than closing it.** The patches above all
-target discard point (a), the hand-off. Point (b) — discarding the selection **inside a
-consumer** — cannot be written until an operator reads one, which is step 12. Until (b) has
-been observed naming a behavioural assertion, a `red > 0` from this phase's own discard
-still cannot be told apart from a harness that silently no-ops on a road nobody drives.
+## 🔴 THE FOURTH CONTROL, OWED SINCE STEP 2 — AND IT IS NOW PAID (ns-2 step 12)
+
+Every patch above targets discard point (a), the hand-off, and every red they produce is a
+row this phase minted for itself. Point (b) — discarding the selection **inside a
+consumer** — could not be written until an operator read one, and until it had been observed
+naming a **behavioural** assertion, a `red > 0` from this phase's own discard could not be
+told apart from a harness silently no-opping on a road nobody drives.
+
+`scopeConsumed` is that patch: `SetMaterialOp` still receives its resolved selection, the
+required fourth argument still arrives, every import and every census stays green, and the
+answer is thrown away at the point of use so the literal range alone decides.
+
+| patch           | red   | what redded                                                    |
+| --------------- | ----- | -------------------------------------------------------------- |
+| `scopeConsumed` | **3** | three assertions about **what the operator emits**, each named |
+
+```
+ns-2 step 12 — 🔴 a SCOPE alone names the faces — with the range left at its default
+ns-2 step 12 — the range and the scope INTERSECT — both survive until the accommodation is deleted
+ns-2 step 12 — a scope selecting NOTHING lands exactly where an INVERTED RANGE already landed
+```
+
+🔑 **THIS IS THE FIRST TIME IN THE PHASE THAT THE HARNESS HAS NAMED SOMETHING OTHER THAN AN
+INSTRUMENT.** Compare it to the step-11 table above, where the whole road could be deleted
+and only rows written for the road itself noticed. The difference is not the harness — it is
+that a consumer now exists. **Step 16's first row can be read as a claim about the road.**
+
+A note for whoever adds the next patch: the first run of this control redded **4**, and the
+extra one was `discardPatchRot`'s own "every required patch is still present, by NAME" —
+working exactly as intended. A new patch is a deliberate act and the list acknowledges it.
