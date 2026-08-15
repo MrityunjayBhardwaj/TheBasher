@@ -66,6 +66,26 @@
 // it expects to blow it, and "the commit that adds the mechanism" is not the same as "the
 // commit that puts a caller on the road the fuse measures". Name the CALLER.
 //
+// ── ✅ STEP 13a IS THAT CALLER, AND THE RE-AIMED FUSE BLEW EXACTLY THERE ──────────────
+//
+// `ArrayModifier` declares a `scope` param and folds the resolved selection's
+// `canonicalQuery` into `arrayGeometryRef`. The sweep below runs through that operator, so
+// row 1's `1` became `121` and the row was updated to the new literal WITH the bytes
+// beside it — which is the whole reason the fuse was written as a number rather than as a
+// bound. The author who put a caller on this road is the one facing the budget.
+//
+//     121-frame 0-N sweep, box, THROUGH THE OPERATOR      121 keys,   0.29 MB
+//     121-frame 0-N sweep, sphere(32,16), same road       121 keys,   6.99 MB
+//     the same sweep driven through the DESCRIPTOR        121 keys,   6.99 MB
+//
+// 🔑 THE TWO ROADS AGREE TO THE BYTE — 7,325,820 B each, and that equality is now asserted
+// as row 1's third case. It is a stronger statement than either number alone: it says the
+// operator hands the key builder exactly the canonical query the descriptor road hands it,
+// so the identity does not fork between the road a director drives and the road the gate
+// measures. What it CANNOT see is a change to `arrayGeometryRef` itself ([[V189]] — both
+// sides reach it through one builder), which is why the discriminating rows for this step
+// are the arithmetic ones and not this equality.
+//
 // ── WHAT *IS* DECIDABLE TODAY, AND IT DECIDES D10 ─────────────────────────────────────
 //
 // D10 refused "accept the bound" on an arithmetic estimate (C3): ≈71 KB per scoped
@@ -194,40 +214,85 @@ beforeEach(() => {
   expect(registry.residentBytes()).toBe(0);
 });
 
-describe('ns-2 step 10 — row 1: the OPERATOR does not put a scope in the key, and this row reds when it does', () => {
-  it('🔴 a 121-frame `0-N` scope sweep over a BOX mints exactly ONE geometry key', () => {
+describe('ns-2 step 10 — row 1: the OPERATOR puts its scope in the key, and this row is what measured it arriving', () => {
+  it('🔴 a 121-frame `0-N` scope sweep over a BOX mints 121 geometry keys, at 0.29 MB', () => {
     const mesh = meshOf('box');
     const keys = new Set<string>();
     for (let n = 0; n < DRAG_FRAMES; n += 1) {
       keys.add(cook(mesh, { count: 3, offset: [1, 0, 0], muted: false, scope: `0-${n}` }));
     }
-    // ONE. Stated as the literal 1, never as "fewer than the frame count".
-    //
-    // 🔴 RE-AIMED AT STEP 12.5, WITH THE MEASUREMENT THAT FORCED IT. The key builder now
-    // folds a canonical query, and this row STAYED GREEN — because `ArrayModifier.evaluate`
-    // receives a resolved selection and discards it until step 13a, so nothing on this road
-    // hands `arrayGeometryRef` a scope. Row 6 below drives the same sweep through the
-    // descriptor and gets 121 keys, which is the difference in one pair of numbers.
-    // The step that makes this operator pass its selection is the step that reds this.
-    expect(keys.size).toBe(1);
-    expect(registry.growthBySource().attach).toBe(1);
+    // 🔴 THE FUSE BLEW HERE, AT STEP 13a, AND THIS IS THE NEW LITERAL. It read `1` from
+    // step 10 until now, twice re-examined: green at 12.5 (the key COULD carry a scope, but
+    // no caller put one there) and red at 13a (`ArrayModifier` folds its resolved
+    // selection's `canonicalQuery`). One key per frame, stated as the frame count, never as
+    // "more than one".
+    expect(keys.size).toBe(DRAG_FRAMES);
+    expect(registry.growthBySource().attach).toBe(DRAG_FRAMES);
+
+    // AND THE BUDGET, WHICH IS THE POINT OF THE FUSE — the author who put the caller on
+    // this road faces it here rather than inheriting a check written by someone who already
+    // believed it was fine. A box is the cheap end: 121 resident scoped builds, 0.29 MB.
+    const bytes = registry.residentBytes();
+    expect(bytes).toBeLessThan(BUDGET_BYTES);
+    expect(bytes).toBeGreaterThan(200 * 1024);
+    expect(bytes).toBeLessThan(400 * 1024);
   });
 
-  it('🔴 …and so does the same sweep over a SPHERE(32,16) — it is the key, not the mesh', () => {
+  it('🔴 …and the same sweep over a SPHERE(32,16) mints 121 too, at 6.99 MB, under budget', () => {
     const mesh = meshOf('sphere');
     const keys = new Set<string>();
     for (let n = 0; n < DRAG_FRAMES; n += 1) {
       keys.add(cook(mesh, { count: 3, offset: [1, 0, 0], muted: false, scope: `0-${n}` }));
     }
-    expect(keys.size).toBe(1);
-    expect(registry.growthBySource().attach).toBe(1);
+    expect(keys.size).toBe(DRAG_FRAMES);
+    expect(registry.growthBySource().attach).toBe(DRAG_FRAMES);
+
+    // The expensive end, and the number D10 was decided against. Bounded rather than pinned
+    // to the byte — the exact figure is three.js's buffer layout — but the BUDGET comparison
+    // is exact, because that is the clause this file exists to settle.
+    const bytes = registry.residentBytes();
+    expect(bytes).toBeLessThan(BUDGET_BYTES);
+    expect(bytes).toBeGreaterThan(5 * 1024 * 1024);
+    expect(bytes).toBeLessThan(9 * 1024 * 1024);
   });
 
-  it('the zero is NOT the scope being inert — the resolver answers differently every frame', () => {
-    // The discriminator for row 1's reading. A sweep that minted one key because the query
-    // never reached the resolver, and a sweep that minted one key because the resolver's
-    // answer never reaches the KEY, are the same observation and completely different
-    // findings. A twelve-face box gives `0-N` twelve distinct answers.
+  it('🔴 the operator road and the DESCRIPTOR road agree to the byte', () => {
+    // What the pair of numbers used to discriminate, now that they have converged. Until
+    // 13a row 1 read 1 and row 6 read 121, and the gap WAS the finding. The gap is closed,
+    // so the equality replaces it: the operator hands the key builder exactly the canonical
+    // query the descriptor road hands it, and neither the key set nor the resident bytes
+    // fork between them.
+    //
+    // ⚠️ WHAT IT CANNOT SEE, said here so it is not over-read: both roads end at
+    // `arrayGeometryRef`, so a change to that builder moves both sides together
+    // ([[V189]]). This row catches the operator dropping or mangling the scope on the way;
+    // the arithmetic rows catch the builder.
+    const viaOperator = new Set<string>();
+    const mesh = meshOf('sphere');
+    for (let n = 0; n < DRAG_FRAMES; n += 1) {
+      viaOperator.add(cook(mesh, { count: 3, offset: [1, 0, 0], muted: false, scope: `0-${n}` }));
+    }
+    const operatorBytes = registry.residentBytes();
+
+    registry.clear();
+    registry.resetGrowth();
+    const viaDescriptor = new Set<string>();
+    const fresh = meshOf('sphere');
+    for (let n = 0; n < DRAG_FRAMES; n += 1) {
+      const ref = arrayGeometryRef(fresh.geometry, 3, [1, 0, 0], `0-${n}`);
+      registry.getForAttach(ref);
+      viaDescriptor.add(ref.key);
+    }
+    expect([...viaOperator].sort()).toEqual([...viaDescriptor].sort());
+    expect(registry.residentBytes()).toBe(operatorBytes);
+  });
+
+  it('the sweep is NOT the scope being inert — the resolver answers differently every frame', () => {
+    // The discriminator this row carried while the sweep read 1, kept now that it reads 121
+    // because it still separates two different things: a sweep whose frames each mint a key
+    // because the resolver genuinely discriminates, and one that would mint keys off a
+    // string the resolver never looked at. A twelve-face box gives `0-N` twelve distinct
+    // answers, and those twelve are what the operator's selection is built from.
     const mesh = meshOf('box') as ObjectData;
     const counts = Array.from({ length: 12 }, (_, n) => {
       const selection = resolveComponentSelection(mesh, { scope: `0-${n}` });

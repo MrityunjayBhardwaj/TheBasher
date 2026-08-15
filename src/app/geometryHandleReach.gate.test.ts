@@ -79,7 +79,15 @@ const HANDLE_KINDS: Record<
   sphere: { producer: 'SphereData', ref: sphereGeometryRef(1, 16, 12, null), probe: 7 },
   array: {
     producer: 'ArrayModifier',
-    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0]),
+    // 🔴 SCOPED ON PURPOSE (ns-2 step 13a), and this is the successor a fuse in
+    // `scopedGeneratorBuild.gate.test.ts` named by hand. `scope` is an OPTIONAL descriptor
+    // field, so an UNSCOPED fixture omits it and `descriptorParamFields` never mentions it
+    // — this whole file would then be blind to the one field that arrived after it was
+    // written, and blind SILENTLY, since a field nobody enumerates cannot be reported
+    // unreachable. The fixture carries a scope so the two checks below actually ask about
+    // it: that `ArrayModifier` declares a same-named param, and that folding a different
+    // query MOVES the key.
+    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0], '0-5'),
     probe: 9,
   },
   mirror: {
@@ -111,6 +119,11 @@ function probeFor(field: string, kind: string): unknown {
   if (field === 'offset') return kind === 'array' ? [5, 0, 0] : 5;
   if (field === 'axis') return 'y';
   if (field === 'size') return [2, 2, 2];
+  // ns-2 step 13a — a DIFFERENT well-formed query, and different after canonicalisation
+  // rather than merely as typed: the key folds the canonical form, so a probe that
+  // canonicalised back to the fixture's `0-5` would report the field ignored when it is
+  // honoured exactly right.
+  if (field === 'scope') return '0-3';
   return p;
 }
 

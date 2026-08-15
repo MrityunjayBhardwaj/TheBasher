@@ -63,8 +63,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { BufferGeometry } from 'three';
 import { declaredParamKeys } from './inspectorSectionBody';
-import { __resetRegistryForTests } from '../core/dag/registry';
-import { registerAllNodes } from '../nodes/registerAll';
+import { __resetRegistryForTests, listNodeTypes } from '../core/dag/registry';
+import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import {
   arrayGeometryRef,
   boxGeometryRef,
@@ -96,8 +96,28 @@ function built(ref: GeometryRef): BufferGeometry {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  registerAllNodes();
+  // 🔴 `__reseedAllNodesForTests`, NOT `registerAllNodes` — measured at step 13a, and the
+  // difference made this file's last row VACUOUS from the day it was written.
+  // `registerAllNodes` carries a module-level `registered` once-guard, so paired with a
+  // per-test reset it re-seeds on the FIRST test and returns immediately on every one
+  // after: `listNodeTypes()` goes 80 → 0 and `declaredParamKeys` answers `[]` for every
+  // node in the repo. The fuse below asks which generators declare a `scope` param and
+  // therefore read `[]` whatever the answer was.
+  // Censused when it was found: 7 of 105 files pair the reset with `registerAllNodes`, and
+  // six of them use `beforeAll` — which runs once, so the guard never bites. This was the
+  // only `beforeEach`, which is why nothing else in the tier was affected. (#678)
+  __reseedAllNodesForTests();
   clear();
+});
+
+it('the registry is still seeded on a test that is not the first — the row below needs it', () => {
+  // The instrument's own control, and it exists because the omission it guards against was
+  // SILENT: an empty registry makes every question about a node's params answer "no", which
+  // is the same shape as a clean pass ([[H360]] — a guard whose subject never arrives reads
+  // as "no objection" forever). Asserted here rather than trusted to the `beforeEach`,
+  // because this case is not the first in the file and that is the whole point.
+  expect(listNodeTypes().length).toBeGreaterThan(0);
+  expect(declaredParamKeys('MirrorModifier')).toContain('axis');
 });
 
 describe('ns-2 step 12.5 — ROW 2: the scoped count is scope-SENSITIVE, as a literal', () => {
@@ -310,19 +330,39 @@ describe('ns-2 step 12.5 — the scope survives the overlay rebuild road', () =>
     ]);
   });
 
-  it('🔴 THE FUSE — no generator declares a `scope` param yet, and step 13a must move a fixture', () => {
-    // V208's shape. `geometryHandleReach.gate.test.ts` checks that every descriptor field is
-    // reachable by a same-named param on its producing node — but its fixtures are UNSCOPED
-    // refs, so it cannot see this field at all. Adding a scoped fixture there today would
-    // red it, correctly: `ArrayModifier` has no `scope` param until step 13a.
+  it('🔴 THE FUSE, BLOWN AND REPLACED — Array declares a `scope`; Mirror is step 13b', () => {
+    // ── WHAT THIS ROW USED TO SAY, AND WHY IT IS REPLACED RATHER THAN DELETED ──────────
     //
-    // So the unreachability is asserted here as a LITERAL, with the successor written down:
-    // 🔴 THE STEP THAT DECLARES A `scope` PARAM ON A GENERATOR MUST ADD THE SCOPED REFS TO
-    // `HANDLE_KINDS` IN THAT SAME COMMIT, and delete this row. Left undone, the overlay's
-    // name-correspondence is unchecked for the one field that arrived after the gate.
+    // It read `declaring: []` and named its own successor by hand:
+    // *the step that declares a `scope` param on a generator must add the scoped refs to
+    // `HANDLE_KINDS` in that same commit.* Step 13a is that step for `ArrayModifier`, and
+    // the fixture moved with it. A blown fuse is replaced, never deleted ([[V208]]) —
+    // deleting it would retire the question one step before its second half is answered.
+    //
+    // 🔴 AND THE FUSE WAS VACUOUS WHEN IT WAS WRITTEN. Measured at 13a: this file paired
+    // `__resetRegistryForTests()` with `registerAllNodes()` in a `beforeEach`, and that
+    // helper's once-guard left the registry EMPTY for every case after the first. This row
+    // is the last in the file, so `declaredParamKeys` answered `[]` for every node in the
+    // repo and the row read `[]` because it could see nothing — not because the claim held.
+    // It went green on a tree where the claim was false, and only redded once the pairing
+    // was fixed. (#678, and the `beforeEach` now carries a control case that would catch a
+    // recurrence before this row could.)
+    //
+    // ── WHAT IT ASKS NOW ──────────────────────────────────────────────────────────────
+    //
+    // The same question, at the position the answer has actually reached. `ArrayModifier`
+    // declares a `scope` param and its `HANDLE_KINDS` fixture is scoped, so the overlay's
+    // name-correspondence IS checked for that field. `MirrorModifier` declares none, so its
+    // fixture must stay unscoped — a scoped mirror fixture today would red the reach gate
+    // correctly, because the param it names does not exist yet.
+    //
+    // 🔴 THE SUCCESSOR, WRITTEN DOWN AS THE PREVIOUS VERSION WROTE ITS OWN: STEP 13b
+    // DECLARES `MirrorModifier.scope`, AND MUST SCOPE THE `mirror` ENTRY IN `HANDLE_KINDS`
+    // IN THE SAME COMMIT — then this literal becomes both generators and the row retires,
+    // because at that point nothing is left unchecked for it to be about.
     const declaring = ['ArrayModifier', 'MirrorModifier'].filter((type) =>
       declaredParamKeys(type).includes('scope'),
     );
-    expect(declaring).toEqual([]);
+    expect(declaring).toEqual(['ArrayModifier']);
   });
 });

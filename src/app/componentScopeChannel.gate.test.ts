@@ -205,16 +205,69 @@ describe('ns-2 step 9b — the evaluator hands a scoped operator its selection',
     expect(handed.scope?.count).toBe(80);
   });
 
-  it('🔴 an authored query narrows it — the query reaches the operator ONLY as a selection', () => {
+  it('🔴 an authored query narrows it — and reaches the operator RESOLVED, plus an identity', () => {
     registerRecorder('Ns2QueryRecorder', 'source');
     evaluateNodeAlone('Ns2QueryRecorder', { muted: false, [SCOPE_PARAM]: '0-9' }, { target: MESH });
-    // Ten of eighty, and the operator was handed a resolved answer — never the string.
+    // Ten of eighty, and the operator was handed a resolved answer.
     expect(handed.scope?.count).toBe(10);
     expect(handed.scope?.length).toBe(80);
     expect(handed.scope?.has(0)).toBe(true);
     expect(handed.scope?.has(10)).toBe(false);
-    // The value carries no member holding the query, so an operator cannot re-parse it.
-    expect(Object.keys(handed.scope!).sort()).toEqual(['count', 'domain', 'has', 'length']);
+
+    // 🔴 STEP 13a CHANGED WHAT THIS ROW CLAIMS, AND THE CHANGE IS THE STEP. It used to
+    // assert the value carried NO member holding the query. It carries one now:
+    // `canonicalQuery`, the selection's identity, because a `'source'` operator's job is to
+    // put its scope into a geometry key and a key needs an identity rather than a mask.
+    //
+    // So the claim is narrowed to what is still true and still load-bearing — the member
+    // set is EXACT, and the only string in it is the CANONICAL form. An operator therefore
+    // cannot read back what the author typed (`0-9` and `9,8,7,6,5,4,3,2,1,0` arrive
+    // identical), and it has nothing to evaluate the string WITH: the census two describes
+    // down pins the query language's node-module importers at zero. That census used to be
+    // tidy and is load-bearing now that an operator holds a query at all.
+    expect(Object.keys(handed.scope!).sort()).toEqual([
+      'canonicalQuery',
+      'count',
+      'domain',
+      'has',
+      'length',
+    ]);
+    expect(handed.scope?.canonicalQuery).toBe('0-9');
+  });
+
+  it('…and two spellings of one scope arrive as ONE identity, so a key cannot fork', () => {
+    // The half the row above cannot see. `canonicalQuery` is what a generator folds into a
+    // geometry key, so if it echoed the authored text, `0-9` and `9,8,7,…,0` would mint two
+    // byte-identical cached builds — the duplicate D9 chose canonicalisation to avoid.
+    registerRecorder('Ns2SpellingRecorder', 'source');
+    evaluateNodeAlone(
+      'Ns2SpellingRecorder',
+      { muted: false, [SCOPE_PARAM]: '9,8,7,6,5,4,3,2,1,0' },
+      { target: MESH },
+    );
+    expect(handed.scope?.canonicalQuery).toBe('0-9');
+    expect(handed.scope?.count).toBe(10);
+  });
+
+  it('an UNSCOPED authoring state carries a NULL identity, not an empty string', () => {
+    // What keeps every pre-phase geometry key byte-identical. `null` is the unscoped road;
+    // a query that happens to name every face is a scope the author wrote and mints its own
+    // build. Two different values for two different states, so a generator cannot collapse
+    // them by accident — the same separation `resolveComponentSelection` already draws
+    // between a declared `null` and an omitted `undefined` ([[V205]]).
+    registerRecorder('Ns2NoScopeRecorder', 'source');
+    evaluateNodeAlone('Ns2NoScopeRecorder', { muted: false }, { target: MESH });
+    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.canonicalQuery).toBeNull();
+
+    registerRecorder('Ns2TotalQueryRecorder', 'source');
+    evaluateNodeAlone(
+      'Ns2TotalQueryRecorder',
+      { muted: false, [SCOPE_PARAM]: '0-79' },
+      { target: MESH },
+    );
+    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.canonicalQuery).toBe('0-79');
   });
 
   it('an UNSCOPED operator is handed nothing at all — the declaration decides', () => {
@@ -372,6 +425,53 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
     // files that DO name these symbols; a typo in the regex produces the same green.
     expect(definers.sort()).toEqual([DEFINER, 'src/nodes/componentSelection.ts'].sort());
   });
+
+  it('🔴 …and no node module imports the query EVALUATORS, which is load-bearing now', () => {
+    // 🔴 STEP 13a MADE THIS ROW NECESSARY, AND SAYING SO IS THE POINT. Until now an
+    // operator could not interpret a query for a reason that cost nothing to maintain: it
+    // never received one. A `'source'` operator now holds `canonicalQuery`, so the
+    // guarantee stops being free — "cannot interpret" is no longer "has nothing to
+    // interpret", it is "has nothing to interpret it WITH", and that is a claim about
+    // imports which has to be asserted rather than observed once.
+    //
+    // The parser is unexported, so the two doors that turn a string into a SET are
+    // `scopeSelection` and `scopeSelectedCount`. Their legitimate callers are the resolver
+    // and the two descriptor-road consumers (the scoped count and the scoped build); NO
+    // node module outside `componentSelection.ts` may name either. `isParsableScopeQuery`
+    // is deliberately not in the probe: it is one bit wide, cannot return terms, and is the
+    // authoring door every `scope` param refines with.
+    const ALLOWED = [
+      'src/nodes/scopeQuery.ts', // defines them
+      'src/nodes/componentSelection.ts', // THE resolver
+      'src/app/faceCount.ts', // the scoped count
+      'src/app/geometryRegistry.ts', // the scoped build
+    ];
+    const probe = /\bscopeSelection\b|\bscopeSelectedCount\b/;
+    const files = sourceFiles();
+    const nodeModules = files.filter(
+      ([path]) => path.startsWith('src/nodes/') && !path.includes('.test.'),
+    );
+    const interpreters = nodeModules
+      .filter(([, src]) => probe.test(stripComments(src)))
+      .map(([path]) => path)
+      .filter((path) => !ALLOWED.includes(path));
+
+    expect({ examined: nodeModules.length, interpreters }).toEqual({
+      examined: nodeModules.length,
+      interpreters: [],
+    });
+
+    // The control, because an empty list over a population of zero is not a finding. The
+    // walk must actually reach node modules, and the probe must actually match its subject
+    // somewhere — a typo produces the same green as a clean repo ([[H326]]).
+    expect(nodeModules.length).toBeGreaterThan(50);
+    const matched = files
+      .filter(([, src]) => probe.test(stripComments(src)))
+      .map(([path]) => path)
+      .filter((path) => !path.includes('.test.'))
+      .sort();
+    expect(matched).toEqual([...ALLOWED].sort());
+  });
 });
 
 describe('ns-2 step 9b — the roads that already ship still work', () => {
@@ -467,7 +567,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('exactly ONE registered node type declares a `scope` param — the fuse, and it has blown', () => {
+  it('exactly TWO registered node types declare a `scope` param — one per LANE', () => {
     // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
     // `declaring: []` and existed to red at the first declaration, because an unparseable
     // query is a named THROW and `evaluate` runs on the render road with no try/catch above
@@ -481,6 +581,16 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // query never enters params. The bad state has no constructor rather than a handler,
     // which matters because this project has no node-error surfacing at all (censused at
     // zero): a throw here would have been the director's entire feedback.
+    //
+    // 🔴 STEP 13a ADDS THE SECOND, AND IT IS THE OTHER LANE. `SetMaterialOp` is `'target'`
+    // — the selection names which faces RECEIVE a write. `ArrayModifier` is `'source'` —
+    // the selection names which faces are GENERATED FROM. Same param name, same refinement,
+    // opposite jobs, and the difference is declared in `chain.scope.kind` rather than
+    // spelled into the param, which is the whole reason the param can be identical.
+    //
+    // The literal is kept EXACT rather than loosened to a count: this list is where a third
+    // declarer shows up, and the question it has to answer on arrival is the one below —
+    // does it refine? `MirrorModifier` is the known next entrant (step 13b).
     const declaring = listNodeTypes().filter((type) => {
       const shape = (
         getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
@@ -489,7 +599,8 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     });
     expect({ examined: listNodeTypes().length, declaring }).toEqual({
       examined: listNodeTypes().length,
-      declaring: ['SetMaterialOp'],
+      // The order is `listNodeTypes()`'s — registration order, not alphabetical.
+      declaring: ['ArrayModifier', 'SetMaterialOp'],
     });
   });
 

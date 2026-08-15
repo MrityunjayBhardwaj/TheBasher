@@ -210,11 +210,19 @@ describe('#607 a selection cannot be built against a count that does not exist',
 });
 
 describe('#607 the resolved selection exposes no buffer', () => {
-  it('has exactly four members, none of them an array', () => {
+  it('has exactly five members, none of them an array', () => {
     // What makes the memoized total safe to share. A reader that mutated it would corrupt
     // every other operator's scope, so the buffer has no constructor rather than a rule.
+    //
+    // 🔴 FOUR BECAME FIVE AT STEP 13a, AND THE NEW ONE IS A STRING ON PURPOSE.
+    // `canonicalQuery` is the selection's IDENTITY — what a `'source'` operator folds into
+    // a geometry key, because a descriptor is a rebuild recipe the registry re-reads later
+    // with no selection in scope. The property THIS row holds is unchanged and is the
+    // reason it enumerates members rather than counting them: nothing here is a buffer or
+    // an array, so there is still nothing a reader can mutate. A member that WAS one — a
+    // mask, a face list — would red this the moment it appeared, which is the whole job.
     const s = scope('0-5');
-    expect(Object.keys(s).sort()).toEqual(['count', 'domain', 'has', 'length']);
+    expect(Object.keys(s).sort()).toEqual(['canonicalQuery', 'count', 'domain', 'has', 'length']);
     for (const name of Object.getOwnPropertyNames(s)) {
       const value = (s as unknown as Record<string, unknown>)[name];
       expect(ArrayBuffer.isView(value)).toBe(false);
@@ -418,6 +426,13 @@ describe('#607 the query has exactly one reader', () => {
         // scope" using the same identifier the resolver reads, so the two cannot fall out
         // of step. It still never sees the query — `evaluate` receives only a resolved
         // selection, which is what the sibling rows below pin.
+        //
+        // ns-2 step 13a — the SECOND declarer, and the first on the `'source'` lane. Same
+        // reading: it names the shared constant in its `paramSchema` and in its `home`
+        // map, and its `evaluate` never touches `params[SCOPE_PARAM]`. What it consumes is
+        // the resolved selection's `canonicalQuery`, which is an identity to pass on and
+        // not a query to interpret — the row below the next one is what holds that apart.
+        'src/nodes/ArrayModifier.ts',
         'src/nodes/SetMaterialOp.ts',
         'src/nodes/componentSelection.ts',
       ],

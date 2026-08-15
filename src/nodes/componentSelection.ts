@@ -40,6 +40,27 @@
 // obvious alternative and does not work: `Object.freeze` on a typed array with elements
 // throws, and succeeds only on a zero-length view.)
 //
+// 🔴 STEP 13a AMENDS ONE SENTENCE THIS HEADER USED TO CARRY, AND THE AMENDMENT IS THE
+// POINT RATHER THAN AN EXCEPTION TO IT. It used to say a selection is "NEVER a query". A
+// selection now carries {@link ComponentSelection.canonicalQuery} — the canonical spelling
+// of the query that produced it, or `null` when nothing was authored — because a
+// `'source'` operator's whole job is to put its scope into a geometry KEY, and a key needs
+// an identity, not a mask.
+//
+//   WHAT DID NOT CHANGE: no operator INTERPRETS a query. That was always the rule, and it
+//   is a rule about who may turn a string into a SET. The parser is unexported, and the two
+//   functions that evaluate a query at a length (`scopeSelection`, `scopeSelectedCount`)
+//   live in `scopeQuery.ts` with an importer census over `src/nodes/**` that pins their
+//   node-module callers at zero.
+//   WHAT DID CHANGE: the guarantee used to be free — an operator could not misuse a query
+//   it did not have. Now it has one, so the census above is load-bearing where it was
+//   merely tidy, and it is asserted rather than assumed.
+//
+// The alternative was for a generator to re-read `params[SCOPE_PARAM]` itself. That is the
+// road this phase exists to close: it puts a second producer of the descriptor's scope
+// beside the resolver, and — measured, not argued — it makes the step's own detector
+// impossible, because discarding the resolved selection would then change nothing.
+//
 // ── WHAT v1 PARSES, AND WHAT IT REFUSES BY NAME ───────────────────────────────────────
 //
 // The reference's Group field is a query language: numeric ranges `0-10`, step `0-100:2`,
@@ -90,11 +111,12 @@ import type { KnownDomain } from './attributes';
 import type { GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
 import { modifierDataSource } from '../app/modifierDataSource';
-import { scopeSelection } from './scopeQuery';
+import { canonicalScopeQuery, scopeSelection } from './scopeQuery';
 
 /**
- * A resolved component selection at one domain. NEVER a query, NEVER a name, NEVER a
- * buffer.
+ * A resolved component selection at one domain. NEVER a name, NEVER a buffer, and never a
+ * query a reader can turn into a set — see {@link ComponentSelection.canonicalQuery} for
+ * the one string it does carry and what may be done with it.
  *
  * `count` is computed at mint — O(1) for a total selection, O(elements) for a scoped one —
  * so a caller can branch on "selects nothing" without walking the mask.
@@ -105,6 +127,31 @@ export interface ComponentSelection {
   readonly length: number;
   /** How many elements are selected. */
   readonly count: number;
+  /**
+   * THE SELECTION'S IDENTITY — the canonical spelling of the query that produced it, or
+   * `null` when no scope was authored (ns-2 step 13a).
+   *
+   * ── WHY A RESOLVED SELECTION CARRIES A STRING AT ALL ──────────────────────────────
+   *
+   * A `'target'` operator writes through the accessor and never needs this. A `'source'`
+   * operator does something the accessor cannot express: it hands its scope to a
+   * `GeometryRef`, whose key is a string and whose descriptor is a REBUILD RECIPE the
+   * registry re-reads later, off the render road, with no selection in scope. So what a
+   * generator must pass downstream is an IDENTITY, and the canonical query is the identity
+   * D9 chose — O(query) to fold, against O(elements) for a mask digest on the drag road.
+   *
+   * ⚠️ `null` AND A QUERY SELECTING EVERYTHING ARE DIFFERENT VALUES, DELIBERATELY. `null`
+   * is the unscoped road, and it is what keeps an unscoped geometry key byte-identical to
+   * what it was before this phase existed. A query that happens to name every face is a
+   * scope the author wrote, and it mints its own build — a benign duplicate, and the same
+   * sound-but-not-total property the canonicaliser already declares.
+   *
+   * 🔴 WHAT A READER MAY DO WITH IT: pass it on. NOT interpret it. The parser is unexported
+   * and the two functions that evaluate a query at a length live in `scopeQuery.ts`, whose
+   * node-module importers are censused at zero — the row that used to be free (an operator
+   * could not misuse a query it never received) and is load-bearing now that one does.
+   */
+  readonly canonicalQuery: string | null;
   has(element: number): boolean;
 }
 
@@ -208,6 +255,17 @@ export function totalSelection(domain: KnownDomain, length: number): ComponentSe
     domain,
     length,
     count: length,
+    // The unscoped identity. A generator handed this puts NO scope on its descriptor.
+    //
+    // ⚠️ IT IS NOT WHAT KEEPS PRE-PHASE KEYS BYTE-IDENTICAL, AND THE FIRST DRAFT OF THIS
+    // COMMENT SAID IT WAS. Measured: replacing this `null` with `''` leaves every geometry
+    // key unchanged, because `scopeField` in `modifierGeometry.ts` already collapses a blank
+    // query to "unscoped" at the ONE place a scope becomes a key. So the choice here is
+    // belt-and-braces, and it earns its place for a different and smaller reason — `null`
+    // and `''` are different CLAIMS ("nothing was authored" against "the author wrote an
+    // empty string"), the same separation [[V205]] draws one level up. Written down because
+    // a comment that overstates a guarantee is how a later reader deletes the real one.
+    canonicalQuery: null,
     has: (element: number) => Number.isInteger(element) && element >= 0 && element < length,
   };
   TOTAL_MEMO.set(key, made);
@@ -243,21 +301,35 @@ export function __resetSelectionMemoForTests(): void {
  * Wrap the language's answer as a resolved selection.
  *
  * {@link scopeSelection} owns the arithmetic — which elements a query names at a length —
- * and this owns the CONTRACT an operator sees: a domain, a length, a count, and an accessor
- * with no buffer behind it a reader can reach. The mask is captured by the closure and is
- * not a property of the returned object, which is what makes the memoized total safe to
- * share, and is kept here for consistency rather than for necessity.
+ * and this owns the CONTRACT an operator sees: a domain, a length, a count, an identity,
+ * and an accessor with no buffer behind it a reader can reach. The mask is captured by the
+ * closure and is not a property of the returned object, which is what makes the memoized
+ * total safe to share, and is kept here for consistency rather than for necessity.
+ *
+ * 🔴 THE SELECTION IS RESOLVED FROM THE CANONICAL FORM, NOT FROM THE AUTHORED ONE, so the
+ * mask and the identity describe literally the same string (ns-2 step 13a). Canonicalising
+ * is meaning-preserving — that is {@link canonicalScopeQuery}'s SOUND direction — and this
+ * turns that from a property two call sites rely on separately into one they share.
+ *
+ * COST, MEASURED rather than waved at, because this runs on the drag road. One extra parse
+ * of an authored query per resolve — O(query) beside an O(length) mask fill. Over a
+ * 960-face sphere: a SCOPED resolve went **1.48 µs → 1.83 µs** per call (+0.35), and an
+ * UNSCOPED one is unchanged at **0.07 µs**, since it never reaches here — it is a memo hit
+ * on the total selection. Against the evaluator's recorded 12 µs per operator per frame
+ * that is about 3%, and the population that pays it is operators with an authored scope.
  */
 function selectionFromQuery(
   query: string,
   domain: KnownDomain,
   length: number,
 ): ComponentSelection {
-  const { mask, count } = scopeSelection(query, length);
+  const canonicalQuery = canonicalScopeQuery(query);
+  const { mask, count } = scopeSelection(canonicalQuery, length);
   return {
     domain,
     length,
     count,
+    canonicalQuery,
     has: (element: number) =>
       Number.isInteger(element) && element >= 0 && element < length && mask[element] === 1,
   };
