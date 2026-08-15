@@ -11,12 +11,17 @@
 import { describe, expect, it, beforeEach } from 'vitest';
 import {
   __resetSelectionMemoForTests,
-  canonicalScopeQuery,
   resolveComponentSelection,
   totalSelection,
   SCOPE_PARAM,
   type ComponentSelection,
 } from './componentSelection';
+// ns-2 step 12.5 — the language moved to a leaf BELOW this module, so a generator's
+// descriptor (`faceCount`) and its build (`geometryRegistry`) can reach it without the
+// cycle that `componentSelection -> faceCount` would otherwise close. The rows below did
+// not move with it: what they assert about canonicalisation is a claim about the RESOLVER's
+// behaviour, and the resolver is still here.
+import { canonicalScopeQuery } from './scopeQuery';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
 import { faceCountOf } from '../app/faceCount';
@@ -123,7 +128,14 @@ describe('#607 the three degenerate cases, decided here', () => {
     // The row that matters most. A lost scope silently meaning "everything" applies the
     // operation to the whole mesh, which is the loudest wrong answer with the quietest
     // failure. The throw is asserted, and so is the fact that it names the offending text.
-    expect(() => scope('not-a-range!!')).toThrow(/componentSelection/);
+    //
+    // The FIRST row asserts the message carries the module that refused. It said
+    // `componentSelection` until step 12.5 moved the language into `scopeQuery.ts`, and it
+    // redded there — which is the row working: a refusal that stops naming its origin is a
+    // stack trace away from being anonymous, and the whole point of these throws is that a
+    // director reading a console can tell what refused and why.
+    expect(() => scope('not-a-range!!')).toThrow(/scopeQuery/);
+    expect(() => scope('not-a-range!!')).toThrow(/not-a-range!!/);
     expect(() => scope('@v>0')).toThrow(/attribute expressions are not implemented/);
     expect(() => scope('arm*')).toThrow(/wildcards are not implemented/);
     expect(() => scope('head')).toThrow(/named groups are not implemented/);
@@ -440,23 +452,45 @@ describe('#607 the query has exactly one reader', () => {
       'ComponentSelection',
       'SCOPE_PARAM',
       '__resetSelectionMemoForTests',
-      'canonicalScopeQuery',
       'componentCountOf',
-      // 🔴 ns-2 step 12 — the ONE new door, and it is one bit wide. Declaring the first
-      // `scope` param makes an authored query reachable, and every refusal in this module
-      // is a THROW that would land on the renderer's unguarded walk. So the query is
-      // refused where it is AUTHORED: a node's schema refines the field with this, and
-      // `setParam` rejects what the schema will not take. It returns a BOOLEAN and can
-      // never return terms, so it cannot be used to act on a scope — only to refuse one at
-      // the door. That is what keeps "no operator interprets a query" true while this
-      // exists; a variant returning terms would break it and belongs nowhere.
-      'isParsableScopeQuery',
       // ns-2 step 9b — the operator's own refusal of an OMITTED selection, written once
       // rather than copy-pasted into four `evaluate` bodies. It exports the REFUSAL, never
       // the query: an operator still has no way to reach the parser.
       'requireResolvedScope',
       'resolveComponentSelection',
       'totalSelection',
+    ]);
+  });
+
+  it('…and the LEAF the language moved to exports no terms either', () => {
+    // 🔴 THE HALF THE ROW ABOVE STOPPED COVERING AT STEP 12.5. Two exports left this module
+    // for `scopeQuery.ts` — the canonicaliser and the one-bit authoring door — so the census
+    // above would now go green on a `scopeQuery` that exported its parser. The claim being
+    // held is not "componentSelection exports no parser", it is "NOTHING does", and that
+    // needs a row wherever the language lives.
+    //
+    // `isParsableScopeQuery` is the one door and it is one bit wide: declaring a `scope`
+    // param makes an authored query reachable, and every refusal in the language is a THROW
+    // that would land on the renderer's unguarded walk, so a query is refused where it is
+    // AUTHORED (a node's schema refines the field with this; `setParam` rejects what the
+    // schema will not take). It returns a BOOLEAN and can NEVER return terms, which is why
+    // it is safe to export while the parser is not — it cannot be used to act on a scope,
+    // only to refuse one at the door. A variant returning terms belongs nowhere.
+    const module = sourceFiles().find(([p]) => p === 'src/nodes/scopeQuery.ts')![1];
+    const exported = [
+      ...stripComments(module).matchAll(/export (?:const|function|interface|type) (\w+)/g),
+    ]
+      .map((m) => m[1])
+      .sort();
+    expect(exported).toEqual([
+      'ScopeMask',
+      'canonicalScopeQuery',
+      'isParsableScopeQuery',
+      // The two answers the descriptor road needs: how many elements a query selects (the
+      // scoped face count) and which ones (the scoped build). Both are ANSWERS at a length,
+      // never terms, so neither lets a caller re-read the language a second way.
+      'scopeSelectedCount',
+      'scopeSelection',
     ]);
   });
 });

@@ -18,6 +18,18 @@
 // which matters because the defect this phase exists to delete is precisely a property
 // that every member had to remember separately.
 //
+// 🔴 THE LANGUAGE MOVED DOWN AT STEP 12.5, AND THE RULE ABOVE DID NOT CHANGE. Parsing,
+// canonicalising and evaluating a query at a length now live in `scopeQuery.ts`, a LEAF
+// with zero value imports, because step 12.5 gave a generator's descriptor a `scope` field
+// and that created two consumers which are not the resolver: `faceCount.ts` (a scoped array
+// derives `source + subset x (count - 1)`) and `geometryRegistry.ts` (which triangles
+// survive). This module imports `faceCount.ts`, so `faceCount.ts` cannot import it back —
+// a measured cycle, not a shape preference. What this module still owns is the CONTRACT an
+// operator sees: {@link ComponentSelection}, the memoized total, and the ONE resolver that
+// turns a spine value plus params into one. `scopeQuery` exports no terms either, so the
+// number of readers of a QUERY did not grow; the language simply sits below all three of
+// its consumers instead of inside one of them.
+//
 // ── WHAT AN OPERATOR CAN AND CANNOT DO WITH A SELECTION ───────────────────────────────
 //
 // {@link ComponentSelection} is ACCESSOR-ONLY, and that is load-bearing rather than
@@ -69,7 +81,8 @@
 // INVERTED range (`5-2`) is refused instead, because it cannot be an authoring intent and
 // silently meaning nothing is the same lost-scope hazard.
 //
-// REF: src/app/faceCount.ts (the only derivable element count); src/nodes/attributes.ts
+// REF: src/nodes/scopeQuery.ts (the language: parse, canonicalise, evaluate at a length);
+//      src/app/faceCount.ts (the only derivable element count); src/nodes/attributes.ts
 //      (`KnownDomain`); src/app/modifierDataSource.ts (which values carry components);
 //      ref/houdini/SOP.md §4; issues #607, #660.
 
@@ -77,6 +90,7 @@ import type { KnownDomain } from './attributes';
 import type { GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
 import { modifierDataSource } from '../app/modifierDataSource';
+import { scopeSelection } from './scopeQuery';
 
 /**
  * A resolved component selection at one domain. NEVER a query, NEVER a name, NEVER a
@@ -222,273 +236,24 @@ export function __resetSelectionMemoForTests(): void {
 }
 
 // ---------------------------------------------------------------------------
-// The ONE parser
-// ---------------------------------------------------------------------------
-
-type ScopeOp = 'add' | 'remove' | 'complement';
-
-interface ScopeTerm {
-  readonly op: ScopeOp;
-  readonly start: number;
-  readonly end: number;
-  readonly step: number;
-}
-
-const ATOM = /^(\d+)(?:-(\d+)(?::(\d+))?)?$/;
-
-/**
- * A scope query as terms, or a named refusal. NOT EXPORTED — see the module header.
- *
- * Separators are whitespace or commas. The reference writes them space-separated; a comma
- * is admitted because it is the shape a human types for a list, and it costs nothing to
- * accept because canonicalisation erases the difference — a separator carries no meaning.
- */
-function parseScopeQuery(query: string): ScopeTerm[] {
-  const tokens = query
-    .trim()
-    .split(/[\s,]+/)
-    .filter(Boolean);
-  if (tokens.length === 0) return [];
-
-  return tokens.map((token) => {
-    let op: ScopeOp = 'add';
-    let body = token;
-    if (body.startsWith('!')) {
-      op = 'complement';
-      body = body.slice(1);
-    } else if (body.startsWith('^')) {
-      op = 'remove';
-      body = body.slice(1);
-    }
-
-    // The deferred constructs, each refused by its own name rather than by a generic
-    // "cannot parse". A reader who mistyped a range and a reader who reached for attribute
-    // expressions need different sentences.
-    if (body.startsWith('@')) {
-      return refuse(
-        `attribute expressions are not implemented ('${token}'). They are the one construct that survives a topology change without an id, and they are deferred deliberately, not overlooked`,
-      );
-    }
-    if (body.includes('*')) {
-      return refuse(
-        `wildcards are not implemented ('${token}') — they match STORED group names, and no group can be named yet`,
-      );
-    }
-    if (/^[A-Za-z_]/.test(body)) {
-      return refuse(
-        `named groups are not implemented ('${token}') — v1's query is a range expression over component indices`,
-      );
-    }
-
-    const m = ATOM.exec(body);
-    if (!m) return refuse(`'${token}' is not a component index or range`);
-
-    const start = Number(m[1]);
-    const end = m[2] === undefined ? start : Number(m[2]);
-    const step = m[3] === undefined ? 1 : Number(m[3]);
-
-    if (end < start) {
-      // Refused rather than normalised or clamped. Clamping an inverted range to nothing is
-      // exactly the silent lost scope this module refuses everywhere else, and swapping the
-      // ends guesses at an intent the author did not express.
-      return refuse(
-        `'${token}' is an inverted range — its end (${end}) is below its start (${start})`,
-      );
-    }
-    if (step < 1) return refuse(`'${token}' has a step of ${step}; a step must be at least 1`);
-
-    return { op, start, end, step };
-  });
-}
-
-/** Is `i` inside this term's range, honouring its step? */
-function inTerm(term: ScopeTerm, i: number): boolean {
-  return i >= term.start && i <= term.end && (i - term.start) % term.step === 0;
-}
-
-/**
- * Can this string be parsed as a scope query? A BOOLEAN, and nothing else (ns-2 step 12).
- *
- * ── WHY THIS EXISTS, AND WHY IT IS NOT A HOLE IN THE ONE-PARSER RULE ──────────────────
- *
- * Step 12 declares the first `scope` param, which makes an authored query reachable for the
- * first time. Every refusal in this module is a THROW, and the throw would land on the
- * renderer's own walk: `resolveEvaluatedMesh` calls `evaluate` with no `try` above it and
- * `SceneFromDAG` calls that during render — measured, not assumed. A director who mistypes
- * a range would take the viewport down, and this project has NO node-error surfacing at all
- * (censused at zero), so the crash would be the entire feedback.
- *
- * So the query is validated where it is AUTHORED instead of where it is read. A node's
- * `paramSchema` refines the field with this predicate, `setParam` silently rejects a value
- * its schema does not accept, and an unparseable query therefore never reaches params, never
- * reaches the resolver, and cannot throw. That is the ladder's third rung: the bad state is
- * not guarded against, it has no constructor.
- *
- * ⚠️ THIS RETURNS A BOOLEAN AND CAN NEVER RETURN TERMS, which is the whole reason it is safe
- * to export while {@link parseScopeQuery} stays private. The rule this module exists to make
- * true is that no operator INTERPRETS a query — an operator that could ask "which faces does
- * this name?" would be a second reading of the query language, and that is the defect the
- * phase is deleting. "Is this well-formed?" is a different question with a one-bit answer:
- * it cannot be used to act on a scope, only to refuse one at the door.
- *
- * It is deliberately NOT total in the other direction either: a query that parses can still
- * be unhonourable against a particular value (an authored scope on a curve, or on a `gltf`
- * handle whose face count is not derivable). Those depend on the SPINE, which a param schema
- * cannot see, and they remain named throws from {@link resolveComponentSelection}.
- */
-export function isParsableScopeQuery(query: string): boolean {
-  try {
-    parseScopeQuery(query);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// The ONE canonicaliser
-// ---------------------------------------------------------------------------
-
-/**
- * The canonical spelling of a scope query — the string a scoped build folds into its
- * geometry key, so two authors who wrote the same scope differently share one cached
- * geometry.
- *
- * It is a pure function of the QUERY and knows nothing about element counts, deliberately:
- * folding a resolved mask would be canonical by construction and O(elements) on the
- * per-frame drag road, while this is O(query).
- *
- * ⚠️ THE DIRECTION THIS GUARANTEES, AND THE ONE IT DOES NOT.
- *
- *   SOUND      — two queries with the same canonical form resolve identically at EVERY
- *                length. This is the load-bearing half: over-coalescing would merge two
- *                different scopes onto one cached geometry, which is a wrong mesh on
- *                screen, not a wasted byte.
- *   NOT TOTAL  — two queries that resolve identically may canonicalise apart, and that is
- *                accepted. `0-5` and `!6-11` select the same six faces of a twelve-face
- *                box and cannot be recognised as equal without knowing the box has twelve
- *                faces. They mint two cached geometries: a benign duplicate, bounded by
- *                the number of distinct canonical queries.
- *
- * Terms are reordered only WITHIN a run of the same operator, because the operators
- * accumulate left to right and are not commutative across each other: `0-5 ^2` and
- * `^2 0-5` mean different things. Within one run they are — union and difference are each
- * commutative with themselves — which is what makes `5,4,3,2,1,0` and `0-5` one entry.
- */
-export function canonicalScopeQuery(query: string): string {
-  return formatTerms(canonicaliseTerms(parseScopeQuery(query)));
-}
-
-function canonicaliseTerms(terms: readonly ScopeTerm[]): ScopeTerm[] {
-  const out: ScopeTerm[] = [];
-  let i = 0;
-  while (i < terms.length) {
-    const op = terms[i].op;
-    let j = i;
-    while (j < terms.length && terms[j].op === op) j += 1;
-    out.push(...canonicaliseRun(terms.slice(i, j)));
-    i = j;
-  }
-  return out;
-}
-
-/**
- * Sort, de-duplicate and (where it is meaning-preserving) coalesce one maximal run of
- * same-operator terms.
- *
- * 🔴 COALESCING IS NOT VALID FOR EVERY OPERATOR, AND ASSUMING IT WAS SHIPPED A BUG (#677).
- * Each term in an `add` run contributes its range and each term in a `remove` run takes
- * one away, so both runs are a UNION of ranges and merging two that touch is exactly the
- * same set. A `complement` term contributes the complement of its range, and the union of
- * two complements is NOT the complement of the union:
- *
- *     `!0-2 !3-5`  over 12 faces  =  {3..11} ∪ {0,1,2,6..11}  =  all twelve
- *     `!0-5`       over 12 faces  =  {6..11}                  =  six
- *
- * Merging them made two queries selecting twelve and six faces share one canonical form,
- * which is one cached geometry for two different scopes — the wrong mesh on screen, and
- * the precise failure this canonicaliser exists to prevent. Sorting and de-duplication
- * stay valid for all three, because union is commutative whatever is being unioned.
- */
-function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
-  const coalescible = run[0].op !== 'complement';
-
-  // Even within a coalescible run, only CONTIGUOUS ranges merge: a stepped range cannot
-  // absorb or be absorbed without changing which elements it names, so stepped terms are
-  // sorted and de-duplicated and otherwise left exactly as written.
-  const contiguous = run
-    .filter((t) => t.step === 1)
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-  const stepped = run
-    .filter((t) => t.step !== 1)
-    .sort((a, b) => a.start - b.start || a.end - b.end || a.step - b.step);
-
-  const merged: ScopeTerm[] = [];
-  for (const term of contiguous) {
-    const last = merged[merged.length - 1];
-    // `start <= last.end + 1` merges ADJACENT ranges too: `0-2 3-5` is `0-5`.
-    const mergeable = coalescible && last !== undefined && term.start <= last.end + 1;
-    if (mergeable) {
-      if (term.end > last.end) merged[merged.length - 1] = { ...last, end: term.end };
-    } else if (last && last.start === term.start && last.end === term.end) {
-      // A duplicate is removable for every operator — `!0-5 !0-5` is `!0-5`.
-      continue;
-    } else {
-      merged.push(term);
-    }
-  }
-
-  const dedupedSteps: ScopeTerm[] = [];
-  for (const term of stepped) {
-    const last = dedupedSteps[dedupedSteps.length - 1];
-    if (last && last.start === term.start && last.end === term.end && last.step === term.step) {
-      continue;
-    }
-    dedupedSteps.push(term);
-  }
-
-  return [...merged, ...dedupedSteps];
-}
-
-function formatTerms(terms: readonly ScopeTerm[]): string {
-  return terms
-    .map((t) => {
-      const prefix = t.op === 'remove' ? '^' : t.op === 'complement' ? '!' : '';
-      if (t.step !== 1) return `${prefix}${t.start}-${t.end}:${t.step}`;
-      if (t.start === t.end) return `${prefix}${t.start}`;
-      return `${prefix}${t.start}-${t.end}`;
-    })
-    .join(' ');
-}
-
-// ---------------------------------------------------------------------------
 // The ONE resolver
 // ---------------------------------------------------------------------------
 
-/** Build a scoped selection from already-parsed terms. */
-function selectionFromTerms(
-  terms: readonly ScopeTerm[],
+/**
+ * Wrap the language's answer as a resolved selection.
+ *
+ * {@link scopeSelection} owns the arithmetic — which elements a query names at a length —
+ * and this owns the CONTRACT an operator sees: a domain, a length, a count, and an accessor
+ * with no buffer behind it a reader can reach. The mask is captured by the closure and is
+ * not a property of the returned object, which is what makes the memoized total safe to
+ * share, and is kept here for consistency rather than for necessity.
+ */
+function selectionFromQuery(
+  query: string,
   domain: KnownDomain,
   length: number,
 ): ComponentSelection {
-  const mask = new Uint8Array(length);
-  for (const term of terms) {
-    if (term.op === 'complement') {
-      for (let i = 0; i < length; i += 1) if (!inTerm(term, i)) mask[i] = 1;
-      continue;
-    }
-    const value = term.op === 'add' ? 1 : 0;
-    const from = Math.max(0, term.start);
-    const to = Math.min(length - 1, term.end);
-    for (let i = from; i <= to; i += 1) if (inTerm(term, i)) mask[i] = value;
-  }
-
-  let count = 0;
-  for (let i = 0; i < length; i += 1) if (mask[i] === 1) count += 1;
-
-  // The mask is captured by the closure and is not a property of the returned object, so
-  // no reader can reach it. That is what makes the memoized total safe to share, and it is
-  // the same guarantee here for consistency rather than for necessity.
+  const { mask, count } = scopeSelection(query, length);
   return {
     domain,
     length,
@@ -582,7 +347,7 @@ export function resolveComponentSelection(
   // distinguishable from an absent one.
   if (authored === null) return totalSelection(SCOPE_DOMAIN, length);
 
-  return selectionFromTerms(parseScopeQuery(authored), SCOPE_DOMAIN, length);
+  return selectionFromQuery(authored, SCOPE_DOMAIN, length);
 }
 
 /**

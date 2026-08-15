@@ -40,10 +40,19 @@ const mirror = (): GeometryDescriptor => ({
 });
 
 describe('#638 the count is a leaf', () => {
-  it('imports exactly one module — the type it takes', () => {
+  it('imports only its type and one LEAF — and the leaf is why that is still a leaf', () => {
     // The whole point of the move. If this grows, say why in the same commit: whatever the
     // new import drags in becomes reachable from every consumer of the count.
-    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types']);
+    //
+    // 🔴 WIDENED at ns-2 step 12.5, and the reason is the property rather than the number.
+    // A scoped generator derives `source + subset x (count - 1)`, so the count has to ask
+    // how many elements a query names — and the module that owns the query language,
+    // `componentSelection.ts`, IMPORTS THIS ONE. Measured: that is a real cycle, not a
+    // shape preference. So the language moved below both, into `scopeQuery.ts`, which has
+    // ZERO value imports (asserted below). What this gate protects is not "one import", it
+    // is that nothing this module depends on can depend back on it.
+    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types', '../nodes/scopeQuery']);
+    expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
   });
 
   it('is where the mint reads the count from — not `modifierGeometry`', () => {
@@ -69,6 +78,9 @@ describe('#638 the count is a leaf', () => {
     // gate exists to keep visible — importing the count from `modifierGeometry` instead
     // would have dragged the evaluator, the node registry, `dataSectionCapability` and the
     // hash into a module that had three imports.
+    //
+    // 🔴 WIDENED AGAIN at ns-2 step 12.5, by one, for the same reason: `scopeQuery` is a
+    // leaf with no imports at all, and a scoped build has to know WHICH triangles survive.
     expect(importsOf('src/app/geometryRegistry.ts')).toEqual([
       'three',
       'three/examples/jsm/utils/BufferGeometryUtils.js',
@@ -77,6 +89,7 @@ describe('#638 the count is a leaf', () => {
       './attributeStore',
       './faceCount',
       './materialGroups',
+      '../nodes/scopeQuery',
     ]);
   });
 
@@ -85,7 +98,8 @@ describe('#638 the count is a leaf', () => {
     // re-opens the graph through the registry, and nothing else would notice.
     expect(importsOf('src/app/materialGroups.ts')).toEqual([]);
     expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
-    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types']);
+    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types', '../nodes/scopeQuery']);
+    expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
 });

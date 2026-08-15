@@ -343,14 +343,34 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
   it('no node module can reach the parser, so a second reading of a query has no import', () => {
     // Step 9's property, re-asserted from the consumer side now that consumers exist. The
     // parser is not exported; this checks nobody found another door to it.
+    //
+    // 🔴 THE SUBJECT MOVED AT STEP 12.5 AND ONE OF THE TWO NAMES STOPPED EXISTING. The
+    // language now lives in `scopeQuery.ts` (a leaf, so a generator's face count and its
+    // build can both reach it without the cycle `componentSelection -> faceCount` closes),
+    // and `selectionFromTerms` was renamed `selectionFromQuery` when the terms stopped
+    // crossing that boundary. A census that keeps grepping for a symbol nobody defines is
+    // a probe testing half of what it names, and it reads exactly like a clean pass — so
+    // both names are re-derived here, and the CONTROL below proves the probe can still see
+    // its subject at all.
+    const DEFINER = 'src/nodes/scopeQuery.ts';
     const files = sourceFiles();
+    const probe = /\bparseScopeQuery\b|\bselectionFromQuery\b/;
     const reachers: string[] = [];
+    const definers: string[] = [];
     for (const [path, raw] of files) {
-      if (path === 'src/nodes/componentSelection.ts' || path.includes('.test.')) continue;
-      if (/\bparseScopeQuery\b|\bselectionFromTerms\b/.test(stripComments(raw)))
-        reachers.push(path);
+      if (path.includes('.test.')) continue;
+      if (!probe.test(stripComments(raw))) continue;
+      // `componentSelection.ts` defines `selectionFromQuery`; `scopeQuery.ts` defines the
+      // parser. Both are private to their file — the export censuses in
+      // `componentSelection.test.ts` are what hold that, and they are a different claim.
+      if (path === DEFINER || path === 'src/nodes/componentSelection.ts') definers.push(path);
+      else reachers.push(path);
     }
     expect({ examined: files.length, reachers }).toEqual({ examined: files.length, reachers: [] });
+
+    // The control. An empty `reachers` is only worth reading if the probe finds the two
+    // files that DO name these symbols; a typo in the regex produces the same green.
+    expect(definers.sort()).toEqual([DEFINER, 'src/nodes/componentSelection.ts'].sort());
   });
 });
 

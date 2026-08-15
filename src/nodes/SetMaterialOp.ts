@@ -89,7 +89,11 @@ import { refWithAttributeKey } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { mintTargetedAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
-import { isParsableScopeQuery, requireResolvedScope, SCOPE_PARAM } from './componentSelection';
+import { requireResolvedScope, SCOPE_PARAM } from './componentSelection';
+// ns-2 step 12.5 — the language moved to a leaf below `componentSelection`, so that a
+// generator's descriptor and its face count can both reach it without a cycle. This is
+// still the one-bit door: a BOOLEAN, never terms.
+import { isParsableScopeQuery } from './scopeQuery';
 
 export const SetMaterialOpParams = z.object({
   /**

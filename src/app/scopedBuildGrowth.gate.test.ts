@@ -19,17 +19,17 @@
 // ── 🔴 THE SECOND HALF CANNOT FIRE YET, AND THAT IS THIS FILE'S FIRST ROW ─────────────
 //
 // The plan says: "Drive a `0-N` sweep over a box and over a sphere(32,16), record resident
-// scoped-build bytes and registrySize()". Run literally, on this tree, it reads:
+// scoped-build bytes and registrySize()". Run literally, on the step-10 tree, it read:
 //
 //     121-frame 0-N scope sweep, box            1 distinct geometry key,  3.3 KB resident
 //     121-frame 0-N scope sweep, sphere(32,16)  1 distinct geometry key, 92.6 KB resident
 //
-// ONE key, both times. Not because the scope is inert — the resolver genuinely produces a
+// ONE key, both times. Not because the scope was inert — the resolver genuinely produces a
 // different selection every frame (counts 1..12 over a twelve-face box, asserted below) —
-// but because **the geometry key does not carry a scope until step 12.5.** `array` and
-// `mirror` descriptors are `{kind, source, count, offset}` and their keys are
-// `` `array|${source.key}|${n}|${offset}` `` (`modifierGeometry.ts:264-270`). D9 folds the
-// canonical query in; that lands at 12.5, four steps from here.
+// but because at step 10 **nothing folded a scope into a geometry key at all.** `array` and
+// `mirror` descriptors were `{kind, source, count, offset}` and their keys were
+// `` `array|${source.key}|${n}|${offset}` ``. D9 folds the canonical query in; that landed
+// at step 12.5, and the next block is what happened when it did.
 //
 // So the measurement the plan calls step 10's discriminating half would, run as written,
 // report "92.6 KB, far under the 16 MB budget ✅" — a pass that is an artifact of the
@@ -37,10 +37,34 @@
 // ships. This is observation target 9 again: the step's instrument was authored against a
 // population that does not reach it yet.
 //
-// ⇒ ROW 1 RECORDS THE ZERO AND IS BUILT TO RED AT STEP 12.5. The moment `arrayGeometryRef`
-// folds a scope, a 121-frame scope sweep mints 121 keys and this row fails — which is the
-// point. The author who writes the fold is then the one who must face the budget, rather
-// than a budget check being written afterwards by someone who already believes it is fine.
+// ⇒ ROW 1 RECORDS THE ZERO AND IS BUILT TO RED WHEN THE FOLD REACHES THIS ROAD. The author
+// who writes the fold is then the one who must face the budget, rather than a budget check
+// being written afterwards by someone who already believes it is fine.
+//
+// ── 🔴 STEP 12.5 LANDED AND ROW 1 DID NOT RED. THE FUSE WAS AIMED ONE STEP SHORT ──────
+//
+// This file predicted, in these words: *"the moment `arrayGeometryRef` folds a scope, a
+// 121-frame scope sweep mints 121 keys and this row fails."* Step 12.5 made
+// `arrayGeometryRef` fold a scope. Measured on that tree: **still 1 key**, and the tier
+// green. The sentence named the wrong subject.
+//
+// The sweep below cooks through `ArrayModifier.evaluate`, and that operator RECEIVES a
+// resolved selection and discards it — by design, until step 13a makes it the first
+// `'source'` consumer. So the fold exists at the key builder and nothing on this road calls
+// it with a scope. Two different things had been collapsed into one phrase:
+//
+//     the KEY CAN carry a scope        step 12.5.  Measured below, on the descriptor road:
+//                                      121 distinct keys, 6.99 MB over a sphere sweep.
+//     the OPERATOR PUTS one there      step 13a.  What this row is actually waiting for.
+//
+// ⇒ the row keeps its literal `1` and is RE-AIMED, not relaxed and not deleted: the step
+// that makes `ArrayModifier` pass its selection into `arrayGeometryRef` is the step that
+// reds it. And because the budget question no longer has to wait for that step, it is
+// ANSWERED HERE instead, against the real allocation — see row 6.
+//
+// 🔑 The general shape, and it is the second time in three steps: a fuse names the commit
+// it expects to blow it, and "the commit that adds the mechanism" is not the same as "the
+// commit that puts a caller on the road the fuse measures". Name the CALLER.
 //
 // ── WHAT *IS* DECIDABLE TODAY, AND IT DECIDES D10 ─────────────────────────────────────
 //
@@ -62,7 +86,14 @@
 //                            64 × 69.5 KB  =  4.34 MB peak,  against a 16 MB budget.
 //
 //                        Even the unbounded reading — all 121 frames of a drag resident at
-//                        once, no sweep at all — is **8.21 MB**, still under budget.
+//                        once, no sweep at all — projected **8.21 MB**, still under budget.
+//                        🔴 MEASURED AT 12.5 against a real allocation: **6.99 MB**. Lower
+//                        than the projection, because a scoped build is SMALLER than the
+//                        unscoped one it replaces — the index shrinks while the positions
+//                        ride through. Row 6 asserts both the total and that inequality,
+//                        since row 4's ceiling uses the unscoped cost as its per-item
+//                        figure and is only a ceiling if scoping cannot make a build
+//                        bigger.
 //
 // 🔑 **D10's FALLBACK IS EXPLICITLY NOT NEEDED, WITH THE NUMBER.** That is the plan's own
 // done-when ("either shipped or explicitly not needed, with the number"), and the number
@@ -87,8 +118,10 @@
 //
 // REF: src/app/geometryRegistry.ts (`residentBytes` — #588's byte instrument, and read its
 //      warning about counting each ArrayBuffer once); src/viewport/geometrySweep.ts
-//      (`SWEEP_GROWTH_BUDGET`); src/app/modifierGeometry.ts:264 (the key that does not yet
-//      carry a scope); src/nodes/componentSelection.ts (`resolveComponentSelection`'s
+//      (`SWEEP_GROWTH_BUDGET`); src/app/modifierGeometry.ts (`arrayGeometryRef` — the key,
+//      which folds a canonical scope since step 12.5); src/nodes/ArrayModifier.ts (the
+//      caller that does not yet pass one — step 13a, and what row 1 is waiting for);
+//      src/nodes/componentSelection.ts (`resolveComponentSelection`'s
 //      degenerate arm); the plan's §5 D9/D10 and §8 step 10; issues #607, #650, #660.
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -96,6 +129,7 @@ import { __resetRegistryForTests } from '../core/dag/registry';
 import { __reseedAllNodesForTests } from '../nodes/registerAll';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import {
+  arrayGeometryRef,
   boxDescriptor,
   boxGeometryRef,
   sphereDescriptor,
@@ -160,15 +194,21 @@ beforeEach(() => {
   expect(registry.residentBytes()).toBe(0);
 });
 
-describe('ns-2 step 10 — row 1: the scope is not in the key yet, and this row reds when it is', () => {
+describe('ns-2 step 10 — row 1: the OPERATOR does not put a scope in the key, and this row reds when it does', () => {
   it('🔴 a 121-frame `0-N` scope sweep over a BOX mints exactly ONE geometry key', () => {
     const mesh = meshOf('box');
     const keys = new Set<string>();
     for (let n = 0; n < DRAG_FRAMES; n += 1) {
       keys.add(cook(mesh, { count: 3, offset: [1, 0, 0], muted: false, scope: `0-${n}` }));
     }
-    // ONE. Stated as the literal 1, never as "fewer than the frame count": the whole value
-    // of this row is that it becomes 121 the moment step 12.5 folds the canonical query in.
+    // ONE. Stated as the literal 1, never as "fewer than the frame count".
+    //
+    // 🔴 RE-AIMED AT STEP 12.5, WITH THE MEASUREMENT THAT FORCED IT. The key builder now
+    // folds a canonical query, and this row STAYED GREEN — because `ArrayModifier.evaluate`
+    // receives a resolved selection and discards it until step 13a, so nothing on this road
+    // hands `arrayGeometryRef` a scope. Row 6 below drives the same sweep through the
+    // descriptor and gets 121 keys, which is the difference in one pair of numbers.
+    // The step that makes this operator pass its selection is the step that reds this.
     expect(keys.size).toBe(1);
     expect(registry.growthBySource().attach).toBe(1);
   });
@@ -276,6 +316,73 @@ describe('ns-2 step 10 — rows 3 and 4: the per-build cost, and the budget it i
     // question this file explicitly does not answer.
     const unsweptDragBytes = perBuild * DRAG_FRAMES;
     expect(unsweptDragBytes).toBeLessThan(BUDGET_BYTES);
+  });
+});
+
+describe('ns-2 step 12.5 — row 6: the fold exists, so the budget is measured, not projected', () => {
+  // What step 10 could not run. The key builder folds a canonical query now, so a 121-frame
+  // `0-N` sweep driven through the DESCRIPTOR mints a real build per frame — the allocation
+  // D10's arithmetic was about. Row 1 above still reads 1 because the operator does not pass
+  // a scope yet; the pair of numbers is the whole point of having both rows.
+
+  it('🔴 the same sweep through the DESCRIPTOR mints 121 keys and stays under budget', () => {
+    const mesh = meshOf('sphere');
+    const keys = new Set<string>();
+    for (let n = 0; n < DRAG_FRAMES; n += 1) {
+      const ref = arrayGeometryRef(mesh.geometry, 3, [1, 0, 0], `0-${n}`);
+      registry.getForAttach(ref);
+      keys.add(ref.key);
+    }
+    // One key per frame — the growth shape D10 refused to accept on an estimate.
+    expect(keys.size).toBe(DRAG_FRAMES);
+
+    // 🔴 AND 121, NOT 12, OVER A BOX TOO — which contradicts the projection step 10 made
+    // under a simulated fold ("box: 12 keys, because the bound is DISTINCT ANSWERS and a
+    // box has twelve faces"). The bound is distinct CANONICAL QUERIES, not distinct
+    // answers: the canonicaliser deliberately does not know how many faces the mesh has,
+    // because knowing would make it O(elements) on the drag road ([[V204]] — sound, not
+    // total). The simulation had folded the resolved mask, which is the key option D9
+    // REJECTED, so it measured the rejected design. Asserted here on a box so the two
+    // cannot be confused again.
+    const box = meshOf('box');
+    const boxKeys = new Set<string>();
+    for (let n = 0; n < DRAG_FRAMES; n += 1) {
+      boxKeys.add(arrayGeometryRef(box.geometry, 3, [1, 0, 0], `0-${n}`).key);
+    }
+    expect(boxKeys.size).toBe(DRAG_FRAMES);
+
+    // THE BUDGET, against a real allocation instead of a projection. Predicted at step 10
+    // from a reverted simulation: 8.21 MB. Measured here: 6.99 MB — LOWER, because a scoped
+    // build is smaller than an unscoped one (the index shrinks; the positions ride through
+    // as dead weight). Bounded rather than pinned to the byte, since the exact figure is
+    // three.js's buffer layout.
+    const dragBytes = registry.residentBytes();
+    expect(dragBytes).toBeLessThan(BUDGET_BYTES);
+    expect(dragBytes).toBeGreaterThan(5 * 1024 * 1024);
+    expect(dragBytes).toBeLessThan(9 * 1024 * 1024);
+  });
+
+  it('a scoped build is never more expensive than the unscoped one it replaces', () => {
+    // The premise under row 4's ceiling. `SWEEP_GROWTH_BUDGET x perBuild` uses the UNSCOPED
+    // per-build cost as the per-item figure, which is only a ceiling if scoping cannot make
+    // a build bigger. Measured: 63.8 KB scoped to half against 69.5 KB unscoped. It is not
+    // obvious — a subset keeps every position and only drops index entries — so it is
+    // asserted rather than assumed.
+    const mesh = meshOf('sphere');
+    registry.getForAttach(mesh.geometry);
+    const sourceOnly = registry.residentBytes();
+    registry.getForAttach(arrayGeometryRef(mesh.geometry, 3, [1, 0, 0]));
+    const unscoped = registry.residentBytes() - sourceOnly;
+
+    registry.clear();
+    const fresh = meshOf('sphere');
+    registry.getForAttach(fresh.geometry);
+    const freshSource = registry.residentBytes();
+    registry.getForAttach(arrayGeometryRef(fresh.geometry, 3, [1, 0, 0], '0-479'));
+    const scoped = registry.residentBytes() - freshSource;
+
+    expect(scoped).toBeLessThanOrEqual(unscoped);
+    expect(unscoped * SWEEP_GROWTH_BUDGET).toBeLessThan(BUDGET_BYTES);
   });
 });
 

@@ -12,5 +12,5 @@ index c486619..80174da 100644
 +  // and the only thing that can notice is something that READS the value.
 +  if (authored === null) return totalSelection(SCOPE_DOMAIN, 1);
  
-   return selectionFromTerms(parseScopeQuery(authored), SCOPE_DOMAIN, length);
+   return selectionFromQuery(authored, SCOPE_DOMAIN, length);
  }

@@ -476,6 +476,23 @@ export type GeometryDescriptor =
       readonly source: GeometryRef;
       readonly count: number;
       readonly offset: Vec3;
+      /**
+       * The CANONICAL component-scope query, when this generator is scoped (ns-2 D9).
+       *
+       * Absent means unscoped, and absent rather than `undefined`: `descriptorParamFields`
+       * reads `Object.keys`, and a written `undefined` would announce a field the producer
+       * has no param for. Always canonical, because the two key builders in
+       * `modifierGeometry.ts` canonicalise on the way in — so two spellings of one scope
+       * share a cached build, and the descriptor never carries a query the parser refuses.
+       *
+       * 🔴 IT IS A FIELD ON THE EXISTING VARIANTS AND NOT A COMPOSABLE `subset` KIND, and
+       * the reason is the reference's own wording. Houdini's Mirror SOP preserves the
+       * *input geometry* while *Group* names the *primitives to mirror*, so a scoped
+       * generator keeps the WHOLE input and generates from the subset —
+       * `mirror(subset(x))` cannot see the whole `x` and yields 36 where the grounded
+       * figure is 54. A `subset` kind is a different operator (Houdini's Blast).
+       */
+      readonly scope?: string;
     }
   // `mirror` (epic #201, #209) — the SECOND modifier: reflect the source across the
   // plane perpendicular to `axis` at `offset` along it (offset 0 = the LOCAL origin,
@@ -489,6 +506,8 @@ export type GeometryDescriptor =
       readonly source: GeometryRef;
       readonly axis: MirrorAxis;
       readonly offset: number;
+      /** The CANONICAL component-scope query, when scoped — see the `array` variant. */
+      readonly scope?: string;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

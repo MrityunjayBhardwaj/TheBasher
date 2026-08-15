@@ -37,8 +37,12 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
-import { faceCountMismatch } from './faceCount';
+import { faceCountMismatch, zeroIndexRefusal } from './faceCount';
 import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
+// ns-2 step 12.5 — which triangles a scoped generator keeps. A LEAF with zero value
+// imports, which is what keeps the registry's declared import set honest: every module
+// here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
+import { scopeSelection } from '../nodes/scopeQuery';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -446,6 +450,19 @@ function build(ref: GeometryRef): BufferGeometry | null {
   if (built === null) return null;
   built.clearGroups();
 
+  // ns-2 D6b — a geometry that built successfully and holds no triangles. Refused BY NAME
+  // and turned into a miss, because attaching it is the quietest failure this module can
+  // produce: nothing errors, the object is simply not there. Nothing reaches this today
+  // (§2.2 preserves the whole input, so no scope can empty a generator) — the emptiness of
+  // its population is censused in `scopedGeneratorBuild.gate.test.ts` rather than assumed,
+  // and the refusal itself is exercised directly there so it is not a guard nobody has run.
+  const empty = zeroIndexRefusal(ref.descriptor, built.getIndex()?.count ?? null);
+  if (empty !== null) {
+    console.error(empty);
+    built.dispose();
+    return null;
+  }
+
   if (ref.attributeKey === undefined) return built;
   const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
   if (index === undefined) return built;
@@ -551,11 +568,58 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
   const copies: BufferGeometry[] = [];
   for (let i = 0; i < d.count; i++) {
     const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
-    copies.push(source.clone().applyMatrix4(m));
+    // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
+    // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
+    // scope selecting nothing the identity rather than an empty mesh.
+    const copy = i === 0 ? source.clone() : faceSubset(source, d.scope);
+    if (copy === null) return null;
+    copies.push(copy.applyMatrix4(m));
   }
   const merged = mergeGeometries(copies);
   for (const c of copies) c.dispose(); // mergeGeometries copies the buffers out
   return merged; // null only if the copies mismatch attributes (same source → never)
+}
+
+/**
+ * A face SUBSET of `source` — a fresh clone carrying only the triangles `scope` names, or
+ * a plain clone when there is no scope (ns-2 step 12.5).
+ *
+ * 🔴 A FACE SUBSET IS AN INDEX SUBSET OVER UNCHANGED ATTRIBUTE BUFFERS. The positions of
+ * the faces it drops are still in the buffer and `mergeGeometries` copies them out
+ * verbatim, so a mirror over a box scoped to half has 54 index entries and 48 positions.
+ * That dead weight is deliberate — compacting would renumber every index and force a
+ * second spelling of three.js's attribute layout — and it is why every assertion about a
+ * scoped build reads `getIndex().count` and never `position.count`.
+ *
+ * The unscoped case goes down the SAME road with `scope === undefined`, rather than the
+ * caller branching around this function: two roads through a builder is what
+ * [[V189]]-shaped parity assertions cannot see.
+ *
+ * Refuses BY NAME for a NON-INDEXED source, and the population is stated rather than
+ * assumed: every sync-buildable source (box, sphere, and a merge of either) is indexed, so
+ * nothing reaches it today. A face subset of a non-indexed geometry means slicing attribute
+ * triplets, which is a different implementation and would be written when something can
+ * actually produce one — guessing at it now would ship an untested arm on the render path.
+ */
+function faceSubset(source: BufferGeometry, scope: string | undefined): BufferGeometry | null {
+  if (scope === undefined) return source.clone();
+  const index = source.getIndex();
+  if (index === null) {
+    console.error(
+      `geometryRegistry: cannot take the face subset '${scope}' of a NON-INDEXED source — a face subset is an index subset, and this geometry has no index`,
+    );
+    return null;
+  }
+  const faces = index.count / 3;
+  const { mask } = scopeSelection(scope, faces);
+  const kept: number[] = [];
+  for (let f = 0; f < faces; f++) {
+    if (mask[f] !== 1) continue;
+    kept.push(index.getX(f * 3), index.getX(f * 3 + 1), index.getX(f * 3 + 2));
+  }
+  const subset = source.clone();
+  subset.setIndex(kept);
+  return subset;
 }
 
 /**
@@ -580,8 +644,12 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
   );
   const t = 2 * d.offset;
   reflect.setPosition(d.axis === 'x' ? t : 0, d.axis === 'y' ? t : 0, d.axis === 'z' ? t : 0);
+  // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
+  // primitives to mirror, so the original is never subset and the reflection always is.
   const original = source.clone();
-  const reflected = reverseWinding(source.clone().applyMatrix4(reflect));
+  const subset = faceSubset(source, d.scope);
+  if (subset === null) return null;
+  const reflected = reverseWinding(subset.applyMatrix4(reflect));
   const merged = mergeGeometries([original, reflected]);
   original.dispose();
   reflected.dispose();
