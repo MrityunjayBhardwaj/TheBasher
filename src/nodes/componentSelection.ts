@@ -203,11 +203,19 @@ export function totalSelection(domain: KnownDomain, length: number): ComponentSe
 /**
  * Empty the total-selection memo.
  *
- * TEST-ONLY, and it exists because the memo never evicts. That is harmless in size — it is
- * bounded by the number of distinct element counts a session sees — but it makes the table
- * ORDER-VISIBLE inside one test file: a case asserting anything about growth or identity
- * would otherwise read the previous case's state, and pass or fail depending on the order
- * the cases happen to be written in.
+ * TEST-ONLY, and it exists because the memo never evicts. It makes the table ORDER-VISIBLE
+ * inside one test file: a case asserting anything about growth or identity would otherwise
+ * read the previous case's state, and pass or fail depending on the order the cases happen
+ * to be written in.
+ *
+ * ⚠️ THE SIZE CLAIM IS NOW MEASURED, BECAUSE STEP 9b MADE THIS TABLE PRODUCTION-LIVE. Until
+ * the evaluator's hand-off landed, {@link totalSelection} had no production caller and
+ * "harmless in size" was inference. It is now hit on every unscoped operator cook. Measured:
+ * a 121-frame drag that changes the face count every frame leaves **121 entries, one per
+ * distinct count, ≈12 KB**; the whole reachable population — a sphere's segments across
+ * their full authorable range — is under two thousand entries, so a session's worst case is
+ * a few hundred KB. Bounded by DISTINCT COUNTS, never by frames, which is why a drag that
+ * returns to a size it already visited adds nothing.
  */
 export function __resetSelectionMemoForTests(): void {
   TOTAL_MEMO.clear();

@@ -76,6 +76,7 @@ import { hydrateInlineMaterial, openpbrMaterialSchema } from '../nodes/materialS
 import { DEFAULT_IMAGE_DESCRIPTOR } from '../nodes/types';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { resolveComponentSelection } from '../nodes/componentSelection';
+import type { ObjectData } from '../nodes/types';
 
 const FILES: readonly (readonly [string, string])[] = sourceFiles().map(
   ([path, src]) => [path, stripComments(src)] as const,

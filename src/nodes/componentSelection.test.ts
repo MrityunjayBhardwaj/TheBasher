@@ -59,8 +59,29 @@ const CAMERA: ObjectData = {
   roll: 0,
 };
 
-const scope = (query: string): ComponentSelection =>
-  resolveComponentSelection(BOX, { [SCOPE_PARAM]: query });
+/**
+ * Resolve against the box fixture, refusing the `null` answer HERE rather than at every
+ * caller (ns-2 step 9b made the resolver's return nullable).
+ *
+ * The narrowing is an assertion, not a cast: `BOX` is a resolvable value, so a `null` from
+ * it means the resolver changed its mind about what a mesh is, and every row below would
+ * otherwise report that as a property of the QUERY it was testing.
+ */
+function mustResolve(
+  spine: ObjectData,
+  params: Readonly<Record<string, unknown>>,
+): ComponentSelection {
+  const resolved = resolveComponentSelection(spine, params);
+  if (resolved === null) {
+    throw new Error(
+      `a resolvable fixture answered null for ${JSON.stringify(params)} — that is a statement ` +
+        `about the resolver, not about the query under test`,
+    );
+  }
+  return resolved;
+}
+
+const scope = (query: string): ComponentSelection => mustResolve(BOX, { [SCOPE_PARAM]: query });
 
 /** The selected indices, read only through the accessor. */
 const selected = (s: ComponentSelection): number[] =>
@@ -74,7 +95,10 @@ beforeEach(() => {
 
 describe('#607 the three degenerate cases, decided here', () => {
   it('NO scope param at all selects everything', () => {
-    const s = resolveComponentSelection(BOX, {});
+    // 🔴 `{}` — an ABSENT param, not a blank one. Routing this through `scope('')` would
+    // have type-checked and tested the wrong thing: blank-means-absent is a separate row
+    // below, and collapsing the two would leave the absent case with no witness at all.
+    const s = mustResolve(BOX, {});
     expect({ count: s.count, length: s.length, domain: s.domain }).toEqual({
       count: 12,
       length: 12,
@@ -91,7 +115,7 @@ describe('#607 the three degenerate cases, decided here', () => {
     expect({ count: nothing.count, length: nothing.length }).toEqual({ count: 0, length: 12 });
     expect(nothing.has(0)).toBe(false);
 
-    const everything = resolveComponentSelection(BOX, {});
+    const everything = scope('');
     expect(nothing.count).not.toBe(everything.count);
   });
 
@@ -110,8 +134,8 @@ describe('#607 the three degenerate cases, decided here', () => {
   it('a BLANK query is an absent one, not an unresolvable one', () => {
     // The empty Group field the reference leaves opaque. Decided: blank means no filter,
     // which is what a blank field means in every authoring surface anyone has used.
-    expect(resolveComponentSelection(BOX, { [SCOPE_PARAM]: '' }).count).toBe(12);
-    expect(resolveComponentSelection(BOX, { [SCOPE_PARAM]: '   ' }).count).toBe(12);
+    expect(scope('').count).toBe(12);
+    expect(scope('   ').count).toBe(12);
   });
 });
 
@@ -427,5 +451,9 @@ function resolveAt(query: string, faces: number): ComponentSelection {
     geometry: { key: `sphere|${faces}`, descriptor },
     material: null,
   };
-  return resolveComponentSelection(spine, query === '' ? {} : { [SCOPE_PARAM]: query });
+  const resolved = resolveComponentSelection(spine, query === '' ? {} : { [SCOPE_PARAM]: query });
+  // Same assertion as `scope`: this sphere is resolvable, so a `null` here is a statement
+  // about the resolver and not about the query under test.
+  if (resolved === null) throw new Error(`the ${faces}-face sphere fixture resolved to null`);
+  return resolved;
 }

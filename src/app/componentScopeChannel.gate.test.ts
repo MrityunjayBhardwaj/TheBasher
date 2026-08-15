@@ -65,10 +65,16 @@ import { resolveComponentSelection, SCOPE_PARAM } from '../nodes/componentSelect
 import type { ComponentSelection } from '../nodes/componentSelection';
 import type { BakedDataValue, CurveDataValue, MeshDataValue, ObjectData } from '../nodes/types';
 
+const MESH_ATTRIBUTE_KEY = mintMeshAttributes(sphereDescriptor(1, 8, 6), 'evaluate');
+
 const MESH: MeshDataValue = {
   kind: 'MeshData',
-  geometry: sphereGeometryRef(1, 8, 6, mintMeshAttributes(sphereDescriptor(1, 8, 6), 'evaluate')),
+  geometry: sphereGeometryRef(1, 8, 6, MESH_ATTRIBUTE_KEY),
   material: hydrateInlineMaterial(null, '#123456'),
+  materialKey: null,
+  // The SAME key the handle carries. A fixture that minted two would describe a mesh whose
+  // handle and value disagree about their own attribute set — the shape [[H357]] names.
+  attributeKey: MESH_ATTRIBUTE_KEY,
 };
 
 /** A curve on a modifier's spine — a shipped road: the modifier passes it through. */
@@ -92,7 +98,24 @@ const BAKED: BakedDataValue = {
     key: 'baked|9b0000-8',
     descriptor: { kind: 'baked', hash: '9b0000', vertexCount: 8 },
   },
-  material: hydrateInlineMaterial(null, '#654321'),
+  // A BAKED value carries a BakedMaterialSpec, not an inline one — the two are different
+  // types and the difference is the whole reason `modifierDataSource` returns a union.
+  material: {
+    materialClass: 'standard',
+    color: '#654321',
+    roughness: 0.4,
+    metalness: 0.1,
+    opacity: 1,
+    transparent: false,
+    emissive: '#000000',
+    emissiveIntensity: 0,
+    map: null,
+    normalMap: null,
+    roughnessMap: null,
+    metalnessMap: null,
+    aoMap: null,
+    emissiveMap: null,
+  },
 };
 
 /** What the last synthetic `evaluate` was handed as its fourth argument. */
@@ -126,7 +149,15 @@ function registerRecorder(type: string, scope: 'source' | 'target' | 'unscoped')
       section: 'none',
     },
     inspectorSections: [],
-    evaluate(_params, inputs, _ctx, handedScope) {
+    // Annotated, because the `as never` below erases the contextual type — so without
+    // these the four parameters are implicit `any`, in a tier no typecheck configuration
+    // reaches. That is the same blindness this step's runtime refusal exists for.
+    evaluate(
+      _params: unknown,
+      inputs: Record<string, unknown>,
+      _ctx: unknown,
+      handedScope: ComponentSelection | null | undefined,
+    ) {
       handed = { called: true, scope: handedScope };
       return inputs.target as ObjectData;
     },
@@ -349,15 +380,13 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // params moved → answer moves.
     expect(resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-4' })!.count).toBe(5);
     // spine moved → answer moves (a different mesh has a different length).
+    const smallerKey = mintMeshAttributes(sphereDescriptor(1, 3, 2), 'evaluate');
     const smaller: MeshDataValue = {
       kind: 'MeshData',
-      geometry: sphereGeometryRef(
-        1,
-        3,
-        2,
-        mintMeshAttributes(sphereDescriptor(1, 3, 2), 'evaluate'),
-      ),
+      geometry: sphereGeometryRef(1, 3, 2, smallerKey),
       material: null,
+      materialKey: null,
+      attributeKey: smallerKey,
     };
     expect(resolveComponentSelection(smaller, {})!.length).toBe(6);
   });
