@@ -403,6 +403,13 @@ describe('#607 the canonicaliser, pinned in BOTH directions', () => {
   });
 });
 
+/**
+ * The one module allowed to read a query out of params — the resolver. Named once so the
+ * census below can EXCLUDE it and the control at the end can REQUIRE it, which are the two
+ * halves of the same claim and must not drift apart.
+ */
+const RESOLVER = 'src/nodes/componentSelection.ts';
+
 describe('#607 the query has exactly one reader', () => {
   it('no production module but the resolver reads the scope param', () => {
     // The whole point of the road: an operator that forgot to parse correctly has no
@@ -433,6 +440,14 @@ describe('#607 the query has exactly one reader', () => {
         // the resolved selection's `canonicalQuery`, which is an identity to pass on and
         // not a query to interpret — the row below the next one is what holds that apart.
         'src/nodes/ArrayModifier.ts',
+        //
+        // ns-2 step 13b — the THIRD declarer, and the SECOND on the `'source'` lane. Same
+        // reading again, and the repetition is the point: two operators now share a scope
+        // kind, a subset helper and a key builder, so nothing about this entry is special
+        // enough to justify a second spelling of anything. Its `evaluate` reads the resolved
+        // selection's `canonicalQuery` and never `params[SCOPE_PARAM]`, which the row below
+        // now checks of EVERY name on this list rather than of one hand-picked member.
+        'src/nodes/MirrorModifier.ts',
         'src/nodes/SetMaterialOp.ts',
         'src/nodes/componentSelection.ts',
       ],
@@ -440,18 +455,54 @@ describe('#607 the query has exactly one reader', () => {
     expect(files.length).toBeGreaterThan(500);
   });
 
-  it('🔴 …and the declaring node reads the NAME only — never the query behind it', () => {
+  it('🔴 …and EVERY declaring node reads the NAME only — never the query behind it', () => {
     // The row above went from one entry to two, which is exactly the shape that turns a
     // census into a rubber stamp: an entry gets added, the list gets longer, and nobody
     // asks what the new entry DOES with what it named. This is that question, asked of the
     // source rather than of the author.
-    const module = sourceFiles().find(([p]) => p === 'src/nodes/SetMaterialOp.ts')![1];
-    const body = stripComments(module);
-    // It may NAME the param (declaring the schema field) …
-    expect(body).toMatch(/\[SCOPE_PARAM\]/);
-    // … and it must never READ the value out of its own params, which is the only way an
-    // operator could get its hands on a query string to interpret a second time.
-    expect(body).not.toMatch(/params\s*(?:\.\s*scope\b|\[\s*SCOPE_PARAM\s*\])/);
+    //
+    // 🔴 AND UNTIL STEP 13b THIS ROW WAS THE RUBBER STAMP IT WARNS ABOUT. It named
+    // `SetMaterialOp.ts` as a string literal and examined that file alone. When step 13a
+    // added `ArrayModifier` to the list above, this row went green without looking at it —
+    // the check made its argument about "the declaring node" while testing one hand-picked
+    // member, which is a guard whose *because* is a claim it does not test. The population is
+    // now DERIVED from the census above, so a declarer cannot join without being examined
+    // here ([[V206]]: an optional field on a shared contract is safe only if the census that
+    // reds is derived from the declarations, not maintained beside them).
+    const files = sourceFiles();
+    const declarers = files
+      .filter(([path, src]) => path !== RESOLVER && /\bSCOPE_PARAM\b/.test(stripComments(src)))
+      .map(([path]) => path);
+
+    // A count is reported so a green cannot come from an empty population — the failure mode
+    // that made a sibling gate vacuous from birth one step ago (#678).
+    expect(declarers).toEqual([
+      'src/nodes/ArrayModifier.ts',
+      'src/nodes/MirrorModifier.ts',
+      'src/nodes/SetMaterialOp.ts',
+    ]);
+
+    // The forbidden shape: reading the query out of one's OWN params, which is the only way
+    // an operator could get its hands on a string to interpret a second time.
+    const READS_THE_QUERY = /params\s*(?:\.\s*scope\b|\[\s*SCOPE_PARAM\s*\])/;
+    const offenders: string[] = [];
+    for (const path of declarers) {
+      const body = stripComments(files.find(([p]) => p === path)![1]);
+      // Each one may NAME the param — that is the declaration, and it is what put the file
+      // on this list in the first place.
+      expect(body, path).toMatch(/\[SCOPE_PARAM\]/);
+      if (READS_THE_QUERY.test(body)) offenders.push(path);
+    }
+    expect({ examined: declarers.length, offenders }).toEqual({
+      examined: declarers.length,
+      offenders: [],
+    });
+
+    // 🔴 THE POSITIVE CONTROL, AND IT IS DELIBERATELY NOT ONE OF THE SUBJECTS. The resolver
+    // is the one module that legitimately reads the query out of params, so it proves the
+    // detector above can actually fire. Without it an `offenders: []` is equally consistent
+    // with a regex that matches nothing anywhere.
+    expect(READS_THE_QUERY.test(stripComments(files.find(([p]) => p === RESOLVER)![1]))).toBe(true);
   });
 
   it('and the parser is not exported, so a second reader has no import to reach', () => {

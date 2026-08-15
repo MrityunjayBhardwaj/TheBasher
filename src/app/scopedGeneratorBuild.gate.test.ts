@@ -330,7 +330,7 @@ describe('ns-2 step 12.5 — the scope survives the overlay rebuild road', () =>
     ]);
   });
 
-  it('🔴 THE FUSE, BLOWN AND REPLACED — Array declares a `scope`; Mirror is step 13b', () => {
+  it('🔴 THE FUSE HAS RETIRED — BOTH generators declare a `scope`, and both fixtures are scoped', () => {
     // ── WHAT THIS ROW USED TO SAY, AND WHY IT IS REPLACED RATHER THAN DELETED ──────────
     //
     // It read `declaring: []` and named its own successor by hand:
@@ -348,21 +348,30 @@ describe('ns-2 step 12.5 — the scope survives the overlay rebuild road', () =>
     // was fixed. (#678, and the `beforeEach` now carries a control case that would catch a
     // recurrence before this row could.)
     //
-    // ── WHAT IT ASKS NOW ──────────────────────────────────────────────────────────────
+    // ── AND NOW IT HAS RETIRED, BY THE CONDITION IT WROTE FOR ITSELF ──────────────────
     //
-    // The same question, at the position the answer has actually reached. `ArrayModifier`
-    // declares a `scope` param and its `HANDLE_KINDS` fixture is scoped, so the overlay's
-    // name-correspondence IS checked for that field. `MirrorModifier` declares none, so its
-    // fixture must stay unscoped — a scoped mirror fixture today would red the reach gate
-    // correctly, because the param it names does not exist yet.
+    // The 13a version named its own successor by hand: *step 13b declares
+    // `MirrorModifier.scope` and must scope the `mirror` entry in `HANDLE_KINDS` in the same
+    // commit — then this literal becomes both generators and the row retires, because at
+    // that point nothing is left unchecked for it to be about.* Step 13b is that commit.
+    // Both generators declare the param, both `HANDLE_KINDS` fixtures are scoped, and the
+    // reach gate one file over now asks its name-correspondence question about `scope` on
+    // both of them.
     //
-    // 🔴 THE SUCCESSOR, WRITTEN DOWN AS THE PREVIOUS VERSION WROTE ITS OWN: STEP 13b
-    // DECLARES `MirrorModifier.scope`, AND MUST SCOPE THE `mirror` ENTRY IN `HANDLE_KINDS`
-    // IN THE SAME COMMIT — then this literal becomes both generators and the row retires,
-    // because at that point nothing is left unchecked for it to be about.
+    // 🔴 RETIRED MEANS "STOPS NAMING A SUCCESSOR", NOT "DELETED" ([[V208]]). What is left is
+    // a plain standing census with no fuse in it: the set of generators declaring a scope,
+    // stated EXACTLY, so a third generator arriving cannot join silently — it has to come
+    // here and answer the questions the channel gate asks of every declarer. There is no
+    // next step written into this row because there is no longer a gap for one to close.
+    //
+    // ⚠️ AND IT IS NO LONGER VACUOUS UNDER AN EMPTY REGISTRY, which is worth stating since
+    // that is exactly how it failed before. The 13a literal was `['ArrayModifier']` filtered
+    // out of a two-name list; the same row against an empty registry produced `[]` and — as
+    // a fuse expecting `[]` — PASSED. Expecting BOTH names inverts that: an empty registry
+    // now reds this row rather than satisfying it.
     const declaring = ['ArrayModifier', 'MirrorModifier'].filter((type) =>
       declaredParamKeys(type).includes('scope'),
     );
-    expect(declaring).toEqual(['ArrayModifier']);
+    expect(declaring).toEqual(['ArrayModifier', 'MirrorModifier']);
   });
 });

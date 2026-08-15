@@ -567,7 +567,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('exactly TWO registered node types declare a `scope` param — one per LANE', () => {
+  it('exactly THREE registered node types declare a `scope` param — one `target`, two `source`', () => {
     // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
     // `declaring: []` and existed to red at the first declaration, because an unparseable
     // query is a named THROW and `evaluate` runs on the render road with no try/catch above
@@ -588,9 +588,16 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // opposite jobs, and the difference is declared in `chain.scope.kind` rather than
     // spelled into the param, which is the whole reason the param can be identical.
     //
-    // The literal is kept EXACT rather than loosened to a count: this list is where a third
+    // 🔴 STEP 13b ADDS THE THIRD, AND IT IS THE SAME LANE AS THE SECOND. `MirrorModifier`
+    // is `'source'` like `ArrayModifier` — the first time two operators share a scope KIND,
+    // which is the whole reason 13b is a step rather than a footnote to 13a: they also share
+    // the subset helper and the key builder, so their arithmetic has to be asserted from
+    // literals neither can reach through the shared code ([[V189]]).
+    //
+    // The literal is kept EXACT rather than loosened to a count: this list is where a fourth
     // declarer shows up, and the question it has to answer on arrival is the one below —
-    // does it refine? `MirrorModifier` is the known next entrant (step 13b).
+    // does it refine? No next entrant is named, because none is planned; the row is now a
+    // standing census rather than a fuse waiting on a known step.
     const declaring = listNodeTypes().filter((type) => {
       const shape = (
         getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
@@ -600,7 +607,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect({ examined: listNodeTypes().length, declaring }).toEqual({
       examined: listNodeTypes().length,
       // The order is `listNodeTypes()`'s — registration order, not alphabetical.
-      declaring: ['ArrayModifier', 'SetMaterialOp'],
+      declaring: ['ArrayModifier', 'MirrorModifier', 'SetMaterialOp'],
     });
   });
 

@@ -92,7 +92,13 @@ const HANDLE_KINDS: Record<
   },
   mirror: {
     producer: 'MirrorModifier',
-    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0),
+    // 🔴 SCOPED ON PURPOSE (ns-2 step 13b), for the reason the `array` entry above states,
+    // and in the SAME COMMIT that declares `MirrorModifier.scope` — because a fuse in
+    // `scopedGeneratorBuild.gate.test.ts` named that pairing by hand as its successor. Until
+    // this step the fixture had to stay unscoped: a scoped mirror would have redded the
+    // reach check correctly, since the param it names did not exist. Now both generators
+    // carry the field, so the name-correspondence is checked for both of them.
+    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0, '0-5'),
     probe: 3,
   },
   gltf: {

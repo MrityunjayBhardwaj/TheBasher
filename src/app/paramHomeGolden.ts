@@ -22,10 +22,13 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
-// USED A SECOND TIME (#607, ns-2 steps 12 and 13a), and the second use is recorded here
+// USED THREE TIMES (#607, ns-2 steps 12, 13a and 13b), and every use is recorded here
 // because an amendment nobody tracks is a rule that quietly became the norm.
-// `SetMaterialOp.scope` and `ArrayModifier.scope` each appended ONE cell to the end of a
-// row whose existing cells are byte-identical to what they were. `GOLDEN_TOTALS.routed`
+// `SetMaterialOp.scope`, `ArrayModifier.scope` and `MirrorModifier.scope` each appended ONE
+// cell to the end of a row whose existing cells are byte-identical to what they were — for
+// Mirror that is `axis=(unrouted) offset=modifier muted=modifier`, untouched. The append is
+// the record of a param that HAS a home; a cell that already carried a value is never
+// rewritten, so a re-home cannot be laundered as an addition. `GOLDEN_TOTALS.routed`
 // moved by exactly the number of appended cells that route to a section, which is the
 // derived half of the same claim — a re-home leaves it unchanged and reds the row instead.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
@@ -96,7 +99,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Math: '[] op=(unrouted)',
   MediaClip:
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
-  MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier',
+  MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
   Mix: '[] factor=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
@@ -157,4 +160,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // is STILL 124, and that is the half of this pair which discriminates — an appended param
 // only ever moves `unrouted`, so a `routed` that moved would mean a param changed homes
 // under cover of an addition, which is precisely what a lone total cannot show.
-export const GOLDEN_TOTALS = { types: 80, routed: 125, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 218 } as const;
