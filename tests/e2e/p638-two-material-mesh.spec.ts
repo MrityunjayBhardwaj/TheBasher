@@ -108,8 +108,10 @@ function authorOps(
   objectId: string,
   opId: string,
   matId: string,
-  faceFrom: number,
-  faceTo: number,
+  // ns-2 step 14 — the retired `faceFrom`/`faceTo` pair became ONE component scope query,
+  // which is the vocabulary the operator has left. `0, 1` here reads `'0-1'`: the same two
+  // faces, authored through the field that survived.
+  scope: string,
 ): Op[] {
   return [
     {
@@ -118,7 +120,7 @@ function authorOps(
       nodeType: 'Material',
       params: { material: { name: `${matId}-blue`, base: { color: BLUE } } },
     },
-    { type: 'addNode', nodeId: opId, nodeType: 'SetMaterialOp', params: { faceFrom, faceTo } },
+    { type: 'addNode', nodeId: opId, nodeType: 'SetMaterialOp', params: { scope } },
     {
       type: 'connect',
       from: { node: dataId, socket: 'out' },
@@ -147,7 +149,7 @@ function secondBoxOps(sceneId: string, x: number): Op[] {
       nodeType: 'Object',
       params: { position: [x, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
-    ...authorOps('n_box2_data', 'n_box2', 'n_setmat2', 'n_mat2', 0, 1),
+    ...authorOps('n_box2_data', 'n_box2', 'n_setmat2', 'n_mat2', '0-1'),
     {
       type: 'connect',
       from: { node: 'n_box2', socket: 'out' },
@@ -171,7 +173,7 @@ function distinctBoxOps(sceneId: string, x: number): Op[] {
       nodeType: 'Object',
       params: { position: [x, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
-    ...authorOps('n_box3_data', 'n_box3', 'n_setmat3', 'n_mat3', 0, 1),
+    ...authorOps('n_box3_data', 'n_box3', 'n_setmat3', 'n_mat3', '0-1'),
     {
       type: 'connect',
       from: { node: 'n_box3', socket: 'out' },
@@ -287,7 +289,7 @@ test.beforeEach(async ({ page }) => {
 
 // ── CLAUSE 1 ──────────────────────────────────────────────────────────────────────────
 test('a box assigned two materials DRAWS with both, and can still be picked', async ({ page }) => {
-  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
+  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', '0-1'), 'assign');
   await waitForTwoMaterialMesh(page, 'n_box');
 
   // The scene walk: the mesh that is actually mounted, not the value that fed it.
@@ -419,7 +421,7 @@ test('two boxes with the SAME assignment share one BufferGeometry, and editing o
   const sceneId = await page.evaluate(
     () => (window as unknown as W).__basher_dag.getState().state.outputs.scene!.node,
   );
-  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
+  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', '0-1'), 'assign');
   await dispatch(page, secondBoxOps(sceneId, 2.5), 'second box');
   await waitForTwoMaterialMesh(page, 'n_box');
   await waitForTwoMaterialMesh(page, 'n_box2');
@@ -434,7 +436,7 @@ test('two boxes with the SAME assignment share one BufferGeometry, and editing o
   // move — not its instance, not its material count.
   await dispatch(
     page,
-    [{ type: 'setParam', nodeId: 'n_setmat2', paramPath: 'faceTo', value: 5 }],
+    [{ type: 'setParam', nodeId: 'n_setmat2', paramPath: 'scope', value: '0-5' }],
     'widen',
   );
   await page.waitForFunction(
@@ -473,7 +475,7 @@ test('two boxes with the SAME assignment share one BufferGeometry, and editing o
 test('NOTHING VANISHED — every mounted mesh is fully covered by the materials it resolves to', async ({
   page,
 }) => {
-  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
+  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', '0-1'), 'assign');
   await waitForTwoMaterialMesh(page, 'n_box');
 
   const report: CoverageReport = await page.evaluate(() => {
@@ -646,7 +648,7 @@ test('the lifetime pair: a SHARED add costs nothing in either instrument, a DIST
     return read();
   };
 
-  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', 0, 1), 'assign');
+  await dispatch(page, authorOps('n_box_data', 'n_box', 'n_setmat', 'n_mat_blue', '0-1'), 'assign');
   await waitForTwoMaterialMesh(page, 'n_box');
   const before = await readAfterSweep();
 

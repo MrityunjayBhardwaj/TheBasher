@@ -183,7 +183,9 @@ const ROWS = [
   {
     type: 'SetMaterialOp',
     src: meshSrc('#444444'),
-    params: { faceFrom: 0, faceTo: -1 },
+    // ns-2 step 14 — the retired face range, and its default meant EVERY face; a blank
+    // scope is the same authoring state, so the frozen hash below must not move.
+    params: {},
     material: true,
     hash: 'f35487f5',
   },

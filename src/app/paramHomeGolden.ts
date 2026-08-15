@@ -31,6 +31,23 @@
 // rewritten, so a re-home cannot be laundered as an addition. `GOLDEN_TOTALS.routed`
 // moved by exactly the number of appended cells that route to a section, which is the
 // derived half of the same claim — a re-home leaves it unchanged and reds the row instead.
+//
+// ── THE THIRD ARM, STATED THE SAME WAY (#607, ns-2 step 14) ──────────────────────────
+//
+// The rule had an arm for dropping a whole ROW and an arm for APPENDING a cell, and none for
+// REMOVING a cell from a row that survives. Step 14 retires `SetMaterialOp.faceFrom`/`faceTo`
+// — the accommodation the component scope supersedes — so the arm is written rather than
+// taken quietly: a cell may be REMOVED in the same commit that removes the param it records,
+// and `GOLDEN_TOTALS` moves by exactly what that cell contributed (two `(unrouted)` cells
+// here, so `unrouted` 218 → 216 and `routed` is untouched).
+//
+// 🔴 WHY REMOVAL CANNOT LAUNDER ANYTHING, WHICH IS A DIFFERENT ARGUMENT FROM THE APPEND ONE.
+// This golden is compared against the LIVE derivation, cell for cell, as one string. Deleting
+// a cell whose param still exists does not hide it — the live row still has that cell and the
+// comparison reds. So the deletion direction is checked by the subject itself, and the freeze
+// is doing its work in the direction where laundering actually lives: an existing cell
+// silently changing VALUE. Removing `faceFrom=(unrouted)` while re-homing `muted` would show
+// as both a shorter row and a changed cell, in one diff, in one string.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
@@ -131,7 +148,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // the whole row is compared as ONE string, so an append leaves every existing cell
   // byte-identical and a re-home anywhere in the row still shows as a diff. The three
   // cells before it are untouched.
-  SetMaterialOp: '[] muted=(unrouted) faceFrom=(unrouted) faceTo=(unrouted) scope=(unrouted)',
+  SetMaterialOp: '[] muted=(unrouted) scope=(unrouted)',
   Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
@@ -160,4 +177,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // is STILL 124, and that is the half of this pair which discriminates — an appended param
 // only ever moves `unrouted`, so a `routed` that moved would mean a param changed homes
 // under cover of an addition, which is precisely what a lone total cannot show.
-export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 216 } as const;

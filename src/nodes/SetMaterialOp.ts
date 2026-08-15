@@ -41,8 +41,9 @@
 // faces; ours took the whole mesh. #638 closed half of that with a literal `faceFrom`/
 // `faceTo` range, and ns-2 step 12 closed the other half: this is the first operator in the
 // app that reads a resolved COMPONENT SELECTION, handed to it by the evaluator as
-// `evaluate`'s fourth argument. Two arms, split on whether the assignment reaches every
-// face:
+// `evaluate`'s fourth argument. Step 14 then deleted the range, which had been kept only
+// until the selection road had demonstrably run — so the selection is now the sole input.
+// Two arms, split on whether the assignment reaches every face:
 //
 //   covers every face  → REPLACE. Byte-identical to what this node emitted before either
 //       the range or the scope existed: one material, no slot table, no index.
@@ -50,17 +51,20 @@
 //       the wired one takes slot 1 inside it, and the geometry is re-minted with the index
 //       folded into its key.
 //
-// 🔴 THE ARM IS CHOSEN FROM THE COVERAGE, NOT FROM THE PARAMS, and that is the step's whole
-// point. A three-clause test over `faceTo`/`faceFrom` cannot see a scope, so honouring one
-// would have meant adding a `scope`-shaped clause beside it — the property spelled per
-// member, which is the defect this phase exists to delete. "Does this assignment reach every
-// face?" is a question both inputs answer, asked once.
+// 🔴 THE ARM IS CHOSEN FROM THE COVERAGE, NOT FROM THE INPUT'S SHAPE, and that is what let
+// both steps land without a branch each. A three-clause test over `faceTo`/`faceFrom` cannot
+// see a scope, so honouring one beside it would have been the property spelled per member —
+// the defect this phase exists to delete. "Does this assignment reach every face?" is a
+// question every input answers, which is why deleting one of two inputs at step 14 changed
+// the argument list here and nothing else.
 //
-// The append semantics reach ONLY a state this node could not previously express, so no
-// graph anyone has already built changes meaning. That is what makes this an extension
-// rather than a semantics change, and it is what keeps the value migration-free: with no
-// scope authored the resolved selection is TOTAL, so `total ∩ range` is the range, and an
-// old save and a new save of the same authored state are the same bytes.
+// The append semantics reach ONLY a state this node could not previously express, so no graph
+// anyone has already built changes meaning. Step 12 was therefore migration-free by
+// construction: with no scope authored the resolved selection was TOTAL, so `total ∩ range`
+// was the range. ⚠️ STEP 14 IS NOT — deleting the range means an already-saved one has to be
+// carried over rather than assumed away, which is what the v1 → v2 migration below is for.
+// Loading is not the same as keeping its meaning, and a zod object drops unknown keys in
+// silence.
 //
 // THREE DECLARED LIMITS, each pinned by tests rather than left to be discovered:
 //
@@ -69,10 +73,12 @@
 //      the second op reads the first's single material field and never sees its table.
 //      Widening the data lane's source contract touches every operator on it and belongs
 //      with the selection system that would make three slots authorable in the first place.
-//   2. THE RANGE AND THE SCOPE BOTH SURVIVE, AND THEY INTERSECT. `faceFrom`/`faceTo` are the
-//      crude precursor the selection supersedes; they are deleted in step 14, last, once the
-//      selection road has demonstrably executed. Until then the faces written are the ones
-//      in BOTH, which is what makes every already-authored graph produce its old output.
+//   2. ~~THE RANGE AND THE SCOPE BOTH SURVIVE~~ — **DONE (ns-2 step 14).** `faceFrom`/`faceTo`
+//      were the crude precursor the selection supersedes, kept until the selection road had
+//      demonstrably executed on both a writer and two generators. It has, so they are gone,
+//      and an already-saved range is rewritten into the query that means the same thing by
+//      the v1 → v2 migration below rather than being dropped. The selection is now the ONLY
+//      input naming which faces receive the write.
 //   3. A source whose face count is not derivable from params (glTF, baked) cannot carry an
 //      assignment at all, and REPLACES instead. Those roads have no data half yet — and an
 //      AUTHORED scope over one of them is a named throw from the resolver rather than a
@@ -102,15 +108,6 @@ export const SetMaterialOpParams = z.object({
    * `evaluate`. Nothing in this file reads it.
    */
   muted: z.boolean().default(false),
-  /**
-   * First face the wired material is written onto. `.default()` and not a bare
-   * `.optional()`, deliberately: an absent field and a present-but-undefined one are
-   * different objects to the value hash, so an old save and a new save of the SAME authored
-   * state would key differently and every downstream cache would cold-start on load.
-   */
-  faceFrom: z.number().int().default(0),
-  /** Last face, inclusive. **-1 means every face** — today's behaviour, and the default. */
-  faceTo: z.number().int().default(-1),
   /**
    * THE COMPONENT SCOPE — which faces receive the write (ns-2 step 12, #607/#660).
    *
@@ -144,9 +141,75 @@ export const SetMaterialOpParams = z.object({
 });
 export type SetMaterialOpParams = z.infer<typeof SetMaterialOpParams>;
 
+/**
+ * The face range this node used to carry, rewritten as the scope query that supersedes it
+ * (ns-2 step 14). Exported for the migration test — the arithmetic is small and total, and a
+ * test that re-derived it would be a second implementation agreeing with the first by
+ * construction.
+ *
+ * ── WHY THIS IS A MIGRATION AND NOT A DELETION ────────────────────────────────────────
+ *
+ * `faceFrom`/`faceTo` shipped to `main` with #638 and are authorable through the agent's
+ * `setParam` road (this node has no inspector section — every cell in its golden row is
+ * `(unrouted)`, so the range was never reachable from the panel). Deleting the params without
+ * a migration would still LOAD, because a zod object strips unknown keys silently — measured,
+ * not assumed — and that is precisely the problem: a director's two-material mesh would come
+ * back as a one-material mesh with nothing said. Loading is not the same as keeping its
+ * meaning.
+ *
+ * ── THE FOUR CASES, AND WHY EACH IS EXACT ─────────────────────────────────────────────
+ *
+ *   from 0, to -1     the default, "every face"          → blank, which means the same thing
+ *   from a>0, to -1   open-ended, "face a to the end"    → `!0-{a-1}`, the COMPLEMENT of what
+ *                                                          comes before it. Length-independent,
+ *                                                          which matters because a migration
+ *                                                          sees params and never a face count.
+ *   0 <= a <= b       a closed range                      → `a-b` (`a-a` canonicalises to `a`)
+ *   a > b, or to < -1 names NO faces (the old code            → `^0`: remove face 0 from the
+ *                     clamped an inverted range to nothing)    empty set. Also length-independent.
+ *
+ * 🔴 EVERY ONE OF THOSE FOUR SPELLINGS WAS MEASURED AGAINST THE PARSER BEFORE BEING WRITTEN
+ * HERE, and one candidate was killed by the measurement: an inverted range cannot simply be
+ * passed through as `7-3`, because that is NOT a parsable query and the schema would refuse
+ * the value the migration produced. `^0` is the expressible spelling of "nothing".
+ *
+ * ⚠️ AN ALREADY-AUTHORED SCOPE WINS AND THE RANGE IS DROPPED. That case cannot arise in any
+ * project that exists — `scope` has never been in a build on `main` (measured: zero
+ * occurrences in `origin/main`'s copy of this file, against four for `faceFrom`) — but a
+ * migration ladder outlives the knowledge that made it, so the rule is stated rather than
+ * left to whichever branch of an `if` happened to run. The two cannot be composed in general:
+ * the shipped semantics was range ∩ scope computed on the resolved MASK, and the query
+ * language has union and difference but no intersection operator.
+ */
+export function scopeFromRetiredFaceRange(from: number, to: number): string {
+  const lo = Math.max(0, Math.trunc(from));
+  if (to === -1) return lo === 0 ? '' : `!0-${lo - 1}`;
+  const hi = Math.trunc(to);
+  if (hi < lo) return '^0';
+  return `${lo}-${hi}`;
+}
+
 export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> = {
   type: 'SetMaterialOp',
-  version: 1,
+  // ns-2 step 14 — BUMPED 1 → 2 by the deletion of `faceFrom`/`faceTo`. The bump is what
+  // gives the migration below something to hang on; without it an old project's range would
+  // be stripped by the schema on the way in, silently.
+  version: 2,
+  migrations: {
+    // v1 → v2: the retired face range becomes the scope query that supersedes it. Every other
+    // param rides through untouched — `muted` and the material edge are not this step's
+    // subject — and the two retired keys are dropped by name rather than by a spread that
+    // happens to omit them, so a reader can see exactly what left.
+    1: (params) => {
+      const p = (params ?? {}) as Record<string, unknown>;
+      const { faceFrom, faceTo, ...rest } = p;
+      const authored = typeof rest[SCOPE_PARAM] === 'string' ? (rest[SCOPE_PARAM] as string) : '';
+      if (authored.trim() !== '') return rest;
+      const from = typeof faceFrom === 'number' ? faceFrom : 0;
+      const to = typeof faceTo === 'number' ? faceTo : -1;
+      return { ...rest, [SCOPE_PARAM]: scopeFromRetiredFaceRange(from, to) };
+    },
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: SetMaterialOpParams,
@@ -183,7 +246,12 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
   // resolved {@link ComponentSelection} the evaluator hands every node whose chain declares
   // a scope; required, and refused at runtime because a required parameter closes the
   // omission only in production ([[H327]]).
-  evaluate(params, inputs, _ctx, scope) {
+  // ns-2 step 14 — `params` is now UNREAD, and that is the shape the phase was after rather
+  // than an oversight: `muted` is honoured by the evaluator and `scope` is resolved by the
+  // resolver, so everything this operator is told arrives as arguments and nothing is
+  // re-interpreted out of its own param record. It is the same claim `ArrayModifier` and
+  // `MirrorModifier` make, reached here by deleting the last field that broke it.
+  evaluate(_params, inputs, _ctx, scope) {
     const selection = requireResolvedScope(scope, 'SetMaterialOp');
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to write onto.
@@ -197,22 +265,18 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     // Hydrated by the socket rule, so what leaves here is always a complete IR.
     const wired = resolveNodeMaterial(inputs.material, undefined);
 
-    // THE FACES THAT RECEIVE THE WRITE — the resolved selection, narrowed by the literal
-    // range. One walk, in `meshAttributes`, which hands back the key AND how many faces it
+    // THE FACES THAT RECEIVE THE WRITE — the resolved selection, and now nothing else
+    // (ns-2 step 14: the literal range that used to narrow it is gone, migrated into the
+    // query). One walk, in `meshAttributes`, which hands back the key AND how many faces it
     // covered; deriving the count a second time here would be two spellings of the same
     // arithmetic, agreeing today and diverging the first time either is touched.
     //
-    // ⚠️ THE ARM IS CHOSEN FROM THE COVERAGE, NOT FROM THE PARAMS. It used to be a
-    // three-clause test over `faceTo`/`faceFrom`; that test cannot see a scope, and re-adding
-    // a `scope`-shaped clause beside it would be the per-member spelling this phase exists to
-    // delete. "Does this assignment reach every face?" is the question both inputs answer.
-    const targeted = mintTargetedAttributes(
-      source.geometry.descriptor,
-      selection,
-      params.faceFrom,
-      params.faceTo,
-      'evaluate',
-    );
+    // ⚠️ THE ARM IS STILL CHOSEN FROM THE COVERAGE, NOT FROM THE SELECTION. It was a
+    // three-clause test over `faceTo`/`faceFrom` before step 12, and the temptation each time
+    // the input changes is to test the new input's shape instead. "Does this assignment reach
+    // every face?" is the question every input answers, asked once — which is why deleting one
+    // of two inputs changed nothing here but the argument list.
+    const targeted = mintTargetedAttributes(source.geometry.descriptor, selection, 'evaluate');
 
     if (targeted !== null && targeted.covered < targeted.faces) {
       // THE APPEND ARM. The source's own material stays on slot 0 for the faces outside

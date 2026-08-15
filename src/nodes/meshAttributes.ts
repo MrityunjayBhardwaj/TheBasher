@@ -142,45 +142,39 @@ export function faceRangeMaterialAttributes(
 
 /**
  * The attribute set for a mesh whose TARGETED faces use slot 1 and the rest slot 0, where
- * "targeted" is a resolved {@link ComponentSelection} narrowed by a literal range
- * (ns-2 step 12, #607).
+ * "targeted" is a resolved {@link ComponentSelection} (ns-2 steps 12 and 14, #607).
  *
- * ── WHY BOTH INPUTS, AND WHY THE OPERATOR DOES NOT COMBINE THEM ITSELF ────────────────
+ * ── WHY THE OPERATOR DOES NOT BUILD THE SELECTION ITSELF ─────────────────────────────
  *
  * `SetMaterialOp` is the first `'target'` consumer: the selection names which components
- * RECEIVE the write. Its `faceFrom`/`faceTo` are the crude precursor the selection
- * supersedes, and they stay until the accommodation is deleted — so for now the faces that
- * actually receive the material are the ones in BOTH. Combining them here rather than in
- * the operator is not tidiness: an operator that built its own selection out of a face
- * count is the decorative-road failure this phase names by name, and `totalSelection` is
- * censused at zero external callers to make it unconstructible. The operator hands over
- * what it was given; this function does the arithmetic.
+ * RECEIVE the write. It hands over what the evaluator gave it and this function does the
+ * arithmetic — because an operator that built its own selection out of a face count is the
+ * decorative-road failure this phase names by name, and `totalSelection` is censused at zero
+ * external callers to make that unconstructible.
  *
- * ⚠️ `to === -1` MEANS EVERY FACE, matching {@link mintFaceRangeAttributes}' contract and the
- * param's own default. It is not a clamped index and must not be trunc'd into one.
+ * 🔴 IT TOOK A SECOND INPUT UNTIL ns-2 STEP 14: `faceFrom`/`faceTo`, the crude precursor the
+ * selection supersedes, intersected with the selection here. They are gone, and a saved range
+ * is rewritten into the equivalent query by `SetMaterialOp`'s v1 → v2 migration rather than
+ * dropped — so this function's contract narrowed without any authored state changing meaning.
+ * What is left is the shape the phase was aiming at: ONE input naming which components are
+ * addressed, resolved in ONE place.
  *
- * The key is content-derived, so two different targeted sets key apart automatically and an
- * unscoped op with the same range keys byte-identically to what it minted before this
- * function existed — which is what makes step 12 a rewrite rather than a behaviour change.
+ * The key is content-derived, so two different targeted sets key apart automatically.
  *
  * Returns `null` when the face count is not derivable from the descriptor.
  */
 export function targetedMaterialAttributes(
   descriptor: GeometryDescriptor,
   selection: ComponentSelection | null,
-  from: number,
-  to: number,
 ): MintedAttributes | null {
   const faces = faceCountOf(descriptor);
   if (faces === null) return null;
 
   const data = new Int32Array(faces);
-  const lo = Math.max(0, Math.trunc(from));
-  const hi = to === -1 ? faces - 1 : Math.min(faces - 1, Math.trunc(to));
-  for (let face = lo; face <= hi; face++) {
+  for (let face = 0; face < faces; face++) {
     // A `null` selection is the resolver's declared "this value has no component domain",
-    // not "select nothing" — the range alone decides, exactly as it did before scope
-    // existed. `count === 0` is the different thing and it is carried by the selection.
+    // not "select nothing" — every face is addressed, exactly as it was before scope existed.
+    // `count === 0` is the different thing and it is carried by the selection.
     if (selection === null || selection.has(face)) data[face] = 1;
   }
 
@@ -201,13 +195,11 @@ export function targetedMaterialAttributes(
 export function mintTargetedAttributes(
   descriptor: GeometryDescriptor,
   selection: ComponentSelection | null,
-  from: number,
-  to: number,
   via: AttributeGrowthSource,
 ): { readonly key: string; readonly covered: number; readonly faces: number } | null {
   refuseUnattributedGrowth(via);
   const faces = faceCountOf(descriptor);
-  const minted = targetedMaterialAttributes(descriptor, selection, from, to);
+  const minted = targetedMaterialAttributes(descriptor, selection);
   if (minted === null || faces === null) return null;
   insert(minted.key, minted.set, via);
   const assigned = minted.set[MATERIAL_INDEX].data;
