@@ -30,20 +30,26 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+// Comments are stripped so a module named in PROSE is not counted as an import — which
+// matters concretely here, because `faceCount.ts`'s own header names `geometryRegistry` and
+// `modifierGeometry` while explaining why it imports neither. A gate that counted those
+// would report the exact opposite of the truth.
+//
+// #676 — THIS MODULE USED TO CARRY ITS OWN TWO-LINE VERSION, AND IT SWALLOWED REAL CODE.
+// It stripped block comments FIRST, with a plain `/\*…\*/` scan over the raw text, so a
+// `/*` sequence appearing INSIDE a line comment opened a block that ran to the next `*/`
+// — taking every import after it. Measured across the repo: **15 files write a `/*`
+// sequence inside a `//` line** (`src/nodes/**`, `src/render/*` and friends, in prose about
+// eslint scopes), and **7 of them lost real import specifiers** — `dryRun.ts` alone lost
+// seven. The gate reported a smaller import set for those modules and reported it
+// confidently, which is the census failure this repo has measured in both directions.
+//
+// So the second spelling is deleted rather than repaired ([[V188]]). `sourceScan`'s
+// stripper is a single pass that tracks quote state and handles the two comment forms in
+// the order they actually nest; it is deliberately node-free, so `tools/` can use it.
+import { stripComments } from '../../src/test-utils/sourceScan';
 
 const REPO = join(__dirname, '../..');
-
-/**
- * Strip line and block comments, so a module named in prose is not counted as an import.
- *
- * This matters concretely here: `faceCount.ts`'s own header names `geometryRegistry` and
- * `modifierGeometry` while explaining why it imports neither. A gate that counted those
- * would report the exact opposite of the truth — the failure mode this repo has measured
- * before, where a census over a string returns the union of the code and the commentary.
- */
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-}
 
 /**
  * The module specifiers `file` imports, in source order, deduplicated.
@@ -58,6 +64,27 @@ export function importsOf(file: string): string[] {
   const re = /(?:^|\n)\s*(?:import|export)\b[^;\n]*?\bfrom\s*['"]([^'"]+)['"]/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
+  // A NAMED clause written across several lines — `import { a,\n b } from '…'`. #676: the
+  // scan above anchors at a line start and then refuses to cross a newline, so it was blind
+  // to every import written this way, which is how one is written as soon as it names more
+  // than a symbol or two. Measured before the fix: a module whose ONLY import was multi-line
+  // reported `[]`, and `modifierGeometry.ts` was missing `../nodes/types` — while the two
+  // leaves this gate actually holds happened to have single-line imports, so the blindness
+  // had never fired. An exact-set assertion that cannot see the ordinary way a set grows
+  // reads as a stronger claim than it makes.
+  //
+  // ⚠️ THIS IS A SECOND PATTERN RATHER THAN A WIDER FIRST ONE, deliberately. Letting the
+  // first cross newlines (`[^;]*?`) lets a match run out of an `export interface` and into a
+  // LATER import — trading a false-negative class for a false-positive one. Joining
+  // newlines inside braces first was tried and REJECTED on measurement: brace depth cannot
+  // be counted without lexing strings and template literals, it went NEGATIVE in real files,
+  // and the collapse then MERGED import lines into the statement above them — the fix lost
+  // 27 real specifiers across 7 files while adding 142. This pattern instead bounds itself
+  // structurally: `[^{}]*` cannot leave the clause, because an import clause never contains
+  // a brace. Verified by diffing both answers over every source file.
+  const braced =
+    /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[A-Za-z_$][\w$]*\s*,\s*)?\{[^{}]*\}\s*from\s*['"]([^'"]+)['"]/g;
+  while ((m = braced.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
   // `import './side-effect'` has no `from` clause and is a dependency all the same.
   const bare = /(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
   while ((m = bare.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
