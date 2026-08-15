@@ -36,7 +36,7 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MaterialValue, ObjectData } from './types';
 import { MaterialOverriddenSet } from './MaterialOverride';
-import { modifierDataSource } from '../app/modifierGeometry';
+import { modifierDataSource } from '../app/modifierDataSource';
 import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import { hydrateInlineMaterial } from './materialSchema';
 

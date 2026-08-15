@@ -15,7 +15,7 @@
 // REF: src/app/dataSectionCapability.ts; src/app/modifierGeometry.ts; issue #498.
 
 import { describe, expect, it } from 'vitest';
-import { modifierDataSource } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import {
   DATA_DEPENDENT_SECTIONS,
   OBJECT_DATA_KINDS,

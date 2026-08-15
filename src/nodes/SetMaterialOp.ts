@@ -73,7 +73,8 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
-import { modifierDataSource, refWithAttributeKey } from '../app/modifierGeometry';
+import { refWithAttributeKey } from '../app/modifierGeometry';
+import { modifierDataSource } from '../app/modifierDataSource';
 import { faceCountOf } from '../app/faceCount';
 import { mintFaceRangeAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';

@@ -42,9 +42,9 @@ import {
   boxDescriptor,
   boxGeometryRef,
   canModifyGeometry,
-  modifierDataSource,
   resolveDataKind,
 } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import { mintMeshAttributes } from '../nodes/meshAttributes';
 import { buildDefaultDagState } from '../core/project/default';
 import { buildAddModifierOps, resolveStackBase } from './operatorStack';

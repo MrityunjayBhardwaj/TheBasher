@@ -32,7 +32,8 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
-import { mirrorGeometryRef, modifierDataSource } from '../app/modifierGeometry';
+import { mirrorGeometryRef } from '../app/modifierGeometry';
+import { modifierDataSource } from '../app/modifierDataSource';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */

@@ -43,7 +43,8 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
-import { arrayGeometryRef, modifierDataSource } from '../app/modifierGeometry';
+import { arrayGeometryRef } from '../app/modifierGeometry';
+import { modifierDataSource } from '../app/modifierDataSource';
 
 export const ArrayModifierParams = z.object({
   /** Number of copies (the source counts as copy 0). ≥1; default 3 for a clear proof. */

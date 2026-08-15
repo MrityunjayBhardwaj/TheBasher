@@ -61,7 +61,7 @@ import {
   singleRef,
   type MaterialLaneType,
 } from './operatorChain';
-import { modifierDataSource } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import {
   resolveMaterialOverrideFields,
   type MaterialMapPresence,
