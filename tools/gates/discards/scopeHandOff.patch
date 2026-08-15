@@ -1,0 +1,21 @@
+diff --git a/src/core/dag/evaluator.ts b/src/core/dag/evaluator.ts
+index e5c5534..36fa76e 100644
+--- a/src/core/dag/evaluator.ts
++++ b/src/core/dag/evaluator.ts
+@@ -251,7 +251,15 @@ export function evaluate(
+     const evalStart = evalPerfHook ? performance.now() : 0;
+     const out =
+       bypassSpine === null
+-        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
++        ? // DISCARD HARNESS: the selection is resolved, then thrown away at the point of
++          // use. Every call stays, every import stays, every source census stays green.
++          (scopeFor(def, node.params, resolved),
++          def.evaluate(
++            node.params,
++            resolved,
++            ctx,
++            def.chain !== undefined && def.chain.scope.kind !== 'unscoped' ? null : undefined,
++          ))
+         : resolved[bypassSpine];
+     if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
+     const hash = hashString(cacheKey);

@@ -117,7 +117,16 @@ function registerLaneOp(
     outputs: { out: { type: out, cardinality: 'single' } },
     chain: {
       input: 'target',
-      scope: { kind: 'source' },
+      // ns-2 step 9b's SIXTH refusal: a `'source'`/`'target'` scope means the evaluator
+      // resolves a component selection from the spine, so the spine must carry
+      // `ObjectData` and nothing else. Derived from the lane rather than hardcoded,
+      // because a synthetic that declared a scope it cannot have would throw in
+      // `beforeEach` and red every row in the file at once — and because "components are a
+      // property of mesh data" is the claim, not a property of this fixture.
+      scope:
+        lane === 'ObjectData'
+          ? { kind: 'source' }
+          : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,
     },

@@ -8,6 +8,13 @@
 // path), App. A (glossary), App. B (Op shapes).
 
 import { z } from 'zod';
+// ns-2 step 9b — the FIRST reference from `src/core/dag/**` into `src/nodes/**`, and it is
+// `import type`, which the compiler erases: the emitted module pulls in nothing. Measured
+// at step 9: `src/core/dag/**` is 14 production files with ZERO imports of `src/app` or
+// `src/nodes`. This one, and the VALUE import the evaluator adds beside it, are the two
+// that road was extracted for (`modifierDataSource` became a leaf in the same wave so the
+// edge does not close a cycle). Pinned by `componentScopeChannel.gate.test.ts`.
+import type { ComponentSelection } from '../../nodes/componentSelection';
 
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -465,8 +472,33 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input
    * or via ctx for impure nodes only.
+   *
+   * ── `scope`: THE FOURTH ARGUMENT, AND WHY IT IS NOT IN `EvalCtx` (ns-2 step 9b) ──────
+   *
+   * The resolved component selection for THIS node, supplied by the evaluator for a node
+   * whose {@link ChainDeclaration.scope} is `'source'` or `'target'` — the four scoped
+   * operators — and for nobody else. It is `null` when the spine value has no component
+   * domain to resolve against, which is a declared answer and not a failure.
+   *
+   * 🔴 IT IS A POSITIONAL ARGUMENT AND NOT A CONTEXT FIELD, DELIBERATELY. `EvalCtx` is
+   * `{time}` and is shared by all 80 node types; widening it would make a PER-NODE datum
+   * global, and the comment above it records that two fields were removed from there for
+   * exactly that class of reason (#576). A node that declares no scope never receives one,
+   * which is a statement a shared bag cannot make.
+   *
+   * Optional HERE because 76 of the 80 node types are not scoped operators and must not be
+   * made to answer for a field that means nothing to them. It is REQUIRED on the four that
+   * are, in their own signatures, plus a runtime refusal of `undefined` — because a
+   * required parameter closes the omission only in production ([[H327]]: typecheck excludes
+   * the test tier and vitest checks no types at all, so both gates are blind to the same
+   * call site).
    */
-  evaluate(params: P, inputs: ResolvedInputs, ctx: EvalCtx): O | Record<string, O>;
+  evaluate(
+    params: P,
+    inputs: ResolvedInputs,
+    ctx: EvalCtx,
+    scope?: ComponentSelection | null,
+  ): O | Record<string, O>;
   /** Optional migration ladder: version N → N+1. */
   migrations?: Record<number, (oldParams: unknown) => unknown>;
   /**

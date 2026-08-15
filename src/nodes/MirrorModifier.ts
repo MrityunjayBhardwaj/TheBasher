@@ -34,6 +34,7 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { mirrorGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
+import { requireResolvedScope } from './componentSelection';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */
@@ -72,7 +73,10 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
     offset: 'modifier',
     muted: 'modifier',
   },
-  evaluate(params, inputs) {
+  // ns-2 step 9b — see `ArrayModifier.evaluate`: required fourth argument, runtime refusal,
+  // not read until the behaviour steps.
+  evaluate(params, inputs, _ctx, scope) {
+    requireResolvedScope(scope, 'MirrorModifier');
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
     if (!src) return src as unknown as ObjectData;

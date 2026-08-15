@@ -15,6 +15,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { resolveComponentSelection } from './componentSelection';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
@@ -49,9 +50,15 @@ function evalMod(
 ): ObjectData | undefined {
   // offset defaults to 0 (zod's default isn't applied when calling evaluate directly,
   // and 0 matches the read-side's default → the parity keys line up).
-  return MirrorModifierNode.evaluate({ offset: 0, ...params }, { target }, ctx) as
-    | ObjectData
-    | undefined;
+  // ns-2 step 9b — the fourth argument goes through the ONE resolver, exactly as the
+  // evaluator does; see `ArrayModifier.test.ts` for why this helper stays a DIRECT call.
+  const full = { offset: 0, ...params };
+  return MirrorModifierNode.evaluate(
+    full,
+    { target },
+    ctx,
+    resolveComponentSelection(target, full),
+  ) as ObjectData | undefined;
 }
 
 beforeEach(() => {

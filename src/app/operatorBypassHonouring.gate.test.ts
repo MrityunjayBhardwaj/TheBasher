@@ -75,6 +75,7 @@ import { mintMeshAttributes } from '../nodes/meshAttributes';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../nodes/materialSchema';
 import { DEFAULT_IMAGE_DESCRIPTOR } from '../nodes/types';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { resolveComponentSelection } from '../nodes/componentSelection';
 
 const FILES: readonly (readonly [string, string])[] = sourceFiles().map(
   ([path, src]) => [path, stripComments(src)] as const,
@@ -203,10 +204,19 @@ function throughEvaluator(row: Row, bypassed: boolean): unknown {
 
 /** Straight into the operator's own `evaluate`, skipping the application site entirely. */
 function directly(row: Row, bypassed: boolean): unknown {
-  return getNodeType(row.type)!.evaluate(
-    { ...row.params, muted: bypassed },
+  const def = getNodeType(row.type)!;
+  const params = { ...row.params, muted: bypassed };
+  // ns-2 step 9b — the fourth argument, supplied here exactly as the evaluator supplies it:
+  // resolved through the ONE resolver for a chain declaring a scope, and absent for every
+  // other node. This road MUST stay direct — it is the [[H350]] blindness detector, whose
+  // whole claim is that `evaluate`'s output is identical with the bypass flag on and off,
+  // and only a direct call can observe that.
+  const scoped = def.chain !== undefined && def.chain.scope.kind !== 'unscoped';
+  return def.evaluate(
+    params,
     inputsOf(row),
     undefined as never,
+    scoped ? resolveComponentSelection(row.src as ObjectData, params) : undefined,
   );
 }
 

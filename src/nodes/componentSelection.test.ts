@@ -116,17 +116,45 @@ describe('#607 the three degenerate cases, decided here', () => {
 });
 
 describe('#607 a selection cannot be built against a count that does not exist', () => {
-  it('refuses a descriptor with no derivable face count, by name', () => {
-    // Pre-mortem 2. Without this the selection would be built at length 0 — a "scope
-    // nothing" on a mesh the author can see, with faces they can count.
-    expect(() => resolveComponentSelection(GLTF, {})).toThrow(/no derivable face count/);
+  // 🔴 THE CONTRACT NARROWED AT STEP 9b, AGAINST A MEASUREMENT. Step 9 refused all three
+  // unresolvable populations unconditionally, because it had no caller. Step 9b gave it
+  // one — the evaluator, ahead of EVERY ArrayModifier and MirrorModifier cook — and the
+  // populations turned out to be shipped roads with green tests of their own: an Array
+  // over a curve passes it through, an Array over baked data yields real `ModifiedData`.
+  // An unconditional refusal there is a production throw on the renderer's walk, which is
+  // the exact failure the plan named when it moved the required parameter OFF
+  // `modifierDataSource`. So the two conditions are separated:
+  //
+  //     nothing authored  → `null`, a DECLARED "no component domain here"
+  //     something authored → a NAMED THROW, because a lost scope is the loud wrong answer
+  //
+  // Both halves are asserted below. Collapsing them in either direction reds a row.
+
+  it('answers `null` — not a throw — when nothing was authored, on every shipped population', () => {
+    // The three values that reach this today, all of them ordinary. If any of these throws,
+    // an operator that works right now stops working, on the render road.
+    expect(resolveComponentSelection(GLTF, {})).toBeNull();
+    expect(resolveComponentSelection(CAMERA, {})).toBeNull();
+    expect(resolveComponentSelection(undefined, {})).toBeNull();
+    // A blank query is an absent one here too — the same collapse as on a resolvable value.
+    expect(resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '  ' })).toBeNull();
+  });
+
+  it('refuses a descriptor with no derivable face count when a scope WAS authored, by name', () => {
+    // Without this the author's scope would be silently dropped and the operator would
+    // apply to everything — on a mesh whose faces they can see and count.
     expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0-5' })).toThrow(
       /no derivable face count/,
     );
   });
 
-  it('refuses a value that has no mesh components at all, by name', () => {
-    expect(() => resolveComponentSelection(CAMERA, {})).toThrow(/has no mesh components/);
+  it('refuses a value with no mesh components at all when a scope WAS authored, by name', () => {
+    expect(() => resolveComponentSelection(CAMERA, { [SCOPE_PARAM]: '0-5' })).toThrow(
+      /has no mesh components/,
+    );
+    expect(() => resolveComponentSelection(undefined, { [SCOPE_PARAM]: '0-5' })).toThrow(
+      /unwired spine/,
+    );
   });
 
   it('and this is NOT `faceAttributeMismatch` — measured, because the plan named it', () => {
@@ -134,7 +162,14 @@ describe('#607 a selection cannot be built against a count that does not exist',
     // for the first time. It cannot: that guard returns `null` — "no objection" — for every
     // count whenever `faceCountOf` is null, which is exactly the case being refused here.
     // Recorded as a row so the claim is not re-inherited from the plan.
-    expect(() => resolveComponentSelection(GLTF, {})).toThrow();
+    expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0' })).toThrow();
+  });
+
+  it('a non-string scope param is refused whatever the value can carry', () => {
+    // The one branch that does not depend on the spine: a param declared as something
+    // other than a string can only come from a schema, and guessing at its meaning is how
+    // a scope gets lost.
+    expect(() => resolveComponentSelection(BOX, { [SCOPE_PARAM]: 7 })).toThrow(/must be a string/);
   });
 });
 
@@ -360,6 +395,10 @@ describe('#607 the query has exactly one reader', () => {
       '__resetSelectionMemoForTests',
       'canonicalScopeQuery',
       'componentCountOf',
+      // ns-2 step 9b — the operator's own refusal of an OMITTED selection, written once
+      // rather than copy-pasted into four `evaluate` bodies. It exports the REFUSAL, never
+      // the query: an operator still has no way to reach the parser.
+      'requireResolvedScope',
       'resolveComponentSelection',
       'totalSelection',
     ]);

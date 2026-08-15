@@ -18,6 +18,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { resolveComponentSelection } from './componentSelection';
 import { __reseedAllNodesForTests } from './registerAll';
 import { SetMaterialOpNode } from './SetMaterialOp';
 import { boxDescriptor, boxGeometryRef, sphereDescriptor } from '../app/modifierGeometry';
@@ -61,12 +62,17 @@ function boxData(): MeshDataValue {
 const evalOp = (
   params: { muted?: boolean; faceFrom?: number; faceTo?: number },
   target: ObjectData | undefined,
-) =>
-  SetMaterialOpNode.evaluate(
-    { muted: false, faceFrom: 0, faceTo: -1, ...params },
+) => {
+  // ns-2 step 9b — the fourth argument goes through the ONE resolver, exactly as the
+  // evaluator does; see `ArrayModifier.test.ts` for why this helper stays a DIRECT call.
+  const full = { muted: false, faceFrom: 0, faceTo: -1, ...params };
+  return SetMaterialOpNode.evaluate(
+    full,
     { target, material: WIRED },
     undefined as never,
+    resolveComponentSelection(target, full),
   ) as ObjectData;
+};
 
 // The store never removes entries (its own declared limit), so only the COUNTERS reset
 // between cases. Every growth case below therefore uses a source whose sets no earlier case
@@ -122,6 +128,7 @@ describe('#638 SetMaterialOp — the full range still REPLACES, byte for byte', 
         { muted: false, faceFrom: 0, faceTo: 1 },
         { target: src, material: [] },
         undefined as never,
+        resolveComponentSelection(src, { muted: false, faceFrom: 0, faceTo: 1 }),
       ),
     ).toBe(src);
   });

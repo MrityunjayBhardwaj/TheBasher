@@ -45,6 +45,7 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { arrayGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
+import { requireResolvedScope } from './componentSelection';
 
 export const ArrayModifierParams = z.object({
   /** Number of copies (the source counts as copy 0). ≥1; default 3 for a clear proof. */
@@ -85,7 +86,18 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
     offset: 'modifier',
     muted: 'modifier',
   },
-  evaluate(params, inputs) {
+  // ns-2 step 9b — `scope` is the resolved component selection the evaluator hands every
+  // node whose chain declares one. REQUIRED here (not `scope?`), because the population of
+  // this signature is exactly the four scoped operators and forgetting it is the road the
+  // phase exists to close; refused at RUNTIME as well, because a required parameter closes
+  // the omission only in production ([[H327]]).
+  //
+  // Not read yet, by design: step 10 derives on the degenerate population, where every
+  // selection is total and every answer is byte-identical, and step 13 is where a scoped
+  // Array stops replicating the whole input. The rewrite and the behaviour change do not
+  // land in one commit ([[K32]] step 3).
+  evaluate(params, inputs, _ctx, scope) {
+    requireResolvedScope(scope, 'ArrayModifier');
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
     if (!src) return src as unknown as ObjectData;

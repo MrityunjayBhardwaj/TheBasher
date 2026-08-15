@@ -4,8 +4,15 @@
 // REF: THESIS.md §6 ("Eighty percent of Basher is node definitions"), §20
 // (tool surface).
 
-import type { NodeDefinition, NodeTypeId, OperatorSection, SocketTypeName } from './types';
+import type {
+  InputDescriptor,
+  NodeDefinition,
+  NodeTypeId,
+  OperatorSection,
+  SocketTypeName,
+} from './types';
 import { operatorLaneOf } from './operatorLane';
+import { acceptedTypes } from './socketMembership';
 
 const registry = new Map<NodeTypeId, NodeDefinition>();
 
@@ -118,6 +125,36 @@ function assertChainDeclaration(def: NodeDefinition): void {
         `'${spine.cardinality}' cardinality. A spine carries ONE value — it is what a bypass ` +
         `hands back and what a stack walks down — so it cannot be a list socket.`,
     );
+  }
+
+  // THE SIXTH REFUSAL (ns-2 step 9b) — a SCOPED spine must carry `ObjectData`, and only
+  // `ObjectData`.
+  //
+  // The evaluator resolves a component selection from the spine value and hands it to
+  // `evaluate`, and the resolver takes an `ObjectData` because components are a property of
+  // mesh data. That is a premise the hand-off rests on, so it is enforced where the author
+  // is present rather than asserted by a cast at the single call site ([[V201]]: enforce the
+  // READER's premises at registration).
+  //
+  // Membership is not enough — a UNION socket accepting `ObjectData | Image` would satisfy
+  // "accepts ObjectData" and still deliver an `Image` at runtime, which is the silent half.
+  // The declaration has to be exact. Scene- and image-lane operators are unaffected: their
+  // honest answer is `scope: {kind:'unscoped', why:'no-component-domain'}`, which is the
+  // member that exists for precisely this.
+  if (chain.scope.kind === 'source' || chain.scope.kind === 'target') {
+    const spineDesc = (def.inputs as Record<string, InputDescriptor | undefined> | undefined)?.[
+      chain.input
+    ];
+    const accepted = spineDesc === undefined ? [] : acceptedTypes(spineDesc);
+    if (accepted.length !== 1 || accepted[0] !== 'ObjectData') {
+      throw new Error(
+        `registerNodeType(${def.type}): chain.scope is '${chain.scope.kind}', so the evaluator ` +
+          `resolves a component selection from the spine — but spine socket '${chain.input}' ` +
+          `accepts ${accepted.join('|')}, not ObjectData alone. Components are a property of ` +
+          `mesh DATA; declare scope {kind:'unscoped', why:'no-component-domain'} if this ` +
+          `operator's spine carries something else.`,
+      );
+    }
   }
 
   // THE FIFTH REFUSAL (ns-2 step 7) — an offered SECTION must match the operator's LANE.

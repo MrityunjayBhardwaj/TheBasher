@@ -19,6 +19,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { resolveComponentSelection } from './componentSelection';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
@@ -60,7 +61,18 @@ function evalMod(
   params: { count: number; offset: [number, number, number]; muted: boolean },
   target: ObjectData | undefined,
 ): ObjectData | undefined {
-  return ArrayModifierNode.evaluate(params, { target }, ctx) as ObjectData | undefined;
+  return ArrayModifierNode.evaluate(
+    params,
+    { target },
+    ctx,
+    // ns-2 step 9b — the fourth argument, and it goes through the ONE resolver exactly as
+    // the evaluator does. NOT hand-built: a stand-in that skips the producer's
+    // transformation inverts the test ([[H328]]), and a second way of turning a source into
+    // a selection is the defect this phase exists to delete. This helper stays a DIRECT call
+    // on purpose — the muted case below asserts the operator is blind to the bypass param,
+    // which only a direct call can observe ([[H350]]).
+    resolveComponentSelection(target, params),
+  ) as ObjectData | undefined;
 }
 
 beforeEach(() => {

@@ -78,6 +78,7 @@ import { modifierDataSource } from '../app/modifierDataSource';
 import { faceCountOf } from '../app/faceCount';
 import { mintFaceRangeAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
+import { requireResolvedScope } from './componentSelection';
 
 export const SetMaterialOpParams = z.object({
   /**
@@ -133,7 +134,11 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
   // nothing a panel could author either: its material arrives over an edge (drawn in the
   // graph) and `muted` is a stack control. Declaring 'material' here would ship a titled,
   // permanently empty card — the exact shape the #458 reachability gate exists to catch.
-  evaluate(params, inputs) {
+  // ns-2 step 9b — see `ArrayModifier.evaluate`: required fourth argument, runtime refusal.
+  // This is the operator step 12 repoints ONTO it: `faceFrom`/`faceTo` become an input to
+  // the query rather than the query itself, so the read here is deliberately still absent.
+  evaluate(params, inputs, _ctx, scope) {
+    requireResolvedScope(scope, 'SetMaterialOp');
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to write onto.
     if (!src) return src as unknown as ObjectData;

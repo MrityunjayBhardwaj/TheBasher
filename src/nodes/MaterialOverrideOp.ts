@@ -37,6 +37,7 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { MaterialValue, ObjectData } from './types';
 import { MaterialOverriddenSet } from './MaterialOverride';
 import { modifierDataSource } from '../app/modifierDataSource';
+import { requireResolvedScope } from './componentSelection';
 import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import { hydrateInlineMaterial } from './materialSchema';
 
@@ -107,7 +108,10 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
     emissive: 'material',
     emissiveIntensity: 'material',
   },
-  evaluate(params, inputs) {
+  // ns-2 step 9b — see `ArrayModifier.evaluate`: required fourth argument, runtime refusal,
+  // not read until the behaviour steps.
+  evaluate(params, inputs, _ctx, scope) {
+    requireResolvedScope(scope, 'MaterialOverrideOp');
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to compose onto.
     if (!src) return src as unknown as ObjectData;

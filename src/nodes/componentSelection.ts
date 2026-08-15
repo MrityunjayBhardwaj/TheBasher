@@ -53,9 +53,16 @@
 //   no scope param, or a blank one   scope EVERYTHING — the memoized total selection.
 //   a query resolving to ZERO        scope NOTHING. `count === 0`, distinct by value from
 //                                    a total, so the two cannot be confused by a caller.
-//   an unparseable / unresolvable    a NAMED THROW. Never a silent fall back to
+//   an unparseable query             a NAMED THROW. Never a silent fall back to
 //                                    "everything": a lost scope applies the operation to
 //                                    the whole mesh.
+//   NO scope, on a value with no     `null` — a DECLARED "nothing to resolve here", not an
+//   component domain                 error. Curves, lights, cameras, unwired spines and
+//                                    `gltf`/`baked` handles all sit on shipped modifier
+//                                    roads today (step 9b measured it), so refusing them
+//                                    would throw on the renderer's walk.
+//   an AUTHORED scope on one of      a NAMED THROW. The author asked for something that
+//   those                           cannot be honoured, and that is the lost-scope hazard.
 //
 // Indices outside `[0, length)` are DROPPED rather than refused — a range half in bounds
 // contributes its in-bounds half, and one wholly out of bounds resolves to nothing. An
@@ -112,10 +119,19 @@ function refuse(why: string): never {
 }
 
 /**
- * How many elements a domain has for a given descriptor, or a named refusal.
+ * How many elements a domain has for a given descriptor, `null` when that descriptor cannot
+ * say, or a named refusal when the DOMAIN is not one ns-2 resolves at.
  *
  * Closed by a `never` over {@link KnownDomain}, so a fifth domain is a compile error at the
  * site that must answer for it.
+ *
+ * ⚠️ `null` AND A REFUSAL ARE DIFFERENT ANSWERS TO DIFFERENT QUESTIONS, and collapsing them
+ * is what step 9b measured as a production crash. A refusal says *this domain has no
+ * derivation at all in ns-2* — a fact about the code, true for every descriptor, and an
+ * author cannot reach it. `null` says *this domain is derivable in principle and THIS
+ * descriptor cannot say how many* — the `gltf` and `baked` arms, whose buffers live outside
+ * the descriptor, and which are ordinary shipped values sitting on a modifier's spine right
+ * now. See {@link resolveComponentSelection} for what the difference buys.
  *
  * ⚠️ THIS IS NOT `elementCountFor`, AND THE DIFFERENCE IS WHY BOTH EXIST. That one maps
  * (domain, a full `MeshElementCounts`) → count. A descriptor yields exactly ONE of those
@@ -131,22 +147,17 @@ function refuse(why: string): never {
  * "ns-2 resolves at `face` only" is visible where a reader goes looking for it rather than
  * buried in this file's prose.
  */
-export function componentCountOf(domain: KnownDomain, descriptor: GeometryDescriptor): number {
+export function componentCountOf(
+  domain: KnownDomain,
+  descriptor: GeometryDescriptor,
+): number | null {
   switch (domain) {
-    case 'face': {
-      const faces = faceCountOf(descriptor);
-      if (faces === null) {
-        // The gltf / baked arms. A selection built against a null count would be a
-        // ZERO-LENGTH selection, which reads as "scope nothing" — on a mesh the author can
-        // see, with faces they can count. Refusing by name is the difference between a
-        // message saying which descriptor has no derivable count and an operator that
-        // silently stops doing anything.
-        return refuse(
-          `descriptor '${descriptor.kind}' has no derivable face count, so a scope cannot be resolved against it (its geometry lives outside the descriptor)`,
-        );
-      }
-      return faces;
-    }
+    case 'face':
+      // The gltf / baked arms answer `null`: their buffers live outside the descriptor, so
+      // nothing here can say how many faces they hold. A ZERO would read as "scope nothing"
+      // on a mesh the author can see, with faces they can count — which is why the absence
+      // is carried as its own value rather than as a number.
+      return faceCountOf(descriptor);
     case 'point':
     case 'edge':
     case 'corner':
@@ -441,35 +452,125 @@ function selectionFromTerms(
 }
 
 /**
+ * The scope an author actually wrote, or `null` when they wrote none.
+ *
+ * A blank string is the same authoring state as an absent param — the author cleared the
+ * field — so both collapse here rather than at three call sites. A non-string is refused:
+ * it can only arrive from a schema declaring the param as something else, and guessing at
+ * its meaning is how a scope gets lost.
+ */
+function authoredScope(params: Readonly<Record<string, unknown>>): string | null {
+  const raw = params[SCOPE_PARAM];
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== 'string') {
+    return refuse(`the '${SCOPE_PARAM}' param must be a string, got ${typeof raw}`);
+  }
+  return raw.trim() === '' ? null : raw;
+}
+
+/**
  * Resolve an operator's scope from its spine value and its params — THE one resolver.
  *
  * Called from the evaluator, once, for a node whose chain declares a `'source'` or
  * `'target'` scope. It is a pure function of exactly the spine value and the params, which
  * are the two things the evaluator's value key already folds; a selection derived from
  * anything else would not be covered by that cache.
+ *
+ * ── WHY `null` IS AN ANSWER AND NOT AN ERROR (ns-2 step 9b) ────────────────────────────
+ *
+ * `null` means: **this spine value has no component domain to resolve against, and the
+ * author asked for no scope.** It is a DECLARED answer in the same sense as
+ * `BypassKind.none` — the operator is told "there is nothing here", not left to infer it
+ * from an omission. The three populations that reach it are shipped and ordinary:
+ *
+ *   an UNWIRED spine        the operator is mid-authoring; it already stays transparent.
+ *   a curve / light / camera `modifierDataSource` says these carry no mesh face at all,
+ *                            and the modifiers already pass them through unchanged.
+ *   a `gltf` / `baked` handle  the buffers live outside the descriptor, so no count exists.
+ *
+ * 🔴 THE PLAN SAID TO REFUSE ALL THREE, AND THAT WAS MEASURED AS A PRODUCTION CRASH. This
+ * resolver runs at the single `evaluate` call site, ahead of every ArrayModifier and
+ * MirrorModifier cook. Both of those roads ship today and are asserted green in this
+ * suite — an Array over a curve passes it through, an Array over baked data yields real
+ * `ModifiedData` — so refusing here would have thrown on the renderer's own walk. It is
+ * the identical failure the plan named when it moved the required parameter OFF
+ * `modifierDataSource`: the guard meant to protect the evaluate path firing on the read
+ * path. Closing that door at the classifier and leaving it open one level up would have
+ * shipped the same crash under a different name.
+ *
+ * ⚠️ AND THE LOST-SCOPE HAZARD STAYS CLOSED, because the two conditions are separated. An
+ * AUTHORED scope over a value that cannot carry one is still a NAMED THROW: the author
+ * asked for something the system cannot honour, and quietly applying the operator to the
+ * whole mesh is the loudest possible wrong answer wearing the quietest failure. `null`
+ * happens only when nothing was asked for.
  */
 export function resolveComponentSelection(
-  spine: ObjectData,
+  spine: ObjectData | undefined,
   params: Readonly<Record<string, unknown>>,
-): ComponentSelection {
-  const source = modifierDataSource(spine);
+): ComponentSelection | null {
+  // Read the query FIRST. Every "cannot resolve" branch below needs to know whether an
+  // author is being ignored, and a resolver that discovers that halfway down answers
+  // differently depending on the order its own checks happen to be written in.
+  const authored = authoredScope(params);
+
+  const source = spine === undefined ? null : modifierDataSource(spine);
   if (source === null) {
+    const what = spine === undefined ? 'an unwired spine' : `a '${spine.kind}' value`;
+    if (authored === null) return null;
     return refuse(
-      `a '${spine.kind}' value has no mesh components, so no selection can be resolved against it`,
+      `${what} has no mesh components, so the authored scope '${authored}' cannot be honoured`,
     );
   }
 
   const length = componentCountOf(SCOPE_DOMAIN, source.geometry.descriptor);
-  const raw = params[SCOPE_PARAM];
+  if (length === null) {
+    if (authored === null) return null;
+    return refuse(
+      `descriptor '${source.geometry.descriptor.kind}' has no derivable face count (its geometry lives outside the descriptor), so the authored scope '${authored}' cannot be honoured`,
+    );
+  }
 
   // No scope authored at all — the operator applies to everything. This is the ONLY road
   // to "everything" that does not go through a query, which is what keeps a LOST scope
   // distinguishable from an absent one.
-  if (raw === undefined || raw === null) return totalSelection(SCOPE_DOMAIN, length);
-  if (typeof raw !== 'string') {
-    return refuse(`the '${SCOPE_PARAM}' param must be a string, got ${typeof raw}`);
-  }
-  if (raw.trim() === '') return totalSelection(SCOPE_DOMAIN, length);
+  if (authored === null) return totalSelection(SCOPE_DOMAIN, length);
 
-  return selectionFromTerms(parseScopeQuery(raw), SCOPE_DOMAIN, length);
+  return selectionFromTerms(parseScopeQuery(authored), SCOPE_DOMAIN, length);
+}
+
+/**
+ * The operator's own refusal of an OMITTED selection — rung 3's runtime half, once.
+ *
+ * The fourth argument to `evaluate` is required on the four scoped operators, and a
+ * required parameter closes the omission only in production: `npm run typecheck` excludes
+ * test files and vitest strips types without checking them, so both standing gates are
+ * blind to the same call site ([[H327]], which has now fired twice in this epic). The
+ * refusal has to run.
+ *
+ * ⚠️ `undefined` AND `null` ARE DIFFERENT FAILURES AND ONLY ONE IS ONE. `undefined` means
+ * nobody supplied a selection — the evaluator's hand-off was skipped, or a caller invoked
+ * `evaluate` directly — and the operator cannot tell "scope everything" from "scope
+ * nothing", so it refuses. `null` is {@link resolveComponentSelection}'s declared answer
+ * that this value has no component domain, and it is returned unchanged.
+ *
+ * ONE implementation for four call sites, deliberately: this phase exists because being an
+ * operator was spelled per member, and a refusal copy-pasted four times is the same defect
+ * in the commit that closes it.
+ */
+export function requireResolvedScope(
+  scope: ComponentSelection | null | undefined,
+  operator: string,
+): ComponentSelection | null {
+  if (scope === undefined) {
+    return refuse(
+      `${operator}.evaluate was called with no resolved selection. The evaluator supplies one ` +
+        `for every node whose chain declares a 'source' or 'target' scope; reaching this means ` +
+        // ⚠️ Do not write the phrase «X from Y» in quotes here: `importsOf` reads a
+        // quoted word after `from` as an import specifier, and this string would show up
+        // in the repo-wide import census as a module nobody can resolve (#676).
+        `the hand-off was skipped, and an operator cannot tell a total selection apart ` +
+        `from an empty one.`,
+    );
+  }
+  return scope;
 }

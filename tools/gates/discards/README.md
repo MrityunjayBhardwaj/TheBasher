@@ -42,9 +42,15 @@ command line _does_ error with "no parser could be inferred", so don't do that.)
 | `null`         | nothing (the file is empty)                                | The null control. `red` must be **0** and the tree byte-identical, and `{files, tests}` must equal the standing tier's own numbers — that is what proves the harness's reporter changed nothing about what ran. |
 | `inputAccepts` | `src/core/dag/ops.ts` — the connect-time socket type check | The positive control, on a road that has nothing to do with the phase being built. `inputAccepts` is still called; its verdict is discarded. Something must red, with names.                                    |
 
+| `scopeHandOff` | `src/core/dag/evaluator.ts` — the component-scope hand-off (ns-2 step 9b) | This phase's own road, first patchable point. `scopeFor` is still called and its answer is thrown away at the `evaluate` call, so the import, the resolver and every source census stay exactly as they are and only the operator's fourth argument changes. |
+
 A positive control on a **foreign** road is deliberate. A harness validated only against
 the road it was built to measure is validated by its own author's belief that the road
-works. The one control that matters most is still owed: once this phase's own road has a
-consumer, discard the resolved selection **inside that consumer** and confirm the harness
-names the assertion that catches it. Until that has been observed once, a `red > 0` from
-this phase's own discard cannot be told apart from a harness that silently no-ops.
+works.
+
+**Still owed, and step 9b narrows it rather than closing it.** `scopeHandOff` patches the
+hand-off, which is discard point (a). Point (b) — discarding the selection **inside a
+consumer** — cannot be written yet, because no operator reads one: step 10 derives on the
+degenerate population and step 12 is where `SetMaterialOp` first consumes it. Until (b) has
+been observed naming a behavioural assertion, a `red > 0` from this phase's own discard
+still cannot be told apart from a harness that silently no-ops on a road nobody drives.
