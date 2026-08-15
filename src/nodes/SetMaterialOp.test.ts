@@ -18,11 +18,11 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
-import { resolveComponentSelection } from './componentSelection';
+import { resolveComponentSelection, SCOPE_PARAM } from './componentSelection';
 import { __reseedAllNodesForTests } from './registerAll';
-import { SetMaterialOpNode } from './SetMaterialOp';
+import { SetMaterialOpNode, SetMaterialOpParams } from './SetMaterialOp';
 import { boxDescriptor, boxGeometryRef, sphereDescriptor } from '../app/modifierGeometry';
-import { mintMeshAttributes } from './meshAttributes';
+import { faceRangeMaterialAttributes, mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial } from './materialSchema';
 import { openpbrMaterialSchema } from './materialSchema';
 import {
@@ -272,5 +272,105 @@ describe('#638 the growth measurement step 4 could not take', () => {
     // Bounded by DISTINCT segment counts (25 of them), never by the 121 frames.
     expect(grown.overlay).toBeLessThanOrEqual(25);
     expect(grown.evaluate).toBe(0);
+  });
+});
+
+// ── ns-2 STEP 12 — THE FIRST OPERATOR THAT READS ITS RESOLVED SELECTION ──────────────
+//
+// Every assertion below is anchored on `faceRangeMaterialAttributes`, the #638 producer,
+// which this step does not touch. That matters more than it looks: the claim is "the
+// selection road and the range road name the same faces", and a parity assertion whose two
+// sides both run through the code under test cannot see that code change ([[V189]]). The
+// range producer is the side the new derivation cannot reach.
+describe('ns-2 step 12 — the selection reaches the assignment', () => {
+  /** The #638 producer's key for a contiguous range — the side step 12 cannot influence. */
+  const rangeKey = (from: number, to: number): string =>
+    faceRangeMaterialAttributes(boxDescriptor([1, 1, 1]), from, to)!.key;
+
+  it('the same authored state emits the same bytes — the range road is unmoved', () => {
+    // 🔴 THE INVARIANCE THIS STEP RESTS ON. With no scope authored the resolved selection
+    // is TOTAL, so `total ∩ [6,11]` is `[6,11]` and every already-authored graph keeps its
+    // output. Asserted against the untouched producer rather than deep-equal against HEAD:
+    // HEAD decays inside this checkout, and a literal pinned in the commit that makes the
+    // change is the only version of this claim that stays true.
+    const out = evalOp({ faceFrom: 6, faceTo: 11 }, boxData()) as ModifiedDataValue;
+    expect(out.materialSlots).toHaveLength(2);
+    expect(out.attributeKey).toBe(rangeKey(6, 11));
+  });
+
+  it('🔴 a SCOPE alone names the faces — with the range left at its default', () => {
+    // The step's whole point, and the row that reds if the fourth argument is discarded:
+    // the default range covers everything, so an operator ignoring its selection would take
+    // the REPLACE arm and emit one material. Two slots here means the query reached the
+    // assignment, and the KEY means it reached the right faces.
+    const out = evalOp({ scope: '6-11' }, boxData()) as ModifiedDataValue;
+    expect(out.materialSlots).toHaveLength(2);
+    expect(out.attributeKey).toBe(rangeKey(6, 11));
+  });
+
+  it('the range and the scope INTERSECT — both survive until the accommodation is deleted', () => {
+    // `[6,11] ∩ 0-8` is `[6,8]`, which the untouched producer can also name. The two inputs
+    // are not ranked and neither wins: the faces written are the ones in both.
+    const out = evalOp({ faceFrom: 6, faceTo: 11, scope: '0-8' }, boxData()) as ModifiedDataValue;
+    expect(out.materialSlots).toHaveLength(2);
+    expect(out.attributeKey).toBe(rangeKey(6, 8));
+  });
+
+  it('a scope naming EVERY face is the replace arm — coverage decides, not the params', () => {
+    // A box is 12 triangles, so `0-11` is total by extension while being a partial-looking
+    // query. The old three-clause test over `faceFrom`/`faceTo` would have called this
+    // partial and emitted a two-slot table whose second slot covers the whole mesh.
+    const src = boxData();
+    const out = evalOp({ scope: '0-11' }, src) as ModifiedDataValue;
+    expect(Object.keys(out).sort()).toEqual(['geometry', 'kind', 'material']);
+    expect(out.geometry).toBe(src.geometry);
+  });
+
+  it('a scope selecting NOTHING lands exactly where an INVERTED RANGE already landed', () => {
+    // 🔴 MEASURED, AND MY FIRST EXPECTATION HERE WAS WRONG — recorded because the wrong one
+    // is the tempting one. "Nothing is selected" reads like the replace arm, but the shipped
+    // node has always taken APPEND for an empty assignment: an inverted range mints an
+    // all-zero index and emits a table whose second slot covers no face, which downstream
+    // reports as one used slot and draws as a single material. The row above it in this file
+    // pins that for the range, and it says so in its own name: *needs no arm anywhere to say
+    // so*.
+    //
+    // So the scope road must land in the same place, and the value of asserting it is that
+    // the two roads AGREE — a step that quietly gave the selection a different answer for
+    // the empty case would be a semantics change hiding inside a rewrite.
+    const scoped = evalOp({ scope: '^0-11' }, boxData()) as ModifiedDataValue;
+    const inverted = evalOp({ faceFrom: 5, faceTo: 2 }, boxData()) as ModifiedDataValue;
+    expect(scoped.attributeKey).toBe(inverted.attributeKey);
+    const index = readAttributes(scoped.attributeKey!)![MATERIAL_INDEX];
+    expect([...index.data].every((v) => v === 0)).toBe(true);
+  });
+
+  it('🔴 an AUTHORED scope over a source with no derivable count THROWS BY NAME', () => {
+    // Declared limit 3, and step 12 sharpens it rather than inheriting it. Without a scope
+    // a glTF source REPLACES — the row above pins that and it still holds. WITH one, the
+    // author has asked for something the system cannot honour, and quietly writing the
+    // material onto the whole mesh is the loudest wrong answer wearing the quietest
+    // failure. The refusal comes from the resolver, before `evaluate` runs at all.
+    const gltfSource: MeshDataValue = {
+      kind: 'MeshData',
+      geometry: {
+        key: 'gltf|asset-x|child-y',
+        descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+      },
+      material: SOURCE_MATERIAL,
+      materialKey: null,
+      attributeKey: null,
+    };
+    expect(() => evalOp({ scope: '0-5' }, gltfSource)).toThrow(/cannot be honoured/);
+  });
+
+  it('an unparseable query cannot be AUTHORED, so it never reaches the resolver', () => {
+    // The other half of the decision, asked of the schema. `setParam` rejects what the
+    // schema will not take, so the parser's throw has no path to the render walk.
+    expect(SetMaterialOpParams.safeParse({ [SCOPE_PARAM]: 'arm*' }).success).toBe(false);
+    expect(SetMaterialOpParams.safeParse({ [SCOPE_PARAM]: '5-2' }).success).toBe(false);
+    expect(SetMaterialOpParams.safeParse({ [SCOPE_PARAM]: '0-5 ^2' }).success).toBe(true);
+    // Blank is the absent state, not an invalid one — it must stay authorable.
+    expect(SetMaterialOpParams.safeParse({}).data?.[SCOPE_PARAM]).toBe('');
   });
 });

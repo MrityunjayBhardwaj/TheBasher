@@ -35,36 +35,48 @@
 // mirror a mute-bypass sitting immediately above it too; that guard is gone, because the
 // bypass is now DECLARED in `chain.bypass` and honoured once, by the evaluator (V58).
 //
-// ── THE FACE RANGE, AND WHY IT DOES NOT CHANGE WHAT THIS NODE ALREADY MEANT (#638) ──
+// ── WHICH FACES RECEIVE THE WRITE, AND WHY THAT DID NOT CHANGE WHAT THIS NODE MEANT ──
 //
 // Blender's `Set Material` takes a SELECTION and writes `material_index` on the selected
-// faces; ours took the whole mesh. `faceFrom`/`faceTo` complete this node against its own
-// stated reference rather than inventing a second one. Two arms, split on whether the range
-// covers every face:
+// faces; ours took the whole mesh. #638 closed half of that with a literal `faceFrom`/
+// `faceTo` range, and ns-2 step 12 closed the other half: this is the first operator in the
+// app that reads a resolved COMPONENT SELECTION, handed to it by the evaluator as
+// `evaluate`'s fourth argument. Two arms, split on whether the assignment reaches every
+// face:
 //
-//   full range (`faceTo === -1`, or [0, faceCount))  → REPLACE. Byte-identical to what this
-//       node emitted before the range existed: one material, no slot table, no index.
-//   partial range                                     → APPEND. The source's material keeps
-//       slot 0 for the faces outside the range, the wired one takes slot 1 inside it, and
-//       the geometry is re-minted with the index folded into its key.
+//   covers every face  → REPLACE. Byte-identical to what this node emitted before either
+//       the range or the scope existed: one material, no slot table, no index.
+//   covers some faces  → APPEND. The source's material keeps slot 0 outside the assignment,
+//       the wired one takes slot 1 inside it, and the geometry is re-minted with the index
+//       folded into its key.
 //
-// The append semantics reach ONLY a state this node could not previously express — there was
-// no parameter for a partial range — so no graph anyone has already built changes meaning.
-// That is what makes this an extension rather than a semantics change to a shipped node, and
-// it is also what keeps the value migration-free: a full-range op emits the old shape, so an
+// 🔴 THE ARM IS CHOSEN FROM THE COVERAGE, NOT FROM THE PARAMS, and that is the step's whole
+// point. A three-clause test over `faceTo`/`faceFrom` cannot see a scope, so honouring one
+// would have meant adding a `scope`-shaped clause beside it — the property spelled per
+// member, which is the defect this phase exists to delete. "Does this assignment reach every
+// face?" is a question both inputs answer, asked once.
+//
+// The append semantics reach ONLY a state this node could not previously express, so no
+// graph anyone has already built changes meaning. That is what makes this an extension
+// rather than a semantics change, and it is what keeps the value migration-free: with no
+// scope authored the resolved selection is TOTAL, so `total ∩ range` is the range, and an
 // old save and a new save of the same authored state are the same bytes.
 //
-// TWO DECLARED LIMITS, both pinned by tests rather than left to be discovered:
+// THREE DECLARED LIMITS, each pinned by tests rather than left to be discovered:
 //
 //   1. ONLY THE LOWEST `SetMaterialOp` IN A STACK CONTRIBUTES A SLOT TABLE; a second one
 //      replaces it. `ModifierDataSource` carries `{geometry, material}` and nothing else, so
 //      the second op reads the first's single material field and never sees its table.
 //      Widening the data lane's source contract touches every operator on it and belongs
 //      with the selection system that would make three slots authorable in the first place.
-//   2. A LITERAL FACE RANGE, NOT A SELECTION FIELD. There is no selection or group concept
-//      in this codebase; a range is the crude precursor a field system supersedes.
-//   3. A source whose face count is not derivable from params (glTF, baked) cannot carry a
-//      range at all, and REPLACES instead. Those roads have no data half yet.
+//   2. THE RANGE AND THE SCOPE BOTH SURVIVE, AND THEY INTERSECT. `faceFrom`/`faceTo` are the
+//      crude precursor the selection supersedes; they are deleted in step 14, last, once the
+//      selection road has demonstrably executed. Until then the faces written are the ones
+//      in BOTH, which is what makes every already-authored graph produce its old output.
+//   3. A source whose face count is not derivable from params (glTF, baked) cannot carry an
+//      assignment at all, and REPLACES instead. Those roads have no data half yet — and an
+//      AUTHORED scope over one of them is a named throw from the resolver rather than a
+//      silent whole-mesh write, because the author asked for something unhonourable.
 //
 // REF: src/nodes/materialSocket.ts (the socket rule); src/app/modifierGeometry.ts
 //      (`modifierDataSource` — the shared classifier); src/nodes/MaterialOverrideOp.ts
@@ -75,10 +87,9 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { refWithAttributeKey } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
-import { faceCountOf } from '../app/faceCount';
-import { mintFaceRangeAttributes } from './meshAttributes';
+import { mintTargetedAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
-import { requireResolvedScope } from './componentSelection';
+import { isParsableScopeQuery, requireResolvedScope, SCOPE_PARAM } from './componentSelection';
 
 export const SetMaterialOpParams = z.object({
   /**
@@ -96,6 +107,36 @@ export const SetMaterialOpParams = z.object({
   faceFrom: z.number().int().default(0),
   /** Last face, inclusive. **-1 means every face** — today's behaviour, and the default. */
   faceTo: z.number().int().default(-1),
+  /**
+   * THE COMPONENT SCOPE — which faces receive the write (ns-2 step 12, #607/#660).
+   *
+   * This is the FIRST `scope` param any node declares, and the name is
+   * {@link SCOPE_PARAM} rather than a literal so the evaluator's resolver and this schema
+   * cannot drift apart. Blank is the same authoring state as absent — the author cleared
+   * the field — and both mean "every face", resolved once, in one place.
+   *
+   * 🔴 `.refine()` IS LOAD-BEARING AND IS NOT VALIDATION HYGIENE. Every refusal in the
+   * resolver is a THROW, and declaring this param is what makes an authored query reach it.
+   * The throw would land on the renderer's own walk — `resolveEvaluatedMesh` calls
+   * `evaluate` with no `try` above it and `SceneFromDAG` calls that during render, measured
+   * rather than assumed — so a director who mistyped a range would take the viewport down,
+   * and this project has no node-error surfacing at all to tell them why. Refining here
+   * moves the refusal to where the value is AUTHORED: `setParam` silently rejects a value
+   * its schema does not accept, so an unparseable query never enters params, never reaches
+   * the resolver, and has no path to the render walk. The bad state is not guarded against;
+   * it has no constructor.
+   *
+   * ⚠️ WHAT IT CANNOT CATCH, said here so the gap is not mistaken for coverage: a query that
+   * PARSES can still be unhonourable against a particular source — an authored scope over a
+   * curve, or over a `gltf`/`baked` handle whose face count is not derivable. Those depend
+   * on the spine value, which a param schema cannot see, and they remain named throws.
+   */
+  [SCOPE_PARAM]: z
+    .string()
+    .refine(isParsableScopeQuery, {
+      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
+    })
+    .default(''),
 });
 export type SetMaterialOpParams = z.infer<typeof SetMaterialOpParams>;
 
@@ -134,11 +175,12 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
   // nothing a panel could author either: its material arrives over an edge (drawn in the
   // graph) and `muted` is a stack control. Declaring 'material' here would ship a titled,
   // permanently empty card — the exact shape the #458 reachability gate exists to catch.
-  // ns-2 step 9b — see `ArrayModifier.evaluate`: required fourth argument, runtime refusal.
-  // This is the operator step 12 repoints ONTO it: `faceFrom`/`faceTo` become an input to
-  // the query rather than the query itself, so the read here is deliberately still absent.
+  // ns-2 step 12 — THE FIRST OPERATOR THAT READS ITS SELECTION. The fourth argument is the
+  // resolved {@link ComponentSelection} the evaluator hands every node whose chain declares
+  // a scope; required, and refused at runtime because a required parameter closes the
+  // omission only in production ([[H327]]).
   evaluate(params, inputs, _ctx, scope) {
-    requireResolvedScope(scope, 'SetMaterialOp');
+    const selection = requireResolvedScope(scope, 'SetMaterialOp');
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to write onto.
     if (!src) return src as unknown as ObjectData;
@@ -150,40 +192,51 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     if (!source) return src;
     // Hydrated by the socket rule, so what leaves here is always a complete IR.
     const wired = resolveNodeMaterial(inputs.material, undefined);
-    const faces = faceCountOf(source.geometry.descriptor);
-    const partial =
-      faces !== null &&
-      params.faceTo !== -1 &&
-      !(params.faceFrom <= 0 && params.faceTo >= faces - 1);
 
-    if (partial) {
+    // THE FACES THAT RECEIVE THE WRITE — the resolved selection, narrowed by the literal
+    // range. One walk, in `meshAttributes`, which hands back the key AND how many faces it
+    // covered; deriving the count a second time here would be two spellings of the same
+    // arithmetic, agreeing today and diverging the first time either is touched.
+    //
+    // ⚠️ THE ARM IS CHOSEN FROM THE COVERAGE, NOT FROM THE PARAMS. It used to be a
+    // three-clause test over `faceTo`/`faceFrom`; that test cannot see a scope, and re-adding
+    // a `scope`-shaped clause beside it would be the per-member spelling this phase exists to
+    // delete. "Does this assignment reach every face?" is the question both inputs answer.
+    const targeted = mintTargetedAttributes(
+      source.geometry.descriptor,
+      selection,
+      params.faceFrom,
+      params.faceTo,
+      'evaluate',
+    );
+
+    if (targeted !== null && targeted.covered < targeted.faces) {
       // THE APPEND ARM. The source's own material stays on slot 0 for the faces outside
-      // the range, and the wired one takes slot 1 inside it. The geometry is re-minted with
-      // the new index folded into its key: two objects whose faces are assigned differently
-      // MUST NOT collide onto one cached instance, because the group layout lives on that
-      // instance and whichever built first would decide for both.
-      const attributeKey = mintFaceRangeAttributes(
-        source.geometry.descriptor,
-        params.faceFrom,
-        params.faceTo,
-        'evaluate',
-      );
-      if (attributeKey !== null) {
-        return {
-          kind: 'ModifiedData',
-          geometry: refWithAttributeKey(source.geometry, attributeKey),
-          material: wired,
-          materialSlots: [source.material, wired],
-          attributeKey,
-        };
-      }
-      // The face count is not derivable (a glTF or baked source — its buffers live in an
-      // asset clone or in OPFS), so there is no domain to write the range onto. Fall
-      // through to REPLACE rather than emit a table with no index behind it: a table
-      // whose index is missing reports one used slot anyway, so the wired material would
-      // silently vanish from a mesh the director just assigned it to. Declared limit,
-      // pinned by a test, and it lifts when those roads get a data half of their own.
+      // the assignment, and the wired one takes slot 1 inside it. The geometry is re-minted
+      // with the new index folded into its key: two objects whose faces are assigned
+      // differently MUST NOT collide onto one cached instance, because the group layout
+      // lives on that instance and whichever built first would decide for both.
+      return {
+        kind: 'ModifiedData',
+        geometry: refWithAttributeKey(source.geometry, targeted.key),
+        material: wired,
+        materialSlots: [source.material, wired],
+        attributeKey: targeted.key,
+      };
     }
+    // Falling through to REPLACE covers two states that are different facts about the world
+    // and the same answer, which is why they are not split:
+    //
+    //   covered === faces      every face receives the write, so a table would hold one
+    //                          used slot — byte-identical to what this node emitted before
+    //                          any range or scope existed.
+    //   targeted === null      the face count is not derivable (a glTF or baked source: its
+    //                          buffers live in an asset clone or in OPFS), so there is no
+    //                          domain to write onto. Emitting a table with no index behind
+    //                          it would report one used slot anyway and the wired material
+    //                          would silently vanish from a mesh the director just assigned
+    //                          it to. Declared limit 3, pinned by a test, and it lifts when
+    //                          those roads get a data half of their own.
     return {
       kind: 'ModifiedData',
       // THE REPLACE ARM — byte-identical to what this node has always emitted, so nothing

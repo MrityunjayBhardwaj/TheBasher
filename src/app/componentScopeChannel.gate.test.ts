@@ -39,9 +39,25 @@
 // What the pre-mortem actually forbids is an operator CONSTRUCTING A SELECTION, and the
 // discriminating name for that is `totalSelection` — the only exported way to obtain one
 // without a query, since the parser is private. So `totalSelection` is censused at zero
-// external callers and `faceCountOf`-in-an-evaluate is pinned as a LITERAL of exactly one,
+// external callers and `faceCountOf`-in-an-evaluate was pinned as a LITERAL of exactly one,
 // with the reason, so a second one reds ([[V200]]: a row leaves a defect census only by
 // becoming unconstructible, never by having its probe weakened).
+//
+// 🔄 THAT LITERAL IS NOW ZERO (ns-2 step 12). The reason it carried named its own expiry —
+// *step 12 is what replaces that range with the resolved selection* — and step 12 did: the
+// count moved into `meshAttributes`, which walks the assignment anyway, and the operator
+// derives nothing. The row ratcheted down rather than being relaxed, so an operator deriving
+// a face count inside `evaluate` is now without exception the fabrication it catches.
+//
+// ── 🔴 AND THE FUSE IN THIS FILE HAS BLOWN (ns-2 step 12) ─────────────────────────────
+//
+// One row here read `declaring: []` — no node type declares a `scope` param — and existed
+// purely to RED at the first declaration, because that is the moment an unparseable query
+// becomes reachable and its named throw lands on the renderer's unguarded walk. The step
+// that created the reachability had to decide who catches it; nobody could inherit the
+// answer. TAKEN: nobody catches it, because it cannot be thrown — the query is refused at
+// the schema, where the value is authored. A second row asks that BEHAVIOURALLY of every
+// declarer, so an operator that gains a scope param and forgets the refinement reds.
 //
 // REF: src/nodes/componentSelection.ts (the resolver and the refusal);
 //      src/core/dag/evaluator.ts (`scopeFor` — the one hand-off line);
@@ -295,12 +311,20 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
     expect({ examined: files.length, callers }).toEqual({ examined: files.length, callers: [] });
   });
 
-  it('exactly ONE operator calls `faceCountOf` inside its `evaluate`, and it is the pinned one', () => {
-    // 🔴 The plan's census said ZERO. Measured: `SetMaterialOp` has called it since ns-1b,
-    // for the face RANGE it already ships — correct code the census as written would have
-    // redded. Pinned as a literal WITH its reason instead: step 12 is what replaces that
-    // range with the resolved selection, and until then a SECOND operator doing the same
-    // thing is the fabrication this row exists to catch.
+  it('NO operator calls `faceCountOf` inside its `evaluate` — step 12 took the count to zero', () => {
+    // 🔴 THE RATCHET THIS ROW WAS WRITTEN TO ANTICIPATE HAS CLOSED. The plan's census said
+    // ZERO and was false against shipped code: `SetMaterialOp` had called `faceCountOf`
+    // since ns-1b, for the face RANGE it already shipped — correct code the census as
+    // written would have redded and someone would have "fixed" by deletion. It was pinned
+    // as a literal of one WITH its reason, and the reason named its own expiry: *step 12 is
+    // what replaces that range with the resolved selection*.
+    //
+    // Step 12 did, so the literal is now the empty list. The count moved into
+    // `meshAttributes.targetedMaterialAttributes`, which is where the assignment is walked
+    // anyway — the operator hands over what it was given and derives nothing. A row leaves
+    // a defect census by becoming unconstructible, never by having its probe weakened, and
+    // this is that: any operator deriving a face count inside `evaluate` is now, without
+    // exception, the fabrication this row exists to catch.
     const files = sourceFiles();
     const withCall: string[] = [];
     for (const [path, raw] of files) {
@@ -312,7 +336,7 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
     }
     expect({ examined: files.length, withCall }).toEqual({
       examined: files.length,
-      withCall: ['src/nodes/SetMaterialOp.ts'],
+      withCall: [],
     });
   });
 
@@ -423,16 +447,20 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('no registered node type declares a `scope` param yet — so the parse throw is UNREACHABLE', () => {
-    // 🔴 THE FUSE ON A DECISION THIS STEP DOES NOT TAKE. An unparseable query is a named
-    // throw, and `evaluate` is called on the render road with no try/catch above it — so
-    // "who catches it?" is a real question. Today the answer is that nobody has to: no
-    // node's schema declares the param, and `setParam` silently rejects a field the schema
-    // does not declare, so no authored state can reach the parser.
+  it('exactly ONE registered node type declares a `scope` param — the fuse, and it has blown', () => {
+    // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
+    // `declaring: []` and existed to red at the first declaration, because an unparseable
+    // query is a named THROW and `evaluate` runs on the render road with no try/catch above
+    // it — `resolveEvaluatedMesh` calls it and `SceneFromDAG` calls that, measured. Whoever
+    // created the reachability had to answer "who catches it?", and nobody could inherit
+    // the answer.
     //
-    // This row is the fuse. The step that first declares a `scope` param reds it, and that
-    // is the step that must decide who catches the throw — inherited by nobody, decided by
-    // whoever creates the reachability.
+    // TAKEN: nobody catches it, because it cannot be thrown. The query is refused where it
+    // is AUTHORED — `SetMaterialOp`'s schema refines the field with the parser's own
+    // validator, and `setParam` rejects a value the schema will not take, so an unparseable
+    // query never enters params. The bad state has no constructor rather than a handler,
+    // which matters because this project has no node-error surfacing at all (censused at
+    // zero): a throw here would have been the director's entire feedback.
     const declaring = listNodeTypes().filter((type) => {
       const shape = (
         getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
@@ -441,8 +469,39 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     });
     expect({ examined: listNodeTypes().length, declaring }).toEqual({
       examined: listNodeTypes().length,
-      declaring: [],
+      declaring: ['SetMaterialOp'],
     });
+  });
+
+  it('🔴 …and EVERY declarer refuses an unparseable query at its own schema', () => {
+    // This is the row that makes the decision above enforced rather than described. A
+    // second operator gaining a scope param and forgetting the refinement is exactly the
+    // per-member omission this phase exists to delete, and it would be SILENT: the param
+    // would work perfectly for every query anyone tried by hand, and take the viewport down
+    // the first time someone mistyped one.
+    //
+    // Asked BEHAVIOURALLY, of the schema itself, never of the source text — a grep for the
+    // validator's name would pass on `.refine(() => true)` and on a refinement applied to
+    // the wrong field.
+    const declaring = listNodeTypes().filter((type) => {
+      const shape = (
+        getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
+      ).shape;
+      return shape !== undefined && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
+    });
+    expect(declaring.length).toBeGreaterThan(0);
+
+    const accepting: string[] = [];
+    for (const type of declaring) {
+      const schema = getNodeType(type)!.paramSchema;
+      // `wildcards are not implemented` is a named parser refusal, so a schema that takes
+      // this value is one that did not consult the parser.
+      if (schema.safeParse({ [SCOPE_PARAM]: 'arm*' }).success) accepting.push(type);
+      // And a VALID query must still be accepted — a refinement that refuses everything
+      // would pass the row above while making the param useless.
+      expect(schema.safeParse({ [SCOPE_PARAM]: '0-5' }).success).toBe(true);
+    }
+    expect({ declaring, accepting }).toEqual({ declaring, accepting: [] });
   });
 });
 

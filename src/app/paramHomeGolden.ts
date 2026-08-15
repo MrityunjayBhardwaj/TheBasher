@@ -116,7 +116,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
   // the reachability gate exists to catch. `muted`'s cell is unchanged.
-  SetMaterialOp: '[] muted=(unrouted) faceFrom=(unrouted) faceTo=(unrouted)',
+  // APPENDED AGAIN at ns-2 step 12 — `scope`, the first component-scope param in the app.
+  // Unrouted for the identical reason, and appended rather than the row being rewritten:
+  // the whole row is compared as ONE string, so an append leaves every existing cell
+  // byte-identical and a re-home anywhere in the row still shows as a diff. The three
+  // cells before it are untouched.
+  SetMaterialOp: '[] muted=(unrouted) faceFrom=(unrouted) faceTo=(unrouted) scope=(unrouted)',
   Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
@@ -141,4 +146,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 
 // 215 → 217 at #638: the two appended `SetMaterialOp` cells, both unrouted. `routed` is
 // unchanged, which is the number that would have moved had anything been re-homed.
-export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 217 } as const;
+// 217 → 218 at ns-2 step 12: the appended `SetMaterialOp.scope` cell, unrouted. `routed`
+// is STILL 124, and that is the half of this pair which discriminates — an appended param
+// only ever moves `unrouted`, so a `routed` that moved would mean a param changed homes
+// under cover of an addition, which is precisely what a lone total cannot show.
+export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 218 } as const;

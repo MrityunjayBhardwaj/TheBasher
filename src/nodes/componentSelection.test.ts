@@ -399,9 +399,32 @@ describe('#607 the query has exactly one reader', () => {
 
     expect({ examined: files.length, readers }).toEqual({
       examined: files.length,
-      readers: ['src/nodes/componentSelection.ts'],
+      readers: [
+        // ns-2 step 12 — the FIRST node to declare a scope param, and it appears here
+        // because it names the shared constant in its `paramSchema`. That is a DECLARATION,
+        // the opposite of the drift this row exists to catch: the operator says "I have a
+        // scope" using the same identifier the resolver reads, so the two cannot fall out
+        // of step. It still never sees the query — `evaluate` receives only a resolved
+        // selection, which is what the sibling rows below pin.
+        'src/nodes/SetMaterialOp.ts',
+        'src/nodes/componentSelection.ts',
+      ],
     });
     expect(files.length).toBeGreaterThan(500);
+  });
+
+  it('🔴 …and the declaring node reads the NAME only — never the query behind it', () => {
+    // The row above went from one entry to two, which is exactly the shape that turns a
+    // census into a rubber stamp: an entry gets added, the list gets longer, and nobody
+    // asks what the new entry DOES with what it named. This is that question, asked of the
+    // source rather than of the author.
+    const module = sourceFiles().find(([p]) => p === 'src/nodes/SetMaterialOp.ts')![1];
+    const body = stripComments(module);
+    // It may NAME the param (declaring the schema field) …
+    expect(body).toMatch(/\[SCOPE_PARAM\]/);
+    // … and it must never READ the value out of its own params, which is the only way an
+    // operator could get its hands on a query string to interpret a second time.
+    expect(body).not.toMatch(/params\s*(?:\.\s*scope\b|\[\s*SCOPE_PARAM\s*\])/);
   });
 
   it('and the parser is not exported, so a second reader has no import to reach', () => {
@@ -419,6 +442,15 @@ describe('#607 the query has exactly one reader', () => {
       '__resetSelectionMemoForTests',
       'canonicalScopeQuery',
       'componentCountOf',
+      // 🔴 ns-2 step 12 — the ONE new door, and it is one bit wide. Declaring the first
+      // `scope` param makes an authored query reachable, and every refusal in this module
+      // is a THROW that would land on the renderer's unguarded walk. So the query is
+      // refused where it is AUTHORED: a node's schema refines the field with this, and
+      // `setParam` rejects what the schema will not take. It returns a BOOLEAN and can
+      // never return terms, so it cannot be used to act on a scope — only to refuse one at
+      // the door. That is what keeps "no operator interprets a query" true while this
+      // exists; a variant returning terms would break it and belongs nowhere.
+      'isParsableScopeQuery',
       // ns-2 step 9b — the operator's own refusal of an OMITTED selection, written once
       // rather than copy-pasted into four `evaluate` bodies. It exports the REFUSAL, never
       // the query: an operator still has no way to reach the parser.

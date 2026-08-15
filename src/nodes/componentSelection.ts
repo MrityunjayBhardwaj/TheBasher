@@ -306,6 +306,45 @@ function inTerm(term: ScopeTerm, i: number): boolean {
   return i >= term.start && i <= term.end && (i - term.start) % term.step === 0;
 }
 
+/**
+ * Can this string be parsed as a scope query? A BOOLEAN, and nothing else (ns-2 step 12).
+ *
+ * ── WHY THIS EXISTS, AND WHY IT IS NOT A HOLE IN THE ONE-PARSER RULE ──────────────────
+ *
+ * Step 12 declares the first `scope` param, which makes an authored query reachable for the
+ * first time. Every refusal in this module is a THROW, and the throw would land on the
+ * renderer's own walk: `resolveEvaluatedMesh` calls `evaluate` with no `try` above it and
+ * `SceneFromDAG` calls that during render — measured, not assumed. A director who mistypes
+ * a range would take the viewport down, and this project has NO node-error surfacing at all
+ * (censused at zero), so the crash would be the entire feedback.
+ *
+ * So the query is validated where it is AUTHORED instead of where it is read. A node's
+ * `paramSchema` refines the field with this predicate, `setParam` silently rejects a value
+ * its schema does not accept, and an unparseable query therefore never reaches params, never
+ * reaches the resolver, and cannot throw. That is the ladder's third rung: the bad state is
+ * not guarded against, it has no constructor.
+ *
+ * ⚠️ THIS RETURNS A BOOLEAN AND CAN NEVER RETURN TERMS, which is the whole reason it is safe
+ * to export while {@link parseScopeQuery} stays private. The rule this module exists to make
+ * true is that no operator INTERPRETS a query — an operator that could ask "which faces does
+ * this name?" would be a second reading of the query language, and that is the defect the
+ * phase is deleting. "Is this well-formed?" is a different question with a one-bit answer:
+ * it cannot be used to act on a scope, only to refuse one at the door.
+ *
+ * It is deliberately NOT total in the other direction either: a query that parses can still
+ * be unhonourable against a particular value (an authored scope on a curve, or on a `gltf`
+ * handle whose face count is not derivable). Those depend on the SPINE, which a param schema
+ * cannot see, and they remain named throws from {@link resolveComponentSelection}.
+ */
+export function isParsableScopeQuery(query: string): boolean {
+  try {
+    parseScopeQuery(query);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The ONE canonicaliser
 // ---------------------------------------------------------------------------
