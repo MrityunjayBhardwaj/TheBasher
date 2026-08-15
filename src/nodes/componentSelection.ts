@@ -334,13 +334,30 @@ function canonicaliseTerms(terms: readonly ScopeTerm[]): ScopeTerm[] {
   return out;
 }
 
-/** Sort and coalesce one maximal run of same-operator terms. */
+/**
+ * Sort, de-duplicate and (where it is meaning-preserving) coalesce one maximal run of
+ * same-operator terms.
+ *
+ * 🔴 COALESCING IS NOT VALID FOR EVERY OPERATOR, AND ASSUMING IT WAS SHIPPED A BUG (#677).
+ * Each term in an `add` run contributes its range and each term in a `remove` run takes
+ * one away, so both runs are a UNION of ranges and merging two that touch is exactly the
+ * same set. A `complement` term contributes the complement of its range, and the union of
+ * two complements is NOT the complement of the union:
+ *
+ *     `!0-2 !3-5`  over 12 faces  =  {3..11} ∪ {0,1,2,6..11}  =  all twelve
+ *     `!0-5`       over 12 faces  =  {6..11}                  =  six
+ *
+ * Merging them made two queries selecting twelve and six faces share one canonical form,
+ * which is one cached geometry for two different scopes — the wrong mesh on screen, and
+ * the precise failure this canonicaliser exists to prevent. Sorting and de-duplication
+ * stay valid for all three, because union is commutative whatever is being unioned.
+ */
 function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
-  const op = run[0].op;
+  const coalescible = run[0].op !== 'complement';
 
-  // Only contiguous ranges coalesce. A stepped range cannot merge with anything without
-  // changing which elements it names, so stepped terms are sorted and de-duplicated and
-  // otherwise left exactly as written.
+  // Even within a coalescible run, only CONTIGUOUS ranges merge: a stepped range cannot
+  // absorb or be absorbed without changing which elements it names, so stepped terms are
+  // sorted and de-duplicated and otherwise left exactly as written.
   const contiguous = run
     .filter((t) => t.step === 1)
     .sort((a, b) => a.start - b.start || a.end - b.end);
@@ -352,8 +369,12 @@ function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
   for (const term of contiguous) {
     const last = merged[merged.length - 1];
     // `start <= last.end + 1` merges ADJACENT ranges too: `0-2 3-5` is `0-5`.
-    if (last && term.start <= last.end + 1) {
+    const mergeable = coalescible && last !== undefined && term.start <= last.end + 1;
+    if (mergeable) {
       if (term.end > last.end) merged[merged.length - 1] = { ...last, end: term.end };
+    } else if (last && last.start === term.start && last.end === term.end) {
+      // A duplicate is removable for every operator — `!0-5 !0-5` is `!0-5`.
+      continue;
     } else {
       merged.push(term);
     }
@@ -368,7 +389,6 @@ function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
     dedupedSteps.push(term);
   }
 
-  void op;
   return [...merged, ...dedupedSteps];
 }
 

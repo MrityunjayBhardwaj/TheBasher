@@ -209,8 +209,38 @@ describe('#607 the canonicaliser, pinned in BOTH directions', () => {
     '3',
     '3 3 3',
     '0-5 ^2-3 ^4',
+    // 🔴 #677 — SEVERAL TERMS OF THE SAME OPERATOR IN A ROW, for each of the three. The
+    // soundness property below was correct and still missed a real bug, because this list
+    // had no query with two negations in a row and a property quantified over a set that
+    // cannot construct a shape says nothing about that shape. `!0-2 !3-5` selects every
+    // face of a twelve-face box while `!0-5` selects six, and they were canonicalising
+    // alike.
+    '!0-2 !3-5',
+    '!0-5 !6-11',
+    '!0-5 !0-5',
+    '!3 !4 !5',
+    '0-2 3-5 6-8',
+    '0-11 ^0-2 ^3-5',
+    '0-11 ^0-5',
   ];
   const LENGTHS = [6, 12, 24, 48];
+
+  it('the query set can REACH the shapes that distinguish the operators', () => {
+    // #677's real lesson. The soundness row below is only as strong as this list, and a
+    // list that never puts two same-operator terms side by side cannot see the one rule
+    // that differs between them. Asserted rather than intended, so a later trim of the
+    // list reds here instead of quietly weakening the property.
+    const runsOf = (op: '' | '^' | '!'): number =>
+      QUERIES.filter(
+        (q) =>
+          q.split(/\s+/).filter((t) => (op === '' ? /^\d/.test(t) : t.startsWith(op))).length >= 2,
+      ).length;
+    expect({
+      add: runsOf('') >= 2,
+      remove: runsOf('^') >= 2,
+      complement: runsOf('!') >= 2,
+    }).toEqual({ add: true, remove: true, complement: true });
+  });
 
   it('collapses the spellings the plan named — the injective-downward half', () => {
     expect(canonicalScopeQuery('5,4,3,2,1,0')).toBe('0-5');
@@ -260,6 +290,23 @@ describe('#607 the canonicaliser, pinned in BOTH directions', () => {
     // A property test over pairs that share nothing compares nothing and passes. The count
     // is asserted so a green here means the loop had work to do.
     expect(comparedPairs).toBeGreaterThan(0);
+  });
+
+  it('never merges two NEGATED ranges, because their union is not the union of their ranges', () => {
+    // #677, as a literal. `!0-2 !3-5` is every face of a twelve-face box — each term keeps
+    // what the other throws away — while `!0-5` is six. Merging them put two different
+    // scopes on one geometry key.
+    expect(selected(resolveAt('!0-2 !3-5', 12))).toHaveLength(12);
+    expect(selected(resolveAt('!0-5', 12))).toEqual([6, 7, 8, 9, 10, 11]);
+    expect(canonicalScopeQuery('!0-2 !3-5')).not.toBe(canonicalScopeQuery('!0-5'));
+
+    // The sibling operators DO merge, and that is what makes the rule a distinction rather
+    // than a blanket refusal to coalesce.
+    expect(canonicalScopeQuery('0-2 3-5')).toBe('0-5');
+    expect(canonicalScopeQuery('^0-2 ^3-5')).toBe('^0-5');
+
+    // A duplicate is removable for every operator, negation included.
+    expect(canonicalScopeQuery('!0-5 !0-5')).toBe('!0-5');
   });
 
   it('is NOT total, and the counter-example is pinned rather than described', () => {
