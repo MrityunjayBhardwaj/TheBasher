@@ -310,9 +310,17 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
     ).toThrow(/ArrayModifier\.evaluate was called with no resolved selection/);
   });
 
-  it('all four scoped operators refuse it, and no unscoped one does', () => {
+  it('all THREE scoped operators refuse it, and no unscoped one does', () => {
     // Derived from the declarations, never a list: the population is whoever declares a
     // scope, so an operator that starts declaring one is covered the day it does.
+    //
+    // 🔴 THIS SAID FOUR UNTIL ns-2 STEP 17, AND THE POPULATION IS WHY IT MOVED RATHER THAN
+    // THE REFUSAL. `MaterialOverrideOp` declared `scope: 'target'` and never read the
+    // selection — measured byte-identical for a total selection and for half the faces —
+    // so its declaration became `unscoped, why: 'declined'`, and an unscoped operator is
+    // handed `undefined` by `scopeFor` and must NOT refuse it. The count fell because a
+    // liar left the set, not because a refusal was weakened; the derivation above is what
+    // made the change a one-line literal instead of an audit. (#682)
     const refused: string[] = [];
     const accepted: string[] = [];
     for (const type of listNodeTypes()) {
@@ -328,7 +336,7 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
       }
     }
     expect({ refused: refused.sort(), accepted }).toEqual({
-      refused: ['ArrayModifier', 'MaterialOverrideOp', 'MirrorModifier', 'SetMaterialOp'],
+      refused: ['ArrayModifier', 'MirrorModifier', 'SetMaterialOp'],
       accepted: [],
     });
   });
@@ -424,6 +432,46 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
     // The control. An empty `reachers` is only worth reading if the probe finds the two
     // files that DO name these symbols; a typo in the regex produces the same green.
     expect(definers.sort()).toEqual([DEFINER, 'src/nodes/componentSelection.ts'].sort());
+  });
+
+  it('🔴 …and ONE canonicaliser, with its two callers NAMED — step 17', () => {
+    // The parser census above says nobody can turn a query into a SET. This is the other
+    // half of the one-parser rule and it was missing until step 17: nobody can turn a query
+    // into a canonical STRING except through one function.
+    //
+    // 🔴 WHY IT IS A SEPARATE CLAIM. Canonicalisation is what makes two spellings of one
+    // scope share a cached geometry, so a SECOND canonicaliser that agrees today is
+    // [[V155]]'s hazard aimed at the geometry registry: the day the two disagree by one
+    // space, two byte-identical builds occupy two cache entries and a handle repoints
+    // mid-drag. The failure is a cache miss and a wrong mesh, never an exception.
+    //
+    // Both callers are legitimate and both are named, because an exemption nobody can see
+    // is how a census starts lying:
+    //   `componentSelection.ts`  THE resolver — mints `ComponentSelection.canonicalQuery`
+    //   `modifierGeometry.ts`    `scopeField` — the ONE place a query becomes part of a key
+    // They are not one caller because they answer different questions: an operator's
+    // identity for a selection, and a descriptor's field. Both go through this function,
+    // which is the whole claim.
+    const DEFINER = 'src/nodes/scopeQuery.ts';
+    const ALLOWED = ['src/nodes/componentSelection.ts', 'src/app/modifierGeometry.ts'];
+    const files = sourceFiles();
+    const naming = files
+      .filter(([path]) => !path.includes('.test.'))
+      .filter(([, raw]) => /\bcanonicalScopeQuery\b/.test(stripComments(raw)))
+      .map(([path]) => path);
+
+    expect({
+      examined: files.length,
+      others: naming.filter((p) => p !== DEFINER && !ALLOWED.includes(p)),
+    }).toEqual({
+      examined: files.length,
+      others: [],
+    });
+
+    // The control, in both directions: exactly one definer, and both allowed callers really
+    // do name it. A regex that matched nothing would satisfy the row above unchanged.
+    expect(naming.filter((p) => p === DEFINER)).toEqual([DEFINER]);
+    expect(naming.filter((p) => ALLOWED.includes(p)).sort()).toEqual([...ALLOWED].sort());
   });
 
   it('🔴 …and no node module imports the query EVALUATORS, which is load-bearing now', () => {

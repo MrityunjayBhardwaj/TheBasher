@@ -181,3 +181,25 @@ all red. The prediction is stale by construction, and the staleness is the desig
 did **not** build one (§17: it would infer correspondence from a field answering a different
 question, and 3 of 7 operators would need an exemption). The check that exists — and that
 fired — is the declaration-vs-behaviour one.
+
+### The step-17 delta, recorded rather than folded into the table above
+
+The table above is stamped with the tree it ran on (`838e8c1`) and stays as it was. Step 17
+added `operatorScopeHonouring.gate.test.ts`, and re-running every arm on `18501fc` moved
+exactly three of them, each by exactly two:
+
+| arm                   | 838e8c1 | 18501fc | what joined                                       |
+| --------------------- | ------- | ------- | ------------------------------------------------- |
+| `scopeConsumed`       | 8       | **10**  | the honouring cross-check **and its minted liar** |
+| `scopeArrayConsumed`  | 9       | **11**  | the same two                                      |
+| `scopeMirrorConsumed` | 8       | **10**  | the same two                                      |
+
+Every other arm is byte-identical, including both controls.
+
+🔑 **THE SHAPE IS THE POINT.** The three arms that moved are the three that discard INSIDE a
+consumer; the four that patch the evaluator did not move, because the new gate calls
+`evaluate` directly and is off their path — [[H375]] again, one file later. So the honouring
+check is a per-consumer detector that nobody had to aim: it reds for whichever operator stops
+honouring, without being told which one, which is the property the three separate arms buy
+one at a time. **Its liar row moving with it is the useful half** — an arm that redded only
+the cross-check would leave open whether the check had merely become unsatisfiable.

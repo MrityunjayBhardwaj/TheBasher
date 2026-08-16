@@ -103,22 +103,32 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     }
   });
 
-  it('SCOPE is declared per operator, and the escape hatch is EXACTLY empty', () => {
+  it('SCOPE is declared per operator, and the escape hatch has EXACTLY ONE member', () => {
     // Generators: the selection names what they GENERATE FROM.
     expect(where((c) => c.scope.kind === 'source')).toEqual(['ArrayModifier', 'MirrorModifier']);
     // Writers: the selection names what RECEIVES the write.
-    expect(where((c) => c.scope.kind === 'target')).toEqual([
-      'MaterialOverrideOp',
-      'SetMaterialOp',
-    ]);
+    expect(where((c) => c.scope.kind === 'target')).toEqual(['SetMaterialOp']);
     // Not a choice: the spine value has no components at all.
     expect(
       where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'no-component-domain'),
     ).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
 
-    // THE EMPTY SET, ASSERTED. `declined` means "could be scoped, is not, yet". The day
-    // one appears, this reds and somebody has to say so out loud in the diff.
-    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
+    // 🔴 THIS ASSERTED THE EMPTY SET UNTIL ns-2 STEP 17, AND THE ROW DID EXACTLY WHAT IT
+    // WAS WRITTEN FOR. `declined` means "could be scoped, is not, YET", and the comment
+    // here said: *the day one appears, this reds and somebody has to say so out loud in
+    // the diff.* Step 17's honouring cross-check found `MaterialOverrideOp` declaring
+    // `target` and emitting byte-identical output for a total selection and for half the
+    // faces — a lying label, shipped. Re-declaring it truthfully is what put it here.
+    //
+    // ⚠️ SO THE EMPTY SET WAS NEVER EVIDENCE OF ANYTHING. It was empty because the
+    // operator that belonged in it had declared something else, which is precisely the
+    // failure an exact census of the empty set cannot see on its own — it needs the
+    // honouring check beside it. Both are now asserted, and they are what disagree when a
+    // declaration drifts from behaviour again. Honouring it is #682; the day that lands,
+    // this returns to `[]` and the `target` set above regains a second member.
+    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
+      'MaterialOverrideOp',
+    ]);
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {

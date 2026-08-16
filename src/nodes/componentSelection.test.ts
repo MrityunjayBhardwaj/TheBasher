@@ -209,6 +209,19 @@ describe('#607 a selection cannot be built against a count that does not exist',
   });
 });
 
+// ⚠️ ns-2 STEP 17 — THE STORED-MASK IMMUTABILITY ASSERTION HAS NO SUBJECT IN THIS PHASE,
+// AND THAT IS STATED HERE RATHER THAN LEFT AS A GAP IN THE PLAN. §17 asks for "a stored
+// group's `Int32Array` is byte-identical after a full resolution pass". v1 stores no group
+// at all — the query is a range expression over component indices, and NAMING a group is a
+// decision deliberately deferred to the phase that builds them (see this module's header,
+// "what v1 parses"). So the population of that assertion is ZERO: there is no stored mask
+// to be mutated, and writing one would be a fixture asserting about itself.
+//
+// The live half of the same concern DOES have a subject and is the describe below: the
+// MEMOIZED total selection is shared between every unscoped operator, and it exposes no
+// buffer, so a mutating reader has no constructor. That is the property that would have
+// needed the immutability assertion if a buffer had escaped — it does not, which is why
+// D2 records the assertion as no longer needed for it.
 describe('#607 the resolved selection exposes no buffer', () => {
   it('has exactly five members, none of them an array', () => {
     // What makes the memoized total safe to share. A reader that mutated it would corrupt
