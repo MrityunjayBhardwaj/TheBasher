@@ -25,6 +25,13 @@
 // exactly, and each pin ships with a minted liar proving the cross-check can fail. A list
 // that cannot be derived gets a gate; it does not get trust.
 //
+// ⚠️ THE ARITHMETIC, SPELLED OUT — because "four are gone" and "two survive" do not add up
+// to seven, and the merge-gate review had to re-derive the missing one. SEVEN → THREE. The
+// third survivor is `ALL` in `registerAll.ts`, and it is not defended above because it is
+// not a membership spelling at all: it is the registry's own input, the list every derived
+// answer is derived FROM. A thing cannot be derived from itself. The two defended above are
+// the two that stayed despite being derivable in principle.
+//
 // ── THE ONE THING THIS STEP DID NOT CLOSE, SAID HERE RATHER THAN GLOSSED ──────────────
 //
 // A cross-check is loud in CI. It is NOT the same as unconstructible: a new modifier absent
