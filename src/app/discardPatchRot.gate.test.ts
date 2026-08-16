@@ -73,6 +73,23 @@ const REQUIRED_PATCHES = [
   // observed naming a behavioural assertion, a `red > 0` from this phase's own discard could
   // not be told apart from a harness silently no-opping on a road nobody drives.
   'scopeConsumed',
+  // 🔴 THE TWO THE EXIT TABLE NAMED AND THE HARNESS DID NOT HAVE (step 16, #679).
+  //
+  // Discard point (b) again, once per GENERATOR. `scopeConsumed` covers the one operator
+  // that WRITES through a selection; these cover the two that turn one into a geometry
+  // key, and the exit requires each to red its own operator's rows and NEITHER of the
+  // others'. Nothing already here could stand in for them, and that was measured rather
+  // than assumed: with all eight of the other patches run, ZERO named a single row of
+  // `componentScope.test.ts` — the file written specifically to grade these two. Four of
+  // them patch `evaluator.ts` while a generator's rows call `evaluate` directly, and the
+  // fifth corrupts a total selection's LENGTH while a generator reads only its
+  // `canonicalQuery`, so a generator is structurally blind to it.
+  //
+  // The step that shipped each generator measured the discard by hand and wrote the number
+  // into a commit message. A hand measurement is not a standing arm, and the exit is
+  // re-run at every future step of this epic.
+  'scopeArrayConsumed',
+  'scopeMirrorConsumed',
 ].sort();
 
 describe('ns-2 step 11 — the discard harness’s patches have not rotted', () => {

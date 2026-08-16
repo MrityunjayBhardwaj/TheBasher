@@ -111,3 +111,73 @@ that a consumer now exists. **Step 16's first row can be read as a claim about t
 A note for whoever adds the next patch: the first run of this control redded **4**, and the
 extra one was `discardPatchRot`'s own "every required patch is still present, by NAME" —
 working exactly as intended. A new patch is a deliberate act and the list acknowledges it.
+
+## 🔴 THE EXIT (ns-2 step 16) — all fourteen rows, measured
+
+Run on `838e8c1`, tier **357 files / 4282 tests** green, every perturbation reverted from
+bytes saved beforehand and the tree proven byte-identical with `git diff --quiet`. Nine of
+the rows are hand perturbations rather than patches, and they are named here so the next run
+reproduces them rather than re-inventing them.
+
+**The blocking condition — _if the first row reads 0, the phase is not done_ — is not
+tripped. Row 1 reads 8.** Three of the fourteen `must NOT red` predictions were falsified,
+all three in the same direction: the instruments are STRONGER than the plan credited them.
+No `must red` half failed.
+
+| #   | perturbation                                            | red      | must red — measured                                                   | must NOT red — measured                                                  |
+| --- | ------------------------------------------------------- | -------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| 1   | `scopeHandOff` — answer discarded at the hand-off       | **8**    | 🔴 **NOT 12 / 13a / 13b — zero of them.** 5 × step 9b, 3 × step 10    | —                                                                        |
+| 2   | `scopeNeverResolved` / `scopeRoadRemoved`               | 9 / 15   | the same, plus step 10's parser-reachability row                      | —                                                                        |
+| 3   | `scopeConsumed` — `SetMaterialOp` only                  | **8**    | 3 × step 12 + 5 × #638                                                | ✅ 0 array rows, 0 mirror rows, 0 exit rows                              |
+| 4   | `scopeArrayConsumed` — `ArrayModifier` only             | **9**    | 4 × 13a + 2 × the exit + 3 × step 10                                  | ✅ 0 mirror rows, 0 step-12 rows                                         |
+| 5   | `scopeMirrorConsumed` — `MirrorModifier` only           | **8**    | 5 × 13b + 3 × the exit                                                | ✅ 0 array rows, 0 step-12 rows                                          |
+| 6   | the canonicaliser over-coalesces (#677's own bug)       | **1**    | step 9's both-directions row, alone                                   | ✅ 12.5's two-instances assertion                                        |
+| 7   | the resolver returns a total selection unconditionally  | **38**   | 12 (×8), 13a (×4), 13b (×5), the exit (×5), 9b, 10, the language      | —                                                                        |
+| 8   | the builder ignores the descriptor's scope field        | **22**   | 12.5's parity row, ×5 descriptors                                     | ✅ the sharing assertion                                                 |
+| 9   | 🔴 CORRELATED — builder **and** `faceCountOf` ignore it | **20**   | 12.5's literal row (`24`), and its mirror twin (`18`)                 | ✅ **the parity gate is ABSENT** — the whole reason row 2 of 12.5 exists |
+| 10  | the scope removed from the geometry KEY                 | **25**   | 12.5's two-instances assertion                                        | ❌ **the count-parity gate ALSO redded (×4)** — see below                |
+| 11  | `chain.scope` dropped from one declaration              | **1757** | step 4's refusal, **at registration, by name**                        | ❌ **unanswerable** — see below                                          |
+| 12  | a `muted:` guard restored in one operator               | **3**    | both no-second-honouring detectors + the operator's own blindness row | ✅ the five bypass hashes                                                |
+| 13  | a hand-maintained membership list re-introduced         | **1**    | "THREE membership lists remain, each with a reason"                   | ✅ nothing behavioural                                                   |
+| 14  | `chain.section` disagreeing with the node's stack       | **30**   | step 4's section row + 4 × step 7's membership rows                   | ❌ **20+ behavioural rows redded too** — see below                       |
+
+### 🔴 Row 1 — the count is 8, and the plan named the wrong witnesses
+
+The exit's headline row was written expecting steps 12, 13a and 13b to observe it. **Not one
+of them does.** Those files call `evaluate` DIRECTLY — deliberately, because the muted case
+can only be observed on a direct call — so a patch on `evaluator.ts` is off their path
+entirely. What observes the hand-off is step 9b's five rows and step 10's three, and three of
+those eight are behavioural (a key set and a byte count over a real sweep).
+
+⇒ **the per-operator arms (rows 3–5) are what carry the phase's behavioural proof**, and the
+harness did not have two of the three until this step (#679). The exit table asked a question
+its own instrument could not answer, and that only became visible by running it.
+
+### 🔴 Row 10 — a key is not only an identity, it is a CACHE key
+
+Predicted: the count-parity gate cannot see a key change, because it compares a count against
+a build for one descriptor. Measured: it redded four times, and the failure names show why —
+two differently-scoped descriptors now produce **the same key**, so the registry hands the
+second one the FIRST one's cached build. Parity then compares a count for one scope against
+a geometry built for another. The gate is sensitive to key collisions as well as to
+count/build drift, which is more than it was credited with.
+
+### 🔴 Row 11 — the refusal is at REGISTRATION, so the row has no `must NOT red` half
+
+Dropping `chain.scope` from one declaration does not red a gate; it stops the registry from
+seeding at all, and 1757 tests fail carrying the refusal's own sentence:
+`registerNodeType(ArrayModifier): chain declaration is missing scope.` "Does the arithmetic
+stay green?" has no answer when no node can register. The totality refusal is unsurvivable
+rather than detectable — stronger than the table's phrasing, and worth stating that way.
+
+### 🔴 Row 14 — its own step made the prediction false
+
+"Must NOT red anything behavioural" was written when `chain.section` was a label. **Step 7
+derived stack membership from it**, so a lying section does not mislabel an operator, it
+moves it to another stack: `operatorStack`, the addModifier mutator and the read-side parity
+all red. The prediction is stale by construction, and the staleness is the design working.
+
+⚠️ The table's row 14 also names an `inspectorSections` cross-check. Revision 2 deliberately
+did **not** build one (§17: it would infer correspondence from a field answering a different
+question, and 3 of 7 operators would need an exemption). The check that exists — and that
+fired — is the declaration-vs-behaviour one.
