@@ -184,7 +184,13 @@ export function targetedMaterialAttributes(
 
 /**
  * Derive a targeted assignment, store it, and hand back BOTH the key and how many faces it
- * actually covers — the selection sibling of {@link mintFaceRangeAttributes}.
+ * actually covers — the selection sibling of {@link mintMeshAttributes}.
+ *
+ * Its RANGE sibling, `mintFaceRangeAttributes`, was deleted at the ns-2 merge gate: step 14
+ * retired `SetMaterialOp`'s `faceFrom`/`faceTo` pair and took its only caller with it, and
+ * an exported store-wrapper with no callers reads as live API. `faceRangeMaterialAttributes`
+ * below is deliberately KEPT — `SetMaterialOp.test.ts` anchors on it as the untouched #638
+ * producer, an oracle that does not route through the code it checks.
  *
  * ⚠️ THE COVERED COUNT IS RETURNED RATHER THAN RE-DERIVED BY THE CALLER. `SetMaterialOp`
  * needs it to choose between REPLACE and APPEND, and a caller that recomputed it from the
@@ -206,24 +212,6 @@ export function mintTargetedAttributes(
   let covered = 0;
   for (let face = 0; face < faces; face++) if (assigned[face] === 1) covered += 1;
   return { key: minted.key, covered, faces };
-}
-
-/**
- * Derive a face-range assignment, store it, and hand back the key — the range sibling of
- * {@link mintMeshAttributes}, with the same content-keyed idempotence and the same required
- * `via`, for the same reasons.
- */
-export function mintFaceRangeAttributes(
-  descriptor: GeometryDescriptor,
-  from: number,
-  to: number,
-  via: AttributeGrowthSource,
-): string | null {
-  refuseUnattributedGrowth(via);
-  const minted = faceRangeMaterialAttributes(descriptor, from, to);
-  if (minted === null) return null;
-  insert(minted.key, minted.set, via);
-  return minted.key;
 }
 
 /** What {@link rebuiltMeshAttributes} decided, and why — the reason is never dropped. */

@@ -425,8 +425,11 @@ export function resolveComponentSelection(
 /**
  * The operator's own refusal of an OMITTED selection — rung 3's runtime half, once.
  *
- * The fourth argument to `evaluate` is required on the four scoped operators, and a
- * required parameter closes the omission only in production: `npm run typecheck` excludes
+ * The fourth argument to `evaluate` is required on every scoped operator — the three that
+ * declare a `source` or `target` scope, censused in `operatorChainDeclaration.gate.test.ts`
+ * rather than counted here, because that number has already moved once (step 17 re-declared
+ * `MaterialOverrideOp` as `unscoped`). A required parameter closes the omission only in
+ * production: `npm run typecheck` excludes
  * test files and vitest strips types without checking them, so both standing gates are
  * blind to the same call site ([[H327]], which has now fired twice in this epic). The
  * refusal has to run.

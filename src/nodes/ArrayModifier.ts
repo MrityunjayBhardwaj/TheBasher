@@ -142,8 +142,9 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   },
   // ns-2 step 9b — `scope` is the resolved component selection the evaluator hands every
   // node whose chain declares one. REQUIRED here (not `scope?`), because the population of
-  // this signature is exactly the four scoped operators and forgetting it is the road the
-  // phase exists to close; refused at RUNTIME as well, because a required parameter closes
+  // this signature is exactly the operators declaring a `source` or `target` scope — three
+  // today, derived by `operatorChainDeclaration.gate.test.ts` rather than restated here —
+  // and forgetting it is the road the phase exists to close; refused at RUNTIME as well, because a required parameter closes
   // the omission only in production ([[H327]]).
   //
   // 🔴 STEP 13a — THE FIRST `'source'` CONSUMER. Read, not merely received.

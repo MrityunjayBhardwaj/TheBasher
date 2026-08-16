@@ -184,15 +184,23 @@ fired — is the declaration-vs-behaviour one.
 
 ### The step-17 delta, recorded rather than folded into the table above
 
-The table above is stamped with the tree it ran on (`838e8c1`) and stays as it was. Step 17
+The table above is stamped with the tree it ran on and stays as it was. Step 17
 added `operatorScopeHonouring.gate.test.ts`, and re-running every arm on `18501fc` moved
 exactly three of them, each by exactly two:
 
-| arm                   | 838e8c1 | 18501fc | what joined                                       |
+| arm                   | step 16 | step 17 | what joined                                       |
 | --------------------- | ------- | ------- | ------------------------------------------------- |
 | `scopeConsumed`       | 8       | **10**  | the honouring cross-check **and its minted liar** |
 | `scopeArrayConsumed`  | 9       | **11**  | the same two                                      |
 | `scopeMirrorConsumed` | 8       | **10**  | the same two                                      |
+
+🔴 **THE TREES THESE RUNS WERE STAMPED WITH ARE `6773c79` (step 16) AND `7c8c418` (step 17)**,
+and the ids that stood here before the merge-gate review — `838e8c1` and `18501fc` — were
+pre-amend objects on **no branch at all**, reachable only until the next `gc`. Both readings
+stand: `git diff` between each pre-amend id and the commit that shipped is **this file and
+nothing else**, which is what recording a measurement after taking it looks like. But a
+citation a reader cannot resolve is not a citation, so the stamps now name commits that are
+ancestors of the branch head.
 
 Every other arm is byte-identical, including both controls.
 

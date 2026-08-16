@@ -280,11 +280,20 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // A consolidation that leaves the old spelling beside the new one has ADDED a spelling.
     // Comment-stripped, so the historical notes in `types.ts` — which say what the field
     // WAS — are not violations, and a live re-declaration is.
-    const live = sourceFiles()
+    //
+    // 🔴 THE DENOMINATOR IS ASSERTED, and it was not until the merge-gate review. MEASURED:
+    // with `sourceFiles()` stubbed to return `[]` this file passed 10 of 10 — this row
+    // reporting a clean empty set having opened nothing — while 56 tests across 22 files
+    // redded. So the suite was never blind to an empty walk; THIS ROW was, and a row that
+    // cannot tell "nobody spells it that way" from "I read nothing" is the rubber stamp it
+    // was written to prevent. Its siblings across the phase's gates already carried this.
+    const files = sourceFiles();
+    const live = files
       .map(([path, src]) => [path, stripComments(src)] as const)
       .filter(([, src]) => /\bchainInput\b/.test(src))
       .map(([path]) => path);
-    expect(live).toEqual([]);
+    expect(files.length, 'the source walk read nothing').toBeGreaterThan(500);
+    expect({ examined: files.length, live }).toEqual({ examined: files.length, live: [] });
   });
 
   it('the declaration is on the DEFINITION, so it cannot reach a value or params hash', () => {

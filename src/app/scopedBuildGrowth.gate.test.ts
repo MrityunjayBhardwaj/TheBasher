@@ -11,9 +11,12 @@
 // 🔴 THE FIRST HALF WAS ALREADY SHIPPED, BY STEP 9b'S REPAIR. [[V205]] split a declared
 // `null` from an omitted `undefined`, and the arm it added — *no scope authored, and the
 // spine has a derivable face count* → `totalSelection(domain, length)` — IS the degenerate
-// derivation. All four scoped operators receive a total selection today, asserted at
+// derivation. Every scoped operator receives a total selection today, asserted at
 // `componentScopeChannel.gate.test.ts` ("a `source` operator receives a resolved selection
-// with the mesh's own face count"). There is no rewrite left to land, and saying so is
+// with the mesh's own face count"). ⚠️ The population is NOT restated here as a number:
+// step 17 moved it from four to three by re-declaring `MaterialOverrideOp` truthfully, and
+// three comments in this branch went on saying "four" until the merge-gate review. The
+// count lives in `operatorChainDeclaration.gate.test.ts`, which derives it. There is no rewrite left to land, and saying so is
 // cheaper than landing a commit that changes nothing and calling it the step.
 //
 // ── 🔴 THE SECOND HALF CANNOT FIRE YET, AND THAT IS THIS FILE'S FIRST ROW ─────────────
