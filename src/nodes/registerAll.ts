@@ -252,18 +252,42 @@ const ALL: NodeDefinition[] = [
   RenderOutputNode as unknown as NodeDefinition,
 ];
 
-let registered = false;
-
+// 🔴 THERE IS DELIBERATELY NO `registered` ONCE-GUARD HERE (#678).
+//
+// There used to be one — `if (registered) return;` — and it made this function a silent
+// no-op after `__resetRegistryForTests()`, because the reset clears the registry and cannot
+// clear a flag that lives in this module. Measured: 80 types, then 0, then 0.
+//
+// The failure is silent in the direction of "everything is fine". An empty registry throws
+// for nothing: `getNodeType(x)` is `undefined`, `declaredParamKeys(x)` is `[]`. So any check
+// shaped as "which nodes declare X?" reads a clean pass forever, whatever the answer really
+// is — which is exactly how the last row of `scopedGeneratorBuild.gate.test.ts` came to be
+// vacuous from the day it was written and pass on a tree where its claim was false.
+//
+// The guard was never load-bearing. The loop below is ALREADY idempotent — it asks
+// `getNodeType` before registering — so the flag bought one thing: skipping ~80 `Map.get`
+// calls on the single production call site (`src/app/boot.ts`, once at boot). That is the
+// entire benefit it was trading against a silent-vacuity bug class, so it is gone rather
+// than detected: with no flag, the dangerous pairing simply works and there is nothing left
+// to warn about or census.
+//
+// Pinned by `nodes.test.ts` — "re-seeds after the registry is reset", which reds by name if
+// a guard comes back. Note that the neighbouring "is idempotent" row does NOT pin this: a
+// once-guard satisfies idempotence and breaks re-seeding, which is why both rows exist.
 export function registerAllNodes(): void {
-  if (registered) return;
   for (const def of ALL) {
     if (!getNodeType(def.type)) registerNodeType(def);
   }
-  registered = true;
 }
 
-/** Test-only re-seed; pairs with __resetRegistryForTests. */
+/**
+ * Test-only re-seed; pairs with `__resetRegistryForTests`.
+ *
+ * Since #678 removed the once-guard this is exactly `registerAllNodes()`, and the two are no
+ * longer distinguishable in a way only their authors know about — which was the point. It is
+ * kept as the name ~145 test files already call; retiring it is a mechanical rename tracked
+ * separately, deliberately not folded into the commit that changed the behaviour.
+ */
 export function __reseedAllNodesForTests(): void {
-  registered = false;
   registerAllNodes();
 }
