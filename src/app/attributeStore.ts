@@ -69,14 +69,30 @@ import type { AttributeSet } from '../nodes/attributes';
  *              missing attribution looks exactly like an attribution of zero. It runs on
  *              the animated path, per frame during a drag, which is precisely the road
  *              worth being able to count on its own.
+ * `modifier`  — a generator TILED its source's assignment across the copies it merges
+ *              (#644). The THIRD producer, and it gets its own origin for the same reason
+ *              `overlay` did, plus one that is specific to it: this growth is a function of
+ *              the SOURCE's assignment and the generator's params, so it is the only origin
+ *              whose size scales with how much a director scopes and copies. Counted under
+ *              `evaluate` it would be indistinguishable from an ordinary primitive mint, and
+ *              the one road whose cost is worth watching would have no number.
+ *
+ *              ⚠️ It is deliberately NOT split by which road called the builder. The same
+ *              tiling runs from `evaluate()` and from the animation overlay's handle rebuild,
+ *              and threading a `via` through `arrayGeometryRef` / `mirrorGeometryRef` would
+ *              add a required parameter to a signature with call sites in the test tier —
+ *              which BOTH standing gates are blind to, so a forgotten one arrives as
+ *              `undefined` and lands back in the bug class `refuseUnattributedGrowth` exists
+ *              to refuse. The origin of this growth is the modifier, whichever road drove it.
  */
-export type AttributeGrowthSource = 'evaluate' | 'read' | 'prime' | 'overlay';
+export type AttributeGrowthSource = 'evaluate' | 'read' | 'prime' | 'overlay' | 'modifier';
 
 const growth: Record<AttributeGrowthSource, number> = {
   evaluate: 0,
   read: 0,
   prime: 0,
   overlay: 0,
+  modifier: 0,
 };
 
 const entries = new Map<string, AttributeSet>();
@@ -119,10 +135,15 @@ export function growthBySource(): Readonly<Record<AttributeGrowthSource, number>
   return { ...growth };
 }
 
-/** Zero the growth counters. Does NOT evict — resident entries are unaffected (limit 1). */
+/**
+ * Zero the growth counters. Does NOT evict — resident entries are unaffected (limit 1).
+ *
+ * Derived from the record's own keys rather than assigning each origin by name (#644). The
+ * by-name form was a second enumeration of the union, and a fifth origin added to the type
+ * without a matching line here would have left that origin's count carrying over between
+ * tests — a counter that never resets reads as growth attributable to whatever ran last,
+ * which is worse than no attribution because it looks like a measurement.
+ */
 export function resetGrowth(): void {
-  growth.evaluate = 0;
-  growth.read = 0;
-  growth.prime = 0;
-  growth.overlay = 0;
+  for (const via of Object.keys(growth) as AttributeGrowthSource[]) growth[via] = 0;
 }

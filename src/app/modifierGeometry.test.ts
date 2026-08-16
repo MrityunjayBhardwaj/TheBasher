@@ -85,20 +85,21 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
     // Before the fix the render road returned the source VERBATIM (geometry
     // 'box|1,1,1') while the read road returned the array.
     //
-    // #638 — the source box's key now carries an attribute component, and an `array` key
-    // embeds its source's key verbatim, so the component rides along. The modifier itself
-    // gains no assignment (D6 — a merged geometry's faces are not the source's faces), and
-    // the `array` builder still takes no attribute key of its own; this is the SOURCE's
-    // identity showing through, which is what an `array` key is made of.
+    // #644 — the `array` key no longer embeds its source's attribute component. It strips
+    // it and appends its OWN, tiled across the copies, because the merged geometry now
+    // genuinely carries that assignment. So the key names the STRIPPED source key, the
+    // params, and the array's own component.
+    //
+    // The stripped source key is derived from a bare `boxGeometryRef` rather than from the
+    // array builder, deliberately: an expectation routed through the builder under test
+    // cannot see a change to that builder ([[V189]]).
     expect(rendered.kind).toBe('ModifiedData');
     expect(read).not.toBeNull();
-    const sourceKey = boxGeometryRef(
-      [1, 1, 1],
-      mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
-    ).key;
-    expect((rendered as { geometry: { key: string } }).geometry.key).toBe(
-      `array|${sourceKey}|4|2,0,0`,
-    );
+    const bareSourceKey = boxGeometryRef([1, 1, 1], null).key;
+    const renderedKey = (rendered as { geometry: { key: string } }).geometry.key;
+    expect(renderedKey.startsWith(`array|${bareSourceKey}|4|2,0,0|a:`)).toBe(true);
+    // Exactly one component — the source's stripped, the array's appended.
+    expect(renderedKey.split('|a:').length - 1).toBe(1);
     // The one band: both roads build the identical deterministic key.
     expect((rendered as { geometry: { key: string } }).geometry.key).toBe(read!.geometry.key);
   });

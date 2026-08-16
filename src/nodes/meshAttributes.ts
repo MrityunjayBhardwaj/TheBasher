@@ -28,7 +28,11 @@
 //      src/nodes/attributeKey.ts (`mintAttributes`); src/app/attributeStore.ts (the holder);
 //      issues #633, #634, #395.
 
-import { faceCountOf } from '../app/faceCount';
+// #644 — `tiledFaceOrder` hands over the merge order ALREADY RESOLVED. This module never
+// names `scopeSelection`/`scopeSelectedCount`, and that is a pinned invariant rather than an
+// accident: turning a query string into a set is the resolver's job and the descriptor
+// road's, never a node module's (`componentScopeChannel.gate.test.ts`).
+import { faceCountOf, tiledFaceOrder } from '../app/faceCount';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
 import { MATERIAL_INDEX, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
@@ -212,6 +216,88 @@ export function mintTargetedAttributes(
   let covered = 0;
   for (let face = 0; face < faces; face++) if (assigned[face] === 1) covered += 1;
   return { key: minted.key, covered, faces };
+}
+
+/**
+ * Tile a source's per-face assignment across the copies a generator merges, store it, and
+ * hand back the key the generator's handle carries — or `null` when there is nothing to tile
+ * (#644). The FIFTH member of this file's minter family.
+ *
+ * ── THE ORDER IS TAKEN FROM THE BUILDER, NOT FROM THE ARITHMETIC ──────────────────────
+ *
+ * `buildArray` merges `[source.clone(), ...faceSubset(source, scope) x (count - 1)]` and
+ * `buildMirror` merges `[source.clone(), faceSubset(source, scope)]`, where `faceSubset`
+ * walks `f = 0..faces-1` ASCENDING and keeps the faces the mask names. `mergeGeometries`
+ * concatenates in that order. So the assignment is laid out the same way: the whole source
+ * first, then `repeats` passes over the selected faces in ascending order.
+ *
+ * Both the count and this layout come from {@link tiledFaceOrder}, and the subset comes from
+ * `scopeSelection` — the same one evaluation of a query the builder's `faceSubset` uses. That
+ * is what makes "the tiled index has exactly as many entries as the built geometry has faces"
+ * true by construction rather than by a test: `build()` consults `faceCountMismatch` BEFORE
+ * deriving a layout, so a disagreement of one face silently drops every group.
+ *
+ * ── WHY IT RETURNS `null` RATHER THAN A UNIFORM SET WHEN THE SOURCE HAS NONE ──────────
+ *
+ * A source that answered `null` to the attribute question has no assignment to propagate,
+ * and minting a uniform one here would be this module inventing data on the generator's
+ * behalf — plus it would change every unscoped generator key that has ever been written.
+ * Absence stays absence, and the generator's key keeps its historical spelling.
+ *
+ * `via` is fixed at `'modifier'` rather than threaded from the caller; the reason is in
+ * `attributeStore.ts`'s origin table.
+ */
+export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): string | null {
+  // Narrowing for `source`: `tiledFaceOrder` answers only for these two kinds, but that is
+  // its invariant and not something the type system carries back out here.
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror') return null;
+
+  const sourceKey = descriptor.source.attributeKey;
+  if (sourceKey === undefined) return null;
+  const carried = read(sourceKey)?.[MATERIAL_INDEX];
+  if (carried === undefined) return null;
+
+  const tiled = tiledFaceOrder(descriptor);
+  if (tiled === null) return null;
+  const { sourceFaces, order } = tiled;
+
+  if (carried.count !== sourceFaces) {
+    // Refused BY NAME, and it degrades to the pre-#644 behaviour (no tiling, no layout)
+    // rather than laying out a wrong one — tiling a set that does not fit its own source
+    // would put the right slots on the WRONG triangles, which is quieter than drawing
+    // slot 0 and therefore worse than the bug this change removes.
+    //
+    // ⚠️ NO PRODUCTION ROAD REACHES IT TODAY, SAID HERE RATHER THAN LEFT TO BE DISCOVERED.
+    // A ref's key and its `attributeKey` are minted in one expression, so a source's set
+    // always fits its own descriptor; the one road that could break the pair — the overlay
+    // rebuilding a handle whose face count moved — is exactly what `rebuiltMeshAttributes`
+    // above resolves, and it drops the set rather than carrying a stale one. So this is the
+    // arm for a producer that has not been written yet. It is still exercised directly by
+    // the gate, because a named guard nobody has ever run reads as "no objection" forever
+    // and a reader who finds it stops looking.
+    console.warn(
+      `meshAttributes: '${descriptor.kind}' cannot tile an assignment over ${carried.count} faces onto a source of ${sourceFaces} — leaving the copies unassigned`,
+    );
+    return null;
+  }
+
+  // A GATHER, and deliberately nothing more. Every decision about which source face lands
+  // where — the preserved input, the subset, how many times it repeats — was taken by
+  // `tiledFaceOrder`, beside the count this has to agree with. There is no arithmetic here
+  // to drift from it.
+  const data = new Int32Array(order.length);
+  for (let face = 0; face < order.length; face++) data[face] = carried.data[order[face]];
+
+  const materialIndex: AttributeData = {
+    domain: 'face',
+    type: 'int',
+    count: data.length,
+    data,
+  };
+  const minted = mintAttributes({ [MATERIAL_INDEX]: materialIndex });
+  if (minted === null) return null;
+  insert(minted.key, minted.set, 'modifier');
+  return minted.key;
 }
 
 /** What {@link rebuiltMeshAttributes} decided, and why — the reason is never dropped. */
