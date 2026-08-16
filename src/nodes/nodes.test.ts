@@ -165,6 +165,26 @@ describe('default node registration', () => {
     registerAllNodes();
     expect(listNodeTypes().length).toBe(ALL_TYPES.length);
   });
+
+  // #678 — RE-SEEDS AFTER A RESET, which is a different claim from the row above.
+  //
+  // Idempotence says "calling it twice does not duplicate". This says "calling it after the
+  // registry has been emptied fills it again". A once-guard satisfies the first and breaks
+  // the second, and the breakage is SILENT: an empty registry throws for nothing —
+  // `getNodeType(x)` is `undefined` and `declaredParamKeys(x)` is `[]` — so any check shaped
+  // as "which nodes declare X?" reads a clean pass forever, whatever the answer really is.
+  // That is what made the last row of `scopedGeneratorBuild.gate.test.ts` vacuous from the
+  // day it was written.
+  //
+  // The literal is `ALL_TYPES.length` and not `> 0` on purpose: a partial re-seed is the
+  // other way this goes wrong, and a floor cannot see it.
+  it('registerAllNodes re-seeds after the registry is reset', () => {
+    __resetRegistryForTests();
+    expect(listNodeTypes().length).toBe(0); // the reset actually emptied it
+
+    registerAllNodes();
+    expect(listNodeTypes().length).toBe(ALL_TYPES.length);
+  });
 });
 
 describe('default project', () => {
