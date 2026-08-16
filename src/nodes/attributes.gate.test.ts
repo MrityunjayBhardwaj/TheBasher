@@ -49,6 +49,11 @@ import {
   type KnownDomain,
   type MeshElementCounts,
 } from './attributes';
+import { componentCountOf } from './componentSelection';
+import type { GeometryDescriptor } from './types';
+
+/** A twelve-face box — the descriptor the second dispatch site is probed against. */
+const BOX_DESCRIPTOR: GeometryDescriptor = { kind: 'box', size: [1, 1, 1] };
 
 /** A topology with four DISTINCT counts, so a site answering the wrong domain is visible. */
 const COUNTS: MeshElementCounts = { points: 8, edges: 12, faces: 6, corners: 24 };
@@ -69,15 +74,52 @@ const DISPATCH_SITES: readonly DispatchSite[] = [
     what: 'elementCountFor',
     probe: (domain) => elementCountFor(domain, COUNTS),
   },
+  {
+    // ns-2 (#607) — the second consumer of the closed half, and the one that made the
+    // remainder check below earn its keep: this module was caught the moment it existed.
+    module: 'src/nodes/componentSelection.ts',
+    what: 'componentCountOf',
+    probe: (domain) => componentCountOf(domain, BOX_DESCRIPTOR),
+  },
 ];
 
-/** Declared exemptions — asserted EXACTLY below. Empty is the current, correct answer. */
+/**
+ * Declared exemptions — asserted EXACTLY below.
+ *
+ * 🔴 THIS LIST WAS EMPTY UNTIL ns-2, AND THE THREE ENTRIES ARE A DEFERRAL, NOT A
+ * NOT-APPLICABLE. A component selection at `point`, `edge` or `corner` is a perfectly
+ * sensible thing to want; what is missing is a way to COUNT those elements from a
+ * descriptor, which is the same arithmetic that decided ns-2 ships `face` alone. Written
+ * here rather than left implicit, because a census whose exemptions carry no reason is a
+ * list of things nobody has to justify again.
+ */
 const DOMAIN_NOT_APPLICABLE: readonly {
   readonly module: string;
   readonly what: string;
   readonly domain: KnownDomain;
   readonly reason: string;
-}[] = [];
+}[] = [
+  {
+    module: 'src/nodes/componentSelection.ts',
+    what: 'componentCountOf',
+    domain: 'point',
+    reason:
+      'a point count is not derivable from a descriptor — a box tessellates to 24 seam-split points, not 8, so the number cannot be read off the params (ns-2 D4)',
+  },
+  {
+    module: 'src/nodes/componentSelection.ts',
+    what: 'componentCountOf',
+    domain: 'edge',
+    reason: 'there is no edge buffer on a built geometry, so there is nothing to count',
+  },
+  {
+    module: 'src/nodes/componentSelection.ts',
+    what: 'componentCountOf',
+    domain: 'corner',
+    reason:
+      'a corner count follows the point count and inherits its problem; it is deferred with `point`',
+  },
+];
 
 /** The module that DECLARES the vocabulary is not a consumer of it. */
 const DECLARING_MODULE = 'src/nodes/attributes.ts';
@@ -125,7 +167,14 @@ describe('#633 domain census — every known domain has an answer at every dispa
   });
 
   it('counts the not-applicable exemptions EXACTLY', () => {
-    expect(DOMAIN_NOT_APPLICABLE).toEqual([]);
+    // Exact, not a floor. An exemption is how a hole gets a permanent excuse, so the set is
+    // pinned by (module, what, domain) and every entry is re-checked below against the
+    // registered sites and the known domains.
+    expect(DOMAIN_NOT_APPLICABLE.map((e) => `${e.module} ${e.what} ${e.domain}`)).toEqual([
+      'src/nodes/componentSelection.ts componentCountOf point',
+      'src/nodes/componentSelection.ts componentCountOf edge',
+      'src/nodes/componentSelection.ts componentCountOf corner',
+    ]);
 
     // Should one ever be added: it must name a REGISTERED site and a KNOWN domain, or the
     // exemption exempts nothing and the hole it hides stays open.

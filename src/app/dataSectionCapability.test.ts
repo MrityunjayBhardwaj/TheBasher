@@ -15,7 +15,7 @@
 // REF: src/app/dataSectionCapability.ts; src/app/modifierGeometry.ts; issue #498.
 
 import { describe, expect, it } from 'vitest';
-import { modifierDataSource } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import {
   DATA_DEPENDENT_SECTIONS,
   OBJECT_DATA_KINDS,
@@ -52,14 +52,13 @@ const BAKED_MATERIAL: BakedMaterialSpec = {
 const FIXTURES: Record<ObjectDataKind, ObjectData> = {
   MeshData: {
     kind: 'MeshData',
-    geometry: { key: 'box|1,1,1', kind: 'box', descriptor: { kind: 'box', size: [1, 1, 1] } },
+    geometry: { key: 'box|1,1,1', descriptor: { kind: 'box', size: [1, 1, 1] } },
     material: null,
   },
   BakedData: {
     kind: 'BakedData',
     geometry: {
       key: 'baked|deadbeef-8',
-      kind: 'baked',
       descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 8 },
     },
     material: BAKED_MATERIAL,
@@ -68,10 +67,9 @@ const FIXTURES: Record<ObjectDataKind, ObjectData> = {
     kind: 'ModifiedData',
     geometry: {
       key: 'array|box|1,1,1|3',
-      kind: 'array',
       descriptor: {
         kind: 'array',
-        source: { key: 'box|1,1,1', kind: 'box', descriptor: { kind: 'box', size: [1, 1, 1] } },
+        source: { key: 'box|1,1,1', descriptor: { kind: 'box', size: [1, 1, 1] } },
         count: 3,
         offset: [2, 0, 0],
       },

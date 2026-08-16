@@ -1,0 +1,21 @@
+diff --git a/src/nodes/SetMaterialOp.ts b/src/nodes/SetMaterialOp.ts
+index 26b41f5..25a37e0 100644
+--- a/src/nodes/SetMaterialOp.ts
++++ b/src/nodes/SetMaterialOp.ts
+@@ -276,7 +276,15 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData>
+     // the input changes is to test the new input's shape instead. "Does this assignment reach
+     // every face?" is the question every input answers, asked once — which is why deleting one
+     // of two inputs changed nothing here but the argument list.
+-    const targeted = mintTargetedAttributes(source.geometry.descriptor, selection, 'evaluate');
++    const targeted = mintTargetedAttributes(
++      source.geometry.descriptor,
++      // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE — at
++      // the point of use, inside the consumer. Every call stays, the import stays, the
++      // required fourth argument stays, and every source census stays green. Only the
++      // ANSWER stops mattering: every face is addressed, exactly as it was before step 12.
++      null,
++      'evaluate',
++    );
+ 
+     if (targeted !== null && targeted.covered < targeted.faces) {
+       // THE APPEND ARM. The source's own material stays on slot 0 for the faces outside

@@ -1,0 +1,18 @@
+diff --git a/src/nodes/ArrayModifier.ts b/src/nodes/ArrayModifier.ts
+index be151a3..8ef93a3 100644
+--- a/src/nodes/ArrayModifier.ts
++++ b/src/nodes/ArrayModifier.ts
+@@ -175,7 +175,12 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData>
+         source.geometry,
+         params.count,
+         params.offset,
+-        selection?.canonicalQuery,
++        // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE —
++        // at the point of use, inside this generator and no other. `requireResolvedScope`
++        // still runs, the import stays, the required fourth argument stays, and every
++        // source census stays green. Only the ANSWER stops travelling: the key is minted
++        // unscoped, exactly as it was before step 13a.
++        undefined,
+       ),
+       material: source.material,
+     };

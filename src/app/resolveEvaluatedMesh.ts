@@ -49,7 +49,7 @@ import type {
   ObjectValue,
   Vec3,
 } from '../nodes/types';
-import { modifierDataSource } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { materialAssignmentOf, materialSlotsOf } from './materialAssignment';
@@ -167,7 +167,6 @@ export function resolveEvaluatedMesh(
     }
     const geometry: GeometryRef = {
       key: `gltf|${p.assetRef}|${p.childName}`,
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: p.assetRef, childName: p.childName },
     };
 

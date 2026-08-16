@@ -7,13 +7,11 @@ afterEach(() => clear());
 
 const boxRef = (key: string, sz: [number, number, number]): GeometryRef => ({
   key,
-  kind: 'box',
   descriptor: { kind: 'box', size: sz },
 });
 
 const bakedRef = (hash: string, vertexCount: number): GeometryRef => ({
   key: `baked|${hash}-${vertexCount}`,
-  kind: 'baked',
   descriptor: { kind: 'baked', hash, vertexCount },
 });
 
@@ -48,7 +46,6 @@ describe('geometryRegistry', () => {
   it('builds a sphere geometry from its descriptor', () => {
     const ref: GeometryRef = {
       key: 'sphere|0.5|24|16',
-      kind: 'sphere',
       descriptor: { kind: 'sphere', radius: 0.5, widthSegments: 24, heightSegments: 16 },
     };
     const g = getForRead(ref);
@@ -59,7 +56,6 @@ describe('geometryRegistry', () => {
   it('returns null for a gltf ref (registry does not own loaded glTF geometry)', () => {
     const ref: GeometryRef = {
       key: 'gltf|asset-1|Mesh0',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'asset-1', childName: 'Mesh0' },
     };
     expect(getForRead(ref)).toBeNull();
@@ -106,7 +102,6 @@ describe('geometryRegistry', () => {
     offset: [number, number, number],
   ): GeometryRef => ({
     key: `array|${source.key}|${count}|${offset.join(',')}`,
-    kind: 'array',
     descriptor: { kind: 'array', source, count, offset },
   });
 
@@ -143,7 +138,6 @@ describe('geometryRegistry', () => {
   it('returns null for an array over a non-sync-buildable source (gltf) — v1 follow-up', () => {
     const gltfSrc: GeometryRef = {
       key: 'gltf|a|M',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
     };
     expect(getForRead(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
@@ -152,7 +146,6 @@ describe('geometryRegistry', () => {
   // SOP / modifier (epic #201, #209) — the recursive `mirror` descriptor build.
   const mirrorRef = (source: GeometryRef, axis: 'x' | 'y' | 'z', offset = 0): GeometryRef => ({
     key: `mirror|${source.key}|${axis}|${offset}`,
-    kind: 'mirror',
     descriptor: { kind: 'mirror', source, axis, offset },
   });
 
@@ -224,7 +217,6 @@ describe('geometryRegistry', () => {
   it('returns null for a mirror over a non-sync-buildable source (gltf) — v1 follow-up', () => {
     const gltfSrc: GeometryRef = {
       key: 'gltf|a|M',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
     };
     expect(getForRead(mirrorRef(gltfSrc, 'x'))).toBeNull();

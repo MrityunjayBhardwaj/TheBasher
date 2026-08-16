@@ -21,12 +21,28 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import {
   buildAddModifierOps,
-  MODIFIER_NODE_TYPES,
+  operatorTypesInSection,
   resolveStackBase,
 } from '../../../app/operatorStack';
 import { canModifyGeometry } from '../../../app/modifierGeometry';
 
-// The geometry modifiers. New modifiers join MODIFIER_NODE_TYPES + this enum.
+// THE ONE MEMBERSHIP LIST ns-2 step 7 LEAVES IN PLACE, and the reason is the type system,
+// not habit. `z.enum` needs a LITERAL tuple at schema-construction time to produce a literal
+// union; a set derived from the registry yields `string`, and `specParams` below narrows on
+// `spec.modifierType === 'ArrayModifier'` to scope Array's params away from Mirror's. Derive
+// this and that narrowing collapses — the same structural reason `MATERIAL_LANE_TYPES` keeps
+// its tuple. The two honest alternatives were measured and both cost more than they save:
+// the spec is built at MODULE scope (so a lazy per-call schema would change the mutator
+// contract for every mutator in the repo), and `z.string().refine(...)` removes the
+// enumerated options from the JSON schema the model actually reads, which is a real
+// regression in what the agent can address.
+//
+// ⇒ it is KEPT and PINNED instead: `operatorMembership.gate.test.ts` asserts this enum's
+// members set-equal the registry-derived `'modifier'` set exactly, with a minted liar
+// proving the cross-check can fail. Forgetting a new modifier here is therefore loud in CI
+// rather than silent — but it is NOT unconstructible, and that difference is recorded in
+// the blindness census rather than glossed: this surface is still one a new operator is
+// invisible to.
 const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier']);
 type ModifierType = z.infer<typeof ModifierType>;
 
@@ -107,7 +123,11 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     if (!state.nodes[spec.target]) {
       return { ok: false, reason: `target "${spec.target}" not in DAG.` };
     }
-    if (!MODIFIER_NODE_TYPES.has(spec.modifierType)) {
+    // Asked of the DERIVATION, not of the enum: the enum has already accepted the value by
+    // the time preconditions run, so re-asking it would check the spec against itself. This
+    // asks whether a modifier of that type is actually registered and declares the modifier
+    // section — the question the builder downstream depends on.
+    if (!operatorTypesInSection('modifier').includes(spec.modifierType)) {
       return { ok: false, reason: `unknown modifierType "${spec.modifierType}".` };
     }
     if (spec.modifierId !== undefined && state.nodes[spec.modifierId]) {

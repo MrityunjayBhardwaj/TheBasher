@@ -14,7 +14,6 @@ import type {
 // OpenPBR IR — so a test that reads it cannot pass while the road is broken.
 const GEOM: GeometryRef = {
   key: 'baked|abc123',
-  kind: 'baked',
   descriptor: { kind: 'baked', hash: 'abc123', vertexCount: 36 },
 };
 
@@ -79,7 +78,7 @@ describe('recomposeBakedObject', () => {
   it('returns null for a mesh Object, an Empty, a null value and a non-Object', () => {
     const meshData: MeshDataValue = {
       kind: 'MeshData',
-      geometry: { key: 'box|1', kind: 'box', descriptor: { kind: 'box', size: [1, 1, 1] } },
+      geometry: { key: 'box|1', descriptor: { kind: 'box', size: [1, 1, 1] } },
       material: null,
     };
     expect(recomposeBakedObject(objPosingBaked({ data: meshData }))).toBeNull();

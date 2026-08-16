@@ -21,12 +21,39 @@
 // appended. What an append adds is a cell that had no previous value to launder. The rule
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
+//
+// USED THREE TIMES (#607, ns-2 steps 12, 13a and 13b), and every use is recorded here
+// because an amendment nobody tracks is a rule that quietly became the norm.
+// `SetMaterialOp.scope`, `ArrayModifier.scope` and `MirrorModifier.scope` each appended ONE
+// cell to the end of a row whose existing cells are byte-identical to what they were — for
+// Mirror that is `axis=(unrouted) offset=modifier muted=modifier`, untouched. The append is
+// the record of a param that HAS a home; a cell that already carried a value is never
+// rewritten, so a re-home cannot be laundered as an addition. `GOLDEN_TOTALS.routed`
+// moved by exactly the number of appended cells that route to a section, which is the
+// derived half of the same claim — a re-home leaves it unchanged and reds the row instead.
+//
+// ── THE THIRD ARM, STATED THE SAME WAY (#607, ns-2 step 14) ──────────────────────────
+//
+// The rule had an arm for dropping a whole ROW and an arm for APPENDING a cell, and none for
+// REMOVING a cell from a row that survives. Step 14 retires `SetMaterialOp.faceFrom`/`faceTo`
+// — the accommodation the component scope supersedes — so the arm is written rather than
+// taken quietly: a cell may be REMOVED in the same commit that removes the param it records,
+// and `GOLDEN_TOTALS` moves by exactly what that cell contributed (two `(unrouted)` cells
+// here, so `unrouted` 218 → 216 and `routed` is untouched).
+//
+// 🔴 WHY REMOVAL CANNOT LAUNDER ANYTHING, WHICH IS A DIFFERENT ARGUMENT FROM THE APPEND ONE.
+// This golden is compared against the LIVE derivation, cell for cell, as one string. Deleting
+// a cell whose param still exists does not hide it — the live row still has that cell and the
+// comparison reds. So the deletion direction is checked by the subject itself, and the freeze
+// is doing its work in the direction where laundering actually lives: an existing cell
+// silently changing VALUE. Removing `faceFrom=(unrouted)` while re-homing `muted` would show
+// as both a shorter row and a changed cell, in one diff, in one string.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
   AnimationClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
-  ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier',
+  ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
@@ -89,7 +116,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Math: '[] op=(unrouted)',
   MediaClip:
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
-  MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier',
+  MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
   Mix: '[] factor=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
@@ -116,7 +143,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
   // the reachability gate exists to catch. `muted`'s cell is unchanged.
-  SetMaterialOp: '[] muted=(unrouted) faceFrom=(unrouted) faceTo=(unrouted)',
+  // APPENDED AGAIN at ns-2 step 12 — `scope`, the first component-scope param in the app.
+  // Unrouted for the identical reason, and appended rather than the row being rewritten:
+  // the whole row is compared as ONE string, so an append leaves every existing cell
+  // byte-identical and a re-home anywhere in the row still shows as a diff. The three
+  // cells before it are untouched.
+  SetMaterialOp: '[] muted=(unrouted) scope=(unrouted)',
   Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
@@ -141,4 +173,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 
 // 215 → 217 at #638: the two appended `SetMaterialOp` cells, both unrouted. `routed` is
 // unchanged, which is the number that would have moved had anything been re-homed.
-export const GOLDEN_TOTALS = { types: 80, routed: 124, unrouted: 217 } as const;
+// 217 → 218 at ns-2 step 12: the appended `SetMaterialOp.scope` cell, unrouted. `routed`
+// is STILL 124, and that is the half of this pair which discriminates — an appended param
+// only ever moves `unrouted`, so a `routed` that moved would mean a param changed homes
+// under cover of an addition, which is precisely what a lone total cannot show.
+export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 216 } as const;

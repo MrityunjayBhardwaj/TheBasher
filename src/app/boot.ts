@@ -687,7 +687,7 @@ export function boot(): Promise<void> {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
         const mesh = resolveEvaluatedMesh(state, nodeId, evalCtx);
-        if (!mesh || mesh.geometry.kind !== 'baked') return null;
+        if (!mesh || mesh.geometry.descriptor.kind !== 'baked') return null;
         const geom = getForRead(mesh.geometry);
         if (!geom) return null; // registry miss — geometry not yet primed
         geom.computeBoundingBox();

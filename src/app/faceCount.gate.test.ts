@@ -51,6 +51,23 @@ const SYNC_BUILDABLE: readonly GeometryRef[] = [
   arrayGeometryRef(sphereGeometryRef(1, 8, 4, null), 2, [0, 2, 0]),
   mirrorGeometryRef(box, 'x', 1),
   mirrorGeometryRef(arrayGeometryRef(box, 2, [2, 0, 0]), 'z', 0),
+  // ── ns-2 step 12.5 — ROW 1. The scoped descriptors join the SAME list, deliberately:
+  // there is one parity gate, and a second one beside it would be a second spelling of the
+  // same claim. A scoped generator preserves its whole input and generates from the subset
+  // (plan §2.2), so the derived count and the built index have to agree here exactly as
+  // they do above — including where the subset is empty, is everything, or is stepped.
+  //
+  // 🔴 READ THIS ROW WITH ITS PAIR. Parity detects DISAGREEMENT, which is what happens when
+  // exactly one of `faceCountOf` and the builder honours the field. It is green when NEITHER
+  // does — measured on the pre-work tree, where all four of these collapsed to their
+  // unscoped twins and this gate passed 14/14. The row that catches the correlated omission
+  // is `scopedGeneratorBuild.gate.test.ts`'s literal `24`, and neither row is the detector
+  // without the other.
+  arrayGeometryRef(box, 3, [2, 0, 0], '0-5'),
+  arrayGeometryRef(box, 3, [2, 0, 0], '!0-11'),
+  arrayGeometryRef(sphereGeometryRef(1, 8, 4, null), 2, [0, 2, 0], '0-23:2'),
+  mirrorGeometryRef(box, 'x', 1, '0-5'),
+  mirrorGeometryRef(sphereGeometryRef(1, 8, 4, null), 'z', 0, '4-30'),
 ];
 
 describe('#633 faceCountOf agrees with the built geometry', () => {
@@ -75,7 +92,6 @@ describe('#633 faceCountOf agrees with the built geometry', () => {
   it('propagates non-derivability through a modifier rather than guessing', () => {
     const gltf: GeometryRef = {
       key: 'gltf|asset|child',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
     };
     expect(faceCountOf(arrayGeometryRef(gltf, 3, [1, 0, 0]).descriptor)).toBeNull();

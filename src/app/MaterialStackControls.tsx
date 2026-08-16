@@ -52,8 +52,10 @@
 //      src/app/NPanel.tsx (renders this in the 'material' section). Issues #394, #526,
 //      #498, #528; vyapti V58, V108.
 
+import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
+import { addableOperators } from './operatorMenu';
 import { canWearMaterial, resolveDataKind } from './modifierGeometry';
 import { dataSectionCapability } from './dataSectionCapability';
 import { OperatorStackRows } from './OperatorStackRows';
@@ -66,17 +68,21 @@ import {
   resolveStackBase,
 } from './operatorStack';
 
-/** The material operators the user can add from the "+ Add" menu.
+/** PRESENTATION ONLY — the menu wording, and the ORDER, which is load-bearing here in a
+ *  way it is not in the geometry stack: SET then OVERRIDE is the order the composition
+ *  reads (set replaces the material flowing through, override authors a sparse set of
+ *  fields over it). No registry knows that, and sorting the derived set would have
+ *  silently reversed the pair — which is why `addableOperators` takes its order from this
+ *  map rather than from the derivation. See `operatorMenu.ts`.
  *
- *  These are the two members of `MATERIAL_LANE_TYPES`, in the order the composition
- *  reads: SET replaces the material flowing through, OVERRIDE authors a sparse set of
- *  fields over it. A new material operator joins here AND in `MATERIAL_LANE_TYPES` —
- *  and that second list is a tuple whose per-field ownership switch closes on a `never`,
- *  so the compiler already refuses a member nobody taught the mask about. */
-const ADDABLE: ReadonlyArray<{ type: string; label: string }> = [
-  { type: 'SetMaterialOp', label: 'Set Material' },
-  { type: 'MaterialOverrideOp', label: 'Override' },
-];
+ *  ns-2 step 7: MEMBERSHIP is no longer spelled here. It comes from
+ *  `operatorTypesInSection('material')`, and a new material operator appears in this menu
+ *  the day it declares `section: 'material'` — under a fallback label until someone writes
+ *  one, rather than being absent until someone remembers this file. */
+const LABELS: Readonly<Record<string, string>> = {
+  SetMaterialOp: 'Set Material',
+  MaterialOverrideOp: 'Override',
+};
 
 /** #498's idiom — a module constant rather than a fresh `[]` per render, so the rows
  *  keep a stable prop identity on the refused path exactly as on the offered one. */
@@ -92,6 +98,13 @@ export function MaterialStackControls({ nodeId }: { nodeId: string }) {
   // selected) it walks DOWN the lane to the data node the stack hangs off.
   const base = resolveStackBase(state, nodeId);
 
+  // ⚠️ ABOVE THE EARLY RETURN, and it has to be: this component returns null for a non-lane
+  // source, so a hook below that line runs on some renders and not others. React keys hooks
+  // by call ORDER, so the panel would read another hook's state after the first time a
+  // Material node was selected. Membership is registry-derived and does not depend on
+  // anything below, so hoisting costs nothing.
+  const offered = useMemo(() => addableOperators('material', LABELS), []);
+
   // Not a data-lane source at all — a Material node, a glTF child, the scene-band
   // `MaterialOverride`. There is no stack here and there never will be. Render nothing
   // rather than an empty one (see the header).
@@ -105,7 +118,7 @@ export function MaterialStackControls({ nodeId }: { nodeId: string }) {
   // action `buildAddMaterialOpOps` would refuse ([[V108]]). It is deliberately the
   // predicate and not `capability.state === 'supported'` spelled again here: one
   // phrasing, two readers.
-  const addable = canWearMaterial(state, base) ? ADDABLE : EMPTY_ADDABLE;
+  const addable = canWearMaterial(state, base) ? offered : EMPTY_ADDABLE;
 
   function onAdd(type: string) {
     const res = buildAddMaterialOpOps(useDagStore.getState().state, base, type);

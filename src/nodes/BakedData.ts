@@ -84,11 +84,28 @@ export const BakedMaterialSpecSchema = z.object({
     .optional(),
 });
 
-/** Zod for the baked `GeometryRef` handle carried as a param — one spelling of the
- *  handle, so the fused predecessor cannot drift from this node while both exist. */
+/**
+ * Zod for the baked `GeometryRef` handle carried as a param — one spelling of the
+ * handle, so the fused predecessor cannot drift from this node while both exist.
+ *
+ * 🔴 ns-2 (D8) — THIS IS THE ONE SPELLING OF `GeometryRef` THE COMPILER CANNOT SEE.
+ * Removing the interface's hand-written `kind` field closed 59 call sites across 24
+ * files, every one of them named by `tsc`. This schema was the sixtieth, and no
+ * typecheck could reach it: a zod object is a runtime value, structurally unrelated to
+ * the interface it mirrors. It was caught because the unit tier ran — eleven
+ * `dispatchApplyTransform` tests failed with `addNode: params failed schema for
+ * BakedData`, LOUDLY, which is the outcome a second spelling is supposed to have and
+ * usually does not.
+ *
+ * ⚠️ This param IS persisted (node params are; the descriptor is not), so dropping the
+ * field is a project-format question and was answered by measurement rather than by
+ * reasoning about zod: an already-saved `{key, kind:'baked', descriptor}` parses clean
+ * under this schema and comes back with the stale field stripped, because a plain
+ * `z.object` is not `.strict()`. **No migration is owed** — old files load, and the
+ * value they load to is the new shape.
+ */
 export const BakedGeometryRefSchema = z.object({
   key: z.string(),
-  kind: z.literal('baked'),
   descriptor: z.object({
     kind: z.literal('baked'),
     hash: z.string(),

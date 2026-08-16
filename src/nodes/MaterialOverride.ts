@@ -62,7 +62,16 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
   paramSchema: MaterialOverrideParams,
   inputs: { target: { type: 'SceneObject', cardinality: 'single' } },
   // #396 — the spine of the scene-lane wrapper chain (see Transform).
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // The scene lane, as Transform.
+    scope: { kind: 'unscoped', why: 'no-component-domain' },
+    bypass: { kind: 'none' },
+    // 'none', NOT 'material'. This is the scene-lane WRAPPER, not one of the two
+    // data-lane material operators; a material stack derived from this field would
+    // otherwise offer three members where it has two.
+    section: 'none',
+  },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['material'],
   home: {

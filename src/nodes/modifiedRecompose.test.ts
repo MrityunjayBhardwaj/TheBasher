@@ -105,7 +105,7 @@ describe('recomposeModifiedObject', () => {
   it('returns null for every other ObjectData, an Empty, a null value and a non-Object', () => {
     const meshData: MeshDataValue = {
       kind: 'MeshData',
-      geometry: { key: 'box|1', kind: 'box', descriptor: { kind: 'box', size: [1, 1, 1] } },
+      geometry: { key: 'box|1', descriptor: { kind: 'box', size: [1, 1, 1] } },
       material: null,
     };
     expect(recomposeModifiedObject(objPosingModified({ data: meshData }))).toBeNull();

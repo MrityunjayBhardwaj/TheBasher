@@ -42,9 +42,9 @@ import {
   boxDescriptor,
   boxGeometryRef,
   canModifyGeometry,
-  modifierDataSource,
   resolveDataKind,
 } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import { mintMeshAttributes } from '../nodes/meshAttributes';
 import { buildDefaultDagState } from '../core/project/default';
 import { buildAddModifierOps, resolveStackBase } from './operatorStack';
@@ -164,7 +164,6 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
   it('offers modifiers on a baked PAIR — the guard that absorbed it in silence (#388)', () => {
     const geometry = {
       key: 'baked|pair-8',
-      kind: 'baked' as const,
       descriptor: { kind: 'baked' as const, hash: 'pair', vertexCount: 8 },
     };
     const material = { ...(rowDataParams('baked').material as Record<string, unknown>) };

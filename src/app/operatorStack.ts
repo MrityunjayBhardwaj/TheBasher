@@ -24,6 +24,8 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, Op } from '../core/dag/types';
+import { getNodeType } from '../core/dag/registry';
+import { bypassParamOf, isBypassed } from '../core/dag/chainBypass';
 import { canModifyGeometry, canWearMaterial } from './modifierGeometry';
 import { nodeDisplayName } from './sceneTreeWalk';
 import {
@@ -45,9 +47,15 @@ import {
 // and modifierGeometry, and sceneTreeWalk -> activeCamera -> resolveDataParamOwner
 // closes a cycle — can still share one walk (#516). Re-exported here so this stays
 // the address every existing caller already knows.
+// ns-2 step 7 — `MODIFIER_NODE_TYPES` and `EFFECT_NODE_TYPES` are GONE, not moved. Both
+// were hand-maintained sets that nothing derived and nothing checked; membership is now
+// `chain.section`, read through the predicates below and through
+// `operatorTypesInSection` for the surfaces that need the whole set (the two "+ Add"
+// menus). A caller that wants "is this a modifier?" asks `isModifierNode`; a caller that
+// wants "which modifiers are there?" asks the derivation, and gets an answer that cannot
+// be one entry short.
 export {
-  MODIFIER_NODE_TYPES,
-  EFFECT_NODE_TYPES,
+  operatorTypesInSection,
   chainSocketOf,
   chainSocketOfType,
   isModifierNode,
@@ -93,8 +101,22 @@ export function findConsumer(
   return null;
 }
 
-function muted(node: Node): boolean {
-  return (node.params as { muted?: unknown }).muted === true;
+/**
+ * Whether an operator is bypassed — asked through the DECLARATION (ns-2 step 5, #660).
+ *
+ * This was `(node.params as { muted?: unknown }).muted === true`: the operator lane's one
+ * unchecked cast, which could not tell an operator that declared `muted: false` from one
+ * that never declared the field at all, and which hard-coded a spelling that is only two
+ * of the nineteen this repo uses for the same idea. Now the param name comes from the
+ * node's own `chain.bypass`, so a stack whose members spell their mute differently is read
+ * correctly rather than silently never-bypassed.
+ *
+ * An unregistered type declares no chain, so it is not an operator and is not bypassable —
+ * which is the same answer the walkers want and the one this returns.
+ */
+function bypassed(node: Node): boolean {
+  const def = getNodeType(node.type);
+  return def !== undefined && isBypassed(def, node.params);
 }
 
 /**
@@ -137,7 +159,7 @@ export function enumerateOperatorStack(
       out.push({
         nodeId: node!.id,
         type: node!.type,
-        muted: muted(node!),
+        muted: bypassed(node!),
         label: nodeDisplayName(node!),
       });
     }
@@ -481,8 +503,16 @@ export function buildRemoveEffectOps(state: DagState, effectId: string): Op[] | 
   return buildRemoveOperatorOps(state, effectId, isEffectNode);
 }
 
-/** Toggle an operator's mute (the stack bypass — V58). One keyframeable setParam:
- *  a muted operator passes its source through unchanged at evaluate. */
+/**
+ * Toggle an operator's mute (the stack bypass — V58). One keyframeable setParam.
+ *
+ * The param path comes from the node's own `chain.bypass` rather than the literal
+ * `'muted'` (ns-2 step 5, #660), so the WRITE and the READ are the same declaration. They
+ * used to be two independent memories of one spelling, and an operator that spelled its
+ * mute differently would have had a toggle writing a param nothing reads — a dead button
+ * with no error anywhere. An operator declaring no bypass has nothing to toggle and
+ * returns null, which is a declared answer rather than a write of `!false`.
+ */
 export function buildToggleOperatorMuteOp(
   state: DagState,
   operatorId: string,
@@ -490,7 +520,10 @@ export function buildToggleOperatorMuteOp(
 ): Op | null {
   const node = state.nodes[operatorId];
   if (!isOp(node)) return null;
-  return { type: 'setParam', nodeId: operatorId, paramPath: 'muted', value: !muted(node!) };
+  const def = getNodeType(node!.type);
+  const param = def !== undefined ? bypassParamOf(def) : null;
+  if (param === null) return null;
+  return { type: 'setParam', nodeId: operatorId, paramPath: param, value: !bypassed(node!) };
 }
 
 export function buildToggleModifierMuteOp(state: DagState, modifierId: string): Op | null {

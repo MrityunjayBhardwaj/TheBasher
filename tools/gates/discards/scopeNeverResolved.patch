@@ -1,0 +1,23 @@
+diff --git a/src/core/dag/evaluator.ts b/src/core/dag/evaluator.ts
+index 3fdc62a..a86ccd5 100644
+--- a/src/core/dag/evaluator.ts
++++ b/src/core/dag/evaluator.ts
+@@ -258,7 +258,17 @@ export function evaluate(
+     const evalStart = evalPerfHook ? performance.now() : 0;
+     const out =
+       bypassSpine === null
+-        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
++        ? // DISCARD HARNESS: the resolver is NEVER CALLED. `scopeFor` stays defined and
++          // imported, so every import census and every call-site census stays green; the
++          // operators receive the same shape they would have received, so nothing throws.
++          // What disappears is the PARSE — the only observable difference from
++          // `scopeHandOff`, which calls the resolver and throws its answer away.
++          def.evaluate(
++            node.params,
++            resolved,
++            ctx,
++            def.chain !== undefined && def.chain.scope.kind !== 'unscoped' ? null : undefined,
++          )
+         : resolved[bypassSpine];
+     if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
+     const hash = hashString(cacheKey);

@@ -164,7 +164,9 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
   it('answering “none” leaves the field ABSENT, not present-and-undefined', () => {
     const box = boxGeometryRef([1, 1, 1], null);
     expect('attributeKey' in box).toBe(false);
-    expect(Object.keys(box).sort()).toEqual(['descriptor', 'key', 'kind']);
+    // Two keys, not three: D8 removed the hand-written `kind` beside `descriptor`, so the
+    // handle's whole surface is the key and the thing it describes.
+    expect(Object.keys(box).sort()).toEqual(['descriptor', 'key']);
   });
 
   it('the component extends the base template, and two indices give two keys', () => {
@@ -201,16 +203,22 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
     // what keeps a baked key (and the OPFS path it doubles as) from moving. Pinned as a
     // HASH rather than by inspection: a field materialising as `undefined` would change
     // the hash while leaving every structural assertion above green.
+    //
+    // ⚠️ THE REFERENCE LITERAL BELOW LOST ITS `kind` AT STEP 8 (D8), and the hash moved with
+    // it. That is a shape change and not a regression, and the thing it could have broken
+    // was checked rather than assumed: the OPFS path is `bakedGeometryKey`, built from the
+    // content hash of the BUFFERS (position/normal/uv/index), never from this object — so no
+    // stored path moves. Nothing in `ProjectSchema` carries a descriptor either. The one
+    // persisted spelling of the handle is `BakedGeometryRefSchema`, and an already-saved
+    // value parses clean under it with the stale field stripped.
     const gltf: GeometryRef = {
       key: 'gltf|asset|child',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
     };
     expect('attributeKey' in gltf).toBe(false);
     expect(hashValue(gltf)).toBe(
       hashValue({
         key: 'gltf|asset|child',
-        kind: 'gltf',
         descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
       }),
     );

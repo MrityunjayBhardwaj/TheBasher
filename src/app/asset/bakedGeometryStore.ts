@@ -217,7 +217,6 @@ export async function writeBakedGeometry(
   }
   return {
     key: bakedGeometryKey(hash, vertexCount),
-    kind: 'baked',
     descriptor: { kind: 'baked', hash, vertexCount },
   };
 }

@@ -63,7 +63,7 @@ describe('bakedGeometryStore', () => {
 
     expect(writeSpy).toHaveBeenCalledTimes(1); // second bake hit the read-or-skip dedupe
     expect(ref1.key).toBe(ref2.key);
-    expect(ref1.kind).toBe('baked');
+    expect(ref1.descriptor.kind).toBe('baked');
     expect(ref1.descriptor).toEqual(ref2.descriptor);
     // The handle carries only structure — no buffers (V29 / §48).
     expect(ref1.descriptor.kind).toBe('baked');

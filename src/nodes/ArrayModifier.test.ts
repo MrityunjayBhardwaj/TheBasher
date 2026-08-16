@@ -18,13 +18,20 @@
 //      src/app/resolveEvaluatedMesh.ts (the modifier branch); vyapti V58; issue #415.
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { resolveComponentSelection } from './componentSelection';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { __reseedAllNodesForTests } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import * as geometryRegistry from '../app/geometryRegistry';
-import { sphereDescriptor, sphereGeometryRef } from '../app/modifierGeometry';
+import {
+  boxDescriptor,
+  boxGeometryRef,
+  sphereDescriptor,
+  sphereGeometryRef,
+} from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial } from './materialSchema';
 import { makeSplitSphere } from '../test-utils/splitSphere';
@@ -56,10 +63,29 @@ function sphereData(): MeshDataValue {
 }
 
 function evalMod(
-  params: { count: number; offset: [number, number, number]; muted: boolean },
+  params: { count: number; offset: [number, number, number]; muted: boolean; scope?: string },
   target: ObjectData | undefined,
 ): ObjectData | undefined {
-  return ArrayModifierNode.evaluate(params, { target }, ctx) as ObjectData | undefined;
+  // ns-2 step 13a — `scope` is OPTIONAL to this helper and REQUIRED on the node, because
+  // the schema gives it `.default('')`. Filled in here rather than loosened there: a blank
+  // query is the authoring state "the author cleared the field", which is exactly what a
+  // case omitting it means, and the two roads must not disagree about that. Caught by the
+  // PRE-vs-POST `tsc` sweep over the changed files — `npm run typecheck` excludes this file
+  // and vitest strips types without checking them, so both standing gates were green on it
+  // ([[H362]], [[H327]]).
+  const full = { ...params, scope: params.scope ?? '' };
+  return ArrayModifierNode.evaluate(
+    full,
+    { target },
+    ctx,
+    // ns-2 step 9b — the fourth argument, and it goes through the ONE resolver exactly as
+    // the evaluator does. NOT hand-built: a stand-in that skips the producer's
+    // transformation inverts the test ([[H328]]), and a second way of turning a source into
+    // a selection is the defect this phase exists to delete. This helper stays a DIRECT call
+    // on purpose — the muted case below asserts the operator is blind to the bypass param,
+    // which only a direct call can observe ([[H350]]).
+    resolveComponentSelection(target, full),
+  ) as ObjectData | undefined;
 }
 
 beforeEach(() => {
@@ -72,7 +98,7 @@ describe('ArrayModifier.evaluate', () => {
     const src = sphereData();
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedDataValue;
     expect(out.kind).toBe('ModifiedData');
-    expect(out.geometry.kind).toBe('array');
+    expect(out.geometry.descriptor.kind).toBe('array');
     expect(out.geometry.descriptor).toMatchObject({ kind: 'array', count: 3, offset: [2, 0, 0] });
     // INHERITED — the material rides through from the source data (#358).
     expect(out.material).toBe(src.material);
@@ -93,9 +119,19 @@ describe('ArrayModifier.evaluate', () => {
   });
 
   it('muted → identity passthrough (byte-identical to no modifier — the stack mute-bypass)', () => {
+    // THROUGH THE EVALUATOR, not through `evaluate` (ns-2 step 5, #660). The bypass is
+    // declared in `chain.bypass` and honoured once, by the machinery — so a muted
+    // operator's `evaluate` never runs, and a direct call would assert the opposite of
+    // what ships. The claim itself is unchanged and still load-bearing.
     const src = sphereData();
-    const out = evalMod({ count: 5, offset: [2, 0, 0], muted: true }, src);
+    const out = evaluateNodeAlone(
+      'ArrayModifier',
+      { count: 5, offset: [2, 0, 0], muted: true },
+      { target: src },
+    );
     expect(out).toBe(src); // same reference — no ModifiedData produced
+    // And the operator itself is now blind to the field: its work is its work.
+    expect(evalMod({ count: 5, offset: [2, 0, 0], muted: true }, src)).not.toBe(src);
   });
 
   it('non-mesh data (a curve) passes through unchanged — nothing to reshape', () => {
@@ -135,7 +171,6 @@ describe('ArrayModifier.evaluate', () => {
       kind: 'BakedData',
       geometry: {
         key: 'baked|deadbeef-8',
-        kind: 'baked',
         descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 8 },
       },
       material: {
@@ -157,7 +192,7 @@ describe('ArrayModifier.evaluate', () => {
     };
     const out = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, baked) as ModifiedDataValue;
     expect(out.kind).toBe('ModifiedData'); // real modified data (not a passthrough)
-    expect(out.geometry.kind).toBe('array');
+    expect(out.geometry.descriptor.kind).toBe('array');
     // #358 — the baked material rides through the modifier verbatim (it was silently
     // dropped to null before: a ModifiedMesh could not hold a BakedMaterialSpec).
     expect(out.material).toBe(baked.material);
@@ -214,7 +249,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
 
     const resolved = resolveEvaluatedMesh(state, id, ctx);
     expect(resolved).not.toBeNull();
-    expect(resolved!.geometry.kind).toBe('array');
+    expect(resolved!.geometry.descriptor.kind).toBe('array');
     // The modified geometry is sync-buildable → real UV islands (not null), so the
     // UV-editor backdrop works for a modifier (#209 follow-up).
     expect(resolved!.uvRead.status).toBe('ok');
@@ -247,7 +282,7 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
   it('a muted modifier resolves to the source mesh on the read side too', () => {
     const { state, id } = withMod(true);
     const resolved = resolveEvaluatedMesh(state, id, ctx);
-    expect(resolved!.geometry.kind).toBe('sphere'); // passthrough — the source's own handle
+    expect(resolved!.geometry.descriptor.kind).toBe('sphere'); // passthrough — the source's own handle
   });
 });
 
@@ -296,5 +331,170 @@ describe('#638 a modifier COLLAPSES a per-face assignment, visibly', () => {
     // count alone; step 6 made assignments vary, so it is a real sharing loss now. This
     // asserts the current behaviour so the fix shows up as a red rather than as nothing.
     expect(out.geometry.key.includes('|a:')).toBe(true);
+  });
+});
+
+// ── ns-2 STEP 13a — THE FIRST `'source'` CONSUMER, AND ITS ARITHMETIC ─────────────────
+//
+// The rule, from the operator's own doc comment and plan §2.2:
+//
+//     A SCOPED GENERATOR PRESERVES ITS WHOLE INPUT AND GENERATES FROM THE SUBSET.
+//
+// Grounded for Mirror (Houdini's *Keep Original* against a *Group* of "primitives to
+// mirror"), and OURS for Array by consistency — Copy and Transform's page does not decide
+// it. Everything below goes through `resolveComponentSelection`, i.e. the real resolver
+// the evaluator calls, never a hand-built selection: a stand-in that skips the producer's
+// transformation inverts the test ([[H328]]).
+describe('ArrayModifier — a scoped generator, through the operator', () => {
+  const boxSource = (): MeshDataValue => {
+    const descriptor = boxDescriptor([1, 1, 1]);
+    const attributeKey = mintMeshAttributes(descriptor, 'evaluate');
+    return {
+      kind: 'MeshData',
+      geometry: boxGeometryRef([1, 1, 1], attributeKey),
+      material: hydrateInlineMaterial(null, '#888888'),
+      materialKey: null,
+      attributeKey,
+    };
+  };
+
+  /** Index entries in the BUILT geometry — NEVER `position.count`. */
+  function builtIndex(value: ObjectData | undefined): number {
+    const geom = geometryRegistry.getForRead((value as ModifiedDataValue).geometry);
+    expect(geom, 'the registry could not build this handle').not.toBeNull();
+    const index = geom!.getIndex();
+    expect(index, 'built without an index').not.toBeNull();
+    // Unreferenced positions ride through a face subset as dead weight, so the index is the
+    // only honest reading of "how many triangles are there" (measured at step 12.5: a
+    // scoped mirror carries 54 index entries against 48 positions).
+    return index!.count;
+  }
+
+  it('🔴 THE DISCRIMINATING ROW — a box arrayed x3 and scoped to half is 72, not 108', () => {
+    // THE DIFFERING CASE, FIRST. 12 preserved + 6 + 6 = 24 faces = 72 index entries,
+    // against 36 faces = 108 for the same array unscoped. Written as the two NUMBERS and
+    // not as a ratio: an expression over the unscoped figure would inherit exactly the
+    // omission this row exists to catch.
+    //
+    // This is the row that proves the scope was HONOURED. It is the one that reds when
+    // `evaluate` discards its fourth argument, and it is the one that must be quoted
+    // beside the `count = 1` row below, which cannot make that claim.
+    const src = boxSource();
+    expect(
+      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, src)),
+    ).toBe(72);
+    expect(builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src))).toBe(108);
+  });
+
+  it('…and the same on a SPHERE, so the arithmetic is not a property of twelve faces', () => {
+    // sphere(8,6) tessellates to 80 faces (2 x 8 x 5), so x3 unscoped is 240 faces = 720
+    // index. Scoped to `0-39` — half — it is 80 + 40 + 40 = 160 faces = 480.
+    // The face count is read from the descriptor's own derivation rather than from the
+    // requested segments, because three.js clamps segments silently ([[H324]]).
+    const src = sphereData();
+    expect(
+      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-39' }, src)),
+    ).toBe(480);
+    expect(builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src))).toBe(720);
+  });
+
+  it('the SEMANTIC row — a scoped array with `count = 1` is the whole source, 36 not 18', () => {
+    // ⚠️ 🔴 NEVER CITE THIS ROW ALONE, AND THAT IS WRITTEN HERE SO A LATER READER CANNOT.
+    //
+    // This row separates the two SEMANTICS: under our rule copy 0 is the preserved input,
+    // so a scoped array of one copy is the whole box (36 index); under the rival reading
+    // of "a subset of input primitives to copy from" it would be the subset alone (18).
+    // Nothing else in the exit distinguishes them, which is why it exists.
+    //
+    // What it does NOT show is that the scope was honoured at all. An implementation that
+    // ignored the scope entirely also yields 36 here — the unscoped control on the next
+    // line is byte-identical to the scoped case, on purpose, and that is the shape of the
+    // trap. The proof of honouring is the 72-vs-108 row above. Cite them together.
+    const src = boxSource();
+    expect(
+      builtIndex(evalMod({ count: 1, offset: [2, 0, 0], muted: false, scope: '0-5' }, src)),
+    ).toBe(36);
+    expect(builtIndex(evalMod({ count: 1, offset: [2, 0, 0], muted: false }, src))).toBe(36);
+  });
+
+  it('the scope reaches the KEY as the CANONICAL query, so two spellings share one build', () => {
+    // What the operator actually passes downstream: the resolved selection's identity, not
+    // the authored text. `5,4,3,2,1,0` and `0-5` are one cached geometry rather than two
+    // byte-identical ones.
+    const src = boxSource();
+    const written = evalMod(
+      { count: 3, offset: [2, 0, 0], muted: false, scope: '5,4,3,2,1,0' },
+      src,
+    );
+    const canonical = evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, src);
+    expect((written as ModifiedDataValue).geometry.key).toBe(
+      (canonical as ModifiedDataValue).geometry.key,
+    );
+    expect((written as ModifiedDataValue).geometry.descriptor).toMatchObject({
+      kind: 'array',
+      scope: '0-5',
+    });
+  });
+
+  it('🔴 an UNSCOPED array is byte-identical to what it was before this step existed', () => {
+    // The regression clause. Every graph that ships today authors no scope, so every one of
+    // their keys must be unchanged — an omitted field, never `{scope: undefined}`
+    // ([[H265]]'s shape). A blank query is the same authoring state as none.
+    //
+    // ⚠️ WHAT HOLDS THIS IS `scopeField`, NOT the resolver's `null` — measured, because the
+    // first draft credited the wrong one. Replacing `canonicalQuery: null` with `''` leaves
+    // this row GREEN: the collapse happens at the ONE place a scope becomes a key. So this
+    // row guards the KEY BUILDER's treatment of the unscoped case, and the resolver's
+    // separate `null`/`''` claim is guarded one file over, in the channel gate. Two rows,
+    // two subjects; neither is evidence for the other.
+    const src = boxSource();
+    const bare = evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src) as ModifiedDataValue;
+    const blank = evalMod(
+      { count: 3, offset: [2, 0, 0], muted: false, scope: '' },
+      src,
+    ) as ModifiedDataValue;
+    expect(bare.geometry.key).toBe('array|box|1,1,1|a:3c7d7ccc|3|2,0,0');
+    expect(blank.geometry.key).toBe(bare.geometry.key);
+    expect(Object.keys(bare.geometry.descriptor).sort()).toEqual([
+      'count',
+      'kind',
+      'offset',
+      'source',
+    ]);
+  });
+
+  it('a scope selecting NOTHING is the identity — the whole input, and it still builds', () => {
+    // D6b through the operator. Under §2.2 the whole input is always preserved, so no
+    // scope can empty a generator: 12 faces, 36 index, and the registry's zero-index
+    // refusal has no reachable input from this road.
+    const src = boxSource();
+    expect(
+      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '!0-11' }, src)),
+    ).toBe(36);
+  });
+
+  it('a scope over a CURVE never arrives — the resolver refuses it one frame earlier', () => {
+    // Target 9's shape, checked rather than assumed: the operator has no arm for "an
+    // authored scope on a value that cannot carry one", because that state cannot reach
+    // `evaluate`. The refusal is the resolver's, by name, and it is what makes the
+    // operator's `null` mean only "unscoped".
+    const curve: CurveDataValue = {
+      kind: 'CurveData',
+      points: [
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+      samples: [
+        [0, 0, 0],
+        [1, 0, 0],
+      ],
+      closed: false,
+    };
+    expect(() =>
+      evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, curve),
+    ).toThrow(/cannot be honoured/);
+    // …and an UNSCOPED array over a curve still passes it straight through, as it has all
+    // along. The two conditions are separated, which is the whole of [[V205]].
+    expect(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, curve)).toBe(curve);
   });
 });

@@ -1,0 +1,28 @@
+diff --git a/src/core/dag/evaluator.ts b/src/core/dag/evaluator.ts
+index 3fdc62a..41bea86 100644
+--- a/src/core/dag/evaluator.ts
++++ b/src/core/dag/evaluator.ts
+@@ -154,7 +154,9 @@ function scopeFor(
+   params: unknown,
+   resolved: ResolvedInputs,
+ ): ComponentSelection | null | undefined {
++  // DISCARD HARNESS: THE WHOLE SCOPE ROAD REMOVED. Nothing is ever resolved.
+   const chain = def.chain;
++  if (chain !== undefined) return undefined;
+   if (chain === undefined || chain.scope.kind === 'unscoped') return undefined;
+   // `params` is `unknown` on a `Node` — the same shape `bypassSpineOf` takes, and for the
+   // same reason: a node's params are whatever its own schema parsed. A non-object cannot
+diff --git a/src/nodes/componentSelection.ts b/src/nodes/componentSelection.ts
+index c486619..428d659 100644
+--- a/src/nodes/componentSelection.ts
++++ b/src/nodes/componentSelection.ts
+@@ -569,7 +569,8 @@ export function requireResolvedScope(
+   scope: ComponentSelection | null | undefined,
+   operator: string,
+ ): ComponentSelection | null {
+-  if (scope === undefined) {
++  // DISCARD HARNESS: THE WHOLE SCOPE ROAD REMOVED. The refusal never fires.
++  if (false as boolean) {
+     return refuse(
+       `${operator}.evaluate was called with no resolved selection. The evaluator supplies one ` +
+         `for every node whose chain declares a 'source' or 'target' scope; reaching this means ` +

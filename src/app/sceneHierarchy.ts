@@ -13,7 +13,7 @@
 //
 // Three comments asserting a mirror that nothing checked. #610 folded two by-name reads
 // onto the declared chain socket and left this alone deliberately, because the obvious
-// fold is WRONG and the reason is worth stating: `chainInput` is declared by
+// fold is WRONG and the reason is worth stating: `chain.input` is declared by
 // ArrayModifier, MirrorModifier, SetMaterialOp, MaterialOverrideOp and ColorCorrect too.
 // Those are OPERATORS. A modifier's spine is a DATA-lane edge — the mesh flows through it
 // and comes out reshaped — not a scene-graph parent edge, and `childEdges` returns [] for
@@ -84,7 +84,7 @@ const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Scene']);
 
 /** Types that parent exactly ONE child, through their declared chain socket.
  *
- *  Declared here rather than derived from `chainInput`, because `chainInput` answers a
+ *  Declared here rather than derived from `chain.input`, because `chain.input` answers a
  *  different question — see the header. This set is the SCENE-lane wrappers only. */
 const WRAPPER_PARENT_TYPES: ReadonlySet<string> = new Set(['Transform', 'MaterialOverride']);
 
@@ -98,7 +98,7 @@ export const HIERARCHY_PARENT_TYPES: ReadonlySet<string> = new Set([
  * The input sockets through which `node` parents scene-graph children — empty for
  * anything that is not a parent at all (a leaf producer, an operator, a sink).
  *
- * A wrapper's socket is read from its DECLARATION (`chainInput`), not assumed to be
+ * A wrapper's socket is read from its DECLARATION (`chain.input`), not assumed to be
  * `target`, for the reason #396 and #610 give: the name and the spine agree for every
  * shipped type and stop agreeing the moment a wrapper gains a second same-typed input.
  */
@@ -113,7 +113,7 @@ export function hierarchySocketsOf(node: HierarchyNodeLike | undefined): readonl
  * holds the evaluated value and so knows the kind independently of the node's type.
  * `null` when that kind does not parent at all.
  *
- * A wrapper's socket comes from the node's own `chainInput` DECLARATION. That is the
+ * A wrapper's socket comes from the node's own `chain.input` DECLARATION. That is the
  * whole content of #396/#610 and it is why this takes the node as well as the kind: two
  * nodes presenting the same kind may spell their spine differently, and the walk must
  * follow each one's declaration rather than a name fixed here.

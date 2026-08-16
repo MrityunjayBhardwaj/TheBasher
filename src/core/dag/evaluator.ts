@@ -19,10 +19,18 @@
 //
 // REF: THESIS.md §10, §51, vyapti V2 (purity), krama K2 step 6 (invalidate).
 
+import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
 import { requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
-import type { EvalCtx, NodeId, ResolvedInputs } from './types';
+import type { EvalCtx, NodeDefinition, NodeId, ResolvedInputs } from './types';
+// ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
+// reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
+// former home imports THIS module, so without that move the edge would have closed the cycle
+// `evaluator → componentSelection → modifierGeometry → evaluator`. Pinned, with the count, by
+// `componentScopeChannel.gate.test.ts`.
+import { resolveComponentSelection, type ComponentSelection } from '../../nodes/componentSelection';
+import type { ObjectData } from '../../nodes/types';
 
 export interface EvalResult<T = unknown> {
   value: T;
@@ -107,6 +115,55 @@ export interface EvaluateOptions {
 
 const DEFAULT_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
+/**
+ * THE COMPONENT-SCOPE HAND-OFF (ns-2 step 9b, #607/#660) — the ONE line that supplies an
+ * operator's resolved selection, and the only production caller of the resolver.
+ *
+ * Being scopeable is true of the operator CATEGORY, so the selection is resolved by the
+ * machinery that runs operators, exactly as the bypass is. What that buys is not
+ * convenience: an operator never sees the QUERY, only a resolved {@link
+ * ComponentSelection}, so "a new operator parsed the scope its own way" has no constructor
+ * — which is the defect this phase exists to delete, in the same shape as the bypass.
+ *
+ * WHO GETS ONE: a node declaring `chain.scope.kind` of `'source'` or `'target'`. Everyone
+ * else — 76 of the 80 registered types, plus the scene- and image-lane wrappers whose
+ * honest answer is `'unscoped'` — is called with three arguments as before.
+ *
+ * ⚠️ DELIBERATELY AFTER THE CACHE LOOKUP AND AFTER THE BYPASS. After the cache, because the
+ * resolution is a pure function of exactly the params and the spine value, which are the
+ * two things `cacheKey` above already folds (P10) — a cache hit is entitled to skip it, and
+ * a selection derived from anything else would not be covered by that key. After the
+ * bypass, because a bypassed operator's `evaluate` never runs: resolving for it would be
+ * work nobody reads, and a muted operator carrying a mistyped query would throw while
+ * muted, which is the one state an author uses to make an operator stop mattering.
+ *
+ * COST, MEASURED rather than asserted (the resolution runs on the drag road): over a
+ * 121-frame drag of an array-over-array-over-sphere source, resolving cost **1.43 ms total
+ * — 12 µs per operator per frame**. That is small absolutely and NOT small relatively: it is
+ * **14% of one `ArrayModifier.evaluate`**, because the operator body itself is only a key
+ * string. Recorded in both units on purpose, since the ratio is the one that will grow if a
+ * future operator's evaluate stays cheap while the descriptor chain deepens.
+ *
+ * The cast is the premise `assertChainDeclaration`'s SIXTH refusal enforces at
+ * registration: a `'source'`/`'target'` spine must accept `ObjectData` and nothing else.
+ * `undefined` (an unwired spine) is an ordinary authoring state and the resolver answers
+ * `null` for it.
+ */
+function scopeFor(
+  def: NodeDefinition,
+  params: unknown,
+  resolved: ResolvedInputs,
+): ComponentSelection | null | undefined {
+  const chain = def.chain;
+  if (chain === undefined || chain.scope.kind === 'unscoped') return undefined;
+  // `params` is `unknown` on a `Node` — the same shape `bypassSpineOf` takes, and for the
+  // same reason: a node's params are whatever its own schema parsed. A non-object cannot
+  // carry a scope query, so it reads as "none authored" rather than as a failure.
+  const record: Readonly<Record<string, unknown>> =
+    params !== null && typeof params === 'object' ? (params as Record<string, unknown>) : {};
+  return resolveComponentSelection(resolved[chain.input] as ObjectData | undefined, record);
+}
+
 interface Frame {
   id: NodeId;
   depth: number;
@@ -187,8 +244,22 @@ export function evaluate(
       }
     }
 
+    // THE OPERATOR BYPASS, APPLIED ONCE (ns-2 step 5, #660). Being bypassable is true of
+    // the operator CATEGORY, so it is honoured by the machinery that runs operators rather
+    // than re-decided inside each one. A bypassed operator's `evaluate` does not run at
+    // all: the value that arrived on its declared spine is handed straight back, by
+    // reference, which is byte-identical to what the five per-operator guards produced
+    // because none of them did anything observable before bypassing.
+    //
+    // Deliberately AFTER the cache lookup and inside the same cache entry: the bypass
+    // param is part of `node.params`, so it is already in `cacheKey`, and a muted and an
+    // un-muted cook are distinct entries with no extra bookkeeping.
+    const bypassSpine = bypassSpineOf(def, node.params);
     const evalStart = evalPerfHook ? performance.now() : 0;
-    const out = def.evaluate(node.params, resolved, ctx);
+    const out =
+      bypassSpine === null
+        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
+        : resolved[bypassSpine];
     if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
     const hash = hashString(cacheKey);
     const result: EvalResult = { value: out, hash };

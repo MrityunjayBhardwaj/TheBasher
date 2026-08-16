@@ -37,8 +37,12 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
-import { faceCountMismatch } from './faceCount';
+import { faceCountMismatch, zeroIndexRefusal } from './faceCount';
 import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
+// ns-2 step 12.5 — which triangles a scoped generator keeps. A LEAF with zero value
+// imports, which is what keeps the registry's declared import set honest: every module
+// here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
+import { scopeSelection } from '../nodes/scopeQuery';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -51,7 +55,8 @@ const cache = new Map<string, BufferGeometry>();
 // the lifetime slice actually has to answer.
 //
 // `internal` is the one that would otherwise be invisible: `build` resolves an `array` /
-// `mirror` source through `get` (:156, :176), so a modifier drag caches the SOURCE box
+// `mirror` source through `get` (in `buildArray` / `buildMirror` — named rather than given as
+// line numbers, which were already two hundred lines stale), so a modifier drag caches the box
 // alongside the merged result — and nothing ever attaches that source. An attach-door
 // refcount would never see it, never count it, and never free it.
 //
@@ -131,10 +136,10 @@ const primed = new Set<string>();
  * outside this module reaches the cache through one of them.
  */
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
-  if (ref.kind === 'gltf') return null;
+  if (ref.descriptor.kind === 'gltf') return null;
   const hit = cache.get(ref.key);
   if (hit) return hit;
-  if (ref.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
+  if (ref.descriptor.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
   const built = build(ref);
   if (built) {
     cache.set(ref.key, built);
@@ -227,13 +232,13 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 //                         IS NONE, and waiting will not help.
 //
 // A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
-// `ref.kind` — which means the rule is restated at every call site, and every restatement is
-// a place it can be got wrong or quietly fall out of date when a kind is added. That is not
-// hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy of this exact
-// switch, and its own header records the defect biting before.
+// `ref.descriptor.kind` — which means the rule is restated at every call site, and every
+// restatement is a place it can be got wrong or quietly fall out of date when a kind is
+// added. That is not hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy
+// of this exact switch, and its own header records the defect biting before.
 //
 // The registry is the single producer of the ambiguity — it is the code that branches on
-// `ref.kind` and decides to return nothing — so it is the correct owner of the reason.
+// `ref.descriptor.kind` and decides to return nothing — so it is the correct owner of the reason.
 // Consumers read it; nobody re-derives it.
 //
 // `getForRead` above stays as the narrowing view for callers that genuinely only need
@@ -257,12 +262,22 @@ export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
 /**
  * The availability class of a geometry kind.
  *
- * Exhaustive, closed by a `never`. Adding a kind to `GeometryRef` without declaring how it
- * becomes available is a COMPILE ERROR rather than a silent default — deliberately, because
- * a default would pick one of the three meanings for the new kind and be right by accident
- * at best.
+ * Exhaustive, closed by a `never`. Adding an arm to `GeometryDescriptor` without declaring
+ * how it becomes available is a COMPILE ERROR rather than a silent default — deliberately,
+ * because a default would pick one of the three meanings for the new kind and be right by
+ * accident at best.
+ *
+ * 🔴 THAT SENTENCE USED TO NAME `GeometryRef`, AND IT WAS FALSE (ns-2 D8). The `never` was
+ * honest, but the parameter was typed `GeometryRef['kind']` — a hand-written six-member
+ * union sitting beside the descriptor and spelled independently of it. A new geometry kind
+ * does not arrive there; it arrives in `GeometryDescriptor`, which is where the kind's data
+ * has to live. Measured by adding a seventh descriptor arm before the field was removed:
+ * `faceCountOf` and `rebuildGeometryRef` both failed to compile and this function compiled
+ * clean, while its comment promised the opposite in capitals. The parameter is now
+ * `GeometryDescriptor['kind']`, so the guarantee holds for the first time — the fix was not
+ * to the `never`, which was always correct, but to the union it closed on.
  */
-export function availabilityOf(kind: GeometryRef['kind']): GeometryAvailability {
+export function availabilityOf(kind: GeometryDescriptor['kind']): GeometryAvailability {
   switch (kind) {
     case 'box':
     case 'sphere':
@@ -302,7 +317,7 @@ export type GeometryReadResult =
  * second way to reach the resource, it is the same read with its absence typed.
  */
 export function readGeometry(ref: GeometryRef): GeometryReadResult {
-  const availability = availabilityOf(ref.kind);
+  const availability = availabilityOf(ref.descriptor.kind);
   const geometry = get(ref, 'read');
   if (geometry) return { status: 'ok', geometry };
   switch (availability) {
@@ -435,6 +450,19 @@ function build(ref: GeometryRef): BufferGeometry | null {
   if (built === null) return null;
   built.clearGroups();
 
+  // ns-2 D6b — a geometry that built successfully and holds no triangles. Refused BY NAME
+  // and turned into a miss, because attaching it is the quietest failure this module can
+  // produce: nothing errors, the object is simply not there. Nothing reaches this today
+  // (§2.2 preserves the whole input, so no scope can empty a generator) — the emptiness of
+  // its population is censused in `scopedGeneratorBuild.gate.test.ts` rather than assumed,
+  // and the refusal itself is exercised directly there so it is not a guard nobody has run.
+  const empty = zeroIndexRefusal(ref.descriptor, built.getIndex()?.count ?? null);
+  if (empty !== null) {
+    console.error(empty);
+    built.dispose();
+    return null;
+  }
+
   if (ref.attributeKey === undefined) return built;
   const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
   if (index === undefined) return built;
@@ -461,60 +489,171 @@ function build(ref: GeometryRef): BufferGeometry | null {
   return built;
 }
 
+/**
+ * Build the geometry a descriptor describes, or `null` when this registry is not the place
+ * it is built.
+ *
+ * ── ns-2 step 8b — WHY THIS IS A `switch` CLOSED BY A `never` ─────────────────────────
+ *
+ * It was an if-chain ending in a bare `return null`, and that terminal line was doing two
+ * unrelated jobs at once. For `gltf` and `baked` the null is the DECLARED answer — their
+ * buffers live in an asset clone and in OPFS, and this function is not their builder. For a
+ * descriptor kind nobody taught this function about, the same null means "I have no idea
+ * what this is", and the two were indistinguishable to every caller and to every reader.
+ *
+ * A new geometry operator therefore had a silent site here: register the node, add the union
+ * arm, teach `faceCountOf` and `availabilityOf` because they refuse to compile, and this
+ * function returns null forever. The renderer draws nothing, the registry warns nothing, and
+ * the descriptor kind that nobody built looks exactly like a glTF child still loading.
+ *
+ * The two answers are now separate: `gltf`/`baked` are cases that return null on purpose,
+ * and the seventh kind is a compile error at the `never`.
+ *
+ * 🔴 THE LIMIT, STATED HERE BECAUSE A LATER STEP DEPENDS ON KNOWING IT. A `never` closes over
+ * the union's DISCRIMINANT. It catches a new KIND and it is completely blind to a new FIELD:
+ * adding `scope` to the existing `array` arm compiles clean through this switch, because the
+ * discriminant did not move. That is not a gap in this closure, it is what this closure is —
+ * and it is why the step that adds such a field owes a count-parity gate rather than
+ * inheriting this one. Reading this `never` as covering "changes to the descriptor" is the
+ * covered-but-unhonoured mistake, one abstraction level up.
+ *
+ * The runtime arm is unreachable by any typed caller and reachable through a cast, which is
+ * how the standing census constructs it. ⚠️ The two `never` closures UPSTREAM of this one in
+ * the same file — `availabilityOf` and `readGeometry` — still return `undefined` from their
+ * runtime arms, so a cast-built handle reaches this named refusal and still reads back with an
+ * out-of-vocabulary status. That is #675, deliberately not folded in here: it changes a read
+ * door's contract on the render path. It refuses BY NAME through the same channel the
+ * module's other two refusals use — `console.error` rather than their `console.warn`, and the
+ * severity difference is deliberate: `faceCountMismatch` and `groupsRefusal` report DATA
+ * disagreeing with data, which is recoverable and expected in the wild, while an undeclared
+ * kind reaching here is a defect in this file that no scene can cause.
+ */
 function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
-  if (d.kind === 'box') {
-    return new BoxGeometry(d.size[0], d.size[1], d.size[2]);
-  }
-  if (d.kind === 'sphere') {
-    return new SphereGeometry(d.radius, d.widthSegments, d.heightSegments);
-  }
-  if (d.kind === 'array') {
-    // SOP / modifier (#209): recursively build the source handle, then merge
-    // `count` CLONES each translated by i*offset (local space). Clone, never
-    // mutate the cached source instance (other refs share it). A source that
-    // can't build sync (gltf MISS / baked MISS → null) makes the whole array
-    // unbuildable here — return null (a follow-up; the renderer renders nothing).
-    // `internal`: this caches the SOURCE box/sphere, which no consumer attaches (#586).
-    const source = get(d.source, 'internal');
-    if (!source) return null;
-    const copies: BufferGeometry[] = [];
-    for (let i = 0; i < d.count; i++) {
-      const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
-      copies.push(source.clone().applyMatrix4(m));
+  switch (d.kind) {
+    case 'box':
+      return new BoxGeometry(d.size[0], d.size[1], d.size[2]);
+    case 'sphere':
+      return new SphereGeometry(d.radius, d.widthSegments, d.heightSegments);
+    case 'array':
+      return buildArray(d);
+    case 'mirror':
+      return buildMirror(d);
+    // Declared nulls, not unknowns: the buffers are somewhere else on purpose (gltf in the
+    // loaded asset clone, baked in OPFS behind an async read that `prime` completes).
+    case 'gltf':
+    case 'baked':
+      return null;
+    default: {
+      const unreachable: never = d;
+      console.error(
+        `geometryRegistry: no build arm for descriptor kind ${JSON.stringify(
+          (unreachable as { kind?: unknown }).kind,
+        )} — the union grew and this switch did not`,
+      );
+      return null;
     }
-    const merged = mergeGeometries(copies);
-    for (const c of copies) c.dispose(); // mergeGeometries copies the buffers out
-    return merged; // null only if the copies mismatch attributes (same source → never)
   }
-  if (d.kind === 'mirror') {
-    // SOP / modifier (#209): reflect the source across the local-origin plane whose
-    // normal is `axis`, then merge the reflection back with the ORIGINAL (a symmetric
-    // whole, 2× the verts — Blender's Mirror). Clone both halves — never mutate the
-    // cached source (H111). The reflection matrix has determinant −1, which flips
-    // triangle winding: `applyMatrix4` reflects the normal attribute (via the normal
-    // matrix), but the index winding would now disagree with those normals →
-    // front-faces become back-faces (the mirrored half renders inside-out). Reverse
-    // the reflected copy's winding so winding and normals agree again.
-    // `internal`: caches the SOURCE, which no consumer attaches (#586) — as `array` does.
-    const source = get(d.source, 'internal');
-    if (!source) return null;
-    // Reflection across the plane perpendicular to `axis` at `offset` along it:
-    // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
-    const reflect = new Matrix4().makeScale(
-      d.axis === 'x' ? -1 : 1,
-      d.axis === 'y' ? -1 : 1,
-      d.axis === 'z' ? -1 : 1,
+}
+
+/**
+ * SOP / modifier (#209): recursively build the source handle, then merge `count` CLONES each
+ * translated by i*offset (local space). Clone, never mutate the cached source instance (other
+ * refs share it). A source that can't build sync (gltf MISS / baked MISS → null) makes the
+ * whole array unbuildable here — return null (a follow-up; the renderer renders nothing).
+ * `internal`: this caches the SOURCE box/sphere, which no consumer attaches (#586).
+ */
+function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGeometry | null {
+  const source = get(d.source, 'internal');
+  if (!source) return null;
+  const copies: BufferGeometry[] = [];
+  for (let i = 0; i < d.count; i++) {
+    const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
+    // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
+    // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
+    // scope selecting nothing the identity rather than an empty mesh.
+    const copy = i === 0 ? source.clone() : faceSubset(source, d.scope);
+    if (copy === null) return null;
+    copies.push(copy.applyMatrix4(m));
+  }
+  const merged = mergeGeometries(copies);
+  for (const c of copies) c.dispose(); // mergeGeometries copies the buffers out
+  return merged; // null only if the copies mismatch attributes (same source → never)
+}
+
+/**
+ * A face SUBSET of `source` — a fresh clone carrying only the triangles `scope` names, or
+ * a plain clone when there is no scope (ns-2 step 12.5).
+ *
+ * 🔴 A FACE SUBSET IS AN INDEX SUBSET OVER UNCHANGED ATTRIBUTE BUFFERS. The positions of
+ * the faces it drops are still in the buffer and `mergeGeometries` copies them out
+ * verbatim, so a mirror over a box scoped to half has 54 index entries and 48 positions.
+ * That dead weight is deliberate — compacting would renumber every index and force a
+ * second spelling of three.js's attribute layout — and it is why every assertion about a
+ * scoped build reads `getIndex().count` and never `position.count`.
+ *
+ * The unscoped case goes down the SAME road with `scope === undefined`, rather than the
+ * caller branching around this function: two roads through a builder is what
+ * [[V189]]-shaped parity assertions cannot see.
+ *
+ * Refuses BY NAME for a NON-INDEXED source, and the population is stated rather than
+ * assumed: every sync-buildable source (box, sphere, and a merge of either) is indexed, so
+ * nothing reaches it today. A face subset of a non-indexed geometry means slicing attribute
+ * triplets, which is a different implementation and would be written when something can
+ * actually produce one — guessing at it now would ship an untested arm on the render path.
+ */
+function faceSubset(source: BufferGeometry, scope: string | undefined): BufferGeometry | null {
+  if (scope === undefined) return source.clone();
+  const index = source.getIndex();
+  if (index === null) {
+    console.error(
+      `geometryRegistry: cannot take the face subset '${scope}' of a NON-INDEXED source — a face subset is an index subset, and this geometry has no index`,
     );
-    const t = 2 * d.offset;
-    reflect.setPosition(d.axis === 'x' ? t : 0, d.axis === 'y' ? t : 0, d.axis === 'z' ? t : 0);
-    const original = source.clone();
-    const reflected = reverseWinding(source.clone().applyMatrix4(reflect));
-    const merged = mergeGeometries([original, reflected]);
-    original.dispose();
-    reflected.dispose();
-    return merged; // null only on attribute mismatch (same source → never)
+    return null;
   }
-  return null; // gltf / baked — not built here (gltf in asset clone, baked from OPFS)
+  const faces = index.count / 3;
+  const { mask } = scopeSelection(scope, faces);
+  const kept: number[] = [];
+  for (let f = 0; f < faces; f++) {
+    if (mask[f] !== 1) continue;
+    kept.push(index.getX(f * 3), index.getX(f * 3 + 1), index.getX(f * 3 + 2));
+  }
+  const subset = source.clone();
+  subset.setIndex(kept);
+  return subset;
+}
+
+/**
+ * SOP / modifier (#209): reflect the source across the local-origin plane whose normal is
+ * `axis`, then merge the reflection back with the ORIGINAL (a symmetric whole, 2× the verts —
+ * Blender's Mirror). Clone both halves — never mutate the cached source (H111). The reflection
+ * matrix has determinant −1, which flips triangle winding: `applyMatrix4` reflects the normal
+ * attribute (via the normal matrix), but the index winding would now disagree with those
+ * normals → front-faces become back-faces (the mirrored half renders inside-out). Reverse the
+ * reflected copy's winding so winding and normals agree again.
+ * `internal`: caches the SOURCE, which no consumer attaches (#586) — as `array` does.
+ */
+function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): BufferGeometry | null {
+  const source = get(d.source, 'internal');
+  if (!source) return null;
+  // Reflection across the plane perpendicular to `axis` at `offset` along it:
+  // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
+  const reflect = new Matrix4().makeScale(
+    d.axis === 'x' ? -1 : 1,
+    d.axis === 'y' ? -1 : 1,
+    d.axis === 'z' ? -1 : 1,
+  );
+  const t = 2 * d.offset;
+  reflect.setPosition(d.axis === 'x' ? t : 0, d.axis === 'y' ? t : 0, d.axis === 'z' ? t : 0);
+  // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
+  // primitives to mirror, so the original is never subset and the reflection always is.
+  const original = source.clone();
+  const subset = faceSubset(source, d.scope);
+  if (subset === null) return null;
+  const reflected = reverseWinding(subset.applyMatrix4(reflect));
+  const merged = mergeGeometries([original, reflected]);
+  original.dispose();
+  reflected.dispose();
+  return merged; // null only on attribute mismatch (same source → never)
 }
 
 /**

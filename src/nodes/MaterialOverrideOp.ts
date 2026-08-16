@@ -36,7 +36,7 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MaterialValue, ObjectData } from './types';
 import { MaterialOverriddenSet } from './MaterialOverride';
-import { modifierDataSource } from '../app/modifierGeometry';
+import { modifierDataSource } from '../app/modifierDataSource';
 import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import { hydrateInlineMaterial } from './materialSchema';
 
@@ -52,7 +52,11 @@ export const MaterialOverrideOpParams = z.object({
   // re-declared, so the two hosts of this rule cannot drift in their vocabulary any
   // more than they can in their composition.
   overridden: MaterialOverriddenSet,
-  /** Stack mute-bypass (V58): true → pass the source through unchanged. */
+  /**
+   * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it
+   * and the evaluator honours it, handing the spine value back without running
+   * `evaluate`. Nothing in this file reads it.
+   */
   muted: z.boolean().default(false),
 });
 export type MaterialOverrideOpParams = z.infer<typeof MaterialOverrideOpParams>;
@@ -87,7 +91,31 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
   inputs: { target: { type: 'ObjectData', cardinality: 'single' } },
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // #396 — the spine the material stack walks down (see SetMaterialOp).
-  chainInput: 'target',
+  chain: {
+    input: 'target',
+    // 🔴 ns-2 step 17 — THIS USED TO READ `{ kind: 'target' }`, AND IT WAS A LYING LABEL.
+    //
+    // The reading was right in principle — a writer, as SetMaterialOp: the selection would
+    // name which faces the override lands on. But `evaluate` below never read the
+    // selection, and its own comment said so ("not read until the behaviour steps"). No
+    // behaviour step came. So the declaration promised something no code delivered, and
+    // every behavioural test passed, because they were all written against what this
+    // operator actually does.
+    //
+    // MEASURED, not read: run this operator against a total selection and against one
+    // naming half the faces, and the two outputs are BYTE-IDENTICAL
+    // (`operatorScopeHonouring.gate.test.ts`, which found it on its first run).
+    //
+    // `declined` is the honest declaration today, and it is exactly what that member of
+    // the union is for: "could be scoped, is not, YET". It moves this operator into a
+    // census that asserted the empty set, which is the point — the escape hatch exists so
+    // that a gap has to be said out loud in a diff rather than worn as a label. Honouring
+    // it is #682: it needs the index-and-slot-table road SetMaterialOp already drives, and
+    // that is a behaviour change with its own arithmetic, not a declaration fix.
+    scope: { kind: 'unscoped', why: 'declined' },
+    bypass: { kind: 'passthrough', param: 'muted' },
+    section: 'material',
+  },
   inspectorSections: ['material'],
   home: {
     color: 'material',
@@ -97,12 +125,14 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
     emissive: 'material',
     emissiveIntensity: 'material',
   },
+  // ns-2 step 17 — NO fourth argument, because the declaration above no longer claims one.
+  // `scopeFor` in the evaluator hands `undefined` to every `unscoped` operator, so keeping
+  // the runtime refusal here would throw on this operator's own road. The refusal and the
+  // declaration are one claim, and they move together.
   evaluate(params, inputs) {
     const src = inputs.target as ObjectData | undefined;
     // Unwired target (transient authoring state) — nothing to compose onto.
     if (!src) return src as unknown as ObjectData;
-    // Mute-bypass (V58) — identity passthrough, byte-identical to no operator.
-    if (params.muted) return src;
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — nothing wears a material.
     if (!source) return src;

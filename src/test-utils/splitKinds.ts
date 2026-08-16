@@ -52,9 +52,12 @@ export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'b
 export interface DataLaneDef {
   readonly inputs?: Record<string, { type?: string | readonly string[] } | undefined>;
   readonly outputs?: Record<string, { type?: string } | undefined>;
-  /** #396 — the socket carrying the chain. Structural, like the rest of this shape, so
-   *  the predicate below can read a real `NodeDefinition` without importing the registry. */
-  readonly chainInput?: string;
+  /** #396 / ns-2 — the operator declaration, of which `input` is the socket carrying the
+   *  chain. Structural, like the rest of this shape, so the predicate below can read a
+   *  real `NodeDefinition` without importing the registry. Only `input` is named here:
+   *  this module asks a SHAPE question and has no use for scope, bypass or section, and
+   *  restating fields it does not read would make it a second declaration of the record. */
+  readonly chain?: { readonly input?: string };
 }
 
 /**
@@ -79,7 +82,7 @@ export function isDataOperatorDef(def: DataLaneDef | undefined): boolean {
   // input the operator NOMINATES as its chain rather than of one called `target`. This
   // was the fourth independent spelling of that question; it now agrees with the other
   // three by construction instead of by everyone happening to pick the same name.
-  const spine = def?.chainInput;
+  const spine = def?.chain?.input;
   if (!spine) return false;
   // #609 — MEMBERSHIP, because a spine may now accept a SET of types, and a bare
   // `=== 'ObjectData'` reads FALSE for such a socket while still compiling.

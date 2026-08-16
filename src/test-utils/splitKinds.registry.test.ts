@@ -123,7 +123,7 @@ describe('the split-kind registry gate', () => {
       SubdivideModifier: {
         inputs: { target: { type: 'ObjectData' } },
         outputs: { out: { type: 'ObjectData' } },
-        chainInput: 'target',
+        chain: { input: 'target' },
       },
       TeapotData: { outputs: { out: { type: 'ObjectData' } } },
     };
@@ -293,7 +293,7 @@ describe('the split-kind registry gate', () => {
       {
         name: 'spine accepts a set INCLUDING ObjectData',
         def: {
-          chainInput: 'target',
+          chain: { input: 'target' },
           inputs: { target: { type: ['Mesh', 'ObjectData'] } },
           outputs: OUT_DATA,
         },
@@ -302,7 +302,7 @@ describe('the split-kind registry gate', () => {
       {
         name: 'spine accepts a set EXCLUDING ObjectData',
         def: {
-          chainInput: 'target',
+          chain: { input: 'target' },
           inputs: { target: { type: ['Mesh', 'SceneObject'] } },
           outputs: OUT_DATA,
         },
@@ -311,7 +311,7 @@ describe('the split-kind registry gate', () => {
       {
         name: 'ObjectData is the FIRST member',
         def: {
-          chainInput: 'target',
+          chain: { input: 'target' },
           inputs: { target: { type: ['ObjectData', 'Mesh'] } },
           outputs: OUT_DATA,
         },
@@ -320,7 +320,7 @@ describe('the split-kind registry gate', () => {
       {
         name: 'scalar spine, the ordinary form',
         def: {
-          chainInput: 'target',
+          chain: { input: 'target' },
           inputs: { target: { type: 'ObjectData' } },
           outputs: OUT_DATA,
         },
@@ -328,7 +328,7 @@ describe('the split-kind registry gate', () => {
       },
       {
         name: 'spine names a socket that is not declared',
-        def: { chainInput: 'missing', inputs: {}, outputs: OUT_DATA },
+        def: { chain: { input: 'missing' }, inputs: {}, outputs: OUT_DATA },
         expected: false,
       },
     ];

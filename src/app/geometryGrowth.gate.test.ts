@@ -134,7 +134,6 @@ describe('#586 — the growth law, per origin', () => {
   it('a primed baked geometry is its own origin — it is not built and not attributed to a door', () => {
     const ref: GeometryRef = {
       key: 'baked|abc-8',
-      kind: 'baked',
       descriptor: { kind: 'baked', hash: 'abc', vertexCount: 8 },
     };
     expect(getForRead(ref)).toBeNull(); // a baked MISS builds nothing

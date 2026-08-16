@@ -8,6 +8,13 @@
 // path), App. A (glossary), App. B (Op shapes).
 
 import { z } from 'zod';
+// ns-2 step 9b — the FIRST reference from `src/core/dag/**` into `src/nodes/**`, and it is
+// `import type`, which the compiler erases: the emitted module pulls in nothing. Measured
+// at step 9: `src/core/dag/**` is 14 production files with ZERO imports of `src/app` or
+// `src/nodes`. This one, and the VALUE import the evaluator adds beside it, are the two
+// that road was extracted for (`modifierDataSource` became a leaf in the same wave so the
+// edge does not close a cycle). Pinned by `componentScopeChannel.gate.test.ts`.
+import type { ComponentSelection } from '../../nodes/componentSelection';
 
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -297,6 +304,95 @@ export interface ResolvedInputs {
   [socket: string]: unknown;
 }
 
+/**
+ * How an operator is SCOPED — whether a resolved component selection reaches it, and what
+ * the selection names when it does. ns-2 (#607, #660).
+ *
+ * ── THE MEANINGS LIVE HERE, NOT IN A PLANNING DOCUMENT ────────────────────────────────
+ *
+ * A closed union whose members' meanings live only in a research document is the shape
+ * this repo has already paid for three times: a label that reads correctly, is honoured
+ * by nobody, and passes every behavioural test because nothing downstream disagrees with
+ * a name. The table below is the contract; if a member's meaning is not stated here it
+ * does not have one.
+ *
+ * ── WHY THREE MEMBERS AND NOT FOUR ────────────────────────────────────────────────────
+ *
+ * An earlier shape had `'passthrough'` and `'none'` as separate members and they were
+ * observationally identical — both meant "no selection reaches this operator". Two states
+ * that need a rule relating them are one state with two spellings, so the pair collapsed
+ * into `'unscoped'` and the DIFFERENCE that actually matters moved into `why`, where it
+ * is carried by the type instead of by prose.
+ */
+export type ScopeKind =
+  /**
+   * The selection names which components the operator READS. A generator preserves its
+   * whole input and generates from the subset — a scoped Mirror reflects the selected
+   * faces and keeps the original, which is Houdini's Mirror SOP with Keep Original on.
+   */
+  | { readonly kind: 'source' }
+  /**
+   * The selection names which components RECEIVE the write. A scoped Set Material
+   * assigns to the selected faces and leaves the rest as they were.
+   */
+  | { readonly kind: 'target' }
+  /**
+   * No selection reaches this operator, and `why` says whether that is a fact or a
+   * decision — the distinction an escape hatch has to carry to stay honest:
+   *
+   *   `'no-component-domain'` — the spine value HAS no components (the scene lane carries
+   *                             a SceneObject, the image lane an Image), so there is
+   *                             nothing to resolve a selection against. Not a choice.
+   *   `'declined'`            — this operator could be scoped and is not, YET. A real
+   *                             deferral, declared where a reader will meet it.
+   */
+  | { readonly kind: 'unscoped'; readonly why: 'no-component-domain' | 'declined' };
+
+/**
+ * How an operator is BYPASSED — the stack's mute.
+ *
+ * `passthrough` NAMES the boolean param carrying the state, rather than assuming every
+ * operator spells it `muted`. That is the whole repair: the field was spelled per member
+ * in two vocabularies with nothing relating them, and read back through a cast that could
+ * not tell "declared and set false" from "never declared at all". A declaration that
+ * names its own param can be checked against the schema at registration, which is what
+ * makes the difference between those two states expressible.
+ *
+ * `none` is a DECLARED answer — "this operator has nothing to bypass" — and not the
+ * accidental `false` a missing field used to produce.
+ */
+export type BypassKind =
+  | { readonly kind: 'passthrough'; readonly param: string }
+  | { readonly kind: 'none' };
+
+/**
+ * Which operator STACK an operator belongs to — the substrate membership claim that is
+ * currently spelled as seven hand-maintained type lists with no gate relating any of them.
+ *
+ * `'none'` is a real member, not a filler: the scene-lane wrappers are operators (they
+ * declare a spine and a stack walks past them) and belong to no offered stack. Giving one
+ * of them a section that a stack actually reads would make that stack offer a member it
+ * does not have — a lying label with a one-commit fuse.
+ */
+export type OperatorSection = 'modifier' | 'material' | 'effect' | 'none';
+
+/**
+ * Everything that is true of a node BECAUSE it is an operator, declared once.
+ *
+ * TOTAL: a node either declares no chain at all (it is not an operator) or declares all
+ * four fields. There is no partial operator, and `registerNodeType` refuses one by name.
+ */
+export interface ChainDeclaration {
+  /** What `chainInput` was: the spine a stack walks down. */
+  readonly input: SocketId;
+  /** The SPINE's scope. One field, not a per-input-role map — see `ScopeKind`. */
+  readonly scope: ScopeKind;
+  /** How the stack's mute reaches this operator. */
+  readonly bypass: BypassKind;
+  /** Which stack offers it. */
+  readonly section: OperatorSection;
+}
+
 export interface NodeDefinition<P = unknown, O = unknown> {
   type: NodeTypeId;
   version: number;
@@ -352,14 +448,57 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * The type rule rides on this too. "An operator's output type equals its input type"
    * was only ever true of the SPINE; argument roles carry their own types and are
    * exempt. Stating the spine is what makes that sentence checkable.
+   *
+   * ── ns-2: THIS FIELD REPLACED `chainInput`, AND WHY IT IS A RECORD ─────────────────
+   *
+   * `chainInput` said one true thing about the category and left every OTHER property of
+   * being an operator spelled per member: the bypass in 19 independent schema
+   * declarations across two vocabularies, membership in seven hand-maintained lists,
+   * which stack section an operator belongs to nowhere at all. The consolidation that
+   * introduced `chainInput` stopped at the socket, and three feet away the next property
+   * went on being copy-pasted. Widening the field to a RECORD is what makes the next
+   * cross-cutting property a row here instead of an eighth thing to remember — scope, the
+   * property this phase adds, is the first to arrive that way rather than by hand.
+   *
+   * OPTIONAL TO OPT IN, TOTAL ONCE OPTED IN. Absent still means "not a chain node".
+   * Present means all four fields are declared, enforced at registration rather than by
+   * type alone: every synthetic definition in the suite reaches `registerNodeType`
+   * through an `as never`, `npm run typecheck` excludes test files, and vitest checks no
+   * types at all — so a required field closes the omission only in production unless
+   * something refuses at runtime.
    */
-  chainInput?: SocketId;
+  chain?: ChainDeclaration;
   /**
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input
    * or via ctx for impure nodes only.
+   *
+   * ── `scope`: THE FOURTH ARGUMENT, AND WHY IT IS NOT IN `EvalCtx` (ns-2 step 9b) ──────
+   *
+   * The resolved component selection for THIS node, supplied by the evaluator for a node
+   * whose {@link ChainDeclaration.scope} is `'source'` or `'target'` — the four scoped
+   * operators — and for nobody else. It is `null` when the spine value has no component
+   * domain to resolve against, which is a declared answer and not a failure.
+   *
+   * 🔴 IT IS A POSITIONAL ARGUMENT AND NOT A CONTEXT FIELD, DELIBERATELY. `EvalCtx` is
+   * `{time}` and is shared by all 80 node types; widening it would make a PER-NODE datum
+   * global, and the comment above it records that two fields were removed from there for
+   * exactly that class of reason (#576). A node that declares no scope never receives one,
+   * which is a statement a shared bag cannot make.
+   *
+   * Optional HERE because 76 of the 80 node types are not scoped operators and must not be
+   * made to answer for a field that means nothing to them. It is REQUIRED on the four that
+   * are, in their own signatures, plus a runtime refusal of `undefined` — because a
+   * required parameter closes the omission only in production ([[H327]]: typecheck excludes
+   * the test tier and vitest checks no types at all, so both gates are blind to the same
+   * call site).
    */
-  evaluate(params: P, inputs: ResolvedInputs, ctx: EvalCtx): O | Record<string, O>;
+  evaluate(
+    params: P,
+    inputs: ResolvedInputs,
+    ctx: EvalCtx,
+    scope?: ComponentSelection | null,
+  ): O | Record<string, O>;
   /** Optional migration ladder: version N → N+1. */
   migrations?: Record<number, (oldParams: unknown) => unknown>;
   /**

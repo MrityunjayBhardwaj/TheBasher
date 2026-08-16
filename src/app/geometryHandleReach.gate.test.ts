@@ -21,9 +21,18 @@
 //   2. Can every descriptor field be REACHED by a param of that name on that producer?
 //   3. Does folding a field actually MOVE the key (i.e. is the field really built from)?
 //   4. Are the non-param-fed kinds left strictly alone?
+//   5. Does the HANDLE still say the kind only once? (ns-2 D8 — added below)
 //
 // Question 3 is the one that catches a half-written rebuild arm. 2 alone would pass against
 // an implementation that read the right names and ignored them.
+//
+// 🔴 QUESTION 5 EXISTS BECAUSE THE PLAN NAMED A DETECTOR THAT DOES NOT DETECT. ns-2 step 8
+// was written expecting that re-adding `GeometryRef`'s hand-written `kind` would red the
+// union parse in question 1. Measured: that parse walks from `export type GeometryDescriptor
+// =` to the first top-level `;`, and `GeometryRef` is a separate declaration BELOW it, so
+// the parse never sees the interface at all — it passed 6/6 with the field present and 6/6
+// with it removed, which is a census arithmetically incapable of deciding the change it was
+// cited for. Question 5 parses the INTERFACE, and its pre/post values are recorded in it.
 //
 // REF: src/app/modifierGeometry.ts (`descriptorParamFields`, `rebuildGeometryRef`);
 //      src/app/overlayWithIdentity.ts (the seam that uses them);
@@ -70,19 +79,32 @@ const HANDLE_KINDS: Record<
   sphere: { producer: 'SphereData', ref: sphereGeometryRef(1, 16, 12, null), probe: 7 },
   array: {
     producer: 'ArrayModifier',
-    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0]),
+    // 🔴 SCOPED ON PURPOSE (ns-2 step 13a), and this is the successor a fuse in
+    // `scopedGeneratorBuild.gate.test.ts` named by hand. `scope` is an OPTIONAL descriptor
+    // field, so an UNSCOPED fixture omits it and `descriptorParamFields` never mentions it
+    // — this whole file would then be blind to the one field that arrived after it was
+    // written, and blind SILENTLY, since a field nobody enumerates cannot be reported
+    // unreachable. The fixture carries a scope so the two checks below actually ask about
+    // it: that `ArrayModifier` declares a same-named param, and that folding a different
+    // query MOVES the key.
+    ref: arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 2, [2, 0, 0], '0-5'),
     probe: 9,
   },
   mirror: {
     producer: 'MirrorModifier',
-    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0),
+    // 🔴 SCOPED ON PURPOSE (ns-2 step 13b), for the reason the `array` entry above states,
+    // and in the SAME COMMIT that declares `MirrorModifier.scope` — because a fuse in
+    // `scopedGeneratorBuild.gate.test.ts` named that pairing by hand as its successor. Until
+    // this step the fixture had to stay unscoped: a scoped mirror would have redded the
+    // reach check correctly, since the param it names did not exist. Now both generators
+    // carry the field, so the name-correspondence is checked for both of them.
+    ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0, '0-5'),
     probe: 3,
   },
   gltf: {
     producer: null,
     ref: {
       key: 'gltf|a|b',
-      kind: 'gltf',
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'b' },
     },
     probe: 'z',
@@ -91,7 +113,6 @@ const HANDLE_KINDS: Record<
     producer: null,
     ref: {
       key: 'baked|h',
-      kind: 'baked',
       descriptor: { kind: 'baked', hash: 'h', vertexCount: 3 },
     },
     probe: 'z',
@@ -104,6 +125,11 @@ function probeFor(field: string, kind: string): unknown {
   if (field === 'offset') return kind === 'array' ? [5, 0, 0] : 5;
   if (field === 'axis') return 'y';
   if (field === 'size') return [2, 2, 2];
+  // ns-2 step 13a — a DIFFERENT well-formed query, and different after canonicalisation
+  // rather than merely as typed: the key folds the canonical form, so a probe that
+  // canonicalised back to the fixture's `0-5` would report the field ignored when it is
+  // honoured exactly right.
+  if (field === 'scope') return '0-3';
   return p;
 }
 
@@ -192,5 +218,85 @@ describe('#537 — every param that feeds a geometry handle can reach it', () =>
     // A written param that is real but feeds a DIFFERENT descriptor kind must not fold in
     // either: `radius` is nothing to a box.
     expect(rebuildGeometryRef(ref, { radius: 5 })).toEqual(boxGeometryRef([1, 1, 1], null));
+  });
+});
+
+// ── QUESTION 5 — ns-2 (D8): THE HANDLE SAYS ITS KIND EXACTLY ONCE ──────────────────────
+
+describe('ns-2 D8 — a geometry handle carries no second spelling of its kind', () => {
+  /**
+   * The members `interface GeometryRef` declares, read off the source.
+   *
+   * Brace-walked rather than lazily matched, for the reason question 1's parser records in
+   * its own comment: an interface body is full of `;` separators and nested doc comments, so
+   * a `([\s\S]*?)\}` would end at the first inner brace and censusa SMALLER subject —
+   * reporting a clean two-member shape while reading one line.
+   */
+  function geometryRefMembers(): string[] {
+    const src = stripComments(readFileSync(SOURCE, 'utf8'));
+    const head = /export interface GeometryRef\s*\{/.exec(src);
+    // The parser must find its subject before any count it produces means anything: a zero
+    // from a regex that matched nothing is indistinguishable from a zero that was measured.
+    expect(head, 'the interface must still be found by this parser').not.toBeNull();
+    let depth = 1;
+    let i = head!.index + head![0].length;
+    for (; i < src.length && depth > 0; i++) {
+      if (src[i] === '{') depth++;
+      else if (src[i] === '}') depth--;
+    }
+    const body = src.slice(head!.index + head![0].length, i - 1);
+    expect(
+      body.length,
+      'the body must be non-empty — an empty parse decides nothing',
+    ).toBeGreaterThan(0);
+    return [...body.matchAll(/readonly\s+([A-Za-z_$][\w$]*)\??\s*:/g)].map((m) => m[1]).sort();
+  }
+
+  it('declares key + descriptor + attributeKey, and no `kind` of its own', () => {
+    // ── THE CENSUS'S OWN VALUE, BEFORE AND AFTER, AS LITERALS ─────────────────────────
+    // Required of any census here, because a number that reads the same on both trees is
+    // measuring something other than the change however the assertion is phrased:
+    //
+    //     PRE  step 8 : ['attributeKey', 'descriptor', 'key', 'kind']   (4 members)
+    //     POST step 8 : ['attributeKey', 'descriptor', 'key']           (3 members)
+    //
+    // Verified by restoring the pre-step file and watching this row red on the word `kind`.
+    //
+    // 🔴 THIS ROW IS THE SOLE DETECTOR, AND THAT IS A MEASUREMENT, NOT A PRECAUTION. Step 8
+    // was expected to make the two-field disagreement UNCONSTRUCTIBLE, and it does only for
+    // the shape that was removed: re-adding `readonly kind` as REQUIRED reds `tsc` at 8
+    // construction sites, so the compiler owns that case. Re-adding it as OPTIONAL —
+    // `readonly kind?:` — was measured too, and it is a different world: **typecheck 0
+    // errors, 4157 of 4158 tests green, and this row the only thing red.** The drift comes
+    // back silently through one question mark. So the honest grade for D8 is a GATE, not an
+    // unconstructible state, and weakening this row leaves the boundary with no detector at
+    // all — the same distinction ns-2 has already paid to keep straight twice.
+    expect(geometryRefMembers()).toEqual(['attributeKey', 'descriptor', 'key']);
+  });
+
+  it('and the two exhaustive dispatches now close on the SAME union', () => {
+    // The reason the field went, stated as the thing that is now true. `availabilityOf` used
+    // to take `GeometryRef['kind']` and `faceCountOf` to take the descriptor — two `never`
+    // closures over two independently-written spellings, with nothing asserting they agreed.
+    // Adding a seventh descriptor arm redded `faceCountOf` and `rebuildGeometryRef` and left
+    // `availabilityOf` compiling clean, while its comment promised a COMPILE ERROR in
+    // capitals. A `never` closed on a second spelling guards the spelling, not the subject.
+    const src = stripComments(readFileSync(join(__dirname, 'geometryRegistry.ts'), 'utf8'));
+    expect(src, 'availabilityOf must close on the descriptor union').toContain(
+      "availabilityOf(kind: GeometryDescriptor['kind'])",
+    );
+    expect(src, 'the hand-written union must not come back as a parameter type').not.toContain(
+      "GeometryRef['kind']",
+    );
+  });
+
+  it('every constructible handle answers its kind through the descriptor alone', () => {
+    // Behavioural half: the four param-fed builders and the two reference kinds all report a
+    // kind, and they report it from one place. `Object.keys` is the discriminator — a handle
+    // that regrew a second field would still answer correctly here and would fail this.
+    for (const [kind, { ref }] of Object.entries(HANDLE_KINDS)) {
+      expect(ref.descriptor.kind, `${kind} descriptor`).toBe(kind);
+      expect(Object.keys(ref), `${kind} handle surface`).not.toContain('kind');
+    }
   });
 });

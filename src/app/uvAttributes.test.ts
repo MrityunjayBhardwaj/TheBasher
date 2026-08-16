@@ -18,13 +18,11 @@ import type { GeometryRef } from '../nodes/types';
 
 const bakedRef = (hash: string): GeometryRef => ({
   key: `baked|${hash}`,
-  kind: 'baked',
   descriptor: { kind: 'baked', hash, vertexCount: 3 },
 });
 
 const gltfRef: GeometryRef = {
   key: 'gltf|asset|child',
-  kind: 'gltf',
   descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
 };
 

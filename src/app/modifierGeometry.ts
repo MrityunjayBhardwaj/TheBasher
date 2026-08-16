@@ -30,20 +30,14 @@
 //      src/nodes/ArrayModifier.ts; docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1;
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §5 / §2.2; vyapti V58; issue #415.
 
-import type {
-  BakedMaterialSpec,
-  GeometryDescriptor,
-  GeometryRef,
-  InlineMaterialSpec,
-  MirrorAxis,
-  ObjectData,
-  Vec3,
-} from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef, MirrorAxis, ObjectData, Vec3 } from '../nodes/types';
 import { evaluate } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
+import { modifierDataSource } from './modifierDataSource';
 import { rebuiltMeshAttributes } from '../nodes/meshAttributes';
+import { canonicalScopeQuery } from '../nodes/scopeQuery';
 
 /**
  * The box descriptor for a size — the ONE spelling of that literal.
@@ -86,7 +80,7 @@ function withAttributeComponent(
 ): GeometryRef {
   if (attributeKey === undefined) {
     throw new Error(
-      `geometryRef: '${base.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
+      `geometryRef: '${base.descriptor.kind}' was built without answering the attribute question — pass the minted key, or null for none`,
     );
   }
   // Absent, never present-and-undefined: the two are different objects to `Object.keys`
@@ -113,10 +107,9 @@ export function refWithAttributeKey(ref: GeometryRef, attributeKey: string | nul
   const carried = ref.attributeKey;
   const base =
     carried === undefined
-      ? { key: ref.key, kind: ref.kind, descriptor: ref.descriptor }
+      ? { key: ref.key, descriptor: ref.descriptor }
       : {
           key: ref.key.slice(0, ref.key.length - `|a:${carried}`.length),
-          kind: ref.kind,
           descriptor: ref.descriptor,
         };
   return withAttributeComponent(base, attributeKey);
@@ -141,7 +134,6 @@ export function boxGeometryRef(size: Vec3, attributeKey: string | null): Geometr
   return withAttributeComponent(
     {
       key: `box|${size[0]},${size[1]},${size[2]}`,
-      kind: 'box',
       descriptor: boxDescriptor(size),
     },
     attributeKey,
@@ -166,75 +158,10 @@ export function sphereGeometryRef(
   return withAttributeComponent(
     {
       key: `sphere|${radius}|${widthSegments}|${heightSegments}`,
-      kind: 'sphere',
       descriptor: sphereDescriptor(radius, widthSegments, heightSegments),
     },
     attributeKey,
   );
-}
-
-/**
- * Everything a geometry modifier needs from its source DATA: the handle to reshape
- * and the material to inherit. `null` from {@link modifierDataSource} means "this
- * value is not a modifiable source" — the modifier passes it through unchanged.
- *
- * There is NO pose here, and that absence is the point. On the data lane (#415) there
- * is none to take: the Object above the stack owns it, and a data node has none of its
- * own. Both references state it (Houdini S8: authored in object space, the transform
- * applied once above the stack; Blender 5.1.1 measured: the evaluated mesh datablock
- * has no `matrix_world`) — see `ModifiedDataValue` in src/nodes/types.ts. The
- * predecessor of this interface carried a `transform` field for the SceneObject-side
- * road, which is what #415 removed.
- */
-export interface ModifierDataSource {
-  readonly geometry: GeometryRef;
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
-}
-
-/**
- * Project a resolved `ObjectData` value into the source a geometry modifier consumes
- * — THE ONE kind-dispatch for "is this data reshapeable, and with what?". `null` means
- * "not a mesh face" and the modifier passes the value through unchanged.
- *
- * #415 moved the modifier onto the data lane, so THIS is the classifier the modifier's
- * own `evaluate` asks, and the one `canModifyGeometry` and the read road ask too. It is
- * now the ONLY one: the SceneObject-side twin `modifierSource` — which answered the same
- * question of a posed scene value and delegated its `Object` arm here — was deleted once
- * the flip left it with no production callers. There is no second answer to keep in step.
- *
- * The switch is CLOSED BY A `never` ([[V109]]) — this is the same exhaustive guard
- * #388 installed in the twin, MOVED here rather than deleted, and it must stay
- * exhaustive for the same reason: an inequality guard (`data.kind !== 'MeshData'`) is
- * ALREADY TOTAL, so widening `ObjectData` cannot redden it and a genuinely mesh-like
- * new member gets absorbed in silence with the wrong answer. A new data kind is a
- * COMPILE ERROR here, which is the point.
- */
-export function modifierDataSource(data: ObjectData): ModifierDataSource | null {
-  switch (data.kind) {
-    // `ModifiedData` is here for the CHAIN case — a modifier over a modifier's output,
-    // which is the reason the stack composes at all: each operator reshapes the
-    // cumulative result below it.
-    case 'MeshData':
-    case 'BakedData':
-    case 'ModifiedData':
-      // All three carry a rebuildable/authoritative handle + an inherited material.
-      // `MeshData.material` is the narrower Inline|null (#388), which fits the wide
-      // union verbatim; a baked or modified source's BakedMaterialSpec rides through
-      // instead of dropping to null (#358).
-      return { geometry: data.geometry, material: data.material };
-    case 'CurveData':
-    case 'LightData':
-    case 'CameraData':
-      // Not a mesh face — nothing for a geometry modifier to reshape. Measured, not
-      // assumed: Blender 5.1.1 accepts 55 modifier types on a mesh and ZERO on a
-      // camera or a light (`ref/GROUND_TRUTH_BLENDER_MODIFIER_DATA.md` §9).
-      return null;
-    default: {
-      const exhaustiveData: never = data;
-      void exhaustiveData;
-      return null;
-    }
-  }
 }
 
 /**
@@ -330,17 +257,55 @@ export function canWearMaterial(state: DagState, nodeId: string): boolean {
 }
 
 /**
+ * The canonical `scope` a generator descriptor carries, or `undefined` for unscoped.
+ *
+ * ONE place, shared by both generators (ns-2 step 12.5), because it decides three things
+ * that must not be decided twice:
+ *
+ *   1. A BLANK query is the same authoring state as none — the author cleared the field.
+ *   2. The field is OMITTED, never written `undefined`. `descriptorParamFields` reads
+ *      `Object.keys`, so `{scope: undefined}` would announce a field the producer has no
+ *      param for, and an equality on the descriptor would stop matching an unscoped twin
+ *      ([[H265]]'s shape, one type over).
+ *   3. The stored string is CANONICAL, so two spellings of one scope share one cached
+ *      build. Canonicalisation is idempotent, which is what makes it safe for
+ *      `rebuildGeometryRef` to feed a descriptor's own scope straight back in.
+ *
+ * A query the language refuses THROWS here rather than being stored — the same refusal the
+ * resolver makes, at the other end of the same road.
+ */
+function scopeField(scope: string | null | undefined): { scope?: string } {
+  if (scope === undefined || scope === null || scope.trim() === '') return {};
+  return { scope: canonicalScopeQuery(scope) };
+}
+
+/**
  * Wrap a source `GeometryRef` in an `array` descriptor: `count` copies of the
  * source, each translated by `i*offset` in the source's LOCAL space, merged. The
  * key folds the source key + params so identical inputs share a registry-cached
  * build (and two different params never false-share, §48). count is clamped ≥1.
+ *
+ * 🔴 `scope` FOLDS INTO THE KEY, AND THAT IS THE WHOLE REASON IT IS A PARAMETER HERE
+ * (ns-2 D9). Without it, two arrays over one source scoped to different halves both key as
+ * `array|<source>|3|2,0,0` and share ONE cached `BufferGeometry` — and both draw something,
+ * which is what makes it silent. The key folds the CANONICAL QUERY rather than a hash of
+ * the resolved mask: O(query) per evaluate instead of O(faces) on the drag road, at the
+ * price that two queries which resolve alike but canonicalise apart mint two builds — a
+ * benign duplicate, bounded by distinct canonical queries and swept by the registry.
+ * Appended only when present, so every unscoped key is byte-identical to what it was.
  */
-export function arrayGeometryRef(source: GeometryRef, count: number, offset: Vec3): GeometryRef {
+export function arrayGeometryRef(
+  source: GeometryRef,
+  count: number,
+  offset: Vec3,
+  scope?: string | null,
+): GeometryRef {
   const n = Math.max(1, Math.floor(count));
+  const scoped = scopeField(scope);
+  const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
   return {
-    key: `array|${source.key}|${n}|${offset[0]},${offset[1]},${offset[2]}`,
-    kind: 'array',
-    descriptor: { kind: 'array', source, count: n, offset },
+    key: `array|${source.key}|${n}|${offset[0]},${offset[1]},${offset[2]}${suffix}`,
+    descriptor: { kind: 'array', source, count: n, offset, ...scoped },
   };
 }
 
@@ -362,11 +327,13 @@ export function mirrorGeometryRef(
   source: GeometryRef,
   axis: MirrorAxis,
   offset: number,
+  scope?: string | null,
 ): GeometryRef {
+  const scoped = scopeField(scope);
+  const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
   return {
-    key: `mirror|${source.key}|${axis}|${offset}`,
-    kind: 'mirror',
-    descriptor: { kind: 'mirror', source, axis, offset },
+    key: `mirror|${source.key}|${axis}|${offset}${suffix}`,
+    descriptor: { kind: 'mirror', source, axis, offset, ...scoped },
   };
 }
 
@@ -486,17 +453,23 @@ export function rebuildGeometryRef(
         reboundAttributeKey(ref, rebuilt),
       );
     }
+    // ns-2 step 12.5 — `scope` falls back to the descriptor's own, exactly as every other
+    // field does. An arm that dropped it would silently UNSCOPE a generator the moment any
+    // animated param on that modifier moved, with every test green, because no fixture that
+    // predates this step is scoped.
     case 'array':
       return arrayGeometryRef(
         d.source,
         (values.count ?? d.count) as number,
         (values.offset ?? d.offset) as Vec3,
+        (values.scope ?? d.scope) as string | undefined,
       );
     case 'mirror':
       return mirrorGeometryRef(
         d.source,
         (values.axis ?? d.axis) as MirrorAxis,
         (values.offset ?? d.offset) as number,
+        (values.scope ?? d.scope) as string | undefined,
       );
     case 'gltf':
     case 'baked':

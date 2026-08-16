@@ -43,10 +43,17 @@
 //      src/app/material/materialOverrideMerge.ts (the one decision); PLAN-2 §5; #394.
 
 import type { DagState } from '../core/dag/state';
+// The DAG node, EXPLICITLY: `Node` unqualified resolves to the DOM's in this project,
+// and the mistake type-checks — a `Node & { type: … }` annotation silently becomes an
+// intersection with `Element`'s ancestor and every field read below stops compiling for
+// the wrong reason. Caught while fixing #674.
+import type { Node } from '../core/dag/types';
 import type { MaterialOverrideField, ObjectData } from '../nodes/types';
 import type { MaterialOverrideOpParams } from '../nodes/MaterialOverrideOp';
 import { overrideValueOf } from '../nodes/MaterialOverrideOp';
 import { evaluate } from '../core/dag/evaluator';
+import { requireNodeType } from '../core/dag/registry';
+import { isBypassed } from '../core/dag/chainBypass';
 import {
   isDataLaneOperator,
   isMaterialLaneOperator,
@@ -54,7 +61,7 @@ import {
   singleRef,
   type MaterialLaneType,
 } from './operatorChain';
-import { modifierDataSource } from './modifierGeometry';
+import { modifierDataSource } from './modifierDataSource';
 import {
   resolveMaterialOverrideFields,
   type MaterialMapPresence,
@@ -135,19 +142,39 @@ export const MATERIAL_OVERRIDE_FIELDS = Object.keys(
  * silently-transparent layer. That is the structural guard, because the failure mode of
  * a missing arm is invisible — the write succeeds against the layer below and nothing
  * changes on screen.
+ *
+ * 🔴 #674 — THAT SENTENCE WAS FALSE FOR AS LONG AS IT HAS BEEN WRITTEN, AND IT WAS THE
+ * REASON THIS LIST WAS KEPT. Measured while ns-2 step 7 retired the sibling lists: a third
+ * member added to `MATERIAL_LANE_TYPES` with no arm here compiled clean. Two casts each
+ * independently disabled the check — `node.type as never` assigns to `never` from ANY type,
+ * so the default arm compiled whatever was unhandled, and `node.type as MaterialLaneType`
+ * asserted the discriminant instead of narrowing it. Both existed because the CALLER
+ * narrows (`isMaterialLaneOperator`) and then passed an ID, so this function re-looked the
+ * node up and got `type: string` back.
+ *
+ * ⇒ it takes the NARROWED NODE now. No casts, and the guarantee is the one the paragraph
+ * above always claimed. A guard that is believed is worse than a missing one: nobody
+ * re-derives a check that is already documented as covered.
  */
 function maskedFieldsOf(
   state: DagState,
-  opId: string,
+  node: Node & { type: MaterialLaneType },
 ): Partial<Record<MaterialOverrideField, MaterialFieldOwner>> {
-  const node = state.nodes[opId];
-  if (!node) return {};
+  const opId = node.id;
   const params = node.params as Record<string, unknown>;
-  // A muted layer is byte-identically no layer (V58) — it masks nothing.
-  if (params.muted === true) return {};
+  // A bypassed layer is byte-identically no layer (V58) — it masks nothing.
+  //
+  // This was `(node.params as Record<string, unknown>).muted === true` — the SECOND
+  // honouring site in the operator lane, and the one a census of unchecked casts could
+  // not see, because it is not a cast: it reads a typed record under a literal field
+  // name. That is what made it survive the consolidation that introduced `chainInput`
+  // and would have made it survive this one — a walker still reading the raw field after
+  // the field stopped being the declaration is exactly the "stops one lane short" shape
+  // ns-2 exists to end, and it is silent, because the two spellings agree today.
+  if (isBypassed(requireNodeType(node.type), node.params)) return {};
 
   const out: Partial<Record<MaterialOverrideField, MaterialFieldOwner>> = {};
-  switch (node.type as MaterialLaneType) {
+  switch (node.type) {
     case 'SetMaterialOp': {
       // Wholesale replace: it masks EVERY field, and its authority for each of them is
       // the Material node on its socket. Nothing connected ⇒ the operator is transparent
@@ -188,7 +215,7 @@ function maskedFieldsOf(
       return out;
     }
     default: {
-      const exhaustive: never = node.type as never;
+      const exhaustive: never = node.type;
       void exhaustive;
       return {};
     }
@@ -225,8 +252,9 @@ export function resolveMaterialFieldOwners(
   const seen = new Set<string>();
   while (cur && remaining > 0 && isDataLaneOperator(state.nodes[cur]) && !seen.has(cur)) {
     seen.add(cur);
-    if (isMaterialLaneOperator(state.nodes[cur])) {
-      const masked = maskedFieldsOf(state, cur);
+    const op = state.nodes[cur];
+    if (isMaterialLaneOperator(op)) {
+      const masked = maskedFieldsOf(state, op);
       for (const field of MATERIAL_OVERRIDE_FIELDS) {
         const owner = masked[field];
         if (owner && out[field] === null) {

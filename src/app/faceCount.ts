@@ -30,6 +30,13 @@
 //      issues #633, #638.
 
 import type { GeometryDescriptor } from '../nodes/types';
+// ns-2 step 12.5 — a scoped generator's count needs to know how many elements its query
+// names. `scopeQuery.ts` is a LEAF with zero value imports, which is what keeps this one a
+// leaf too: the property this module holds is not "one import" for its own sake, it is that
+// nothing it depends on can depend back on it. `componentSelection.ts` could not have
+// served, because it imports this module — a measured cycle, and the reason the language
+// moved below all three of its consumers rather than into one of them.
+import { scopeSelectedCount } from '../nodes/scopeQuery';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -66,13 +73,39 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       const h = Math.max(2, Math.floor(descriptor.heightSegments));
       return 2 * w * (h - 1);
     }
+    // ── ns-2 step 12.5 — THE SCOPED ARMS ────────────────────────────────────────────
+    //
+    // A SCOPED GENERATOR PRESERVES ITS WHOLE INPUT AND GENERATES FROM THE SUBSET (plan
+    // §2.2). So the count is `source + subset x (copies generated)`, and it degenerates to
+    // the unscoped product exactly when the subset is the whole input — which is why the
+    // unscoped arm is not a special case below, it is `subset === source`.
+    //
+    // For MIRROR the rule is GROUNDED: Houdini's Mirror SOP documents *Keep Original* —
+    // "Preserves the input geometry" — while *Group* is "Primitives to mirror". For ARRAY
+    // it is OURS, extended from Mirror by consistency: copy 0 sits at the identity offset
+    // and is the preserved input; copies 1..n-1 are generated from the subset. Copy and
+    // Transform's page does not decide it, and `subset x count` reads its wording just as
+    // well — the row that makes the choice visible rather than assumed is `count = 1`
+    // yielding the whole source, which is why it is an exit criterion and not a comment.
+    //
+    // 🔴 THIS AND THE BUILDER MUST MOVE TOGETHER. They are one claim spelled twice — the
+    // arithmetic here, the merge in `geometryRegistry.ts` — and `build()` consults
+    // `faceCountMismatch` before deriving a group layout, so a scoped build whose count
+    // was left unamended warns and returns the geometry with its MATERIAL GROUPS DROPPED.
+    // Parity (`faceCount.gate.test.ts`) catches ONE of them drifting; it is green when
+    // NEITHER honours the field, which is why the literal `24` lives beside it in
+    // `scopedGeneratorBuild.gate.test.ts`.
     case 'array': {
       const source = faceCountOf(descriptor.source.descriptor);
-      return source === null ? null : source * Math.max(1, Math.floor(descriptor.count));
+      if (source === null) return null;
+      const copies = Math.max(1, Math.floor(descriptor.count));
+      const subset = subsetCountOf(descriptor.scope, source);
+      return source + subset * (copies - 1);
     }
     case 'mirror': {
       const source = faceCountOf(descriptor.source.descriptor);
-      return source === null ? null : source * 2;
+      if (source === null) return null;
+      return source + subsetCountOf(descriptor.scope, source);
     }
     case 'gltf':
     case 'baked':
@@ -82,6 +115,18 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       throw new Error(`faceCountOf: undeclared descriptor kind ${JSON.stringify(unreachable)}`);
     }
   }
+}
+
+/**
+ * How many of a source's `total` elements a generator's scope names — `total` when it is
+ * unscoped.
+ *
+ * The unscoped answer is the SAME expression rather than a branch around it, so the two
+ * cases cannot drift: an unscoped generator is one whose subset is everything, which is
+ * exactly what makes `source + subset x (count - 1)` collapse back to `source x count`.
+ */
+function subsetCountOf(scope: string | undefined, total: number): number {
+  return scope === undefined ? total : scopeSelectedCount(scope, total);
 }
 
 /**
@@ -108,6 +153,40 @@ export function faceCountMismatch(
   const expected = faces * 3;
   if (indexCount === expected) return null;
   return `faceCount: descriptor '${descriptor.kind}' derives ${faces} faces (${expected} index entries) but the built geometry carries ${indexCount}`;
+}
+
+/**
+ * Why a built geometry has no triangles at all, or `null` when it has some (ns-2 D6b).
+ *
+ * ── WHY THE TRIGGER IS THE BUILT INDEX AND NOT A `null` FROM THE MERGE ────────────────
+ *
+ * The plan's first revision guarded a different state: *"if `mergeGeometries` returns
+ * `null`…"*. Measured, it does not. `merge([full, empty])` returns a valid geometry with
+ * index 36 and 48 dead positions; `merge([empty])` returns one with index 0. A valid
+ * geometry that draws nothing is quieter than a `null` would have been — the renderer
+ * attaches it, nothing errors, and the object is simply not there. So the refusal is
+ * written against the state that exists.
+ *
+ * ⚠️ AND ITS REACHABLE POPULATION IS EMPTY TODAY, WHICH IS SAID HERE RATHER THAN IMPLIED.
+ * Under §2.2's rule a scoped generator preserves its WHOLE input, so a scope selecting
+ * nothing yields the source unchanged — 12 faces for a box, never 0. No descriptor this
+ * phase can construct drives a build to an empty index, and the gate says so with a
+ * census. It is kept for two reasons, both stated: it is the detector for a semantic
+ * change that makes copy 0 a subset too (the rival reading of Copy and Transform's
+ * wording), and an empty draw is the quietest failure this road can produce. Because
+ * nothing reaches it, the gate proves the INSTRUMENT works by calling it directly —
+ * a guard whose subject never arrives reads as "no objection" forever ([[H360]]).
+ *
+ * Says nothing for a NON-indexed geometry: that is a different condition with a different
+ * answer, and it is the one that makes coverage undefined rather than violated — the same
+ * separation {@link faceCountMismatch} already draws.
+ */
+export function zeroIndexRefusal(
+  descriptor: GeometryDescriptor,
+  indexCount: number | null,
+): string | null {
+  if (indexCount === null || indexCount > 0) return null;
+  return `faceCount: descriptor '${descriptor.kind}' built a geometry with an EMPTY index (${indexCount} entries) — it would attach and draw nothing`;
 }
 
 /**

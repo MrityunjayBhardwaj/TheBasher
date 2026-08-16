@@ -136,6 +136,13 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
   'src/agent/mutators/builders/retarget.ts': authored('fixed-ctx-by-design'),
+  // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
+  // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
+  // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
+  // params its caller hands it verbatim — so authored, for the same reason `retarget`
+  // above is. It exists because the operator bypass moved into the evaluator and a
+  // direct `evaluate` call can no longer observe it.
+  'src/test-utils/evaluateNodeAlone.ts': authored('fixed-ctx-by-design'),
   'src/app/cookState.ts': authored('mints-the-cooked-state'),
 
   // ── INDIFFERENT — the escape hatch, and the reason it is not the easy road ─────────
@@ -169,7 +176,14 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
   it('the census has the size it was written against', () => {
     // An EXACT count, not a floor: this set is expected to SHRINK as the fold lands and
     // roads collapse, and a floor would go quietly green on the way down.
-    expect(evaluatorConsumers()).toHaveLength(35);
+    //
+    // 35 → 36 at ns-2 step 5, and an increase here is worth a sentence rather than a
+    // reflex bump: the operator bypass moved into the evaluator, so a node test can no
+    // longer observe it by calling `evaluate` directly, and the one shared helper that
+    // repoints those tests onto the real road is the new importer. One helper, not one
+    // per test file — the alternative was three near-identical copies, which is the
+    // defect this phase is about.
+    expect(evaluatorConsumers()).toHaveLength(36);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
