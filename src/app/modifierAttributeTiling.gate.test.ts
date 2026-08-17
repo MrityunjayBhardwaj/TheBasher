@@ -75,8 +75,13 @@
 //      issues #644, #649, #638, #645.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { arrayGeometryRef, boxGeometryRef, mirrorGeometryRef } from './modifierGeometry';
-import { faceCountOf } from './faceCount';
+import {
+  arrayGeometryRef,
+  boxGeometryRef,
+  mirrorGeometryRef,
+  sphereGeometryRef,
+} from './modifierGeometry';
+import { faceCountOf, tiledFaceOrder } from './faceCount';
 import { clear, getForRead } from './geometryRegistry';
 import { faceRangeMaterialAttributes, uniformMaterialAttributes } from '../nodes/meshAttributes';
 import { insert } from './attributeStore';
@@ -352,5 +357,186 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     expect(mirrorGeometryRef(boxGeometryRef(BOX_SIZE, null), 'x', 0).key).toBe(
       'mirror|box|1,1,1|x|0',
     );
+  });
+
+  // ── #689 — THE LAYOUT IS NOT RE-DERIVED WHEN NOTHING IT DEPENDS ON MOVED ────────────
+  //
+  // The rows above are all about the VALUE. These are about the cost of producing it, and none
+  // of them is a timer: a wall-clock assertion in the unit tier is flaky by construction and
+  // would tell a reader nothing about WHY it got faster.
+  //
+  // The observable used instead is OBJECT IDENTITY. `tiledFaceOrder` builds a fresh array on
+  // every miss, so a returned array that is reference-equal to the previous one is proof the
+  // loop did not run — deterministic, and it fails for exactly one reason. The measurement that
+  // motivated it is in #689: 389 µs per call at 7,680 merged faces against 0.2 µs for the
+  // untiled path, on the road `ArrayModifier.evaluate` walks every frame.
+  describe('the tiling is memoised on what the layout actually depends on', () => {
+    it('an offset drag re-uses one layout and one tiled key', () => {
+      const source = twoMaterialBox();
+      const first = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0]).descriptor);
+      const second = tiledFaceOrder(arrayGeometryRef(source, 3, [9, 4, 1]).descriptor);
+
+      expect(first).not.toBeNull();
+      // IDENTITY, not equality — `toEqual` would pass on a rebuild and prove nothing.
+      expect(second!.order).toBe(first!.order);
+      // ...and the whole way up: the two refs differ in their offset, so their KEYS differ,
+      // while the attribute component they carry is the same minted key.
+      const a = arrayGeometryRef(source, 3, [2, 0, 0]);
+      const b = arrayGeometryRef(source, 3, [9, 4, 1]);
+      expect(a.key).not.toBe(b.key);
+      expect(b.attributeKey).toBe(a.attributeKey);
+    });
+
+    it('an Array with count 2 and a Mirror share one layout, because they ARE one layout', () => {
+      // `faceCount.ts`'s cache key deliberately omits `kind`, on the stated grounds that
+      // `repeats` already carries it and the two coincide at `count: 2`. That is a claim about
+      // behaviour, so it is checked here rather than left in a comment — if it were false the
+      // omission would be a correctness bug and not an optimisation.
+      const source = twoMaterialBox();
+      const asArray = tiledFaceOrder(arrayGeometryRef(source, 2, [2, 0, 0]).descriptor);
+      const asMirror = tiledFaceOrder(mirrorGeometryRef(source, 'x', 0).descriptor);
+      expect(asArray!.order).toBe(asMirror!.order);
+      // And the shared layout is the RIGHT one: the whole 12-face source, then one copy.
+      expect(asArray!.order).toHaveLength(24);
+      expect(asMirror!.sourceFaces).toBe(12);
+    });
+
+    it('two scopes over one source do NOT share a layout', () => {
+      // The over-eager direction, which is the one that would ship a wrong picture: a cache
+      // keyed too loosely gives the second modifier the first one's face order.
+      const source = twoMaterialBox();
+      const wide = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0], '1-6').descriptor);
+      const narrow = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0], '1-2').descriptor);
+      expect(wide!.order).not.toBe(narrow!.order);
+      expect(wide!.order).toHaveLength(24); // 12 + 2 x 6
+      expect(narrow!.order).toHaveLength(16); // 12 + 2 x 2
+    });
+
+    it('past the cache ceiling the answers stay correct', () => {
+      // The cache clears wholesale at 8 entries. Nine distinct layouts therefore cross that
+      // boundary, and the row that matters is that the NINTH is still right — a cache whose
+      // reclaim path returns a stale or empty layout would drop every group downstream.
+      const source = twoMaterialBox();
+      const lengths = [];
+      for (let count = 2; count <= 10; count++) {
+        const order = tiledFaceOrder(arrayGeometryRef(source, count, [2, 0, 0]).descriptor)!.order;
+        lengths.push(order.length);
+        // Every layout starts with the whole preserved source, whatever the cache did.
+        expect(order.slice(0, 12)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+      }
+      // 12 faces x count, for count 2..10 — and it agrees with the count road, which is the
+      // agreement `build()` consults before it derives any groups at all.
+      expect(lengths).toEqual([24, 36, 48, 60, 72, 84, 96, 108, 120]);
+      for (let count = 2; count <= 10; count++) {
+        expect(faceCountOf(arrayGeometryRef(source, count, [2, 0, 0]).descriptor)).toBe(12 * count);
+      }
+    });
+
+    it('a repeat over an unchanged source skips the gather and the content hash', () => {
+      // ── WHY THIS ROW IS A RATIO AND NOT AN IDENTITY CHECK ─────────────────────────────
+      //
+      // The rows above observe the LAYOUT cache through object identity. That instrument is
+      // blind to the second cache — the one holding the tiled key — because a memo miss
+      // re-mints a key that is CONTENT-DERIVED and therefore byte-identical to the hit's. No
+      // value-based assertion can separate them, and the blindness is not theoretical: with
+      // the key cache's read deleted, all five sibling rows here stayed green while the cost
+      // went back to 1655 µs per call at 31,744 faces. The cache carrying ~99% of the win had
+      // no detector at all, so this is that detector.
+      //
+      // Two populations, measured in the SAME run so anything that shifts the whole machine
+      // lands in both terms and cancels — an absolute microsecond bound is the shape that does
+      // not travel to another CPU:
+      //
+      //   MISS — one layout, a DIFFERENT source assignment per call. The layout cache hits, so
+      //          the gather and the hash run every time, at a constant face count.
+      //   HIT  — one layout, one source, a varying offset. Exactly a drag.
+      //
+      // Same descriptor shape, same face count, same code path; the memo is the only
+      // difference. The sources are built OUTSIDE the timed loop so minting them is not
+      // measured.
+      //
+      // ⚠️ THE SOURCE IS A SPHERE, NOT THE BOX EVERY OTHER ROW USES, AND THAT IS THE FINDING
+      // THAT WROTE THIS PARAGRAPH. Written first with the 36-face box it reads
+      // `hit 0.21ms / miss 0.17ms` over 300 calls — the hit measuring SLOWER, three runs in a
+      // row. Nothing was wrong with the cache: the work it skips is ~0.5 µs on 36 faces, below
+      // the cost of the differing key string the varying-offset arm builds. A cost instrument
+      // is only a detector on a population where the cost EXISTS, and the fixture that suits
+      // every correctness row here is too small by three orders of magnitude for this one.
+      const sphereDescriptor = sphereGeometryRef(1, 32, 16, null).descriptor;
+      const sourceFaces = faceCountOf(sphereDescriptor);
+      expect(sourceFaces, 'the sphere fixture has no derivable face count').toBe(960);
+
+      // Annotated, not inferred. An evolving `[]` would be `any[]` here because the timed
+      // callbacks below read it before the pushes are all seen — three errors that neither
+      // `npm run typecheck` (it excludes tests) nor vitest's esbuild transpile can see, found
+      // by the changed-file sweep.
+      const sources: GeometryRef[] = [];
+      for (let variant = 0; variant < 6; variant++) {
+        const minted = faceRangeMaterialAttributes(sphereDescriptor, variant, 500);
+        insert(minted!.key, minted!.set, 'evaluate');
+        sources.push(sphereGeometryRef(1, 32, 16, minted!.key));
+      }
+      const COPIES = 8; // 960 source faces x 8 = 7,680 merged — where the cost is real
+      const RUNS = 20;
+
+      const time = (fn: (i: number) => void) => {
+        for (let i = 0; i < 5; i++) fn(i); // warm, so neither population pays for JIT
+        const t0 = performance.now();
+        for (let i = 0; i < RUNS; i++) fn(i);
+        return performance.now() - t0;
+      };
+
+      const miss = time((i) => {
+        arrayGeometryRef(sources[i % sources.length], COPIES, [2, 0, 0]);
+      });
+      const hit = time((i) => {
+        arrayGeometryRef(sources[0], COPIES, [i * 0.001, 0, 0]);
+      });
+
+      // 5x, against a ratio measured at several hundred on this fixture. The margin is
+      // deliberately vast: this row exists to catch the cache being REMOVED, not to police its
+      // efficiency, and it is a RATIO within one run rather than a microsecond bound so a
+      // slower CPU moves both terms and cancels. If it ever fires, the cache is not consulted.
+      expect(
+        hit * 5,
+        `a memoised repeat cost ${hit.toFixed(2)}ms against ${miss.toFixed(2)}ms for a genuine ` +
+          `miss over ${RUNS} calls at ${COPIES * 960} merged faces — the tiled-key cache is ` +
+          `not being consulted`,
+      ).toBeLessThan(miss);
+    });
+
+    it('a refused source is warned about EVERY time, not just the first', () => {
+      // The memo is written on the success path only, and the refusal returns BEFORE the cache
+      // is consulted at all — so as the code stands today no perturbation of the caching can
+      // make this row red. It is a FORWARD guard rather than a detector, said plainly because
+      // the two are worth different amounts and a reader should not have to work it out.
+      //
+      // What it guards is one specific edit: hoisting the cache read above the refusal and
+      // recording refusals too. Run as an arm, that is exactly what it catches — the warning
+      // count goes 2 -> 1 and nothing else in this file moves. A guard that goes quiet after
+      // its first firing stops reporting a condition that is still true, which is worse than
+      // not having it: the second reader sees a clean console and concludes the fixture is fine.
+      const wrongSize = mintAttributes({
+        [MATERIAL_INDEX]: {
+          domain: 'face',
+          type: 'int',
+          count: 36,
+          data: new Int32Array(36),
+        } satisfies AttributeData,
+      });
+      insert(wrongSize!.key, wrongSize!.set, 'evaluate');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      try {
+        const source = boxGeometryRef(BOX_SIZE, wrongSize!.key);
+        arrayGeometryRef(source, 3, [2, 0, 0]);
+        arrayGeometryRef(source, 3, [9, 4, 1]);
+        const refusals = warn.mock.calls
+          .map((c) => String(c[0]))
+          .filter((m) => m.includes('cannot tile an assignment over 36 faces'));
+        expect(refusals).toHaveLength(2);
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

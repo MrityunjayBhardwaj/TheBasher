@@ -247,6 +247,18 @@ export function mintTargetedAttributes(
  * `via` is fixed at `'modifier'` rather than threaded from the caller; the reason is in
  * `attributeStore.ts`'s origin table.
  */
+/**
+ * The tiled key already minted for a (layout, source assignment) pair (#689).
+ *
+ * Keyed on the LAYOUT OBJECT first and the source's attribute key second, which is what makes
+ * the nesting the right way round: the outer key is the thing with a bounded lifetime, so this
+ * whole structure is reclaimed by `faceCount.ts`'s cache rather than by a policy of its own.
+ * Two modifiers over one source with different scopes hold different layouts and therefore
+ * different outer entries — a flat map keyed on the source alone would have them evict each
+ * other and hit 0%.
+ */
+const tiledKeyCache = new WeakMap<readonly number[], Map<string, string>>();
+
 export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): string | null {
   // Narrowing for `source`: `tiledFaceOrder` answers only for these two kinds, but that is
   // its invariant and not something the type system carries back out here.
@@ -281,6 +293,21 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
     return null;
   }
 
+  // #689 — the gather, the Int32Array and the content hash below are all a function of exactly
+  // two things: the source's assignment, and the layout to gather it through. Neither moves
+  // during an offset drag, and re-deriving them per frame produced a key that was already
+  // resident (measured: 121 frames, ZERO new store entries). So the answer is remembered.
+  //
+  // The layout half of the key is the order object's IDENTITY, not a restatement of what the
+  // layout depends on. `faceCount.ts` returns the same object for an unchanged tiling, so this
+  // cache cannot disagree with that module about what "the same layout" means — and it cannot
+  // outlive it either: a WeakMap keyed on the order means an entry becomes collectable the
+  // moment `faceCount.ts` drops that order from its own bounded cache. One reclaimer, one
+  // stated ceiling, and it lives beside the thing being bounded rather than here.
+  const perSource = tiledKeyCache.get(order);
+  const remembered = perSource?.get(sourceKey);
+  if (remembered !== undefined) return remembered;
+
   // A GATHER, and deliberately nothing more. Every decision about which source face lands
   // where — the preserved input, the subset, how many times it repeats — was taken by
   // `tiledFaceOrder`, beside the count this has to agree with. There is no arithmetic here
@@ -297,6 +324,13 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   const minted = mintAttributes({ [MATERIAL_INDEX]: materialIndex });
   if (minted === null) return null;
   insert(minted.key, minted.set, 'modifier');
+
+  // Remembered only on the success path — a refusal above returns before this, so a source
+  // whose assignment does not fit gets the warning EVERY time rather than once. A guard that
+  // goes quiet after its first firing is a guard that stops reporting a condition which is
+  // still true.
+  if (perSource === undefined) tiledKeyCache.set(order, new Map([[sourceKey, minted.key]]));
+  else perSource.set(sourceKey, minted.key);
   return minted.key;
 }
 

@@ -208,8 +208,15 @@ function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
  * cannot disagree about which faces the subset holds.
  *
  * ⚠️ ALLOCATES, which is why {@link faceCountOf} does not call it. The count runs per operator
- * per evaluate on the drag road and stays allocation-free; this runs where an attribute is
- * actually being tiled.
+ * per evaluate and stays allocation-free.
+ *
+ * 🔴 #689 AMENDS WHAT THIS PARAGRAPH USED TO CLAIM. It said "this runs where an attribute is
+ * actually being tiled", implying a rarer road than the count's. That was wrong: the sole
+ * consumer is reached from `arrayGeometryRef`, which `ArrayModifier.evaluate` calls — the SAME
+ * per-operator-per-evaluate road. Measured on an Array x8: 75 µs per call at 640 merged faces,
+ * 389 µs at 7,680, and 1.69 ms at 31,744, against 0.2 µs for the untiled path. So the
+ * allocation this module deliberately kept out of `faceCountOf` had been reintroduced one
+ * level up. It is memoised now — see {@link tiledFaceOrder}'s cache below.
  *
  * `sourceFaces` is returned ALONGSIDE the order rather than left for the caller to re-derive.
  * The caller needs it to check that the assignment it is about to gather from actually fits
@@ -224,11 +231,53 @@ export interface TiledFaceOrder {
   readonly order: readonly number[];
 }
 
+/**
+ * How many distinct layouts the order cache holds before it is cleared (#689).
+ *
+ * The ceiling is the RECLAIMER'S CADENCE times the per-entry cost, never the key space times
+ * it: an entry is `order.length` numbers, so the largest plausible one — a 64x32 sphere through
+ * an Array x8, 31,744 faces — is about 254 KB, and eight of those is ~2 MB. That is the bound,
+ * and it does not grow with how long a drag lasts.
+ *
+ * Eight rather than one because a scene evaluates EVERY operator per frame: a single-entry memo
+ * in a project with two array modifiers is evicted by the sibling before it is ever read, which
+ * is a cache with a 0% hit rate and the full cost of one.
+ */
+const ORDER_CACHE_LIMIT = 8;
+
+/**
+ * The last few resolved layouts, keyed by the three things a layout actually depends on.
+ *
+ * ⚠️ THE KEY IS DERIVED FROM {@link FaceTiling}, not written out again from the descriptor.
+ * That is the same discipline the rest of this module keeps: `sourceFaces`, `scope` and
+ * `repeats` are exactly the fields {@link faceTilingOf} computes, so a fourth thing the layout
+ * comes to depend on cannot be added to the rule and forgotten here — it has to pass through
+ * that record, and this key destructures the whole of it.
+ *
+ * `kind` is deliberately ABSENT. `repeats` already carries it (mirror is 1, array is count-1),
+ * and where they coincide — an Array with `count: 2` — the two layouts are genuinely identical:
+ * the whole source, then one copy of the subset. Sharing an entry there is correct rather than
+ * lucky, and `faceCount.gate.test.ts` holds the row that says so.
+ */
+const orderCache = new Map<string, TiledFaceOrder>();
+
 export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder | null {
   const tiling = faceTilingOf(descriptor);
   if (tiling === null) return null;
 
   const { sourceFaces, scope, repeats } = tiling;
+  // #689 — an offset drag moves NONE of these three, which is why the cache pays. Measured
+  // before the fix: 121 frames of a varying offset re-derived the same layout 121 times and
+  // added ZERO entries to the attribute store, so the whole per-frame cost bought a key that
+  // was already resident.
+  //
+  // An ANIMATED `count`, by contrast, moves `repeats` every frame and thrashes this — and that
+  // is the honest outcome, not a failure of the cache: the layout genuinely differs per frame,
+  // so there is no redundancy to exploit and it degrades to exactly the uncached cost.
+  const cacheKey = `${sourceFaces}|${scope ?? '*'}|${repeats}`;
+  const hit = orderCache.get(cacheKey);
+  if (hit !== undefined) return hit;
+
   // The whole input is preserved and comes FIRST — §2.2's rule, and the reason an unscoped
   // generator is not a special case: its subset is everything.
   const order: number[] = [];
@@ -241,7 +290,14 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
       order.push(face);
     }
   }
-  return { sourceFaces, order };
+  const resolved: TiledFaceOrder = { sourceFaces, order };
+
+  // Cleared wholesale rather than evicted one at a time. An LRU here would be a second policy
+  // to reason about for a cache whose entire purpose is "the last frame looked like this one";
+  // clearing costs the next frame one rebuild and keeps the ceiling a single multiplication.
+  if (orderCache.size >= ORDER_CACHE_LIMIT) orderCache.clear();
+  orderCache.set(cacheKey, resolved);
+  return resolved;
 }
 
 /**
