@@ -235,9 +235,12 @@ describe('#688 the face-domain producer census', () => {
     // `DomainId` is open as DATA so a fifth domain costs no migration. That openness is for
     // round-tripping stored values, NOT for a producer to invent one: an attribute minted at
     // an unknown domain reaches no dispatch site and is silently ignored everywhere.
-    const unknown = [...censusDomains()]
-      .flatMap(([name, domains]) => [...domains].map((d) => `${name} @ ${d}`))
-      .filter((row) => !isKnownDomain(row.split(' @ ')[1]));
+    const unknown: string[] = [];
+    for (const [name, domains] of censusDomains()) {
+      // Iterated as VALUES rather than parsed back out of a formatted string: a census that
+      // re-reads its own display format is one delimiter away from lying about its subject.
+      for (const domain of domains) if (!isKnownDomain(domain)) unknown.push(`${name} @ ${domain}`);
+    }
 
     expect(unknown).toEqual([]);
   });
@@ -305,6 +308,32 @@ describe('#688 the producer list is complete', () => {
     );
 
     expect([...new Set(PRODUCERS.map((p) => p.module))].filter((m) => !minting.has(m))).toEqual([]);
+  });
+
+  it('🔴 registers a probe for every mint CALL SITE, not merely for every module', () => {
+    // THE HOLE THE MODULE-LEVEL CHECK ABOVE LEAVES OPEN, closed by counting.
+    //
+    // The remainder check is satisfied the moment a module appears in `PRODUCERS` even once.
+    // So a FIFTH minting function added inside `meshAttributes.ts` — already registered four
+    // times over — would be driven by no probe and reported by no remainder, and this whole
+    // file would stay green while exactly the attribute it exists to catch walked in. Found
+    // by reading this gate back against itself rather than by a failure.
+    //
+    // Counting call sites is a weaker instrument than the import-clause sweep above (an alias
+    // defeats it), which is why it SUPPLEMENTS that check rather than replacing it: the sweep
+    // owns "is this module a producer at all", this row owns "are all of its producers here".
+    const stripped = new Map(sourceFiles().map(([path, src]) => [path, stripComments(src)]));
+    const mismatches: string[] = [];
+
+    for (const [path, src] of stripped) {
+      if (path === DECLARING_MODULE) continue;
+      const sites = (src.match(/\bmintAttributes\s*\(/g) ?? []).length;
+      const probes = PRODUCERS.filter((p) => p.module === path).length;
+      if (sites !== probes)
+        mismatches.push(`${path}: ${sites} mint call site(s), ${probes} probe(s)`);
+    }
+
+    expect(mismatches).toEqual([]);
   });
 
   it('every registered producer actually mints something', () => {
