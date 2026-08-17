@@ -14,7 +14,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, __resetRegistryForTests } from '../core/dag';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
@@ -64,7 +64,7 @@ function boundIds(state: DagState, nodeId = BOX_DATA): string[] {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('#394 S3d-c — possession decides who gets the data-block row', () => {

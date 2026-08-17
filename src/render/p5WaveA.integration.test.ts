@@ -25,7 +25,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { StubComfyUICapability } from '../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { expandClosure } from '../agent/closure/expand';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -35,7 +35,7 @@ import { dryRun, type CompileWorkflowFn } from './dryRun';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /**

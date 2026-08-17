@@ -38,7 +38,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { SPLIT_KINDS, splitOps, type SplitKindName } from '../test-utils/splitKinds';
 import { exposeParams, resolveExposedTarget } from './exposeParams';
 import { MATERIAL_FIELD_IR_PATH } from './resolveMaterialFieldOwner';
@@ -47,7 +47,7 @@ const COLOR = MATERIAL_FIELD_IR_PATH.color;
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function applyOps(state: DagState, ops: readonly Op[]): DagState {

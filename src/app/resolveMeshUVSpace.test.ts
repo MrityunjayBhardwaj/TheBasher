@@ -20,14 +20,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** A baked mesh whose geometry ref points at OPFS bytes that were never primed — the

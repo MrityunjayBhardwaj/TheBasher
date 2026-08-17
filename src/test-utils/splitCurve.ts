@@ -46,7 +46,7 @@ export interface SplitCurve {
 
 /**
  * Inject an Object → CurveData split curve into `state` and return the new state plus the two
- * ids. Requires the real node registry to be seeded (`__reseedAllNodesForTests()`), since it
+ * ids. Requires the real node registry to be seeded (`registerAllNodes()`), since it
  * builds genuine `CurveData`/`Object` nodes and a `data` edge.
  */
 export function makeSplitCurve(state: DagState, opts: SplitCurveOpts): SplitCurve {

@@ -24,7 +24,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { applyOp, __resetRegistryForTests } from '../core/dag';
 import { registerNodeType, getNodeType, listNodeTypes } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op, SocketId } from '../core/dag/types';
@@ -92,7 +92,7 @@ function wireBinary(opType: string): DagState {
 describe('#396 — the chain spine is declared, not named', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('THE DISCRIMINATOR: the base moves when the SAME graph nominates a different spine', () => {

@@ -19,7 +19,7 @@ import { Box3, Vector3 } from 'three';
 import { applyOp, emptyDagState, __resetRegistryForTests } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
@@ -140,7 +140,7 @@ function buildSplitSphereState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   geometryRegistry.clear();
 });
 
@@ -697,7 +697,7 @@ describe('dispatchApplyTransform (primitives)', () => {
 describe('#411 — the animated guard covers every param the bake consumes', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
     geometryRegistry.clear();
   });
 

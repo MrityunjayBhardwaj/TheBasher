@@ -34,7 +34,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, getNodeType } from '../dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../storage';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { assignedMaterials, primaryMaterial } from '../../app/materialAssignment';
@@ -85,7 +85,7 @@ const EXPECTED_GEOMETRY_KEYS: Record<string, string> = {
 describe('#637 this phase ships no migration, and the absence is pinned', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('did not move the project format version', () => {

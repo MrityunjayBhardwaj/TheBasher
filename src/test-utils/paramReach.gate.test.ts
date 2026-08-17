@@ -44,7 +44,7 @@ import { emptyDagState } from '../core/dag/state';
 import { evaluate } from '../core/dag/evaluator';
 import { snapshotRegistry } from '../core/dag/registry';
 import type { EvalCtx, Op } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   renderedValueForBand,
   rowDataParams,
@@ -103,7 +103,7 @@ function measureSeams(kind: SplitKindName): Record<string, Seam> {
 
 describe('param-reach gate (#492)', () => {
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('every schema param is classified, and every classification names a real param', () => {

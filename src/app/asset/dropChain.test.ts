@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests, registerAllNodes } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { useDagStore } from '../../core/dag/store';
 import { __resetDropCounterForTests, buildAssetDropOps } from './dropChain';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   registerAllNodes();
   __resetDropCounterForTests();
   useDagStore.setState({

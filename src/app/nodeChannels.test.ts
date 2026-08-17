@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   directChannelNodesForTarget,
   channelValuesFromNodes,
@@ -9,7 +9,7 @@ import {
 } from './nodeChannels';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // A KeyframeChannelNumber node targeting `target.paramPath` with one key.

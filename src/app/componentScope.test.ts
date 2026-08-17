@@ -89,7 +89,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { resolveComponentSelection } from '../nodes/componentSelection';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import * as geometryRegistry from './geometryRegistry';
 import {
   boxDescriptor,
@@ -184,7 +184,7 @@ function mirrorIndex(source: MeshDataValue, scope: string): number {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('ns-2 exit clause 3 — the arithmetic, on a BOX, at a non-aligned boundary', () => {

@@ -55,14 +55,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { isSectionId, paramToSection, type SectionId } from './inspectorSections';
 import { declaredParamKeys } from './inspectorSectionBody';
 import { GOLDEN_PARAM_HOMES, GOLDEN_TOTALS } from './paramHomeGolden';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const UNROUTED = '(unrouted)';

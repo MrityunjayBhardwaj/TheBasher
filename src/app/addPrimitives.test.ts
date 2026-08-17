@@ -5,11 +5,11 @@
 import { describe, expect, it } from 'vitest';
 import { emptyDagState, applyOp } from '../core/dag';
 import type { Op } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildAddPrimitiveOps, type PrimitiveKind } from './addPrimitives';
 
 function seedSceneState() {
-  __reseedAllNodesForTests();
+  registerAllNodes();
   let state = emptyDagState();
   const seed: Op[] = [{ type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} }];
   for (const op of seed) state = applyOp(state, op).next;
@@ -21,7 +21,7 @@ function seedSceneState() {
 
 describe('buildAddPrimitiveOps', () => {
   it('returns null when no scene output is wired', () => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
     const empty = emptyDagState();
     expect(buildAddPrimitiveOps(empty, 'Cube', [0, 0, 0])).toBeNull();
   });

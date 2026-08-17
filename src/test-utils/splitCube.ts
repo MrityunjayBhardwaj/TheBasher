@@ -41,7 +41,7 @@ export interface SplitCube {
 
 /**
  * Inject an Object → BoxData split cube into `state` and return the new state plus the two ids.
- * Requires the real node registry to be seeded (`__reseedAllNodesForTests()`), since it builds
+ * Requires the real node registry to be seeded (`registerAllNodes()`), since it builds
  * genuine `BoxData`/`Object` nodes and a `data` edge.
  */
 export function makeSplitCube(state: DagState, opts: SplitCubeOpts): SplitCube {

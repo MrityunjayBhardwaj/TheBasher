@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, evaluate, createEvaluatorCache } from '../core/dag';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitLight } from '../test-utils/splitLight';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -23,7 +23,7 @@ function apply(state: DagState, ops: Op[]): DagState {
 describe('resolveRigLightSources (#208)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   function withRig(): { state: DagState; rigId: string; l1: string; l2: string } {

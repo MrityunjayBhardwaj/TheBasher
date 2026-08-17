@@ -13,7 +13,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTransientEditStore } from './stores/transientEditStore';
 
@@ -47,14 +47,14 @@ function buildState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useTransientEditStore.getState().clearAll();
 });
 
 describe('#386 — the INVERSE (data → poser) reach and the null contract it must not break', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   /** A split light: an Object posing a LightData, the #386 C3 shape. */

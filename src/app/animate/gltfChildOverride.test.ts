@@ -24,7 +24,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { __resetRegistryForTests } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { routeAnimatedGrab } from './autoKeyCommit';
 import { useDagStore } from '../../core/dag/store';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
@@ -66,7 +66,7 @@ function buildChildState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('GltfChild manual-override write (P7.7 C2)', () => {

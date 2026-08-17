@@ -13,12 +13,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, __resetRegistryForTests } from '../core/dag';
 import { OpError } from '../core/dag/ops';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import type { DagState } from '../core/dag/state';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // The node types below are deliberately DIFFERENT types, because that is the whole claim:

@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
@@ -38,7 +38,7 @@ import type { ToolContext } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   __resetToolRegistryForTests();
 });
 

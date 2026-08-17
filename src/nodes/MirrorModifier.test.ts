@@ -18,7 +18,7 @@ import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { resolveComponentSelection } from './componentSelection';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveEvaluatedMesh } from '../app/resolveEvaluatedMesh';
 import * as geometryRegistry from '../app/geometryRegistry';
@@ -85,7 +85,7 @@ function evalMod(
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('MirrorModifier.evaluate', () => {

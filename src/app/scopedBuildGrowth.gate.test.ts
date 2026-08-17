@@ -149,7 +149,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import {
   arrayGeometryRef,
@@ -205,7 +205,7 @@ function cook(mesh: MeshDataValue, params: Record<string, unknown>): string {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   registry.clear();
   registry.resetGrowth();
   __resetSelectionMemoForTests();

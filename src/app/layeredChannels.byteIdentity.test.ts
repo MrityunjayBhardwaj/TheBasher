@@ -10,13 +10,13 @@
 // REF: docs/NLA-DESIGN.md §3.1/§4/§6; vyapti V88 D2/D3; RESEARCH.md test infra.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { layeredChannelValues } from './layeredChannels';
 import { directChannelValuesForTarget } from './nodeChannels';
 import type { KeyframeChannelValue } from '../nodes/types';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const vec3Channel = (

@@ -34,7 +34,7 @@ import type { EvalCtx, Op } from '../core/dag/types';
 import { migrateProjectFormat } from '../core/project/migrations';
 import { RETIRED_LADDERS } from '../core/project/retiredLadders';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { resolveDataParamOwner } from '../app/resolveDataParamOwner';
 import { addChannelMutator } from '../agent/mutators/builders/addChannel';
 import { validatePlan } from '../agent/mutators/validate';
@@ -123,7 +123,7 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
   const [base, overlaid] = spec.distinctValues;
 
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('the fixture actually holds its base value (guard the guard)', () => {
@@ -244,7 +244,7 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
 // to exist.
 describe('R9 — every kind owns its own step on the migration ladder', () => {
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('each kind has a migration registered at its version', () => {
@@ -327,7 +327,7 @@ describe.each(SPLIT_KIND_NAMES)('R10 — wrong-half write — %s', (kind) => {
   const [base, overlaid] = spec.distinctValues;
 
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('the owner resolves to the data half', () => {

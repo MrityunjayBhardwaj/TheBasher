@@ -12,7 +12,7 @@ import {
   type DagState,
 } from '../../core/dag';
 import { recomposeLightObject } from '../../nodes/lightRecompose';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitLight } from '../../test-utils/splitLight';
@@ -51,7 +51,7 @@ import { proposePlanTool, listMutatorsTool } from './tool';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   __resetMutatorRegistryForTests();
 });
 

@@ -35,7 +35,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { emptyDagState, applyOp, type DagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import {
@@ -74,7 +74,7 @@ function splitCubeWithArray(opts: { position?: [number, number, number]; color?:
 }
 
 describe('modifierGeometry — a modifier attaches to the Object and reshapes its data (#377)', () => {
-  beforeEach(() => __reseedAllNodesForTests());
+  beforeEach(() => registerAllNodes());
 
   it('read and render agree on a split-Object source (the pair that was broken)', () => {
     const { state, modifierId } = splitCubeWithArray();
@@ -323,7 +323,7 @@ describe('modifierGeometry — a modifier attaches to the Object and reshapes it
 // #498 — `resolveDataKind`, the fact the OFFER needs that `canModifyGeometry` cannot give.
 describe('#498 resolveDataKind — the kind, not just the boolean', () => {
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('names each data kind in the default project, and refuses non-data nodes', () => {

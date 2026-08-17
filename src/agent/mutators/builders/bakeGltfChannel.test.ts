@@ -13,7 +13,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../../core/dag';
-import { __reseedAllNodesForTests } from '../../../nodes/registerAll';
+import { registerAllNodes } from '../../../nodes/registerAll';
 import { validatePlan } from '../validate';
 import { bakeGltfChannelMutator } from './bakeGltfChannel';
 import { gltfChildDagId, gltfChannelDagId } from '../../../core/import/gltfImportChain';
@@ -100,7 +100,7 @@ function buildState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('mutator.timeline.bakeGltfChannel (D1)', () => {

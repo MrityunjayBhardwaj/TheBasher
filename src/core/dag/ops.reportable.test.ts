@@ -11,12 +11,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from './ops';
 import { emptyDagState } from './state';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { makeSplitCube } from '../../test-utils/splitCube';
 
 describe('applyOp — #423 wrong-half write is REPORTABLE', () => {
   beforeEach(() => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   // A split cube: the Object owns the transform (position/rotation/scale) and

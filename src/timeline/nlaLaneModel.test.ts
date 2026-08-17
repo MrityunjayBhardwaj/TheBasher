@@ -9,7 +9,7 @@
 // (as the DAG stores them), the layeredChannels.test.ts discipline.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { layeredChannelValues } from '../app/layeredChannels';
 import { buildNlaLanes, type NlaLanes, type NlaStripBlock } from './nlaLaneModel';
 import { ActionParams } from '../nodes/Action';
@@ -17,7 +17,7 @@ import { StripParams } from '../nodes/Strip';
 import { TrackParams } from '../nodes/Track';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // A 2s linear position ramp 0 → [2,1,0] (the box target, predictable values).
