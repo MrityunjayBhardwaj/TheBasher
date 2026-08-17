@@ -30,7 +30,14 @@
 //   - `GeometryRef.key` is four hand-built literal templates with no generic walk to join
 //     (`modifierGeometry.ts`), so folding means editing those functions — which is exactly
 //     the render-side work ns-1 deferred, and #638 does. The two primitive builders now
-//     take a REQUIRED attribute key; the two modifier builders still take none.
+//     take a REQUIRED attribute key.
+//     ⚠️ THE MODIFIER BUILDERS TAKE NO SUCH PARAMETER AND THEIR KEYS STILL CARRY A
+//     COMPONENT (#644) — the two are not the same statement, and reading the first as the
+//     second is a live trap. They MINT one instead of receiving one: the source's component
+//     is stripped and a freshly tiled set is minted from it, so an array over an assigned
+//     box keys as `array|box|1,1,1|3|2,0,0|a:…`. Widened again by #688 to gather every
+//     FACE-domain attribute rather than `material_index` alone; corner-domain attributes
+//     are still dropped, because the tiling order is a face permutation (#694).
 //
 // THE COST ns-1 STATED, AND WHAT PAID IT: a parallel key alone did not let two same-size
 // boxes with different per-face assignments render differently — they resolved to one
