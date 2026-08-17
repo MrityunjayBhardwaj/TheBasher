@@ -76,7 +76,11 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
     // Restated, not floored, when #638 added the `overlay` origin: the whole record is
     // compared rather than one field, so a NEW origin reds here and has to be answered for
     // — which is the point. An origin nobody enumerates is an origin nobody counts.
-    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0, overlay: 0 });
+    // EXACT, not a subset: the origin table is a growing population, so a row that only
+    // checked `evaluate` would stay green when a new producer landed under a label nobody
+    // reads. `modifier` joined at #644 — the generator tiling — and this red is the row
+    // doing its job.
+    expect(growthBySource()).toEqual({ evaluate: 2, read: 0, prime: 0, overlay: 0, modifier: 0 });
   });
 
   it('has NO async producer yet, and says so as a number', () => {
@@ -112,7 +116,7 @@ describe('#633 attribute store — growth is attributed, and residency is a numb
 
     resetGrowth();
 
-    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0, overlay: 0 });
+    expect(growthBySource()).toEqual({ evaluate: 0, read: 0, prime: 0, overlay: 0, modifier: 0 });
     expect(residentCount()).toBe(resident);
   });
 });

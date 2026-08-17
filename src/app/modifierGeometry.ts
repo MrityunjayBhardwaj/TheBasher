@@ -36,7 +36,7 @@ import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
 import { modifierDataSource } from './modifierDataSource';
-import { rebuiltMeshAttributes } from '../nodes/meshAttributes';
+import { mintTiledModifierAttributes, rebuiltMeshAttributes } from '../nodes/meshAttributes';
 import { canonicalScopeQuery } from '../nodes/scopeQuery';
 
 /**
@@ -104,15 +104,32 @@ function withAttributeComponent(
  * and no attribute key containing a delimiter can confuse it.
  */
 export function refWithAttributeKey(ref: GeometryRef, attributeKey: string | null): GeometryRef {
+  return withAttributeComponent(
+    { key: keyWithoutAttributeComponent(ref), descriptor: ref.descriptor },
+    attributeKey,
+  );
+}
+
+/**
+ * A ref's key with its OWN attribute component removed — the inverse of the append in
+ * {@link withAttributeComponent}.
+ *
+ * Removed by the exact text the sibling field names, never by parsing for `|a:`, so an
+ * attribute key that happened to contain the delimiter cannot confuse it and there is
+ * nothing to guess at.
+ *
+ * Two callers, and the second is what made this its own function (#644). A generator embeds
+ * its SOURCE's key, and while it embedded that key verbatim the generator's own key varied
+ * with the source's assignment — a fragment the merged geometry did not express, which is
+ * #649 stated exactly. The generator now strips it and appends the TILED component instead,
+ * so the key names what the merged geometry actually carries: identical assignments share
+ * one build even when the sources' full attribute sets differ, and differing assignments key
+ * apart because the group layouts genuinely differ.
+ */
+function keyWithoutAttributeComponent(ref: GeometryRef): string {
   const carried = ref.attributeKey;
-  const base =
-    carried === undefined
-      ? { key: ref.key, descriptor: ref.descriptor }
-      : {
-          key: ref.key.slice(0, ref.key.length - `|a:${carried}`.length),
-          descriptor: ref.descriptor,
-        };
-  return withAttributeComponent(base, attributeKey);
+  if (carried === undefined) return ref.key;
+  return ref.key.slice(0, ref.key.length - `|a:${carried}`.length);
 }
 
 /**
@@ -303,10 +320,14 @@ export function arrayGeometryRef(
   const n = Math.max(1, Math.floor(count));
   const scoped = scopeField(scope);
   const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
-  return {
-    key: `array|${source.key}|${n}|${offset[0]},${offset[1]},${offset[2]}${suffix}`,
-    descriptor: { kind: 'array', source, count: n, offset, ...scoped },
-  };
+  const descriptor = { kind: 'array' as const, source, count: n, offset, ...scoped };
+  return withAttributeComponent(
+    {
+      key: `array|${keyWithoutAttributeComponent(source)}|${n}|${offset[0]},${offset[1]},${offset[2]}${suffix}`,
+      descriptor,
+    },
+    mintTiledModifierAttributes(descriptor),
+  );
 }
 
 /**
@@ -331,10 +352,14 @@ export function mirrorGeometryRef(
 ): GeometryRef {
   const scoped = scopeField(scope);
   const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
-  return {
-    key: `mirror|${source.key}|${axis}|${offset}${suffix}`,
-    descriptor: { kind: 'mirror', source, axis, offset, ...scoped },
-  };
+  const descriptor = { kind: 'mirror' as const, source, axis, offset, ...scoped };
+  return withAttributeComponent(
+    {
+      key: `mirror|${keyWithoutAttributeComponent(source)}|${axis}|${offset}${suffix}`,
+      descriptor,
+    },
+    mintTiledModifierAttributes(descriptor),
+  );
 }
 
 // ── #537 — REBUILDING A HANDLE THE ANIMATION OVERLAY HAS WRITTEN THROUGH ───────────────

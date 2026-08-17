@@ -36,7 +36,7 @@ import type { GeometryDescriptor } from '../nodes/types';
 // nothing it depends on can depend back on it. `componentSelection.ts` could not have
 // served, because it imports this module — a measured cycle, and the reason the language
 // moved below all three of its consumers rather than into one of them.
-import { scopeSelectedCount } from '../nodes/scopeQuery';
+import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -95,17 +95,17 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
     // Parity (`faceCount.gate.test.ts`) catches ONE of them drifting; it is green when
     // NEITHER honours the field, which is why the literal `24` lives beside it in
     // `scopedGeneratorBuild.gate.test.ts`.
-    case 'array': {
-      const source = faceCountOf(descriptor.source.descriptor);
-      if (source === null) return null;
-      const copies = Math.max(1, Math.floor(descriptor.count));
-      const subset = subsetCountOf(descriptor.scope, source);
-      return source + subset * (copies - 1);
-    }
+    //
+    // #644 — BOTH ARMS NOW GO THROUGH {@link faceTilingOf}, and that is not a tidy-up. The
+    // per-face material index has to be tiled to match this count exactly, or `build()`
+    // trips `faceCountMismatch` and drops the layout. Two functions deriving "the whole
+    // source, then N copies of the subset" independently is [[V155]]'s hazard applied to
+    // the one arithmetic that must not drift. One statement of the rule, two consumers.
+    case 'array':
     case 'mirror': {
-      const source = faceCountOf(descriptor.source.descriptor);
-      if (source === null) return null;
-      return source + subsetCountOf(descriptor.scope, source);
+      const tiling = faceTilingOf(descriptor);
+      if (tiling === null) return null;
+      return tiling.sourceFaces + subsetCountOf(tiling.scope, tiling.sourceFaces) * tiling.repeats;
     }
     case 'gltf':
     case 'baked':
@@ -127,6 +127,177 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
  */
 function subsetCountOf(scope: string | undefined, total: number): number {
   return scope === undefined ? total : scopeSelectedCount(scope, total);
+}
+
+/**
+ * How a generator lays its faces out: the WHOLE source, then `repeats` copies of the subset
+ * its scope names — or `null` when the descriptor is not a generator, or its source's count
+ * is not derivable.
+ *
+ * ── WHY THIS IS A SEPARATE FUNCTION AND NOT AN EXPRESSION INSIDE `faceCountOf` (#644) ──
+ *
+ * Two consumers need the same rule at different granularities. {@link faceCountOf} needs the
+ * total; the modifier's attribute tiling needs the STRUCTURE — which faces come first, how
+ * many times the subset repeats — so it can lay a per-face `material_index` out in exactly
+ * the order the builder merges. Those two must agree to the face, because `build()` consults
+ * {@link faceCountMismatch} BEFORE deriving a group layout: a tiled index one face out of
+ * step makes the registry warn and return the geometry with its groups DROPPED, which is the
+ * precise failure #644 exists to remove, re-entering from behind.
+ *
+ * Stating the rule once and deriving both answers from it is what makes that disagreement
+ * unconstructible rather than tested-for.
+ *
+ * `repeats` is where the two kinds differ and the ONLY place they do:
+ *   `array`  — copy 0 is the preserved input and copies `1..n-1` are generated, so `n - 1`.
+ *   `mirror` — the original is preserved and the reflection is generated, so exactly `1`.
+ *
+ * ⚠️ IT DELIBERATELY DOES NOT RETURN THE SUBSET ITSELF. The mask costs an allocation per
+ * call and `faceCountOf` runs per operator per evaluate, on the drag road; handing back the
+ * query lets the count consumer stay allocation-free while the tiling consumer evaluates it
+ * through `scopeSelection` — the ONE evaluation of a query at a length, which is where the
+ * "which faces" claim is already spelled once.
+ */
+// NOT exported, and neither is {@link faceTilingOf}: both consumers of the rule live in this
+// module, and an exported symbol with no caller outside it reads as live API to the next
+// reader. {@link tiledFaceOrder} is the whole of what the outside needs.
+interface FaceTiling {
+  /** Faces in the source, all of which are preserved and come FIRST. */
+  readonly sourceFaces: number;
+  /** The generator's canonical scope query, or `undefined` when it is unscoped. */
+  readonly scope: string | undefined;
+  /** How many copies of the subset follow the preserved source. */
+  readonly repeats: number;
+}
+
+function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror') return null;
+  const sourceFaces = faceCountOf(descriptor.source.descriptor);
+  if (sourceFaces === null) return null;
+  const repeats = descriptor.kind === 'array' ? Math.max(1, Math.floor(descriptor.count)) - 1 : 1;
+  return { sourceFaces, scope: descriptor.scope, repeats };
+}
+
+/**
+ * Which SOURCE face each face of a generator's built geometry came from — the merge order as
+ * a plain array, or `null` when the descriptor is not a generator or its count is not
+ * derivable (#644).
+ *
+ * `order[i] === f` means face `i` of the merged geometry is a copy of source face `f`. So a
+ * per-face attribute is propagated by a gather — `tiled[i] = source[order[i]]` — with no
+ * arithmetic at the consumer at all.
+ *
+ * ── WHY THE ORDER LIVES HERE AND NOT WITH THE MINTER THAT NEEDS IT ────────────────────
+ *
+ * Two reasons, and the second is a hard constraint rather than a preference.
+ *
+ * 1. It must agree with {@link faceCountOf} exactly — `order.length` IS the face count, and
+ *    `build()` drops every material group when they disagree by one. Deriving both from the
+ *    same statement of the rule in the same module is what makes that unconstructible.
+ *
+ * 2. **Turning a query into a set is not a thing a `src/nodes/` module may do.** `scopeSelection`
+ *    and `scopeSelectedCount` are the two doors from a query STRING to a SET, and their callers
+ *    are pinned by name: the resolver, plus the two descriptor-road consumers — this module and
+ *    the registry's scoped build. An operator holds a `canonicalQuery` now, so "cannot interpret
+ *    a query" stopped being free and became a claim about imports. The attribute minter needed
+ *    the subset; had it imported `scopeSelection` to get it, that guarantee would have been
+ *    widened to excuse its first violation. Handing it the resolved ORDER instead keeps the
+ *    interpretation on the side of the boundary that already owns it.
+ *
+ * The subset is evaluated through `scopeSelection` — the same one evaluation the registry's
+ * `faceSubset` uses to decide which triangles survive — so the assignment and the geometry
+ * cannot disagree about which faces the subset holds.
+ *
+ * ⚠️ ALLOCATES, which is why {@link faceCountOf} does not call it. The count runs per operator
+ * per evaluate and stays allocation-free.
+ *
+ * 🔴 #689 AMENDS WHAT THIS PARAGRAPH USED TO CLAIM. It said "this runs where an attribute is
+ * actually being tiled", implying a rarer road than the count's. That was wrong: the sole
+ * consumer is reached from `arrayGeometryRef`, which `ArrayModifier.evaluate` calls — the SAME
+ * per-operator-per-evaluate road. Measured on an Array x8: 75 µs per call at 640 merged faces,
+ * 389 µs at 7,680, and 1.69 ms at 31,744, against 0.2 µs for the untiled path. So the
+ * allocation this module deliberately kept out of `faceCountOf` had been reintroduced one
+ * level up. It is memoised now — see {@link tiledFaceOrder}'s cache below.
+ *
+ * `sourceFaces` is returned ALONGSIDE the order rather than left for the caller to re-derive.
+ * The caller needs it to check that the assignment it is about to gather from actually fits
+ * its own source, and `faceCountOf` RECURSES through a nested generator chain — so a caller
+ * computing it separately would walk the chain twice and would be a second statement of "how
+ * many faces does this source have". One walk, one answer.
+ */
+export interface TiledFaceOrder {
+  /** Faces in the SOURCE — what a per-face attribute being gathered from must carry. */
+  readonly sourceFaces: number;
+  /** `order[i]` is the source face that face `i` of the merged geometry came from. */
+  readonly order: readonly number[];
+}
+
+/**
+ * How many distinct layouts the order cache holds before it is cleared (#689).
+ *
+ * The ceiling is the RECLAIMER'S CADENCE times the per-entry cost, never the key space times
+ * it: an entry is `order.length` numbers, so the largest plausible one — a 64x32 sphere through
+ * an Array x8, 31,744 faces — is about 254 KB, and eight of those is ~2 MB. That is the bound,
+ * and it does not grow with how long a drag lasts.
+ *
+ * Eight rather than one because a scene evaluates EVERY operator per frame: a single-entry memo
+ * in a project with two array modifiers is evicted by the sibling before it is ever read, which
+ * is a cache with a 0% hit rate and the full cost of one.
+ */
+const ORDER_CACHE_LIMIT = 8;
+
+/**
+ * The last few resolved layouts, keyed by the three things a layout actually depends on.
+ *
+ * ⚠️ THE KEY IS DERIVED FROM {@link FaceTiling}, not written out again from the descriptor.
+ * That is the same discipline the rest of this module keeps: `sourceFaces`, `scope` and
+ * `repeats` are exactly the fields {@link faceTilingOf} computes, so a fourth thing the layout
+ * comes to depend on cannot be added to the rule and forgotten here — it has to pass through
+ * that record, and this key destructures the whole of it.
+ *
+ * `kind` is deliberately ABSENT. `repeats` already carries it (mirror is 1, array is count-1),
+ * and where they coincide — an Array with `count: 2` — the two layouts are genuinely identical:
+ * the whole source, then one copy of the subset. Sharing an entry there is correct rather than
+ * lucky, and `faceCount.gate.test.ts` holds the row that says so.
+ */
+const orderCache = new Map<string, TiledFaceOrder>();
+
+export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder | null {
+  const tiling = faceTilingOf(descriptor);
+  if (tiling === null) return null;
+
+  const { sourceFaces, scope, repeats } = tiling;
+  // #689 — an offset drag moves NONE of these three, which is why the cache pays. Measured
+  // before the fix: 121 frames of a varying offset re-derived the same layout 121 times and
+  // added ZERO entries to the attribute store, so the whole per-frame cost bought a key that
+  // was already resident.
+  //
+  // An ANIMATED `count`, by contrast, moves `repeats` every frame and thrashes this — and that
+  // is the honest outcome, not a failure of the cache: the layout genuinely differs per frame,
+  // so there is no redundancy to exploit and it degrades to exactly the uncached cost.
+  const cacheKey = `${sourceFaces}|${scope ?? '*'}|${repeats}`;
+  const hit = orderCache.get(cacheKey);
+  if (hit !== undefined) return hit;
+
+  // The whole input is preserved and comes FIRST — §2.2's rule, and the reason an unscoped
+  // generator is not a special case: its subset is everything.
+  const order: number[] = [];
+  for (let face = 0; face < sourceFaces; face++) order.push(face);
+
+  const mask = scope === undefined ? null : scopeSelection(scope, sourceFaces).mask;
+  for (let copy = 0; copy < repeats; copy++) {
+    for (let face = 0; face < sourceFaces; face++) {
+      if (mask !== null && mask[face] !== 1) continue;
+      order.push(face);
+    }
+  }
+  const resolved: TiledFaceOrder = { sourceFaces, order };
+
+  // Cleared wholesale rather than evicted one at a time. An LRU here would be a second policy
+  // to reason about for a cache whose entire purpose is "the last frame looked like this one";
+  // clearing costs the next frame one rebuild and keeps the ceiling a single multiplication.
+  if (orderCache.size >= ORDER_CACHE_LIMIT) orderCache.clear();
+  orderCache.set(cacheKey, resolved);
+  return resolved;
 }
 
 /**

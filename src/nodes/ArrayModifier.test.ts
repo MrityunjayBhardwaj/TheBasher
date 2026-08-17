@@ -314,23 +314,31 @@ describe('#638 a modifier COLLAPSES a per-face assignment, visibly', () => {
     expect(out.attributeKey ?? null).toBeNull();
   });
 
-  it('and the merged handle carries NO attribute component in its key or its sibling field', () => {
-    // The builder assertion, separate from the node's, because the key is what the cache
-    // reads: an `array` key that inherited its source's component would name a merged
-    // geometry by an index that describes only the source.
+  it('the merged handle now carries a TILED attribute component of its own (#644)', () => {
+    // 🔴 THIS ROW IS THE INVERSION OF THE ONE IT REPLACES, AND THAT HANDOVER IS THE POINT.
+    // Until #644 it asserted `'attributeKey' in out.geometry === false` and said, in these
+    // words, that it pinned the collapse "so the fix shows up as a red rather than as
+    // nothing". It did exactly that: tiling the assignment reddened it, and this is the
+    // claim that replaces it. A declared limitation's pin is not deleted when the limit
+    // lifts — it is rewritten to the new declaration, or the next reader cannot tell a
+    // lifted limit from a forgotten test.
     const out = evalMod(
       { count: 3, offset: [2, 0, 0], muted: false },
       sphereData(),
     ) as ModifiedDataValue;
-    expect('attributeKey' in out.geometry).toBe(false);
+    expect('attributeKey' in out.geometry).toBe(true);
     expect(out.geometry.key.startsWith('array|')).toBe(true);
-    // 🔴 AND THE KNOWN COST, PINNED RATHER THAN HIDDEN (#649). An `array` key embeds its
-    // SOURCE's key verbatim, component and all, while the modifier drops the assignment —
-    // so two arrays over differently-assigned sources get distinct keys for byte-identical
-    // merged geometry. That cost was zero while every component was a function of face
-    // count alone; step 6 made assignments vary, so it is a real sharing loss now. This
-    // asserts the current behaviour so the fix shows up as a red rather than as nothing.
-    expect(out.geometry.key.includes('|a:')).toBe(true);
+    // The component is the ARRAY's, minted over the merged face count — not the source's
+    // carried through. `sphereData()` is a sphere, so this is also the row that shows the
+    // tiling is not box-shaped arithmetic.
+    expect(
+      out.geometry.key.endsWith(`|a:${(out.geometry as { attributeKey: string }).attributeKey}`),
+    ).toBe(true);
+    // 🔴 AND THE COST #649 PINNED IS GONE, ASSERTED RATHER THAN ASSUMED. The key carries
+    // EXACTLY ONE component — the source's is stripped before the array's is appended — so
+    // two arrays over sources that differ only in some other attribute converge on one
+    // build again. Two `|a:` fragments would be a key naming a geometry with two answers.
+    expect(out.geometry.key.split('|a:').length - 1).toBe(1);
   });
 });
 
@@ -453,7 +461,15 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
       { count: 3, offset: [2, 0, 0], muted: false, scope: '' },
       src,
     ) as ModifiedDataValue;
-    expect(bare.geometry.key).toBe('array|box|1,1,1|a:3c7d7ccc|3|2,0,0');
+    //
+    // 🔴 THE LITERAL MOVED AT #644 AND THE CLAIM DID NOT — the distinction is the whole
+    // reason this note exists. The component is no longer the SOURCE's, embedded mid-key;
+    // it is the ARRAY's own tiled one, appended at the end. That is a #644 change, not a
+    // scope change, so the row's subject — does an unscoped generator pick up a suffix? —
+    // is untouched, and the discriminating half below (`blank === bare`) never moved. Only
+    // the incidental half is restated ([[H342]]: keep the discriminating half a literal,
+    // and when a neighbour reds, check the neighbour still examines something).
+    expect(bare.geometry.key).toBe('array|box|1,1,1|3|2,0,0|a:faeec10a');
     expect(blank.geometry.key).toBe(bare.geometry.key);
     expect(Object.keys(bare.geometry.descriptor).sort()).toEqual([
       'count',

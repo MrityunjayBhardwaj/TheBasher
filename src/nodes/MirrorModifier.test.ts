@@ -304,7 +304,12 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     const src = boxSource();
     const bare = evalMod({ axis: 'x', muted: false }, src) as ModifiedDataValue;
     const blank = evalMod({ axis: 'x', muted: false, scope: '' }, src) as ModifiedDataValue;
-    expect(bare.geometry.key).toBe('mirror|box|1,1,1|a:3c7d7ccc|x|0');
+    //
+    // 🔴 THE LITERAL MOVED AT #644 AND THE CLAIM DID NOT. The component is no longer the
+    // SOURCE's embedded mid-key but the MIRROR's own tiled one, appended at the end — a
+    // #644 change, not a scope change. The row's subject (does an unscoped generator pick
+    // up a suffix?) is untouched, and the discriminating half below never moved ([[H342]]).
+    expect(bare.geometry.key).toBe('mirror|box|1,1,1|x|0|a:06770795');
     expect(blank.geometry.key).toBe(bare.geometry.key);
     expect(Object.keys(bare.geometry.descriptor).sort()).toEqual([
       'axis',
