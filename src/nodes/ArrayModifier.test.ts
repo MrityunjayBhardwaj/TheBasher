@@ -286,17 +286,29 @@ describe('ArrayModifier — read-side parity (boundary-pair)', () => {
   });
 });
 
-// #638 (ns-1b step 9) — D6, PINNED AS A DECLARED BEHAVIOUR RATHER THAN LEFT TO BE
-// DISCOVERED. A modifier merges its source into one new geometry, and `mergeGeometries`
-// drops the source's groups — so an assignment cannot follow it. The decision is that the
-// modifier DROPS the per-face assignment and the result renders slot 0, not that it carries
-// a stale index onto a merged mesh: a 12-element index over a 24-face merge is refused by
-// the count gate, no layout is written, and under an array material that mesh would draw
-// NOTHING. A visible collapse to one material is the honest failure; an invisible mesh is
-// not. The limit lifts when the modifiers get a data half of their own, and until then it
-// is a test rather than a sentence.
-describe('#638 a modifier COLLAPSES a per-face assignment, visibly', () => {
-  it('an Array over a two-slot box emits no table and no attribute key', () => {
+// #691 — THE COLLAPSE IS OVER, AND THIS BLOCK IS THE SECOND INVERSION OF THE SAME PIN.
+//
+// What stood here asserted the DROP, and it justified it in its own words:
+//
+//   "A modifier merges its source into one new geometry, and `mergeGeometries` drops the
+//    source's groups — so an assignment cannot follow it. […] a 12-element index over a
+//    24-face merge is refused by the count gate, no layout is written, and under an array
+//    material that mesh would draw NOTHING."
+//
+// Every clause was true when written, and #644 is exactly what stopped it being true: the
+// merged handle now carries a TILED index at the merged length, so the assignment DOES
+// follow. The premise that made the collapse the honest choice is gone, and what was left
+// was a table being withheld from a layout already built to receive it.
+//
+// So the pin is inverted rather than deleted — the same handover the row below it made when
+// #644 landed, and the reason its predecessor said it existed: *"so the fix shows up as a
+// red rather than as nothing"*. It did. It redded 1 of 4308 on the carry, by name.
+//
+// ⚠️ WHAT IS STILL NOT CLAIMED: two ASSIGNING ops stacked. This carries ONE table through
+// one generator, which needs no composition rule because every merged face still indexes
+// into the same entries. Concatenate-with-reindex vs replace is #647 and is untouched here.
+describe('#691 a modifier CARRIES a per-face assignment through the merge', () => {
+  it('an Array over a two-slot box emits the table and a TILED attribute key', () => {
     const src: MeshDataValue & { materialSlots?: unknown[] } = {
       ...sphereData(),
       materialSlots: [
@@ -308,10 +320,31 @@ describe('#638 a modifier COLLAPSES a per-face assignment, visibly', () => {
       materialSlots?: unknown[];
       attributeKey?: string | null;
     };
-    // Slot 0 rides through as the single material; the table does not.
+    // The single material still rides through unchanged — the table is ADDED beside it, not
+    // swapped for it, so a consumer reading only `material` sees exactly what it saw before.
     expect(out.material).toBe(src.material);
-    expect(out.materialSlots).toBeUndefined();
-    expect(out.attributeKey ?? null).toBeNull();
+    expect(out.materialSlots).toEqual(src.materialSlots);
+
+    // 🔴 THE KEY IS THE MERGED HANDLE'S, NEVER THE SOURCE'S — the asymmetry
+    // `slotTableThrough` exists to hold. Forwarding the source's key would hand a
+    // source-length index to a merged mesh, `faceCountMismatch` would refuse it, and the
+    // result would draw slot 0 everywhere: byte-indistinguishable from the collapse this
+    // replaces, which is why it is asserted as an identity and not merely as "defined".
+    expect(out.attributeKey).toBe(out.geometry.attributeKey);
+    expect(out.attributeKey).not.toBe(src.attributeKey);
+  });
+
+  it('emits NEITHER half when the source carries no table', () => {
+    // The both-or-neither rule, on the population that is almost the whole tree. A
+    // single-material source must come out shaped exactly as it always has — an added
+    // `materialSlots: [material]` here would be a normalisation that moves every key.
+    const out = evalMod(
+      { count: 3, offset: [2, 0, 0], muted: false },
+      sphereData(),
+    ) as ModifiedDataValue & { materialSlots?: unknown[]; attributeKey?: string | null };
+
+    expect('materialSlots' in out).toBe(false);
+    expect('attributeKey' in out).toBe(false);
   });
 
   it('the merged handle now carries a TILED attribute component of its own (#644)', () => {
