@@ -1,41 +1,43 @@
-// #688 — `material_index` is the ONLY face-domain attribute any producer mints, and the
-// tiled modifier key is lossless exactly while that stays true.
+// #688 — what every producer mints, at which domain, observed rather than asserted.
 //
-// ── THE DEFECT THIS PINS, AND WHY IT IS QUIET ─────────────────────────────────────────
+// ── THE DEFECT THIS WAS WRITTEN FOR, AND WHY THAT IS NOW HISTORY ──────────────────────
 //
 // #649 stopped a generator's key inheriting its source's whole attribute component and
 // replaced it with a freshly minted, TILED one. Right — but `mintTiledModifierAttributes`
-// reads and mints exactly one name:
+// then read and minted exactly one name:
 //
 //     const carried = read(sourceKey)?.[MATERIAL_INDEX];      // the read,  enumerated
 //     const minted  = mintAttributes({ [MATERIAL_INDEX]: … }); // the mint,  enumerated
 //
-// So the generator's key names only the tiled `material_index`. Constructed and measured on
+// so the generator's key named only the tiled `material_index`. Constructed and measured on
 // `e84ff4a`: two boxes with an IDENTICAL `material_index` and a DIFFERENT second face-domain
-// attribute produce `sourceKeysDiffer: true` and `arrayKeysDiffer: FALSE` — both
-// `array|box|1,1,1|3|2,0,0|a:ea2140ba` — and the second attribute is silently dropped. Two
-// geometries that genuinely differ collapse onto one build: #649's own defect, sign flipped.
+// attribute produced `sourceKeysDiffer: true` and `arrayKeysDiffer: FALSE` — both
+// `array|box|1,1,1|3|2,0,0|a:ea2140ba` — and the second attribute was silently dropped. Two
+// geometries that genuinely differ collapsed onto one build: #649's own defect, sign flipped.
 //
-// It is quiet because the enumeration is TRUE TODAY, not because it is safe. `AttributeSet`
-// is deliberately open (`Readonly<Record<string, AttributeData>>`) and its own comment says
-// why — a closed struct "cannot hold the user-authored attribute the model exists to make
-// possible". The bug arrives with that feature.
+// ⚠️ THAT ENUMERATION IS GONE. #688's first half shipped the gather: the minter now selects
+// its set by DOMAIN, so it carries every face-domain attribute its source holds and the
+// collapse above is unconstructible. This file was written as the second half, BEFORE that
+// landed, and it is kept because the population census it builds outlives the defect — but
+// every row below now means something different from what it was written to mean, and the
+// difference is recorded here rather than left for a reader to reconstruct.
 //
-// ── WHY A CENSUS AND NOT THE FIX ──────────────────────────────────────────────────────
+// ── WHAT THE CENSUS IS FOR NOW ────────────────────────────────────────────────────────
 //
-// The honest fix is for the tiling to gather EVERY face-domain attribute the source carries;
-// the gather is already generic (`tiled[i] = source[order[i]]` is per-face data, not
-// material data). That is #688's first half and it is not what this file is.
+// Not "the enumeration is safe" — there is no enumeration. Two things, both still live:
 //
-// This is the second half, and it is worth having even after the first lands: it makes the
-// enumeration's justification CHECKABLE rather than asserted. Today the claim "only
-// `material_index` is face-domain" is written in prose at the mint site. A reader has no way
-// to confirm it and no way to notice when it stops being true — the failure surfaces as a
-// rendering oddity, months later, from a sharing loss nobody connected to this line.
+//   1. `UVMap` is CORNER, and the tiling still cannot lay out a corner-domain attribute
+//      (`order` is a permutation of FACE indices). Corner attributes are therefore still
+//      dropped by a generator, which is #694, still open. This census is what observes the
+//      domain of every producer's output, so it is what notices a producer arriving at a
+//      domain the tiling cannot carry.
+//   2. A second FACE-domain attribute is no longer a bug when it appears — the gather
+//      handles it — but it is still a population change nobody has exercised end to end.
+//      The forward guard below reds so that someone confirms it rather than assumes it.
 //
 // A decision that cannot be taken yet is a test that reds when it becomes takeable ([[V208]]).
-// The second face-domain attribute is unreachable from a production producer right now —
-// measured below, `UVMap` is CORNER — so there is nothing to fix and everything to pin.
+// What changed is the decision: it was "widen the enumeration or gather"; it is now "confirm
+// the gather carries the new attribute, and say whether its domain can be laid out at all".
 //
 // ── WHY THE PRODUCER POPULATION IS THE RIGHT DENOMINATOR ──────────────────────────────
 //
@@ -50,10 +52,11 @@
 // Every row below DRIVES the producer and reads `.domain` off what it actually minted. A
 // name-keyed or source-scanned census would report on spelling; this one reports on values.
 // It is what makes the `UVMap` row load-bearing rather than decorative: re-domaining UVs from
-// `corner` to `face` would be invisible to any assertion about names, and would put a second
-// attribute straight into the collapsing set.
+// `corner` to `face` would be invisible to any assertion about names, and it is a domain
+// change — not a name change — that decides whether the tiling can lay an attribute out.
 //
-// REF: src/nodes/meshAttributes.ts (`mintTiledModifierAttributes` — the enumerated mint);
+// REF: src/nodes/meshAttributes.ts (`mintTiledModifierAttributes` — the domain-selected
+//      gather, and the ⚠️ block naming the corner-domain drop it does NOT close);
 //      src/nodes/attributeKey.ts (`mintAttributes` — the one door, and why a remainder
 //      check on it is complete rather than best-effort);
 //      src/nodes/attributes.ts (`AttributeSet` open by design, `MATERIAL_INDEX`, `UV_MAP`);
@@ -186,7 +189,22 @@ function censusDomains(): Map<string, Set<string>> {
   return byName;
 }
 
-/** The names a producer mints at the FACE domain, sorted — the set the tiling must carry. */
+/**
+ * The FACE-domain names carried under ONE key, sorted — the set the tiling must reproduce
+ * for that particular source.
+ *
+ * Distinct from {@link faceDomainNames}, which is the union over the whole producer
+ * population: the tiling is answerable for its own source's set, never for the population's.
+ * Conflating the two is what made the tiled row fire on the harmless case.
+ */
+function faceDomainNamesOf(key: string | null | undefined, what: string): string[] {
+  const set = fromStore(key, what);
+  return Object.keys(set)
+    .filter((name) => set[name].domain === 'face')
+    .sort();
+}
+
+/** The names a producer mints at the FACE domain, sorted — over the whole population. */
 function faceDomainNames(): string[] {
   return [...censusDomains()]
     .filter(([, domains]) => domains.has('face'))
@@ -201,9 +219,17 @@ beforeEach(() => {
 describe('#688 the face-domain producer census', () => {
   it('🔴 `material_index` is the ONLY face-domain attribute any producer mints', () => {
     // THE FORWARD GUARD. Exact, never a floor: a floor passes forever once the second name
-    // lands, which is the entire failure mode. When this reds, `mintTiledModifierAttributes`
-    // is silently dropping the new attribute and collapsing keys that must differ — read
-    // #688's first half (gather every face-domain attribute) before touching this list.
+    // lands, which is the entire failure mode.
+    //
+    // ⚠️ WHAT A RED MEANS CHANGED WHEN THE GATHER SHIPPED. It used to mean
+    // `mintTiledModifierAttributes` is silently dropping the new attribute. It no longer
+    // does — the minter selects by domain and carries whatever its source holds (measured:
+    // giving the tiled row's own source a second face-domain attribute leaves the tiling
+    // row GREEN). A red here now means the population changed and two things want
+    // confirming: that the gather really carries it end to end, and — if the new attribute
+    // is NOT face-domain — that something can lay it out at all, which for the corner
+    // domain is #694 and is still open. Update the literal once you have confirmed, not
+    // before.
     expect(faceDomainNames()).toEqual([MATERIAL_INDEX]);
   });
 
@@ -247,17 +273,31 @@ describe('#688 the face-domain producer census', () => {
 });
 
 describe('#688 the tiled modifier key carries the whole face-domain set', () => {
-  it('🔴 the tiled mint names exactly the census`s face-domain attributes', () => {
-    // THE ROW THAT TIES THE CENSUS TO THE DEFECT, and the one that discriminates.
+  it('🔴 the tiled mint carries exactly ITS SOURCE`s face-domain attributes', () => {
+    // THE ROW THAT TIES THE CENSUS TO THE TILING, and the one that discriminates.
     //
-    // The row above pins what producers mint; this one pins what the TILING carries, and
-    // compares the two. Today both are `[material_index]`. Add a second face-domain producer
-    // and they diverge — the census grows, the enumerated mint does not — so the sharing loss
-    // is named here, at the seam, instead of being found in a render months later.
-    const array = arrayGeometryRef(twoMaterialBoxRef(), 3, [2, 0, 0]);
+    // ⚠️ COMPARED AGAINST THE SOURCE, NOT AGAINST THE POPULATION UNION, and that is a
+    // correction rather than a preference. This row first compared the tiling's output to
+    // `faceDomainNames()` — the union over EVERY producer — which is only the same set while
+    // every producer happens to mint the same face-domain names. Measured once the gather
+    // shipped: giving a NON-source producer a second face-domain attribute redded this row
+    // while nothing whatsoever was broken (the tiling carried its own source faithfully),
+    // and giving the SOURCE one left it green (the gather did carry it). So against the
+    // union it had become a detector that fires only on the harmless case and stays silent
+    // on the harmful one — exactly inverted.
+    //
+    // Against the source it states the gather's actual contract: whatever face-domain data
+    // the source holds comes through, no more and no less. It reds if the minter ever drops
+    // one again, which is the defect this file exists for.
+    const source = twoMaterialBoxRef();
+    const sourceFaceNames = faceDomainNamesOf(source.attributeKey, 'the tiled row`s source');
+    const array = arrayGeometryRef(source, 3, [2, 0, 0]);
     const tiled = fromStore(mintTiledModifierAttributes(array.descriptor), 'the tiled minter');
 
-    expect(Object.keys(tiled).sort()).toEqual(faceDomainNames());
+    expect(Object.keys(tiled).sort()).toEqual(sourceFaceNames);
+    // Not vacuous on an empty source: the source is asserted to carry something, so an
+    // equality between two empty lists cannot be what passes here.
+    expect(sourceFaceNames.length).toBeGreaterThan(0);
   });
 
   it('carries the source`s assignment rather than merely a set of the right shape', () => {
