@@ -266,6 +266,21 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
 
   const sourceKey = descriptor.source.attributeKey;
   if (sourceKey === undefined) return null;
+
+  // ⚠️ #688 — THIS READ IS ENUMERATED, AND SO IS THE MINT BELOW. Both name `material_index`
+  // alone, so any OTHER face-domain attribute the source carries is dropped here and absent
+  // from the tiled key. Two sources differing only in that attribute then mint byte-identical
+  // keys and share one build — #649's defect with the sign flipped.
+  //
+  // It is correct today because `material_index` is the only face-domain attribute any
+  // producer mints, and that is not left as a claim: `faceDomainProducers.gate.test.ts` drives
+  // every producer, reads the domain off what each actually minted, and reds the moment a
+  // second face-domain one appears. `UVMap` is CORNER, which is the whole reason this is
+  // reachable only by construction and not from a production road.
+  //
+  // The fix when that gate reds is to gather EVERY face-domain attribute rather than widen
+  // this enumeration by one more name — the gather below is already generic over per-face
+  // data, so the work is iterating the set, not new arithmetic.
   const carried = read(sourceKey)?.[MATERIAL_INDEX];
   if (carried === undefined) return null;
 
