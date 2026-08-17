@@ -29,6 +29,17 @@ import {
   sphereGeometryRef,
 } from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
+import { read } from '../app/attributeStore';
+import { MATERIAL_INDEX } from './attributes';
+
+/**
+ * The merged face count of an unscoped mirror over the sphere fixture — MEASURED (160), not
+ * derived. The fixture's sphere(1, 8, 6) tessellates to 80 triangles and an unscoped mirror
+ * keeps the whole input and reflects all of it, so 160 is `2 x 80`. Written as a literal on
+ * purpose: computing it from `faceCountOf` here would route the assertion through the same
+ * arithmetic the production road uses, and it would then agree with a wrong answer.
+ */
+const MIRRORED_FACES = 160;
 import { hydrateInlineMaterial } from './materialSchema';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { buildAddModifierOps, resolveStackBase } from '../app/operatorStack';
@@ -354,5 +365,49 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     // …and an UNSCOPED mirror over a curve still passes it straight through, as it always
     // has. The two conditions are separated, which is the whole of [[V205]].
     expect(evalMod({ axis: 'x', muted: false }, curve)).toBe(curve);
+  });
+});
+
+// #691 — the table travels through the MIRROR too, asserted here rather than inferred from
+// the Array's rows. Both modifiers now forward through one helper (`slotTableThrough`), and
+// a shared helper is exactly the shape a parity assertion cannot see into ([[V189]]): a
+// defect in it reds both sides or neither. So the discriminating row below is a LITERAL
+// merged face count, which the Array's numbers cannot produce and the helper cannot supply.
+describe('#691 the Mirror carries its source assignment through the merge', () => {
+  it('emits the table and a tiled key sized to the MIRRORED face count', () => {
+    const src: MeshDataValue & { materialSlots?: unknown[] } = {
+      ...sphereData(),
+      materialSlots: [
+        hydrateInlineMaterial(null, '#ff0000'),
+        hydrateInlineMaterial(null, '#00ff00'),
+      ],
+    };
+    const out = evalMod({ axis: 'x', muted: false }, src) as ModifiedDataValue & {
+      materialSlots?: unknown[];
+      attributeKey?: string;
+    };
+
+    expect(out.material).toBe(src.material);
+    expect(out.materialSlots).toEqual(src.materialSlots);
+    // The MERGED handle's key, never the source's — the asymmetry the helper holds.
+    expect(out.attributeKey).toBe(out.geometry.attributeKey);
+    expect(out.attributeKey).not.toBe(src.attributeKey);
+
+    // The literal. An unscoped mirror keeps the whole input and reflects all of it, so the
+    // index is twice the source's — and it is the LENGTH that proves the key describes the
+    // merged mesh: a forwarded source key would sit here at half this number and be refused
+    // by the count gate, drawing slot 0 everywhere.
+    const attribute = read(out.attributeKey!)?.[MATERIAL_INDEX];
+    expect(attribute?.count).toBe(MIRRORED_FACES);
+    expect(attribute?.domain).toBe('face');
+  });
+
+  it('emits NEITHER half when the source carries no table', () => {
+    const out = evalMod({ axis: 'x', muted: false }, sphereData()) as ModifiedDataValue & {
+      materialSlots?: unknown[];
+      attributeKey?: string;
+    };
+    expect('materialSlots' in out).toBe(false);
+    expect('attributeKey' in out).toBe(false);
   });
 });

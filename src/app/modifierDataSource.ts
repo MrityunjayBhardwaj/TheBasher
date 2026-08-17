@@ -55,6 +55,66 @@ import type {
 export interface ModifierDataSource {
   readonly geometry: GeometryRef;
   readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
+  /**
+   * The source's slot TABLE, when it has one (#691).
+   *
+   * ⚠️ THIS IS A PASS-THROUGH, NOT TABLE COMPOSITION. Exactly one table is in play: the
+   * modifier reshapes its source's faces and every one of them still indexes into the same
+   * entries, so the table travels unchanged and there is nothing to merge. The question
+   * #647 is waiting on — how two tables combine when two ASSIGNING ops stack, concatenate
+   * with re-indexing or replace — is not answered here and is not raised by this: a second
+   * op that WRITES a table is what needs a rule, and a modifier writes none.
+   *
+   * Absent means "one material", preserved deliberately rather than normalised to a
+   * one-entry table: `materialSlotsOf` already derives that from `material`, and emitting a
+   * table for every single-material mesh would change the shape of a value the whole
+   * existing population carries.
+   */
+  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  /**
+   * The content key of the SOURCE's attribute set — the index half of the pair, present
+   * exactly when the table is, per `ModifiedDataValue`'s stated invariant.
+   *
+   * ⚠️ A CONSUMER MUST NOT FORWARD THIS ONTO ITS OUTPUT. It describes the source's faces;
+   * a generator's output has more of them. The tiled key for the merged result is minted by
+   * the geometry builder and lives on the handle it returns — that is the one to emit.
+   */
+  readonly attributeKey?: string;
+}
+
+/**
+ * How a GENERATOR forwards its source's slot table onto its own output (#691) — one
+ * statement, shared by every modifier that merges copies of its source.
+ *
+ * ── THE ASYMMETRY, WHICH IS THE WHOLE REASON THIS IS A FUNCTION ───────────────────────
+ *
+ * The two halves of the pair come from DIFFERENT places, and swapping them is silent:
+ *
+ *   table  ← the SOURCE. Tiling reshapes which faces exist, never which slots exist, so
+ *            the entries are unchanged and travel verbatim.
+ *   index  ← the BUILT HANDLE, never the source. The source's key describes its own faces
+ *            (12 on a box); the merged result has more (36 for an array x3). Forwarding
+ *            the source's key would hand a 12-entry index to a 36-face mesh, which
+ *            `faceCountMismatch` refuses — `build()` then writes NO groups and the mesh
+ *            draws slot 0 everywhere, looking exactly like the collapse this removes.
+ *
+ * ── WHY BOTH-OR-NEITHER, NEVER ONE ────────────────────────────────────────────────────
+ *
+ * `ModifiedDataValue` states it: `attributeKey` is "present exactly when the table is,
+ * because neither half means anything alone". So a source WITH a table whose built handle
+ * carries no tiled key (the builder declined — a descriptor whose face count is not
+ * derivable, or a source that carried no assignment) emits NOTHING and collapses to one
+ * material. That is the honest pre-#644 behaviour, not a half-pair pointing nowhere.
+ */
+export function slotTableThrough(
+  source: ModifierDataSource,
+  built: GeometryRef,
+): {
+  materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
+  attributeKey?: string;
+} {
+  if (source.materialSlots === undefined || built.attributeKey === undefined) return {};
+  return { materialSlots: source.materialSlots, attributeKey: built.attributeKey };
 }
 
 /**
@@ -81,12 +141,39 @@ export function modifierDataSource(data: ObjectData): ModifierDataSource | null 
     // which is the reason the stack composes at all: each operator reshapes the
     // cumulative result below it.
     case 'MeshData':
-    case 'BakedData':
     case 'ModifiedData':
-      // All three carry a rebuildable/authoritative handle + an inherited material.
+      // Both carry a rebuildable/authoritative handle + an inherited material.
       // `MeshData.material` is the narrower Inline|null (#388), which fits the wide
-      // union verbatim; a baked or modified source's BakedMaterialSpec rides through
-      // instead of dropping to null (#358).
+      // union verbatim; a modified source's BakedMaterialSpec rides through instead of
+      // dropping to null (#358).
+      //
+      // #691 — the TABLE rides through too, and only when it exists. Spread conditionally
+      // rather than assigned `undefined`: an explicitly-`undefined` entry is a present key
+      // to `Object.keys`, and this value reaches content hashing, so a normalised shape
+      // would move every single-material key in the tree for no behaviour change. The pair
+      // is emitted whole or not at all, which is `ModifiedDataValue`'s stated invariant
+      // (`attributeKey` "present exactly when the table is") applied one lane earlier.
+      //
+      // ⚠️ `?? undefined` is not noise: the two sources spell the same absence differently.
+      // `MeshData.attributeKey` is REQUIRED and nullable (`string | null`);
+      // `ModifiedData.attributeKey` is OPTIONAL (`string | undefined`). Carrying a literal
+      // `null` through would satisfy neither the field's type nor the both-or-neither rule.
+      return {
+        geometry: data.geometry,
+        material: data.material,
+        ...(data.materialSlots === undefined
+          ? {}
+          : {
+              materialSlots: data.materialSlots,
+              attributeKey: data.attributeKey ?? undefined,
+            }),
+      };
+    case 'BakedData':
+      // A baked source carries NEITHER half — measured, not assumed: `BakedDataValue`
+      // declares no `materialSlots` and no `attributeKey`, because a bake writes one
+      // material spec (`primaryMaterial` is the declared narrowing at that seam). So there
+      // is no table to forward and this arm cannot be folded in with the two above; the
+      // compiler is what separated them, on the first typecheck after they were grouped.
       return { geometry: data.geometry, material: data.material };
     case 'CurveData':
     case 'LightData':

@@ -1,18 +1,18 @@
 diff --git a/src/nodes/MirrorModifier.ts b/src/nodes/MirrorModifier.ts
-index 2b69acf..68515e5 100644
+index 10c83a0..477a787 100644
 --- a/src/nodes/MirrorModifier.ts
 +++ b/src/nodes/MirrorModifier.ts
-@@ -147,7 +147,12 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
-         source.geometry,
-         params.axis,
-         params.offset,
--        selection?.canonicalQuery,
-+        // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE —
-+        // at the point of use, inside this generator and no other. `requireResolvedScope`
-+        // still runs, the import stays, the required fourth argument stays, and every
-+        // source census stays green. Only the ANSWER stops travelling: the key is minted
-+        // unscoped, exactly as it was before step 13b.
-+        undefined,
-       ),
-       material: source.material,
-     };
+@@ -145,7 +145,12 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
+       source.geometry,
+       params.axis,
+       params.offset,
+-      selection?.canonicalQuery,
++      // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE —
++      // at the point of use, inside this generator and no other. `requireResolvedScope`
++      // still runs, the import stays, the required fourth argument stays, and every
++      // source census stays green. Only the ANSWER stops travelling: the key is minted
++      // unscoped, exactly as it was before step 13b.
++      undefined,
+     );
+     return {
+       kind: 'ModifiedData',

@@ -68,7 +68,7 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { arrayGeometryRef } from '../app/modifierGeometry';
-import { modifierDataSource } from '../app/modifierDataSource';
+import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
 import { SCOPE_PARAM, requireResolvedScope } from './componentSelection';
 import { isParsableScopeQuery } from './scopeQuery';
 
@@ -170,15 +170,17 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — pass through unchanged.
     if (!source) return src;
+    const geometry = arrayGeometryRef(
+      source.geometry,
+      params.count,
+      params.offset,
+      selection?.canonicalQuery,
+    );
     return {
       kind: 'ModifiedData',
-      geometry: arrayGeometryRef(
-        source.geometry,
-        params.count,
-        params.offset,
-        selection?.canonicalQuery,
-      ),
+      geometry,
       material: source.material,
+      ...slotTableThrough(source, geometry),
     };
   },
 };
