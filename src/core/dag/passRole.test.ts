@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from './index';
 import { getNodeType, listNodeTypes, registerNodeType } from './registry';
 import { evaluate } from './evaluator';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { renderSummarizePassTool } from '../../agent/tools/renderSummarizePass';
 import { passRoleOf, passRoleOfType } from './passRole';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImagePassKind, type ImageValue } from '../../nodes/types';
@@ -109,7 +109,7 @@ function roleTagDisagreements(): string[] {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('#608 — a pass role is read from the declaration, not the value', () => {

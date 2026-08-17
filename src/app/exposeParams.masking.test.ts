@@ -21,7 +21,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { SPLIT_KINDS, splitOps } from '../test-utils/splitKinds';
 
 /** Counts real calls without replacing the implementation — the answers must stay true.
@@ -47,7 +47,7 @@ const { MATERIAL_FIELD_IR_PATH } = await import('./resolveMaterialFieldOwner');
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   calls.owners = 0;
 });
 

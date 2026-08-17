@@ -47,7 +47,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, registerNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { isModifierNode, operatorTypesInSection } from './operatorChain';
 import { addableOperators } from './operatorMenu';
 import { arrayGeometryRef, boxGeometryRef } from './modifierGeometry';
@@ -276,7 +276,7 @@ describe('ns-2 step 1 — the surfaces a new geometry operator is invisible to',
     // back. Without it the probe would be measured against an empty registry, where every
     // surface is trivially blind to everything.
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
     registerProbeOperator();
   });
 

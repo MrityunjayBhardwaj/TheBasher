@@ -9,7 +9,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests } from '../dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../storage/MemoryStorage';
 import { loadProject, saveProject } from './io';
 import { repairDuplicateRoleBindings } from './repairRoleBindings';
@@ -46,7 +46,7 @@ function projectWith(passBindings: Array<{ node: string; socket: string }>): Pro
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('#608 — duplicate roles are repaired when a project is loaded', () => {

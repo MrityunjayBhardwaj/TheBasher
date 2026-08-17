@@ -16,13 +16,13 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';
 import { makeSplitCube } from '../test-utils/splitCube';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };

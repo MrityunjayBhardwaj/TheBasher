@@ -37,7 +37,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { SPLIT_KINDS, splitOps, type SplitKindName } from '../test-utils/splitKinds';
 import { canApplyTransform } from './animate/dispatchApplyTransform';
@@ -48,7 +48,7 @@ import { exposeParams, type ExposedParam } from './exposeParams';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function applyOps(state: DagState, ops: readonly Op[]): DagState {

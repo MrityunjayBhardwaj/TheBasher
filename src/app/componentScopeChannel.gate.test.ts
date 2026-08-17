@@ -69,7 +69,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, listNodeTypes, registerNodeType } from '../core/dag/registry';
 import { getNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { importsOf } from '../../tools/gates/moduleShape';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
@@ -182,7 +182,7 @@ function registerRecorder(type: string, scope: 'source' | 'target' | 'unscoped')
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   handed = { called: false, scope: undefined };
 });
 

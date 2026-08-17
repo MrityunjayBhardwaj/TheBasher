@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { identify } from './identify';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
 import { shouldRunIdentifyRound } from '../orchestrator';
@@ -17,7 +17,7 @@ import { makeSplitLight } from '../../test-utils/splitLight';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildScene(): DagState {

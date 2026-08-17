@@ -9,14 +9,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, __resetRegistryForTests } from '.';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { buildDefaultDagState } from '../project/default';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import type { Op } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // #365 Phase 5a (Slice 1b) — the box's material lives on the BoxData node now (n_box_data),

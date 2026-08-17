@@ -3,14 +3,14 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { probeWebCodecsEncoder, runVideoStitch, stubVideoEncoder } from './runVideoStitch';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildStitchState(opts: { frameEnd?: number; outputPath?: string } = {}) {

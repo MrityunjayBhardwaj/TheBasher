@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildAddProfileOps } from './studioProfiles';
@@ -49,7 +49,7 @@ function sceneWithKeyProfile(): DagState {
 describe('studioProfileIO (#208)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('composes a rig into the portable JSON shape (name/center/radius + lights in order)', () => {

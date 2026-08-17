@@ -16,14 +16,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { emptyDagState, evaluate } from '../core/dag';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { makeSplitLight, type SplitLightKind } from '../test-utils/splitLight';
 import { recomposeLightObject } from './lightRecompose';
 import type { LightValue } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const POSITIONAL_LIGHTS = ['DirectionalLight', 'PointLight', 'SpotLight', 'AreaLight'];

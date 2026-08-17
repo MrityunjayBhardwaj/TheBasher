@@ -3,7 +3,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag';
 import { getNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   formatSectionLabel,
   isDefaultCollapsed,
@@ -21,7 +21,7 @@ import {
 // tell you whether the camera that ships is routed correctly.
 beforeAll(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const homeOn = (nodeType: string, key: string) =>

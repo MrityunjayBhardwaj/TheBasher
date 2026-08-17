@@ -28,7 +28,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -79,7 +79,7 @@ function sceneEdgeOf(state: DagState) {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('operatorStack', () => {

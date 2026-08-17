@@ -35,7 +35,7 @@ import { z } from 'zod';
 import { applyOp } from './ops';
 import { emptyDagState } from './state';
 import { getNodeType, listNodeTypes, registerNodeType, __resetRegistryForTests } from './registry';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { acceptedTypes } from './types';
 import type { DagState } from './state';
 import type { Op, SocketTypeName } from './types';
@@ -197,7 +197,7 @@ describe('#609 — an input socket accepts a SET of types', () => {
     // sayable. If this list is ever empty again, the union has no production user and
     // every membership check in the repo is running over a degenerate population.
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
 
     const unions: string[] = [];
     for (const type of listNodeTypes()) {

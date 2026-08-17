@@ -32,7 +32,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../storage';
 import { composeProject, loadProject, projectPath } from './io';
 import { ProjectSchema, type Project } from './schema';
@@ -118,7 +118,7 @@ async function recomposeFixture(): Promise<Project> {
 describe('#631 — project save is O(scene), not O(vertices)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('carries no bulk numeric run anywhere in the payload — neither as an array nor as a typed array', async () => {

@@ -9,7 +9,7 @@ import { applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildLightBrushOp } from './lightBrush';
 import { makeSplitLight } from '../test-utils/splitLight';
 
@@ -32,7 +32,7 @@ function addRigLight(state: DagState, id: string, pos: Vec3): DagState {
 describe('buildLightBrushOp', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('paints the selected rig light onto its own shell (radius preserved)', () => {

@@ -21,7 +21,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { resolveTransformParam } from './resolveTransformParam';
 
 const BOX_ID = 'n_box';
@@ -84,7 +84,7 @@ function buildAnimatedState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('resolveTransformParam', () => {

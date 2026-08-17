@@ -14,7 +14,7 @@ import { applyOp, __resetRegistryForTests } from '../core/dag';
 import type { Op } from '../core/dag/types';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel';
@@ -26,7 +26,7 @@ import { TrackParams } from '../nodes/Track';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // A 2s vec3 position ramp (actLen=2); influenceAt is a scalar so the valueType is

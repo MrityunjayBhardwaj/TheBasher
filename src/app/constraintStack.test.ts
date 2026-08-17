@@ -9,7 +9,7 @@ import { applyOp, __resetRegistryForTests } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   buildAddConstraintOps,
   buildMoveConstraintOps,
@@ -39,7 +39,7 @@ function withConstraints(n: number): { state: DagState; ids: string[] } {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('constraintStack — add (edge-less)', () => {

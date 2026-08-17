@@ -16,7 +16,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { __resetRegistryForTests } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { routeAnimatedGrab } from './autoKeyCommit';
 import { useDagStore } from '../../core/dag/store';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
@@ -49,7 +49,7 @@ function buildAnimatedState(): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useTransientEditStore.getState().clearAll();
   useTimeStore.setState({ playing: false, frame: 0, seconds: 0 } as never);
 });

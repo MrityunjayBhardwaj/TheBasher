@@ -104,7 +104,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { snapshotRegistry } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { stripComments } from './sourceScan';
 import { SPLIT_KINDS, SPLIT_KIND_NAMES } from './splitKinds';
 
@@ -302,7 +302,7 @@ describe('retire-a-kind gate (#471 B-III)', () => {
       }
     }
 
-    __reseedAllNodesForTests();
+    registerAllNodes();
     const registry = snapshotRegistry();
     for (const type of retired) {
       const isRegistered = registry[type] !== undefined;

@@ -19,7 +19,7 @@ import { primaryMaterial } from '../../app/materialAssignment';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
 import { getNodeType } from '../dag/registry';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { DEFAULT_CAMERA_POSE, resolveCameraPoseAt } from '../../app/activeCamera';
@@ -42,7 +42,7 @@ import { ProjectSchema, type Project } from './schema';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** A serialized pre-this-milestone (v1) BoxMesh project — NO scale, flat material. */
@@ -2641,7 +2641,7 @@ describe('KeyframeChannel v1 → v2: extend/cycle → Cycles modifier (#275, byt
 describe('ParamDriver v8 → v9: two source sockets collapse into one (#609)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   /** A v8 save whose vec driver is wired on the RETIRED `inVec` socket — the shape every

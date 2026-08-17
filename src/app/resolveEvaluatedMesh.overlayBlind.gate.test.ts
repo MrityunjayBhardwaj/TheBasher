@@ -34,7 +34,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { foldOverlays } from './cookState';
 import { timeDependentNodes } from './timeDependence';
@@ -57,7 +57,7 @@ function sizeOfCooked(state: { nodes: Record<string, { params: unknown }> }, id:
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useTransientEditStore.getState().clearAll();
 });
 

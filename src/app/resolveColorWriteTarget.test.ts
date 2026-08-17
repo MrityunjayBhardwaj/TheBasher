@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitLight } from '../test-utils/splitLight';
 import { resolveColorWriteTarget } from './resolveColorWriteTarget';
@@ -15,7 +15,7 @@ import { resolveColorWriteTarget } from './resolveColorWriteTarget';
 describe('resolveColorWriteTarget', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('a split MESH resolves to the data node, at the material IR path', () => {

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../../../core/dag';
 import { MemoryStorage } from '../../../core/storage';
-import { __reseedAllNodesForTests } from '../../../nodes/registerAll';
+import { registerAllNodes } from '../../../nodes/registerAll';
 import type { ImageValue, PromptValue } from '../../../nodes/types';
 import {
   STYLIZED_REALISM_PLACEHOLDERS,
@@ -12,7 +12,7 @@ import {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const samplePrompt: PromptValue = {

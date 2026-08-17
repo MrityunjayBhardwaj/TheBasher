@@ -12,7 +12,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { useDagStore } from '../core/dag/store';
 import { useNotificationStore } from '../app/stores/notificationStore';
 import { dispatchMutatorFromUI } from '../app/animate/dispatchMutator';
@@ -55,7 +55,7 @@ describe('commitNla (the mutator road)', () => {
 describe('commitNlaSetParam (the sanctioned raw road)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('writes the param atomically and returns {ok:true} with no toast', () => {

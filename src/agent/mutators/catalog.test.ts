@@ -18,7 +18,7 @@
 // prove #23 survives (the specExample the model copies is still inline).
 
 import { describe, expect, it, beforeEach } from 'vitest';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import {
   __resetMutatorRegistryForTests,
   firstSentence,
@@ -36,7 +36,7 @@ const ctx = (): ToolContext => ({ dagState: emptyDagState() });
 describe('mutator catalog — PICKER/DETAIL split (#332)', () => {
   beforeEach(() => {
     __resetMutatorRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
     registerAllMutators();
   });
 

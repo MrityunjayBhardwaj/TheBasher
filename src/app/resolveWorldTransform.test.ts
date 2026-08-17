@@ -14,7 +14,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitLight } from '../test-utils/splitLight';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
@@ -85,7 +85,7 @@ function buildNestedTransformState(opts: {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('resolveWorldTransform', () => {
@@ -483,7 +483,7 @@ function buildGroupedLightState(
 describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it("composes a nested light's world position through its parent Group translation", () => {
@@ -527,7 +527,7 @@ describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
 describe('resolveWorldTransform — a baked PAIR ignores its scale, an ordinary Object does not (#388)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('baked pair → world scale [1,1,1]; a plain cube Object at the same scale → [3,3,3]', () => {

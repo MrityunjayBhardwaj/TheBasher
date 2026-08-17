@@ -8,7 +8,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { stripDriveRefusal } from './stripDrive';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitCamera } from '../test-utils/splitCamera';
@@ -16,7 +16,7 @@ import { stripTargetRows } from '../timeline/NlaAddStripPopover';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** scene ← box, plus a camera wired into `scene.camera`. */

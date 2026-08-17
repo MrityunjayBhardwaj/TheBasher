@@ -12,7 +12,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { cameraDataOf, cameraLensParams, cameraProjectionOf, isCameraNode } from './cameraNode';
 import { enumerateCameraNodeIds } from './activeCamera';
@@ -26,7 +26,7 @@ import { validatePlan } from '../agent/mutators/validate';
 import { addPassMutator } from '../agent/mutators/builders/addPass';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function applyAll(s: DagState, ops: unknown[]): DagState {

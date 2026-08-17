@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { createFork } from './forkedDag';
 import { useDiffStore, acceptSelectedOps, rejectDiff } from './store';
 import { ClosurePreservationError } from '../closure/expand';
@@ -31,7 +31,7 @@ const BOX_DATA = dataIdFor('box');
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useDiffStore.getState().reset();
 });
 

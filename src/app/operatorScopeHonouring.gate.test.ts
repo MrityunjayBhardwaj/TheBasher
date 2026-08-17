@@ -47,7 +47,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, listNodeTypes, registerNodeType } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { hashValue } from '../core/dag/hash';
 import { resolveComponentSelection } from '../nodes/componentSelection';
 import { sphereDescriptor, sphereGeometryRef } from './modifierGeometry';
@@ -136,7 +136,7 @@ function honours(type: string): { moved: boolean; kind: string } {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', () => {

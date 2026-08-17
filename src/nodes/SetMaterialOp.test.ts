@@ -19,7 +19,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { resolveComponentSelection, SCOPE_PARAM } from './componentSelection';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { SetMaterialOpNode, SetMaterialOpParams } from './SetMaterialOp';
 import { boxDescriptor, boxGeometryRef, sphereDescriptor } from '../app/modifierGeometry';
 import { faceRangeMaterialAttributes, mintMeshAttributes } from './meshAttributes';
@@ -80,7 +80,7 @@ beforeEach(() => {
   // The mute is honoured by the evaluator now (ns-2 step 5), and the evaluator resolves
   // the definition through the registry — so this file needs the registry seeded, which
   // a definition-only test never did before.
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('#638 SetMaterialOp — the full range still REPLACES, byte for byte', () => {

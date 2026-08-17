@@ -8,14 +8,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildAddStudioLightOps } from './addStudioLight';
 import { enumerateStudioLights } from './studioLightRig';
 
 describe('buildAddStudioLightOps', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('adds a Track-To-aimed AreaLight that enumerates as a rig light on the sphere', () => {

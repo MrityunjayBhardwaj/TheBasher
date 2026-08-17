@@ -4,14 +4,14 @@
 // they serialize round-trip, and an Action channel is target-less (I-1).
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { getNodeType } from '../core/dag/registry';
 import { ActionParams, ActionChannelSchema } from './Action';
 import { StripParams } from './Strip';
 import { TrackParams } from './Track';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('NLA nodes are registered (addNode validates — V1)', () => {

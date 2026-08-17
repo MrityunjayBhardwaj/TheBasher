@@ -13,14 +13,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import type { InlineMaterialSpec, ObjectData } from './types';
 import { setMaterialColorMutator } from '../agent/mutators/builders/setMaterialColor';
 import type { ClosureSet } from '../agent/closure/types';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const BASE_COLOR = '#112233';

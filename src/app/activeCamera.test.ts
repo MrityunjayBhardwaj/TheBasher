@@ -17,7 +17,7 @@ import { cameraDataOf } from './cameraNode';
 import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Node } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { splitOps } from '../test-utils/splitKinds';
@@ -25,7 +25,7 @@ import { splitOps } from '../test-utils/splitKinds';
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('activeCamera — selectActiveCameraNode', () => {

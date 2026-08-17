@@ -10,7 +10,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, getNodeType } from '../core/dag';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { GltfChildNode, GltfChildParams } from './GltfChild';
 import type { GltfChildValue } from './types';
 
@@ -116,7 +116,7 @@ describe('GltfChild node', () => {
   describe('registration', () => {
     beforeEach(() => {
       __resetRegistryForTests();
-      __reseedAllNodesForTests();
+      registerAllNodes();
     });
 
     it("getNodeType('GltfChild') resolves after a re-seed", () => {
