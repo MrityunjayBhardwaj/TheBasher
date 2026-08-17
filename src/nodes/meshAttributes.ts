@@ -34,7 +34,7 @@
 // road's, never a node module's (`componentScopeChannel.gate.test.ts`).
 import { faceCountOf, tiledFaceOrder } from '../app/faceCount';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
-import { MATERIAL_INDEX, componentsOf, type AttributeData } from './attributes';
+import { MATERIAL_INDEX, componentsOf, emptyLike, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
 import type { GeometryDescriptor } from './types';
 // TYPE ONLY, and that is the whole relationship: this module reads a selection through its
@@ -383,10 +383,11 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   for (const name of faceNames) {
     const attribute = carried[name];
     const components = componentsOf(attribute.type);
-    const data =
-      attribute.data instanceof Int32Array
-        ? new Int32Array(order.length * components)
-        : new Float32Array(order.length * components);
+    // The array CLASS is forwarded off the source too (#696), through a helper closed by a
+    // `never`. It was the one thing here still derived rather than forwarded, and as a
+    // two-arm ternary it would have kept compiling — silently allocating the wrong class —
+    // the day `AttributeArray` grows a third member.
+    const data = emptyLike(attribute.data, order.length * components);
     for (let face = 0; face < order.length; face++) {
       const from = order[face] * components;
       const to = face * components;

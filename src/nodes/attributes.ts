@@ -110,6 +110,27 @@ export function componentsOf(type: AttributeType): number {
 export type AttributeArray = Int32Array | Float32Array;
 
 /**
+ * An empty backing array of the SAME CLASS as `like`, `length` components long.
+ *
+ * Closed by a `never`, for the same reason {@link componentsOf} is: a new member of
+ * {@link AttributeArray} must come here and say how to allocate it. The alternative — a
+ * two-arm `instanceof` ternary with the second arm as the fallthrough — compiles unchanged
+ * when the union grows and silently allocates the wrong class, which for a numeric buffer
+ * means truncation or a precision change with nothing to red (#696).
+ *
+ * It takes an EXEMPLAR rather than a type tag on purpose. A caller copying values out of an
+ * existing attribute wants the class its source actually uses, not the class its declared
+ * `type` implies — those two are allowed to disagree, and a helper keyed on the tag would
+ * quietly "correct" the disagreement by truncating floats into an `Int32Array`.
+ */
+export function emptyLike(like: AttributeArray, length: number): AttributeArray {
+  if (like instanceof Int32Array) return new Int32Array(length);
+  if (like instanceof Float32Array) return new Float32Array(length);
+  const unreachable: never = like;
+  throw new Error(`emptyLike: undeclared attribute array ${String(unreachable)}`);
+}
+
+/**
  * One named attribute's values at one domain.
  *
  * `count` is in ELEMENTS, never components — a corner-domain `float2` over 12 corners has

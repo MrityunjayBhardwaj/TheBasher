@@ -693,6 +693,36 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     expect(Array.from(set.face_colour.data.slice(36, 42))).toEqual([0, 100, 200, 1, 101, 201]);
   });
 
+  it("🔴 each tiled attribute keeps its SOURCE's array class, per attribute (#696)", () => {
+    // The gather allocates through `emptyLike`, which forwards the class off the source rather
+    // than deriving it from the declared `type`. Nothing else in the tier can see that choice:
+    // the content key copies values into plain arrays before hashing, and every integer these
+    // fixtures carry is exact in float32 — so a gather that put `material_index` into a
+    // `Float32Array` produces identical keys, identical lengths and identical VALUES, and the
+    // whole suite stays green. Measured, not assumed: returning the wrong class from
+    // `emptyLike` left 359 files / 4319 tests passing byte for byte.
+    //
+    // So this row is the only thing standing between that choice and a silent drift, and it
+    // asserts the two classes SEPARATELY — a single-attribute check would pass on a gather
+    // that allocated one class for everything, which is precisely the failure mode.
+    const ref = arrayGeometryRef(
+      boxCarrying({
+        face_colour: {
+          domain: 'face',
+          type: 'float3',
+          count: 12,
+          data: new Float32Array(36),
+        },
+      }),
+      2,
+      [2, 0, 0],
+    );
+    const set = tiledSet(ref);
+
+    expect(set.material_index.data).toBeInstanceOf(Int32Array);
+    expect(set.face_colour.data).toBeInstanceOf(Float32Array);
+  });
+
   it('CONTROL — the single-attribute population keys BYTE-IDENTICALLY to before the widening', () => {
     // The regression row, and its two literals were read off `e84ff4a` rather than off this
     // tree. A generator key is also a cache key, so a widening that re-hashed the existing
