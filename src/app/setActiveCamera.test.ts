@@ -10,10 +10,10 @@ import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildDefaultDagState } from '../core/project/default';
 import { selectActiveCameraNode } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function applyAll(state: DagState, ops: ReturnType<typeof buildSetActiveCameraOps>): DagState {

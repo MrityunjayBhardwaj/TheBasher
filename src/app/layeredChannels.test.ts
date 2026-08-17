@@ -4,7 +4,7 @@
 // them) so channel-sampler defaults (modifiers/extend) apply exactly as in prod.
 
 import { describe, it, expect, beforeAll } from 'vitest';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   layeredChannelValues,
   stripChannelValuesForTarget,
@@ -17,7 +17,7 @@ import { TrackParams } from '../nodes/Track';
 import type { Vec3 } from '../nodes/types';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // A 2s linear position ramp [0,0,0] → [2,0,0] (predictable halfway = [1,0,0]).

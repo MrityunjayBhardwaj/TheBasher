@@ -14,7 +14,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Node } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { childEdges } from './resolveWorldTransform';
 import {
   HIERARCHY_PARENT_TYPES,
@@ -30,7 +30,7 @@ function node(id: string, type: string, inputs: Record<string, unknown> = {}): N
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('hierarchySocketsOf', () => {

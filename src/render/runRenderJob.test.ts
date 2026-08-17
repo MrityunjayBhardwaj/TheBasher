@@ -13,7 +13,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../core/dag';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { stubEncoder } from './encoders/stubEncoder';
@@ -21,7 +21,7 @@ import { runRenderJob } from './runRenderJob';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildJobState(opts: {

@@ -17,13 +17,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { emptyDagState, applyOp } from '../core/dag';
 import { listNodeTypes, getNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { isDataKindDef } from '../test-utils/splitKinds';
 import { iconKindForNode } from './SceneTreeIcon';
 
 describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries it', () => {
-  beforeEach(() => __reseedAllNodesForTests());
+  beforeEach(() => registerAllNodes());
 
   it('a split cube gets the mesh icon, resolved through its data edge (#414)', () => {
     const { state, objectId } = makeSplitCube(emptyDagState(), {

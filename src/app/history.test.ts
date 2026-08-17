@@ -9,7 +9,7 @@ import { useDagStore } from '../core/dag/store';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { useTimelineSelection } from '../timeline/timelineSelection';
 import { historyRedo, historyUndo } from './history';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 
 /** Seed both sub-selection stores with a live-looking reference. */
 function selectSubElements(): void {
@@ -31,7 +31,7 @@ function seedTwoNodes(): void {
 }
 
 beforeEach(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useDagStore.getState().reset();
   useCurveSelectionStore.getState().clear();
   useTimelineSelection.getState().setActiveKeyframe(null);

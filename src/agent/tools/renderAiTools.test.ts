@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { StubComfyUICapability } from '../../core/comfy';
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { MemoryStorage } from '../../core/storage';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { renderDryRunWorkflowTool } from './renderDryRunWorkflow';
@@ -10,7 +10,7 @@ import { renderSummarizeStylizedTool } from './renderSummarizeStylized';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildAiRenderState() {

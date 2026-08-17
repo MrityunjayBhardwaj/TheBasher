@@ -46,7 +46,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
 import { registerNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { operatorLaneOf } from '../core/dag/operatorLane';
 import {
   MATERIAL_LANE_TYPES,
@@ -137,7 +137,7 @@ function registerLaneOp(
 describe('ns-2 step 6 — the lane is derived, in one place, and it is total', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('THE INSTRUMENT CONTROL: the known member has a lane, and it is the right one', () => {

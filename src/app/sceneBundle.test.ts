@@ -5,7 +5,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DagState } from '../core/dag/state';
 import { __resetRegistryForTests } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { composeProject } from '../core/project/io';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
@@ -24,7 +24,7 @@ import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** Build a DagState from loosely-typed nodes (the collector only reads params). */

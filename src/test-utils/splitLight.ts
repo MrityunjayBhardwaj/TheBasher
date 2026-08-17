@@ -64,7 +64,7 @@ export interface SplitLight {
 /**
  * Inject an Object → LightData split light into `state` and return the new state plus
  * the two ids. Requires the real node registry to be seeded
- * (`__reseedAllNodesForTests()`), since it builds genuine `LightData`/`Object` nodes
+ * (`registerAllNodes()`), since it builds genuine `LightData`/`Object` nodes
  * and a `data` edge. Wiring: data.out → object.data ; object.out → connectTo.
  */
 export function makeSplitLight(state: DagState, opts: SplitLightOpts): SplitLight {

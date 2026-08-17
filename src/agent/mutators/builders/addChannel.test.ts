@@ -10,7 +10,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../../core/dag';
 import type { Op } from '../../../core/dag/types';
-import { __reseedAllNodesForTests } from '../../../nodes/registerAll';
+import { registerAllNodes } from '../../../nodes/registerAll';
 import { makeSplitCube } from '../../../test-utils/splitCube';
 import { addChannelMutator, type AddChannelSpec } from './addChannel';
 import { validatePlan } from '../validate';
@@ -27,7 +27,7 @@ function channelTarget(state: DagState, spec: AddChannelSpec): string {
 describe('addChannel — data-param channel targets the owning half (#450)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('routes a split cube material channel to the BoxData, not the Object', () => {
@@ -78,7 +78,7 @@ describe('addChannel — data-param channel targets the owning half (#450)', () 
 describe('addChannel — a forcing material operator owns the field it supplies (#519)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   function withForcingOp(): { state: DagState; objectId: string; dataId: string; opId: string } {

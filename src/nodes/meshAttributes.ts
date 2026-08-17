@@ -34,7 +34,7 @@
 // road's, never a node module's (`componentScopeChannel.gate.test.ts`).
 import { faceCountOf, tiledFaceOrder } from '../app/faceCount';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
-import { MATERIAL_INDEX, type AttributeData } from './attributes';
+import { MATERIAL_INDEX, componentsOf, emptyLike, type AttributeData } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
 import type { GeometryDescriptor } from './types';
 // TYPE ONLY, and that is the whole relationship: this module reads a selection through its
@@ -219,9 +219,49 @@ export function mintTargetedAttributes(
 }
 
 /**
- * Tile a source's per-face assignment across the copies a generator merges, store it, and
+ * The tiled key already minted for a (layout, source assignment) pair (#689).
+ *
+ * Keyed on the LAYOUT OBJECT first and the source's attribute key second, which is what makes
+ * the nesting the right way round: the outer key is the thing with a bounded lifetime, so this
+ * whole structure is reclaimed by `faceCount.ts`'s cache rather than by a policy of its own.
+ * Two modifiers over one source with different scopes hold different layouts and therefore
+ * different outer entries — a flat map keyed on the source alone would have them evict each
+ * other and hit 0%.
+ *
+ * The inner key stays the SOURCE's attribute key even though the gather now reads every
+ * face-domain attribute (#688): that key is a content hash of the source's whole set, so it
+ * already varies with anything the gather could read. Widening the gather does not widen what
+ * identifies its input.
+ */
+const tiledKeyCache = new WeakMap<readonly number[], Map<string, string>>();
+
+/**
+ * Tile a source's per-face attributes across the copies a generator merges, store them, and
  * hand back the key the generator's handle carries — or `null` when there is nothing to tile
- * (#644). The FIFTH member of this file's minter family.
+ * (#644, widened by #688). The FIFTH member of this file's minter family.
+ *
+ * ── EVERY FACE-DOMAIN ATTRIBUTE, NOT A NAME THIS MODULE KNOWS (#688) ──────────────────
+ *
+ * The first version gathered `material_index` alone. That made the generator's key name only
+ * the tiled material index, which was a TRUE statement about the merged geometry exactly as
+ * long as `material_index` was the only face-domain attribute anything minted — and
+ * `AttributeSet`'s own comment exists to say that will not last. The moment a source carried
+ * a second one, two genuinely different merged geometries collapsed onto one cached build and
+ * the second attribute was dropped: #649's defect with the sign flipped, and constructed
+ * rather than argued (`face_group` differing, `sourceKeysDiffer: true`, `arrayKeysDiffer:
+ * false`, both `array|box|1,1,1|3|2,0,0|a:ea2140ba`).
+ *
+ * So the set is selected by DOMAIN, which is the property that makes a face order applicable,
+ * rather than by name. Nothing here knows what a caller's attribute means, and that is the
+ * point: the gather is `tiled[i] = source[order[i]]`, which is correct for any per-face datum.
+ *
+ * ⚠️ ONLY THE FACE DOMAIN. `order` is a permutation of FACE indices, so it cannot lay out a
+ * point-, edge- or corner-domain attribute — a corner attribute needs a corner order, which
+ * `tiledFaceOrder` does not produce and cannot without the builders' per-face corner counts.
+ * Those attributes are therefore dropped from the tiled set, exactly as they were before this
+ * change, and the same sharing loss this fixes for the face domain remains open for them
+ * (#694). Said here rather than left to be discovered, because `UVMap` is corner-domain and
+ * is the one attribute a reader will look for.
  *
  * ── THE ORDER IS TAKEN FROM THE BUILDER, NOT FROM THE ARITHMETIC ──────────────────────
  *
@@ -237,27 +277,25 @@ export function mintTargetedAttributes(
  * true by construction rather than by a test: `build()` consults `faceCountMismatch` BEFORE
  * deriving a layout, so a disagreement of one face silently drops every group.
  *
+ * ── WHY A SINGLE MISFIT REFUSES THE WHOLE SET ─────────────────────────────────────────
+ *
+ * One attribute whose count does not match the source's face total refuses ALL of them, and
+ * that is the same both-or-neither rule the slot table forwards under. Tiling the ones that
+ * fit and dropping the one that does not would be *this function* silently losing an
+ * attribute, which is the defect it was widened to remove. A partial answer here is
+ * indistinguishable from the bug.
+ *
  * ── WHY IT RETURNS `null` RATHER THAN A UNIFORM SET WHEN THE SOURCE HAS NONE ──────────
  *
  * A source that answered `null` to the attribute question has no assignment to propagate,
  * and minting a uniform one here would be this module inventing data on the generator's
  * behalf — plus it would change every unscoped generator key that has ever been written.
- * Absence stays absence, and the generator's key keeps its historical spelling.
+ * Absence stays absence, and the generator's key keeps its historical spelling. A source
+ * carrying attributes at no face domain at all takes the same road, for the same reason.
  *
  * `via` is fixed at `'modifier'` rather than threaded from the caller; the reason is in
  * `attributeStore.ts`'s origin table.
  */
-/**
- * The tiled key already minted for a (layout, source assignment) pair (#689).
- *
- * Keyed on the LAYOUT OBJECT first and the source's attribute key second, which is what makes
- * the nesting the right way round: the outer key is the thing with a bounded lifetime, so this
- * whole structure is reclaimed by `faceCount.ts`'s cache rather than by a policy of its own.
- * Two modifiers over one source with different scopes hold different layouts and therefore
- * different outer entries — a flat map keyed on the source alone would have them evict each
- * other and hit 0%.
- */
-const tiledKeyCache = new WeakMap<readonly number[], Map<string, string>>();
 
 export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): string | null {
   // Narrowing for `source`: `tiledFaceOrder` answers only for these two kinds, but that is
@@ -266,44 +304,49 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
 
   const sourceKey = descriptor.source.attributeKey;
   if (sourceKey === undefined) return null;
+  // `null`, not `undefined` — the store's own "no set under this key". The one-attribute
+  // version reached the set through `?.[MATERIAL_INDEX]`, which collapsed that distinction
+  // into the same `undefined` a missing NAME produces; reading the set itself separates them.
+  const carried = read(sourceKey);
+  if (carried === null) return null;
 
-  // ⚠️ #688 — THIS READ IS ENUMERATED, AND SO IS THE MINT BELOW. Both name `material_index`
-  // alone, so any OTHER face-domain attribute the source carries is dropped here and absent
-  // from the tiled key. Two sources differing only in that attribute then mint byte-identical
-  // keys and share one build — #649's defect with the sign flipped.
-  //
-  // It is correct today because `material_index` is the only face-domain attribute any
-  // producer mints, and that is not left as a claim: `faceDomainProducers.gate.test.ts` drives
-  // every producer, reads the domain off what each actually minted, and reds the moment a
-  // second face-domain one appears. `UVMap` is CORNER, which is the whole reason this is
-  // reachable only by construction and not from a production road.
-  //
-  // The fix when that gate reds is to gather EVERY face-domain attribute rather than widen
-  // this enumeration by one more name — the gather below is already generic over per-face
-  // data, so the work is iterating the set, not new arithmetic.
-  const carried = read(sourceKey)?.[MATERIAL_INDEX];
-  if (carried === undefined) return null;
+  // Selected by DOMAIN, never by name (#688) — see the block above. Sorted so the walk below
+  // is deterministic; `mintAttributes` sorts again on its own, so the key does not depend on
+  // this, but the WARNING's wording does and a message whose word order varies per run is a
+  // message nobody can grep for.
+  const faceNames = Object.keys(carried)
+    .filter((name) => carried[name].domain === 'face')
+    .sort();
+  // Not "no attributes" but "none this order can lay out": a source carrying only corner-domain
+  // data reaches here and takes the historical road, which is why this is a separate exit from
+  // the `sourceKey === undefined` one above rather than folded into it.
+  if (faceNames.length === 0) return null;
 
   const tiled = tiledFaceOrder(descriptor);
   if (tiled === null) return null;
   const { sourceFaces, order } = tiled;
 
-  if (carried.count !== sourceFaces) {
-    // Refused BY NAME, and it degrades to the pre-#644 behaviour (no tiling, no layout)
-    // rather than laying out a wrong one — tiling a set that does not fit its own source
-    // would put the right slots on the WRONG triangles, which is quieter than drawing
-    // slot 0 and therefore worse than the bug this change removes.
-    //
-    // ⚠️ NO PRODUCTION ROAD REACHES IT TODAY, SAID HERE RATHER THAN LEFT TO BE DISCOVERED.
-    // A ref's key and its `attributeKey` are minted in one expression, so a source's set
-    // always fits its own descriptor; the one road that could break the pair — the overlay
-    // rebuilding a handle whose face count moved — is exactly what `rebuiltMeshAttributes`
-    // above resolves, and it drops the set rather than carrying a stale one. So this is the
-    // arm for a producer that has not been written yet. It is still exercised directly by
-    // the gate, because a named guard nobody has ever run reads as "no objection" forever
-    // and a reader who finds it stops looking.
+  // Refused BY NAME — every name, not the first — and it degrades to the pre-#644 behaviour
+  // (no tiling, no layout) rather than laying out a wrong one: tiling a set that does not fit
+  // its own source would put the right slots on the WRONG triangles, which is quieter than
+  // drawing slot 0 and therefore worse than the bug this change removes. ALL of them are
+  // named because a reader who fixes the alphabetically-first one and re-runs would otherwise
+  // meet the next one with no warning that it was already known.
+  //
+  // ⚠️ NO PRODUCTION ROAD REACHES IT TODAY, SAID HERE RATHER THAN LEFT TO BE DISCOVERED.
+  // A ref's key and its `attributeKey` are minted in one expression, so a source's set
+  // always fits its own descriptor; the one road that could break the pair — the overlay
+  // rebuilding a handle whose face count moved — is exactly what `rebuiltMeshAttributes`
+  // above resolves, and it drops the set rather than carrying a stale one. So this is the
+  // arm for a producer that has not been written yet. It is still exercised directly by
+  // the gate, because a named guard nobody has ever run reads as "no objection" forever
+  // and a reader who finds it stops looking.
+  const misfits = faceNames.filter((name) => carried[name].count !== sourceFaces);
+  if (misfits.length > 0) {
     console.warn(
-      `meshAttributes: '${descriptor.kind}' cannot tile an assignment over ${carried.count} faces onto a source of ${sourceFaces} — leaving the copies unassigned`,
+      `meshAttributes: '${descriptor.kind}' cannot tile ${misfits
+        .map((name) => `'${name}' over ${carried[name].count} faces`)
+        .join(', ')} onto a source of ${sourceFaces} — leaving the copies unassigned`,
     );
     return null;
   }
@@ -327,16 +370,42 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // where — the preserved input, the subset, how many times it repeats — was taken by
   // `tiledFaceOrder`, beside the count this has to agree with. There is no arithmetic here
   // to drift from it.
-  const data = new Int32Array(order.length);
-  for (let face = 0; face < order.length; face++) data[face] = carried.data[order[face]];
-
-  const materialIndex: AttributeData = {
-    domain: 'face',
-    type: 'int',
-    count: data.length,
-    data,
-  };
-  const minted = mintAttributes({ [MATERIAL_INDEX]: materialIndex });
+  //
+  // `count` is in ELEMENTS and `data` is flattened component-major, so the copy steps by
+  // `componentsOf(type)` — that is the whole difference between this and the one-attribute
+  // version, and it is why a `float3` face attribute lands correctly rather than being
+  // sheared by a factor of three. The output array class is taken from the SOURCE's rather
+  // than derived from its declared `type`, so a source whose type and storage already
+  // disagree comes out exactly as inconsistent as it went in: a gather does not quietly
+  // half-correct its input, and truncating floats into an `Int32Array` on the strength of a
+  // `type: 'int'` label would be doing precisely that.
+  const tiledSet: Record<string, AttributeData> = {};
+  for (const name of faceNames) {
+    const attribute = carried[name];
+    const components = componentsOf(attribute.type);
+    // The array CLASS is forwarded off the source too (#696), through a helper closed by a
+    // `never`. It was the one thing here still derived rather than forwarded, and as a
+    // two-arm ternary it would have kept compiling — silently allocating the wrong class —
+    // the day `AttributeArray` grows a third member.
+    const data = emptyLike(attribute.data, order.length * components);
+    for (let face = 0; face < order.length; face++) {
+      const from = order[face] * components;
+      const to = face * components;
+      for (let component = 0; component < components; component++) {
+        data[to + component] = attribute.data[from + component];
+      }
+    }
+    // The domain is FORWARDED, not re-declared as `'face'`. They are equal by the filter
+    // above, and writing the literal would make this the second place that decides what
+    // domain the tiled attribute is at — one of them free to drift.
+    tiledSet[name] = {
+      domain: attribute.domain,
+      type: attribute.type,
+      count: order.length,
+      data,
+    };
+  }
+  const minted = mintAttributes(tiledSet);
   if (minted === null) return null;
   insert(minted.key, minted.set, 'modifier');
 

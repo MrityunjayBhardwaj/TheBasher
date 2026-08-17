@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
-import { __reseedAllNodesForTests, registerAllNodes } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { makeSplitCube } from '../test-utils/splitCube';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   registerAllNodes();
 });
 

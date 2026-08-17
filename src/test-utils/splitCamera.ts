@@ -60,7 +60,7 @@ export interface SplitCamera {
 
 /**
  * Inject an Object → CameraData split camera into `state` and return the new state plus the
- * two ids. Requires the real node registry to be seeded (`__reseedAllNodesForTests()`), since
+ * two ids. Requires the real node registry to be seeded (`registerAllNodes()`), since
  * it builds genuine `CameraData`/`Object` nodes and a `data` edge.
  * Wiring: data.out → object.data ; object.out → connectTo.
  */

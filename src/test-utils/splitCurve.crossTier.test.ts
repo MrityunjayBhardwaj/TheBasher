@@ -36,11 +36,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { splitCurveOps } from '../../tests/e2e/_splitCurve';
 import { emptyDagState } from '../core/dag/state';
 import { snapshotRegistry } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCurve } from './splitCurve';
 
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** The params the e2e builder DECLARES for the CurveData, before the schema parses them. */

@@ -279,15 +279,3 @@ export function registerAllNodes(): void {
     if (!getNodeType(def.type)) registerNodeType(def);
   }
 }
-
-/**
- * Test-only re-seed; pairs with `__resetRegistryForTests`.
- *
- * Since #678 removed the once-guard this is exactly `registerAllNodes()`, and the two are no
- * longer distinguishable in a way only their authors know about — which was the point. It is
- * kept as the name ~145 test files already call; retiring it is a mechanical rename tracked
- * separately, deliberately not folded into the commit that changed the behaviour.
- */
-export function __reseedAllNodesForTests(): void {
-  registerAllNodes();
-}

@@ -9,7 +9,7 @@ import { primaryMaterial } from './materialAssignment';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
@@ -26,7 +26,7 @@ function ctxAt(seconds: number) {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('resolveEvaluatedMesh', () => {
@@ -150,7 +150,7 @@ describe('resolveEvaluatedMesh', () => {
   // material, and the pose — which is where it belongs now that the pair is the only
   // producer.
   it('projects a baked PAIR: verbatim handle + captured spec + the Object half’s pose', () => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
     const geometry = {
       key: 'baked|pair-8',
       descriptor: { kind: 'baked' as const, hash: 'pairhash', vertexCount: 8 },

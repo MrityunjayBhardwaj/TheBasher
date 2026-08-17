@@ -3,7 +3,7 @@ import { StubComfyUICapability, type ComfyInputs, type ComfyWorkflowJson } from 
 import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import type { CompileWorkflowFn } from '../../render/dryRun';
@@ -12,7 +12,7 @@ import { runWorkflow } from './runWorkflow';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   useRenderJobsStore.setState({ inFlight: new Set() });
   useDagStore.getState().reset();
 });

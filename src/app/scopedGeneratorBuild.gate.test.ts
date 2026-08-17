@@ -64,7 +64,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { BufferGeometry } from 'three';
 import { declaredParamKeys } from './inspectorSectionBody';
 import { __resetRegistryForTests, listNodeTypes } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   arrayGeometryRef,
   boxGeometryRef,
@@ -96,17 +96,23 @@ function built(ref: GeometryRef): BufferGeometry {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  // 🔴 `__reseedAllNodesForTests`, NOT `registerAllNodes` — measured at step 13a, and the
-  // difference made this file's last row VACUOUS from the day it was written.
-  // `registerAllNodes` carries a module-level `registered` once-guard, so paired with a
-  // per-test reset it re-seeds on the FIRST test and returns immediately on every one
-  // after: `listNodeTypes()` goes 80 → 0 and `declaredParamKeys` answers `[]` for every
-  // node in the repo. The fuse below asks which generators declare a `scope` param and
-  // therefore read `[]` whatever the answer was.
-  // Censused when it was found: 7 of 105 files pair the reset with `registerAllNodes`, and
-  // six of them use `beforeAll` — which runs once, so the guard never bites. This was the
-  // only `beforeEach`, which is why nothing else in the tier was affected. (#678)
-  __reseedAllNodesForTests();
+  // 🔴 THE RESET MUST BE FOLLOWED BY A RE-SEED, AND THE ROW BELOW IS WHY THIS IS SPELLED OUT.
+  //
+  // HISTORY, kept because it is the reason this row exists and not a live warning: this
+  // comment used to insist on a TEST-ONLY ALIAS here rather than `registerAllNodes`, because
+  // `registerAllNodes` carried a module-level `registered` once-guard. Paired with a per-test
+  // reset that re-seeded on the FIRST test and returned immediately on every one after —
+  // `listNodeTypes()` went 80 → 0 and `declaredParamKeys` answered `[]` for every node in the
+  // repo — which made this file's last row VACUOUS from the day it was written, since it asks
+  // which generators declare a `scope` param and would read `[]` whatever the answer was.
+  // Censused then: 7 of 105 files paired the reset with `registerAllNodes`, six via
+  // `beforeAll`, which runs once so the guard never bit. This `beforeEach` was the only one.
+  //
+  // ⚠️ THAT DISTINCTION NO LONGER EXISTS. #678 deleted the once-guard and #685 retired the
+  // test-only alias, so there is ONE name and it always re-seeds. What survives is the
+  // ordering requirement — reset, then seed, then `clear()` — and the row below, which is the
+  // standing check that the seeding actually happened on a test that is not the first.
+  registerAllNodes();
   clear();
 });
 

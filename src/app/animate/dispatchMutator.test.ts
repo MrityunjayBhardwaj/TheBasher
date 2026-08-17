@@ -9,7 +9,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
@@ -28,7 +28,7 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   __resetMutatorRegistryForTests();
   registerAllMutators();
   useDiffStore.getState().reset();

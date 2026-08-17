@@ -1172,11 +1172,37 @@ export interface MeshDataValue {
    * `materialKey`, null when this producer derives no attributes (glTF / baked, whose
    * buffers this value never sees).
    *
-   * A THIRD parallel key, deliberately not folded into `GeometryRef.key`: that handle is
-   * shared and content-keyed, so folding a per-object component into it would either
-   * collide two objects onto one entry or shatter the sharing the cache exists for. The
-   * argument, the four references that agree with it and the assertions enforcing it are in
-   * `attributeKey.ts` and `attributeKey.test.ts`.
+   * 🔴 IT IS A COMPONENT OF `GeometryRef.key`, and this block used to argue that it must
+   * never be. That argument was true of the READ half and #638 is what answered it, so the
+   * paragraph is inverted rather than merely lagging — it carried the reasoning AGAINST the
+   * thing that shipped, on the first doc block anyone reads before touching attribute
+   * identity. The shape: an unattributed box keys as `box|1,1,1`, and the SAME box carrying a
+   * face-domain assignment keys as `box|1,1,1|a:<content hash>` — that trailing fragment IS
+   * the fold.
+   *
+   * ⚠️ NO HASH IS QUOTED HERE ON PURPOSE. `attributeKey.test.ts` pins the four base TEMPLATES
+   * verbatim and INTERPOLATES the hash beside them, so a content hash is free to move without
+   * a test or a comment going stale. A literal hash in prose is unpinned by construction — the
+   * issue that asked for this correction quoted one that no longer reproduces on any fixture in
+   * the file, which is the argument for the convention rather than against it.
+   *
+   * WHY THE FOLD RATHER THAN A SIBLING: a parallel key alone could not make two same-size
+   * boxes with different per-face assignments render differently — they resolved to one
+   * shared `BufferGeometry`. It has to be the geometry key because the group layout lives on
+   * the `BufferGeometry` INSTANCE and three.js has no per-object group layout.
+   *
+   * AND THE COST IT WAS FEARED TO CARRY IS ANSWERED, NOT OVERRIDDEN: sharing survives
+   * because the component is CONTENT-derived, so two objects with the same assignment still
+   * land on one entry; and two objects do not collide precisely because a differing
+   * assignment differs in the component.
+   *
+   * ⚠️ STILL A SIBLING FIELD, THOUGH — the fold is about the geometry KEY, not about this
+   * field moving. The per-element INDEX is geometry-level and the slot TABLE is
+   * object-level, which is the split both reference systems make and #638 implements.
+   *
+   * The argument, the four references that agree with it and the assertions enforcing it
+   * live in `attributeKey.ts` and `attributeKey.test.ts` — pointed at rather than restated,
+   * because restating it here is what let the two drift apart in the first place.
    *
    * The set itself lives in `attributeStore`, keyed by this string. It is not serialized —
    * it is re-derived from params on every evaluation, which is free under a content key.

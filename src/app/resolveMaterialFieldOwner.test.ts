@@ -10,13 +10,13 @@
 // red instead of coincidentally matching.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { MATERIAL_FIELD_IR_PATH, resolveMaterialFieldOwners } from './resolveMaterialFieldOwner';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 const BASE_COLOR = '#112233';

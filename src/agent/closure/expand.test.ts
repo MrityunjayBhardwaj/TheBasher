@@ -9,7 +9,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { expandClosure, isFreshAddNode, opTargetNodeId } from './expand';
 import type { ClosureSpec } from './types';
 import type { Op } from '../../core/dag/types';
@@ -19,7 +19,7 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildBaseline(): DagState {

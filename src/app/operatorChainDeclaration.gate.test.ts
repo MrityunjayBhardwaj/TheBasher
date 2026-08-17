@@ -41,7 +41,7 @@ import {
   listNodeTypes,
   registerNodeType,
 } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { hashValue } from '../core/dag/hash';
 import { stripComments } from '../test-utils/sourceScan';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
@@ -82,7 +82,7 @@ function probeDef(chain: unknown, overrides: Record<string, unknown> = {}): unkn
 describe('ns-2 step 4 — being an operator is ONE declaration', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('all seven operators declare a TOTAL chain — no partial operator exists', () => {

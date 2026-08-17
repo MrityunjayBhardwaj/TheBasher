@@ -12,7 +12,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import {
   trackToForTarget,
@@ -64,7 +64,7 @@ function buildPointTrackTo(boxPos: Vec3, aimPoint: Vec3): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('nodeConstraints — enumeration', () => {

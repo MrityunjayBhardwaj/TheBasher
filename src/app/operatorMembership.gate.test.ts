@@ -51,7 +51,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, listNodeTypes, registerNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { MATERIAL_LANE_TYPES, isModifierNode, operatorTypesInSection } from './operatorChain';
 import { addableOperators, fallbackOperatorLabel } from './operatorMenu';
 import { addModifierMutator } from '../agent/mutators/builders/addModifier';
@@ -92,7 +92,7 @@ function registerOp(name: string, section: OperatorSection, lane: SocketTypeName
 describe('ns-2 step 7 — membership is derived from the declaration', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('THE INSTRUMENT CONTROL: the derivation sees the operators that are demonstrably there', () => {
@@ -198,7 +198,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
 describe('ns-2 step 7 — the two lists that stay are pinned, and the pins can fail', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('the agent enum set-equals the derived modifier set', () => {
@@ -262,6 +262,6 @@ describe('ns-2 step 7 — an offered section must match the lane its stack carri
   it('the positive control: every shipped operator satisfies the refusal', () => {
     // The seven production declarations are what the rule was derived FROM, so they must
     // pass it — otherwise the rule is a claim about a population it does not fit.
-    expect(() => __reseedAllNodesForTests()).not.toThrow();
+    expect(() => registerAllNodes()).not.toThrow();
   });
 });

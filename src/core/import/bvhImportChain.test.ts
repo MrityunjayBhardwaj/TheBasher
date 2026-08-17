@@ -3,7 +3,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { buildBvhImportOps, __resetBvhImportCounterForTests } from './bvhImportChain';
 import type { AnimationClipValue } from '../../nodes/types';
 
@@ -31,7 +31,7 @@ Frame Time: 0.0333333
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   __resetBvhImportCounterForTests();
 });
 

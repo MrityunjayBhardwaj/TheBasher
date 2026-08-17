@@ -29,11 +29,11 @@ import {
   type SectionCtx,
 } from './inspectorSectionBody';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 
 // The registry is populated by a side-effecting boot step in the real app.
 beforeAll(() => {
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** A one-node state whose params are EMPTY — the state every assertion below

@@ -12,13 +12,13 @@ import {
   evaluate,
   type DagState,
 } from '../../core/dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import type { CharacterValue } from '../../nodes/types';
 import { buildWalkToOps } from './walkTo';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 function buildBaselineCharacter(): DagState {

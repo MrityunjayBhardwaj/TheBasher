@@ -26,7 +26,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../core/dag';
 import type { DagState, Op } from '../core/dag/types';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { CameraDataNode } from './CameraData';
 import { recomposeCameraObject } from './cameraRecompose';
@@ -35,7 +35,7 @@ import type { CameraValue, ImageValue, SceneValue, ShotValue } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 // The one authored lens used throughout. NONE of these values may be a fallback the

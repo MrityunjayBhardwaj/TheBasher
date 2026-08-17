@@ -26,7 +26,7 @@ import { applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import {
   constraintStackForTarget,
   followPathStackForTarget,
@@ -123,7 +123,7 @@ function buildFollowing(params: Record<string, unknown> = {}): DagState {
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('FollowPath — band separation (the enumeration is shared, the coercion is not)', () => {

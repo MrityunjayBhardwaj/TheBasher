@@ -23,7 +23,7 @@ import { __resetRegistryForTests } from '../core/dag';
 import { registerNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeDefinition } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { childEdges } from './resolveWorldTransform';
 import { findTargetAssetRef } from './resolveOverrideSlots';
 
@@ -56,7 +56,7 @@ function node(id: string, type: string, inputs: Node['inputs'], params: unknown 
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
   registerNodeType(SpineWrapper);
 });
 

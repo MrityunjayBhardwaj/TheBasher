@@ -33,7 +33,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests } from '../dag';
-import { __reseedAllNodesForTests } from '../../nodes/registerAll';
+import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../storage';
 import { loadProject, projectPath } from './io';
 import { PROJECT_FORMAT_VERSION } from './schema';
@@ -42,7 +42,7 @@ import { readPreNs1FixtureBytes } from '../../../tools/gates/preNs1Fixture';
 describe('ns-1 pre-phase fixture', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('was captured at a format version no newer than the current one', () => {

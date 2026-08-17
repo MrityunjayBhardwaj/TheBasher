@@ -1,13 +1,13 @@
 // resolveDataParamOwner — the object↔data split's "who owns this data param?" reach.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 /** An Object (transform) pointing at a BoxData (geometry + material) via `data`. */

@@ -10,7 +10,7 @@ import { applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 import { enumerateStudioLights, resolveRigTarget } from './studioLightRig';
 import { makeSplitLight } from '../test-utils/splitLight';
 
@@ -60,7 +60,7 @@ function addAreaLight(
 describe('enumerateStudioLights', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('lists only AreaLights aimed by a Track-To (a free area light is omitted)', () => {
@@ -92,7 +92,7 @@ describe('enumerateStudioLights', () => {
 describe('resolveRigTarget', () => {
   beforeEach(() => {
     __resetRegistryForTests();
-    __reseedAllNodesForTests();
+    registerAllNodes();
   });
 
   it('derives the centre from the first rig light’s fixed aim point', () => {

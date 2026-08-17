@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EvalCtx } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
-import { __reseedAllNodesForTests } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import {
   ClampNode,
   CurveRemapNode,
@@ -109,7 +109,7 @@ describe('vector compute nodes — evaluate (Vector3 rail)', () => {
 
 describe('#292 compute nodes — registration', () => {
   it('the whole vocabulary is registered by registerAllNodes', () => {
-    __reseedAllNodesForTests();
+    registerAllNodes();
     for (const type of [
       'Math',
       'Clamp',

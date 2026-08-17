@@ -9,7 +9,7 @@ import {
 } from '../core/dag';
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
-import { __reseedAllNodesForTests, registerAllNodes } from './registerAll';
+import { registerAllNodes } from './registerAll';
 import { SCATTER_MAX } from './ScatterNode';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -152,7 +152,7 @@ const ALL_TYPES = [
 
 beforeEach(() => {
   __resetRegistryForTests();
-  __reseedAllNodesForTests();
+  registerAllNodes();
 });
 
 describe('default node registration', () => {

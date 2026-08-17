@@ -4,7 +4,7 @@ import { gltfAssetDepNodes } from './gltfAssetDeps';
 import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
 import type { DagState, Op } from '../core/dag/types';
-import { __reseedAllNodesForTests } from '../nodes/registerAll';
+import { registerAllNodes } from '../nodes/registerAll';
 
 const ASSET = 'assets/cicada.glb';
 const NODE_NAME_MAP = { Body: 'child1' };
@@ -39,7 +39,7 @@ function buildScene(): DagState {
 }
 
 describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ / B13)', () => {
-  beforeEach(() => __reseedAllNodesForTests());
+  beforeEach(() => registerAllNodes());
 
   it('selects this asset’s GltfChild nodes (and only them)', () => {
     const s = buildScene();
