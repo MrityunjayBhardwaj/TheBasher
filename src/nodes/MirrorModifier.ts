@@ -53,7 +53,7 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { mirrorGeometryRef } from '../app/modifierGeometry';
-import { modifierDataSource } from '../app/modifierDataSource';
+import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
 import { SCOPE_PARAM, requireResolvedScope } from './componentSelection';
 import { isParsableScopeQuery } from './scopeQuery';
 
@@ -141,15 +141,17 @@ export const MirrorModifierNode: NodeDefinition<MirrorModifierParams, ObjectData
     const source = modifierDataSource(src);
     // Non-mesh data (curve / light / camera) — pass through unchanged.
     if (!source) return src;
+    const geometry = mirrorGeometryRef(
+      source.geometry,
+      params.axis,
+      params.offset,
+      selection?.canonicalQuery,
+    );
     return {
       kind: 'ModifiedData',
-      geometry: mirrorGeometryRef(
-        source.geometry,
-        params.axis,
-        params.offset,
-        selection?.canonicalQuery,
-      ),
+      geometry,
       material: source.material,
+      ...slotTableThrough(source, geometry),
     };
   },
 };
