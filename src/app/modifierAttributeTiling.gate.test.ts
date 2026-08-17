@@ -84,7 +84,7 @@ import {
 import { faceCountOf, tiledFaceOrder } from './faceCount';
 import { clear, getForRead } from './geometryRegistry';
 import { faceRangeMaterialAttributes, uniformMaterialAttributes } from '../nodes/meshAttributes';
-import { insert } from './attributeStore';
+import { insert, read } from './attributeStore';
 import { mintAttributes } from '../nodes/attributeKey';
 import { MATERIAL_INDEX, UV_MAP, type AttributeData } from '../nodes/attributes';
 import type { GeometryRef } from '../nodes/types';
@@ -338,7 +338,7 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       // passing because nothing happened.
       const messages = warn.mock.calls.map((c) => String(c[0]));
       expect(
-        messages.filter((m) => m.includes('cannot tile an assignment over 36 faces')),
+        messages.filter((m) => m.includes("cannot tile 'material_index' over 36 faces")),
       ).toHaveLength(1);
       expect(messages.filter((m) => m.includes('they describe different meshes'))).toHaveLength(1);
       expect(messages).toHaveLength(2);
@@ -532,11 +532,234 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
         arrayGeometryRef(source, 3, [9, 4, 1]);
         const refusals = warn.mock.calls
           .map((c) => String(c[0]))
-          .filter((m) => m.includes('cannot tile an assignment over 36 faces'));
+          .filter((m) => m.includes("cannot tile 'material_index' over 36 faces"));
         expect(refusals).toHaveLength(2);
       } finally {
         warn.mockRestore();
       }
     });
+  });
+});
+
+// ── #688 — THE GATHER READS THE DOMAIN, NOT A NAME ────────────────────────────────────
+//
+// #649 made the generator's key name exactly the tiled `material_index`. That was a true
+// statement about the merged geometry only while `material_index` was the only face-domain
+// attribute anything minted, and `AttributeSet`'s own comment exists to say that will not
+// last. With a second face attribute present the same sentence inverted: the key stopped
+// varying with something the merged geometry SHOULD express, two genuinely different results
+// collapsed onto one cached build, and the second attribute was dropped on the way through.
+//
+// 🔴 EVERY ROW BELOW WAS RUN AGAINST `e84ff4a` FIRST, IN A WORKTREE, TWICE — and the two runs
+// name the same set, so the numbers here are a measurement and not one reading. **FIVE of this
+// block's rows red there:** the key row because the two keys are equal; the survival, scope and
+// component rows because the tiled set has one member; the refusal row because it asserts the
+// per-name message this change introduced.
+//
+// **The THREE control rows pass there and here, which is what makes them controls** — their
+// literals were read off that tree, not chosen to match this one. (A sixth row, the sibling cost
+// ratio in the block above, redded once in a loaded full-file run and passes in isolation on that
+// same tree and in two clean full runs; recorded as the flake it is rather than filed as a
+// finding.)
+//
+// Two rows in the `#649` block above also red on `e84ff4a`, and only because this change made the
+// refusal message name the attribute — `cannot tile 'material_index' over 36 faces` where it read
+// `cannot tile an assignment over 36 faces`. That is a literal being updated, not behaviour
+// moving: both rows assert the same two counts on either side of it.
+//
+//     BEFORE (e84ff4a)   arrayKey  array|box|1,1,1|3|2,0,0|a:ea2140ba
+//                        mirrorKey mirror|box|1,1,1|x|0|a:33d7e0b5
+//                        tiledNames ["material_index"]   uvSharesWithBare true
+//     AFTER              byte-identical on every one of those fields
+//
+// The single-attribute population being untouched is therefore a measurement rather than a
+// claim, which matters more here than usual: a widening that silently re-hashed every existing
+// generator key would invalidate every cached build in the wild and nothing would say so.
+describe('#688 — the tiling carries EVERY face-domain attribute, selected by domain', () => {
+  /** A face-domain `int` attribute whose value IS the face index — so the order is readable. */
+  function faceOrdinal(faces: number): AttributeData {
+    const data = new Int32Array(faces);
+    for (let face = 0; face < faces; face++) data[face] = face;
+    return { domain: 'face', type: 'int', count: faces, data };
+  }
+
+  /** The two-material split as a bare attribute, identical on every source built from it. */
+  function splitSlots(): AttributeData {
+    const data = new Int32Array(12);
+    data.fill(1, 6);
+    return { domain: 'face', type: 'int', count: 12, data };
+  }
+
+  /** A box carrying `material_index` plus whatever else the caller names. */
+  function boxCarrying(extra: Readonly<Record<string, AttributeData>>): GeometryRef {
+    const minted = mintAttributes({ [MATERIAL_INDEX]: splitSlots(), ...extra });
+    expect(minted, 'the fixture failed to mint').not.toBeNull();
+    insert(minted!.key, minted!.set, 'evaluate');
+    return boxGeometryRef(BOX_SIZE, minted!.key);
+  }
+
+  /** The tiled set a generator's handle points at, by name. */
+  function tiledSet(ref: GeometryRef) {
+    expect('attributeKey' in ref, `${ref.key} carries no tiled attributes`).toBe(true);
+    const set = read(ref.attributeKey!);
+    expect(set, `nothing stored under ${ref.attributeKey}`).not.toBeNull();
+    return set!;
+  }
+
+  it('🔴 THE DISCRIMINATING ROW — two sources differing ONLY in a second face attribute key APART', () => {
+    // The defect, as filed. Both sources carry an IDENTICAL `material_index`, so their group
+    // layouts are identical and #649's row would have them share a build. They differ in
+    // `face_group`, which the merged geometry genuinely does express — so sharing one cached
+    // instance hands whichever built first to both.
+    //
+    // Measured on `e84ff4a`: both keys are `array|box|1,1,1|3|2,0,0|a:ea2140ba` and this row
+    // reds on the first assertion. The layouts being equal is asserted too, because that is
+    // what stops the row from being satisfied by the two simply differing in some other way.
+    const a = boxCarrying({ face_group: faceOrdinal(12) });
+    const b = boxCarrying({
+      face_group: { domain: 'face', type: 'int', count: 12, data: new Int32Array(12).fill(7) },
+    });
+    expect(a.key, 'the fixture needs two different SOURCE keys to be a test').not.toBe(b.key);
+
+    const refA = arrayGeometryRef(a, 3, [2, 0, 0]);
+    const refB = arrayGeometryRef(b, 3, [2, 0, 0]);
+
+    expect(refA.key).not.toBe(refB.key);
+    expect(layoutOf(refA)).toEqual(layoutOf(refB));
+  });
+
+  it('🔴 the second attribute SURVIVES, tiled through the same order as the material index', () => {
+    // Not merely "the key differs" — the data has to arrive. `face_group` holds the face index,
+    // so the tiled values ARE the order, readable as a literal: the whole source, then two more
+    // passes over the whole source, because this array is unscoped.
+    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(12) }), 3, [2, 0, 0]);
+    const set = tiledSet(ref);
+
+    expect(Object.keys(set).sort()).toEqual(['face_group', 'material_index']);
+    expect(Array.from(set.face_group.data)).toEqual([
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+    ]);
+    // Domain and type are FORWARDED, not re-declared — a gather that rebuilt them from a
+    // literal would be a second place deciding what the tiled attribute is.
+    expect(set.face_group.domain).toBe('face');
+    expect(set.face_group.type).toBe('int');
+    expect(set.face_group.count).toBe(36);
+  });
+
+  it('🔴 a SCOPED generator takes the second attribute through the SUBSET, not the whole source', () => {
+    // The arm that separates "gathers the second attribute" from "gathers it ignoring scope".
+    // `1-6` keeps faces 1..6, so the order is the whole source followed by two passes over
+    // exactly those six — and because `face_group` is the face index, that subset is legible
+    // as a literal rather than as a count.
+    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(12) }), 3, [2, 0, 0], '1-6');
+    const set = tiledSet(ref);
+
+    expect(faceCountOf(ref.descriptor)).toBe(24);
+    expect(Array.from(set.face_group.data)).toEqual([
+      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ...[1, 2, 3, 4, 5, 6],
+      ...[1, 2, 3, 4, 5, 6],
+    ]);
+  });
+
+  it('🔴 a MULTI-COMPONENT face attribute is gathered per element, not sheared by its width', () => {
+    // `count` is in ELEMENTS and `data` is flattened component-major, so a gather that stepped
+    // by 1 instead of by `componentsOf(type)` would read across element boundaries. It would
+    // still produce a well-formed array of the right length — which is exactly why this needs
+    // literal values and not a length check. Face f holds (f, f+100, f+200); a stride-1 gather
+    // puts (1, 100, 200) at f=0... and (100, 200, 1) at f=1, so the first triple alone does
+    // not discriminate and the second one does.
+    const faces = 12;
+    const data = new Float32Array(faces * 3);
+    for (let face = 0; face < faces; face++) {
+      data[face * 3] = face;
+      data[face * 3 + 1] = face + 100;
+      data[face * 3 + 2] = face + 200;
+    }
+    const ref = arrayGeometryRef(
+      boxCarrying({ face_colour: { domain: 'face', type: 'float3', count: faces, data } }),
+      2,
+      [2, 0, 0],
+    );
+    const set = tiledSet(ref);
+
+    expect(set.face_colour.type).toBe('float3');
+    expect(set.face_colour.count).toBe(24);
+    expect(set.face_colour.data.length).toBe(72);
+    // The first two elements of each of the two copies, which is where a stride error shows.
+    expect(Array.from(set.face_colour.data.slice(0, 6))).toEqual([0, 100, 200, 1, 101, 201]);
+    expect(Array.from(set.face_colour.data.slice(36, 42))).toEqual([0, 100, 200, 1, 101, 201]);
+  });
+
+  it('CONTROL — the single-attribute population keys BYTE-IDENTICALLY to before the widening', () => {
+    // The regression row, and its two literals were read off `e84ff4a` rather than off this
+    // tree. A generator key is also a cache key, so a widening that re-hashed the existing
+    // population would quietly invalidate every build in the wild.
+    const source = twoMaterialBox();
+    expect(arrayGeometryRef(source, 3, [2, 0, 0]).key).toBe('array|box|1,1,1|3|2,0,0|a:ea2140ba');
+    expect(mirrorGeometryRef(source, 'x', 0).key).toBe('mirror|box|1,1,1|x|0|a:33d7e0b5');
+  });
+
+  it('CONTROL — a CORNER-domain attribute is still excluded, by domain and not by name', () => {
+    // The other side of the filter, and the reason it is a domain test rather than a name test.
+    // `order` is a permutation of FACE indices and cannot lay out a corner attribute, so `UVMap`
+    // stays out of the tiled set and out of the key — which is also what keeps #649's row above
+    // true. Widening the filter to every domain would red this row and that row together.
+    const uv: AttributeData = {
+      domain: 'corner',
+      type: 'float2',
+      count: 36,
+      data: new Float32Array(72),
+    };
+    const withUv = arrayGeometryRef(boxCarrying({ [UV_MAP]: uv }), 3, [2, 0, 0]);
+    const bare = arrayGeometryRef(boxCarrying({}), 3, [2, 0, 0]);
+
+    expect(Object.keys(tiledSet(withUv))).toEqual([MATERIAL_INDEX]);
+    expect(withUv.key).toBe(bare.key);
+  });
+
+  it('CONTROL — a source with attributes at NO face domain takes the historical road', () => {
+    // Distinct from "the source has no attributes at all": this one has a set, and a key, and
+    // nothing the order can lay out. It must reach the same unattributed spelling rather than
+    // minting an empty set — `{}` has no representation ([[V188]]) and a uniform stand-in would
+    // be this module inventing an assignment.
+    const cornerOnly = mintAttributes({
+      [UV_MAP]: { domain: 'corner', type: 'float2', count: 36, data: new Float32Array(72) },
+    });
+    insert(cornerOnly!.key, cornerOnly!.set, 'evaluate');
+    const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, cornerOnly!.key), 3, [2, 0, 0]);
+
+    expect(ref.key).toBe('array|box|1,1,1|3|2,0,0');
+    expect('attributeKey' in ref).toBe(false);
+    expect(layoutOf(ref)).toEqual([]);
+  });
+
+  it('the refusal names EVERY misfit attribute, not just the alphabetically first', () => {
+    // One misfit refuses the whole set, because tiling the ones that fit and dropping the one
+    // that does not is this function silently losing an attribute — the defect it was widened
+    // to remove. The message lists all of them so a reader who fixes one is not sent back for
+    // the next with no warning that it was already known.
+    const wrong = mintAttributes({
+      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 36, data: new Int32Array(36) },
+      zz_group: { domain: 'face', type: 'int', count: 36, data: new Int32Array(36) },
+    });
+    insert(wrong!.key, wrong!.set, 'evaluate');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, wrong!.key), 3, [2, 0, 0]);
+      expect('attributeKey' in ref).toBe(false);
+
+      const tiling = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('cannot tile'));
+      expect(tiling).toHaveLength(1);
+      expect(tiling[0]).toContain("'material_index' over 36 faces");
+      expect(tiling[0]).toContain("'zz_group' over 36 faces");
+      expect(tiling[0]).toContain('onto a source of 12');
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
