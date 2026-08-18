@@ -18,7 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { importsOf } from '../../tools/gates/moduleShape';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
-import { faceAttributeMismatch, faceCountMismatch, faceCountOf } from './faceCount';
+import { faceCountMismatch, faceCountOf } from './faceCount';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
 const box = (): GeometryDescriptor => ({ kind: 'box', size: [1, 1, 1] });
@@ -105,22 +105,15 @@ describe('#638 the count is a leaf', () => {
 });
 
 describe('#638 a count disagreement is refused by name', () => {
-  it('refuses a 12-element face attribute on a 24-face mirror, naming both numbers', () => {
-    // The plan's own step-1 observation. A mirror doubles its source, so a box's twelve
-    // faces become twenty-four — and an index minted for the source is exactly the stale
-    // component the overlay road can produce.
+  it('the counts a mint-time refusal is measured against are the ones this leaf derives', () => {
+    // #654 retired `faceAttributeMismatch`, whose rows used to sit here. What it compared is
+    // still compared — by `mintTiledModifierAttributes`, against the SOURCE descriptor, and
+    // `modifierAttributeTiling.gate.test.ts` holds the rows that construct the disagreement
+    // and assert the message. What this leaf still owes that refusal is the NUMBERS, so they
+    // are pinned here: a mirror doubles its source and an array multiplies it.
+    expect(faceCountOf(box())).toBe(12);
     expect(faceCountOf(mirror())).toBe(24);
-    const why = faceAttributeMismatch(mirror(), 12);
-    expect(why).not.toBeNull();
-    expect(why).toContain('24');
-    expect(why).toContain('12');
-    expect(why).toContain('mirror');
-  });
-
-  it('says nothing when the attribute fits', () => {
-    expect(faceAttributeMismatch(box(), 12)).toBeNull();
-    expect(faceAttributeMismatch(mirror(), 24)).toBeNull();
-    expect(faceAttributeMismatch(sphere(), 2 * 8 * 3)).toBeNull();
+    expect(faceCountOf(sphere())).toBe(2 * 8 * 3);
   });
 
   it('refuses a built geometry whose index disagrees with the descriptor', () => {
@@ -132,18 +125,15 @@ describe('#638 a count disagreement is refused by name', () => {
     expect(faceCountMismatch(box(), 36)).toBeNull();
   });
 
-  it('and the mint-time half has NO production caller — stated in the module, checked here', () => {
-    // #654. Every mint site derives its element count from `faceCountOf` on the same
-    // descriptor, so a mint-time disagreement has no constructor and this guard would be
-    // comparing a number against itself. That is written into the module, and a claim
-    // about the code's shape decays unless something reads it: if a production caller
-    // ever appears, this reds and the paragraph gets rewritten in the same commit.
+  it('the retired mint-time guard is GONE, not merely uncalled — #654', () => {
+    // The row this replaces censused `faceAttributeMismatch` for production callers and found
+    // zero for three phases. The zero was true and the conclusion was not: the rule ran the
+    // whole time, re-implemented inline rather than called, so a census over the NAME could
+    // not see it. Now that the identifier is retired, the thing worth pinning is that it did
+    // not come back — a second statement of a live rule is what was actually being removed.
     const files = sourceFiles();
     const found = files
-      .filter(([path, src]) => {
-        if (path === 'src/app/faceCount.ts') return false; // where it is defined
-        return /\bfaceAttributeMismatch\s*\(/.test(stripComments(src));
-      })
+      .filter(([, src]) => /\bfaceAttributeMismatch\b/.test(stripComments(src)))
       .map(([path]) => path);
 
     // `examined` beside `found`, so a walk that stopped descending cannot report an empty
@@ -160,6 +150,5 @@ describe('#638 a count disagreement is refused by name', () => {
     const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'a', childName: 'n' };
     expect(faceCountOf(gltf)).toBeNull();
     expect(faceCountMismatch(gltf, 999)).toBeNull();
-    expect(faceAttributeMismatch(gltf, 999)).toBeNull();
   });
 });

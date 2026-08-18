@@ -193,11 +193,15 @@ describe('#607 a selection cannot be built against a count that does not exist',
     );
   });
 
-  it('and this is NOT `faceAttributeMismatch` — measured, because the plan named it', () => {
-    // ns-2's step-9 pre-mortem said this refusal would make `faceAttributeMismatch` live
-    // for the first time. It cannot: that guard returns `null` — "no objection" — for every
+  it('and this is NOT the face-count guard the plan named — measured, twice', () => {
+    // ns-2's step-9 pre-mortem said this refusal would make `faceAttributeMismatch` live for
+    // the first time. It could not: that guard returned `null` — "no objection" — for every
     // count whenever `faceCountOf` is null, which is exactly the case being refused here.
     // Recorded as a row so the claim is not re-inherited from the plan.
+    //
+    // #654 has since RETIRED that guard, having measured its rule to be live elsewhere. The
+    // row stays, because what it pins is a property of THIS refusal — that a null count is
+    // its subject and not something a count comparison could ever have covered.
     expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0' })).toThrow();
   });
 

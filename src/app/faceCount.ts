@@ -455,33 +455,25 @@ export function zeroIndexRefusal(
 }
 
 /**
- * Why a face-domain attribute does not fit a descriptor, or `null` when it does.
+ * ── WHERE THE MINT-TIME COUNT RULE LIVES, AND WHY IT IS NOT A FUNCTION HERE (#654) ────
  *
- * Separate from {@link faceCountMismatch} because the two catch different mistakes at
- * different moments: this one compares an ATTRIBUTE's element count against the descriptor
- * at mint time; that one compares the BUILT geometry against the descriptor at build time.
- * A single function taking both would let a caller pass one and default the other, which is
- * how a gate silently stops checking half of what it names.
+ * A `faceAttributeMismatch(descriptor, attributeCount)` used to sit at this spot, written in
+ * ns-1b step 1 as the mint-time half of a pair with {@link faceCountMismatch}. It was retired
+ * because the rule it stated is live and the function was not: a census reported ZERO
+ * production callers for three phases while `mintTiledModifierAttributes` enforced the same
+ * comparison inline, against the SOURCE descriptor. Measured before removing it — over counts
+ * 11, 12, 13, 24 and 36, on both an Array and a Mirror, the retired function applied to
+ * `descriptor.source.descriptor` and the tiling's own test agreed on every row.
  *
- * ⚠️ NO PRODUCTION CALLER TODAY, AND THAT IS SAID HERE RATHER THAN LEFT TO BE DISCOVERED
- * (#654). Every mint site in this repo derives its element count from {@link faceCountOf} on
- * the same descriptor, so a mint-time disagreement has no constructor — the guard would be
- * comparing a number against itself. The disagreement that IS reachable arrives later, when a
- * handle carries an attribute key its rebuilt or merged geometry no longer fits, and that one
- * is caught by {@link faceCountMismatch} in the registry, against the geometry three.js
+ * 🔴 A CENSUS OVER A NAME CANNOT SEE A RULE THAT WAS COPIED. The zero was true and the
+ * conclusion drawn from it — "this guard never runs" — was false. What never ran was the
+ * identifier.
+ *
+ * The surviving statement is the better one on both counts: it compares against the count it
+ * already holds, so it does not re-walk `faceCountOf` through a nested generator chain per
+ * attribute per evaluate (see {@link TiledFaceOrder} on why that walk happens once), and it
+ * is domain-general — a corner attribute is measured against the source's CORNERS (#694),
+ * which a face-only function could not express. {@link faceCountMismatch} below is unaffected
+ * and is still the build-time half, consulted by the registry against the geometry three.js
  * actually built.
- *
- * So this is the arm for a producer that carries a count from somewhere else — an importer,
- * or a stored set read back against a descriptor — and it stays here, tested, for the moment
- * one exists. What it must NOT be read as is a live check on the mint: a named guard that
- * never runs is worse than an open gap, because a reader who finds it stops looking.
  */
-export function faceAttributeMismatch(
-  descriptor: GeometryDescriptor,
-  attributeCount: number,
-): string | null {
-  const faces = faceCountOf(descriptor);
-  if (faces === null) return null;
-  if (attributeCount === faces) return null;
-  return `faceCount: descriptor '${descriptor.kind}' derives ${faces} faces but the face-domain attribute carries ${attributeCount}`;
-}
