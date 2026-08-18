@@ -51,7 +51,7 @@
 // table is keyed the same way and closed the same way: a new `ObjectData` member is a
 // COMPILE ERROR here, at the one site that has to decide what the new kind can host.
 //
-// REF: src/app/modifierGeometry.ts (`modifierDataSource` — the can-it-now half);
+// REF: src/app/modifierDataSource.ts (`modifierDataSource` — the can-it-now half);
 //      src/app/objectDataBand.ts (the shape this follows: a named, never-closed classifier);
 //      src/nodes/ObjectNode.ts (the unconditional declaration this exists to qualify);
 //      ref/GROUND_TRUTH_BLENDER_MODIFIER_DATA.md §9. Issues #498, #349, #394.

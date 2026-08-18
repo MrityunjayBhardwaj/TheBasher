@@ -69,10 +69,15 @@
 // THREE DECLARED LIMITS, each pinned by tests rather than left to be discovered:
 //
 //   1. ONLY THE LOWEST `SetMaterialOp` IN A STACK CONTRIBUTES A SLOT TABLE; a second one
-//      replaces it. `ModifierDataSource` carries `{geometry, material}` and nothing else, so
-//      the second op reads the first's single material field and never sees its table.
-//      Widening the data lane's source contract touches every operator on it and belongs
-//      with the selection system that would make three slots authorable in the first place.
+//      replaces it. ⚠️ THIS IS A CHOICE NOT YET MADE, NOT A CONTRACT THAT CANNOT EXPRESS
+//      IT. The reason written here before #698 said `ModifierDataSource` "carries
+//      `{geometry, material}` and nothing else" — #691 made that false. The source DOES
+//      carry `materialSlots` today and `modifierDataSource` forwards the pair whole; the
+//      second op simply does not READ it, because the emission below builds a fresh
+//      two-entry table out of `source.material` alone. What is missing is the rule for
+//      MERGING two tables — concatenate with re-indexing, or replace — which is #647, and
+//      which belongs with the selection system that would make three slots authorable in
+//      the first place. The sparse sibling collapses identically, pinned alongside (#699).
 //   2. ~~THE RANGE AND THE SCOPE BOTH SURVIVE~~ — **DONE (ns-2 step 14).** `faceFrom`/`faceTo`
 //      were the crude precursor the selection supersedes, kept until the selection road had
 //      demonstrably executed on both a writer and two generators. It has, so they are gone,
@@ -84,8 +89,9 @@
 //      AUTHORED scope over one of them is a named throw from the resolver rather than a
 //      silent whole-mesh write, because the author asked for something unhonourable.
 //
-// REF: src/nodes/materialSocket.ts (the socket rule); src/app/modifierGeometry.ts
-//      (`modifierDataSource` — the shared classifier); src/nodes/MaterialOverrideOp.ts
+// REF: src/nodes/materialSocket.ts (the socket rule); src/app/modifierDataSource.ts
+//      (`modifierDataSource` — the shared classifier, DEFINED there; `modifierGeometry.ts`
+//      only imports it); src/nodes/MaterialOverrideOp.ts
 //      (the sparse sibling); docs/OPERATORS-AND-LIGHTING-DESIGN.md §5/§2.2; issue #394.
 
 import { z } from 'zod';

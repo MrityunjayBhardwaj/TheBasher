@@ -59,7 +59,7 @@
 // or a glTF import can no longer be wired here at all, because they emit `SceneObject`
 // and this socket takes `ObjectData` — the type system now says what a banner used to.
 //
-// REF: src/app/modifierGeometry.ts (`modifierDataSource` — the shared classifier +
+// REF: src/app/modifierDataSource.ts (`modifierDataSource` — the shared classifier +
 //      array-wrap); src/app/geometryRegistry.ts (build 'array'); src/nodes/types.ts
 //      (`ModifiedDataValue`); docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1;
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §5/§2.2; issue #415.
