@@ -193,11 +193,15 @@ describe('#607 a selection cannot be built against a count that does not exist',
     );
   });
 
-  it('and this is NOT `faceAttributeMismatch` — measured, because the plan named it', () => {
-    // ns-2's step-9 pre-mortem said this refusal would make `faceAttributeMismatch` live
-    // for the first time. It cannot: that guard returns `null` — "no objection" — for every
+  it('and this is NOT the face-count guard the plan named — measured, twice', () => {
+    // ns-2's step-9 pre-mortem said this refusal would make `faceAttributeMismatch` live for
+    // the first time. It could not: that guard returned `null` — "no objection" — for every
     // count whenever `faceCountOf` is null, which is exactly the case being refused here.
     // Recorded as a row so the claim is not re-inherited from the plan.
+    //
+    // #654 has since RETIRED that guard, having measured its rule to be live elsewhere. The
+    // row stays, because what it pins is a property of THIS refusal — that a null count is
+    // its subject and not something a count comparison could ever have covered.
     expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0' })).toThrow();
   });
 
@@ -454,6 +458,15 @@ describe('#607 the query has exactly one reader', () => {
         // not a query to interpret — the row below the next one is what holds that apart.
         'src/nodes/ArrayModifier.ts',
         //
+        // #682 — the FOURTH declarer, and the SECOND on the `'target'` lane. It is also the
+        // only entry here that was measured LYING before it was measured honouring: it
+        // declared a scope at ns-2 step 17 while emitting byte-identical output for a total
+        // selection and for half the faces, was re-declared `declined`, and returns now with
+        // the behaviour built. Same reading as the rest — it names the shared constant in its
+        // `paramSchema`, and its `evaluate` consumes the RESOLVED selection, never
+        // `params[SCOPE_PARAM]`, which the row below checks of every name on this list.
+        'src/nodes/MaterialOverrideOp.ts',
+        //
         // ns-2 step 13b — the THIRD declarer, and the SECOND on the `'source'` lane. Same
         // reading again, and the repetition is the point: two operators now share a scope
         // kind, a subset helper and a key builder, so nothing about this entry is special
@@ -491,6 +504,7 @@ describe('#607 the query has exactly one reader', () => {
     // that made a sibling gate vacuous from birth one step ago (#678).
     expect(declarers).toEqual([
       'src/nodes/ArrayModifier.ts',
+      'src/nodes/MaterialOverrideOp.ts',
       'src/nodes/MirrorModifier.ts',
       'src/nodes/SetMaterialOp.ts',
     ]);

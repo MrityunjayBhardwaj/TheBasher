@@ -95,6 +95,13 @@ const FIXTURES: Record<string, { params: Record<string, unknown>; material?: boo
   ArrayModifier: { params: { count: 3, offset: [2, 0, 0], muted: false } },
   MirrorModifier: { params: { axis: 'x', offset: 3, muted: false } },
   SetMaterialOp: { params: { muted: false }, material: true },
+  // #682. `overridden` is what makes the override non-empty — without a field marked, the
+  // composition is the identity and BOTH legs would come back equal, so the row would report
+  // a dishonouring operator that is in fact honouring. A fixture that cannot tell the two
+  // legs apart is the [[H328]] shape: it inverts the test rather than weakening it.
+  MaterialOverrideOp: {
+    params: { muted: false, color: '#ff0000', overridden: { color: true } },
+  },
 };
 
 /** The operators whose declaration PROMISES the selection changes what they emit. */
@@ -151,21 +158,18 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // And the exemptions are derived from the same field rather than listed here, so an
     // operator cannot be excused by being forgotten.
     //
-    // 🔴 `MaterialOverrideOp` IS IN THIS LIST BECAUSE OF WHAT THE ROW BELOW FOUND, and it
-    // is the one member here for a different reason from the other three. Those three have
-    // no component domain at all — a scene object, a scene object, an image — so there is
-    // nothing a selection could name. `MaterialOverrideOp` has one and does not use it:
-    // it declared `'target'`, emitted byte-identical output for a total selection and for
-    // half the faces, and was re-declared `unscoped, why: 'declined'` at step 17. The two
-    // reasons are DIFFERENT CLAIMS and the union carries which is which, so this row does
-    // not have to. Honouring it is #682, and the day that lands this list loses a member.
+    // 🔴 THE LIST LOST `MaterialOverrideOp` AT #682, WHICH IS THE HANDOVER THE ROW ABOVE IT
+    // PREDICTED IN AS MANY WORDS: *"Honouring it is #682, and the day that lands this list
+    // loses a member."* It sat here as the one member with a component domain it declined to
+    // use; it now composes onto the selected faces and leaves the rest carrying the source's
+    // material, so it belongs in the derived population below instead.
+    //
+    // The three that remain are here for the OTHER reason, and it is a different claim: a
+    // scene object, a scene object and an image have no component domain at all, so there is
+    // nothing a selection could name. The union carries which reason applies, which is why
+    // this row does not have to.
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
-    expect(exempt.sort()).toEqual([
-      'ColorCorrect',
-      'MaterialOverride',
-      'MaterialOverrideOp',
-      'Transform',
-    ]);
+    expect(exempt.sort()).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
   });
 
   it('🔴 THE CROSS-CHECK — every operator declaring a scope emits something DIFFERENT for a subset', () => {

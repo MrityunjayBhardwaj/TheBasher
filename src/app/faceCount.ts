@@ -301,6 +301,100 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
 }
 
 /**
+ * The corner-domain sibling of {@link TiledFaceOrder} — which SOURCE corner each corner of a
+ * generator's built geometry came from (#694).
+ *
+ * ── WHY THIS IS DERIVED FROM THE FACE ORDER AND NOT COMPUTED BESIDE IT ────────────────
+ *
+ * A corner order is the face order with each face expanded into its corners, and expanding
+ * it here rather than re-walking the tiling is what keeps the two from disagreeing about
+ * which copies exist. Every decision about the layout — the preserved input first, the
+ * subset, how many times it repeats — is still taken exactly once, in {@link tiledFaceOrder}.
+ *
+ * ── THE PER-FACE CORNER COUNT IS 3, AND THAT IS A FACT ABOUT THE ROAD ─────────────────
+ *
+ * #694 was filed saying a corner order "cannot [be produced] without the builders' per-face
+ * corner counts". Measured, that is not the obstacle: every descriptor this module answers
+ * for is TRIANGLE-INDEXED — `faceCountMismatch` right below defines a face as three index
+ * entries, and `faceSubset` takes whole triangles — so the per-face corner count is the
+ * constant 3 rather than something the builders have to be asked for.
+ *
+ * 🔴 WINDING IS THE OBSTACLE, AND IT IS A FACT ABOUT THE BUILDERS. `buildMirror` runs
+ * `reverseWinding` over its reflected half (`geometryRegistry.ts`), which swaps the 2nd and
+ * 3rd corner of every triangle so the reflected faces are not back-facing. Observed on a
+ * box: source face 0 is `[0,2,1]` and its mirrored copy is `[0,1,2]`. So a corner order of
+ * `3·face + k` would be correct for an Array and would put every mirrored face's corners in
+ * the wrong places — silently, because a UV lands somewhere plausible rather than nowhere.
+ * `buildArray` applies translations only and never reverses, which is why the array arm is
+ * the identity and the mirror arm is not.
+ *
+ * ⚠️ THE REVERSED COPIES ARE THE ONES AFTER THE SOURCE. `buildMirror` merges
+ * `[original, reflected]` and this module puts the preserved source first, so the boundary
+ * is `sourceFaces` and the two statements are the same statement.
+ */
+export interface TiledCornerOrder {
+  /** Corners in the SOURCE — what a per-corner attribute being gathered from must carry. */
+  readonly sourceCorners: number;
+  /** `order[i]` is the source corner that corner `i` of the merged geometry came from. */
+  readonly order: readonly number[];
+}
+
+/** Corners per face on this road. See the block above — a face IS a triangle here. */
+const CORNERS_PER_FACE = 3;
+
+/**
+ * Memoised on the FACE order's identity, so this cache cannot outlive the layout it expands
+ * and needs no ceiling of its own: an entry becomes collectable the moment `orderCache`
+ * above drops that face order. One reclaimer, one stated ceiling — the same reason
+ * `meshAttributes`'s own key cache keys on this object rather than on a restatement of it.
+ *
+ * 🔴 AND THEN KEYED BY WINDING WITHIN THAT, WHICH IS NOT A DETAIL. `orderCache`'s key omits
+ * `kind` on purpose — a Mirror and an Array with `count: 2` have the SAME face layout (the
+ * whole source, then one copy of the subset) and correctly share one entry. Their CORNER
+ * layouts are not the same: the mirror's second copy is wound backwards and the array's is
+ * not. So the face order's identity does not determine a corner order, and keying on it
+ * alone hands whichever generator built first to both — measured, and it is what the gate's
+ * mirrored-corner row reds on.
+ */
+const cornerOrderCache = new WeakMap<readonly number[], Map<boolean, TiledCornerOrder>>();
+
+export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrder | null {
+  const faces = tiledFaceOrder(descriptor);
+  if (faces === null) return null;
+
+  // Whether the copies AFTER the preserved source are wound backwards. The single fact that
+  // separates two corner layouts sharing one face layout, so it is what the cache splits on.
+  const reversesCopies = descriptor.kind === 'mirror';
+
+  const perOrder = cornerOrderCache.get(faces.order);
+  const hit = perOrder?.get(reversesCopies);
+  if (hit !== undefined) return hit;
+
+  const { sourceFaces, order } = faces;
+  // Faces at or after this index are copies that `reverseWinding` flipped. `Infinity` rather
+  // than a boolean beside the loop so the comparison below is the same shape in both arms.
+  const reversedFrom = reversesCopies ? sourceFaces : Infinity;
+
+  const corners: number[] = [];
+  for (let face = 0; face < order.length; face++) {
+    const base = order[face] * CORNERS_PER_FACE;
+    if (face >= reversedFrom) corners.push(base, base + 2, base + 1);
+    else corners.push(base, base + 1, base + 2);
+  }
+
+  const resolved: TiledCornerOrder = {
+    sourceCorners: sourceFaces * CORNERS_PER_FACE,
+    order: corners,
+  };
+  if (perOrder === undefined) {
+    cornerOrderCache.set(faces.order, new Map([[reversesCopies, resolved]]));
+  } else {
+    perOrder.set(reversesCopies, resolved);
+  }
+  return resolved;
+}
+
+/**
  * Why a built geometry disagrees with its descriptor's face count, or `null` when they
  * agree — the refusal ns-1b step 4 consults before deriving groups from an index.
  *
@@ -361,33 +455,25 @@ export function zeroIndexRefusal(
 }
 
 /**
- * Why a face-domain attribute does not fit a descriptor, or `null` when it does.
+ * ── WHERE THE MINT-TIME COUNT RULE LIVES, AND WHY IT IS NOT A FUNCTION HERE (#654) ────
  *
- * Separate from {@link faceCountMismatch} because the two catch different mistakes at
- * different moments: this one compares an ATTRIBUTE's element count against the descriptor
- * at mint time; that one compares the BUILT geometry against the descriptor at build time.
- * A single function taking both would let a caller pass one and default the other, which is
- * how a gate silently stops checking half of what it names.
+ * A `faceAttributeMismatch(descriptor, attributeCount)` used to sit at this spot, written in
+ * ns-1b step 1 as the mint-time half of a pair with {@link faceCountMismatch}. It was retired
+ * because the rule it stated is live and the function was not: a census reported ZERO
+ * production callers for three phases while `mintTiledModifierAttributes` enforced the same
+ * comparison inline, against the SOURCE descriptor. Measured before removing it — over counts
+ * 11, 12, 13, 24 and 36, on both an Array and a Mirror, the retired function applied to
+ * `descriptor.source.descriptor` and the tiling's own test agreed on every row.
  *
- * ⚠️ NO PRODUCTION CALLER TODAY, AND THAT IS SAID HERE RATHER THAN LEFT TO BE DISCOVERED
- * (#654). Every mint site in this repo derives its element count from {@link faceCountOf} on
- * the same descriptor, so a mint-time disagreement has no constructor — the guard would be
- * comparing a number against itself. The disagreement that IS reachable arrives later, when a
- * handle carries an attribute key its rebuilt or merged geometry no longer fits, and that one
- * is caught by {@link faceCountMismatch} in the registry, against the geometry three.js
+ * 🔴 A CENSUS OVER A NAME CANNOT SEE A RULE THAT WAS COPIED. The zero was true and the
+ * conclusion drawn from it — "this guard never runs" — was false. What never ran was the
+ * identifier.
+ *
+ * The surviving statement is the better one on both counts: it compares against the count it
+ * already holds, so it does not re-walk `faceCountOf` through a nested generator chain per
+ * attribute per evaluate (see {@link TiledFaceOrder} on why that walk happens once), and it
+ * is domain-general — a corner attribute is measured against the source's CORNERS (#694),
+ * which a face-only function could not express. {@link faceCountMismatch} below is unaffected
+ * and is still the build-time half, consulted by the registry against the geometry three.js
  * actually built.
- *
- * So this is the arm for a producer that carries a count from somewhere else — an importer,
- * or a stored set read back against a descriptor — and it stays here, tested, for the moment
- * one exists. What it must NOT be read as is a live check on the mint: a named guard that
- * never runs is worse than an open gap, because a reader who finds it stops looking.
  */
-export function faceAttributeMismatch(
-  descriptor: GeometryDescriptor,
-  attributeCount: number,
-): string | null {
-  const faces = faceCountOf(descriptor);
-  if (faces === null) return null;
-  if (attributeCount === faces) return null;
-  return `faceCount: descriptor '${descriptor.kind}' derives ${faces} faces but the face-domain attribute carries ${attributeCount}`;
-}

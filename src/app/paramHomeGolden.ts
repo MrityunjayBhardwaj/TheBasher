@@ -112,7 +112,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   MaterialOverride:
     '[material] name=(unrouted) color=material roughness=material metalness=material opacity=material emissive=material emissiveIntensity=material overridden=(unrouted) ignoreSourceMaterial=(unrouted) slotIndex=(unrouted)',
   MaterialOverrideOp:
-    '[material] name=(unrouted) color=material roughness=material metalness=material opacity=material emissive=material emissiveIntensity=material overridden=(unrouted) muted=(unrouted)',
+    '[material] name=(unrouted) color=material roughness=material metalness=material opacity=material emissive=material emissiveIntensity=material overridden=(unrouted) muted=(unrouted) scope=(unrouted)',
   Math: '[] op=(unrouted)',
   MediaClip:
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
@@ -177,4 +177,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // is STILL 124, and that is the half of this pair which discriminates — an appended param
 // only ever moves `unrouted`, so a `routed` that moved would mean a param changed homes
 // under cover of an addition, which is precisely what a lone total cannot show.
-export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 216 } as const;
+// 216 → 217 at #682: the appended `MaterialOverrideOp.scope` cell, unrouted, when that
+// operator started honouring the selection it had been declaring. `routed` is STILL 126 —
+// the same discriminating half, and the reason this is one appended cell rather than a
+// rewritten row.
+export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 217 } as const;
