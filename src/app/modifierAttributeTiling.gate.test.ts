@@ -260,13 +260,58 @@ describe('#644 — the tiled index and the derived face count agree, so groups a
 });
 
 describe('#649 — the modifier key names what the merged geometry carries, and nothing else', () => {
-  it('🔴 two sources with the SAME assignment but different attribute sets share one array key', () => {
+  it('🔴 two sources differing only in a POINT attribute share one array key', () => {
     // #649's residual, and the reason the source key's own `|a:` fragment is stripped rather
     // than left embedded. Both sources carry an identical `material_index`; one also carries a
-    // UV map. The merged geometry and its group layout are therefore identical, so the two
-    // must resolve to ONE cached build. While the source's component is embedded verbatim the
-    // keys differ on a fragment the merged geometry does not express — the literal complaint
-    // in #649's title.
+    // point-domain attribute. The merged geometry and its group layout are therefore
+    // identical, so the two must resolve to ONE cached build. While the source's component is
+    // embedded verbatim the keys differ on a fragment the merged geometry does not express —
+    // the literal complaint in #649's title.
+    //
+    // 🔴 THIS ROW USED A UV MAP UNTIL #694, AND THE HANDOVER IS THE POINT. A corner attribute
+    // was the natural choice for "a difference the merged geometry does not express" only
+    // while corners were dropped from the tiled set. Now that they tile, two sources differing
+    // in their UVs express that difference and MUST key apart — the row directly below. So
+    // #649's guarantee did not expire, it moved to the domains that are still not laid out:
+    // point and edge. If a point order is ever built, this row moves again rather than being
+    // deleted, and the row below it is what says where to.
+    const faces = 12;
+    const materialIndex: AttributeData = {
+      domain: 'face',
+      type: 'int',
+      count: faces,
+      data: new Int32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+    };
+    const bare = mintAttributes({ [MATERIAL_INDEX]: materialIndex })!;
+    const withPoint = mintAttributes({
+      [MATERIAL_INDEX]: materialIndex,
+      // 24, not 8: a box is seam-split, so its point count is what the builder actually
+      // produces rather than the cube's eight corners.
+      zz_point: { domain: 'point', type: 'float3', count: 24, data: new Float32Array(72) },
+    })!;
+    expect(bare.key, 'the fixture needs two DIFFERENT source keys to be a test').not.toBe(
+      withPoint.key,
+    );
+    insert(bare.key, bare.set, 'evaluate');
+    insert(withPoint.key, withPoint.set, 'evaluate');
+
+    const a = arrayGeometryRef(boxGeometryRef(BOX_SIZE, bare.key), 3, [2, 0, 0]);
+    const b = arrayGeometryRef(boxGeometryRef(BOX_SIZE, withPoint.key), 3, [2, 0, 0]);
+
+    expect(a.key).toBe(b.key);
+    expect(getForRead(a)).toBe(getForRead(b));
+  });
+
+  it('🔴 two sources differing only in their UVs now key APART — #694, the sharing loss closed', () => {
+    // The defect #694 was filed for, asserted as closed. Before the corner order these two
+    // resolved to ONE cached build: the UV map was dropped from the tiled set, so it reached
+    // neither the merged geometry nor the key, and `uvSharesWithBare` was `true`. Whichever
+    // built first was handed to both.
+    //
+    // This is observable today even though nothing yet READS a tiled UV — a key is a string,
+    // and the sharing loss is a statement about identity rather than about pixels. What is
+    // deliberately NOT claimed here is that anything draws differently; see the corner-layout
+    // row below for the part that would catch a wrong layout.
     const faces = 12;
     const materialIndex: AttributeData = {
       domain: 'face',
@@ -281,20 +326,19 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
         domain: 'corner',
         type: 'float2',
         count: faces * 3,
-        data: new Float32Array(faces * 3 * 2),
+        data: new Float32Array(faces * 3 * 2).fill(0.25),
       },
     })!;
-    expect(bare.key, 'the fixture needs two DIFFERENT source keys to be a test').not.toBe(
-      withUv.key,
-    );
     insert(bare.key, bare.set, 'evaluate');
     insert(withUv.key, withUv.set, 'evaluate');
 
     const a = arrayGeometryRef(boxGeometryRef(BOX_SIZE, bare.key), 3, [2, 0, 0]);
     const b = arrayGeometryRef(boxGeometryRef(BOX_SIZE, withUv.key), 3, [2, 0, 0]);
 
-    expect(a.key).toBe(b.key);
-    expect(getForRead(a)).toBe(getForRead(b));
+    expect(a.key).not.toBe(b.key);
+    const tiled = read(b.attributeKey!);
+    expect(tiled, `nothing stored under ${b.attributeKey}`).not.toBeNull();
+    expect(Object.keys(tiled!).sort()).toEqual([MATERIAL_INDEX, UV_MAP].sort());
   });
 
   it('🔴 two sources with DIFFERENT assignments still key apart — the variance that is honest', () => {
@@ -732,11 +776,14 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     expect(mirrorGeometryRef(source, 'x', 0).key).toBe('mirror|box|1,1,1|x|0|a:33d7e0b5');
   });
 
-  it('CONTROL — a CORNER-domain attribute is still excluded, by domain and not by name', () => {
-    // The other side of the filter, and the reason it is a domain test rather than a name test.
-    // `order` is a permutation of FACE indices and cannot lay out a corner attribute, so `UVMap`
-    // stays out of the tiled set and out of the key — which is also what keeps #649's row above
-    // true. Widening the filter to every domain would red this row and that row together.
+  it('a CORNER-domain attribute now REACHES the tiled set, still by domain and not by name', () => {
+    // 🔴 THIS ROW INVERTED AT #694 AND THAT IS THE HANDOVER IT WAS WRITTEN FOR. It used to
+    // assert `UVMap` stayed OUT of the tiled set, with the reason stated in the negative:
+    // `order` was a permutation of FACE indices and could not lay out a corner attribute. A
+    // corner order exists now, so the same domain-not-name selection admits it.
+    //
+    // What did NOT change is why this is a domain test: nothing here knows what `UVMap` means.
+    // A second corner attribute under any name rides the same order.
     const uv: AttributeData = {
       domain: 'corner',
       type: 'float2',
@@ -746,24 +793,95 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     const withUv = arrayGeometryRef(boxCarrying({ [UV_MAP]: uv }), 3, [2, 0, 0]);
     const bare = arrayGeometryRef(boxCarrying({}), 3, [2, 0, 0]);
 
-    expect(Object.keys(tiledSet(withUv))).toEqual([MATERIAL_INDEX]);
-    expect(withUv.key).toBe(bare.key);
+    expect(Object.keys(tiledSet(withUv)).sort()).toEqual([MATERIAL_INDEX, UV_MAP].sort());
+    // The tiled corner attribute spans the merged geometry's corners, not the source's.
+    expect(tiledSet(withUv)[UV_MAP].count).toBe(36 * 3);
+    expect(withUv.key).not.toBe(bare.key);
   });
 
-  it('CONTROL — a source with attributes at NO face domain takes the historical road', () => {
+  it('CONTROL — a POINT-domain attribute is still excluded, by domain and not by name', () => {
+    // The other side of the filter, kept alive at the domain that still has no order. This is
+    // the row that would red if the widening had been written as "tile every domain" rather
+    // than as one dispatch with an arm per domain — a point attribute has one element per
+    // point, and laying it out through a face or corner order would gather garbage.
+    const pt: AttributeData = {
+      domain: 'point',
+      type: 'float3',
+      count: 24,
+      data: new Float32Array(72),
+    };
+    const withPoint = arrayGeometryRef(boxCarrying({ zz_point: pt }), 3, [2, 0, 0]);
+    const bare = arrayGeometryRef(boxCarrying({}), 3, [2, 0, 0]);
+
+    expect(Object.keys(tiledSet(withPoint))).toEqual([MATERIAL_INDEX]);
+    expect(withPoint.key).toBe(bare.key);
+  });
+
+  it('CONTROL — a source with attributes at NO LAYABLE domain takes the historical road', () => {
     // Distinct from "the source has no attributes at all": this one has a set, and a key, and
-    // nothing the order can lay out. It must reach the same unattributed spelling rather than
+    // nothing any order can lay out. It must reach the same unattributed spelling rather than
     // minting an empty set — `{}` has no representation ([[V188]]) and a uniform stand-in would
     // be this module inventing an assignment.
-    const cornerOnly = mintAttributes({
-      [UV_MAP]: { domain: 'corner', type: 'float2', count: 36, data: new Float32Array(72) },
+    //
+    // 🔴 THE FIXTURE MOVED FROM CORNER TO POINT AT #694, AND THE ROW IS THE SAME ROW. A
+    // corner-only source now tiles, so it stopped being an example of "nothing layable" — the
+    // condition this guards did not go away, the set of domains that satisfy it shrank. It
+    // shrinks again the day a point order exists, and then this row needs `edge`.
+    const pointOnly = mintAttributes({
+      zz_point: { domain: 'point', type: 'float3', count: 24, data: new Float32Array(72) },
     });
-    insert(cornerOnly!.key, cornerOnly!.set, 'evaluate');
-    const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, cornerOnly!.key), 3, [2, 0, 0]);
+    insert(pointOnly!.key, pointOnly!.set, 'evaluate');
+    const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, pointOnly!.key), 3, [2, 0, 0]);
 
     expect(ref.key).toBe('array|box|1,1,1|3|2,0,0');
     expect('attributeKey' in ref).toBe(false);
     expect(layoutOf(ref)).toEqual([]);
+  });
+
+  it('🔴 a MIRRORED copy takes its corners in REVERSED winding — the row a wrong layout reds', () => {
+    // THE DISCRIMINATING ROW. Everything above this is satisfied by a corner order that is
+    // merely the right LENGTH; this is the one that reds if the values land in the wrong
+    // places. `buildMirror` runs `reverseWinding` over its reflected half, swapping each
+    // triangle's 2nd and 3rd corner so the reflected faces are not back-facing — observed on
+    // a box, source face 0 is [0,2,1] and its mirrored copy is [0,1,2]. So `3·face + k` is
+    // correct for an Array and WRONG for a Mirror, and it is wrong quietly: a UV lands
+    // somewhere plausible rather than nowhere.
+    //
+    // Every corner carries its own source index as its value, so the gathered array IS the
+    // order and a misplacement is readable rather than inferred.
+    const faces = 12;
+    const corners = faces * 3;
+    const stamped = mintAttributes({
+      [UV_MAP]: {
+        domain: 'corner',
+        type: 'float2',
+        count: corners,
+        // component 0 is the source corner index; component 1 is a constant so a shear by a
+        // factor of two would not read as a plausible permutation.
+        data: new Float32Array(Array.from({ length: corners }, (_, c) => [c, -1]).flat()),
+      },
+    })!;
+    insert(stamped.key, stamped.set, 'evaluate');
+    const source = boxGeometryRef(BOX_SIZE, stamped.key);
+
+    const mirrored = tiledSet(mirrorGeometryRef(source, 'x', 0))[UV_MAP];
+    const read = (element: number) => mirrored.data[element * 2];
+
+    // The preserved original comes first and is NOT reversed.
+    expect([read(0), read(1), read(2)]).toEqual([0, 1, 2]);
+    // The reflected half is, and it is the SAME source face read in swapped order.
+    expect([read(corners + 0), read(corners + 1), read(corners + 2)]).toEqual([0, 2, 1]);
+    expect(mirrored.count).toBe(corners * 2);
+
+    // An ARRAY never reverses — `buildArray` applies translations only — so the same fixture
+    // through the other generator must come back in source order. Without this pair the row
+    // could be satisfied by swapping unconditionally.
+    const arrayed = tiledSet(arrayGeometryRef(source, 2, [2, 0, 0]))[UV_MAP];
+    expect([
+      arrayed.data[corners * 2],
+      arrayed.data[corners * 2 + 2],
+      arrayed.data[corners * 2 + 4],
+    ]).toEqual([0, 1, 2]);
   });
 
   it('the refusal names EVERY misfit attribute, not just the alphabetically first', () => {
