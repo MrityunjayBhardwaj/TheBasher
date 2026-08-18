@@ -103,11 +103,14 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     }
   });
 
-  it('SCOPE is declared per operator, and the escape hatch has EXACTLY ONE member', () => {
+  it('SCOPE is declared per operator, and the escape hatch is EMPTY again', () => {
     // Generators: the selection names what they GENERATE FROM.
     expect(where((c) => c.scope.kind === 'source')).toEqual(['ArrayModifier', 'MirrorModifier']);
     // Writers: the selection names what RECEIVES the write.
-    expect(where((c) => c.scope.kind === 'target')).toEqual(['SetMaterialOp']);
+    expect(where((c) => c.scope.kind === 'target')).toEqual([
+      'MaterialOverrideOp',
+      'SetMaterialOp',
+    ]);
     // Not a choice: the spine value has no components at all.
     expect(
       where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'no-component-domain'),
@@ -124,11 +127,15 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // operator that belonged in it had declared something else, which is precisely the
     // failure an exact census of the empty set cannot see on its own — it needs the
     // honouring check beside it. Both are now asserted, and they are what disagree when a
-    // declaration drifts from behaviour again. Honouring it is #682; the day that lands,
-    // this returns to `[]` and the `target` set above regains a second member.
-    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
-      'MaterialOverrideOp',
-    ]);
+    // declaration drifts from behaviour again.
+    //
+    // ✅ #682 LANDED AND THIS IS EMPTY AGAIN — with the `target` set above regaining its
+    // second member, exactly the pair this comment predicted. The round trip is the thing
+    // worth keeping: an empty `declined` set now means something it did not mean the first
+    // time, because the honouring check ran beside it on the way out AND on the way back.
+    // An empty set is only evidence when something else would have been non-empty had the
+    // claim been false.
+    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {

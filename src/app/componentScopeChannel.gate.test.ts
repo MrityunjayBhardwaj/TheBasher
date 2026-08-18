@@ -310,17 +310,22 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
     ).toThrow(/ArrayModifier\.evaluate was called with no resolved selection/);
   });
 
-  it('all THREE scoped operators refuse it, and no unscoped one does', () => {
+  it('all FOUR scoped operators refuse it, and no unscoped one does', () => {
     // Derived from the declarations, never a list: the population is whoever declares a
     // scope, so an operator that starts declaring one is covered the day it does.
     //
-    // 🔴 THIS SAID FOUR UNTIL ns-2 STEP 17, AND THE POPULATION IS WHY IT MOVED RATHER THAN
-    // THE REFUSAL. `MaterialOverrideOp` declared `scope: 'target'` and never read the
-    // selection — measured byte-identical for a total selection and for half the faces —
-    // so its declaration became `unscoped, why: 'declined'`, and an unscoped operator is
-    // handed `undefined` by `scopeFor` and must NOT refuse it. The count fell because a
-    // liar left the set, not because a refusal was weakened; the derivation above is what
-    // made the change a one-line literal instead of an audit. (#682)
+    // 🔴 THIS COUNT HAS NOW MOVED IN BOTH DIRECTIONS FOR THE SAME OPERATOR, AND THAT ROUND
+    // TRIP IS WORTH MORE THAN EITHER NUMBER. It said four until ns-2 step 17, when
+    // `MaterialOverrideOp` was measured declaring `scope: 'target'` while emitting
+    // byte-identical output for a total selection and for half the faces; its declaration
+    // became `unscoped, why: 'declined'` and it left the population, because an unscoped
+    // operator is handed `undefined` by `scopeFor` and must NOT refuse it. #682 built the
+    // behaviour, so the declaration is `target` again and it is back — this time with
+    // `operatorScopeHonouring.gate.test.ts` asserting the two legs differ.
+    //
+    // The count fell because a liar left the set and rose because an honourer joined it. In
+    // neither direction was the refusal itself touched, and the derivation above is what
+    // made each change a one-line literal instead of an audit.
     const refused: string[] = [];
     const accepted: string[] = [];
     for (const type of listNodeTypes()) {
@@ -336,7 +341,7 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
       }
     }
     expect({ refused: refused.sort(), accepted }).toEqual({
-      refused: ['ArrayModifier', 'MirrorModifier', 'SetMaterialOp'],
+      refused: ['ArrayModifier', 'MaterialOverrideOp', 'MirrorModifier', 'SetMaterialOp'],
       accepted: [],
     });
   });
@@ -615,7 +620,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('exactly THREE registered node types declare a `scope` param — one `target`, two `source`', () => {
+  it('exactly FOUR registered node types declare a `scope` param — two `target`, two `source`', () => {
     // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
     // `declaring: []` and existed to red at the first declaration, because an unparseable
     // query is a named THROW and `evaluate` runs on the render road with no try/catch above
@@ -642,10 +647,20 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // the subset helper and the key builder, so their arithmetic has to be asserted from
     // literals neither can reach through the shared code ([[V189]]).
     //
-    // The literal is kept EXACT rather than loosened to a count: this list is where a fourth
-    // declarer shows up, and the question it has to answer on arrival is the one below —
-    // does it refine? No next entrant is named, because none is planned; the row is now a
-    // standing census rather than a fuse waiting on a known step.
+    // 🔴 THE FOURTH ARRIVED AT #682, AND IT ANSWERED THE QUESTION THIS ROW ASKED OF IT.
+    // `MaterialOverrideOp` is `'target'` like `SetMaterialOp` — the selection names which
+    // faces RECEIVE the composition — and it refines with the parser's own validator, so the
+    // row below stayed green rather than being widened to admit it. That is the entire point
+    // of keeping the literal exact: the entrant had to be looked at, and what it had to prove
+    // was written down before anyone knew which operator it would be.
+    //
+    // It is also the operator that LEFT this list's neighbouring census at step 17 for
+    // declaring a scope it did not honour. Arriving here is the same operator returning with
+    // the behaviour built (`operatorScopeHonouring.gate.test.ts` asserts the two legs differ).
+    //
+    // The literal is kept EXACT rather than loosened to a count. No next entrant is named,
+    // because none is planned; the row is a standing census rather than a fuse waiting on a
+    // known step.
     const declaring = listNodeTypes().filter((type) => {
       const shape = (
         getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
@@ -655,7 +670,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect({ examined: listNodeTypes().length, declaring }).toEqual({
       examined: listNodeTypes().length,
       // The order is `listNodeTypes()`'s — registration order, not alphabetical.
-      declaring: ['ArrayModifier', 'MirrorModifier', 'SetMaterialOp'],
+      declaring: ['ArrayModifier', 'MaterialOverrideOp', 'MirrorModifier', 'SetMaterialOp'],
     });
   });
 

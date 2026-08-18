@@ -458,6 +458,15 @@ describe('#607 the query has exactly one reader', () => {
         // not a query to interpret — the row below the next one is what holds that apart.
         'src/nodes/ArrayModifier.ts',
         //
+        // #682 — the FOURTH declarer, and the SECOND on the `'target'` lane. It is also the
+        // only entry here that was measured LYING before it was measured honouring: it
+        // declared a scope at ns-2 step 17 while emitting byte-identical output for a total
+        // selection and for half the faces, was re-declared `declined`, and returns now with
+        // the behaviour built. Same reading as the rest — it names the shared constant in its
+        // `paramSchema`, and its `evaluate` consumes the RESOLVED selection, never
+        // `params[SCOPE_PARAM]`, which the row below checks of every name on this list.
+        'src/nodes/MaterialOverrideOp.ts',
+        //
         // ns-2 step 13b — the THIRD declarer, and the SECOND on the `'source'` lane. Same
         // reading again, and the repetition is the point: two operators now share a scope
         // kind, a subset helper and a key builder, so nothing about this entry is special
@@ -495,6 +504,7 @@ describe('#607 the query has exactly one reader', () => {
     // that made a sibling gate vacuous from birth one step ago (#678).
     expect(declarers).toEqual([
       'src/nodes/ArrayModifier.ts',
+      'src/nodes/MaterialOverrideOp.ts',
       'src/nodes/MirrorModifier.ts',
       'src/nodes/SetMaterialOp.ts',
     ]);
