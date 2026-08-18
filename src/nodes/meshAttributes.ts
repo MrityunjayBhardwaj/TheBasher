@@ -407,9 +407,25 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   const corners = tiledCornerOrder(descriptor);
   if (corners === null) return null;
 
-  const layable = Object.keys(carried)
-    .filter((name) => layoutForDomain(carried[name].domain, tiled, corners) !== null)
-    .sort();
+  // The memo is consulted BEFORE the layouts are resolved, not after. Everything below this
+  // line is a pure function of the two things the key already names — the corner order and the
+  // source key — so a hit that had to walk the attribute set first would be paying the cost it
+  // exists to avoid. #689 measured that road at 75 µs to 1.69 ms per operator per evaluate.
+  const perSource = tiledKeyCache.get(corners.order);
+  const remembered = perSource?.get(sourceKey);
+  if (remembered !== undefined) return remembered;
+
+  // ONE layout per attribute, resolved once and carried to all three users below (the empty
+  // check, the refusal, the gather). Calling `layoutForDomain` at each of them instead would
+  // allocate a record per attribute per user on a per-evaluate road, and — worse than the cost
+  // — would let the three disagree about which attributes tile if the dispatch ever stopped
+  // being a pure function of the domain. Insertion order is the sorted name order, so the
+  // walk below is deterministic and the refusal's wording does not vary per run.
+  const layouts = new Map<string, TiledLayout>();
+  for (const name of Object.keys(carried).sort()) {
+    const layout = layoutForDomain(carried[name].domain, tiled, corners);
+    if (layout !== null) layouts.set(name, layout);
+  }
   // Not "no attributes" but "none this road can lay out": a source carrying only point- or
   // edge-domain data reaches here and takes the historical road, which is why this is a
   // separate exit from the `sourceKey === undefined` one above rather than folded into it.
@@ -419,7 +435,7 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // be a SECOND statement of which domains this road can tile, free to drift from the one
   // below. Both orders are memoised, so the cost of taking them for a source that turns out
   // to carry nothing layable is a map lookup.
-  if (layable.length === 0) return null;
+  if (layouts.size === 0) return null;
 
   // Refused BY NAME — every name, not the first — and it degrades to the pre-#644 behaviour
   // (no tiling, no layout) rather than laying out a wrong one: tiling a set that does not fit
@@ -441,17 +457,13 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // face and a corner attribute one per source corner, so a single `sourceFaces` comparison
   // would have refused every correctly-sized corner attribute the moment corners started
   // tiling. Both the number and the noun come from the same record the gather uses.
-  const misfits = layable.filter((name) => {
-    const layout = layoutForDomain(carried[name].domain, tiled, corners);
-    return layout !== null && carried[name].count !== layout.sourceElements;
-  });
+  const misfits = [...layouts].filter(
+    ([name, layout]) => carried[name].count !== layout.sourceElements,
+  );
   if (misfits.length > 0) {
     console.warn(
       `meshAttributes: '${descriptor.kind}' cannot tile ${misfits
-        .map((name) => {
-          const layout = layoutForDomain(carried[name].domain, tiled, corners);
-          return `'${name}' over ${carried[name].count} ${layout?.noun ?? carried[name].domain}`;
-        })
+        .map(([name, layout]) => `'${name}' over ${carried[name].count} ${layout.noun}`)
         .join(
           ', ',
         )} onto a source of ${sourceFaces} faces / ${corners.sourceCorners} corners — leaving the copies unassigned`,
@@ -479,10 +491,6 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // separates them, and it is reachable for exactly as long, being held by the same WeakMap
   // one hop further down. Measured: keyed on `order`, the gate's array control reads back the
   // mirror's swapped corners.
-  const perSource = tiledKeyCache.get(corners.order);
-  const remembered = perSource?.get(sourceKey);
-  if (remembered !== undefined) return remembered;
-
   // A GATHER, and deliberately nothing more. Every decision about which source face lands
   // where — the preserved input, the subset, how many times it repeats — was taken by
   // `tiledFaceOrder`, beside the count this has to agree with. There is no arithmetic here
@@ -497,15 +505,14 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // half-correct its input, and truncating floats into an `Int32Array` on the strength of a
   // `type: 'int'` label would be doing precisely that.
   const tiledSet: Record<string, AttributeData> = {};
-  for (const name of layable) {
+  for (const [name, layout] of layouts) {
     const attribute = carried[name];
     const components = componentsOf(attribute.type);
     // WHICH order gathers this attribute is decided by its own DOMAIN, through the same
     // dispatch the filter and the refusal above consulted (#694). A face attribute rides the
     // face order and a corner attribute the corner order; nothing here re-decides that, and
     // the `null` arm is unreachable because `layable` is exactly the names it answered for.
-    const layout = layoutForDomain(attribute.domain, tiled, corners);
-    if (layout === null) continue;
+
     // The array CLASS is forwarded off the source too (#696), through a helper closed by a
     // `never`. It was the one thing here still derived rather than forwarded, and as a
     // two-arm ternary it would have kept compiling — silently allocating the wrong class —
