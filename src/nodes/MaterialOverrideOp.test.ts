@@ -22,6 +22,7 @@ import { boxDescriptor, boxGeometryRef } from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
 import { SetMaterialOpNode } from './SetMaterialOp';
+import { modifierDataSource } from '../app/modifierDataSource';
 import type { MeshDataValue, ModifiedDataValue, ObjectData } from './types';
 
 const SOURCE_MATERIAL = hydrateInlineMaterial(null, '#ff0000');
@@ -165,7 +166,7 @@ function evalSet(params: { scope?: string }, src: ObjectData): ObjectData {
   const full = { muted: false, scope: '', ...params };
   return SetMaterialOpNode.evaluate(
     full,
-    { target: src, material: WIRED } as never,
+    { target: src, material: WIRED },
     undefined as never,
     resolveComponentSelection(src, full),
   ) as ObjectData;
@@ -198,8 +199,11 @@ describe('#699 — the declared limit this shares with SetMaterialOp, pinned on 
     // override. That is the collapse, stated rather than discovered.
     expect(second.materialSlots![0]).not.toBe(SOURCE_MATERIAL);
     expect(second.materialSlots![0]).toBe(first.material);
-    // And the source DID offer its table — a choice, not an inability to see it.
-    expect(first.materialSlots).toBeDefined();
+    // 🔑 AND THE TABLE WAS REACHABLE — read through the SAME classifier the operator calls,
+    // not off the value, because what is in question is the second op's VIEW of its source.
+    // This is what makes the collapse a choice rather than an inability, and it is the
+    // assertion that reds if a future `modifierDataSource` ever stops forwarding the pair.
+    expect(modifierDataSource(first)!.materialSlots).toHaveLength(2);
   });
 
   it('override over a SetMaterialOp collapses the same way — the mixed stack is not special', () => {
