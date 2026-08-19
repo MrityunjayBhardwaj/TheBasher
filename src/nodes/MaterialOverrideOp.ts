@@ -28,9 +28,29 @@
 // All three delegate the SAME decision (`resolveMaterialOverrideFields`). This module
 // translates vocabulary; it never re-answers "may this scalar be written".
 //
+// ── THE DECLARED LIMIT THIS SHARES WITH `SetMaterialOp`, PINNED RATHER THAN DISCOVERED ─
+//
+// ONLY THE LOWEST ASSIGNING OP IN A STACK CONTRIBUTES A SLOT TABLE. Stack two overrides
+// and the result has TWO slots, not three: the append arm below builds its table out of
+// `source.material` alone, so the table the op underneath emitted is discarded and the
+// original base material is gone from it. An override over a `SetMaterialOp` collapses the
+// same way, in both stacking orders.
+//
+// ⚠️ THE SOURCE CAN CARRY THE TABLE — THIS IS A CHOICE, NOT AN EXPRESSIVE LIMIT. #691
+// widened `ModifierDataSource` with `materialSlots`, and `modifierDataSource` forwards the
+// pair whole, so `source.materialSlots` is right there and simply not read. What is missing
+// is the rule for MERGING two tables — concatenate with re-indexing, or replace — which is
+// #647, and which waits on the selection system that would make three slots authorable at
+// all. Until that rule exists this operator REPLACES, deliberately.
+//
+// The twin states the same limit (`SetMaterialOp` limit 1) and has carried a pinning row
+// since #638; this side was collapsing identically with neither, which is #699. The rows
+// live in this module's test file so a merge rule cannot land on one operator alone.
+//
 // REF: src/app/material/composeMaterial.ts (the one composition rule + the split);
 //      src/nodes/MaterialOverride.ts (the scene-band wrapper it shares the schema with);
-//      src/app/resolveMaterialFieldOwner.ts (what this node MASKS); issue #394 S3c.
+//      src/nodes/SetMaterialOp.ts (the twin's declared limit 1 — the same collapse);
+//      src/app/resolveMaterialFieldOwner.ts (what this node MASKS); issues #394 S3c, #647.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
