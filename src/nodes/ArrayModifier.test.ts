@@ -14,7 +14,7 @@
 // That is the one behavioural claim of the whole slice, and a fixture that quietly kept
 // feeding scene values would have gone on passing while asserting the opposite.
 //
-// REF: src/nodes/ArrayModifier.ts; src/app/modifierGeometry.ts (`modifierDataSource`);
+// REF: src/nodes/ArrayModifier.ts; src/app/modifierDataSource.ts (`modifierDataSource`);
 //      src/app/resolveEvaluatedMesh.ts (the modifier branch); vyapti V58; issue #415.
 
 import { beforeEach, describe, expect, it } from 'vitest';

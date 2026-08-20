@@ -202,10 +202,17 @@ describe('#638 SetMaterialOp — a partial range APPENDS, which nothing could ex
   });
 
   it('ONLY THE LOWEST op in a stack contributes a table — the declared limit, pinned', () => {
-    // The second op reads its source through `modifierDataSource`, which carries
-    // `{geometry, material}` and nothing else, so the first op's table is not visible to
-    // it. A director stacking two ops expecting three slots gets two, and this is the test
+    // A director stacking two ops expecting three slots gets two, and this is the test
     // that reds if that ever changes silently rather than by decision.
+    //
+    // ⚠️ THE REASON MATTERS AND IT IS NOT THE ONE THIS ROW USED TO GIVE (#698). It said
+    // `modifierDataSource` "carries `{geometry, material}` and nothing else, so the first
+    // op's table is not visible to it". #691 widened that source: `materialSlots` rides
+    // through, so the first op's table IS visible. The second op discards it — the
+    // emission builds a fresh two-entry table from `source.material` alone. So what this
+    // row pins is a REPLACE choice made in the absence of a merge rule (#647), not an
+    // expressive limit of the contract. Read that way, the assertions below still hold
+    // for exactly the reason they are written.
     const first = evalOp({ scope: '0-1' }, boxData()) as ModifiedDataValue;
     expect(first.materialSlots).toHaveLength(2);
 

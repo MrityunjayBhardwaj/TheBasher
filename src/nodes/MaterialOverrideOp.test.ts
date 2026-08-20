@@ -20,7 +20,9 @@ import { registerAllNodes } from './registerAll';
 import { MaterialOverrideOpNode, MaterialOverrideOpParams } from './MaterialOverrideOp';
 import { boxDescriptor, boxGeometryRef } from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
-import { hydrateInlineMaterial } from './materialSchema';
+import { hydrateInlineMaterial, openpbrMaterialSchema } from './materialSchema';
+import { SetMaterialOpNode } from './SetMaterialOp';
+import { modifierDataSource } from '../app/modifierDataSource';
 import type { MeshDataValue, ModifiedDataValue, ObjectData } from './types';
 
 const SOURCE_MATERIAL = hydrateInlineMaterial(null, '#ff0000');
@@ -149,5 +151,79 @@ describe('#682 — a scoped override composes onto the selection only', () => {
         undefined as never,
       ),
     ).toThrow(/MaterialOverrideOp\.evaluate was called with no resolved selection/);
+  });
+});
+
+const WIRED = [
+  {
+    kind: 'OpenPBRMaterial',
+    spec: openpbrMaterialSchema().parse({ name: 'wired', base: { color: '#0000ff' } }),
+  },
+];
+
+/** Run `SetMaterialOp` the way the evaluator does — the twin, for the mixed-stack rows. */
+function evalSet(params: { scope?: string }, src: ObjectData): ObjectData {
+  const full = { muted: false, scope: '', ...params };
+  return SetMaterialOpNode.evaluate(
+    full,
+    { target: src, material: WIRED },
+    undefined as never,
+    resolveComponentSelection(src, full),
+  ) as ObjectData;
+}
+
+describe('#699 — the declared limit this shares with SetMaterialOp, pinned on THIS side too', () => {
+  // The twin has carried a row for this since #638; this operator was collapsing identically
+  // with neither a declaration nor a row. The point is not that two slots is RIGHT — it is
+  // that the number is a DECISION (#647 owes the merge rule) and must not drift into
+  // something else in silence, on one operator and not the other.
+  //
+  // ⚠️ THE REASON IS NOT THAT THE SOURCE CANNOT CARRY A TABLE. #691 widened
+  // `ModifierDataSource` with `materialSlots` and `modifierDataSource` forwards the pair
+  // whole, so the lower op's table IS reachable here. The append arm does not read it.
+
+  it('override OVER override — two slots, not three, and the ORIGINAL base is gone', () => {
+    const first = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
+    expect(first.materialSlots).toHaveLength(2);
+    expect(first.materialSlots![0]).toBe(SOURCE_MATERIAL);
+
+    // A DISJOINT scope on the second op — the case a director reaches for wanting three
+    // materials. Disjoint matters: overlapping ranges could yield two slots for a reason
+    // with nothing to do with the collapse, and the row would pin the wrong thing.
+    const second = evalOp({ [SCOPE_PARAM]: '6-11' }, first) as ModifiedDataValue;
+    expect(second.materialSlots).toHaveLength(2);
+
+    // 🔴 THE DISCRIMINATING ASSERTION. Slot 0 is now the FIRST op's composed material, so the
+    // material the mesh originally arrived in is no longer anywhere in the table. Faces 0-5,
+    // which the first op deliberately left untouched, now index a slot wearing the first
+    // override. That is the collapse, stated rather than discovered.
+    expect(second.materialSlots![0]).not.toBe(SOURCE_MATERIAL);
+    expect(second.materialSlots![0]).toBe(first.material);
+    // 🔑 AND THE TABLE WAS REACHABLE — read through the SAME classifier the operator calls,
+    // not off the value, because what is in question is the second op's VIEW of its source.
+    // This is what makes the collapse a choice rather than an inability, and it is the
+    // assertion that reds if a future `modifierDataSource` ever stops forwarding the pair.
+    expect(modifierDataSource(first)!.materialSlots).toHaveLength(2);
+  });
+
+  it('override over a SetMaterialOp collapses the same way — the mixed stack is not special', () => {
+    const set = evalSet({ scope: '0-5' }, boxData()) as ModifiedDataValue;
+    expect(set.materialSlots).toHaveLength(2);
+
+    const over = evalOp({ [SCOPE_PARAM]: '6-11' }, set) as ModifiedDataValue;
+    expect(over.materialSlots).toHaveLength(2);
+    expect(over.materialSlots![0]).toBe(set.material);
+    expect(over.materialSlots![0]).not.toBe(SOURCE_MATERIAL);
+  });
+
+  it('and the reverse order collapses too — SetMaterialOp over an override', () => {
+    // Both orders, because a merge rule landing on one operator would leave the other free
+    // to disagree about what stacking means, and nothing today would red.
+    const over = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
+    const set = evalSet({ scope: '6-11' }, over) as ModifiedDataValue;
+
+    expect(set.materialSlots).toHaveLength(2);
+    expect(set.materialSlots![0]).toBe(over.material);
+    expect(set.materialSlots![0]).not.toBe(SOURCE_MATERIAL);
   });
 });
