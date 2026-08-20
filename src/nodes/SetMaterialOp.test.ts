@@ -440,3 +440,77 @@ describe('ns-2 step 12 — the selection reaches the assignment', () => {
     expect(SetMaterialOpParams.safeParse({}).data?.[SCOPE_PARAM]).toBe('');
   });
 });
+
+describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source', () => {
+  // The migration ladder is already pinned shape by shape above. What was never pinned is the
+  // CONSEQUENCE, and it is the one direction that got worse: over a glTF or baked handle the
+  // retired range was INERT (the operator could not build an assignment, so it took the
+  // replace arm and the range did nothing), while an authored scope over the same source is a
+  // named refusal — deliberately, because silently writing the material onto the whole mesh is
+  // the loudest wrong answer wearing the quietest failure.
+  //
+  // So the migration can turn a silent no-op into a viewport-down throw, and a migration
+  // cannot avoid it: it sees PARAMS and never the spine value, so it cannot know the source is
+  // countless. These rows exist to state exactly which saved projects that reaches, because
+  // "arguably empty" is not a population and cannot be reasoned with later.
+  //
+  // 🔑 THE SET IS CLOSED AND CAN ONLY SHRINK. The v1 -> v2 migration fires only for projects
+  // saved at version 1, and the range is retired, so nothing can ever enter this set again.
+  // That is the fact that makes documenting it the proportionate answer rather than a
+  // load-path repair.
+
+  /** A glTF handle: its buffers live in an asset clone, so no domain is derivable. */
+  const countlessSource = (): MeshDataValue => ({
+    kind: 'MeshData',
+    geometry: {
+      key: 'gltf|asset-x|child-y',
+      descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+    },
+    material: SOURCE_MATERIAL,
+    materialKey: null,
+    attributeKey: null,
+  });
+
+  const migrate = (v1: Record<string, unknown>): Record<string, unknown> =>
+    SetMaterialOpNode.migrations![1](v1) as Record<string, unknown>;
+
+  it('the COMMON project migrates to a scope that is still inert — no throw', () => {
+    // A project with no range at all, and one holding the explicit default, both migrate to
+    // blank. Blank is total, and a total selection over an underivable source resolves to
+    // `null` rather than refusing — which is what keeps the overwhelming majority of saved
+    // projects out of this issue entirely.
+    for (const v1 of [{ muted: false }, { muted: false, faceFrom: 0, faceTo: -1 }]) {
+      const migrated = migrate(v1);
+      expect(migrated[SCOPE_PARAM]).toBe('');
+      expect(resolveComponentSelection(countlessSource(), migrated)).toBeNull();
+    }
+  });
+
+  it('🔴 an AUTHORED range is the one that migrates into a refusal', () => {
+    const migrated = migrate({ muted: false, faceFrom: 0, faceTo: 1 });
+    expect(migrated[SCOPE_PARAM]).toBe('0-1');
+
+    // Named, and naming the query — the refusal a director can act on, not a stack trace.
+    expect(() => resolveComponentSelection(countlessSource(), migrated)).toThrow(
+      /has no derivable face count/,
+    );
+  });
+
+  it('CONTROL — the same migrated scope over a COUNTABLE source resolves cleanly', () => {
+    // Without this row the one above is satisfied by a migration that produced nonsense: a
+    // scope that throws over EVERY source would pass it and mean something entirely different.
+    // The control is what makes the refusal attributable to the SOURCE.
+    const migrated = migrate({ muted: false, faceFrom: 0, faceTo: 1 });
+    const sel = resolveComponentSelection(boxData(), migrated);
+    expect(sel).not.toBeNull();
+    // Field by field rather than deep-equality: the resolved selection also carries a `has`
+    // PREDICATE, which a JSON-shaped expectation cannot see — the probe that drafted this row
+    // stringified the value and the function vanished from the picture entirely.
+    expect(sel!.domain).toBe('face');
+    expect(sel!.length).toBe(12);
+    expect(sel!.count).toBe(2);
+    expect(sel!.canonicalQuery).toBe('0-1');
+    // And the predicate agrees with the range it was migrated from: faces 0 and 1, no others.
+    expect([0, 1, 2, 11].map((i) => sel!.has(i))).toEqual([true, true, false, false]);
+  });
+});
