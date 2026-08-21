@@ -92,12 +92,20 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       scale: params.scale ?? [1, 1, 1],
       // `data` unset → an Empty (the Group/Null/Transform collapse is a later phase).
       data: (inputs.data as ObjectData | undefined) ?? null,
-      // #645 — carried onto the value ONLY when the author set one, so an Object that
-      // overrides nothing evaluates to the same shape it did before the field existed.
-      // Spreading a `{}` instead would put an empty record on every Object in the scene
-      // and make "overrides nothing" indistinguishable from "overrides nothing, on
-      // purpose" at every reader downstream.
-      ...(params.slotOverrides ? { slotOverrides: params.slotOverrides } : {}),
+      // #645 — carried onto the value ONLY when the author actually set one, so an Object
+      // that overrides nothing evaluates to the same shape it did before the field
+      // existed, and a reader downstream never has to branch on a field that is present
+      // and says nothing.
+      //
+      // NON-EMPTY, not merely present. `{}` is a reachable param — it is what removing the
+      // last override leaves behind — and carrying it would give "this Object overrides
+      // nothing" TWO spellings on the value: absent, and an empty record. This file's own
+      // neighbours record what that costs (`uvs: null` carried three situations with three
+      // different correct responses, and got deleted for it). One meaning, one spelling:
+      // the VALUE says absent, whatever shape the param arrived in.
+      ...(params.slotOverrides && Object.keys(params.slotOverrides).length > 0
+        ? { slotOverrides: params.slotOverrides }
+        : {}),
     };
   },
 };

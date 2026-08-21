@@ -125,6 +125,45 @@ describe('#645 P1 — an Object can carry per-slot material overrides', () => {
     expect(Object.keys(empty.slotOverrides ?? {})).toEqual([]);
   });
 
+  it('an empty override record does NOT reach the value — one meaning, one spelling', () => {
+    // `{}` is reachable: it is what removing the last override leaves behind. If it were
+    // carried through, "this Object overrides nothing" would have two spellings on the
+    // value — absent, and an empty record — and every reader downstream would have to
+    // know both. The neighbours in `types.ts` record what that costs: `uvs: null` carried
+    // three situations with three different correct responses and was deleted for it.
+    //
+    // Found in review of this commit's own diff, not designed in: the first spelling
+    // carried any truthy record, and `{}` is truthy.
+    const value = evalObject({ slotOverrides: {} }, sharedBoxData());
+    expect('slotOverrides' in value).toBe(false);
+
+    // The control, so this is not passing because the field stopped working: a NON-empty
+    // record still reaches the value from the same road.
+    const real = evalObject({ slotOverrides: { '0': { name: 'x' } } }, sharedBoxData());
+    expect('slotOverrides' in real).toBe(true);
+  });
+
+  it('survives a JSON round trip, and an Object without one serializes byte-identical', () => {
+    // OBSERVED, not inferred from the schema. `NodeSchema.params` is `z.unknown()`, so the
+    // project file carries params opaquely and the no-migration claim rests on the field
+    // being plain JSON and absent by default — the same road `spare` and `meta.hidden`
+    // take, and for the same stated reason. Both halves are cheap to actually run, so
+    // they are run.
+    const authored = ObjectParams.parse({
+      slotOverrides: { '2': { name: 'accent', base: { color: '#00ff00' } } },
+    });
+    const revived = ObjectParams.parse(JSON.parse(JSON.stringify(authored)));
+    expect(revived).toEqual(authored);
+    expect(revived.slotOverrides?.['2'].base.color).toBe('#00ff00');
+
+    // 🔑 THE HALF THAT MATTERS FOR EXISTING PROJECTS: a params object saved before this
+    // field existed has no such key, and serializing what the schema makes of it puts no
+    // key back. That is the whole no-migration argument, and it is what a `.default({})`
+    // would have quietly broken by writing `"slotOverrides":{}` into every Object.
+    const legacy = ObjectParams.parse({ position: [1, 2, 3] });
+    expect(JSON.stringify(legacy)).not.toContain('slotOverrides');
+  });
+
   it('two Objects over ONE data node can now be told apart — the promise the tree has been making', () => {
     const shared = sharedBoxData();
     const plain = evalObject({}, shared);
