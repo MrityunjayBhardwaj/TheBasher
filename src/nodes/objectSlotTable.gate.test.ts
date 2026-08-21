@@ -259,34 +259,80 @@ describe('#645 P0 — the slot table is derived in one place, and no Object can 
     expect(readFileSync(TYPES, 'utf8')).toContain("readonly kind: 'ModifiedMesh';");
   });
 
-  // ── D. THE FUSE ─────────────────────────────────────────────────────────────────────
+  // ── D. THE FUSE, BLOWN AND SUCCEEDED ────────────────────────────────────────────────
   //
-  // THE QUESTION THIS ROW IS PROTECTING: when an Object gains a place to say "my slot n
-  // points elsewhere", three decisions become owed at once and none of them can be
-  // inherited — (1) what PRECEDENCE an Object override has over whatever the chain
-  // produced for that slot index; (2) whether the override may enter the geometry key,
-  // which it must not, because keeping it out is the one row where this road beats the
-  // reference on instance sharing; (3) which of the seven call sites in case B still read
-  // the data side, given that every one of them AGREES with the correct answer for every
-  // non-overridden object and lies only on the case under test.
+  // 🔴 THE ORIGINAL ROW HERE ASSERTED THAT `ObjectValue` HAD NO MATERIAL FIELD, and it
+  // reds now, because #645 P1 added `slotOverrides`. It is recorded rather than deleted,
+  // because what it was protecting is what the successor below has to carry forward.
   //
-  // This row reds in the commit that adds the field, which is the commit that must answer
-  // all three. It is not a TODO: a TODO is read when someone opens the file, a fuse is
-  // read by the runner and cannot be walked past.
+  // WHAT IT WAS PROTECTING: the moment an Object gains a place to say "my slot n points
+  // elsewhere", three decisions become owed at once and none can be inherited —
+  //   (1) what PRECEDENCE an Object override has over whatever the chain produced for
+  //       that slot index;
+  //   (2) whether the override may enter the GEOMETRY KEY, which it must not, because
+  //       keeping it out is the one row where this road beats the reference on instance
+  //       sharing;
+  //   (3) which of the seven call sites in case B still read the data side, given that
+  //       every one of them AGREES with the correct answer for every object that
+  //       overrides nothing, and lies only on the case under test.
   //
-  // ITS SUCCESSOR, so it is replaced rather than deleted: a row asserting BEHAVIOURALLY
-  // that two Objects over one shared data node resolve DIFFERENT tables while the data
-  // value is untouched by identity, and that both still resolve to one `BufferGeometry`.
-  // Deleting this row instead of succeeding it would leave the decision taken and
-  // unenforced — the covered-but-unhonoured shape that made this gate necessary.
-  it('D. FUSE — `ObjectValue` declares no material field, so link==OBJECT is unconstructible', () => {
+  // P1 ANSWERS (1) IN THE TYPE and defers (2) and (3) to the step that moves the
+  // derivation — so this is deliberately NOT the behavioural successor the original row
+  // named. It cannot be yet: nothing reads the field at P1, and a row asserting that two
+  // Objects resolve DIFFERENT tables would have to be written red.
+  //
+  // So the chain gets one more link. D1 below pins the state P1 actually reaches: the
+  // field is declared, it is schema'd, it defaults to absent — and NOTHING PRODUCTION
+  // READS IT. That last count is the fuse now. It reds in the commit that adds the first
+  // reader, which is the commit that must answer (2) and (3), and whose own successor is
+  // the behavioural row: two Objects over one shared data node resolving different tables
+  // while the data value is untouched by identity and both still resolve to one
+  // `BufferGeometry`.
+  //
+  // ⚠️ A DECLARED FIELD THAT NOTHING READS IS THE EXACT SHAPE THIS GATE WAS BUILT TO
+  // CATCH — the tree promising a capability it does not have. D1 is what keeps P1 from
+  // being that: the gap is not merely known, it is counted, and the count is what fails.
+  it("D1. FUSE — `slotOverrides` is declared and schema'd, and NOTHING production reads it", () => {
+    // Declared on the value type, as the sixth field.
     expect(fieldsOf(TYPES, 'ObjectValue')).toEqual([
       'kind',
       'position',
       'rotation',
       'scale',
       'data',
+      'slotOverrides',
     ]);
+
+    // Schema'd on the node, so an authored write is not silently dropped. Keyed on the
+    // param schema's own text: a field typed but not schema'd is exactly the failure this
+    // asserts against, and the type declaration alone cannot see it.
+    const node = readFileSync('src/nodes/ObjectNode.ts', 'utf8');
+    expect(node).toContain('slotOverrides: z.record(');
+    // `.optional()`, never `.default({})` — the latter writes an empty record into every
+    // saved Object, which is a format change wearing a default's clothes.
+    expect(node).toMatch(/slotOverrides: z\.record\([^\n]*\)\.optional\(\)/);
+
+    // THE FUSE ITSELF. Zero production readers — a literal, not a bound, so it cannot
+    // absorb the first one. The universe is every production source under `src/`, with the
+    // value type and the node excluded: they DECLARE the field, which is not the same as
+    // reading it.
+    //
+    // ⚠️ IT KEYS ON A READ, NOT ON THE NAME, and that distinction was forced by a false
+    // positive rather than foreseen. The first spelling matched the bare identifier and
+    // went red on `paramHomeGolden.ts` — a frozen DATA TABLE that contains the string
+    // `slotOverrides=(unrouted)` inside a string literal and reads nothing at all. A
+    // census over a name cannot tell a reader from a mention of one; a census over a
+    // property access can. `.slotOverrides` and `{ slotOverrides` are what a reader looks
+    // like, and both perturbations below are written in exactly those shapes.
+    const READ = /\.slotOverrides\b|\{\s*slotOverrides\b/;
+    const readers = productionSources()
+      .filter((f) => f !== TYPES && f !== 'src/nodes/ObjectNode.ts')
+      .filter((f) =>
+        readFileSync(f, 'utf8')
+          .split('\n')
+          .some((l) => !isComment(l) && READ.test(l)),
+      );
+    expect(readers).toEqual([]);
   });
 
   it('D2. and behaviourally: two Objects over one data node resolve the IDENTICAL table', () => {

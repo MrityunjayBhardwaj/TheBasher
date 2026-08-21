@@ -15,12 +15,31 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import { openpbrMaterialSchema } from './materialSchema';
 import type { ObjectData, ObjectValue } from './types';
 
 export const ObjectParams = z.object({
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   rotation: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   scale: z.tuple([z.number(), z.number(), z.number()]).default([1, 1, 1]),
+  /**
+   * #645 — per-slot material overrides carried BY THE OBJECT, keyed by decimal slot index.
+   * An entry's presence is the reference's `link == OBJECT` for that slot; its absence is
+   * `link == DATA`. See {@link ObjectValue.slotOverrides} for why this is a record rather
+   * than a sparse array, and why there is no separate link enum.
+   *
+   * SCHEMA'D, not merely typed. A `setParam` of a field with no schema entry is silently
+   * rejected — the write would appear to succeed and change nothing — so the authoring
+   * surface P4 adds cannot work unless this is declared here.
+   *
+   * ⚠️ DEFAULTS TO ABSENT, and that is what keeps this off the migration road. Every
+   * project saved at the current format version parses unchanged: the key is simply not
+   * there, `.optional()` admits that, and an Object with no overrides evaluates to exactly
+   * the value it evaluated to before this field existed. A `.default({})` would have been
+   * the tempting spelling and is the wrong one — it writes an empty object into every
+   * saved Object node, which is a format change dressed as a default.
+   */
+  slotOverrides: z.record(z.string().regex(/^\d+$/), openpbrMaterialSchema()).optional(),
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 
@@ -73,6 +92,12 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       scale: params.scale ?? [1, 1, 1],
       // `data` unset → an Empty (the Group/Null/Transform collapse is a later phase).
       data: (inputs.data as ObjectData | undefined) ?? null,
+      // #645 — carried onto the value ONLY when the author set one, so an Object that
+      // overrides nothing evaluates to the same shape it did before the field existed.
+      // Spreading a `{}` instead would put an empty record on every Object in the scene
+      // and make "overrides nothing" indistinguishable from "overrides nothing, on
+      // purpose" at every reader downstream.
+      ...(params.slotOverrides ? { slotOverrides: params.slotOverrides } : {}),
     };
   },
 };
