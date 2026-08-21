@@ -25,6 +25,7 @@ export type {
 export { validatePlan } from './validate';
 
 import { registerMutator } from './catalog';
+import { setObjectSlotMaterialMutator } from './builders/setObjectSlotMaterial';
 import { rotateMutator } from './builders/rotate';
 import { translateMutator } from './builders/translate';
 import { scaleMutator } from './builders/scale';
@@ -79,6 +80,7 @@ export {
   setStripTimingMutator,
   setStripBlendMutator,
   setTrackStateMutator,
+  setObjectSlotMaterialMutator,
 };
 
 export function registerAllMutators(): void {
@@ -86,6 +88,10 @@ export function registerAllMutators(): void {
   registerMutator(translateMutator);
   registerMutator(scaleMutator);
   registerMutator(setMaterialColorMutator);
+  // #645 P4 — the OBJECT-side half of the same question. `setMaterialColor` writes the
+  // material every reader of that data shares; this one re-points a single slot for ONE
+  // object and leaves the shared data untouched.
+  registerMutator(setObjectSlotMaterialMutator);
   registerMutator(duplicateMutator);
   registerMutator(deleteNodeMutator);
   // P3 Wave B — animation Mutators (THESIS §42, issue #34). v0.7 #199: the
