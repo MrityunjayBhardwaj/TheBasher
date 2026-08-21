@@ -2511,11 +2511,28 @@ function ObjectMeshR({
   // failing. `MeshDataValue.material` is inline-only now, so the structural test is gone
   // and the fallback covers exactly the case it was always for — an Empty, or a data node
   // with no material. A baked material reaches `BakedMeshR` through its own arm.
-  const mat = data?.material ?? null;
+  // #645 — THE RESOLVED SLOT, not `data.material`. This line used to read the data value
+  // directly, and that was the bug the browser found while every unit row stayed green: the
+  // ASSIGNMENT below was migrated to resolve through the Object, but the single hydrated
+  // material handed to the GPU was still the data's, so an object-level override changed the
+  // slot table and not one pixel. The census could not see it either — `objectSlotsOf` was
+  // being called, just not for the thing that draws.
+  //
+  // One entry, because `ObjectR` dispatches anything wider to `MultiMaterialMeshR` (which
+  // hydrates from its `slots` prop and so was already correct).
+  const slots = data ? objectSlotsOf(value, data) : [];
+  const mat = (slots[0] as InlineMaterialSpec | null | undefined) ?? null;
   const inlineMat = mat ?? MODIFIED_FALLBACK_MATERIAL;
   // #536 S2 — the evaluator already decided this material's identity; hand it down
   // instead of letting the renderer re-derive it. Only when the data node actually
   // HAS a material: the fallback below is not what the evaluator keyed.
+  //
+  // 🔴 #645 — AND ONLY WHEN THE RESOLVED SLOT IS STILL THE DATA'S OWN MATERIAL. `materialKey`
+  // is the identity the evaluator minted for `data.material`; an object-level override
+  // replaces the material but cannot replace that key, so handing it down would look the
+  // overridden material up in a content-keyed registry under the SOURCE's identity and hand
+  // back the source. Tested by identity rather than by asking whether an override exists,
+  // which keeps the field's single reader in the derivation.
   const material = usePrimitiveMaterial(
     inlineMat,
     override,
@@ -2524,7 +2541,7 @@ function ObjectMeshR({
     // `data?.materialKey` is `string | null | undefined`, and the seam now refuses the
     // third: an absent key and a road that has none are different claims, and only the
     // caller knows which one it is making.
-    mat ? (data?.materialKey ?? null) : null,
+    mat && mat === data?.material ? (data?.materialKey ?? null) : null,
   );
   const geom = data ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
@@ -2537,10 +2554,10 @@ function ObjectMeshR({
   const draw = resolveMeshMaterial(
     geom,
     data
-      ? // #645 — the Object's table, not the data's. This component is mounted only for a
-        // ONE-entry table, and that test is now taken on the object-level answer too, so
-        // the two dispatchers still cannot disagree about which road a mesh is on.
-        materialAssignmentOf(data.attributeKey, objectSlotsOf(value, data))
+      ? // #645 — the Object's table, not the data's, and the SAME `slots` the material above
+        // was hydrated from. Resolving twice here would be two answers to one question, and
+        // the pair silently disagreeing is what made the override invisible before.
+        materialAssignmentOf(data.attributeKey, slots)
       : { slots: [], indices: null },
     [material],
   );

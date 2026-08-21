@@ -289,6 +289,52 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     expect(readers).toEqual([ASSIGNMENT]);
   });
 
+  // ── E. THE ROW THE BROWSER HAD TO TEACH US ──────────────────────────────────────────
+  //
+  // 🔴 THIS EXISTS BECAUSE EVERY OTHER ROW IN THIS FILE WAS GREEN WHILE THE OVERRIDE DREW
+  // NOTHING. P2 migrated the ASSIGNMENT in `ObjectMeshR` to resolve through the Object, and
+  // left the single hydrated material beside it reading `data.material` directly. So the
+  // slot table honoured the override and the pixel did not — two answers to one question,
+  // with the census green because `objectSlotsOf` WAS being called, just not for the thing
+  // that draws.
+  //
+  // The e2e spec caught it. That is a 34-minute gate for a one-line regression, so the
+  // cheap detector lives here: on the single-slot road the hydration input and the
+  // assignment input must be the SAME resolved table, and neither may be re-derived.
+  //
+  // ⚠️ WHAT THIS CANNOT SEE, stated rather than discovered later: it reads source text, so
+  // a third spelling that reaches the data value by another route is invisible to it. The
+  // behavioural backstop is `tests/e2e/p645-object-slot-override-draws.spec.ts`, whose grey
+  // floor is the clause that actually refuses a wrong answer.
+  it('E. the single-slot road hydrates from the RESOLVED table, not from `data.material`', () => {
+    const src = readFileSync('src/viewport/SceneFromDAG.tsx', 'utf8');
+    const body = src.slice(
+      src.indexOf('function ObjectMeshR('),
+      src.indexOf('function MultiMaterialMeshR('),
+    );
+    expect(body.length).toBeGreaterThan(200); // the slice is real, not an empty window
+
+    const code = body.split('\n').filter((l) => !isComment(l));
+
+    // The material that DRAWS comes off the resolved table.
+    expect(code.some((l) => /const slots = data \? objectSlotsOf\(value, data\)/.test(l))).toBe(
+      true,
+    );
+    expect(code.some((l) => /const mat = \(slots\[0\]/.test(l))).toBe(true);
+
+    // And nothing on this road takes the material off the data value again. `data.material`
+    // is exactly the read the bug was.
+    expect(
+      code.filter((l) => /data\??\.material\b/.test(l) && !/=== data\?\.material/.test(l)),
+    ).toEqual([]);
+
+    // The assignment reuses that same `slots` rather than resolving a second time — one
+    // question, one answer.
+    expect(code.some((l) => /materialAssignmentOf\(data\.attributeKey, slots\)/.test(l))).toBe(
+      true,
+    );
+  });
+
   // ── D2. THE TERMINAL LINK — THE CONSEQUENCE ITSELF ──────────────────────────────────
   //
   // The claim four places in the tree have been making since #638, asserted at last. This
