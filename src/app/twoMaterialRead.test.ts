@@ -30,12 +30,13 @@ import { multiMaterialBakeRefusal } from './animate/dispatchApplyTransform';
 import { BoxDataNode, BoxDataParams } from '../nodes/BoxData';
 import type { MeshDataValue } from '../nodes/types';
 
-const twoValued = () => evaluatedMeshFromMeshData(twoMaterialMeshData(), TWO_MATERIAL_TRANSFORM);
+const twoValued = () =>
+  evaluatedMeshFromMeshData(null, twoMaterialMeshData(), TWO_MATERIAL_TRANSFORM);
 
 const uniform = () => {
   const params = BoxDataParams.parse({ size: [1, 1, 1], material: {} });
   const data = BoxDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
-  return evaluatedMeshFromMeshData(data, TWO_MATERIAL_TRANSFORM);
+  return evaluatedMeshFromMeshData(null, data, TWO_MATERIAL_TRANSFORM);
 };
 
 describe('#634 a mesh assigning two materials across its faces reads as TWO', () => {
@@ -77,9 +78,9 @@ describe('#634 the uniform case is unchanged by all of this', () => {
   it('answers the same material the single field always answered', () => {
     const params = BoxDataParams.parse({ size: [1, 1, 1], material: {} });
     const data = BoxDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
-    expect(primaryMaterial(evaluatedMeshFromMeshData(data, TWO_MATERIAL_TRANSFORM).materials)).toBe(
-      data.material,
-    );
+    expect(
+      primaryMaterial(evaluatedMeshFromMeshData(null, data, TWO_MATERIAL_TRANSFORM).materials),
+    ).toBe(data.material);
   });
 
   it('covers all 12 of the box’s faces, so "uniform" is a measured answer', () => {

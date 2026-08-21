@@ -149,7 +149,7 @@ import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
 // geometry, the assignment and the hydrated table, and draws whatever comes back.
 import { meshMaterialRefusal, resolveMeshMaterial } from '../app/resolveMeshMaterial';
 import { useSlotMaterials } from '../app/material/useSlotMaterials';
-import { materialAssignmentOf, materialSlotsOf } from '../app/materialAssignment';
+import { dataSlotsOnly, materialAssignmentOf, objectSlotsOf } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
 import type {
   AmbientLightValue,
@@ -1753,22 +1753,31 @@ const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChild
     // and an arm-less member now fails to compile, which is the point.
     case 'BakedMesh':
       return <BakedMeshR value={value} override={override} />;
-    case 'ModifiedMesh':
+    case 'ModifiedMesh': {
       // #638 (ns-1b step 6) — the multi-slot fork, taken at every dispatcher that can
       // reach this value shape, through the one shared test.
-      return needsMaterialSlots(value) ? (
+      //
+      // #645 — `dataSlotsOnly`, the ESCAPE HATCH, and this is one of the two places
+      // entitled to it. A fused `ModifiedMeshValue` arrives here through the DAG value
+      // flow with no Object anywhere in reach, and there is no Object whose overrides
+      // could be applied. The arm is also unreachable today — nothing on the value flow
+      // produces this kind, which the gate measures rather than assumes — so the honest
+      // answer here is the data's table, named as such.
+      const slots = dataSlotsOnly(value);
+      return needsMaterialSlots(slots) ? (
         <MultiMaterialMeshR
           position={value.position}
           rotation={value.rotation}
           scale={value.scale}
           geometry={value.geometry}
-          slots={materialSlotsOf(value)}
+          slots={slots}
           attributeKey={value.attributeKey ?? null}
           override={override}
         />
       ) : (
         <ModifiedMeshR value={value} override={override} />
       );
+    }
     // #231 Inc 2 — a light nested in a Group. nodeId=null/constrained=false: the
     // nested light renders STATIC (it inherits the group's world transform from
     // GroupR's `<group>` for free), but does not yet carry its own direct-channel
@@ -2433,14 +2442,18 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot
     // table anywhere, and its output is a `ModifiedData`. Without this arm the op could
     // author an assignment that nothing draws.
-    if (needsMaterialSlots(modified)) {
+    // #645 — through the Object, not the data. `value` is the `ObjectValue` this arm
+    // recomposed from, so its per-slot overrides land on top of whatever the modifier
+    // chain produced for each index.
+    const modifiedSlots = objectSlotsOf(value, modified);
+    if (needsMaterialSlots(modifiedSlots)) {
       return (
         <MultiMaterialMeshR
           position={modified.position}
           rotation={modified.rotation}
           scale={modified.scale}
           geometry={modified.geometry}
-          slots={materialSlotsOf(modified)}
+          slots={modifiedSlots}
           attributeKey={modified.attributeKey ?? null}
           override={override}
         />
@@ -2454,14 +2467,18 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
   // the app pays nothing for this arm existing. It is also the stable one — a component-type
   // change on "how many slots does this object declare" is a rare authoring edit, while a
   // change on "how many slots do the faces currently use" would remount the mesh mid-drag.
-  if (data?.kind === 'MeshData' && needsMaterialSlots(data)) {
+  // #645 — resolved through the Object. The fork's INPUT is the object-level table now,
+  // which is what makes an Object able to push a shared single-slot mesh onto the
+  // multi-slot road, or read a shared multi-slot one with its own material in one index.
+  const objectSlots = data?.kind === 'MeshData' ? objectSlotsOf(value, data) : null;
+  if (data?.kind === 'MeshData' && objectSlots && needsMaterialSlots(objectSlots)) {
     return (
       <MultiMaterialMeshR
         position={value.position}
         rotation={value.rotation}
         scale={value.scale ?? [1, 1, 1]}
         geometry={data.geometry}
-        slots={materialSlotsOf(data)}
+        slots={objectSlots}
         attributeKey={data.attributeKey}
         override={override}
       />
@@ -2520,7 +2537,10 @@ function ObjectMeshR({
   const draw = resolveMeshMaterial(
     geom,
     data
-      ? materialAssignmentOf(data.attributeKey, materialSlotsOf(data))
+      ? // #645 — the Object's table, not the data's. This component is mounted only for a
+        // ONE-entry table, and that test is now taken on the object-level answer too, so
+        // the two dispatchers still cannot disagree about which road a mesh is on.
+        materialAssignmentOf(data.attributeKey, objectSlotsOf(value, data))
       : { slots: [], indices: null },
     [material],
   );
@@ -2664,11 +2684,8 @@ function MultiMaterialMeshR({
  * single-material population pays nothing for the fork existing, and it does not remount a
  * mesh mid-drag when the faces' assignment changes without the table's shape changing.
  */
-function needsMaterialSlots(value: {
-  readonly material: InlineMaterialSpec | BakedMaterialSpec | null;
-  readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
-}): boolean {
-  return materialSlotsOf(value).length > 1;
+function needsMaterialSlots(slots: readonly unknown[]): boolean {
+  return slots.length > 1;
 }
 
 // Phase 151 — BakedMeshR, the renderer for the Apply-Transform product (#151).

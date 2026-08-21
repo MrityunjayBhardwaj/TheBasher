@@ -1215,7 +1215,7 @@ export interface MeshDataValue {
    * object-level and the per-face index is geometry-level, which is the line both reference
    * systems draw and the reason two objects can share one mesh and still look different.
    *
-   * ⚠️ Read it through `materialSlotsOf`, never directly — one derivation site is what keeps
+   * ⚠️ Read it through `objectSlotsOf`, never directly — one derivation site is what keeps
    * this from becoming a second spelling of `material` that agrees today and diverges later.
    */
   readonly materialSlots?: readonly (InlineMaterialSpec | null)[];
@@ -1403,7 +1403,7 @@ export interface ModifiedDataValue {
    * has, and emits no table. A table appears only for a partial range — a state the node
    * could not express before this phase — so no existing graph changes shape.
    *
-   * ⚠️ Read through `materialSlotsOf`, never directly, so the single `material` field and
+   * ⚠️ Read through `objectSlotsOf`, never directly, so the single `material` field and
    * this one cannot be read as two different answers to the same question.
    */
   readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
@@ -1492,7 +1492,7 @@ export interface ObjectValue {
    * route one through the other.
    *
    * ⚠️ Read through `objectSlotsOf`, never directly, and never alongside a bare
-   * `materialSlotsOf(data)` — a data-side read agrees with the correct answer for every
+   * `dataSlotsOnly(data)` — a data-side read agrees with the correct answer for every
    * object that overrides nothing, and disagrees only on the case under test.
    */
   readonly slotOverrides?: Readonly<Record<string, InlineMaterialSpec>>;
