@@ -5,7 +5,7 @@
 // The unit tier can assert what the modifier EMITS; it cannot assert that three.js draws
 // with it. That gap is exactly where this defect lived: after #644 the merged geometry had
 // a correct six-group, 108-index layout AND the picture was unchanged, because the value
-// carried no table, `materialSlotsOf` fell back to `[material]`, and a single material makes
+// carried no table, `dataSlotsOnly` fell back to `[material]`, and a single material makes
 // three.js ignore every group. Measured in a browser at the time: `materialCount: 1` beside
 // a layout that was right in every other respect. A value assertion cannot see that, and
 // this repo has no React component tier ([[V190]]) — so the browser spec IS the work.
@@ -19,7 +19,7 @@
 //
 // REF: src/app/modifierDataSource.ts (`slotTableThrough` — the forwarding rule and the
 //      source-vs-built asymmetry); src/nodes/ArrayModifier.ts; src/nodes/MirrorModifier.ts;
-//      src/app/materialAssignment.ts (`materialSlotsOf`);
+//      src/app/materialAssignment.ts (`dataSlotsOnly`, the data half of `objectSlotsOf`);
 //      src/viewport/SceneFromDAG.tsx (`needsMaterialSlots` — the fork this unblocks);
 //      tests/e2e/p638-two-material-mesh.spec.ts (the un-modified source case);
 //      issues #691, #644, #649, #638.

@@ -124,7 +124,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier] position=transform rotation=transform scale=transform',
+    '[transform,constraint,driver,modifier] position=transform rotation=transform scale=transform slotOverrides=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -181,4 +181,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // operator started honouring the selection it had been declaring. `routed` is STILL 126 —
 // the same discriminating half, and the reason this is one appended cell rather than a
 // rewritten row.
-export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 217 } as const;
+export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 218 } as const;

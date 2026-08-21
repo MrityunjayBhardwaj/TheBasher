@@ -1215,7 +1215,7 @@ export interface MeshDataValue {
    * object-level and the per-face index is geometry-level, which is the line both reference
    * systems draw and the reason two objects can share one mesh and still look different.
    *
-   * ⚠️ Read it through `materialSlotsOf`, never directly — one derivation site is what keeps
+   * ⚠️ Read it through `objectSlotsOf`, never directly — one derivation site is what keeps
    * this from becoming a second spelling of `material` that agrees today and diverges later.
    */
   readonly materialSlots?: readonly (InlineMaterialSpec | null)[];
@@ -1403,7 +1403,7 @@ export interface ModifiedDataValue {
    * has, and emits no table. A table appears only for a partial range — a state the node
    * could not express before this phase — so no existing graph changes shape.
    *
-   * ⚠️ Read through `materialSlotsOf`, never directly, so the single `material` field and
+   * ⚠️ Read through `objectSlotsOf`, never directly, so the single `material` field and
    * this one cannot be read as two different answers to the same question.
    */
   readonly materialSlots?: readonly (InlineMaterialSpec | BakedMaterialSpec | null)[];
@@ -1459,6 +1459,43 @@ export interface ObjectValue {
   readonly rotation: Vec3;
   readonly scale: Vec3;
   readonly data: ObjectData | null;
+  /**
+   * #645 — the OBJECT half of the material slot table: "this Object's slot *n* points
+   * somewhere else", leaving the data node untouched. Keyed by decimal slot index.
+   *
+   * This is the field the rest of this file has been promising since #638. The paragraphs
+   * at `:540`, `:634` and `:1212` all say the slot TABLE is object-level and that this is
+   * what lets two objects share one mesh and still look different — and until this existed
+   * they described a road that was not built: `materialSlots` sat on the data types only,
+   * so two Objects reading one data node received the identical table with nothing in the
+   * type system able to make them differ. What shipped was the reference's `link == DATA`
+   * case, correctly, and nothing else.
+   *
+   * ── PRESENCE IS THE LINK MODE, AND THERE IS NO ENUM ────────────────────────────────
+   *
+   * The reference stores a per-slot `link` of `OBJECT | DATA` beside a material that may
+   * independently be empty, which makes "link is OBJECT but no material is set" a real and
+   * separately-handled state. Here an entry's PRESENCE is `link == OBJECT` and its absence
+   * is `link == DATA`, so that state has no constructor rather than a guard — the same rung
+   * of the ladder the rest of this union sits on.
+   *
+   * ── WHY A RECORD AND NOT A SPARSE ARRAY ────────────────────────────────────────────
+   *
+   * An array would have to spell "inherit this slot" as a hole, and JSON has no holes: a
+   * hole serializes to `null`. `null` is already a MEANING on the data-side table — it is
+   * how {@link MeshDataValue.materialSlots} says "this slot has no material at all" — so
+   * an array representation would make "inherit from the data" and "explicitly nothing"
+   * the same bytes on reload. The record cannot express either confusion.
+   *
+   * ⚠️ NOT the same axis as `MaterialOverrideValue.slotIndex`, which addresses the i-th
+   * `isMesh` in a cloned glTF's traverse order. Two different meanings of "slot"; do not
+   * route one through the other.
+   *
+   * ⚠️ Read through `objectSlotsOf`, never directly, and never alongside a bare
+   * `dataSlotsOnly(data)` — a data-side read agrees with the correct answer for every
+   * object that overrides nothing, and disagrees only on the case under test.
+   */
+  readonly slotOverrides?: Readonly<Record<string, InlineMaterialSpec>>;
 }
 
 export type SceneChild =

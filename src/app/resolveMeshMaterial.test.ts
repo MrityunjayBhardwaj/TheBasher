@@ -19,7 +19,7 @@ import * as THREE from 'three';
 import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
 import { clear, getForRead } from './geometryRegistry';
-import { materialAssignmentOf, materialSlotsOf, primaryMaterial } from './materialAssignment';
+import { materialAssignmentOf, objectSlotsOf, primaryMaterial } from './materialAssignment';
 import { meshMaterialRefusal, resolveMeshMaterial } from './resolveMeshMaterial';
 import { boxGeometryRef, boxDescriptor } from './modifierGeometry';
 import { mintMeshAttributes } from '../nodes/meshAttributes';
@@ -38,7 +38,7 @@ const hydrated = (n: number) =>
 /** The pair a component builds: the built instance, and the value's own assignment. */
 const drawFor = (data: MeshDataValue, materials: readonly THREE.Material[]) => {
   const geometry = getForRead(data.geometry);
-  const assignment = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+  const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data));
   return {
     geometry,
     draw: resolveMeshMaterial(geometry, assignment, materials),
@@ -176,7 +176,7 @@ describe('#651 the single material is the one the faces USE', () => {
     const indices = new Int32Array(12);
     indices.fill(1);
     const data = boxFromFaceIndices(indices);
-    const slots = materialSlotsOf(data);
+    const slots = objectSlotsOf(null, data);
     const assignment = materialAssignmentOf(data.attributeKey, slots);
     const geometry = getForRead(data.geometry)!;
     const materials = hydrated(2);
@@ -197,7 +197,7 @@ describe('#651 the single material is the one the faces USE', () => {
     const indices = new Int32Array(12);
     indices.fill(3);
     const data = boxFromFaceIndices(indices, [null, null, null, null]);
-    const assignment = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+    const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data));
     const geometry = getForRead(data.geometry)!;
     const materials = hydrated(2);
 
@@ -223,7 +223,7 @@ describe('#638 resolveMeshMaterial — the contract at its edges', () => {
     const geometry = getForRead(data.geometry)!;
     const draw = resolveMeshMaterial(
       geometry,
-      materialAssignmentOf(data.attributeKey, materialSlotsOf(data)),
+      materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data)),
       hydrated(8),
     );
     expect(draw!.geometry).toBe(geometry);

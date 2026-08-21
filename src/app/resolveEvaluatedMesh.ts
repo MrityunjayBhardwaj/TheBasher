@@ -52,7 +52,7 @@ import type {
 import { modifierDataSource } from './modifierDataSource';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { materialAssignmentOf, materialSlotsOf } from './materialAssignment';
+import { materialAssignmentOf, objectSlotsOf } from './materialAssignment';
 import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { readMeshUVs } from './uvAttributes';
 
@@ -106,6 +106,13 @@ function resolvePrimitiveTransform(
  * whose interesting cases are unreachable.
  */
 export function evaluatedMeshFromMeshData(
+  // #645 — REQUIRED and FIRST, not an optional tail argument. An optional one would have
+  // let every existing caller keep compiling while silently reading the data side, which
+  // is the one failure this migration exists to make impossible: a data-side read agrees
+  // with the correct answer for every object that overrides nothing, so nothing would have
+  // failed until the exact case under test. `null` is a real answer here — the read side
+  // has roads with genuinely no Object — but it has to be SAID.
+  object: { readonly slotOverrides?: Readonly<Record<string, InlineMaterialSpec>> } | null,
   data: MeshDataValue,
   transform: MeshTransform,
 ): EvaluatedMesh {
@@ -113,7 +120,7 @@ export function evaluatedMeshFromMeshData(
   // The data node's IR is the object's slot TABLE; the geometry's face attribute says which
   // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
   // which is the point: the read path moved first, while the answers still agreed.
-  const materials = materialAssignmentOf(data.attributeKey, materialSlotsOf(data));
+  const materials = materialAssignmentOf(data.attributeKey, objectSlotsOf(object, data));
   const uvRead = readMeshUVs(data.geometry);
   return {
     geometry: data.geometry,
@@ -316,9 +323,11 @@ export function resolveEvaluatedMesh(
       // attribute yet" — it can have one now, and a synthesised array of zeros would still
       // be a lie for the roads that do not.
       const modGeometry = data.geometry;
+      // #645 — through the Object. `value` is the `ObjectValue` this branch evaluated, so
+      // the read side and the renderer resolve the same table from the same road.
       const modifiedMaterials = materialAssignmentOf(
         data.attributeKey ?? null,
-        materialSlotsOf(data),
+        objectSlotsOf(value, data),
       );
       const modifiedUvs = readMeshUVs(modGeometry);
       return {
@@ -330,7 +339,7 @@ export function resolveEvaluatedMesh(
     }
     const exhaustiveData: 'MeshData' = data.kind;
     void exhaustiveData;
-    return evaluatedMeshFromMeshData(data, transform);
+    return evaluatedMeshFromMeshData(value, data, transform);
   }
 
   return null; // identity-null: not a mesh producer

@@ -108,8 +108,21 @@ export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null 
 }
 
 /**
- * The object's slot TABLE for a data value — the ONE derivation, so the optional multi-slot
- * field and the single `material` field can never be read as two answers.
+ * The DATA half of the slot table, with no Object consulted — the chain's answer for a mesh
+ * before any object-level override lands on it.
+ *
+ * ⚠️ THIS IS THE ESCAPE HATCH, NOT THE ROAD. Almost every caller wants {@link objectSlotsOf}.
+ * This one exists for the roads that genuinely have no Object to consult, and every use of it
+ * is censused to a literal in `src/nodes/objectSlotTable.gate.test.ts` — because its danger is
+ * that it is not WRONG anywhere. It agrees with the correct answer for every object that
+ * overrides nothing, which is almost all of them, and disagrees only on the case under test.
+ * That is the reference's own recorded instrument trap (§7.2), and a count is the only thing
+ * that catches a road quietly rejoining it.
+ *
+ * It was called `materialSlotsOf` until #645. The rename is the migration lever: every call
+ * site had to stop compiling and say which of the two answers it wanted, because a widened
+ * signature that kept working would have left the data-side read in place at every site that
+ * never thought about it.
  *
  * Generic over the material type rather than widened to a union, and that is the difference
  * between one derivation and two: `MeshDataValue` carries inline specs only while
@@ -118,11 +131,49 @@ export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null 
  * narrowing back out to each of them; the generic gives each road its own type through the
  * same single line of logic.
  */
-export function materialSlotsOf<M>(data: {
+export function dataSlotsOnly<M>(data: {
   readonly material: M;
   readonly materialSlots?: readonly M[];
 }): readonly M[] {
   return data.materialSlots ?? [data.material];
+}
+
+/**
+ * The object's slot TABLE — the ONE derivation, and the only one that answers the question
+ * the rest of the tree has been asking since #638: what does THIS Object's slot *n* point at?
+ *
+ * ── THE PRECEDENCE RULE, STATED ONCE HERE ─────────────────────────────────────────────
+ *
+ * An Object override WINS for the slot index it names, over whatever the chain produced for
+ * that index. That is the reference's model — a per-slot `link == OBJECT` re-points that slot
+ * and the shared datablock is never written — and it is what keeps the composition question
+ * (#647) from blocking this: however the chain decided to compose its table, the Object's say
+ * is applied last and per index.
+ *
+ * ── WHAT AN OUT-OF-RANGE OVERRIDE DOES, AND WHY IT IS NOT A SILENT DROP ───────────────
+ *
+ * The table's LENGTH is the data's. An override naming an index the data has no slot for does
+ * not extend it — in the reference an object's slot count IS its data's, so there is no such
+ * slot to point anywhere. It is stated here and pinned by a row rather than left to be
+ * discovered, and it is an obligation on the authoring surface: the inspector must not offer
+ * an index the data has no slot for, and the agent road must refuse one.
+ *
+ * ⚠️ NOT the `slotIndex` on `MaterialOverrideValue`, which addresses the i-th `isMesh` in a
+ * cloned glTF's traverse order. Two different meanings of "slot".
+ */
+export function objectSlotsOf<M>(
+  object: { readonly slotOverrides?: Readonly<Record<string, M>> } | null | undefined,
+  data: {
+    readonly material: M;
+    readonly materialSlots?: readonly M[];
+  },
+): readonly M[] {
+  const base = dataSlotsOnly(data);
+  const overrides = object?.slotOverrides;
+  if (!overrides) return base;
+  // Mapped over the DATA's length, which is what makes an out-of-range key a no-op rather
+  // than a way to grow the table from the object side.
+  return base.map((slot, i) => overrides[String(i)] ?? slot);
 }
 
 /**

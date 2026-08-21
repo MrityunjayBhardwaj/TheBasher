@@ -66,7 +66,7 @@ export interface ModifierDataSource {
    * op that WRITES a table is what needs a rule, and a modifier writes none.
    *
    * Absent means "one material", preserved deliberately rather than normalised to a
-   * one-entry table: `materialSlotsOf` already derives that from `material`, and emitting a
+   * one-entry table: `dataSlotsOnly` already derives that from `material`, and emitting a
    * table for every single-material mesh would change the shape of a value the whole
    * existing population carries.
    */
