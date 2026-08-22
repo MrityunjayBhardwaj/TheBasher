@@ -77,11 +77,23 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   //
   // 'modifier' is appended LAST so `sections[0]` stays 'transform' and no section's
   // default-collapsed state shifts underneath the existing specs.
-  inspectorSections: ['transform', 'constraint', 'driver', 'modifier'],
+  //
+  // #645 — 'slots' joins for the same reason 'modifier' did, and it is data-dependent in the
+  // same way: an Object's slot count IS its data's, so an Empty has none and a camera or a
+  // light never will. Classified in `dataSectionCapability.ts` rather than added to the
+  // Object-owned list, which is what the registry gate asks of every section here.
+  //
+  // Appended LAST, keeping `sections[0]` at 'transform', so no existing section's
+  // default-collapsed state shifts underneath the specs that assert it.
+  inspectorSections: ['transform', 'constraint', 'driver', 'modifier', 'slots'],
   home: {
     position: 'transform',
     rotation: 'transform',
     scale: 'transform',
+    // #645 P6 — the param now has a card that draws it. Until this phase it routed nowhere
+    // and sat in the unrouted bucket, which was the honest state while nothing could author
+    // one: a home names the section that RENDERS a param, and no section did.
+    slotOverrides: 'slots',
   },
   evaluate(params, inputs) {
     return {

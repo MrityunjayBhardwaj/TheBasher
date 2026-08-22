@@ -59,6 +59,10 @@ import type { MeshDataValue, ObjectValue } from './types';
 const TYPES = 'src/nodes/types.ts';
 const ASSIGNMENT = 'src/app/materialAssignment.ts';
 const OBJECT_NODE = 'src/nodes/ObjectNode.ts';
+/** #645 P6 — the authoring road. Reads WHICH slots are authored; never resolves what draws. */
+const AUTHORING = 'src/app/objectSlotAuthoring.ts';
+/** The panel that draws the list. Reads the authored colour for its field; same rule. */
+const PANEL = 'src/app/NPanel.tsx';
 
 /**
  * The production roads that resolve a slot table. Tests are excluded on purpose: a test
@@ -286,7 +290,40 @@ describe('#645 — the slot table is derived once, through the Object', () => {
           .split('\n')
           .some((l) => !isComment(l) && READ.test(l)),
       );
-    expect(readers).toEqual([ASSIGNMENT]);
+
+    // 🔴 THE FUSE MOVED AT P6, AND MOVING IT IS THE POINT — it is replaced, never deleted.
+    //
+    // Through P5 this read `toEqual([ASSIGNMENT])`: the field had exactly ONE consumer, so
+    // it could not be read two ways. P6 adds an AUTHORING surface, and a surface that lets a
+    // director create an override has to be able to see which ones exist. So the literal
+    // grows — and if that were all it did, the fuse would be gone, because "one reader" was
+    // the whole of its content.
+    //
+    // What replaces it is the distinction the new readers make necessary. There are two
+    // questions one can ask this field, and only one of them may have more than one asker:
+    //
+    //   • WHAT DRAWS — resolve the override against the data's table, apply precedence.
+    //     Exactly ONE site, still: `objectSlotsOf` in `materialAssignment.ts`.
+    //   • WHAT IS AUTHORED — which indices does this Object name? A question about the
+    //     PARAM, answered without resolving anything, and the authoring road needs it.
+    //
+    // The danger a second reader introduces is not that it reads. It is that it RE-DERIVES —
+    // that a panel composes its own answer to the first question and quietly disagrees with
+    // the renderer. That is checked below, on the composition itself, rather than being
+    // prevented by a count that this phase has to raise anyway.
+    expect(readers).toEqual([ASSIGNMENT, AUTHORING, PANEL].sort());
+
+    // The precedence rule — an Object override wins for the index it names — appears ONCE,
+    // at the derivation. A road that spelled it again would agree on every object that
+    // overrides nothing and disagree exactly where it matters (the reference's §7.2 trap),
+    // which is precisely what a reader count cannot see.
+    const COMPOSES = /overrides\[[^\]]*\]\s*\?\?/;
+    const composers = productionSources().filter((f) =>
+      readFileSync(f, 'utf8')
+        .split('\n')
+        .some((l) => !isComment(l) && COMPOSES.test(l)),
+    );
+    expect(composers).toEqual([ASSIGNMENT]);
   });
 
   // ── E. THE ROW THE BROWSER HAD TO TEACH US ──────────────────────────────────────────
