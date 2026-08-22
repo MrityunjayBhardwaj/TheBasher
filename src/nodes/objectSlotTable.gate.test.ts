@@ -311,7 +311,12 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // that a panel composes its own answer to the first question and quietly disagrees with
     // the renderer. That is checked below, on the composition itself, rather than being
     // prevented by a count that this phase has to raise anyway.
-    expect(readers).toEqual([ASSIGNMENT, AUTHORING, PANEL].sort());
+    // ⚠️ BOTH SIDES SORTED. `productionSources()` is a raw `readdirSync` walk, and readdir
+    // order is a FILESYSTEM property — alphabetical-ish on APFS, hash order on ext4. This
+    // row was the file's first multi-element comparison against that walk, so it was the
+    // first that could pass locally and red on CI for no reason but the disk. Every other
+    // census here compares against `[]`, one element, or a sorted list; this one now does too.
+    expect([...readers].sort()).toEqual([ASSIGNMENT, AUTHORING, PANEL].sort());
 
     // The precedence rule — an Object override wins for the index it names — appears ONCE,
     // at the derivation. A road that spelled it again would agree on every object that
