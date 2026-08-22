@@ -600,4 +600,11 @@ export const SPLIT_KIND_NAMES = Object.keys(SPLIT_KINDS) as SplitKindName[];
  * gate, for the same reason `dataSections` is: a copy that can drift would turn the
  * sections road from an observation into a restatement of itself.
  */
-export const OBJECT_SECTIONS: readonly string[] = ['transform', 'constraint', 'driver', 'modifier'];
+export const OBJECT_SECTIONS: readonly string[] = [
+  'transform',
+  'constraint',
+  'driver',
+  'modifier',
+  // #645 — the Object's per-slot material overrides.
+  'slots',
+];

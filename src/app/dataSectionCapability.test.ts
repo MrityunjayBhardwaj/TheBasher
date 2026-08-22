@@ -123,10 +123,10 @@ describe('#498 dataSectionCapability', () => {
   it('classifies every ObjectData kind, and classifies nothing else', () => {
     // Guard the guard: an empty sweep would pass every assertion below vacuously.
     expect(OBJECT_DATA_KINDS.length).toBeGreaterThan(0);
-    // #394 S3d added 'material'. The list is pinned as an EQUALITY rather than a floor
-    // because a section silently leaving the table takes its whole column of answers
-    // with it, and nothing else here would notice.
-    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier', 'material']);
+    // #394 S3d added 'material'; #645 added 'slots'. The list is pinned as an EQUALITY
+    // rather than a floor because a section silently leaving the table takes its whole
+    // column of answers with it, and nothing else here would notice.
+    expect(DATA_DEPENDENT_SECTIONS).toEqual(['modifier', 'material', 'slots']);
 
     const fixtureKinds = Object.keys(FIXTURES).sort();
     expect([...OBJECT_DATA_KINDS].sort()).toEqual(fixtureKinds);
@@ -183,7 +183,8 @@ describe('#498 dataSectionCapability', () => {
     // Pin the census so a kind silently changing state is a red, not a shrug.
     // modifier: curve 'not-yet' (#349) + light/camera 'never'.
     // material: curve 'not-yet' (#528) + light/camera 'never'.
-    expect({ notYet, never }).toEqual({ notYet: 2, never: 4 });
+    // slots (#645): curve 'not-yet' (#528, the same blocker — see below) + light/camera 'never'.
+    expect({ notYet, never }).toEqual({ notYet: 3, never: 6 });
   });
 
   it('pins the measured Blender answer per kind', () => {
@@ -226,6 +227,34 @@ describe('#498 dataSectionCapability', () => {
     expect(mat.issue).not.toBe(mod.issue);
   });
 
+  it('#645 the slots column names #528 DELIBERATELY, and that is not the copied-column failure', () => {
+    // The guard above says a copied column would file one gap under another. This column
+    // names the SAME issue the material column does, so the distinction has to be stated
+    // rather than left to look like the thing that guard forbids.
+    //
+    // It is not a copy, it is a DEPENDENCY. A slot table is a table OF materials — the
+    // length is the data's material table (`objectSlotsOf`, stated once at the derivation).
+    // `CurveDataValue` carries no material field, so there is nothing for an Object to
+    // re-point a slot OF. That is not a second, parallel gap that deserves its own issue;
+    // it is #528 not being closed yet, and filing a separate one would create a ticket that
+    // closes itself the moment #528 lands.
+    //
+    // The difference from the modifier column is what makes this checkable: #349 (a curve's
+    // modifier stack) can be closed WITHOUT #528, and #528 without it. The slots gap cannot
+    // be closed without #528 at all.
+    const mat = dataSectionCapability('CurveData', 'material');
+    const slots = dataSectionCapability('CurveData', 'slots');
+    const mod = dataSectionCapability('CurveData', 'modifier');
+    expect(slots.state).toBe('not-yet');
+    if (slots.state !== 'not-yet' || mat.state !== 'not-yet' || mod.state !== 'not-yet')
+      throw new Error('unreachable');
+    expect(slots.issue).toBe(mat.issue);
+    expect(slots.issue).not.toBe(mod.issue);
+    // And the reasons must NOT be the same string — the shared issue is the claim, the
+    // reason is why THIS section is blocked by it, and a copied reason would lose that.
+    expect(slots.reason).not.toBe(mat.reason);
+  });
+
   it('offers the section for supported and not-yet, and withholds it only for never', () => {
     // The curve keeps its affordance ON PURPOSE. Hiding it would encode a tracked gap
     // (#349) as an intentional design decision, which is the thing #498 warns against.
@@ -249,8 +278,8 @@ describe('#498 dataSectionCapability', () => {
       }
     }
     // Guard the guard, and pin the split so a column emptying cannot pass vacuously:
-    // 12 cells = 2 sections × 6 kinds; 4 are 'never' (light + camera, both sections).
-    expect({ offered, withheld }).toEqual({ offered: 8, withheld: 4 });
+    // 18 cells = 3 sections × 6 kinds; 6 are 'never' (light + camera, all three sections).
+    expect({ offered, withheld }).toEqual({ offered: 12, withheld: 6 });
   });
 
   it('MATERIAL: "supported" means the VALUE carries a material field, both directions', () => {

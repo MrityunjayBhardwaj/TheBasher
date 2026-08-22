@@ -48,6 +48,35 @@
 // is doing its work in the direction where laundering actually lives: an existing cell
 // silently changing VALUE. Removing `faceFrom=(unrouted)` while re-homing `muted` would show
 // as both a shorter row and a changed cell, in one diff, in one string.
+//
+// ── THE FOURTH ARM: AN UNROUTED CELL MAY BE ROUTED (#645 P6) ─────────────────────────
+//
+// The rule had arms for dropping a ROW, APPENDING a cell, and REMOVING a cell. It had none
+// for a cell that reads `(unrouted)` becoming a routed one, and #645 needs exactly that:
+// `Object.slotOverrides` was appended as `(unrouted)` when the param landed, because nothing
+// rendered it yet and a `home` names the section that RENDERS a param. This phase adds that
+// section, so the cell has to move.
+//
+// 🔴 WHY THIS IS NOT THE LAUNDERING THE FREEZE EXISTS TO CATCH, which is a DIFFERENT
+// argument from the other three arms and has to be, because this one really does rewrite a
+// cell that already carried a value.
+//
+// What the freeze guards against is a RE-HOME: a param quietly changing which section owns
+// it, section A to section B, where both readings look equally plausible to a reviewer and
+// only the frozen cell records which one shipped. `(unrouted)` is not a section. There is no
+// prior owner to move away from and no earlier decision being overwritten — the cell records
+// that the param had NO home, and the edit records that it now has one. A reviewer reading
+// the diff sees a param acquiring a card, not a param changing cards.
+//
+// And it is checked twice over rather than argued once. `GOLDEN_TOTALS` moves by exactly one
+// in each direction — `routed` 126 → 127 and `unrouted` 218 → 217 — so a routing change
+// dressed as this one would have to leave both totals intact, which a genuine re-home does
+// (it moves a cell between two sections and touches neither total). The totals are what tell
+// the two apart, and they are derived from the live subject rather than written here.
+//
+// THE ARM, STATED: a cell reading `(unrouted)` may be ROUTED, in the same commit that adds
+// the param's `home` entry and the section that draws it, and `GOLDEN_TOTALS` must move by
+// exactly one in each direction. A cell that already names a section is still frozen.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
@@ -124,7 +153,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier] position=transform rotation=transform scale=transform slotOverrides=(unrouted)',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -181,4 +210,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // operator started honouring the selection it had been declaring. `routed` is STILL 126 —
 // the same discriminating half, and the reason this is one appended cell rather than a
 // rewritten row.
-export const GOLDEN_TOTALS = { types: 80, routed: 126, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 80, routed: 127, unrouted: 217 } as const;

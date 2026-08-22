@@ -138,11 +138,13 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 26 = the prior 21 + the five #283 Phase 4 NLA mutators: 4A createAction+addStrip,
-    // 4B setStripTiming+setStripBlend, 4C setTrackState. (21 was 20 + `setKeyframeInterp`;
-    // 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`; 18 was 17 +
-    // `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(26);
+    // 27 = 26 + `setObjectSlotMaterial` (#645 P4 — the object-side half of
+    // `setMaterialColor`: it re-points ONE slot for one object and leaves the shared data
+    // node unwritten). (26 was the prior 21 + the five #283 Phase 4 NLA mutators: 4A
+    // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
+    // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
+    // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
+    expect(mutators).toHaveLength(27);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -161,6 +163,7 @@ describe('mutator catalog', () => {
       'mutator.rotate',
       'mutator.scale',
       'mutator.setMaterialColor',
+      'mutator.setObjectSlotMaterial',
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addChannelModifier',
@@ -2222,7 +2225,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(26);
+    expect(parsed.mutators).toHaveLength(27);
   });
 });
 
@@ -3835,6 +3838,7 @@ import {
   translateMutator as _translateM,
   scaleMutator as _scaleM,
   setMaterialColorMutator as _setColorM,
+  setObjectSlotMaterialMutator as _setSlotM,
   duplicateMutator as _dupM,
   deleteNodeMutator as _delM,
   addChannelMutator as _addChannelM,
@@ -4058,6 +4062,14 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setColorM as MutatorDefinition<unknown>,
       build: buildScene,
       spec: { targetSelectors: ['box'], color: '#00ff00' },
+    },
+    // #645 P4 — slot 0 because `buildScene`'s cube declares exactly one slot, and this
+    // Mutator REFUSES an index the data has no slot for. A probe spec that gate-rejects is
+    // a broken probe, so the index is chosen against the fixture rather than at random.
+    'mutator.setObjectSlotMaterial': {
+      mutator: _setSlotM as MutatorDefinition<unknown>,
+      build: buildScene,
+      spec: { targetSelectors: ['box'], slotIndex: 0, color: '#00ff00' },
     },
     'mutator.duplicate': {
       mutator: _dupM as MutatorDefinition<unknown>,

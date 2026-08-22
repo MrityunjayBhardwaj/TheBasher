@@ -73,6 +73,12 @@ import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
 import {
+  buildClearSlotOverrideOp,
+  buildOverrideSlotOp,
+  objectSlotTable,
+  slotAbsenceOf,
+} from './objectSlotAuthoring';
+import {
   dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
@@ -2445,6 +2451,179 @@ function SlotSelector({ nodeId }: { nodeId: string }) {
   );
 }
 
+/**
+ * #645 P6 — the OBJECT's per-slot material overrides, as an authoring surface.
+ *
+ * ── WHAT THIS SAYS THAT NOTHING ELSE ON SCREEN DOES ───────────────────────────────
+ *
+ * The panel already draws the DATA's material, in the "Data · …" block below. That block
+ * answers "what is this mesh made of"; every Object reading that data gets the same answer,
+ * and editing it moves all of them. This card answers the other half of the reference's
+ * per-slot question: which slots does THIS Object re-point, leaving the shared datablock
+ * untouched — `link == OBJECT` for that slot, `link == DATA` for the rest.
+ *
+ * That is why it is its own section and not a second `material` card. The two are about
+ * different nodes, and the row's whole content is WHICH of the two you are editing.
+ *
+ * ── THE COUNT COMES FROM THE DATA, WHICH IS WHY THIS ONE EVALUATES ────────────────
+ *
+ * A slot list the object could extend would be a different mechanism from the reference's.
+ * The table's length is the data's, so the rows are read off the RESOLVED mesh — see
+ * `objectSlotAuthoring.ts` for why that costs an evaluation and why the cheaper shape-only
+ * read cannot answer it.
+ *
+ * ⚠️ Read through the resolved table, never off the data value. A data-side read agrees with
+ * the correct answer for every object that overrides nothing — which is almost all of them —
+ * and disagrees only on the case this card exists to author.
+ */
+function ObjectSlotRows({ nodeId }: { nodeId: string }) {
+  const state = useDagStore((s) => s.state);
+  const dispatch = useDagStore((s) => s.dispatch);
+  // The CURRENT playhead, not frame 0: a slot's material can be animated, and a swatch that
+  // disagreed with the viewport would be the inspector lying about the same frame (H40).
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } });
+
+  // No data to slot. Say WHICH of the three absences it is, through the same capability
+  // table the section classification uses — an Empty, a tracked gap, or a category answer.
+  // Reporting them all as "no mesh data" would encode #528 as a design decision, and would
+  // leave that table a set of grounded answers nothing reads.
+  if (!table) {
+    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } });
+    return (
+      <div
+        className={`px-3 py-1.5 text-[11px] ${absence?.why === 'not-yet' ? 'text-warn' : 'text-fg/50'}`}
+        data-testid={`inspector-slots-none-${nodeId}`}
+        data-absence={absence?.why ?? 'no-data'}
+      >
+        {absence?.why === 'not-yet' ? '⚠ ' : ''}
+        {absence?.message ?? "No mesh data — an object's slots come from the data it reads."}
+      </div>
+    );
+  }
+
+  const params = (state.nodes[nodeId]?.params ?? {}) as {
+    slotOverrides?: Record<string, { base?: { color?: unknown } }>;
+  };
+
+  const takeOver = (index: number) => {
+    const op = buildOverrideSlotOp(useDagStore.getState().state, nodeId, index, {
+      time: { frame, seconds, normalized },
+    });
+    if (op) dispatch(op, 'user', `override material slot ${index}`);
+  };
+  const handBack = (index: number) => {
+    const op = buildClearSlotOverrideOp(useDagStore.getState().state, nodeId, index);
+    if (op) dispatch(op, 'user', `revert material slot ${index} to data`);
+  };
+
+  return (
+    <div data-testid={`inspector-object-slots-${nodeId}`} className="flex flex-col">
+      {table.rows.map((row) => {
+        const authored = params.slotOverrides?.[String(row.index)];
+        const color = typeof authored?.base?.color === 'string' ? authored.base.color : row.color;
+        return (
+          <div key={row.index} className="flex flex-col">
+            <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
+              <span className="flex items-center gap-2 font-mono text-fg/60">
+                <span
+                  aria-hidden="true"
+                  data-testid={`inspector-slot-swatch-${nodeId}-${row.index}`}
+                  style={{ backgroundColor: row.color }}
+                  className="h-3 w-3 shrink-0 rounded-sm border border-border"
+                />
+                <span>{row.index}</span>
+                {row.name ? <span className="text-fg/40">{row.name}</span> : null}
+              </span>
+              <span className="flex items-center gap-1.5">
+                {/* The link state IN WORDS. "Object"/"Data" is the reference's own
+                    vocabulary, and it is the one fact a director needs before editing:
+                    which of the two nodes am I about to change? */}
+                <span
+                  data-testid={`inspector-slot-link-${nodeId}-${row.index}`}
+                  className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide ${
+                    row.overridden ? 'bg-accent/15 text-accent' : 'text-fg/40'
+                  }`}
+                >
+                  {row.overridden ? 'Object' : 'Data'}
+                </span>
+                <button
+                  type="button"
+                  data-testid={
+                    row.overridden
+                      ? `inspector-slot-revert-${nodeId}-${row.index}`
+                      : `inspector-slot-override-${nodeId}-${row.index}`
+                  }
+                  onClick={() => (row.overridden ? handBack(row.index) : takeOver(row.index))}
+                  className="rounded border border-border px-2 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                >
+                  {row.overridden ? 'Revert' : 'Override'}
+                </button>
+              </span>
+            </div>
+            {/* The SAME animatable colour row the native and glTF material editors render,
+                so the diamond, Auto-Key routing and driven-value read side come for free
+                rather than being re-implemented one surface over. */}
+            {row.overridden ? (
+              <MaterialColorRow
+                nodeId={nodeId}
+                paramPath={`slotOverrides.${row.index}.base.color`}
+                label="colour"
+                value={color}
+                testidColor={`inspector-slot-color-${nodeId}-${row.index}`}
+                testidHex={`inspector-slot-colorhex-${nodeId}-${row.index}`}
+                onSource={(next) =>
+                  dispatch(
+                    {
+                      type: 'setParam',
+                      nodeId,
+                      paramPath: `slotOverrides.${row.index}.base.color`,
+                      value: next,
+                    },
+                    'user',
+                    `edit material slot ${row.index} colour`,
+                  )
+                }
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      {/* 🔴 OVERRIDES THAT NO LONGER NAME A SLOT. Reachable without any edit to this card:
+          write one on slot 2, then let the data drop to one slot. The entry survives in
+          params, resolves to nothing, and draws nothing — the silently-dropped write this
+          whole area exists to stop, arriving one edit later. Listing it is what makes it
+          recoverable; hiding it would be the panel agreeing with the drop. */}
+      {table.stale.length > 0 ? (
+        <div className="flex flex-col gap-1 border-t border-border px-3 py-1.5">
+          <div
+            data-testid={`inspector-slot-stale-${nodeId}`}
+            className="font-mono text-[10px] uppercase tracking-wide text-warn"
+          >
+            {table.stale.length} override{table.stale.length === 1 ? '' : 's'} past the data&apos;s{' '}
+            {table.rows.length} slot{table.rows.length === 1 ? '' : 's'} — drawing nothing
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {table.stale.map((index) => (
+              <button
+                key={index}
+                type="button"
+                data-testid={`inspector-slot-clearstale-${nodeId}-${index}`}
+                onClick={() => handBack(index)}
+                className="rounded border border-border px-2 py-0.5 font-mono text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              >
+                clear {index}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /** One read-only row inside the glTF material readout (label · value). */
 function ReadoutRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -3133,6 +3312,11 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   channelModifiers: (ctx) => <ChannelModifierControls nodeId={ctx.paramsNodeId} />,
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
+  // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
+  // lets two objects share one mesh and still look different. In the linked-data block
+  // `paramsNodeId` is the DATA node, and writing there would move both objects — the
+  // exact confusion this section exists to resolve.
+  objectSlots: (ctx) => <ObjectSlotRows nodeId={ctx.objectNodeId} />,
 };
 
 export function NPanel() {

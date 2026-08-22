@@ -115,6 +115,12 @@ const CONSUMERS: Record<string, Decision> = {
   'src/render/runVideoStitch.ts': cooked('exports-a-frame'),
   'src/agent/tools/renderSummarizePass.ts': cooked('describes-a-frame'),
   'src/agent/tools/renderSummarizeStylized.ts': cooked('describes-a-frame'),
+  // #645 P6 — the Object slot list the inspector draws. COOKED, and it has to be: the
+  // slot table is whatever the modifier and material chain produced at t, so the panel
+  // reading authored params would report a table the viewport is not drawing. Same
+  // frame, same answer (H40). It describes what is on screen rather than producing it,
+  // which is what puts it beside the two summarizers above rather than the renderers.
+  'src/app/objectSlotAuthoring.ts': cooked('describes-a-frame'),
 
   // ── BOTH — the one file with two seams and a different answer at each ─────────────
   'src/viewport/SceneFromDAG.tsx': both('evaluates-the-safe-tier-then-folds-the-rest'),
@@ -183,7 +189,11 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // repoints those tests onto the real road is the new importer. One helper, not one
     // per test file — the alternative was three near-identical copies, which is the
     // defect this phase is about.
-    expect(evaluatorConsumers()).toHaveLength(36);
+    // 36 → 37 at #645 P6, and the increase is worth its sentence for the same reason the
+    // last one was: the Object's slot list is read off the RESOLVED mesh, because an
+    // object's slot count is its data's and only the evaluated chain knows what that is.
+    // A shape-only read would have added no importer here and answered the wrong question.
+    expect(evaluatorConsumers()).toHaveLength(37);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

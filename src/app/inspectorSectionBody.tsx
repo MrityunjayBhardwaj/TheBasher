@@ -97,7 +97,8 @@ export type ControlKey =
   | 'channelExtend'
   | 'channelModifiers'
   | 'applyTransform'
-  | 'setOrigin';
+  | 'setOrigin'
+  | 'objectSlots';
 
 export type SectionControl = {
   key: ControlKey;
@@ -275,6 +276,23 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
     },
   ],
   layout: [],
+  // #645 — the OBJECT's per-slot override list. Declared only by `ObjectNode`, so the
+  // control renders exactly where the section does.
+  //
+  // `whenDeclared`, NOT a possession test, and the reason is worth stating because the
+  // neighbouring controls read the other way. `slotOverrides` is `.optional()` with no
+  // default, so it does not materialize on a node until the first override is written —
+  // `ownsParam('slotOverrides')` is therefore FALSE for every Object that has yet to
+  // override anything, which is every Object the director would be trying to author one on.
+  // Gating on possession would hide the only affordance that creates the possession.
+  //
+  // `suppressesAllRows` because the control IS the presentation of that one param: the
+  // generic row for a record of material specs would be an unreadable blob beside a slot
+  // list that already draws it. The param still routes here (see `ObjectNode.home`), which
+  // is what keeps it out of the unrouted bucket.
+  slots: [
+    { key: 'objectSlots', applies: whenDeclared, placement: 'before', suppressesAllRows: true },
+  ],
 };
 
 /** Every row key a control owns across the sections a node declares.

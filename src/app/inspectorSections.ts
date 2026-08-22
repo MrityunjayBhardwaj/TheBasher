@@ -33,7 +33,8 @@ export type SectionId =
   | 'effect'
   | 'environment'
   | 'camera'
-  | 'layout';
+  | 'layout'
+  | 'slots';
 
 export const SECTION_IDS: readonly SectionId[] = [
   'transform',
@@ -66,6 +67,11 @@ export const SECTION_IDS: readonly SectionId[] = [
   'environment',
   'camera',
   'layout',
+  // The OBJECT's per-slot material overrides (#645). Deliberately NOT 'material': that
+  // section is the DATA's, and the panel already draws it in the linked-data block. This
+  // one answers the other half of the reference's per-slot question — which slots does
+  // THIS object re-point, leaving the shared datablock untouched.
+  'slots',
 ];
 
 /** Type-narrow at the persistence boundary — unknown strings (legacy
@@ -78,8 +84,21 @@ export function isSectionId(v: unknown): v is SectionId {
 /** Display label for a section. Title-case the literal id. Kept pure
  *  so future i18n drops in as a substitution layer above this fn. */
 export function formatSectionLabel(id: SectionId): string {
-  return id.charAt(0).toUpperCase() + id.slice(1);
+  return SECTION_LABELS[id] ?? id.charAt(0).toUpperCase() + id.slice(1);
 }
+
+/**
+ * Sections whose card title is not their id title-cased.
+ *
+ * Deliberately a lookup with ONE entry rather than a renamed id. 'Material Slots' is two
+ * words and the id is a key — used in persistence, in `home` declarations and in the frozen
+ * golden — so spelling the display name into the id would put a presentation choice
+ * everywhere the key travels. #645: a card reading 'Slots' in a panel that already says
+ * 'Submesh' one control over names the wrong dimension.
+ */
+const SECTION_LABELS: Partial<Record<SectionId, string>> = {
+  slots: 'Material Slots',
+};
 
 /** D-10 A — multi-select Inspector resolution: show Transform + Layout
  *  (the two foundational sections common to every node type that has

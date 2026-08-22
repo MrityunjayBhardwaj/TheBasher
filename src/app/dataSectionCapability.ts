@@ -79,7 +79,7 @@ export type ObjectDataKind = ObjectData['kind'];
  * a real, persistable, permanently inert operator over a camera exactly as "+ Array" once
  * did (#498). One table, asked by both halves, is what keeps offer == accept ([[V108]]).
  */
-export type DataDependentSection = 'modifier' | 'material';
+export type DataDependentSection = 'modifier' | 'material' | 'slots';
 
 /** The section applies to this kind, and the machinery to honour it exists. */
 export interface CapabilitySupported {
@@ -201,9 +201,59 @@ const MATERIAL_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
   },
 };
 
+/**
+ * #645 — the OBJECT's per-slot override list. A different question from 'material', and the
+ * asymmetry is the reason it gets its own column rather than riding on that one.
+ *
+ * 'material' asks "can a source of this kind WEAR a material?" — it gates the data-lane
+ * operator stack. This asks "does a source of this kind give an Object a slot TABLE to
+ * re-point?" The two agree on every kind today, and they agree for different reasons, which
+ * is exactly the situation that goes wrong later if they share one entry: the first kind
+ * where a source wears a material without exposing a countable table would silently inherit
+ * the wrong answer.
+ *
+ * The table's length is the DATA's — that rule is stated once at `objectSlotsOf` — so a kind
+ * with no material table has no slots for an Object to re-point, whatever else is true of it.
+ */
+const SLOTS_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
+  // The three mesh faces. Each resolves to an `EvaluatedMesh` carrying a slot table, so the
+  // count the panel needs is answerable and every row it draws is a real slot.
+  MeshData: { state: 'supported' },
+  BakedData: { state: 'supported' },
+  // The chain case: a table the modifier and material lane composed. It is the case the
+  // override exists FOR — diverging two objects over one chain without forking the chain.
+  ModifiedData: { state: 'supported' },
+
+  CurveData: {
+    state: 'not-yet',
+    reason:
+      'Blocked BEHIND #528, not independent of it. A curve legitimately wears a material in ' +
+      'the reference (bpy.types.Curve declares the same `materials` collection Mesh does), ' +
+      'but CurveDataValue carries no material field at all — so there is no table for an ' +
+      'Object to re-point a slot of yet. The slot list follows the material section here; it ' +
+      'cannot lead it.',
+    issue: 528,
+  },
+
+  LightData: {
+    state: 'never',
+    reason:
+      'A slot re-points a material, and a light is not a surface for one to describe. ' +
+      'Measured: bpy.types.Light declares no `materials` property at all, so there is no ' +
+      'slot table on either side of the link.',
+  },
+  CameraData: {
+    state: 'never',
+    reason:
+      'Same as a light — nothing to shade, so nothing to slot. Measured: bpy.types.Camera ' +
+      'declares no `materials` property at all.',
+  },
+};
+
 const CAPABILITY: Record<DataDependentSection, Record<ObjectDataKind, SectionCapability>> = {
   modifier: MODIFIER_CAPABILITY,
   material: MATERIAL_CAPABILITY,
+  slots: SLOTS_CAPABILITY,
 };
 
 /**

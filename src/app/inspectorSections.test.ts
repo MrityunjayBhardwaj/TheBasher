@@ -118,6 +118,9 @@ describe('SECTION_IDS', () => {
       'environment',
       'camera',
       'layout',
+      // The OBJECT's per-slot material overrides (#645) — the object half of the
+      // reference's per-slot link, distinct from the DATA's 'material' section.
+      'slots',
     ]);
   });
 });
@@ -147,6 +150,23 @@ describe('formatSectionLabel', () => {
     expect(formatSectionLabel('mesh')).toBe('Mesh');
     expect(formatSectionLabel('channel')).toBe('Channel');
     expect(formatSectionLabel('layout')).toBe('Layout');
+  });
+
+  it('#645 uses the override for a section whose title is not its id title-cased', () => {
+    // 'Slots' alone names the wrong dimension in a panel that says 'Submesh' one control
+    // over (that one addresses the i-th mesh in a glTF traverse; this one addresses the
+    // material slot table). The id stays a single word because it is a KEY — persistence,
+    // `home` declarations, the frozen golden — and the display name is presentation.
+    expect(formatSectionLabel('slots')).toBe('Material Slots');
+  });
+
+  it('#645 every section id still has a non-empty label', () => {
+    // The override map is a `Partial<Record<…>>`, so a typo'd key would silently fall
+    // through to the title-case default rather than fail. Sweeping every id is what
+    // notices a label that went missing, rather than one that went wrong.
+    for (const id of SECTION_IDS) {
+      expect(formatSectionLabel(id).length, `${id} has no label`).toBeGreaterThan(0);
+    }
   });
 });
 
