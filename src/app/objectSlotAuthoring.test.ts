@@ -31,6 +31,7 @@ import {
   buildClearSlotOverrideOp,
   buildOverrideSlotOp,
   objectSlotTable,
+  slotAbsenceOf,
 } from './objectSlotAuthoring';
 
 const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -115,6 +116,78 @@ describe('#645 the Object slot list', () => {
       { type: 'addNode', nodeId: 'empty', nodeType: 'Object', params: {} },
     ]);
     expect(objectSlotTable(state, 'empty', CTX)).toBeNull();
+  });
+});
+
+describe('#645 WHY an Object has no slot list — three absences, three sentences', () => {
+  // 🔴 THESE MUST NOT COLLAPSE. Reporting a curve's tracked gap (#528) with the same
+  // sentence as a camera's category answer encodes the gap as a design decision, which is
+  // the specific failure `dataSectionCapability` was built to prevent one section over.
+  //
+  // And without a reader, `SLOTS_CAPABILITY` would be six carefully grounded answers that
+  // nothing consults — the registry gate is satisfied by the table EXISTING, not by its
+  // use. These rows are what make it load-bearing.
+
+  function objectOver(dataType: string, dataParams: Record<string, unknown> = {}): DagState {
+    return apply(emptyDagState(), [
+      { type: 'addNode', nodeId: 'data', nodeType: dataType, params: dataParams },
+      { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'data', socket: 'out' },
+        to: { node: 'obj', socket: 'data' },
+      },
+    ]);
+  }
+
+  it('an Empty says its data is missing, not that slots are impossible', () => {
+    const state = apply(emptyDagState(), [
+      { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: {} },
+    ]);
+    const absence = slotAbsenceOf(state, 'obj', CTX);
+    expect(absence?.why).toBe('no-data');
+  });
+
+  it('a camera says NEVER, and names the kind', () => {
+    const absence = slotAbsenceOf(objectOver('CameraData', { fov: 45 }), 'obj', CTX);
+    expect(absence?.why).toBe('never');
+    expect(absence?.message).toContain('CameraData');
+  });
+
+  it('a light says NEVER too — a different kind, the same category answer', () => {
+    const absence = slotAbsenceOf(objectOver('LightData'), 'obj', CTX);
+    expect(absence?.why).toBe('never');
+    expect(absence?.message).toContain('LightData');
+  });
+
+  it('a curve says NOT-YET and names the issue — a gap, not a limit', () => {
+    const absence = slotAbsenceOf(objectOver('CurveData'), 'obj', CTX);
+    expect(absence?.why).toBe('not-yet');
+    if (absence?.why !== 'not-yet') throw new Error('unreachable');
+    // The ISSUE is the load-bearing half: it is what makes the sentence a tracked gap
+    // rather than an apology, and it must be the material gap the slot table waits on.
+    expect(absence.issue).toBe(528);
+    expect(absence.message).toContain('#528');
+  });
+
+  it('an Object that HAS a table has no absence at all', () => {
+    const { state, left } = twoObjectsOverOneMesh();
+    expect(slotAbsenceOf(state, left, CTX)).toBeNull();
+  });
+
+  it('the three sentences are all different — the collapse this guards against', () => {
+    const said = [
+      slotAbsenceOf(objectOver('CameraData', { fov: 45 }), 'obj', CTX)!.message,
+      slotAbsenceOf(objectOver('CurveData'), 'obj', CTX)!.message,
+      slotAbsenceOf(
+        apply(emptyDagState(), [
+          { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: {} },
+        ]),
+        'obj',
+        CTX,
+      )!.message,
+    ];
+    expect(new Set(said).size).toBe(3);
   });
 
   it('is null for a node that is not an Object — the override lives on the poser', () => {

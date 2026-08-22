@@ -48,6 +48,8 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Op } from '../core/dag/types';
 import type { InlineMaterialSpec } from '../nodes/types';
 import { hydrateInlineMaterial, isBakedMaterialSpec } from '../nodes/materialSchema';
+import { dataSectionCapability, type ObjectDataKind } from './dataSectionCapability';
+import { resolveDataKind } from './modifierGeometry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
@@ -112,11 +114,85 @@ function nameOfSlot(slot: unknown): string | null {
 }
 
 /**
+ * Why an Object has no slot list, when it has none.
+ *
+ * 🔴 THREE SITUATIONS, THREE CORRECT SENTENCES, AND THEY MUST NOT COLLAPSE. An Empty has no
+ * data yet — attach some and the list appears. A curve has data that carries no material
+ * table, which is a tracked GAP (#528) and the panel must say so rather than imply the
+ * absence is intended. A camera or a light can never have one, and that is a category answer
+ * with a reference measurement behind it. Reporting all three as "no mesh data" would encode
+ * the tracked gap as a design decision, which is the specific failure `dataSectionCapability`
+ * exists to prevent.
+ *
+ * ⚠️ THIS IS ALSO WHY THIS FUNCTION EXISTS AT ALL. Without it `SLOTS_CAPABILITY` would be a
+ * table of carefully grounded answers that nothing reads — the registry gate is satisfied by
+ * its EXISTENCE, not by its use, so the table would have shipped inert. A classification no
+ * surface consults is the covered-but-unhonoured shape one layer up.
+ */
+export type SlotAbsence =
+  | { readonly why: 'no-data'; readonly message: string }
+  | {
+      readonly why: 'not-yet';
+      readonly kind: ObjectDataKind;
+      readonly issue: number;
+      readonly message: string;
+    }
+  | { readonly why: 'never'; readonly kind: ObjectDataKind; readonly message: string };
+
+/**
+ * Which of the three absences this Object is in, or null when it has a slot list.
+ *
+ * Asked of the DATA's kind, through the same table the section classification uses, so the
+ * sentence on screen and the reason in the table cannot drift apart.
+ */
+export function slotAbsenceOf(
+  state: DagState,
+  objectId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): SlotAbsence | null {
+  const node = state.nodes[objectId];
+  if (!node || node.type !== 'Object') return null;
+  if (objectSlotTable(state, objectId, ctx, cache)) return null;
+
+  const dataId = (node.inputs as { data?: { node?: string } } | undefined)?.data?.node;
+  const kind = dataId ? resolveDataKind(state, dataId) : null;
+  if (!kind) {
+    return {
+      why: 'no-data',
+      message: "No mesh data — an object's slots come from the data it reads.",
+    };
+  }
+  const cap = dataSectionCapability(kind, 'slots');
+  if (cap.state === 'not-yet') {
+    return {
+      why: 'not-yet',
+      kind,
+      issue: cap.issue,
+      message: `${kind} carries no material table yet, so there is nothing to re-point. A gap rather than a limit — see issue #${cap.issue}.`,
+    };
+  }
+  if (cap.state === 'never') {
+    return {
+      why: 'never',
+      kind,
+      message: `A slot re-points a material, and ${kind} has no surface for one to describe.`,
+    };
+  }
+  // 'supported' with no table is the drift case: the kind says it has slots and the resolver
+  // produced none. Say that rather than a reassuring sentence — the two declarations
+  // disagreeing is exactly what a reader needs to see.
+  return {
+    why: 'no-data',
+    message: `${kind} should carry a slot table and none resolved.`,
+  };
+}
+
+/**
  * The Object's slot list, or null when there is nothing to slot.
  *
- * Null is a real answer and it is not an error: an Empty Object has no data, and a camera or
- * a light has data that no material describes. The caller says so on screen rather than
- * drawing an empty card.
+ * Null is a real answer and it is not an error — see {@link slotAbsenceOf} for which of the
+ * three absences it is, and why the caller must not collapse them into one sentence.
  */
 export function objectSlotTable(
   state: DagState,

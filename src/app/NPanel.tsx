@@ -76,6 +76,7 @@ import {
   buildClearSlotOverrideOp,
   buildOverrideSlotOp,
   objectSlotTable,
+  slotAbsenceOf,
 } from './objectSlotAuthoring';
 import {
   dispatchApplyTransform,
@@ -2485,16 +2486,20 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   const normalized = useTimeStore((s) => s.normalized);
   const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } });
 
-  // No data to slot — an Empty, or data no material describes. Say so rather than draw an
-  // empty card: the section is declared unconditionally by `ObjectNode`, so silence here
-  // reads as a broken panel instead of an honest absence.
+  // No data to slot. Say WHICH of the three absences it is, through the same capability
+  // table the section classification uses — an Empty, a tracked gap, or a category answer.
+  // Reporting them all as "no mesh data" would encode #528 as a design decision, and would
+  // leave that table a set of grounded answers nothing reads.
   if (!table) {
+    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } });
     return (
       <div
-        className="px-3 py-1.5 text-[11px] text-fg/50"
+        className={`px-3 py-1.5 text-[11px] ${absence?.why === 'not-yet' ? 'text-warn' : 'text-fg/50'}`}
         data-testid={`inspector-slots-none-${nodeId}`}
+        data-absence={absence?.why ?? 'no-data'}
       >
-        No mesh data — an object&apos;s slots come from the data it reads.
+        {absence?.why === 'not-yet' ? '⚠ ' : ''}
+        {absence?.message ?? "No mesh data — an object's slots come from the data it reads."}
       </div>
     );
   }
