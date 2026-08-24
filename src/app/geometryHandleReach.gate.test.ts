@@ -281,9 +281,16 @@ describe('ns-2 D8 — a geometry handle carries no second spelling of its kind',
     // Adding a seventh descriptor arm redded `faceCountOf` and `rebuildGeometryRef` and left
     // `availabilityOf` compiling clean, while its comment promised a COMPILE ERROR in
     // capitals. A `never` closed on a second spelling guards the spelling, not the subject.
+    //
+    // #708 — the parameter is now the DESCRIPTOR ITSELF, not its kind, and that is strictly
+    // stronger for what this row guards. The `never` still closes on the descriptor union,
+    // and taking the whole descriptor is what lets `availabilityOf` reach `.source` — so the
+    // un-composed question, which is what produced a false answer for every generator over a
+    // buffer, is no longer askable. The second assertion below is the actual regression
+    // guard and is untouched: the hand-written union must not return as a parameter type.
     const src = stripComments(readFileSync(join(__dirname, 'geometryRegistry.ts'), 'utf8'));
     expect(src, 'availabilityOf must close on the descriptor union').toContain(
-      "availabilityOf(kind: GeometryDescriptor['kind'])",
+      'availabilityOf(descriptor: GeometryDescriptor)',
     );
     expect(src, 'the hand-written union must not come back as a parameter type').not.toContain(
       "GeometryRef['kind']",
