@@ -362,6 +362,40 @@ export function mirrorGeometryRef(
   );
 }
 
+/**
+ * Wrap a source `GeometryRef` in a `subset` descriptor (#671): emit the faces `scope` names
+ * and drop the rest, or the reverse when `keep` is false. Houdini's Blast at the substrate,
+ * Blender's Mask at the node. The ONE place a source ref becomes a subset descriptor.
+ *
+ * 🔴 THE SCOPE IS REQUIRED AND MUST BE NON-BLANK, and this is where that is enforced rather
+ * than hoped for. A blank query would canonicalise to nothing and leave the descriptor
+ * carrying `scope: ''`, which `scopeSelection` would resolve to the empty set — so a mask
+ * nobody had configured yet would DELETE THE WHOLE MESH the moment it was added to a stack.
+ * The caller's job is to stay transparent until it has a selection; refusing here means a
+ * descriptor in that state cannot be built at all, rather than being built and drawing
+ * nothing.
+ *
+ * `keep` folds into the key beside the query, because the two polarities over one selection
+ * are two different geometries and sharing a cached build between them would draw the
+ * complement of what was asked for — silently, since both are valid meshes.
+ */
+export function subsetGeometryRef(source: GeometryRef, scope: string, keep: boolean): GeometryRef {
+  const canonical = canonicalScopeQuery(scope);
+  if (canonical.trim() === '') {
+    throw new Error(
+      'subsetGeometryRef: a subset needs a selection — a blank scope would delete the whole mesh. The operator must stay transparent until it has one.',
+    );
+  }
+  const descriptor = { kind: 'subset' as const, source, scope: canonical, keep };
+  return withAttributeComponent(
+    {
+      key: `subset|${keyWithoutAttributeComponent(source)}|${canonical}|${keep}`,
+      descriptor,
+    },
+    mintTiledModifierAttributes(descriptor),
+  );
+}
+
 // ── #537 — REBUILDING A HANDLE THE ANIMATION OVERLAY HAS WRITTEN THROUGH ───────────────
 //
 // The four builders above are called by the EVALUATOR, once per evaluation, from the node's
@@ -495,6 +529,16 @@ export function rebuildGeometryRef(
         (values.axis ?? d.axis) as MirrorAxis,
         (values.offset ?? d.offset) as number,
         (values.scope ?? d.scope) as string | undefined,
+      );
+    // #671 — both fields fall back to the descriptor's own, as every arm above does. The
+    // descriptor's `scope` is already canonical and non-blank (`subsetGeometryRef` refuses
+    // otherwise), so the fallback cannot reintroduce the delete-everything state; a WRITTEN
+    // blank would be refused there, which is the same answer one frame earlier.
+    case 'subset':
+      return subsetGeometryRef(
+        d.source,
+        (values.scope ?? d.scope) as string,
+        (values.keep ?? d.keep) as boolean,
       );
     case 'gltf':
     case 'baked':

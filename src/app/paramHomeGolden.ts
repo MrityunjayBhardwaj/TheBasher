@@ -77,6 +77,28 @@
 // THE ARM, STATED: a cell reading `(unrouted)` may be ROUTED, in the same commit that adds
 // the param's `home` entry and the section that draws it, and `GOLDEN_TOTALS` must move by
 // exactly one in each direction. A cell that already names a section is still frozen.
+//
+// ── THE FIFTH ARM: A NEW NODE TYPE ADDS A ROW (#668) ─────────────────────────────────
+//
+// The four arms above all act on a row for a type that already exists. None covers a type
+// that did not exist at all, and #668 adds one (`MaskModifier`). The gate forces the issue
+// rather than leaving it optional: it asserts `listNodeTypes()` set-equals this table's
+// keys, so a new registered type with no row here is a red, and there is no way to ship one
+// without taking this decision.
+//
+// 🔴 WHY A NEW ROW CANNOT LAUNDER ANYTHING, which is the append arm's argument and not the
+// re-home one. Laundering is an EXISTING cell silently changing which section owns it. A new
+// row has no existing cells — every cell in it is a first value, recording where a param
+// that never had a home now lives. There is no prior decision to overwrite, so a reviewer
+// reading the diff sees a type arriving with its routing declared, not a type's routing
+// changing. `GOLDEN_TOTALS.types` moves by exactly one, and `routed`/`unrouted` move by that
+// row's own cells — three routed here, none unrouted — so a re-home smuggled into the same
+// commit still shows as a changed cell in a row that already existed.
+//
+// THE ARM, STATED: a whole ROW may be ADDED, in the same commit that registers the node type
+// it records, and `GOLDEN_TOTALS.types` moves by exactly one while `routed`/`unrouted` move
+// by exactly the cells the new row contributes. Rows for types that already exist are
+// untouched by this arm.
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
@@ -137,6 +159,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
   MakeVec3: '[]',
+  MaskModifier: '[modifier] keep=modifier muted=modifier scope=modifier',
   Material: '[material] material=material',
   MaterialOverride:
     '[material] name=(unrouted) color=material roughness=material metalness=material opacity=material emissive=material emissiveIntensity=material overridden=(unrouted) ignoreSourceMaterial=(unrouted) slotIndex=(unrouted)',
@@ -210,4 +233,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // operator started honouring the selection it had been declaring. `routed` is STILL 126 —
 // the same discriminating half, and the reason this is one appended cell rather than a
 // rewritten row.
-export const GOLDEN_TOTALS = { types: 80, routed: 127, unrouted: 217 } as const;
+// 80 → 81 types and 127 → 130 routed at #668: `MaskModifier`'s whole row arrives under the
+// fifth arm above, and all three of its cells route (`keep`, `muted`, `scope` → modifier).
+// `unrouted` is UNCHANGED, which is the derived half of the claim that nothing existing was
+// re-homed to make room for it.
+export const GOLDEN_TOTALS = { types: 81, routed: 130, unrouted: 217 } as const;

@@ -146,13 +146,14 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this phase's own thesis — the most expensive kind.
     expect(unreadableSchemas()).toEqual([]);
-    expect(listNodeTypes()).toHaveLength(80);
+    expect(listNodeTypes()).toHaveLength(81);
   });
 
-  it('`muted` is declared SEVEN times in source, and that is three different populations', () => {
+  it('`muted` is declared EIGHT times in source, and that is three different populations', () => {
     expect(zodDeclarations('muted')).toEqual([
       ['src/nodes/ArrayModifier.ts', 1],
       ['src/nodes/ColorCorrect.ts', 1],
+      ['src/nodes/MaskModifier.ts', 1],
       ['src/nodes/MaterialOverrideOp.ts', 1],
       ['src/nodes/MirrorModifier.ts', 1],
       ['src/nodes/SetMaterialOp.ts', 1],
@@ -164,10 +165,11 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       ['src/nodes/channelModifiers.ts', 1],
     ]);
 
-    // Six of the seven are on registered node types; the seventh is that shared base.
+    // Seven of the eight are on registered node types; the eighth is that shared base.
     expect(registeredDeclaring('muted')).toEqual([
       'ArrayModifier',
       'ColorCorrect',
+      'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
@@ -182,6 +184,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     expect(operatorsDeclaringMuted).toEqual([
       'ArrayModifier',
       'ColorCorrect',
+      'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
@@ -208,9 +211,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     ]);
     expect(registeredDeclaring('mute')).toHaveLength(11);
 
-    // 19 declarations of one concept across 80 node types, in two vocabularies, and no
+    // 20 declarations of one concept across 81 node types, in two vocabularies, and no
     // node declares both.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(19);
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(20);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -261,6 +264,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     expect(chainInputDeclarers()).toEqual([
       'ArrayModifier',
       'ColorCorrect',
+      'MaskModifier',
       'MaterialOverride',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -298,7 +302,11 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     }
     // The derivation those four now go through, non-empty, so the zeros above are
     // retirements rather than a census that lost its subject.
-    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('modifier')).toEqual([
+      'ArrayModifier',
+      'MaskModifier',
+      'MirrorModifier',
+    ]);
     expect(operatorTypesInSection('material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(operatorTypesInSection('effect')).toEqual(['ColorCorrect']);
 
@@ -310,7 +318,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
         'src/agent/mutators/builders/addModifier.ts',
         /const ModifierType = z\.enum\(\[([\s\S]*?)\]\)/,
       ),
-    ).toBe("'ArrayModifier', 'MirrorModifier'");
+    ).toBe("'ArrayModifier', 'MirrorModifier', 'MaskModifier'");
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines
     // `MaterialLaneType`, and the per-field ownership switch closes on a `never` over it. A

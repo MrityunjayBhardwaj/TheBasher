@@ -260,6 +260,7 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
       'gltf',
       'mirror',
       'sphere',
+      'subset',
     ]);
     expect(/attribut/i.test(union)).toBe(false);
   });

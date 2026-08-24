@@ -508,6 +508,37 @@ export type GeometryDescriptor =
       readonly offset: number;
       /** The CANONICAL component-scope query, when scoped — see the `array` variant. */
       readonly scope?: string;
+    }
+  // `subset` (#671, #668) — THE OPERATOR THE SCOPED VARIANTS ABOVE DELIBERATELY ARE NOT.
+  //
+  // The `array`/`mirror` comment says a scope is a FIELD on a generator and not a composable
+  // `subset` kind, because a scoped generator preserves its whole input and generates from
+  // the subset — `mirror(subset(x))` yields 36 where the grounded figure is 54. That
+  // argument rules `subset` out as a way to express SCOPING. It does not rule out the
+  // operator, and this is it: Houdini's Blast, which emits the subset itself and drops the
+  // rest. The director-facing node is Blender's Mask modifier — the substrate is Houdini's,
+  // the interaction model is Blender's, which is the split #607 already draws.
+  //
+  // 🔴 `scope` IS REQUIRED HERE, WHERE IT IS OPTIONAL ON THE GENERATORS ABOVE, and the
+  // asymmetry is the point rather than an oversight. An unscoped generator is meaningful —
+  // it generates from the whole input. An unscoped subset is not: it either keeps everything
+  // or deletes everything, and both are an operator that should not have been in the chain.
+  // Making it required means "a subset with no selection" has no constructor.
+  //
+  // `keep` is the polarity, and it is what makes ONE kind serve both reference lineages:
+  // Blender's Mask keeps the group (with an invert toggle), Houdini's Blast deletes the
+  // selection (with *Delete Non-Selected*). Same operator, opposite defaults.
+  | {
+      readonly kind: 'subset';
+      readonly source: GeometryRef;
+      /**
+       * The CANONICAL component-scope query naming the SELECTED faces. Always canonical,
+       * for the reason the generators state: two spellings of one selection must share a
+       * cached build, and the descriptor must never carry a query the parser refuses.
+       */
+      readonly scope: string;
+      /** `true` keeps the selected faces and drops the rest; `false` drops the selection. */
+      readonly keep: boolean;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

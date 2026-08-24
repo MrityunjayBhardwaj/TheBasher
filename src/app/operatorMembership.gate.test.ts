@@ -99,7 +99,11 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     // Before any assertion about what is MISSING from a set is worth reading. A section
     // pattern one field too tight returns an empty set, and an empty set reads exactly like
     // "this stack has no members", which agrees with nothing and alarms nobody.
-    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('modifier')).toEqual([
+      'ArrayModifier',
+      'MaskModifier',
+      'MirrorModifier',
+    ]);
     expect(operatorTypesInSection('material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(operatorTypesInSection('effect')).toEqual(['ColorCorrect']);
     expect(operatorTypesInSection('none')).toEqual(['MaterialOverride', 'Transform']);
@@ -114,11 +118,13 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
 
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
     ]);
     expect(addableOperators('modifier', { ArrayModifier: 'Array' }).map((o) => o.type)).toEqual([
       'ArrayModifier',
+      'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
     ]);

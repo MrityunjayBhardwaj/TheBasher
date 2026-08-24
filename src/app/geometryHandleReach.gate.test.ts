@@ -47,6 +47,7 @@ import {
   boxGeometryRef,
   descriptorParamFields,
   mirrorGeometryRef,
+  subsetGeometryRef,
   rebuildGeometryRef,
   sphereGeometryRef,
 } from './modifierGeometry';
@@ -100,6 +101,18 @@ const HANDLE_KINDS: Record<
     // carry the field, so the name-correspondence is checked for both of them.
     ref: mirrorGeometryRef(boxGeometryRef([1, 1, 1], null), 'x', 0, '0-5'),
     probe: 3,
+  },
+  subset: {
+    producer: 'MaskModifier',
+    // 🔴 SCOPED BY CONSTRUCTION (#668/#671), where the two generators above had to be scoped
+    // ON PURPOSE. Their `scope` is optional, so an unscoped fixture would omit the field and
+    // leave this file blind to it. A subset's scope is REQUIRED — `subsetGeometryRef` refuses
+    // a blank one — so there is no unscoped fixture to accidentally write, and the field is
+    // enumerated whether or not anyone remembered to think about it.
+    ref: subsetGeometryRef(boxGeometryRef([1, 1, 1], null), '0-5', true),
+    // `keep` is the only non-`scope` field, and the probe must MOVE the key: the two
+    // polarities over one query are two different geometries.
+    probe: false,
   },
   gltf: {
     producer: null,

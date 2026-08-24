@@ -103,6 +103,7 @@ const ALL_TYPES = [
   'LightRig',
   'LocomotionState',
   'MakeVec3',
+  'MaskModifier',
   // #394 — the material's own producer node. Distinct from 'MaterialOverride', which is
   // the per-object redirect/tint, not the material itself.
   'Material',

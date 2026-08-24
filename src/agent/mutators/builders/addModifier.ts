@@ -43,7 +43,7 @@ import { canModifyGeometry } from '../../../app/modifierGeometry';
 // rather than silent — but it is NOT unconstructible, and that difference is recorded in
 // the blindness census rather than glossed: this surface is still one a new operator is
 // invisible to.
-const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier']);
+const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier', 'MaskModifier']);
 type ModifierType = z.infer<typeof ModifierType>;
 
 const AddModifierSpec = z.object({

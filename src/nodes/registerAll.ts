@@ -57,6 +57,7 @@ import { MaterialOverrideNode } from './MaterialOverride';
 import { MaterialOverrideOpNode } from './MaterialOverrideOp';
 import { SetMaterialOpNode } from './SetMaterialOp';
 import { MirrorModifierNode } from './MirrorModifier';
+import { MaskModifierNode } from './MaskModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
@@ -174,6 +175,10 @@ const ALL: NodeDefinition[] = [
   // constraint above) that rewrites its source geometry into a rebuildable handle.
   ArrayModifierNode as unknown as NodeDefinition,
   MirrorModifierNode as unknown as NodeDefinition,
+  // #668 / #671 — the THIRD modifier, and the first that emits FEWER faces than it receives.
+  // The two above preserve their whole input and generate from the subset; this one emits
+  // the subset itself (Houdini's Blast, presented as Blender's Mask).
+  MaskModifierNode as unknown as NodeDefinition,
   // #394 S3c — the MATERIAL half of the same lane. Both are `ObjectData → ObjectData`
   // operators standing between the data and the Object that wears it (Houdini's Material
   // SOP / Blender GN `Set Material`): SetMaterialOp replaces wholesale from a Material

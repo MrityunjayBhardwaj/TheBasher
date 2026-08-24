@@ -175,6 +175,14 @@ const ROWS = [
     hash: '6ab03ff1',
   },
   {
+    type: 'MaskModifier',
+    src: meshSrc('#555555'),
+    // #668 — a scope is REQUIRED for the operator to do anything: with none it is
+    // transparent by design, which would make this row a bypass test with nothing to bypass.
+    params: { keep: true, scope: '0-5' },
+    hash: '563e20c7',
+  },
+  {
     type: 'MirrorModifier',
     src: meshSrc('#333333'),
     params: { axis: 'x', offset: 0 },
@@ -227,8 +235,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   it('THE INSTRUMENT CONTROL: the registry and the corpus both answered', () => {
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this step's own thesis — the most expensive kind of agreement.
-    expect(listNodeTypes()).toHaveLength(80);
-    expect(operators()).toHaveLength(7);
+    expect(listNodeTypes()).toHaveLength(81);
+    expect(operators()).toHaveLength(8);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

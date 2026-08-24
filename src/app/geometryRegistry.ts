@@ -301,6 +301,11 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
     case 'array':
     case 'mirror':
       return composedOverSource(availabilityOf(descriptor.source.descriptor));
+    // #671 — a subset is a recipe rooted at its source exactly as the generators are, so it
+    // inherits by the SAME rule rather than a second one. It emits fewer faces than its
+    // source; it does not become available any earlier or later than it.
+    case 'subset':
+      return composedOverSource(availabilityOf(descriptor.source.descriptor));
     default: {
       const unreachable: never = descriptor;
       return unreachable;
@@ -595,6 +600,8 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
       return buildArray(d);
     case 'mirror':
       return buildMirror(d);
+    case 'subset':
+      return buildSubset(d);
     // Declared nulls, not unknowns: the buffers are somewhere else on purpose (gltf in the
     // loaded asset clone, baked in OPFS behind an async read that `prime` completes).
     case 'gltf':
@@ -658,7 +665,17 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
  * triplets, which is a different implementation and would be written when something can
  * actually produce one — guessing at it now would ship an untested arm on the render path.
  */
-function faceSubset(source: BufferGeometry, scope: string | undefined): BufferGeometry | null {
+function faceSubset(
+  source: BufferGeometry,
+  scope: string | undefined,
+  // #671 — WHICH SIDE OF THE MASK SURVIVES. `true` (the default, and what every generator
+  // caller means) keeps the selected faces; `false` keeps the complement, which is Blast's
+  // *delete the selection* and the Mask modifier's inverted toggle. It is a parameter here
+  // rather than a second walk in `buildSubset` because "which triangles survive" is one
+  // statement — a second copy of this loop is exactly the kind of agrees-today arithmetic
+  // that drifts the first time the index layout changes.
+  keep = true,
+): BufferGeometry | null {
   if (scope === undefined) return source.clone();
   const index = source.getIndex();
   if (index === null) {
@@ -671,12 +688,30 @@ function faceSubset(source: BufferGeometry, scope: string | undefined): BufferGe
   const { mask } = scopeSelection(scope, faces);
   const kept: number[] = [];
   for (let f = 0; f < faces; f++) {
-    if (mask[f] !== 1) continue;
+    if ((mask[f] === 1) !== keep) continue;
     kept.push(index.getX(f * 3), index.getX(f * 3 + 1), index.getX(f * 3 + 2));
   }
   const subset = source.clone();
   subset.setIndex(kept);
   return subset;
+}
+
+/**
+ * #671 (Blast / #668's Mask) — emit the selected faces and drop the rest, or the reverse.
+ *
+ * The whole operator is `faceSubset` at the top level, which is what makes it a different
+ * thing from a scoped generator rather than a rearrangement of one: a generator calls
+ * `faceSubset` to decide what to GENERATE FROM and then merges the result back with its
+ * whole input, so the unselected faces survive. This does not merge anything back. That is
+ * the 54-vs-36 distinction the `array` descriptor's comment draws, on the other side of it.
+ *
+ * A source that cannot build synchronously makes the subset unbuildable, exactly as it does
+ * for the generators — same rule, stated by delegating to the same `get`.
+ */
+function buildSubset(d: Extract<GeometryDescriptor, { kind: 'subset' }>): BufferGeometry | null {
+  const source = get(d.source, 'internal');
+  if (!source) return null;
+  return faceSubset(source, d.scope, d.keep);
 }
 
 /**

@@ -458,6 +458,14 @@ describe('#607 the query has exactly one reader', () => {
         // not a query to interpret — the row below the next one is what holds that apart.
         'src/nodes/ArrayModifier.ts',
         //
+        // #668 — the FIFTH declarer, and the THIRD on the `'target'` lane. It reads the
+        // resolved selection's `canonicalQuery` exactly as the two generators do, and for
+        // the same reason: what it hands downstream is a `GeometryRef` whose descriptor is a
+        // rebuild recipe the registry re-reads later, with no selection in reach. So it
+        // needs the selection's IDENTITY, never the query — and like every other name here,
+        // its `evaluate` never touches `params[SCOPE_PARAM]`.
+        'src/nodes/MaskModifier.ts',
+        //
         // #682 — the FOURTH declarer, and the SECOND on the `'target'` lane. It is also the
         // only entry here that was measured LYING before it was measured honouring: it
         // declared a scope at ns-2 step 17 while emitting byte-identical output for a total
@@ -504,6 +512,7 @@ describe('#607 the query has exactly one reader', () => {
     // that made a sibling gate vacuous from birth one step ago (#678).
     expect(declarers).toEqual([
       'src/nodes/ArrayModifier.ts',
+      'src/nodes/MaskModifier.ts',
       'src/nodes/MaterialOverrideOp.ts',
       'src/nodes/MirrorModifier.ts',
       'src/nodes/SetMaterialOp.ts',
