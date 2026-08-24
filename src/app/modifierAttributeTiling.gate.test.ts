@@ -80,6 +80,7 @@ import {
   boxGeometryRef,
   mirrorGeometryRef,
   sphereGeometryRef,
+  subsetGeometryRef,
 } from './modifierGeometry';
 import { faceCountOf, tiledFaceOrder } from './faceCount';
 import { clear, getForRead } from './geometryRegistry';
@@ -226,6 +227,48 @@ describe('#644 — MIRROR tiles the source assignment onto the reflected half', 
       [18, 18, 1],
       [36, 15, 0],
       [51, 3, 1],
+    ]);
+  });
+});
+
+describe("#719 — SUBSET carries the surviving faces' slots, so a Mask keeps its materials", () => {
+  it('🔴 a mask keeping `2-8` of a two-material box lays out TWO groups, split where the source splits', () => {
+    // #671 derived a `subsetFaceOrder` for exactly this, and #719 measured that the order was
+    // consumed by nothing: `mintTiledModifierAttributes` refused every kind but `array` and
+    // `mirror` four lines before it asked for one. The subset ref minted with no
+    // `attributeKey`, the store held nothing for it, and `build()` returned before `addGroup`
+    // — so this box built with `groups: []`, drew entirely in slot 0, and raised nothing.
+    //
+    // 🔴 THE SCOPE SPANS THE SOURCE'S OWN MATERIAL BOUNDARY, WHICH IS WHAT MAKES THIS A
+    // DETECTOR. The two-material fixture puts faces 0-5 on slot 0 and 6-11 on slot 1, so
+    // keeping `2-8` keeps four slot-0 faces and three slot-1 ones. A scope landing inside one
+    // material would produce a SINGLE group, and a single group is also what the defect
+    // produces once `addGroup` is reached at all — the two are told apart only by a mask that
+    // has to survive a boundary. Written as the numbers for the reason this whole file is:
+    // 7 faces -> 21 index entries, 4 x 3 = 12 on slot 0 then 3 x 3 = 9 on slot 1.
+    const ref = subsetGeometryRef(twoMaterialBox(), '2-8', true);
+
+    expect(faceCountOf(ref.descriptor)).toBe(7);
+    expect(builtIndexCount(ref)).toBe(21);
+    expect(layoutOf(ref)).toEqual([
+      [0, 12, 0],
+      [12, 9, 1],
+    ]);
+  });
+
+  it('🔴 the INVERSE mask keeps the complement, and its slot split is the complement too', () => {
+    // `keep: false` over the same query — faces 0,1 (slot 0) and 9,10,11 (slot 1) survive.
+    // The polarity is asserted here rather than left to the descriptor's own row because the
+    // gather reads `order`, and an order built from the wrong side of the mask would produce a
+    // valid layout over the wrong faces: 5 faces and 15 entries either way, differing only in
+    // WHICH slots they carry. 2 x 3 = 6 on slot 0, then 3 x 3 = 9 on slot 1.
+    const ref = subsetGeometryRef(twoMaterialBox(), '2-8', false);
+
+    expect(faceCountOf(ref.descriptor)).toBe(5);
+    expect(builtIndexCount(ref)).toBe(15);
+    expect(layoutOf(ref)).toEqual([
+      [0, 6, 0],
+      [6, 9, 1],
     ]);
   });
 });
