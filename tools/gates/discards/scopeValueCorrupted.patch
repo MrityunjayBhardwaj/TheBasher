@@ -1,16 +1,16 @@
 diff --git a/src/nodes/componentSelection.ts b/src/nodes/componentSelection.ts
-index c486619..80174da 100644
+index 2637215..063b45e 100644
 --- a/src/nodes/componentSelection.ts
 +++ b/src/nodes/componentSelection.ts
-@@ -541,7 +541,10 @@ export function resolveComponentSelection(
+@@ -422,7 +422,10 @@ export function resolveComponentSelection(
    // No scope authored at all — the operator applies to everything. This is the ONLY road
    // to "everything" that does not go through a query, which is what keeps a LOST scope
    // distinguishable from an absent one.
--  if (authored === null) return totalSelection(SCOPE_DOMAIN, length);
+-  if (authored === null) return totalSelection(domain, length);
 +  // DISCARD HARNESS: the degenerate arm still returns a TOTAL selection, of the wrong
 +  // LENGTH. Shape-correct, content-wrong. Nothing throws, every call site is unchanged,
 +  // and the only thing that can notice is something that READS the value.
-+  if (authored === null) return totalSelection(SCOPE_DOMAIN, 1);
++  if (authored === null) return totalSelection(domain, 1);
  
-   return selectionFromQuery(authored, SCOPE_DOMAIN, length);
+   return selectionFromQuery(authored, domain, length);
  }

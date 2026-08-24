@@ -93,6 +93,10 @@ const SUBSET = '0-39';
  */
 const FIXTURES: Record<string, { params: Record<string, unknown>; material?: boolean }> = {
   ArrayModifier: { params: { count: 3, offset: [2, 0, 0], muted: false } },
+  // #668. `keep: true` is the default polarity, and either would do here: the row asks
+  // whether the OUTPUT moves between a total selection and a subset, and a mask moves under
+  // both — keeping 6 of 12 faces and keeping 12 differ, and so do dropping 6 and dropping 0.
+  MaskModifier: { params: { keep: true, muted: false } },
   MirrorModifier: { params: { axis: 'x', offset: 3, muted: false } },
   SetMaterialOp: { params: { muted: false }, material: true },
   // #682. `overridden` is what makes the override non-empty — without a field marked, the
@@ -134,7 +138,7 @@ function honours(type: string): { moved: boolean; kind: string } {
       params as never,
       inputs as never,
       ctx as never,
-      resolveComponentSelection(src, params),
+      resolveComponentSelection(src, params, 'face'),
     );
   };
 
@@ -201,7 +205,7 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
       outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
       chain: {
         input: 'target',
-        scope: { kind: 'source' },
+        scope: { kind: 'source', domain: 'face' },
         bypass: { kind: 'passthrough', param: 'muted' },
         section: 'modifier',
       },

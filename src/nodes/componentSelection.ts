@@ -107,7 +107,21 @@
 //      (`KnownDomain`); src/app/modifierDataSource.ts (which values carry components);
 //      ref/houdini/SOP.md §4; issues #607, #660.
 
-import type { KnownDomain } from './attributes';
+import type { KnownDomain, ScopeDomain } from './attributes';
+
+/**
+ * Re-exported, NOT redefined (#714). {@link ScopeDomain} is declared in `attributes.ts`
+ * beside the domain vocabulary it is an `Extract` over — that module imports nothing, so it
+ * can be reached from anywhere without a cycle.
+ *
+ * 🔴 IT IS RE-EXPORTED HERE SO `core/dag` DOES NOT GROW A SECOND EDGE INTO `nodes/`. The
+ * layering row in `componentScopeChannel.gate.test.ts` pins that surface as an EXACT list —
+ * `core/dag/types.ts` reaches this module and nothing else — and it red on the direct import,
+ * which is the gate working rather than an obstacle. The concept belongs to this module's
+ * surface anyway: "which atom class may a scope be resolved at" is a fact about scopes, and
+ * the resolver below is the thing that consumes it.
+ */
+export type { ScopeDomain };
 import type { GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
 import { modifierDataSource } from '../app/modifierDataSource';
@@ -163,16 +177,6 @@ export interface ComponentSelection {
  * socket would be a project-format migration for something that is authored text.
  */
 export const SCOPE_PARAM = 'scope';
-
-/**
- * The domain ns-2 resolves selections at.
- *
- * `face` ONLY, and the reason is arithmetic rather than taste: a face count is derivable
- * from a descriptor and the other three are not. `point` needs a new count derivation and
- * has 24 seam-split points on a box; `edge` has no buffer at all. Widening is one edit
- * here plus an arm in {@link componentCountOf}.
- */
-const SCOPE_DOMAIN: KnownDomain = 'face';
 
 /** Every refusal from this module is named and carries the query that produced it. */
 function refuse(why: string): never {
@@ -391,6 +395,7 @@ function authoredScope(params: Readonly<Record<string, unknown>>): string | null
 export function resolveComponentSelection(
   spine: ObjectData | undefined,
   params: Readonly<Record<string, unknown>>,
+  domain: ScopeDomain,
 ): ComponentSelection | null {
   // Read the query FIRST. Every "cannot resolve" branch below needs to know whether an
   // author is being ignored, and a resolver that discovers that halfway down answers
@@ -406,20 +411,20 @@ export function resolveComponentSelection(
     );
   }
 
-  const length = componentCountOf(SCOPE_DOMAIN, source.geometry.descriptor);
+  const length = componentCountOf(domain, source.geometry.descriptor);
   if (length === null) {
     if (authored === null) return null;
     return refuse(
-      `descriptor '${source.geometry.descriptor.kind}' has no derivable face count (its geometry lives outside the descriptor), so the authored scope '${authored}' cannot be honoured`,
+      `descriptor '${source.geometry.descriptor.kind}' has no derivable ${domain} count (its geometry lives outside the descriptor), so the authored scope '${authored}' cannot be honoured`,
     );
   }
 
   // No scope authored at all — the operator applies to everything. This is the ONLY road
   // to "everything" that does not go through a query, which is what keeps a LOST scope
   // distinguishable from an absent one.
-  if (authored === null) return totalSelection(SCOPE_DOMAIN, length);
+  if (authored === null) return totalSelection(domain, length);
 
-  return selectionFromQuery(authored, SCOPE_DOMAIN, length);
+  return selectionFromQuery(authored, domain, length);
 }
 
 /**

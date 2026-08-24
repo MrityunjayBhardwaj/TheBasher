@@ -382,9 +382,24 @@ function layoutForDomain(
  */
 
 export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): string | null {
-  // Narrowing for `source`: `tiledFaceOrder` answers only for these two kinds, but that is
-  // its invariant and not something the type system carries back out here.
-  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror') return null;
+  // Narrowing for `source`: `tiledFaceOrder` answers for exactly these three kinds, but that
+  // is its invariant and not something the type system carries back out here.
+  //
+  // 🔴 `subset` IS HERE BECAUSE THE ORDER ALONE WAS NOT THE FIX (#719). #671 derived a
+  // `subsetFaceOrder` precisely so a mask would not drop its source's per-face materials,
+  // and this narrowing — written when only the two generators had an order — refused the
+  // descriptor four lines before the order was ever asked for. So the order was computed
+  // correctly, consumed by nothing, and a masked two-material box built with `groups: []`:
+  // the right geometry in one material, which is a plausible screen with no error. The
+  // comment above stated the invariant it had once enforced, which is exactly what a
+  // narrowing left behind by a widening looks like from the inside.
+  //
+  // Nothing below this line is generator-specific. It reads `descriptor.source`, the face
+  // order and the corner order, and all three answer for a subset — `tiledCornerOrder`
+  // derives from the face order and its `reversesCopies` is correctly `false` here, since
+  // `faceSubset` applies no winding reversal the way `buildMirror` does.
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
+    return null;
 
   const sourceKey = descriptor.source.attributeKey;
   if (sourceKey === undefined) return null;

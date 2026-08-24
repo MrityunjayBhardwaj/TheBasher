@@ -85,10 +85,11 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all seven operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all eight operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArrayModifier', // data lane — geometry
       'ColorCorrect', // effect lane
+      'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
       'MirrorModifier', // data lane — geometry
@@ -108,6 +109,9 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     expect(where((c) => c.scope.kind === 'source')).toEqual(['ArrayModifier', 'MirrorModifier']);
     // Writers: the selection names what RECEIVES the write.
     expect(where((c) => c.scope.kind === 'target')).toEqual([
+      // #668 — survival IS the write. The selection names the faces the mask acts on, and
+      // nothing is merged back, which is what separates it from the two generators above.
+      'MaskModifier',
       'MaterialOverrideOp',
       'SetMaterialOp',
     ]);
@@ -156,7 +160,11 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
   });
 
   it('SECTION is declared, and the two nodes in no stack are the two with nothing to bypass', () => {
-    expect(where((c) => c.section === 'modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(where((c) => c.section === 'modifier')).toEqual([
+      'ArrayModifier',
+      'MaskModifier',
+      'MirrorModifier',
+    ]);
     expect(where((c) => c.section === 'material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(where((c) => c.section === 'effect')).toEqual(['ColorCorrect']);
     expect(where((c) => c.section === 'none')).toEqual(['MaterialOverride', 'Transform']);
@@ -185,7 +193,9 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     ).toThrow(/missing scope/);
 
     expect(() =>
-      registerNodeType(probeDef({ input: 'target', scope: { kind: 'source' } }) as never),
+      registerNodeType(
+        probeDef({ input: 'target', scope: { kind: 'source', domain: 'face' } }) as never,
+      ),
     ).toThrow(/missing bypass, section/);
   });
 
@@ -198,7 +208,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'target',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'bypassed' },
           section: 'modifier',
         }) as never,
@@ -222,7 +232,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'nonesuch',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
         }) as never,
@@ -234,7 +244,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
         probeDef(
           {
             input: 'target',
-            scope: { kind: 'source' },
+            scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
           },
@@ -260,7 +270,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
         probeDef(
           {
             input: 'target',
-            scope: { kind: 'source' },
+            scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
           },
@@ -275,7 +285,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'target',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
         }) as never,

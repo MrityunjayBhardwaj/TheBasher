@@ -12,6 +12,7 @@
 // type system needing to grow.
 
 import type { OverriddenSet } from '../core/override/overrideSet';
+import type { ScopeDomain } from './attributes';
 
 export type Vec2 = readonly [number, number];
 
@@ -493,6 +494,25 @@ export type GeometryDescriptor =
        * figure is 54. A `subset` kind is a different operator (Houdini's Blast).
        */
       readonly scope?: string;
+      /**
+       * WHICH ATOM CLASS `scope` NAMES (#714).
+       *
+       * Present exactly when `scope` is, and minted with it by the one `scopeField` helper
+       * so the pair has no constructor that can produce half of it. A scope without a class
+       * is a selection nobody can resolve; a class without a scope is a fact about nothing.
+       *
+       * 🔴 IT FOLDS INTO THE KEY, WHICH IS THE WHOLE REASON IT IS STORED RATHER THAN
+       * RE-DERIVED. `scope` is a string of indices and says nothing about what it indexes,
+       * so `array|<source>|3|2,0,0|0-5` names two different geometries the day a second
+       * domain is resolvable — the same faces or the same points — and they would share one
+       * cached build. Both would draw, which is what makes it silent, and it is the identical
+       * argument `scope` itself is folded under one paragraph above.
+       *
+       * It is NOT in {@link descriptorParamFields}: that census answers "which fields does a
+       * producing node feed from a param?", and this one is fed from the operator's
+       * `ChainDeclaration` instead. See that function for where the line is drawn.
+       */
+      readonly domain?: ScopeDomain;
     }
   // `mirror` (epic #201, #209) — the SECOND modifier: reflect the source across the
   // plane perpendicular to `axis` at `offset` along it (offset 0 = the LOCAL origin,
@@ -508,6 +528,47 @@ export type GeometryDescriptor =
       readonly offset: number;
       /** The CANONICAL component-scope query, when scoped — see the `array` variant. */
       readonly scope?: string;
+      /** The atom class `scope` names. Present exactly when `scope` is — see the `array` variant. */
+      readonly domain?: ScopeDomain;
+    }
+  // `subset` (#671, #668) — THE OPERATOR THE SCOPED VARIANTS ABOVE DELIBERATELY ARE NOT.
+  //
+  // The `array`/`mirror` comment says a scope is a FIELD on a generator and not a composable
+  // `subset` kind, because a scoped generator preserves its whole input and generates from
+  // the subset — `mirror(subset(x))` yields 36 where the grounded figure is 54. That
+  // argument rules `subset` out as a way to express SCOPING. It does not rule out the
+  // operator, and this is it: Houdini's Blast, which emits the subset itself and drops the
+  // rest. The director-facing node is Blender's Mask modifier — the substrate is Houdini's,
+  // the interaction model is Blender's, which is the split #607 already draws.
+  //
+  // 🔴 `scope` IS REQUIRED HERE, WHERE IT IS OPTIONAL ON THE GENERATORS ABOVE, and the
+  // asymmetry is the point rather than an oversight. An unscoped generator is meaningful —
+  // it generates from the whole input. An unscoped subset is not: it either keeps everything
+  // or deletes everything, and both are an operator that should not have been in the chain.
+  // Making it required means "a subset with no selection" has no constructor.
+  //
+  // `keep` is the polarity, and it is what makes ONE kind serve both reference lineages:
+  // Blender's Mask keeps the group (with an invert toggle), Houdini's Blast deletes the
+  // selection (with *Delete Non-Selected*). Same operator, opposite defaults.
+  | {
+      readonly kind: 'subset';
+      readonly source: GeometryRef;
+      /**
+       * The CANONICAL component-scope query naming the SELECTED faces. Always canonical,
+       * for the reason the generators state: two spellings of one selection must share a
+       * cached build, and the descriptor must never carry a query the parser refuses.
+       */
+      readonly scope: string;
+      /**
+       * WHICH ATOM CLASS `scope` NAMES — REQUIRED here, exactly as `scope` is (#714).
+       *
+       * The generators above make the pair optional because an unscoped generator is
+       * meaningful. A subset with no scope is not, so neither half is optional here and the
+       * "selected nothing at no class" state has no constructor.
+       */
+      readonly domain: ScopeDomain;
+      /** `true` keeps the selected faces and drops the rest; `false` drops the selection. */
+      readonly keep: boolean;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

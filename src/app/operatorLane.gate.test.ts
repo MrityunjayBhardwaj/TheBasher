@@ -125,7 +125,7 @@ function registerLaneOp(
       // property of mesh data" is the claim, not a property of this fixture.
       scope:
         lane === 'ObjectData'
-          ? { kind: 'source' }
+          ? { kind: 'source', domain: 'face' }
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,
@@ -195,6 +195,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(laneMap()).toEqual({
       ArrayModifier: 'ObjectData',
       ColorCorrect: 'Image',
+      MaskModifier: 'ObjectData',
       MaterialOverride: 'SceneObject',
       MaterialOverrideOp: 'ObjectData',
       MirrorModifier: 'ObjectData',
@@ -204,7 +205,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(Object.values(laneMap())).not.toContain('NO LANE');
   });
 
-  it('THE LANE IS NOT THE SECTION: four on the data lane, two in the modifier set', () => {
+  it('THE LANE IS NOT THE SECTION: five on the data lane, three in the modifier set', () => {
     // The discrepancy is the finding, not a defect. The lane answers a question about SHAPE
     // ("does this kind of value flow through?") and every node with that shape has to be
     // walked past. Which STACK offers an operator is a different question with a different
@@ -213,11 +214,16 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // steps and not one.
     expect(laneMembers('ObjectData')).toEqual([
       'ArrayModifier',
+      'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
     ]);
-    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('modifier')).toEqual([
+      'ArrayModifier',
+      'MaskModifier',
+      'MirrorModifier',
+    ]);
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
     expect(laneMembers('Image')).toEqual(['ColorCorrect']);
   });
@@ -232,6 +238,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
 
     expect(laneMembers('ObjectData')).toEqual([
       'ArrayModifier',
+      'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
       'Ns2SyntheticDataOp',
@@ -245,7 +252,11 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // data lane does not put an operator in the modifier stack, and step 7 kept it that way
     // when it retired the lists (a member joins a stack by declaring the section, never by
     // having the right sockets).
-    expect(operatorTypesInSection('modifier')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    expect(operatorTypesInSection('modifier')).toEqual([
+      'ArrayModifier',
+      'MaskModifier',
+      'MirrorModifier',
+    ]);
     expect(isModifierNode(nodeOfType('Ns2SyntheticDataOp'))).toBe(false);
   });
 

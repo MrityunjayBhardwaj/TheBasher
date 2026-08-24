@@ -50,7 +50,7 @@ function registerBinaryOp(type: string, spine: SocketId): void {
     chain: {
       input: spine,
       // A data-lane geometry operator: the selection would name what it reads.
-      scope: { kind: 'source' },
+      scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
     },
@@ -160,7 +160,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the set of chain nodes is EXACTLY the seven operators, across all three lanes', () => {
+  it('the set of chain nodes is EXACTLY the eight operators, across all three lanes', () => {
     // An EXACT set, not a floor: this population grows, and the failure mode of a new
     // operator is that it registers without a spine and every stack surface goes blind
     // to it — silently, because a node with no spine simply is not a chain node. Making
@@ -170,6 +170,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     expect(declared.sort()).toEqual([
       'ArrayModifier', // data lane — geometry
       'ColorCorrect', // effect lane
+      'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
       'MirrorModifier', // data lane — geometry

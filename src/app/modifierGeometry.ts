@@ -38,6 +38,7 @@ import { dataSectionCapability } from './dataSectionCapability';
 import { modifierDataSource } from './modifierDataSource';
 import { mintTiledModifierAttributes, rebuiltMeshAttributes } from '../nodes/meshAttributes';
 import { canonicalScopeQuery } from '../nodes/scopeQuery';
+import type { ScopeDomain } from '../nodes/attributes';
 
 /**
  * The box descriptor for a size — the ONE spelling of that literal.
@@ -291,9 +292,27 @@ export function canWearMaterial(state: DagState, nodeId: string): boolean {
  * A query the language refuses THROWS here rather than being stored — the same refusal the
  * resolver makes, at the other end of the same road.
  */
-function scopeField(scope: string | null | undefined): { scope?: string } {
+/**
+ * The key fragment a scoped generator appends — the canonical query AND the atom class it
+ * names, or nothing at all when unscoped (#714).
+ *
+ * 🔴 ONE HELPER FOR BOTH GENERATORS BECAUSE THEY MUST NOT SPELL IT DIFFERENTLY. `array` and
+ * `mirror` each built this inline, which agreed while there was one fragment to append and
+ * is exactly the arrangement that drifts when a second one arrives. The domain is appended
+ * INSIDE the same branch as the query rather than beside it, so an unscoped key stays
+ * byte-identical to every unscoped key ever written — the property `scope` itself was
+ * introduced under, and the reason neither fragment is emitted unconditionally.
+ */
+function scopeSuffix(scoped: { scope?: string; domain?: ScopeDomain }): string {
+  return scoped.scope === undefined ? '' : `|${scoped.scope}|${scoped.domain}`;
+}
+
+function scopeField(
+  scope: string | null | undefined,
+  domain: ScopeDomain,
+): { scope?: string; domain?: ScopeDomain } {
   if (scope === undefined || scope === null || scope.trim() === '') return {};
-  return { scope: canonicalScopeQuery(scope) };
+  return { scope: canonicalScopeQuery(scope), domain };
 }
 
 /**
@@ -316,10 +335,11 @@ export function arrayGeometryRef(
   count: number,
   offset: Vec3,
   scope?: string | null,
+  domain: ScopeDomain = 'face',
 ): GeometryRef {
   const n = Math.max(1, Math.floor(count));
-  const scoped = scopeField(scope);
-  const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
+  const scoped = scopeField(scope, domain);
+  const suffix = scopeSuffix(scoped);
   const descriptor = { kind: 'array' as const, source, count: n, offset, ...scoped };
   return withAttributeComponent(
     {
@@ -349,13 +369,53 @@ export function mirrorGeometryRef(
   axis: MirrorAxis,
   offset: number,
   scope?: string | null,
+  domain: ScopeDomain = 'face',
 ): GeometryRef {
-  const scoped = scopeField(scope);
-  const suffix = scoped.scope === undefined ? '' : `|${scoped.scope}`;
+  const scoped = scopeField(scope, domain);
+  const suffix = scopeSuffix(scoped);
   const descriptor = { kind: 'mirror' as const, source, axis, offset, ...scoped };
   return withAttributeComponent(
     {
       key: `mirror|${keyWithoutAttributeComponent(source)}|${axis}|${offset}${suffix}`,
+      descriptor,
+    },
+    mintTiledModifierAttributes(descriptor),
+  );
+}
+
+/**
+ * Wrap a source `GeometryRef` in a `subset` descriptor (#671): emit the faces `scope` names
+ * and drop the rest, or the reverse when `keep` is false. Houdini's Blast at the substrate,
+ * Blender's Mask at the node. The ONE place a source ref becomes a subset descriptor.
+ *
+ * 🔴 THE SCOPE IS REQUIRED AND MUST BE NON-BLANK, and this is where that is enforced rather
+ * than hoped for. A blank query would canonicalise to nothing and leave the descriptor
+ * carrying `scope: ''`, which `scopeSelection` would resolve to the empty set — so a mask
+ * nobody had configured yet would DELETE THE WHOLE MESH the moment it was added to a stack.
+ * The caller's job is to stay transparent until it has a selection; refusing here means a
+ * descriptor in that state cannot be built at all, rather than being built and drawing
+ * nothing.
+ *
+ * `keep` folds into the key beside the query, because the two polarities over one selection
+ * are two different geometries and sharing a cached build between them would draw the
+ * complement of what was asked for — silently, since both are valid meshes.
+ */
+export function subsetGeometryRef(
+  source: GeometryRef,
+  scope: string,
+  keep: boolean,
+  domain: ScopeDomain = 'face',
+): GeometryRef {
+  const canonical = canonicalScopeQuery(scope);
+  if (canonical.trim() === '') {
+    throw new Error(
+      'subsetGeometryRef: a subset needs a selection — a blank scope would delete the whole mesh. The operator must stay transparent until it has one.',
+    );
+  }
+  const descriptor = { kind: 'subset' as const, source, scope: canonical, domain, keep };
+  return withAttributeComponent(
+    {
+      key: `subset|${keyWithoutAttributeComponent(source)}|${canonical}|${domain}|${keep}`,
       descriptor,
     },
     mintTiledModifierAttributes(descriptor),
@@ -394,7 +454,15 @@ export function mirrorGeometryRef(
  * rename that breaks the pairing) is a red rather than a silent freeze.
  */
 export function descriptorParamFields(descriptor: GeometryDescriptor): readonly string[] {
-  return Object.keys(descriptor).filter((k) => k !== 'kind' && k !== 'source');
+  // 🔴 `domain` JOINS `kind` AND `source` IN THE EXCLUSION, AND FOR THE SAME REASON (#714):
+  // this census answers "which descriptor fields does a producing node feed from a PARAM?",
+  // and the atom class is not one. It is read off the operator's `ChainDeclaration`, which is
+  // code, so no param spells it and none should — `geometryHandleReach.gate.test.ts` requires
+  // every field this returns to be reachable from a node's param, and it would be right to
+  // refuse a field that has no param behind it. Leaving it in would either red that gate or
+  // buy a green by inventing a `domain` param an author could animate to a class the operator
+  // does not implement.
+  return Object.keys(descriptor).filter((k) => k !== 'kind' && k !== 'source' && k !== 'domain');
 }
 
 /**
@@ -495,6 +563,16 @@ export function rebuildGeometryRef(
         (values.axis ?? d.axis) as MirrorAxis,
         (values.offset ?? d.offset) as number,
         (values.scope ?? d.scope) as string | undefined,
+      );
+    // #671 — both fields fall back to the descriptor's own, as every arm above does. The
+    // descriptor's `scope` is already canonical and non-blank (`subsetGeometryRef` refuses
+    // otherwise), so the fallback cannot reintroduce the delete-everything state; a WRITTEN
+    // blank would be refused there, which is the same answer one frame earlier.
+    case 'subset':
+      return subsetGeometryRef(
+        d.source,
+        (values.scope ?? d.scope) as string,
+        (values.keep ?? d.keep) as boolean,
       );
     case 'gltf':
     case 'baked':

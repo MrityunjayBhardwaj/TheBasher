@@ -107,6 +107,18 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       if (tiling === null) return null;
       return tiling.sourceFaces + subsetCountOf(tiling.scope, tiling.sourceFaces) * tiling.repeats;
     }
+    // #671 — THE SUBSET ARM, AND IT IS NOT A GENERATOR'S. The arms above are
+    // `source + subset x repeats` because a scoped generator PRESERVES its whole input.
+    // A subset emits the selection and nothing else, so the source term is absent — which
+    // is the same 54-vs-36 distinction the descriptor's own comment draws, in arithmetic.
+    case 'subset': {
+      const sourceFaces = faceCountOf(descriptor.source.descriptor);
+      if (sourceFaces === null) return null;
+      const selected = scopeSelectedCount(descriptor.scope, sourceFaces);
+      // The complement is derived rather than counted a second way: `scopeSelectedCount` is
+      // the ONE door from a query to a count, and inverting its answer keeps it that way.
+      return descriptor.keep ? selected : sourceFaces - selected;
+    }
     case 'gltf':
     case 'baked':
       return null;
@@ -261,7 +273,46 @@ const ORDER_CACHE_LIMIT = 8;
  */
 const orderCache = new Map<string, TiledFaceOrder>();
 
+/**
+ * The subset's face order (#671). Separate from {@link faceTilingOf} because a subset is not
+ * a tiling: there are no repeats and no preserved input, so it has none of the three fields
+ * that record actually carries. Sharing the record would have meant a `repeats: 0` that reads
+ * as "generates nothing" rather than "emits the selection".
+ *
+ * 🔴 IT EXISTS AT ALL SO A MASK DOES NOT SILENTLY DROP PER-FACE MATERIALS. Without an order,
+ * `tiledFaceOrder` returns null for a subset, the attribute is not re-gathered, and a masked
+ * mesh quietly renders with one material where its source had several — a plausible screen,
+ * no error, and the wrong answer relied on. The order makes the gather `tiled[i] =
+ * source[order[i]]` exactly as it is for a generator.
+ */
+function subsetFaceOrder(
+  d: Extract<GeometryDescriptor, { kind: 'subset' }>,
+): TiledFaceOrder | null {
+  const sourceFaces = faceCountOf(d.source.descriptor);
+  if (sourceFaces === null) return null;
+
+  // Prefixed so it cannot collide with a generator's `${sourceFaces}|${scope}|${repeats}`,
+  // and carrying `keep` because the two polarities are different layouts over one query.
+  const cacheKey = `subset|${sourceFaces}|${d.scope}|${d.keep}`;
+  const hit = orderCache.get(cacheKey);
+  if (hit !== undefined) return hit;
+
+  const { mask } = scopeSelection(d.scope, sourceFaces);
+  const order: number[] = [];
+  // The SAME survival test the registry's `faceSubset` applies, so the attribute and the
+  // geometry cannot disagree about which faces survived.
+  for (let face = 0; face < sourceFaces; face++) {
+    if ((mask[face] === 1) !== d.keep) continue;
+    order.push(face);
+  }
+  const resolved: TiledFaceOrder = { sourceFaces, order };
+  if (orderCache.size >= ORDER_CACHE_LIMIT) orderCache.clear();
+  orderCache.set(cacheKey, resolved);
+  return resolved;
+}
+
 export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder | null {
+  if (descriptor.kind === 'subset') return subsetFaceOrder(descriptor);
   const tiling = faceTilingOf(descriptor);
   if (tiling === null) return null;
 

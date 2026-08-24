@@ -97,7 +97,7 @@ describe('ns-2 step 11 — the discard harness’s patches have not rotted', () 
     expect(discardPatchNames()).toEqual(REQUIRED_PATCHES);
   });
 
-  it('🔴 every patch still applies — the exit’s only discriminating instrument is alive', () => {
+  it('🔴 every patch still applies — the exit’s only discriminating instrument is alive', (ctx) => {
     const report = discardPatchApplicability();
 
     // 🔴 THE HARNESS RUNS THIS VERY TEST WITH A PATCH APPLIED, so mid-run the tree is
@@ -107,8 +107,25 @@ describe('ns-2 step 11 — the discard harness’s patches have not rotted', () 
     // patch, i.e. this gate would corrupt the exit measurement it exists to protect. The
     // harness refuses to START on a dirty tree, so any run that got this far had a clean
     // tree first and this row already had its say.
+    //
+    // 🔴 BUT IT SKIPS RATHER THAN PASSING (#720), AND THE DIFFERENCE IS NOT COSMETIC. This
+    // row abstains on a dirty tree, and a dirty tree is the normal state of a working tree
+    // during development — so a silent green here covered exactly the edit-test loop in
+    // which patches get rotted. Measured on #714: two full-tier runs reported
+    // `368 files / 4413 tests` green with three of these patches ALREADY rotted, and the
+    // third run, on a clean tree, found them. Read from a green tier, this row's own name
+    // asserted something that was false for the duration of that work.
+    //
+    // A gate's green has to distinguish THREE states — decided-and-passed,
+    // decided-and-failed, and could-not-decide — and a boolean assertion has two. `skip`
+    // is the third colour. It costs nothing in the harness case above (a skip is not a
+    // red, so the exit measurement is still uncorrupted) and it means a GREEN row here
+    // always carries its name's claim.
     if (!report.decidable) {
+      // The shape check still runs: an undecidable report must be EMPTY, not a partial
+      // list that reads like a verdict.
       expect(report.patches).toEqual([]);
+      ctx.skip();
       return;
     }
 

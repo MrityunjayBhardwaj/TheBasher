@@ -260,7 +260,7 @@ function registerProbeOperator(): void {
     outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
     chain: {
       input: 'target',
-      scope: { kind: 'source' },
+      scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
     },

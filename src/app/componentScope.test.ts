@@ -165,7 +165,7 @@ function arrayIndex(source: MeshDataValue, count: number, scope: string): number
       params,
       { target: source },
       ctx,
-      resolveComponentSelection(source, params),
+      resolveComponentSelection(source, params, 'face'),
     ) as ObjectData,
   );
 }
@@ -177,7 +177,7 @@ function mirrorIndex(source: MeshDataValue, scope: string): number {
       params,
       { target: source },
       ctx,
-      resolveComponentSelection(source, params),
+      resolveComponentSelection(source, params, 'face'),
     ) as ObjectData,
   );
 }

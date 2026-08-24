@@ -61,6 +61,7 @@ import {
 const LABELS: Readonly<Record<string, string>> = {
   ArrayModifier: 'Array',
   MirrorModifier: 'Mirror',
+  MaskModifier: 'Mask',
 };
 
 /** #498 — a module constant, not a fresh `[]` per render, so the rows keep a stable

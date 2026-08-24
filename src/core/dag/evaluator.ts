@@ -161,7 +161,14 @@ function scopeFor(
   // carry a scope query, so it reads as "none authored" rather than as a failure.
   const record: Readonly<Record<string, unknown>> =
     params !== null && typeof params === 'object' ? (params as Record<string, unknown>) : {};
-  return resolveComponentSelection(resolved[chain.input] as ObjectData | undefined, record);
+  // `chain.scope.domain` and not a constant: the atom class a selection names is the
+  // operator's own declaration (#714), and the narrowing above has already discarded the
+  // `'unscoped'` arm, which is the one with no domain to hand over.
+  return resolveComponentSelection(
+    resolved[chain.input] as ObjectData | undefined,
+    record,
+    chain.scope.domain,
+  );
 }
 
 interface Frame {

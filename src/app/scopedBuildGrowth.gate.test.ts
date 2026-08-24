@@ -298,7 +298,7 @@ describe('ns-2 step 10 — row 1: the OPERATOR puts its scope in the key, and th
     // answers, and those twelve are what the operator's selection is built from.
     const mesh = meshOf('box') as ObjectData;
     const counts = Array.from({ length: 12 }, (_, n) => {
-      const selection = resolveComponentSelection(mesh, { scope: `0-${n}` });
+      const selection = resolveComponentSelection(mesh, { scope: `0-${n}` }, 'face');
       return selection === null ? -1 : selection.count;
     });
     expect(counts).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
