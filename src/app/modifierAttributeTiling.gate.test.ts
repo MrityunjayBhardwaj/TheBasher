@@ -86,6 +86,7 @@ import { clear, getForRead } from './geometryRegistry';
 import { faceRangeMaterialAttributes, uniformMaterialAttributes } from '../nodes/meshAttributes';
 import { insert, read } from './attributeStore';
 import { mintAttributes } from '../nodes/attributeKey';
+import * as attributeKey from '../nodes/attributeKey';
 import { MATERIAL_INDEX, UV_MAP, type AttributeData } from '../nodes/attributes';
 import type { GeometryRef } from '../nodes/types';
 
@@ -477,7 +478,7 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     });
 
     it('a repeat over an unchanged source skips the gather and the content hash', () => {
-      // ── WHY THIS ROW IS A RATIO AND NOT AN IDENTITY CHECK ─────────────────────────────
+      // ── WHY THIS ROW COUNTS A CALL AND NOT A DURATION (#705) ──────────────────────────
       //
       // The rows above observe the LAYOUT cache through object identity. That instrument is
       // blind to the second cache — the one holding the tiled key — because a memo miss
@@ -487,66 +488,80 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       // went back to 1655 µs per call at 31,744 faces. The cache carrying ~99% of the win had
       // no detector at all, so this is that detector.
       //
-      // Two populations, measured in the SAME run so anything that shifts the whole machine
-      // lands in both terms and cancels — an absolute microsecond bound is the shape that does
-      // not travel to another CPU:
+      // 🔴 IT USED TO BE A WALL-CLOCK RATIO, WHICH MADE IT NON-DETERMINISTIC IN THE ONE TIER
+      // THAT IS TRUSTED TO BE DETERMINISTIC. It turned `main` red twice on a shared runner,
+      // most recently on a tree BYTE-IDENTICAL to one that had passed the same job ninety
+      // minutes earlier — the comparison that settles it as runner load and not code. A red
+      // then said either "the cache regressed" or "the runner was busy", with nothing in the
+      // output to tell a reader which, so the row spent trust instead of earning it.
       //
-      //   MISS — one layout, a DIFFERENT source assignment per call. The layout cache hits, so
-      //          the gather and the hash run every time, at a constant face count.
-      //   HIT  — one layout, one source, a varying offset. Exactly a drag.
+      // What the row actually claims is that the cache was CONSULTED. `mintAttributes` is the
+      // content hash named in this row's own title, and it is reachable only THROUGH the
+      // gather — the gather builds the record it is handed, with no early return between the
+      // two — while the memo returns above both. So one call count answers for both nouns in
+      // the title, exactly, and without a clock.
       //
-      // Same descriptor shape, same face count, same code path; the memo is the only
-      // difference. The sources are built OUTSIDE the timed loop so minting them is not
-      // measured.
+      // `growthBySource()` cannot do this job, which is worth saying because it looks like it
+      // could: `insert` returns early for a resident key and a miss re-mints the same content
+      // key, so the counter reads identically whether or not the memo was consulted.
       //
-      // ⚠️ THE SOURCE IS A SPHERE, NOT THE BOX EVERY OTHER ROW USES, AND THAT IS THE FINDING
-      // THAT WROTE THIS PARAGRAPH. Written first with the 36-face box it reads
-      // `hit 0.21ms / miss 0.17ms` over 300 calls — the hit measuring SLOWER, three runs in a
-      // row. Nothing was wrong with the cache: the work it skips is ~0.5 µs on 36 faces, below
-      // the cost of the differing key string the varying-offset arm builds. A cost instrument
-      // is only a detector on a population where the cost EXISTS, and the fixture that suits
-      // every correctness row here is too small by three orders of magnitude for this one.
+      // Both literals were OBSERVED before being written, and the arms are ORDERED — the miss
+      // control runs first, while nothing is memoised yet:
+      //
+      //   MISS — 6 distinct source assignments, one constant offset, cycled 20 times.
+      //          Exactly 6 gathers: one per distinct source, memoised thereafter.
+      //   HIT  — one source, a varying offset. Exactly a drag, and exactly 0 gathers.
+      //
+      // The sphere fixture is KEPT from the timing version deliberately. It is no longer
+      // needed for cost, but it is the population the sibling rows reason about, and
+      // shrinking it would change what this row covers in exchange for nothing.
       const sphereDescriptor = sphereGeometryRef(1, 32, 16, null).descriptor;
       const sourceFaces = faceCountOf(sphereDescriptor);
       expect(sourceFaces, 'the sphere fixture has no derivable face count').toBe(960);
 
-      // Annotated, not inferred. An evolving `[]` would be `any[]` here because the timed
-      // callbacks below read it before the pushes are all seen — three errors that neither
-      // `npm run typecheck` (it excludes tests) nor vitest's esbuild transpile can see, found
-      // by the changed-file sweep.
+      // Annotated, not inferred. An evolving `[]` would be `any[]` here — an error neither
+      // `npm run typecheck` (it excludes tests) nor vitest's esbuild transpile can see.
       const sources: GeometryRef[] = [];
       for (let variant = 0; variant < 6; variant++) {
         const minted = faceRangeMaterialAttributes(sphereDescriptor, variant, 500);
         insert(minted!.key, minted!.set, 'evaluate');
         sources.push(sphereGeometryRef(1, 32, 16, minted!.key));
       }
-      const COPIES = 8; // 960 source faces x 8 = 7,680 merged — where the cost is real
+
+      const COPIES = 8; // 960 source faces x 8 = 7,680 merged
       const RUNS = 20;
 
-      const time = (fn: (i: number) => void) => {
-        for (let i = 0; i < 5; i++) fn(i); // warm, so neither population pays for JIT
-        const t0 = performance.now();
-        for (let i = 0; i < RUNS; i++) fn(i);
-        return performance.now() - t0;
-      };
+      // Spied through the NAMESPACE rather than the named import, because that is the binding
+      // `meshAttributes.ts` calls through once vitest has transformed it — verified by a fresh
+      // call registering before either arm was written, rather than assumed from the tooling.
+      const gather = vi.spyOn(attributeKey, 'mintAttributes');
+      try {
+        gather.mockClear();
+        for (let i = 0; i < RUNS; i++) {
+          arrayGeometryRef(sources[i % sources.length], COPIES, [2, 0, 0]);
+        }
+        // The message is built from the SAME number the assertion reads — the old one was
+        // composed from a different measurement than the one it asserted, and so described a
+        // comfortable pass while reporting a failure.
+        expect(
+          gather,
+          `${RUNS} calls over ${sources.length} distinct sources gathered ` +
+            `${gather.mock.calls.length} times — expected exactly one gather per distinct source`,
+        ).toHaveBeenCalledTimes(sources.length);
 
-      const miss = time((i) => {
-        arrayGeometryRef(sources[i % sources.length], COPIES, [2, 0, 0]);
-      });
-      const hit = time((i) => {
-        arrayGeometryRef(sources[0], COPIES, [i * 0.001, 0, 0]);
-      });
-
-      // 5x, against a ratio measured at several hundred on this fixture. The margin is
-      // deliberately vast: this row exists to catch the cache being REMOVED, not to police its
-      // efficiency, and it is a RATIO within one run rather than a microsecond bound so a
-      // slower CPU moves both terms and cancels. If it ever fires, the cache is not consulted.
-      expect(
-        hit * 5,
-        `a memoised repeat cost ${hit.toFixed(2)}ms against ${miss.toFixed(2)}ms for a genuine ` +
-          `miss over ${RUNS} calls at ${COPIES * 960} merged faces — the tiled-key cache is ` +
-          `not being consulted`,
-      ).toBeLessThan(miss);
+        gather.mockClear();
+        for (let i = 0; i < RUNS; i++) {
+          arrayGeometryRef(sources[0], COPIES, [i * 0.001, 0, 0]);
+        }
+        expect(
+          gather,
+          `a ${RUNS}-step offset drag over one unchanged source gathered ` +
+            `${gather.mock.calls.length} times at ${COPIES * sourceFaces!} merged faces — ` +
+            `the tiled-key cache is not being consulted`,
+        ).toHaveBeenCalledTimes(0);
+      } finally {
+        gather.mockRestore();
+      }
     });
 
     it('a refused source is warned about EVERY time, not just the first', () => {
