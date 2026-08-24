@@ -1,18 +1,18 @@
 diff --git a/src/nodes/ArrayModifier.ts b/src/nodes/ArrayModifier.ts
-index 29c7475..9080b5a 100644
+index fc5e3d7..39df1bc 100644
 --- a/src/nodes/ArrayModifier.ts
 +++ b/src/nodes/ArrayModifier.ts
-@@ -174,7 +174,12 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData>
+@@ -192,7 +192,12 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData>
        source.geometry,
        params.count,
        params.offset,
 -      selection?.canonicalQuery,
 +      // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE —
 +      // at the point of use, inside this generator and no other. `requireResolvedScope`
-+      // still runs, the import stays, the required fourth argument stays, and every
-+      // source census stays green. Only the ANSWER stops travelling: the key is minted
-+      // unscoped, exactly as it was before step 13a.
++      // still runs, the import stays, the required fourth argument stays, the declared
++      // domain still travels, and every source census stays green. Only the ANSWER stops
++      // travelling: the key is minted unscoped, exactly as it was before step 13a.
 +      undefined,
+       SCOPE_DOMAIN,
      );
      return {
-       kind: 'ModifiedData',
