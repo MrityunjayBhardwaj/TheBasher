@@ -67,7 +67,7 @@ const evalOp = (params: { muted?: boolean; scope?: string }, target: ObjectData 
     full,
     { target, material: WIRED },
     undefined as never,
-    resolveComponentSelection(target, full),
+    resolveComponentSelection(target, full, 'face'),
   ) as ObjectData;
 };
 
@@ -125,7 +125,7 @@ describe('#638 SetMaterialOp — the full range still REPLACES, byte for byte', 
         { muted: false, scope: '0-1' },
         { target: src, material: [] },
         undefined as never,
-        resolveComponentSelection(src, { muted: false, scope: '0-1' }),
+        resolveComponentSelection(src, { muted: false, scope: '0-1' }, 'face'),
       ),
     ).toBe(src);
   });
@@ -482,7 +482,7 @@ describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source',
     for (const v1 of [{ muted: false }, { muted: false, faceFrom: 0, faceTo: -1 }]) {
       const migrated = migrate(v1);
       expect(migrated[SCOPE_PARAM]).toBe('');
-      expect(resolveComponentSelection(countlessSource(), migrated)).toBeNull();
+      expect(resolveComponentSelection(countlessSource(), migrated, 'face')).toBeNull();
     }
   });
 
@@ -491,7 +491,7 @@ describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source',
     expect(migrated[SCOPE_PARAM]).toBe('0-1');
 
     // Named, and naming the query — the refusal a director can act on, not a stack trace.
-    expect(() => resolveComponentSelection(countlessSource(), migrated)).toThrow(
+    expect(() => resolveComponentSelection(countlessSource(), migrated, 'face')).toThrow(
       /has no derivable face count/,
     );
   });
@@ -501,7 +501,7 @@ describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source',
     // scope that throws over EVERY source would pass it and mean something entirely different.
     // The control is what makes the refusal attributable to the SOURCE.
     const migrated = migrate({ muted: false, faceFrom: 0, faceTo: 1 });
-    const sel = resolveComponentSelection(boxData(), migrated);
+    const sel = resolveComponentSelection(boxData(), migrated, 'face');
     expect(sel).not.toBeNull();
     // Field by field rather than deep-equality: the resolved selection also carries a `has`
     // PREDICATE, which a JSON-shaped expectation cannot see — the probe that drafted this row

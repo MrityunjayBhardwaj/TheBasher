@@ -227,7 +227,7 @@ function directly(row: Row, bypassed: boolean): unknown {
     params,
     inputsOf(row),
     undefined as never,
-    scoped ? resolveComponentSelection(row.src as ObjectData, params) : undefined,
+    scoped ? resolveComponentSelection(row.src as ObjectData, params, 'face') : undefined,
   );
 }
 

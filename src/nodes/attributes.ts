@@ -73,6 +73,56 @@ export const KNOWN_DOMAINS = ['point', 'edge', 'face', 'corner'] as const;
 
 export type KnownDomain = (typeof KNOWN_DOMAINS)[number];
 
+/**
+ * THE ATOM CLASSES A SCOPE MAY BE RESOLVED AT TODAY (#714).
+ *
+ * `face` ONLY, and the reason is arithmetic rather than taste: a face count is derivable
+ * from a descriptor and the other three are not. `point` needs a new count derivation and
+ * has 24 seam-split points on a box; `edge` has no buffer at all.
+ *
+ * ── WHY THIS IS A TYPE AND NOT THE MODULE CONSTANT IT REPLACED ────────────────────────
+ *
+ * It was `const SCOPE_DOMAIN: KnownDomain = 'face'` — one module-private value that every
+ * resolution silently agreed with. Two things were wrong with that, and only the second is
+ * about this file. The first: an operator had no way to SAY which class its scope named, so
+ * every operator's answer was face whether or not its author had thought about it. The
+ * second: widening it was an assignment, and an assignment reds nothing — the sites that
+ * would then be wrong go on compiling.
+ *
+ * As a type the widening is a DETECTOR. Adding `'point'` here stops compiling every
+ * `never`-closed switch over a {@link ScopeDomain} until it declares an arm, which is the
+ * list of sites that owe an answer, produced by the compiler rather than by a census. And
+ * an operator declaring `domain: 'point'` today fails at its own declaration, because
+ * `'point'` is not assignable — instead of registering cleanly and quietly behaving as face.
+ *
+ * ⚠️ THE LIST AND THE TYPE ARE ONE DECLARATION, exactly as `KNOWN_DOMAINS` and
+ * {@link KnownDomain} are: the const is the source and the type is read off it, so widening
+ * is a single edit and the two halves have no way to drift. The `satisfies readonly
+ * KnownDomain[]` is what stops it naming a class the domain vocabulary does not have —
+ * deleting a member from `KNOWN_DOMAINS` reds this rather than leaving it pointing at a
+ * domain nothing else believes in.
+ *
+ * 🔴 THERE IS DELIBERATELY NO REGISTRATION-TIME REFUSAL TO MATCH, and the reason is a
+ * measurement rather than an oversight. `chain`'s four fields are refused at runtime because
+ * the test tier is type-blind and omitting one fails SILENTLY. Omitting a domain does not:
+ * it arrives at `componentCountOf` as `undefined` and comes straight back out of that
+ * function's `never` default as `componentSelection: undeclared domain undefined`, naming
+ * the resolver and the calling test in the stack. Measured while this landed — 88 test-tier
+ * call sites went red at once, every one of them pointing at itself. A second refusal would
+ * buy an earlier throw for a case the type already closes in production, and would cost
+ * `core/dag/registry.ts` a value import into `nodes/`, which the layering row in
+ * `componentScopeChannel.gate.test.ts` pins as an exact set precisely so a third file has to
+ * argue for itself. This one cannot.
+ *
+ * 🔴 THIS IS THE *CODE* HALF ONLY. `attributes.ts` draws the split this leans on: storage
+ * speaks the open `DomainId` so a foreign class round-trips, dispatch speaks a closed set so
+ * every site answers for every member. A scope's domain is dispatch — it is chosen by an
+ * operator's declaration, never read off a file — so the closed half is the right one here.
+ */
+export const SCOPE_DOMAINS = ['face'] as const satisfies readonly KnownDomain[];
+
+export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
+
 /** The one crossing from the open data identifier to the closed code one. */
 export function isKnownDomain(domain: DomainId): domain is KnownDomain {
   return (KNOWN_DOMAINS as readonly string[]).includes(domain);

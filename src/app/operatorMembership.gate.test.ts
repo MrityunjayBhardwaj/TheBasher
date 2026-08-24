@@ -80,7 +80,7 @@ function registerOp(name: string, section: OperatorSection, lane: SocketTypeName
       // ns-2 step 9b's SIXTH refusal — derived from the lane, see `operatorLane.gate.test.ts`.
       scope:
         lane === 'ObjectData'
-          ? { kind: 'source' }
+          ? { kind: 'source', domain: 'face' }
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,

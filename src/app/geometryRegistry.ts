@@ -43,6 +43,7 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // imports, which is what keeps the registry's declared import set honest: every module
 // here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
 import { scopeSelection } from '../nodes/scopeQuery';
+import type { ScopeDomain } from '../nodes/attributes';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -635,7 +636,7 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
     // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
     // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
     // scope selecting nothing the identity rather than an empty mesh.
-    const copy = i === 0 ? source.clone() : faceSubset(source, d.scope);
+    const copy = i === 0 ? source.clone() : elementSubset(source, d.scope, d.domain);
     if (copy === null) return null;
     copies.push(copy.applyMatrix4(m));
   }
@@ -645,8 +646,22 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
 }
 
 /**
- * A face SUBSET of `source` — a fresh clone carrying only the triangles `scope` names, or
- * a plain clone when there is no scope (ns-2 step 12.5).
+ * An ELEMENT subset of `source` at one atom class — a fresh clone carrying only the elements
+ * `scope` names, or a plain clone when there is no scope (ns-2 step 12.5, #714).
+ *
+ * ── WHY IT DISPATCHES ON A DOMAIN IT HAS ONE ARM FOR ──────────────────────────────────
+ *
+ * It was `faceSubset`, and the name was the honest description of a function that took a
+ * query and assumed what it indexed. That assumption was correct and unrecorded: nothing
+ * anywhere said the query named faces, so widening the resolvable set would have changed what
+ * this function MEANS without changing a line of it — and the `point` reading of `0-5` is a
+ * different set of triangles that still builds, still draws, and raises nothing.
+ *
+ * The `never` below closes "is there an arm for every class a scope can be resolved at?".
+ * Adding `'point'` to {@link ScopeDomain} stops this compiling until someone decides what a
+ * point subset of an index buffer is, which is the question a rename alone would have let a
+ * future author skip. ⚠️ It closes existence, not correctness: the face arm being right is a
+ * runtime claim, held by the tiling gate's literal group layouts.
  *
  * 🔴 A FACE SUBSET IS AN INDEX SUBSET OVER UNCHANGED ATTRIBUTE BUFFERS. The positions of
  * the faces it drops are still in the buffer and `mergeGeometries` copies them out
@@ -665,9 +680,13 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
  * triplets, which is a different implementation and would be written when something can
  * actually produce one — guessing at it now would ship an untested arm on the render path.
  */
-function faceSubset(
+function elementSubset(
   source: BufferGeometry,
   scope: string | undefined,
+  // Paired with `scope` by `scopeField`, so "a query at no class" has no constructor. Read
+  // as a pair here too: a lone half is a defect in the producer, not an authoring state, and
+  // the plain clone is the answer that cannot corrupt geometry while someone finds it.
+  domain: ScopeDomain | undefined,
   // #671 — WHICH SIDE OF THE MASK SURVIVES. `true` (the default, and what every generator
   // caller means) keeps the selected faces; `false` keeps the complement, which is Blast's
   // *delete the selection* and the Mask modifier's inverted toggle. It is a parameter here
@@ -676,7 +695,24 @@ function faceSubset(
   // that drifts the first time the index layout changes.
   keep = true,
 ): BufferGeometry | null {
-  if (scope === undefined) return source.clone();
+  if (scope === undefined || domain === undefined) return source.clone();
+  switch (domain) {
+    case 'face':
+      return faceSubset(source, scope, keep);
+    default: {
+      const unreachable: never = domain;
+      console.error(
+        `geometryRegistry: no subset arm for domain ${JSON.stringify(
+          unreachable,
+        )} — ScopeDomain grew and this switch did not`,
+      );
+      return null;
+    }
+  }
+}
+
+/** The `face` arm of {@link elementSubset}: an index subset over unchanged attribute buffers. */
+function faceSubset(source: BufferGeometry, scope: string, keep: boolean): BufferGeometry | null {
   const index = source.getIndex();
   if (index === null) {
     console.error(
@@ -699,9 +735,9 @@ function faceSubset(
 /**
  * #671 (Blast / #668's Mask) — emit the selected faces and drop the rest, or the reverse.
  *
- * The whole operator is `faceSubset` at the top level, which is what makes it a different
+ * The whole operator is `elementSubset` at the top level, which is what makes it a different
  * thing from a scoped generator rather than a rearrangement of one: a generator calls
- * `faceSubset` to decide what to GENERATE FROM and then merges the result back with its
+ * `elementSubset` to decide what to GENERATE FROM and then merges the result back with its
  * whole input, so the unselected faces survive. This does not merge anything back. That is
  * the 54-vs-36 distinction the `array` descriptor's comment draws, on the other side of it.
  *
@@ -711,7 +747,7 @@ function faceSubset(
 function buildSubset(d: Extract<GeometryDescriptor, { kind: 'subset' }>): BufferGeometry | null {
   const source = get(d.source, 'internal');
   if (!source) return null;
-  return faceSubset(source, d.scope, d.keep);
+  return elementSubset(source, d.scope, d.domain, d.keep);
 }
 
 /**
@@ -739,7 +775,7 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
   // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
   // primitives to mirror, so the original is never subset and the reflection always is.
   const original = source.clone();
-  const subset = faceSubset(source, d.scope);
+  const subset = elementSubset(source, d.scope, d.domain);
   if (subset === null) return null;
   const reflected = reverseWinding(subset.applyMatrix4(reflect));
   const merged = mergeGeometries([original, reflected]);

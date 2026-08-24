@@ -138,7 +138,7 @@ function honours(type: string): { moved: boolean; kind: string } {
       params as never,
       inputs as never,
       ctx as never,
-      resolveComponentSelection(src, params),
+      resolveComponentSelection(src, params, 'face'),
     );
   };
 
@@ -205,7 +205,7 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
       outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
       chain: {
         input: 'target',
-        scope: { kind: 'source' },
+        scope: { kind: 'source', domain: 'face' },
         bypass: { kind: 'passthrough', param: 'muted' },
         section: 'modifier',
       },

@@ -50,7 +50,7 @@ function registerBinaryOp(type: string, spine: SocketId): void {
     chain: {
       input: spine,
       // A data-lane geometry operator: the selection would name what it reads.
-      scope: { kind: 'source' },
+      scope: { kind: 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'modifier',
     },

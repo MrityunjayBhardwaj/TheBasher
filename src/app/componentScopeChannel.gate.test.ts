@@ -160,7 +160,9 @@ function registerRecorder(type: string, scope: 'source' | 'target' | 'unscoped')
     chain: {
       input: 'target',
       scope:
-        scope === 'unscoped' ? { kind: 'unscoped', why: 'declined' } : { kind: scope as 'source' },
+        scope === 'unscoped'
+          ? { kind: 'unscoped', why: 'declined' }
+          : { kind: scope as 'source', domain: 'face' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section: 'none',
     },
@@ -572,8 +574,8 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // selection derived from anything further would not be covered by that cache — two
     // different scopes would collide on one entry. Asserted as determinism over repeated
     // calls with equal inputs, and as sensitivity to each of the two inputs separately.
-    const a = resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-9' })!;
-    const b = resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-9' })!;
+    const a = resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-9' }, 'face')!;
+    const b = resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-9' }, 'face')!;
     expect([a.count, a.length, a.has(3), a.has(40)]).toEqual([
       b.count,
       b.length,
@@ -581,7 +583,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
       b.has(40),
     ]);
     // params moved → answer moves.
-    expect(resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-4' })!.count).toBe(5);
+    expect(resolveComponentSelection(MESH, { [SCOPE_PARAM]: '0-4' }, 'face')!.count).toBe(5);
     // spine moved → answer moves (a different mesh has a different length).
     const smallerKey = mintMeshAttributes(sphereDescriptor(1, 3, 2), 'evaluate');
     const smaller: MeshDataValue = {
@@ -591,7 +593,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
       materialKey: null,
       attributeKey: smallerKey,
     };
-    expect(resolveComponentSelection(smaller, {})!.length).toBe(6);
+    expect(resolveComponentSelection(smaller, {}, 'face')!.length).toBe(6);
   });
 
   it('THE SIXTH REFUSAL: a scoped spine that does not carry ObjectData is refused at registration', () => {
@@ -609,7 +611,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
         outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
         chain: {
           input: 'target',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'none',
         },

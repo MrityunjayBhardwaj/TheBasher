@@ -76,7 +76,7 @@ function mustResolve(
   spine: ObjectData,
   params: Readonly<Record<string, unknown>>,
 ): ComponentSelection {
-  const resolved = resolveComponentSelection(spine, params);
+  const resolved = resolveComponentSelection(spine, params, 'face');
   if (resolved === null) {
     throw new Error(
       `a resolvable fixture answered null for ${JSON.stringify(params)} — that is a statement ` +
@@ -169,26 +169,26 @@ describe('#607 a selection cannot be built against a count that does not exist',
   it('answers `null` — not a throw — when nothing was authored, on every shipped population', () => {
     // The three values that reach this today, all of them ordinary. If any of these throws,
     // an operator that works right now stops working, on the render road.
-    expect(resolveComponentSelection(GLTF, {})).toBeNull();
-    expect(resolveComponentSelection(CAMERA, {})).toBeNull();
-    expect(resolveComponentSelection(undefined, {})).toBeNull();
+    expect(resolveComponentSelection(GLTF, {}, 'face')).toBeNull();
+    expect(resolveComponentSelection(CAMERA, {}, 'face')).toBeNull();
+    expect(resolveComponentSelection(undefined, {}, 'face')).toBeNull();
     // A blank query is an absent one here too — the same collapse as on a resolvable value.
-    expect(resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '  ' })).toBeNull();
+    expect(resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '  ' }, 'face')).toBeNull();
   });
 
   it('refuses a descriptor with no derivable face count when a scope WAS authored, by name', () => {
     // Without this the author's scope would be silently dropped and the operator would
     // apply to everything — on a mesh whose faces they can see and count.
-    expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0-5' })).toThrow(
+    expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0-5' }, 'face')).toThrow(
       /no derivable face count/,
     );
   });
 
   it('refuses a value with no mesh components at all when a scope WAS authored, by name', () => {
-    expect(() => resolveComponentSelection(CAMERA, { [SCOPE_PARAM]: '0-5' })).toThrow(
+    expect(() => resolveComponentSelection(CAMERA, { [SCOPE_PARAM]: '0-5' }, 'face')).toThrow(
       /has no mesh components/,
     );
-    expect(() => resolveComponentSelection(undefined, { [SCOPE_PARAM]: '0-5' })).toThrow(
+    expect(() => resolveComponentSelection(undefined, { [SCOPE_PARAM]: '0-5' }, 'face')).toThrow(
       /unwired spine/,
     );
   });
@@ -202,14 +202,16 @@ describe('#607 a selection cannot be built against a count that does not exist',
     // #654 has since RETIRED that guard, having measured its rule to be live elsewhere. The
     // row stays, because what it pins is a property of THIS refusal — that a null count is
     // its subject and not something a count comparison could ever have covered.
-    expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0' })).toThrow();
+    expect(() => resolveComponentSelection(GLTF, { [SCOPE_PARAM]: '0' }, 'face')).toThrow();
   });
 
   it('a non-string scope param is refused whatever the value can carry', () => {
     // The one branch that does not depend on the spine: a param declared as something
     // other than a string can only come from a schema, and guessing at its meaning is how
     // a scope gets lost.
-    expect(() => resolveComponentSelection(BOX, { [SCOPE_PARAM]: 7 })).toThrow(/must be a string/);
+    expect(() => resolveComponentSelection(BOX, { [SCOPE_PARAM]: 7 }, 'face')).toThrow(
+      /must be a string/,
+    );
   });
 });
 
@@ -619,7 +621,11 @@ function resolveAt(query: string, faces: number): ComponentSelection {
     geometry: { key: `sphere|${faces}`, descriptor },
     material: null,
   };
-  const resolved = resolveComponentSelection(spine, query === '' ? {} : { [SCOPE_PARAM]: query });
+  const resolved = resolveComponentSelection(
+    spine,
+    query === '' ? {} : { [SCOPE_PARAM]: query },
+    'face',
+  );
   // Same assertion as `scope`: this sphere is resolvable, so a `null` here is a statement
   // about the resolver and not about the query under test.
   if (resolved === null) throw new Error(`the ${faces}-face sphere fixture resolved to null`);

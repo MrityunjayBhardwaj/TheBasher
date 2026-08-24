@@ -51,7 +51,7 @@ function evalOp(params: Record<string, unknown>, src: ObjectData): unknown {
     parsed,
     { target: src } as never,
     undefined as never,
-    resolveComponentSelection(src, parsed as unknown as Record<string, unknown>),
+    resolveComponentSelection(src, parsed as unknown as Record<string, unknown>, 'face'),
   );
 }
 
@@ -168,7 +168,7 @@ function evalSet(params: { scope?: string }, src: ObjectData): ObjectData {
     full,
     { target: src, material: WIRED },
     undefined as never,
-    resolveComponentSelection(src, full),
+    resolveComponentSelection(src, full, 'face'),
   ) as ObjectData;
 }
 

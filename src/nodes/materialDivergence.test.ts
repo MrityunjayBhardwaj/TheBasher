@@ -70,7 +70,7 @@ function evalOverride(color: string, scope: string, src: ObjectData): ModifiedDa
     parsed,
     { target: src } as never,
     undefined as never,
-    resolveComponentSelection(src, parsed as unknown as Record<string, unknown>),
+    resolveComponentSelection(src, parsed as unknown as Record<string, unknown>, 'face'),
   ) as ModifiedDataValue;
 }
 

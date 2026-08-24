@@ -193,7 +193,9 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     ).toThrow(/missing scope/);
 
     expect(() =>
-      registerNodeType(probeDef({ input: 'target', scope: { kind: 'source' } }) as never),
+      registerNodeType(
+        probeDef({ input: 'target', scope: { kind: 'source', domain: 'face' } }) as never,
+      ),
     ).toThrow(/missing bypass, section/);
   });
 
@@ -206,7 +208,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'target',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'bypassed' },
           section: 'modifier',
         }) as never,
@@ -230,7 +232,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'nonesuch',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
         }) as never,
@@ -242,7 +244,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
         probeDef(
           {
             input: 'target',
-            scope: { kind: 'source' },
+            scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
           },
@@ -268,7 +270,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
         probeDef(
           {
             input: 'target',
-            scope: { kind: 'source' },
+            scope: { kind: 'source', domain: 'face' },
             bypass: { kind: 'passthrough', param: 'muted' },
             section: 'modifier',
           },
@@ -283,7 +285,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       registerNodeType(
         probeDef({
           input: 'target',
-          scope: { kind: 'source' },
+          scope: { kind: 'source', domain: 'face' },
           bypass: { kind: 'passthrough', param: 'muted' },
           section: 'modifier',
         }) as never,

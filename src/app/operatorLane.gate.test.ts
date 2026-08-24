@@ -125,7 +125,7 @@ function registerLaneOp(
       // property of mesh data" is the claim, not a property of this fixture.
       scope:
         lane === 'ObjectData'
-          ? { kind: 'source' }
+          ? { kind: 'source', domain: 'face' }
           : { kind: 'unscoped', why: 'no-component-domain' },
       bypass: { kind: 'passthrough', param: 'muted' },
       section,

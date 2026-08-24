@@ -84,7 +84,7 @@ function evalMod(
     // a selection is the defect this phase exists to delete. This helper stays a DIRECT call
     // on purpose — the muted case below asserts the operator is blind to the bypass param,
     // which only a direct call can observe ([[H350]]).
-    resolveComponentSelection(target, full),
+    resolveComponentSelection(target, full, 'face'),
   ) as ObjectData | undefined;
 }
 

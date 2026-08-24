@@ -66,6 +66,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import type { ScopeDomain } from './attributes';
 import type { ObjectData } from './types';
 import { arrayGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
@@ -114,6 +115,23 @@ export const ArrayModifierParams = z.object({
 });
 export type ArrayModifierParams = z.infer<typeof ArrayModifierParams>;
 
+/**
+ * THE ATOM CLASS THIS OPERATOR'S SCOPE NAMES — declared once, read twice (#714).
+ *
+ * The declaration below hands it to the evaluator, which resolves the selection at it; the
+ * builder call in `evaluate` hands the same value to the descriptor, which folds it into the
+ * cache key. One `const` for both because they must not be able to disagree: a selection
+ * resolved at one class and a geometry keyed at another is a mesh built from the wrong set,
+ * and both would draw.
+ *
+ * ⚠️ NOT `selection.domain`, DELIBERATELY, though at runtime it is the same value. A
+ * `ComponentSelection` is a general value and its `domain` is the wide `KnownDomain` — the
+ * memoisation rows construct selections at classes no operator can declare. Reading it here
+ * would need a cast back down to {@link ScopeDomain}, and a cast is exactly the thing that
+ * keeps compiling when the two sets stop coinciding.
+ */
+const SCOPE_DOMAIN: ScopeDomain = 'face';
+
 export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> = {
   type: 'ArrayModifier',
   version: 1,
@@ -129,7 +147,7 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
     input: 'target',
     // A generator: the selection names which faces it GENERATES FROM. It preserves its
     // whole input and replicates the subset.
-    scope: { kind: 'source' },
+    scope: { kind: 'source', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
   },
@@ -175,6 +193,7 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
       params.count,
       params.offset,
       selection?.canonicalQuery,
+      SCOPE_DOMAIN,
     );
     return {
       kind: 'ModifiedData',

@@ -79,7 +79,7 @@ function evalMod(
     full,
     { target },
     ctx,
-    resolveComponentSelection(target, full),
+    resolveComponentSelection(target, full, 'face'),
   ) as ObjectData | undefined;
 }
 

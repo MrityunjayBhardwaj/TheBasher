@@ -49,6 +49,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import type { ScopeDomain } from './attributes';
 import type { ObjectData } from './types';
 import { subsetGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
@@ -97,6 +98,23 @@ export const MaskModifierParams = z.object({
 });
 export type MaskModifierParams = z.infer<typeof MaskModifierParams>;
 
+/**
+ * THE ATOM CLASS THIS OPERATOR'S SCOPE NAMES — declared once, read twice (#714).
+ *
+ * The declaration below hands it to the evaluator, which resolves the selection at it; the
+ * builder call in `evaluate` hands the same value to the descriptor, which folds it into the
+ * cache key. One `const` for both because they must not be able to disagree: a selection
+ * resolved at one class and a geometry keyed at another is a mesh built from the wrong set,
+ * and both would draw.
+ *
+ * ⚠️ NOT `selection.domain`, DELIBERATELY, though at runtime it is the same value. A
+ * `ComponentSelection` is a general value and its `domain` is the wide `KnownDomain` — the
+ * memoisation rows construct selections at classes no operator can declare. Reading it here
+ * would need a cast back down to {@link ScopeDomain}, and a cast is exactly the thing that
+ * keeps compiling when the two sets stop coinciding.
+ */
+const SCOPE_DOMAIN: ScopeDomain = 'face';
+
 export const MaskModifierNode: NodeDefinition<MaskModifierParams, ObjectData> = {
   type: 'MaskModifier',
   version: 1,
@@ -109,7 +127,7 @@ export const MaskModifierNode: NodeDefinition<MaskModifierParams, ObjectData> = 
     input: 'target',
     // A writer, not a generator: the selection names the faces that are acted on, and
     // nothing is merged back. See the header on why this is not `'source'`.
-    scope: { kind: 'target' },
+    scope: { kind: 'target', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
   },
@@ -132,7 +150,7 @@ export const MaskModifierNode: NodeDefinition<MaskModifierParams, ObjectData> = 
     // this passes through rather than acting on the total selection.
     const query = selection?.canonicalQuery;
     if (query === null || query === undefined) return src;
-    const geometry = subsetGeometryRef(source.geometry, query, params.keep);
+    const geometry = subsetGeometryRef(source.geometry, query, params.keep, SCOPE_DOMAIN);
     return {
       kind: 'ModifiedData',
       geometry,

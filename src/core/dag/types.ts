@@ -14,7 +14,7 @@ import { z } from 'zod';
 // `src/nodes`. This one, and the VALUE import the evaluator adds beside it, are the two
 // that road was extracted for (`modifierDataSource` became a leaf in the same wave so the
 // edge does not close a cycle). Pinned by `componentScopeChannel.gate.test.ts`.
-import type { ComponentSelection } from '../../nodes/componentSelection';
+import type { ComponentSelection, ScopeDomain } from '../../nodes/componentSelection';
 
 // ---------------------------------------------------------------------------
 // Identifiers
@@ -324,18 +324,34 @@ export interface ResolvedInputs {
  * into `'unscoped'` and the DIFFERENCE that actually matters moved into `why`, where it
  * is carried by the type instead of by prose.
  */
+/**
+ * WHAT a selection names, and — on the two arms that have one — WHICH ATOM CLASS it names
+ * them from (#714).
+ *
+ * 🔴 `domain` SITS ON THE SCOPED ARMS AND NOT ON {@link ChainDeclaration}, so an unscoped
+ * operator has no domain to answer for rather than a domain that means nothing. It used to
+ * be a module-private constant in `componentSelection.ts` that every resolution silently
+ * agreed with, which meant an operator could not state its atom class even if its author had
+ * decided one. Declaring it here puts the answer beside `input`, `bypass` and `section` —
+ * the other three things that are true of a node BECAUSE it is an operator.
+ *
+ * Typed {@link ScopeDomain} and not `KnownDomain`: the set is `'face'` alone today, so
+ * `domain: 'point'` fails to compile at the operator's own declaration instead of
+ * registering cleanly and quietly behaving as face. See that type for what widening it
+ * reds.
+ */
 export type ScopeKind =
   /**
    * The selection names which components the operator READS. A generator preserves its
    * whole input and generates from the subset — a scoped Mirror reflects the selected
    * faces and keeps the original, which is Houdini's Mirror SOP with Keep Original on.
    */
-  | { readonly kind: 'source' }
+  | { readonly kind: 'source'; readonly domain: ScopeDomain }
   /**
    * The selection names which components RECEIVE the write. A scoped Set Material
    * assigns to the selected faces and leaves the rest as they were.
    */
-  | { readonly kind: 'target' }
+  | { readonly kind: 'target'; readonly domain: ScopeDomain }
   /**
    * No selection reaches this operator, and `why` says whether that is a fact or a
    * decision — the distinction an escape hatch has to carry to stay honest:
