@@ -256,8 +256,11 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
  *                  A miss is "not read yet".
  *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
  *                  An absent clone is "still loading the asset".
+ *   'unreachable'— a RECIPE whose source the registry can never `get`. Composition only:
+ *                  no leaf kind is unreachable. A miss is permanent until #367 makes a
+ *                  glTF handle resolve for the operator chain.
  */
-export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
+export type GeometryAvailability = 'procedural' | 'primed' | 'clone' | 'unreachable';
 
 /**
  * The availability class of a geometry kind.
@@ -277,19 +280,67 @@ export type GeometryAvailability = 'procedural' | 'primed' | 'clone';
  * `GeometryDescriptor['kind']`, so the guarantee holds for the first time — the fix was not
  * to the `never`, which was always correct, but to the union it closed on.
  */
-export function availabilityOf(kind: GeometryDescriptor['kind']): GeometryAvailability {
-  switch (kind) {
+export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailability {
+  switch (descriptor.kind) {
     case 'box':
     case 'sphere':
-    case 'array':
-    case 'mirror':
       return 'procedural';
     case 'baked':
       return 'primed';
     case 'gltf':
       return 'clone';
+    // ── #708 — A RECIPE ROOTED AT A BUFFER IS NOT PROCEDURAL ──────────────────────────
+    //
+    // These two used to sit in the 'procedural' arm above, classified by their OWN kind
+    // while their buildability belongs to their source: `buildArray`/`buildMirror` resolve
+    // `descriptor.source` through this same registry, so a generator is available exactly
+    // when its source is. Measured before the change — an array over a baked source read
+    // `none`, whose declared meaning is "there genuinely is none, and waiting will not
+    // help", and then read `ok` the moment the source was primed. The registry disproved
+    // its own answer one call later; that is a false statement, not a lost distinction.
+    case 'array':
+    case 'mirror':
+      return composedOverSource(availabilityOf(descriptor.source.descriptor));
     default: {
-      const unreachable: never = kind;
+      const unreachable: never = descriptor;
+      return unreachable;
+    }
+  }
+}
+
+/**
+ * How a generator's availability follows from its SOURCE's — the composition rule, stated
+ * once because the two generator arms above must not answer it differently.
+ *
+ * It is not identity, and the exception is the whole reason this is a function. A `clone`
+ * source does not make the generator a `clone`: nothing loads an ARRAY of a glTF child into
+ * an asset clone, so `elsewhere` ("look in the clone for this geometry") would be false, and
+ * it would reach `resolveMeshUVSpace`, which treats that status as "this descriptor IS a
+ * gltf descriptor" and reads `assetRef` straight off it. Handed an array descriptor it finds
+ * none, gets no clone, and returns a permanent loading state. So a recipe over a clone is
+ * `unreachable`: `get` on a gltf ref always returns null and clone loading puts nothing in
+ * the registry, so the build can never succeed here — until #367.
+ *
+ * Closed by a `never` like its caller: a fifth availability class must decide what it means
+ * under composition rather than inherit an arm by accident.
+ */
+function composedOverSource(source: GeometryAvailability): GeometryAvailability {
+  switch (source) {
+    // Buildable now, and the generator's own build is synchronous — the unchanged case.
+    case 'procedural':
+      return 'procedural';
+    // Buildable once the async read lands. The generator inherits the WAIT, which is the
+    // defect this function exists to fix.
+    case 'primed':
+      return 'primed';
+    // See the block above: reachable for the source, never for a recipe over it.
+    case 'clone':
+      return 'unreachable';
+    // Already blocked further down the chain; blockedness does not clear by nesting.
+    case 'unreachable':
+      return 'unreachable';
+    default: {
+      const unreachable: never = source;
       return unreachable;
     }
   }
@@ -317,7 +368,7 @@ export type GeometryReadResult =
  * second way to reach the resource, it is the same read with its absence typed.
  */
 export function readGeometry(ref: GeometryRef): GeometryReadResult {
-  const availability = availabilityOf(ref.descriptor.kind);
+  const availability = availabilityOf(ref.descriptor);
   const geometry = get(ref, 'read');
   if (geometry) return { status: 'ok', geometry };
   switch (availability) {
@@ -325,7 +376,13 @@ export function readGeometry(ref: GeometryRef): GeometryReadResult {
       return { status: 'elsewhere', availability };
     case 'primed':
       return { status: 'pending', availability };
+    // #708 — both mean "waiting will not help", and they are kept as separate CLASSES
+    // rather than folded, because they become false at different moments: 'procedural'
+    // is a malformed descriptor and stays wrong forever, while 'unreachable' is a
+    // standing limitation that #367 is expected to lift. Folding them would lose the
+    // difference exactly where the next reader needs it.
     case 'procedural':
+    case 'unreachable':
       return { status: 'none', availability };
     default: {
       const unreachable: never = availability;
