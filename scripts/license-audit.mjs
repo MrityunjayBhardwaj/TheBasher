@@ -130,7 +130,7 @@ function main() {
   const here = path.dirname(fileURLToPath(import.meta.url));
   const externalCode = auditExternalModels({
     manifestPath: path.join(here, 'external-models.json'),
-    srcRoot: path.resolve(here, '..', 'src'),
+    repoRoot: path.resolve(here, '..'),
   });
   if (externalCode !== 0) process.exit(externalCode);
 

@@ -17,7 +17,66 @@ import path from 'node:path';
 
 export const VERDICTS = new Set(['ALLOWED', 'ALLOWED_WITH_CONDITIONS', 'BLOCKED']);
 
+// Every root where a model id could be referenced by code that actually runs.
+// `docs/` is absent on purpose: prose must be able to name a blocked model.
+export const SCAN_ROOTS = ['src', 'tests', 'scripts'];
+
+// The three files whose job is to name blocked models. Without this the gate reds
+// on its own record. Enumerated exactly, never a glob or a directory — an
+// over-broad exemption silently re-opens the hole it was cut for (#737).
+export const EXEMPT = [
+  'scripts/external-models.json',
+  'scripts/external-model-audit.mjs',
+  'scripts/external-model-audit.test.mjs',
+];
+
 const REQUIRED = ['id', 'name', 'role', 'source', 'licence', 'verdict', 'reason', 'citations'];
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Parsed as UTC midnight so the verdict does not depend on the runner's timezone. */
+function parseDay(s) {
+  return Date.parse(`${s}T00:00:00Z`);
+}
+
+/** A verdict's own check date, falling back to the manifest-wide one (#740). */
+export function entryCheckedAt(model, manifest) {
+  return model?.checkedAt ?? manifest?.checkedAt ?? null;
+}
+
+/**
+ * A recorded verdict is a measurement with a shelf life, not a fact — the NVIDIA
+ * Open Model grant is revocable and incorporates terms by reference, so it can
+ * change without anything here moving. `now` is injected so the result is
+ * deterministic and the thresholds are testable without waiting (#740).
+ */
+export function checkStaleness(manifest, now = new Date()) {
+  const cfg = manifest?.staleness ?? {};
+  const warnAfter = Number(cfg.warnAfterDays);
+  const failAfter = Number(cfg.failAfterDays);
+  const warnings = [];
+  const failures = [];
+  if (!Number.isFinite(warnAfter) || !Number.isFinite(failAfter)) {
+    return {
+      warnings,
+      failures: ['staleness.warnAfterDays / staleness.failAfterDays missing or not numbers'],
+    };
+  }
+  const nowMs = now.getTime();
+  for (const m of manifest?.models ?? []) {
+    const at = entryCheckedAt(m, manifest);
+    if (!at || !DATE.test(at)) {
+      failures.push(`${m?.id}: checkedAt missing or not YYYY-MM-DD`);
+      continue;
+    }
+    const ageDays = Math.floor((nowMs - parseDay(at)) / 86400000);
+    if (ageDays > failAfter)
+      failures.push(`${m.id}: checked ${at}, ${ageDays}d old (hard limit ${failAfter}d)`);
+    else if (ageDays > warnAfter)
+      warnings.push(`${m.id}: checked ${at}, ${ageDays}d old (review at ${warnAfter}d)`);
+  }
+  return { warnings, failures };
+}
 
 /** Structural check on the manifest itself. Returns an array of problem strings. */
 export function checkManifest(manifest) {
@@ -50,6 +109,9 @@ export function checkManifest(manifest) {
     for (const c of cites) {
       if (typeof c !== 'string' || !/^https?:\/\//.test(c))
         problems.push(`${id}: citation is not a URL: ${c}`);
+    }
+    if (m?.checkedAt !== undefined && !DATE.test(String(m.checkedAt))) {
+      problems.push(`${id}: checkedAt "${m.checkedAt}" is not YYYY-MM-DD`);
     }
     // Conditions are what makes a conditional grant honourable at the point of use.
     if (
@@ -85,15 +147,38 @@ export function blockedNeedles(manifest) {
   return needles;
 }
 
-export function listSourceFiles(root, exts = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json']) {
-  const out = [];
-  if (!fs.existsSync(root)) return out;
+const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'];
+
+function walkDir(dir, exts, out) {
+  if (!fs.existsSync(dir)) return out;
   for (const entry of fs
-    .readdirSync(root, { withFileTypes: true })
+    .readdirSync(dir, { withFileTypes: true })
     .sort((a, b) => a.name.localeCompare(b.name))) {
-    const p = path.join(root, entry.name);
-    if (entry.isDirectory()) out.push(...listSourceFiles(p, exts));
-    else if (exts.includes(path.extname(entry.name))) out.push(p);
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
+      walkDir(p, exts, out);
+    } else if (exts.includes(path.extname(entry.name))) {
+      out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Files to scan, as repo-relative POSIX paths, across every scan root minus the
+ * exact exemptions. Repo-relative because the exemption list is written that way —
+ * comparing absolute paths would make every exemption silently fail to match, and
+ * the gate would then red on its own manifest (#737).
+ */
+export function listSourceFiles(repoRoot, roots = SCAN_ROOTS, exempt = EXEMPT, exts = EXTS) {
+  const exemptSet = new Set(exempt);
+  const out = [];
+  for (const root of roots) {
+    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) {
+      const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
+      if (!exemptSet.has(rel)) out.push(rel);
+    }
   }
   return out;
 }
@@ -121,7 +206,7 @@ export function findBlockedReferences(
 }
 
 /** Console-reporting entry point. Returns 0 clean, 3 on any problem. */
-export function auditExternalModels({ manifestPath, srcRoot }) {
+export function auditExternalModels({ manifestPath, repoRoot, now = new Date() }) {
   if (!fs.existsSync(manifestPath)) {
     console.error(`✗ External-model manifest missing: ${manifestPath}`);
     return 3;
@@ -135,8 +220,19 @@ export function auditExternalModels({ manifestPath, srcRoot }) {
     return 3;
   }
 
-  const files = listSourceFiles(srcRoot);
-  const hits = findBlockedReferences(manifest, files);
+  const { warnings, failures } = checkStaleness(manifest, now);
+  if (failures.length) {
+    console.error(`✗ External-model verdicts are stale (${failures.length}):`);
+    for (const f of failures) console.error(`  ${f}`);
+    console.error('  Re-check the terms, update checkedAt, re-run. The NVIDIA grant is revocable.');
+    return 3;
+  }
+  for (const w of warnings) console.warn(`⚠ ${w}`);
+
+  const files = listSourceFiles(repoRoot);
+  const hits = findBlockedReferences(manifest, files, (f) =>
+    fs.readFileSync(path.join(repoRoot, f), 'utf8'),
+  );
   if (hits.length) {
     console.error(`✗ BLOCKED model referenced in source (${hits.length}):`);
     for (const h of hits) console.error(`  ${h.file}: "${h.needle}" (${h.id})`);
@@ -149,7 +245,8 @@ export function auditExternalModels({ manifestPath, srcRoot }) {
   console.log(
     `✓ External-model audit passed: ${manifest.models.length} recorded ` +
       `(${counts.ALLOWED} allowed, ${counts.ALLOWED_WITH_CONDITIONS} conditional, ${counts.BLOCKED} blocked), ` +
-      `${files.length} source files scanned, checked ${manifest.checkedAt}.`,
+      `${files.length} files scanned across ${SCAN_ROOTS.join(', ')} (${EXEMPT.length} exempt), ` +
+      `checked ${manifest.checkedAt}.`,
   );
   return 0;
 }

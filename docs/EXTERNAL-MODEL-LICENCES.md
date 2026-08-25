@@ -172,28 +172,61 @@ no error.
 `scripts/external-model-audit.mjs` enforces it, and `npm run license-audit` runs it before the
 npm tree walk, so CI needed no new wiring.
 
-Two checks, and the second is the one with teeth:
+Three checks, and the second is the one with teeth:
 
 1. **The manifest is well formed** — every entry has a verdict from a closed set, a reason, and
    at least one cited URL. A verdict with no citation is an opinion, and is rejected. A
-   conditional grant with no listed conditions is rejected. A missing or malformed
-   `checkedAt` is rejected, so a stale audit cannot pass quietly.
-2. **No BLOCKED model is referenced anywhere in `src/`.** Recording a verdict makes it known;
-   this makes it enforced.
+   conditional grant with no listed conditions is rejected. A malformed date is rejected.
+2. **No BLOCKED model is referenced** anywhere under `src/`, `tests/` or `scripts/`. Recording a
+   verdict makes it known; this makes it enforced.
+3. **No verdict has gone stale.** Past `staleness.warnAfterDays` (180) the audit warns; past
+   `staleness.failAfterDays` (365) it fails. A per-model `checkedAt` overrides the manifest-wide
+   one, so re-checking one model does not claim the others were re-checked.
 
-Verified by constructing the failure rather than assuming it: a file referencing
-`Kimodo-SMPLX-RP-v1` in `src/` makes the gate exit **3** and name the file; removing it returns
-exit **0** with `932 source files scanned` printed as the denominator. Repeated with
-`partfield` to confirm the gate is not keyed to one model.
+Verified by constructing each failure rather than by observing a pass:
+
+| constructed                                                | result                                                                 |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------- |
+| blocked model referenced in `src/`                         | exit **3**, file named                                                 |
+| blocked model referenced in `tests/`                       | exit **3**, file named                                                 |
+| blocked model referenced in `scripts/`                     | exit **3**, file named                                                 |
+| second blocked model, to show the gate is not keyed to one | exit **3**                                                             |
+| `checkedAt` pushed past 365 days                           | exit **3**, age named                                                  |
+| `checkedAt` pushed into the 180-day band                   | exit **0** with a warning — a review prompt must not red the build     |
+| all probes removed                                         | exit **0**, `1229 files scanned across src, tests, scripts (3 exempt)` |
+
+**`docs/` is deliberately not scanned**, and three files are exempt by exact path —
+`external-models.json`, `external-model-audit.mjs`, and its test. Naming a blocked model is
+their job; without the exemption the gate reds on its own record. The exemption list is
+enumerated, never a glob or a directory, and a test asserts it stays that way — an over-broad
+exemption re-opens the hole it was cut for while the gate keeps printing a pass.
+
+### 🔴 What this gate does NOT catch
+
+Stated plainly, because a control whose limits are unwritten gets trusted past them.
+
+**It is a static text scan, so it cannot see a model id that does not exist at build time** — one
+assembled by concatenation, supplied by a graph param, read from a config file, or typed into a
+field. A checkpoint whose terms forbid production use can still be reached that way, and the
+gate will report a clean pass. That pass is then read as coverage, which is worse than no gate.
+
+No amount of widening the roots reaches this. The closure belongs where a model id is first
+resolved into a request — the generation capability A1 builds, which should consult this same
+manifest and refuse a BLOCKED id at runtime. Tracked as #739; part 2 lands with A1 (#729).
+
+A second, smaller limit: matching is by substring, so an unrelated identifier containing
+`partfield` would be reported. That direction is the safe one — it over-reports rather than
+under-reports — and the report names the file, so it costs a glance.
 
 ### To add or re-check a model
 
-Add an entry to `scripts/external-models.json` with the cited URLs, bump `checkedAt`, and add
+Add an entry to `scripts/external-models.json` with the cited URLs, set its `checkedAt`, and add
 a section here. Then run `npm run license-audit`.
 
 🔴 **Two reasons to re-check rather than trust this file:**
 
 - The NVIDIA Open Model grant is **revocable**, and the Trustworthy AI terms it incorporates
-  live at a URL that can change without the licence changing.
+  live at a URL that can change without the licence changing. That is what the staleness
+  thresholds exist for.
 - **Check the specific checkpoint, not the project.** Finding 1 above exists because one
   release carried two licences.

@@ -5,6 +5,11 @@
     "ALLOWED_WITH_CONDITIONS": "Commercial use is granted, but the grant carries obligations or is revocable. Conditions are listed and must be honoured at the point of use.",
     "BLOCKED": "Terms forbid commercial or production use, or grant nothing. Must not be designed into a feature."
   },
+  "staleness": {
+    "comment": "A recorded verdict is a measurement with a shelf life. The NVIDIA Open Model grant is revocable and incorporates acceptable-use terms by reference, so it can change without this file moving. Past warnAfterDays the audit warns; past failAfterDays it fails. A per-model checkedAt overrides the manifest-wide one, so re-checking one model does not claim the others were re-checked.",
+    "warnAfterDays": 180,
+    "failAfterDays": 365
+  },
   "checkedAt": "2026-08-26",
   "models": [
     {
