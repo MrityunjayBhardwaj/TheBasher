@@ -55,8 +55,7 @@ import type { ScopeDomain } from './attributes';
 import type { ObjectData } from './types';
 import { mirrorGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
-import { SCOPE_PARAM, requireResolvedScope } from './componentSelection';
-import { isParsableScopeQuery } from './scopeQuery';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */
@@ -90,29 +89,16 @@ export const MirrorModifierParams = z.object({
    * this project has no node-error surfacing at all. Refining here means an unparseable query
    * never enters params. Blank is the same authoring state as absent.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type MirrorModifierParams = z.infer<typeof MirrorModifierParams>;
 
 /**
- * THE ATOM CLASS THIS OPERATOR'S SCOPE NAMES — declared once, read twice (#714).
+ * The atom class this operator's scope names — declared here, read twice (#714).
  *
- * The declaration below hands it to the evaluator, which resolves the selection at it; the
- * builder call in `evaluate` hands the same value to the descriptor, which folds it into the
- * cache key. One `const` for both because they must not be able to disagree: a selection
- * resolved at one class and a geometry keyed at another is a mesh built from the wrong set,
- * and both would draw.
- *
- * ⚠️ NOT `selection.domain`, DELIBERATELY, though at runtime it is the same value. A
- * `ComponentSelection` is a general value and its `domain` is the wide `KnownDomain` — the
- * memoisation rows construct selections at classes no operator can declare. Reading it here
- * would need a cast back down to {@link ScopeDomain}, and a cast is exactly the thing that
- * keeps compiling when the two sets stop coinciding.
+ * WHY it is a per-operator `const` rather than a shared one, and why it is not read off the
+ * resolved selection, is one fact about the TYPE and lives with the type: see
+ * {@link ScopeDomain} in `attributes.ts`. This line is the decision; that is the reasoning.
  */
 const SCOPE_DOMAIN: ScopeDomain = 'face';
 

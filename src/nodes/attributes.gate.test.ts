@@ -50,6 +50,9 @@ import {
   type MeshElementCounts,
 } from './attributes';
 import { componentCountOf } from './componentSelection';
+import { carriageForDomain } from './meshAttributes';
+import { arrayGeometryRef, boxGeometryRef } from '../app/modifierGeometry';
+import { tiledCornerOrder, tiledFaceOrder } from '../app/faceCount';
 import type { GeometryDescriptor } from './types';
 
 /** A twelve-face box — the descriptor the second dispatch site is probed against. */
@@ -57,6 +60,20 @@ const BOX_DESCRIPTOR: GeometryDescriptor = { kind: 'box', size: [1, 1, 1] };
 
 /** A topology with four DISTINCT counts, so a site answering the wrong domain is visible. */
 const COUNTS: MeshElementCounts = { points: 8, edges: 12, faces: 6, corners: 24 };
+
+/**
+ * A REAL tiling for the third dispatch site, taken from the same producers the production
+ * road uses. Built once — `faceCount.ts` returns the same order objects for an unchanged
+ * tiling, and probing through a freshly derived one per domain would be asking a different
+ * question than the road asks.
+ */
+const ARRAYED_BOX = (() => {
+  const ref = arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 3, [2, 0, 0]);
+  const faces = tiledFaceOrder(ref.descriptor);
+  const corners = tiledCornerOrder(ref.descriptor);
+  if (faces === null || corners === null) throw new Error('fixture: arrayed box has no tiling');
+  return { faces, corners };
+})();
 
 /** A site that dispatches on the CLOSED domain type, and how to ask it for an answer. */
 interface DispatchSite {
@@ -80,6 +97,19 @@ const DISPATCH_SITES: readonly DispatchSite[] = [
     module: 'src/nodes/componentSelection.ts',
     what: 'componentCountOf',
     probe: (domain) => componentCountOf(domain, BOX_DESCRIPTOR),
+  },
+  {
+    // #715 (P1) — the third consumer, and it was caught by the remainder check below the
+    // moment `CLASS_CARRIAGE` named `KnownDomain`, exactly as `componentSelection` was. That
+    // is the census earning its keep for the second time.
+    //
+    // 🔑 IT OWES NO EXEMPTIONS, AND THAT IS THE POINT OF THE PHASE. `componentCountOf` has
+    // three, because it cannot COUNT those classes from a descriptor. This site answers for
+    // all four, because "we drop this class, here is why, here is the issue that closes it"
+    // is an answer — which is the whole difference between a declared drop and a `null`.
+    module: 'src/nodes/meshAttributes.ts',
+    what: 'carriageForDomain',
+    probe: (domain) => carriageForDomain(domain, ARRAYED_BOX.faces, ARRAYED_BOX.corners),
   },
 ];
 

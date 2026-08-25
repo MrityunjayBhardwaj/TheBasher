@@ -123,6 +123,33 @@ export const SCOPE_DOMAINS = ['face'] as const satisfies readonly KnownDomain[];
 
 export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
 
+/**
+ * ── HOW AN OPERATOR DECLARES ITS CLASS, AND WHY EACH ONE DECLARES ITS OWN ─────────────
+ *
+ * Stated here, at the type, because it is ONE FACT and it was spelled five times (#680).
+ * Every scoped operator carries `const SCOPE_DOMAIN: ScopeDomain = 'face'` and a copy of
+ * this reasoning; the VALUE stays copied, deliberately, and the reasoning moved here.
+ *
+ * 🔑 FIVE OPERATORS CHOOSING `'face'` IS FIVE DECISIONS THAT HAPPEN TO AGREE. That is the
+ * whole reason #714 replaced the single module-private constant with a per-operator
+ * declaration, and collapsing the five back into one shared value would undo it: the day an
+ * operator scopes at a different class, a shared constant is the thing that silently gives
+ * it the wrong one. So the duplication of the VALUE is correct and must survive; only the
+ * explanation was redundant.
+ *
+ * Each operator's `const` is declared once and read twice — the `chain` declaration hands it
+ * to the evaluator, which resolves the selection at it, and the builder call in `evaluate`
+ * hands the same value to the descriptor, which folds it into the cache key. One `const` for
+ * both because they must not be able to disagree: a selection resolved at one class and a
+ * geometry keyed at another is a mesh built from the wrong set, and both would draw.
+ *
+ * ⚠️ NOT `selection.domain`, DELIBERATELY, though at runtime it is the same value. A
+ * `ComponentSelection` is a general value and its `domain` is the wide {@link KnownDomain} —
+ * the memoisation rows construct selections at classes no operator can declare. Reading it
+ * there would need a cast back down to {@link ScopeDomain}, and a cast is exactly the thing
+ * that keeps compiling when the two sets stop coinciding.
+ */
+
 /** The one crossing from the open data identifier to the closed code one. */
 export function isKnownDomain(domain: DomainId): domain is KnownDomain {
   return (KNOWN_DOMAINS as readonly string[]).includes(domain);

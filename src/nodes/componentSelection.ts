@@ -107,6 +107,7 @@
 //      (`KnownDomain`); src/app/modifierDataSource.ts (which values carry components);
 //      ref/houdini/SOP.md §4; issues #607, #660.
 
+import { z } from 'zod';
 import type { KnownDomain, ScopeDomain } from './attributes';
 
 /**
@@ -125,7 +126,7 @@ export type { ScopeDomain };
 import type { GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
 import { modifierDataSource } from '../app/modifierDataSource';
-import { canonicalScopeQuery, scopeSelection } from './scopeQuery';
+import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
 
 /**
  * A resolved component selection at one domain. NEVER a name, NEVER a buffer, and never a
@@ -177,6 +178,39 @@ export interface ComponentSelection {
  * socket would be a project-format migration for something that is authored text.
  */
 export const SCOPE_PARAM = 'scope';
+
+/**
+ * The scope param's schema — the whole zod chain, so a declarer writes
+ * `[SCOPE_PARAM]: scopeParam()` and cannot spell any part of it a sixth time (#680).
+ *
+ * ── WHAT WAS DUPLICATED, AND WHAT DELIBERATELY IS NOT ─────────────────────────────────
+ *
+ * This block was byte-identical in five node files — message string and `.default('')`
+ * included, verified by pairwise diff. Nothing in it is a per-operator decision: the parser,
+ * the refusal message and the empty default are one fact about what a scope query IS.
+ *
+ * ⚠️ THE ATOM CLASS BESIDE IT IS THE OPPOSITE CASE AND STAYS COPIED. Five operators each
+ * declaring `SCOPE_DOMAIN = 'face'` is five decisions that happen to agree, which is exactly
+ * why #714 replaced the shared module constant with a per-operator declaration. Collapsing
+ * those back into one value would undo that. What was single there was the RATIONALE, and it
+ * moved to the type's own definition site instead. Two adjacent duplications, two different
+ * fixes — see #680.
+ *
+ * ── WHY THE REFINEMENT HAS TO BE HERE AT ALL ──────────────────────────────────────────
+ *
+ * An unparseable query reaching the resolver is a THROW, `evaluate` runs on the render walk
+ * with no `try` above it, and this project has no node-error surfacing. Refining at the
+ * schema means an unparseable query never enters params. Blank is the same authoring state
+ * as absent.
+ */
+export function scopeParam(): z.ZodDefault<z.ZodEffects<z.ZodString, string, string>> {
+  return z
+    .string()
+    .refine(isParsableScopeQuery, {
+      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
+    })
+    .default('');
+}
 
 /** Every refusal from this module is named and carries the query that produced it. */
 function refuse(why: string): never {

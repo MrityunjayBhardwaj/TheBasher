@@ -102,11 +102,10 @@ import { refWithAttributeKey } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { mintTargetedAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
-import { requireResolvedScope, SCOPE_PARAM } from './componentSelection';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 // ns-2 step 12.5 — the language moved to a leaf below `componentSelection`, so that a
 // generator's descriptor and its face count can both reach it without a cycle. This is
 // still the one-bit door: a BOOLEAN, never terms.
-import { isParsableScopeQuery } from './scopeQuery';
 
 export const SetMaterialOpParams = z.object({
   /**
@@ -139,12 +138,7 @@ export const SetMaterialOpParams = z.object({
    * curve, or over a `gltf`/`baked` handle whose face count is not derivable. Those depend
    * on the spine value, which a param schema cannot see, and they remain named throws.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type SetMaterialOpParams = z.infer<typeof SetMaterialOpParams>;
 
@@ -197,19 +191,11 @@ export function scopeFromRetiredFaceRange(from: number, to: number): string {
 }
 
 /**
- * THE ATOM CLASS THIS OPERATOR'S SCOPE NAMES — declared once, read twice (#714).
+ * The atom class this operator's scope names — declared here, read twice (#714).
  *
- * The declaration below hands it to the evaluator, which resolves the selection at it; the
- * builder call in `evaluate` hands the same value to the descriptor, which folds it into the
- * cache key. One `const` for both because they must not be able to disagree: a selection
- * resolved at one class and a geometry keyed at another is a mesh built from the wrong set,
- * and both would draw.
- *
- * ⚠️ NOT `selection.domain`, DELIBERATELY, though at runtime it is the same value. A
- * `ComponentSelection` is a general value and its `domain` is the wide `KnownDomain` — the
- * memoisation rows construct selections at classes no operator can declare. Reading it here
- * would need a cast back down to {@link ScopeDomain}, and a cast is exactly the thing that
- * keeps compiling when the two sets stop coinciding.
+ * WHY it is a per-operator `const` rather than a shared one, and why it is not read off the
+ * resolved selection, is one fact about the TYPE and lives with the type: see
+ * {@link ScopeDomain} in `attributes.ts`. This line is the decision; that is the reasoning.
  */
 const SCOPE_DOMAIN: ScopeDomain = 'face';
 

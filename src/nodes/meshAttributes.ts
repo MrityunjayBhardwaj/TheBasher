@@ -47,6 +47,7 @@ import {
   isKnownDomain,
   type AttributeData,
   type DomainId,
+  type KnownDomain,
 } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
 import type { GeometryDescriptor } from './types';
@@ -262,7 +263,92 @@ interface TiledLayout {
 }
 
 /**
- * Which layout lays out a domain, or `null` when this road cannot lay it out (#694).
+ * WHAT THIS ROAD DOES WITH EACH ATOM CLASS — the carriage table (#715).
+ *
+ * ── WHY THE VERDICT IS KEYED ON THE CLASS AND NOT ON THE OPERATOR ─────────────────────
+ *
+ * #715 was filed proposing a per-operator, per-class declaration beside the four
+ * {@link ChainDeclaration} fields, on the strength of a reference grade reading *"a modifier
+ * must, per attribute class, declare preserve/transform/drop"*. That grade is the reference
+ * author's design requirement written for us; the system it grades does not work that way.
+ * Houdini puts CARRIAGE in the substrate (`duplicateSource` copies the input, so the default
+ * is preserve), the TRANSFORM RULE on the datum (each attribute carries its own transform
+ * type), and leaves the operator ONE topology flag. See `ref/houdini/SOP.md:81,24,84`.
+ *
+ * Our own cost curve said the same thing louder. Production files touched per fix on this
+ * concern: #644 `02ddbb3` = 3, #694 `33cb6b1` = 2, #719 `9109887` = 1 — converging on THIS
+ * FILE. A per-operator table would have pushed a converged concern back out to five node
+ * files plus the registry, and made operator N+1 cost four hand-typed verdicts instead of
+ * zero. The boundary was already right; what was missing was the table being STATED.
+ *
+ * ── WHAT THE TABLE BUYS THAT A `null` DID NOT ────────────────────────────────────────
+ *
+ * A drop is a legitimate answer. A drop nobody declared is not — it is indistinguishable
+ * from an oversight, and from a bug. Both facts below were true before this table existed
+ * and neither was written down anywhere a reader or a gate could reach:
+ *
+ *   - `point` and `edge` are dropped, and WHY, and WHICH ISSUE CLOSES IT.
+ *   - the population of drops is exactly two, so it can only shrink deliberately.
+ *
+ * 🔴 `Record<KnownDomain, …>` IS THE REAL CLOSURE HERE, STRONGER THAN THE `never` BELOW. A
+ * fifth atom class is a compile error AT THIS TABLE, at the site that must answer for it,
+ * before any dispatch runs. The `never` in {@link carriageForDomain} stays as the second
+ * guard because it closes a different question — see the note there.
+ */
+type LaidOutBy = 'face-order' | 'corner-order';
+
+export type ClassVerdict =
+  /** This road lays the class out, through the named order. */
+  | { readonly kind: 'laid-out'; readonly by: LaidOutBy; readonly noun: string }
+  /** This road drops the class, on purpose, with the reason and the issue that closes it. */
+  | { readonly kind: 'dropped'; readonly why: string; readonly until: string };
+
+/**
+ * The declared verdict for every atom class. **The one place that states a drop.**
+ *
+ * Exported so `classCarriage.gate.test.ts` can census it WITHOUT constructing a tiling —
+ * which is the point of hoisting it out of the dispatch: a gate that had to build orders to
+ * discover the drops would be re-deriving the answer it is checking.
+ */
+export const CLASS_CARRIAGE: Readonly<Record<KnownDomain, ClassVerdict>> = {
+  face: { kind: 'laid-out', by: 'face-order', noun: 'faces' },
+  corner: { kind: 'laid-out', by: 'corner-order', noun: 'corners' },
+  point: {
+    kind: 'dropped',
+    why:
+      "a point attribute has no order to ride: `point` still means the renderer's split " +
+      'buffer (24 positions on a box, not 8), so there is no stable element to gather to',
+    until: '#716',
+  },
+  edge: {
+    kind: 'dropped',
+    why:
+      'the edge domain has no elements at all in this build — no buffer, no order, and ' +
+      '`MeshElementCounts.edges` has no producer',
+    until: '#718',
+  },
+};
+
+/**
+ * What happens to one class's attributes through this merge.
+ *
+ * 🔴 A FOREIGN DOMAIN AND A DECLARED DROP ARE DIFFERENT ANSWERS, AND THIS IS WHERE THEY
+ * STOPPED BEING THE SAME VALUE. Both used to return `null`, and the function's own doc had
+ * to spend a paragraph explaining that the two `null`s meant different things — which is the
+ * shape of a type that has not been written yet. A drop is a decision THIS BUILD TOOK about
+ * a class it knows; `foreign` is a class it has never heard of, which must round-trip
+ * untouched because domains are data. Collapsing them would let a census of "what do we
+ * drop?" answer with someone else's domain.
+ */
+export type ClassCarriage =
+  | { readonly kind: 'laid-out'; readonly layout: TiledLayout }
+  | { readonly kind: 'dropped'; readonly why: string; readonly until: string }
+  | { readonly kind: 'foreign' };
+
+const FOREIGN: ClassCarriage = { kind: 'foreign' };
+
+/**
+ * Resolve a domain to its carriage, binding the declared order to the real one.
  *
  * ── ONE DISPATCH, THREE CALLERS, BECAUSE THE ALTERNATIVE IS THREE ANSWERS ─────────────
  *
@@ -273,38 +359,51 @@ interface TiledLayout {
  * measured against a face count. The order, the denominator and the noun travel together
  * because they are one decision.
  *
- * 🔴 `point` AND `edge` RETURN `null` RATHER THAN THROWING, WHICH IS THE PRE-#694 BEHAVIOUR
- * DELIBERATELY KEPT. A source carrying them takes the historical road — no tiling, no layout
- * — exactly as it did when only `face` tiled. Refusing loudly instead would be a behaviour
- * change for sources that exist today, smuggled in under a widening.
+ * 🔴 A DROPPED CLASS DOES NOT THROW, WHICH IS THE PRE-#694 BEHAVIOUR DELIBERATELY KEPT. A
+ * source carrying one takes the historical road — no tiling, no layout — exactly as it did
+ * when only `face` tiled. Refusing loudly instead would be a behaviour change for sources
+ * that exist today, smuggled in under a widening. What #715 changed is that the drop is now
+ * SAYABLE, not that it is now fatal.
  *
- * ⚠️ THE `never` CLOSES "IS THERE AN ARM FOR EVERY DOMAIN?", NOT "IS EACH ARM RIGHT?". It
- * fires when `KNOWN_DOMAINS` grows and nobody decided what the new domain does here — which
- * is worth having and is not evidence that the arms above it return the right orders. That
- * claim is a runtime one, and it is held by the gate's mirrored-corner row: an arm returning
- * a wrong-but-valid order compiles perfectly and reds there.
- *
- * An UNKNOWN domain is `null` too, and before the switch rather than in it: domains are data
- * and round-trip, so a set carrying one this build has never heard of must survive being read
- * and re-written, not stop a generator from building.
+ * ⚠️ THE `never` CLOSES "IS THERE AN ORDER FOR EVERY WAY A CLASS CAN BE LAID OUT?", NOT "IS
+ * EACH ARM RIGHT?". {@link CLASS_CARRIAGE} already closes "is there a verdict for every
+ * class?" at compile time, so this one guards the narrower question the table cannot: a new
+ * `LaidOutBy` member with no order bound to it. Neither is evidence that the arms return the
+ * RIGHT orders — that claim is runtime, and it is held by the gate's mirrored-corner row,
+ * where an arm returning a wrong-but-valid order compiles perfectly and reds.
  */
-function layoutForDomain(
+export function carriageForDomain(
   domain: DomainId,
   faces: TiledFaceOrder,
   corners: TiledCornerOrder,
-): TiledLayout | null {
-  if (!isKnownDomain(domain)) return null;
-  switch (domain) {
-    case 'face':
-      return { order: faces.order, sourceElements: faces.sourceFaces, noun: 'faces' };
-    case 'corner':
-      return { order: corners.order, sourceElements: corners.sourceCorners, noun: 'corners' };
-    case 'point':
-    case 'edge':
-      return null;
+): ClassCarriage {
+  // Before the table, not in it: domains are data and round-trip, so a set carrying one this
+  // build has never heard of must survive being read and re-written, not stop a generator
+  // from building.
+  if (!isKnownDomain(domain)) return FOREIGN;
+  const verdict = CLASS_CARRIAGE[domain];
+  // The declared verdict IS the returned value for a drop — the same object, not a copy of
+  // its fields. A second spelling of the reason here is a second place free to drift from
+  // the table this function exists to consult.
+  if (verdict.kind === 'dropped') return verdict;
+  switch (verdict.by) {
+    case 'face-order':
+      return {
+        kind: 'laid-out',
+        layout: { order: faces.order, sourceElements: faces.sourceFaces, noun: verdict.noun },
+      };
+    case 'corner-order':
+      return {
+        kind: 'laid-out',
+        layout: {
+          order: corners.order,
+          sourceElements: corners.sourceCorners,
+          noun: verdict.noun,
+        },
+      };
     default: {
-      const unreachable: never = domain;
-      throw new Error(`layoutForDomain: undeclared domain ${String(unreachable)}`);
+      const unreachable: never = verdict.by;
+      throw new Error(`carriageForDomain: no order bound to '${String(unreachable)}'`);
     }
   }
 }
@@ -334,7 +433,7 @@ function layoutForDomain(
  * This block used to say ONLY THE FACE DOMAIN, and gave the reason in the negative: `order`
  * is a permutation of FACE indices, so a corner attribute — `UVMap` above all — was dropped
  * and two sources differing only in their UVs collapsed onto one cached build. That is
- * closed. `tiledCornerOrder` expands the face order into corners, and {@link layoutForDomain}
+ * closed. `tiledCornerOrder` expands the face order into corners, and {@link CLASS_CARRIAGE}
  * is the single place that says which order lays out which domain.
  *
  * 🔴 THE OBSTACLE WAS NEVER THE PER-FACE CORNER COUNT, WHICH IS WHAT #694 WAS FILED SAYING.
@@ -343,9 +442,11 @@ function layoutForDomain(
  * `3·face + k` is right for an Array and silently wrong for a Mirror. Recorded because a
  * reader who trusts the issue will go looking for per-face corner counts that do not exist.
  *
- * ⚠️ POINT AND EDGE ARE STILL DROPPED, and for the original reason — there is no point or
- * edge order. Their sharing loss stays open, and it is a real one the day anything mints
- * them; `layoutForDomain`'s `null` arm is where that decision would be taken.
+ * ✅ POINT AND EDGE ARE STILL DROPPED — AND THE DROP IS NOW DECLARED (#715). It was a bare
+ * `null` arm and a paragraph here; it is now a row in {@link CLASS_CARRIAGE} carrying the
+ * reason and the issue that closes it (`point` → #716, `edge` → #718), censused exactly by
+ * `classCarriage.gate.test.ts` so the population can only shrink deliberately. The sharing
+ * loss itself is unchanged and stays open — what changed is that it is sayable.
  *
  * ── THE ORDER IS TAKEN FROM THE BUILDER, NOT FROM THE ARITHMETIC ──────────────────────
  *
@@ -431,15 +532,15 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   if (remembered !== undefined) return remembered;
 
   // ONE layout per attribute, resolved once and carried to all three users below (the empty
-  // check, the refusal, the gather). Calling `layoutForDomain` at each of them instead would
+  // check, the refusal, the gather). Calling `carriageForDomain` at each of them instead would
   // allocate a record per attribute per user on a per-evaluate road, and — worse than the cost
   // — would let the three disagree about which attributes tile if the dispatch ever stopped
   // being a pure function of the domain. Insertion order is the sorted name order, so the
   // walk below is deterministic and the refusal's wording does not vary per run.
   const layouts = new Map<string, TiledLayout>();
   for (const name of Object.keys(carried).sort()) {
-    const layout = layoutForDomain(carried[name].domain, tiled, corners);
-    if (layout !== null) layouts.set(name, layout);
+    const carriage = carriageForDomain(carried[name].domain, tiled, corners);
+    if (carriage.kind === 'laid-out') layouts.set(name, carriage.layout);
   }
   // Not "no attributes" but "none this road can lay out": a source carrying only point- or
   // edge-domain data reaches here and takes the historical road, which is why this is a
