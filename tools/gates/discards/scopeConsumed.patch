@@ -1,14 +1,14 @@
 diff --git a/src/nodes/SetMaterialOp.ts b/src/nodes/SetMaterialOp.ts
-index 26b41f5..25a37e0 100644
+index 4d1a1a9..bfe85ae 100644
 --- a/src/nodes/SetMaterialOp.ts
 +++ b/src/nodes/SetMaterialOp.ts
-@@ -276,7 +276,15 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData>
-     // the input changes is to test the new input's shape instead. "Does this assignment reach
-     // every face?" is the question every input answers, asked once — which is why deleting one
-     // of two inputs changed nothing here but the argument list.
--    const targeted = mintTargetedAttributes(source.geometry.descriptor, selection, 'evaluate');
+@@ -290,7 +290,15 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData>
+     // forward and replaces `material_index` in them, so it needs the key the handle names
+     // as well as the shape it describes. A scoped write used to emit a set of exactly one
+     // entry, and this arm folded it on in place of everything the source carried.
+-    const targeted = mintTargetedAttributes(source.geometry, selection, 'evaluate');
 +    const targeted = mintTargetedAttributes(
-+      source.geometry.descriptor,
++      source.geometry,
 +      // DISCARD HARNESS: the selection is resolved, handed over, and thrown away HERE — at
 +      // the point of use, inside the consumer. Every call stays, the import stays, the
 +      // required fourth argument stays, and every source census stays green. Only the
