@@ -70,8 +70,7 @@ import type { ScopeDomain } from './attributes';
 import type { ObjectData } from './types';
 import { arrayGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
-import { SCOPE_PARAM, requireResolvedScope } from './componentSelection';
-import { isParsableScopeQuery } from './scopeQuery';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 
 export const ArrayModifierParams = z.object({
   /** Number of copies (the source counts as copy 0). ≥1; default 3 for a clear proof. */
@@ -106,12 +105,7 @@ export const ArrayModifierParams = z.object({
    * unparseable query never enters params — the bad state has no constructor rather than a
    * handler. Blank is the same authoring state as absent: the author cleared the field.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type ArrayModifierParams = z.infer<typeof ArrayModifierParams>;
 

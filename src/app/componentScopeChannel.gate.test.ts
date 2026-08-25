@@ -718,6 +718,48 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     }
     expect({ declaring, accepting }).toEqual({ declaring, accepting: [] });
   });
+
+  it('🔴 …and every declarer agrees on the DEFAULT and the refusal MESSAGE, not just the verdict', () => {
+    // #680 — the half the row above never covered. It asks "does this schema refuse `arm*`?",
+    // which a hand-rolled sixth copy with a different message and no default would answer
+    // correctly while quietly disagreeing about what a blank scope means and about what a
+    // director is told. Both were byte-identical across five files by copy-paste; they are
+    // now one `scopeParam()` and this row is what keeps a sixth declarer from re-forking
+    // them.
+    //
+    // Asked BEHAVIOURALLY, like the row above — of the parsed value and of the raised issue,
+    // never of the source text. A grep for `scopeParam(` would pass on a declarer that
+    // called it and then overrode the default.
+    const declaring = listNodeTypes().filter((type) => {
+      const shape = (
+        getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
+      ).shape;
+      return shape !== undefined && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
+    });
+    expect(declaring.length).toBeGreaterThan(0);
+
+    const defaults: Record<string, unknown> = {};
+    const messages: Record<string, string | undefined> = {};
+    for (const type of declaring) {
+      const schema = getNodeType(type)!.paramSchema;
+      // The DEFAULT: what an omitted scope parses to. Blank is the same authoring state as
+      // absent, and a declarer defaulting to anything else would mean a different operator.
+      const parsed = schema.safeParse({});
+      defaults[type] = parsed.success
+        ? (parsed.data as Record<string, unknown>)[SCOPE_PARAM]
+        : '<schema refused an empty object>';
+      // The MESSAGE: what the director is told. Read off the raised issue for THIS field.
+      const refused = schema.safeParse({ [SCOPE_PARAM]: 'arm*' });
+      messages[type] = refused.success
+        ? '<accepted — covered by the row above>'
+        : refused.error.issues.find((i) => i.path[0] === SCOPE_PARAM)?.message;
+    }
+
+    const EXPECTED_MESSAGE =
+      'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`';
+    expect(defaults).toEqual(Object.fromEntries(declaring.map((t) => [t, ''])));
+    expect(messages).toEqual(Object.fromEntries(declaring.map((t) => [t, EXPECTED_MESSAGE])));
+  });
 });
 
 describe('ns-2 step 9b — the layering edge, stated and pinned', () => {

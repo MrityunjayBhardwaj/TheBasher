@@ -102,11 +102,10 @@ import { refWithAttributeKey } from '../app/modifierGeometry';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { mintTargetedAttributes } from './meshAttributes';
 import { isMaterialLinked, resolveNodeMaterial } from './materialSocket';
-import { requireResolvedScope, SCOPE_PARAM } from './componentSelection';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 // ns-2 step 12.5 — the language moved to a leaf below `componentSelection`, so that a
 // generator's descriptor and its face count can both reach it without a cycle. This is
 // still the one-bit door: a BOOLEAN, never terms.
-import { isParsableScopeQuery } from './scopeQuery';
 
 export const SetMaterialOpParams = z.object({
   /**
@@ -139,12 +138,7 @@ export const SetMaterialOpParams = z.object({
    * curve, or over a `gltf`/`baked` handle whose face count is not derivable. Those depend
    * on the spine value, which a param schema cannot see, and they remain named throws.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type SetMaterialOpParams = z.infer<typeof SetMaterialOpParams>;
 

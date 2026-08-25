@@ -562,6 +562,11 @@ describe('#607 the query has exactly one reader', () => {
       // the query: an operator still has no way to reach the parser.
       'requireResolvedScope',
       'resolveComponentSelection',
+      // #680 — the scope param's SCHEMA, exported so five declarers stop spelling the same
+      // six lines. It exports the DOOR, never the query: what a caller gets back is a zod
+      // schema that refuses an unparseable string, which is `isParsableScopeQuery`'s one bit
+      // wrapped in the shape a `paramSchema` takes. A declarer still cannot reach a term.
+      'scopeParam',
       'totalSelection',
     ]);
   });

@@ -55,8 +55,7 @@ import type { ScopeDomain } from './attributes';
 import type { ObjectData } from './types';
 import { mirrorGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
-import { SCOPE_PARAM, requireResolvedScope } from './componentSelection';
-import { isParsableScopeQuery } from './scopeQuery';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 
 export const MirrorModifierParams = z.object({
   /** The axis to reflect across (the negated component). Default 'x' (the most common). */
@@ -90,12 +89,7 @@ export const MirrorModifierParams = z.object({
    * this project has no node-error surfacing at all. Refining here means an unparseable query
    * never enters params. Blank is the same authoring state as absent.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type MirrorModifierParams = z.infer<typeof MirrorModifierParams>;
 

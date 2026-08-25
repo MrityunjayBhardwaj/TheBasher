@@ -60,8 +60,7 @@ import { MaterialOverriddenSet } from './MaterialOverride';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { composeBakedMaterial, composeMaterial } from '../app/material/composeMaterial';
 import { hydrateInlineMaterial } from './materialSchema';
-import { requireResolvedScope, SCOPE_PARAM } from './componentSelection';
-import { isParsableScopeQuery } from './scopeQuery';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 import { mintTargetedAttributes } from './meshAttributes';
 import { refWithAttributeKey } from '../app/modifierGeometry';
 
@@ -100,12 +99,7 @@ export const MaterialOverrideOpParams = z.object({
    * total selection they already had. This is a widening of what is expressible, not a change
    * to what any existing project means.
    */
-  [SCOPE_PARAM]: z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default(''),
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type MaterialOverrideOpParams = z.infer<typeof MaterialOverrideOpParams>;
 
