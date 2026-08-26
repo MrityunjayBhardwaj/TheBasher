@@ -195,6 +195,30 @@
       "conditions": [],
       "checkedAt": "2026-08-26",
       "citations": ["https://github.com/Tencent-Hunyuan/Hunyuan3D-2/blob/main/LICENSE"]
+    },
+    {
+      "id": "tripo-python-sdk",
+      "name": "Tripo Python SDK (official)",
+      "role": "the grounded API contract for text-to-3D, phase A4 — read, not shipped",
+      "source": "https://github.com/VAST-AI-Research/tripo-python-sdk",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "MIT, 'Copyright (c) 2023 Tripo Development Team'. Recorded because Basher's Tripo client was written FROM this source: every endpoint, header, field name and task status is cited to it rather than guessed. No code is copied and the package is not a dependency, so nothing is shipped — but a verdict is owed for anything a feature was derived from, and MIT permits derivation with attribution either way.",
+      "conditions": [],
+      "checkedAt": "2026-08-27",
+      "citations": ["https://github.com/VAST-AI-Research/tripo-python-sdk/blob/master/LICENSE"]
+    },
+    {
+      "id": "tripo-3d-for-blender",
+      "name": "Tripo 3D for Blender (official extension)",
+      "role": "the reference feature surface for text-to-3D / image-to-3D, phase A4 — read, not shipped",
+      "source": "https://github.com/VAST-AI-Research/tripo-3d-for-blender",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "MIT, 'Copyright (c) 2024 VAST-AI-Research'. The plugin defines WHICH options a director should get — its scene properties are the enumerated surface Basher's capability mirrors (model version, face limit, quad, texture/PBR, texture and geometry quality, alignment, auto-size, style, orientation, the multiview set, and the five pose ratios). Recorded for the same reason as the SDK: derived from, not shipped.",
+      "conditions": [],
+      "checkedAt": "2026-08-27",
+      "citations": ["https://github.com/VAST-AI-Research/tripo-3d-for-blender/blob/main/LICENSE"]
     }
   ]
 }
