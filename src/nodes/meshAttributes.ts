@@ -39,6 +39,7 @@ import {
   type TiledCornerOrder,
   type TiledFaceOrder,
 } from '../app/faceCount';
+import { tiledPointOrder, type TiledPointOrder } from '../app/pointIdentity';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
 import {
   MATERIAL_INDEX,
@@ -47,7 +48,7 @@ import {
   isKnownDomain,
   type AttributeData,
   type AttributeSet,
-  type DomainId,
+  type AttributeType,
   type KnownDomain,
 } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
@@ -351,7 +352,7 @@ interface TiledLayout {
  * before any dispatch runs. The `never` in {@link carriageForDomain} stays as the second
  * guard because it closes a different question — see the note there.
  */
-type LaidOutBy = 'face-order' | 'corner-order';
+type LaidOutBy = 'face-order' | 'corner-order' | 'point-order';
 
 export type ClassVerdict =
   /** This road lays the class out, through the named order. */
@@ -370,25 +371,22 @@ export const CLASS_CARRIAGE: Readonly<Record<KnownDomain, ClassVerdict>> = {
   face: { kind: 'laid-out', by: 'face-order', noun: 'faces' },
   corner: { kind: 'laid-out', by: 'corner-order', noun: 'corners' },
   point: {
-    kind: 'dropped',
-    // 🔴 RESTATED AT #716, AND THE OLD REASON IS QUOTED BECAUSE IT WENT FALSE RATHER THAN
-    // STALE. It read: *"`point` still means the renderer's split buffer (24 positions on a
-    // box, not 8), so there is no stable element to gather to"*. P2 built exactly that stable
-    // element — a box's 8 topological points, with a deterministic split -> topological map —
-    // so the sentence that justified this drop no longer describes the system. A declared drop
-    // whose reason has quietly become false is worse than an undeclared one, because it is the
-    // thing a reader trusts instead of checking.
+    // 🔴 THE DROP IS GONE AT #717, AND ITS REASON HAD GONE FALSE FOR THE SECOND TIME. The
+    // sentence that stood here read: *"the weld gives `point` a stable element to gather TO
+    // (#716), but this road still has no point ORDER to gather THROUGH: which source point
+    // each merged point came from is a property of the built geometry, not of the
+    // descriptor"*. #754 made a derived geometry's point identity compose STRUCTURALLY, so
+    // the source's point count — and therefore the order — is derivable from the descriptor
+    // alone. Measured before this flipped: `pointCountOf` answers `counted` for the source of
+    // every derived case that has a face order.
     //
-    // The drop SURVIVES, on a different and narrower reason: the weld gives a stable
-    // DESTINATION, and this road needs a stable ORDER. Gathering through an Array means
-    // knowing which SOURCE point each merged point came from, and that correspondence is a
-    // property of the merged geometry, not of the descriptor this module reasons from. #717
-    // is where the order arrives; this is the entry it was waiting on.
-    why:
-      'the weld gives `point` a stable element to gather TO (#716), but this road still has ' +
-      'no point ORDER to gather THROUGH: which source point each merged point came from is a ' +
-      'property of the built geometry, not of the descriptor',
-    until: '#717',
+    // That reason had ALREADY been restated once, at #716, when ITS predecessor went false.
+    // Twice is a pattern worth naming rather than quietly editing a third time: this entry's
+    // justification tracks a moving substrate, so it is re-derived from what the code can do
+    // now, never patched to survive.
+    kind: 'laid-out',
+    by: 'point-order',
+    noun: 'points',
   },
   edge: {
     kind: 'dropped',
@@ -413,9 +411,62 @@ export const CLASS_CARRIAGE: Readonly<Record<KnownDomain, ClassVerdict>> = {
 export type ClassCarriage =
   | { readonly kind: 'laid-out'; readonly layout: TiledLayout }
   | { readonly kind: 'dropped'; readonly why: string; readonly until: string }
+  /**
+   * #717 — this road CAN lay the class out, and THIS OPERATOR would corrupt THIS DATUM.
+   *
+   * 🔴 NOT THE SAME ANSWER AS `dropped`, and the distinction is the one the type above was
+   * written to draw. A drop is about a CLASS and is true for every descriptor: nothing here
+   * lays out an edge, whatever operator is asking. A refusal is about a (datum, operator)
+   * PAIR: a `float3` rides through an Array untouched and would come out of a Mirror
+   * unreflected. Collapsing them would make "what do we drop?" answer with a reflection
+   * problem, and would make the refusal disappear the day the class starts tiling.
+   *
+   * It is also LOUDER. A drop is silent by design — the pre-#694 behaviour deliberately kept.
+   * A refusal is a statement that correct-looking data would otherwise be produced, so it
+   * warns by name, the way a misfit does.
+   */
+  | { readonly kind: 'refused'; readonly why: string; readonly until: string }
   | { readonly kind: 'foreign' };
 
 const FOREIGN: ClassCarriage = { kind: 'foreign' };
+
+/**
+ * Types this road will not carry through a REFLECTION, and the issue that ends the refusal.
+ *
+ * ── WHY A TYPE AND NOT A DOMAIN, AND WHY ONLY THE MIRROR ─────────────────────────────
+ *
+ * `AttributeType` is a STORAGE WIDTH, not a transform type: a `float3` may be a position, a
+ * velocity, a normal or a colour, and this model cannot tell them apart (#723). Under a
+ * reflection those want different answers and we can supply none, so the honest move is to
+ * refuse rather than to pick one silently.
+ *
+ * **Only the Mirror**, and that is MEASURED rather than read off the builder. A direction is a
+ * difference of positions, so the question "does this operator corrupt a direction?" is
+ * "does it change differences?" — measured over position pairs in the built buffer: an Array
+ * copy preserves them EXACTLY at every offset (identity linear part), while the Mirror's
+ * reflected copy changes them, and every changed pair matches `diag(-1,1,1)` exactly. Houdini
+ * says the same in words: a **Vector** *"transforms as a direction — the linear part, not the
+ * translation"*, and an Array's linear part is the identity. A Subset transforms nothing.
+ *
+ * **Only `float3`.** `float2` is NOT refused, and that is a decision with evidence on both
+ * sides: Blender's Mirror offers *Flip UV* as an OPTION rather than a fix, so carrying UVs
+ * unflipped is a legitimate default in the reference — and #694 already ships corner UVs
+ * through a Mirror, so refusing `float2` would REGRESS a shipped behaviour to guard a datum
+ * the reference does not treat as broken. Measured: a corner `float2` survives a Mirror today
+ * at count 72 from a source of 36.
+ *
+ * ⚠️ AT EVERY DOMAIN THIS ROAD LAYS OUT, not at `point` alone, because the reason has nothing
+ * to do with which class the datum sits on. Both references key the rule on the TYPE and span
+ * the domains: Houdini's transform type is carried by the ATTRIBUTE and set via Attribute
+ * Create at any class — decisively, its hard-edge normals live at VERTEX class, *"lets a
+ * shared point carry different UVs/normals per adjacent face"* — and Blender's type-directed
+ * interpolation rules (*"Boolean data type attributes have special rules"*) span Point through
+ * Spline, while its Mirror *Data* panel fixes span corner (Flip UV, Flip UDIM) and point
+ * (Vertex Groups). The FACE arm's grounding is weaker — it rests on Houdini's *"Vertex
+ * overrides Point overrides Primitive overrides Detail"* implying `N`/`Cd` at Primitive class,
+ * implied rather than stated — and it is recorded as such rather than smoothed over.
+ */
+const REFLECTION_REFUSES: readonly AttributeType[] = ['float3'];
 
 /**
  * Resolve a domain to its carriage, binding the declared order to the real one.
@@ -443,10 +494,13 @@ const FOREIGN: ClassCarriage = { kind: 'foreign' };
  * where an arm returning a wrong-but-valid order compiles perfectly and reds.
  */
 export function carriageForDomain(
-  domain: DomainId,
+  data: AttributeData,
+  operator: GeometryDescriptor['kind'],
   faces: TiledFaceOrder,
   corners: TiledCornerOrder,
+  points: TiledPointOrder,
 ): ClassCarriage {
+  const { domain } = data;
   // Before the table, not in it: domains are data and round-trip, so a set carrying one this
   // build has never heard of must survive being read and re-written, not stop a generator
   // from building.
@@ -456,6 +510,23 @@ export function carriageForDomain(
   // its fields. A second spelling of the reason here is a second place free to drift from
   // the table this function exists to consult.
   if (verdict.kind === 'dropped') return verdict;
+
+  // #717 — AFTER the drop and BEFORE the order, which is the only place it can go. A refusal
+  // is about a (datum, operator) pair, so it cannot live in the domain-keyed table above; and
+  // it must precede the layout, because the whole point is that this datum gets no layout.
+  // Asked here rather than at the call sites for the reason this function exists at all: the
+  // filter, the fit check and the gather have to agree about which attributes travel, and
+  // three separate spellings of that is exactly the drift the doc above records.
+  if (operator === 'mirror' && REFLECTION_REFUSES.includes(data.type))
+    return {
+      kind: 'refused',
+      why:
+        `a '${data.type}' may be a position, a velocity, a normal or a colour, and this model ` +
+        `carries no transform type to tell them apart — so a mirror would hand the reflected ` +
+        `copy UNREFLECTED values`,
+      until: '#723',
+    };
+
   switch (verdict.by) {
     case 'face-order':
       return {
@@ -470,6 +541,11 @@ export function carriageForDomain(
           sourceElements: corners.sourceCorners,
           noun: verdict.noun,
         },
+      };
+    case 'point-order':
+      return {
+        kind: 'laid-out',
+        layout: { order: points.order, sourceElements: points.sourcePoints, noun: verdict.noun },
       };
     default: {
       const unreachable: never = verdict.by;
@@ -586,12 +662,17 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // message nobody can grep for.
   const tiled = tiledFaceOrder(descriptor);
   if (tiled === null) return null;
-  const { sourceFaces } = tiled;
   // Asked for unconditionally rather than only when a corner attribute is present: it is a
   // memoised expansion of the face order just taken, so the branch would buy nothing and
   // would put the two orders on different roads through this function.
   const corners = tiledCornerOrder(descriptor);
   if (corners === null) return null;
+  // #717 — the third order, taken unconditionally for the same reason the corner order is: it
+  // is a memoised function of two numbers, so a branch on "does this source carry a point
+  // attribute?" would buy nothing and would put the three orders on different roads through
+  // this function.
+  const points = tiledPointOrder(descriptor);
+  if (points === null) return null;
 
   // The memo is consulted BEFORE the layouts are resolved, not after. Everything below this
   // line is a pure function of the two things the key already names — the corner order and the
@@ -608,10 +689,41 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // being a pure function of the domain. Insertion order is the sorted name order, so the
   // walk below is deterministic and the refusal's wording does not vary per run.
   const layouts = new Map<string, TiledLayout>();
+  // #717 — collected BY NAME so the warning can name every one, for the reason the misfit
+  // warning gives: a reader who fixes the alphabetically-first and re-runs would otherwise
+  // meet the next with no sign it was already known.
+  const refused: [string, ClassCarriage & { kind: 'refused' }][] = [];
   for (const name of Object.keys(carried).sort()) {
-    const carriage = carriageForDomain(carried[name].domain, tiled, corners);
+    const carriage = carriageForDomain(carried[name], descriptor.kind, tiled, corners, points);
     if (carriage.kind === 'laid-out') layouts.set(name, carriage.layout);
+    else if (carriage.kind === 'refused') refused.push([name, carriage]);
   }
+  // 🔴 WARNED, AND THEN THE OTHER ATTRIBUTES STILL TRAVEL. Two decisions here, both deliberate.
+  //
+  // WARNED, because a refusal says correct-looking data would otherwise have been produced —
+  // unreflected directions on the reflected half, which renders plausibly and is wrong. That is
+  // the opposite of a `dropped` class, which is silent by design because nothing was ever going
+  // to be produced. Same loudness as the misfit warning below, and for the same reason.
+  //
+  // AND NOT FATAL TO THE WHOLE TILING, which is the part worth arguing. Refusing the entire set
+  // would drop this mirror's per-face MATERIALS too — a visible regression, caused by an
+  // attribute that has nothing to do with them. The misfit case below does refuse everything,
+  // and the asymmetry is honest: a misfit means the set does not FIT its source, so nothing in
+  // it can be trusted to line up. A refusal is about one datum's semantics under one operator;
+  // the rest of the set is unaffected and correct.
+  //
+  // ⚠️ THIS PARAGRAPH IS OUR DECISION AND IS NOT GROUNDED IN EITHER REFERENCE, said plainly
+  // rather than dressed up. Houdini never faces it — an attribute DECLARES its transform type,
+  // so there is nothing to refuse. Blender enumerates a fixed Data list on its Mirror and its
+  // behaviour for anything off that list is UNVERIFIED from the manual, so it cannot be cited
+  // either way. What this follows is our own precedent: the misfit path warns by name and
+  // declines rather than laying out something wrong.
+  if (refused.length > 0)
+    console.warn(
+      `meshAttributes: '${descriptor.kind}' refuses to carry ${refused
+        .map(([name]) => `'${name}' (${carried[name].type} at ${carried[name].domain})`)
+        .join(', ')} — ${refused[0][1].why}; until ${refused[0][1].until}`,
+    );
   // Not "no attributes" but "none this road can lay out": a source carrying only point- or
   // edge-domain data reaches here and takes the historical road, which is why this is a
   // separate exit from the `sourceKey === undefined` one above rather than folded into it.
@@ -643,16 +755,28 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // face and a corner attribute one per source corner, so a single `sourceFaces` comparison
   // would have refused every correctly-sized corner attribute the moment corners started
   // tiling. Both the number and the noun come from the same record the gather uses.
+  //
+  // 🔴 AND SO IS THE MESSAGE, SINCE #717 — CAUGHT BY OBSERVING IT RATHER THAN BY READING IT.
+  // It used to end `onto a source of ${N} faces / ${M} corners`, a global pair written when
+  // exactly two domains tiled. The moment `point` tiled, a point misfit printed the attribute's
+  // count beside two denominators that had nothing to do with it — measured verbatim:
+  //
+  //     'zz' over 98 points onto a source of 168 faces / 504 corners
+  //
+  // 86 is the number the reader needed and it was the one number absent. The expected count now
+  // comes from the SAME `layout` the comparison used, so the message cannot name a denominator
+  // the check did not apply, and a fourth domain needs no edit here at all.
   const misfits = [...layouts].filter(
     ([name, layout]) => carried[name].count !== layout.sourceElements,
   );
   if (misfits.length > 0) {
     console.warn(
       `meshAttributes: '${descriptor.kind}' cannot tile ${misfits
-        .map(([name, layout]) => `'${name}' over ${carried[name].count} ${layout.noun}`)
-        .join(
-          ', ',
-        )} onto a source of ${sourceFaces} faces / ${corners.sourceCorners} corners — leaving the copies unassigned`,
+        .map(
+          ([name, layout]) =>
+            `'${name}' over ${carried[name].count} ${layout.noun} (this source has ${layout.sourceElements})`,
+        )
+        .join(', ')} — leaving the copies unassigned`,
     );
     return null;
   }

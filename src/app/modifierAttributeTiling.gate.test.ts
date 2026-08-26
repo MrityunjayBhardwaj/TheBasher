@@ -304,7 +304,7 @@ describe('#644 — the tiled index and the derived face count agree, so groups a
 });
 
 describe('#649 — the modifier key names what the merged geometry carries, and nothing else', () => {
-  it('🔴 two sources differing only in a POINT attribute share one array key', () => {
+  it('🔴 two sources differing only in an EDGE attribute share one array key', () => {
     // #649's residual, and the reason the source key's own `|a:` fragment is stripped rather
     // than left embedded. Both sources carry an identical `material_index`; one also carries a
     // point-domain attribute. The merged geometry and its group layout are therefore
@@ -312,13 +312,16 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     // embedded verbatim the keys differ on a fragment the merged geometry does not express —
     // the literal complaint in #649's title.
     //
-    // 🔴 THIS ROW USED A UV MAP UNTIL #694, AND THE HANDOVER IS THE POINT. A corner attribute
-    // was the natural choice for "a difference the merged geometry does not express" only
-    // while corners were dropped from the tiled set. Now that they tile, two sources differing
-    // in their UVs express that difference and MUST key apart — the row directly below. So
-    // #649's guarantee did not expire, it moved to the domains that are still not laid out:
-    // point and edge. If a point order is ever built, this row moves again rather than being
-    // deleted, and the row below it is what says where to.
+    // 🔴 THIS ROW USED A UV MAP UNTIL #694 AND A POINT ATTRIBUTE UNTIL #717, AND THE HANDOVER
+    // IS THE POINT. Its own note predicted this: *"if a point order is ever built, this row
+    // moves again rather than being deleted, and the row below it is what says where to."*
+    // #754 built the order, so a point attribute is now a difference the merged geometry DOES
+    // express, and the point fixture moved to the row below exactly as the UV fixture did.
+    //
+    // #649's guarantee did not expire; it moved to the last domain still not laid out — EDGE.
+    // The day #718 lays edges out, this row has nowhere left to move, and that is the honest
+    // outcome rather than a failure: "a difference the merged geometry does not express" will
+    // be an empty category, and the row should be deleted with #649 recorded as fully closed.
     const faces = 12;
     const materialIndex: AttributeData = {
       domain: 'face',
@@ -327,20 +330,20 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       data: new Int32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
     };
     const bare = mintAttributes({ [MATERIAL_INDEX]: materialIndex })!;
-    const withPoint = mintAttributes({
+    const withEdge = mintAttributes({
       [MATERIAL_INDEX]: materialIndex,
-      // 24, not 8: a box is seam-split, so its point count is what the builder actually
-      // produces rather than the cube's eight corners.
-      zz_point: { domain: 'point', type: 'float3', count: 24, data: new Float32Array(72) },
+      // An EDGE attribute now, and its count is 12 because a box has twelve edges. There is no
+      // edge buffer to check that against — which is the whole reason `edge` is still dropped.
+      zz_edge: { domain: 'edge', type: 'float', count: 12, data: new Float32Array(12) },
     })!;
     expect(bare.key, 'the fixture needs two DIFFERENT source keys to be a test').not.toBe(
-      withPoint.key,
+      withEdge.key,
     );
     insert(bare.key, bare.set, 'evaluate');
-    insert(withPoint.key, withPoint.set, 'evaluate');
+    insert(withEdge.key, withEdge.set, 'evaluate');
 
     const a = arrayGeometryRef(boxGeometryRef(BOX_SIZE, bare.key), 3, [2, 0, 0]);
-    const b = arrayGeometryRef(boxGeometryRef(BOX_SIZE, withPoint.key), 3, [2, 0, 0]);
+    const b = arrayGeometryRef(boxGeometryRef(BOX_SIZE, withEdge.key), 3, [2, 0, 0]);
 
     expect(a.key).toBe(b.key);
     expect(getForRead(a)).toBe(getForRead(b));
@@ -857,22 +860,71 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     expect(withUv.key).not.toBe(bare.key);
   });
 
-  it('CONTROL — a POINT-domain attribute is still excluded, by domain and not by name', () => {
-    // The other side of the filter, kept alive at the domain that still has no order. This is
-    // the row that would red if the widening had been written as "tile every domain" rather
-    // than as one dispatch with an arm per domain — a point attribute has one element per
-    // point, and laying it out through a face or corner order would gather garbage.
+  it('🔴 #717 THE EXIT — a point attribute survives Array, Mirror AND Mask, with gathered values', () => {
+    // The issue's exit criterion, as one row, because "survives Array" alone was satisfiable by
+    // a build that still lost it at the other two. A box has 8 topological points; the datum is
+    // an `int` so the Mirror does not refuse it — that refusal is `float3`-only and has its own
+    // rows in `classCarriage.gate.test.ts`.
+    const ids = new Int32Array([10, 11, 12, 13, 14, 15, 16, 17]);
+    const src = boxCarrying({
+      zz_ids: { domain: 'point', type: 'int', count: 8, data: ids },
+    });
+
+    const cases: readonly (readonly [string, GeometryRef, number, number])[] = [
+      // name, ref, expected merged point count, expected copies of the source run
+      ['array x3', arrayGeometryRef(src, 3, [2, 0, 0]), 24, 3],
+      ['mirror', mirrorGeometryRef(src, 'x', 2), 16, 2],
+      ['mask (subset)', subsetGeometryRef(src, '0-5', true), 8, 1],
+    ];
+
+    for (const [name, ref, points, copies] of cases) {
+      const set = tiledSet(ref);
+      expect(Object.keys(set).sort(), name).toEqual([MATERIAL_INDEX, 'zz_ids']);
+      expect(set['zz_ids'].count, name).toBe(points);
+      expect(set['zz_ids'].domain, name).toBe('point');
+      // 🔴 THE VALUES, NOT JUST THE COUNT. A wrong order of the right LENGTH is the failure
+      // this phase exists to prevent, and a count assertion cannot see it. Every copy must
+      // repeat the source's run verbatim, because a gather through `[0..7]` per copy is what
+      // the order promises.
+      const out = Array.from(set['zz_ids'].data);
+      expect(out.length, name).toBe(8 * copies);
+      for (let c = 0; c < copies; c++)
+        expect(out.slice(c * 8, c * 8 + 8), `${name} copy ${c}`).toEqual(Array.from(ids));
+    }
+  });
+
+  it('🔴 #717 a POINT-domain attribute now TILES — and its count is 8, not 24', () => {
+    // This row said "still excluded, by domain and not by name", kept alive at the domain that
+    // then had no order. #754 gave it one, so it flips — and the fixture's own justification
+    // is the thing worth reading, because it went false a phase before the row did:
+    //
+    //   *"24, not 8: a box is seam-split, so its point count is what the builder actually
+    //    produces rather than the cube's eight corners."*
+    //
+    // #716 made `point` mean the TOPOLOGICAL set. A box has 8 points and 24 split positions,
+    // and an attribute rides the 8 — the renderer does the duplication. Left at 24 this
+    // fixture does not merely mis-describe: it MISFITS, the whole tiling is refused, and the
+    // row would have read as "point attributes still do not travel" for a reason that has
+    // nothing to do with whether they can.
     const pt: AttributeData = {
       domain: 'point',
       type: 'float3',
-      count: 24,
-      data: new Float32Array(72),
+      count: 8,
+      data: new Float32Array([...Array(24).keys()]),
     };
     const withPoint = arrayGeometryRef(boxCarrying({ zz_point: pt }), 3, [2, 0, 0]);
     const bare = arrayGeometryRef(boxCarrying({}), 3, [2, 0, 0]);
 
-    expect(Object.keys(tiledSet(withPoint))).toEqual([MATERIAL_INDEX]);
-    expect(withPoint.key).toBe(bare.key);
+    expect(Object.keys(tiledSet(withPoint)).sort()).toEqual([MATERIAL_INDEX, 'zz_point']);
+    // It spans the MERGED geometry's points — 3 copies of 8 — not the source's.
+    expect(tiledSet(withPoint)['zz_point'].count).toBe(24);
+    // ...and it is a GATHER, so copy 1 repeats copy 0's values verbatim. A row asserting only
+    // the count would pass on an order that gathered garbage of the right length.
+    const out = tiledSet(withPoint)['zz_point'].data;
+    expect(Array.from(out.slice(0, 6))).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(Array.from(out.slice(24, 30))).toEqual([0, 1, 2, 3, 4, 5]);
+    // A source carrying one is now a source the merged geometry EXPRESSES, so the keys part.
+    expect(withPoint.key).not.toBe(bare.key);
   });
 
   it('CONTROL — a source with attributes at NO LAYABLE domain takes the historical road', () => {
@@ -881,15 +933,17 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     // minting an empty set — `{}` has no representation ([[V188]]) and a uniform stand-in would
     // be this module inventing an assignment.
     //
-    // 🔴 THE FIXTURE MOVED FROM CORNER TO POINT AT #694, AND THE ROW IS THE SAME ROW. A
-    // corner-only source now tiles, so it stopped being an example of "nothing layable" — the
-    // condition this guards did not go away, the set of domains that satisfy it shrank. It
-    // shrinks again the day a point order exists, and then this row needs `edge`.
-    const pointOnly = mintAttributes({
-      zz_point: { domain: 'point', type: 'float3', count: 24, data: new Float32Array(72) },
+    // 🔴 THE FIXTURE MOVED CORNER -> POINT AT #694 AND POINT -> EDGE AT #717, AND IT IS THE
+    // SAME ROW EACH TIME. Its note predicted this move in as many words: *"it shrinks again
+    // the day a point order exists, and then this row needs `edge`."* The condition this
+    // guards has never gone away; the set of domains satisfying it keeps shrinking, and it is
+    // now down to ONE. #718 empties it, and then this row has no fixture left — at which point
+    // it should be deleted rather than kept alive on a domain invented to feed it.
+    const edgeOnly = mintAttributes({
+      zz_edge: { domain: 'edge', type: 'float', count: 12, data: new Float32Array(12) },
     });
-    insert(pointOnly!.key, pointOnly!.set, 'evaluate');
-    const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, pointOnly!.key), 3, [2, 0, 0]);
+    insert(edgeOnly!.key, edgeOnly!.set, 'evaluate');
+    const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, edgeOnly!.key), 3, [2, 0, 0]);
 
     expect(ref.key).toBe('array|box|1,1,1|3|2,0,0');
     expect('attributeKey' in ref).toBe(false);
@@ -961,9 +1015,43 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
         .map((c) => String(c[0]))
         .filter((m) => m.includes('cannot tile'));
       expect(tiling).toHaveLength(1);
-      expect(tiling[0]).toContain("'material_index' over 36 faces");
-      expect(tiling[0]).toContain("'zz_group' over 36 faces");
-      expect(tiling[0]).toContain('onto a source of 12');
+      expect(tiling[0]).toContain("'material_index' over 36 faces (this source has 12)");
+      expect(tiling[0]).toContain("'zz_group' over 36 faces (this source has 12)");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('🔴 #717 the misfit message names the denominator the CHECK used, not a global pair', () => {
+    // Caught by OBSERVING a real build rather than by reading the code. The message used to end
+    // `onto a source of N faces / M corners` — a global pair, correct while exactly two domains
+    // tiled. The moment `point` tiled, a point misfit printed its count beside two denominators
+    // that had nothing to do with it. Measured verbatim before the fix:
+    //
+    //     'zz' over 98 points onto a source of 168 faces / 504 corners
+    //
+    // The sphere's 86 points — the one number a reader needs to fix the attribute — was the one
+    // number absent. Now the expected count comes from the SAME layout the comparison used, so
+    // the message cannot name a denominator the check did not apply, and a fourth domain needs
+    // no edit here at all.
+    const wrong = mintAttributes({
+      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 12, data: new Int32Array(12) },
+      // A box has 8 topological points; 24 is its SPLIT count, which is the exact mistake the
+      // fixtures in this file used to make and the one a reader is most likely to repeat.
+      zz_pts: { domain: 'point', type: 'int', count: 24, data: new Int32Array(24) },
+    });
+    insert(wrong!.key, wrong!.set, 'evaluate');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ref = arrayGeometryRef(boxGeometryRef(BOX_SIZE, wrong!.key), 3, [2, 0, 0]);
+      expect('attributeKey' in ref).toBe(false);
+      const tiling = warn.mock.calls
+        .map((c) => String(c[0]))
+        .filter((m) => m.includes('cannot tile'));
+      expect(tiling).toHaveLength(1);
+      expect(tiling[0]).toContain("'zz_pts' over 24 points (this source has 8)");
+      // ...and the misleading global pair is gone, not merely supplemented.
+      expect(tiling[0]).not.toContain('corners');
     } finally {
       warn.mockRestore();
     }
