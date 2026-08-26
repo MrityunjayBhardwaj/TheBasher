@@ -98,6 +98,103 @@
         "https://github.com/VAST-AI-Research/UniRig/blob/main/LICENSE",
         "https://huggingface.co/VAST-AI/UniRig"
       ]
+    },
+    {
+      "id": "trellis-code",
+      "name": "TRELLIS (inference code)",
+      "role": "candidate for text-to-3D, phase A4",
+      "source": "https://github.com/microsoft/TRELLIS",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "MIT, copyright Microsoft Corporation. But the README grants MIT to 'TRELLIS models and the MAJORITY of the code' -- that hedge is load-bearing. Two submodules are excluded and carry their own terms: diffoctreerast (derived from diff-gaussian-rasterization) and a modified Flexicubes. Both are recorded separately. This verdict covers the MIT portion only.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": [
+        "https://github.com/microsoft/TRELLIS/blob/main/LICENSE",
+        "https://github.com/microsoft/TRELLIS#license"
+      ]
+    },
+    {
+      "id": "trellis-weights",
+      "name": "TRELLIS-image-large and siblings (weights)",
+      "role": "candidate for text-to-3D weights, phase A4",
+      "source": "https://huggingface.co/microsoft/TRELLIS-image-large",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "The model card declares MIT, and the README says the models are MIT alongside the code. The WEIGHTS are genuinely unencumbered. This is true and, on its own, misleading: what turns TRELLIS's output into a mesh is the reference pipeline, not the weights, and that pipeline is blocked below.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": [
+        "https://huggingface.co/microsoft/TRELLIS-image-large",
+        "https://github.com/microsoft/TRELLIS#license"
+      ]
+    },
+    {
+      "id": "instantmesh-code",
+      "name": "InstantMesh (inference code)",
+      "role": "candidate for text-to-3D / image-to-3D, phase A4",
+      "source": "https://github.com/TencentARC/InstantMesh",
+      "licence": "Apache-2.0",
+      "verdict": "ALLOWED",
+      "reason": "Apache-2.0, on the audit's existing permissive allowlist. The code proper is clean; its declared dependency set is not -- see nvdiffrast.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": ["https://github.com/TencentARC/InstantMesh/blob/main/LICENSE"]
+    },
+    {
+      "id": "instantmesh-weights",
+      "name": "InstantMesh (weights)",
+      "role": "candidate for text-to-3D / image-to-3D weights, phase A4",
+      "source": "https://huggingface.co/TencentARC/InstantMesh",
+      "licence": "Apache-2.0",
+      "verdict": "ALLOWED",
+      "reason": "The model card declares apache-2.0. Same shape as TRELLIS: the weights are clean and the mesh-extraction dependency is not.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": ["https://huggingface.co/TencentARC/InstantMesh"]
+    },
+    {
+      "id": "nvdiffrast",
+      "name": "nvdiffrast (NVlabs)",
+      "role": "mesh-extraction dependency of BOTH text-to-3D candidates, phase A4 -- the deciding entry",
+      "source": "https://github.com/NVlabs/nvdiffrast",
+      "licence": "Nvidia Source Code License (1-Way Commercial)",
+      "verdict": "BLOCKED",
+      "reason": "Section 3.3 restricts USE, not distribution: 'The Work and any derivative works thereof only may be used or intended for use non-commercially... non-commercially means for research or evaluation purposes only and not for any direct or indirect monetary gain.' That is verbatim the clause PartField is already blocked under, so the ComfyUI over-HTTP carve-out does not reach it either (finding 2 in EXTERNAL-MODEL-LICENCES.md). It matters here because it is not an optional extra: InstantMesh's requirements.txt installs it directly ('git+https://github.com/NVlabs/nvdiffrast/') and TRELLIS's install instructions name it. Mesh extraction is precisely the stage phase A4 needs, so a permissive model reached through this pipeline is not permissively usable.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": [
+        "https://github.com/NVlabs/nvdiffrast/blob/main/LICENSE.txt",
+        "https://github.com/TencentARC/InstantMesh/blob/main/requirements.txt",
+        "https://github.com/microsoft/TRELLIS#installation"
+      ]
+    },
+    {
+      "id": "diff-gaussian-rasterization",
+      "name": "diff-gaussian-rasterization (Inria / MPII) -- the parent of TRELLIS's diffoctreerast",
+      "role": "rendering dependency of TRELLIS, phase A4",
+      "source": "https://github.com/graphdeco-inria/diff-gaussian-rasterization",
+      "licence": "Gaussian-Splatting License",
+      "verdict": "BLOCKED",
+      "reason": "Non-commercial USE restriction: 'The Software may be used non-commercially, i.e., for research and/or evaluation purposes only' and 'THE USER CANNOT USE, EXPLOIT OR DISTRIBUTE THE SOFTWARE FOR COMMERCIAL PURPOSES WITHOUT PRIOR AND EXPLICIT CONSENT OF LICENSORS.' TRELLIS's diffoctreerast submodule is stated by its own README to derive from this project, so the restriction travels with the derivative. Commercial use requires contacting Inria.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": [
+        "https://github.com/graphdeco-inria/diff-gaussian-rasterization/blob/main/LICENSE.md",
+        "https://github.com/microsoft/TRELLIS#license"
+      ]
+    },
+    {
+      "id": "hunyuan3d-2",
+      "name": "Hunyuan3D 2.0 (Tencent)",
+      "role": "candidate for text-to-3D, phase A4 -- rejected on terms",
+      "source": "https://github.com/Tencent-Hunyuan/Hunyuan3D-2",
+      "licence": "Tencent Hunyuan 3D 2.0 Community License Agreement",
+      "verdict": "BLOCKED",
+      "reason": "Not an OSI-approved permissive licence, and it fails this repo's posture three separate ways. Territorial: 'THIS LICENSE AGREEMENT DOES NOT APPLY IN THE EUROPEAN UNION, UNITED KINGDOM AND SOUTH KOREA' -- there is no grant at all for users there. Scale: above 1 million monthly active users a separate licence must be requested from Tencent. Conduct: an Acceptable Use Policy is incorporated by reference. A licence that can stop applying based on where a user lives is not one a shipped feature can rest on.",
+      "conditions": [],
+      "checkedAt": "2026-08-26",
+      "citations": ["https://github.com/Tencent-Hunyuan/Hunyuan3D-2/blob/main/LICENSE"]
     }
   ]
 }
