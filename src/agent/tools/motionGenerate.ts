@@ -15,6 +15,20 @@
 // would have meant either lying about purity or inventing a node type whose
 // evaluation performs I/O, which is the provenance branch A1 exists to avoid.
 //
+// The agent-facing text names only roads that exist. It used to offer the clip
+// as one that could be "layered under a hand-authored clip", which is a
+// capability the graph does not have: enumerating every input socket of all 81
+// registered node types finds exactly one that consumes a pose —
+// `LocomotionState.clip`, cardinality `single` — and `PosedSkeleton` has none at
+// all, so two clips cannot meet anywhere. Nothing layers, for generated,
+// imported or hand-authored motion alike; `AnimationLayer` carried it and was
+// retired in #199. A description is an instruction to a model, and a capability
+// named in it that the model then cannot reach costs a turn and teaches nothing,
+// because wiring a second clip to that one socket silently replaces the first
+// rather than refusing. A test derives the claim's premise from the live
+// registry, so the day a fold node ships the guard reds and this text is
+// rewritten deliberately instead of drifting back. Issues #758, #759, #760.
+//
 // The checkpoint is NOT an argument. It is configuration: a director chooses it
 // once in Settings, and the tool generates with what is configured. Letting the
 // agent name a checkpoint per call would spread the licence surface across every
@@ -57,10 +71,11 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
   name: 'motion.generate',
   description:
     'Generate an animation clip from a text description. Returns an Op[] that adds ' +
-    'a Skeleton + AnimationClip wired to the project TimeSource — the same nodes a ' +
-    'dropped .bvh file produces, so the clip can be retargeted onto a character, ' +
-    'layered under a hand-authored clip, and keyframed like any other. The ' +
-    'checkpoint is configured in Settings, not chosen per call.',
+    'a Skeleton + AnimationClip wired to the project TimeSource — the identical ops ' +
+    'a dropped .bvh file produces, carrying no mark of having been generated, so ' +
+    'every road open to an imported clip is open to this one. Retarget it with ' +
+    'mutator.animation.retarget. The checkpoint is configured in Settings, not ' +
+    'chosen per call.',
   paramSchema: motionGenerateSchema,
   async handler(args: MotionGenerateArgs, ctx: ToolContext): Promise<ToolResult> {
     if (!ctx.motionCapability) {
@@ -126,8 +141,9 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       text:
         `Generated "${args.name ?? args.prompt}" with ${ctx.motionModel} ` +
         `(job ${result.jobId}) — Skeleton ${result.skeletonId}, AnimationClip ` +
-        `${result.clipId}. It is an ordinary clip: retarget it onto a character ` +
-        `with mutator.animation.retarget, or layer it like any imported motion.` +
+        `${result.clipId}. It is an ordinary clip, with nothing in the graph ` +
+        `marking it as generated: retarget it onto a character with ` +
+        `mutator.animation.retarget.` +
         owed,
     };
   },

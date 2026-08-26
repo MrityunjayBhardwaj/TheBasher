@@ -6,7 +6,14 @@
 // and that its context wiring fails legibly rather than silently.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../../core/dag';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  emptyDagState,
+  evaluate,
+  getNodeType,
+  listNodeTypes,
+} from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
 import {
   StubMotionGenerationCapability,
@@ -213,5 +220,60 @@ describe('the tool is actually reachable by the agent', () => {
     const parsed = motionGenerateTool.paramSchema.safeParse({ prompt: 'walk', model: BLOCKED });
     expect(parsed.success).toBe(true);
     expect(parsed.success && 'model' in parsed.data).toBe(false);
+  });
+});
+
+describe('the agent-facing text offers only roads that exist (#758)', () => {
+  /**
+   * Every input socket in the live registry that consumes a pose-bearing value.
+   * Derived, never spelled out: a hard-coded list would keep passing after a
+   * fold node shipped, which is the one moment this guard has to speak.
+   */
+  function poseConsumingSockets(): string[] {
+    const found: string[] = [];
+    for (const type of listNodeTypes()) {
+      const def = getNodeType(type);
+      for (const [socket, spec] of Object.entries(def?.inputs ?? {})) {
+        const s = spec as { type: string; cardinality?: string };
+        if (s.type === 'AnimationClip' || s.type === 'PosedSkeleton') {
+          found.push(`${type}.${socket}: ${s.type} (${s.cardinality})`);
+        }
+      }
+    }
+    return found.sort();
+  }
+
+  it('measures the premise: exactly one socket consumes a pose, and it is single', () => {
+    // Not a restatement of the guard below — its PREMISE, asserted where a
+    // reader can see it. This reds the day a pose-folding node lands, which is
+    // precisely when the description must be rewritten rather than left to
+    // drift back into a promise nobody re-measured.
+    expect(poseConsumingSockets()).toEqual(['LocomotionState.clip: AnimationClip (single)']);
+  });
+
+  it('does not offer layering while no two clips can meet', async () => {
+    const sockets = poseConsumingSockets();
+    const canFold =
+      sockets.length > 1 || sockets.some((s) => s.endsWith('(list)') || s.endsWith('(multi)'));
+    expect(canFold).toBe(false);
+
+    // BOTH agent-facing surfaces, not just the catalogue entry. The result text
+    // is the one the model reads immediately after acting, and it carried the
+    // same promise.
+    const result = await motionGenerateTool.handler({ prompt: 'walk' }, ctx());
+    // `ToolResult.text` is optional, so this is a requirement, not a cast: a
+    // result the model reads nothing from would satisfy the loop below
+    // vacuously — the H451 shape, where the assertion holds for the very
+    // implementation it forbids.
+    expect(result.text).toBeTruthy();
+    for (const text of [motionGenerateTool.description, result.text ?? '']) {
+      expect(text.toLowerCase()).not.toMatch(/\blayer/);
+    }
+  });
+
+  it('still names the road that DOES exist, so the correction did not just delete', () => {
+    // A guard that only forbids can be satisfied by saying nothing. Retarget is
+    // real and covered (generatedMotion.test.ts), so it must survive.
+    expect(motionGenerateTool.description).toContain('mutator.animation.retarget');
   });
 });
