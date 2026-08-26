@@ -15,7 +15,12 @@ import {
 } from './external-model-audit.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const manifest = JSON.parse(fs.readFileSync(path.join(here, 'external-models.json'), 'utf8'));
+const manifest = JSON.parse(
+  fs.readFileSync(
+    path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json'),
+    'utf8',
+  ),
+);
 
 // This gate exists because the npm dependency walk in license-audit.mjs cannot
 // see a model reached over HTTP. Each test below pins a property that would

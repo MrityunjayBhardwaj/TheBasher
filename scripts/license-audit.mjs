@@ -129,7 +129,7 @@ function main() {
   // even when the dependency walk is broken.
   const here = path.dirname(fileURLToPath(import.meta.url));
   const externalCode = auditExternalModels({
-    manifestPath: path.join(here, 'external-models.json'),
+    manifestPath: path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json'),
     repoRoot: path.resolve(here, '..'),
   });
   if (externalCode !== 0) process.exit(externalCode);

@@ -168,7 +168,7 @@ no error.
 
 ## The gate
 
-`scripts/external-models.json` is the machine-readable record;
+`src/core/licensing/external-models.json` is the machine-readable record;
 `scripts/external-model-audit.mjs` enforces it, and `npm run license-audit` runs it before the
 npm tree walk, so CI needed no new wiring.
 
@@ -220,7 +220,7 @@ under-reports — and the report names the file, so it costs a glance.
 
 ### To add or re-check a model
 
-Add an entry to `scripts/external-models.json` with the cited URLs, set its `checkedAt`, and add
+Add an entry to `src/core/licensing/external-models.json` with the cited URLs, set its `checkedAt`, and add
 a section here. Then run `npm run license-audit`.
 
 🔴 **Two reasons to re-check rather than trust this file:**

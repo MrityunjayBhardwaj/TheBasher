@@ -22,10 +22,12 @@ export const VERDICTS = new Set(['ALLOWED', 'ALLOWED_WITH_CONDITIONS', 'BLOCKED'
 export const SCAN_ROOTS = ['src', 'tests', 'scripts'];
 
 // The three files whose job is to name blocked models. Without this the gate reds
-// on its own record. Enumerated exactly, never a glob or a directory — an
-// over-broad exemption silently re-opens the hole it was cut for (#737).
+// on its own record — and since the manifest moved under src/ so runtime code can
+// read it, that is no longer hypothetical: it sits inside a scanned root.
+// Enumerated exactly, never a glob or a directory — an over-broad exemption
+// silently re-opens the hole it was cut for (#737).
 export const EXEMPT = [
-  'scripts/external-models.json',
+  'src/core/licensing/external-models.json',
   'scripts/external-model-audit.mjs',
   'scripts/external-model-audit.test.mjs',
 ];
