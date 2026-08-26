@@ -650,6 +650,43 @@ export interface GeometryRef {
 }
 
 // ---------------------------------------------------------------------------
+// #744 / #754 — a count and its ABSENCES, as one value
+// ---------------------------------------------------------------------------
+
+/**
+ * How many elements of some class a descriptor has — or the named reason it cannot say.
+ *
+ * ── WHY THIS IS A TYPE AND NOT `number | null` ────────────────────────────────────────
+ *
+ * The `null` it replaces was carrying two unrelated facts (#744). One is permanent — a
+ * `gltf` or `baked` descriptor's buffers live in a loaded asset clone or in OPFS, and
+ * nothing on the descriptor says how many elements they hold, so no amount of later work
+ * makes that arm answerable HERE. The other was temporary: the three derived kinds refused
+ * because a WELDED point count depends on whether copies coincide. #754 retires that second
+ * reason entirely — a generator's point identity composes structurally — which is why the
+ * shipped verdict has two arms and not the three #744 sketched. See {@link pointCountOf}.
+ *
+ * The shape is `ClassVerdict`'s, deliberately: same module family, same failure it was
+ * written to fix. That one's own doc names the tell — *"the function's own doc had to spend
+ * a paragraph explaining that the two `null`s meant different things, which is the shape of
+ * a type that has not been written yet."* `pointCountOf`'s doc was spending that paragraph.
+ *
+ * ⚠️ IT DOES NOT MODEL "this domain has no derivation at all". That is a fact about the
+ * BUILD rather than about a descriptor, an author cannot reach it, and `componentCountOf`
+ * throws on it rather than returning it — see the note there. Folding it in here would let a
+ * caller handle a programming error as if it were data.
+ */
+export type CountVerdict =
+  /** The number, derived from params alone. */
+  | { readonly kind: 'counted'; readonly count: number }
+  /**
+   * No answer from a descriptor, because the elements are not IN the descriptor. Carries
+   * its own reason so a caller can quote it instead of restating it — and so a verdict that
+   * travelled up a source chain still says which link produced it.
+   */
+  | { readonly kind: 'outside-the-descriptor'; readonly why: string };
+
+// ---------------------------------------------------------------------------
 // Evaluated UVs (v0.6 #3, issue #181) — the real UV layout for DISPLAY only
 // ---------------------------------------------------------------------------
 //

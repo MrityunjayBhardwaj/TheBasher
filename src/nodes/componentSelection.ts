@@ -123,7 +123,7 @@ import type { KnownDomain, ScopeDomain } from './attributes';
  * the resolver below is the thing that consumes it.
  */
 export type { ScopeDomain };
-import type { GeometryDescriptor, ObjectData } from './types';
+import type { CountVerdict, GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
@@ -219,19 +219,28 @@ function refuse(why: string): never {
 }
 
 /**
- * How many elements a domain has for a given descriptor, `null` when that descriptor cannot
- * say, or a named refusal when the DOMAIN is not one ns-2 resolves at.
+ * How many elements a domain has for a given descriptor — as a {@link CountVerdict} — or a
+ * named refusal when the DOMAIN is not one ns-2 resolves at.
  *
  * Closed by a `never` over {@link KnownDomain}, so a fifth domain is a compile error at the
  * site that must answer for it.
  *
- * ⚠️ `null` AND A REFUSAL ARE DIFFERENT ANSWERS TO DIFFERENT QUESTIONS, and collapsing them
- * is what step 9b measured as a production crash. A refusal says *this domain has no
+ * ⚠️ AN ABSENCE AND A REFUSAL ARE DIFFERENT ANSWERS TO DIFFERENT QUESTIONS, and collapsing
+ * them is what step 9b measured as a production crash. A refusal says *this domain has no
  * derivation at all in ns-2* — a fact about the code, true for every descriptor, and an
- * author cannot reach it. `null` says *this domain is derivable in principle and THIS
+ * author cannot reach it, which is why it THROWS and is not an arm of the verdict. An
+ * `outside-the-descriptor` verdict says *this domain is derivable in principle and THIS
  * descriptor cannot say how many* — the `gltf` and `baked` arms, whose buffers live outside
  * the descriptor, and which are ordinary shipped values sitting on a modifier's spine right
  * now. See {@link resolveComponentSelection} for what the difference buys.
+ *
+ * 🔴 #744 — THE RETURN USED TO BE `number | null`, AND THE `null` WAS CARRYING TWO FACTS.
+ * At `point` it meant both "the buffers are elsewhere" (`gltf`, `baked`) and "a welded count
+ * depends on positional coincidence" (`array`, `mirror`, `subset`), which have different
+ * futures: the first is permanent, the second was a road. #754 built that road — the derived
+ * arms compose — so the second meaning is gone rather than named, and what remains is one
+ * absence with its reason attached. The type is kept even at two arms because the reason now
+ * travels WITH the absence instead of being restated by each caller.
  *
  * ⚠️ THIS IS NOT `elementCountFor`, AND THE DIFFERENCE IS WHY BOTH EXIST. That one maps
  * (domain, a full `MeshElementCounts`) → count. A descriptor yields exactly ONE of those
@@ -250,19 +259,31 @@ function refuse(why: string): never {
 export function componentCountOf(
   domain: KnownDomain,
   descriptor: GeometryDescriptor,
-): number | null {
+): CountVerdict {
   switch (domain) {
-    case 'face':
-      // The gltf / baked arms answer `null`: their buffers live outside the descriptor, so
+    case 'face': {
+      // The gltf / baked arms have no answer: their buffers live outside the descriptor, so
       // nothing here can say how many faces they hold. A ZERO would read as "scope nothing"
       // on a mesh the author can see, with faces they can count — which is why the absence
       // is carried as its own value rather than as a number.
-      return faceCountOf(descriptor);
+      //
+      // #744 — `faceCountOf` STILL SPEAKS `number | null`, AND THE LIFT HAPPENS HERE. Its
+      // `null` has only ever meant one thing: its derived arms recurse, and come back null
+      // only when a `gltf` or `baked` sits somewhere up the chain. The collapse #744
+      // describes was `pointCountOf`'s alone, so lifting `faceCountOf` too would rewrite
+      // five in-module callers to buy a distinction that function does not draw.
+      const faces = faceCountOf(descriptor);
+      return faces === null
+        ? {
+            kind: 'outside-the-descriptor',
+            why: `descriptor '${descriptor.kind}' resolves to a 'gltf' or 'baked' source, whose triangles live outside the descriptor`,
+          }
+        : { kind: 'counted', count: faces };
+    }
     case 'point':
-      // #716 — the TOPOLOGICAL count, which is derivable for the two primitive kinds. The
-      // three derived kinds come back `null` from there, because a welded count depends on
-      // whether copies COINCIDE, and that is a function of an operator's offset rather than
-      // of its structure — measured, and written up at `pointCountOf`.
+      // #716 gave this arm the TOPOLOGICAL count; #754 made it total for everything but the
+      // two kinds whose buffers are elsewhere, by composing a derived geometry's point
+      // identity from its source's instead of position-welding the merged result.
       //
       // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, which is worth saying because
       // it looks like it should. A scope's domain is chosen by an OPERATOR'S DECLARATION, and
@@ -457,13 +478,18 @@ export function resolveComponentSelection(
     );
   }
 
-  const length = componentCountOf(domain, source.geometry.descriptor);
-  if (length === null) {
+  const count = componentCountOf(domain, source.geometry.descriptor);
+  if (count.kind !== 'counted') {
     if (authored === null) return null;
+    // #744 — the verdict's OWN words, quoted rather than restated. The sentence that used to
+    // sit here ("its geometry lives outside the descriptor") was this module asserting the
+    // reason on the count function's behalf, and it would have gone quietly false the moment
+    // a second kind of absence existed. Quoting keeps the reason where it is decided.
     return refuse(
-      `descriptor '${source.geometry.descriptor.kind}' has no derivable ${domain} count (its geometry lives outside the descriptor), so the authored scope '${authored}' cannot be honoured`,
+      `descriptor '${source.geometry.descriptor.kind}' has no derivable ${domain} count — ${count.why} — so the authored scope '${authored}' cannot be honoured`,
     );
   }
+  const length = count.count;
 
   // No scope authored at all — the operator applies to everything. This is the ONLY road
   // to "everything" that does not go through a query, which is what keeps a LOST scope
