@@ -14,6 +14,7 @@
 import type { z } from 'zod';
 import type { ComfyUICapability } from '../../core/comfy';
 import type { MotionGenerationCapability } from '../../core/motiongen';
+import type { ModelGenerationCapability } from '../../core/modelgen';
 import type { Op } from '../../core/dag/types';
 import type { DagState } from '../../core/dag/state';
 import type { StorageCapability } from '../../core/storage';
@@ -52,6 +53,22 @@ export interface ToolContext {
    * within a single release, so a hidden default would pick one silently.
    */
   motionModel?: string;
+  /**
+   * A4: text-to-3D capability for `model.generate`. Boot resolves Tripo vs Stub
+   * via pickModelGeneration(). Undefined when nothing is wired.
+   */
+  modelCapability?: ModelGenerationCapability;
+  /**
+   * A4: the model version `model.generate` runs. Carried here rather than taken
+   * as a tool argument for the same reason as `motionModel` — it is
+   * configuration, not a per-call choice.
+   *
+   * Unlike `motionModel` it carries no licence weight: a hosted service ships no
+   * weights, so what governs use is one agreement about the SERVICE and a
+   * version is a menu choice inside it. The gate is consulted once, on the
+   * service id, inside the capability.
+   */
+  modelVersion?: string;
 }
 
 /**

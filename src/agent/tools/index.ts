@@ -18,6 +18,7 @@ export { renderSummarizePassTool } from './renderSummarizePass';
 export { renderDryRunWorkflowTool } from './renderDryRunWorkflow';
 export { renderSummarizeStylizedTool } from './renderSummarizeStylized';
 export { motionGenerateTool } from './motionGenerate';
+export { modelGenerateTool } from './modelGenerate';
 
 import { registerTool } from './registry';
 import { characterWalkToTool } from './characterWalkTo';
@@ -33,6 +34,7 @@ import { renderSummarizePassTool } from './renderSummarizePass';
 import { renderDryRunWorkflowTool } from './renderDryRunWorkflow';
 import { renderSummarizeStylizedTool } from './renderSummarizeStylized';
 import { motionGenerateTool } from './motionGenerate';
+import { modelGenerateTool } from './modelGenerate';
 
 export function registerAllTools(): void {
   registerTool(characterWalkToTool);
@@ -54,6 +56,7 @@ export function registerAllTools(): void {
   registerTool(renderSummarizeStylizedTool);
   // A1 — text-to-motion. Enters by the same road an imported .bvh takes.
   registerTool(motionGenerateTool);
+  registerTool(modelGenerateTool);
   // Mutator + strategy catalogs are registered separately via
   // registerAllMutators() / registerAllStrategies() — keeps registry
   // resets independent in tests; boot wires all three.

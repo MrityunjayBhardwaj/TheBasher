@@ -21,7 +21,7 @@ import { useAgentSessionStore } from '../agent/session/store';
 import { useSelectionStore } from './stores/selectionStore';
 import { runAgentTurn } from '../agent/orchestrator';
 import type { LLMConfig } from '../agent/transport/types';
-import { getComfyCapability, getMotionCapability, getStorage } from './boot';
+import { getComfyCapability, getMotionCapability, getModelCapability, getStorage } from './boot';
 import { useSettingsStore } from './stores/settingsStore';
 
 const DEFAULT_BASE_URL = 'https://api.deepinfra.com/v1';
@@ -77,15 +77,16 @@ export function AgentChat() {
     // Resolve capabilities fresh per turn (the underlying getters are
     // module-level singletons — same instance across the session, but
     // never captured at component mount where they'd be premature).
-    const [comfyCapability, storage, motionCapability] = await Promise.all([
+    const [comfyCapability, storage, motionCapability, modelCapability] = await Promise.all([
       getComfyCapability(),
       getStorage(),
       getMotionCapability(),
+      getModelCapability(),
     ]);
     // The checkpoint is read at turn time, not captured at mount — a director
     // who changes it in Settings mid-session means the next turn, not the next
     // reload.
-    const { motionGenModel } = useSettingsStore.getState();
+    const { motionGenModel, modelGenVersion } = useSettingsStore.getState();
 
     try {
       await runAgentTurn(config, {
@@ -97,6 +98,8 @@ export function AgentChat() {
         storage,
         motionCapability,
         motionModel: motionGenModel,
+        modelCapability,
+        modelVersion: modelGenVersion,
       });
     } finally {
       setRunning(false);

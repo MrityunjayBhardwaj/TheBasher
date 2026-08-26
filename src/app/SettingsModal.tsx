@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from './stores/settingsStore';
 import { probeComfyUI, type ComfyProbeResult } from '../core/comfy';
-import { resetComfyCapability, resetMotionCapability } from './boot';
+import { resetComfyCapability, resetMotionCapability, resetModelCapability } from './boot';
 import { conditionsFor, modelRecordFor } from '../core/licensing/allowedModels';
 
 type TestState = { status: 'idle' | 'testing' } | ({ status: 'done' } & ComfyProbeResult);
@@ -31,6 +31,10 @@ export function SettingsModal() {
   const storedMotionModel = useSettingsStore((s) => s.motionGenModel);
   const setMotionGenUrl = useSettingsStore((s) => s.setMotionGenUrl);
   const setMotionGenModel = useSettingsStore((s) => s.setMotionGenModel);
+  const storedTripoKey = useSettingsStore((s) => s.tripoApiKey);
+  const storedModelVersion = useSettingsStore((s) => s.modelGenVersion);
+  const setTripoApiKey = useSettingsStore((s) => s.setTripoApiKey);
+  const setModelGenVersion = useSettingsStore((s) => s.setModelGenVersion);
 
   // Draft state — edits commit only on Save, so Cancel/Esc discards them.
   const [url, setUrl] = useState(storedUrl);
@@ -38,6 +42,8 @@ export function SettingsModal() {
   const [live, setLive] = useState(storedLive);
   const [motionUrl, setMotionUrl] = useState(storedMotionUrl);
   const [motionModel, setMotionModel] = useState(storedMotionModel);
+  const [tripoKey, setTripoKey] = useState(storedTripoKey);
+  const [modelVersion, setModelVersion] = useState(storedModelVersion);
   const [test, setTest] = useState<TestState>({ status: 'idle' });
 
   // Re-seed the draft from the store each time the modal opens.
@@ -48,6 +54,8 @@ export function SettingsModal() {
       setLive(storedLive);
       setMotionUrl(storedMotionUrl);
       setMotionModel(storedMotionModel);
+      setTripoKey(storedTripoKey);
+      setModelVersion(storedModelVersion);
       setTest({ status: 'idle' });
     }
   }, [isOpen, storedUrl, storedAuth, storedLive, storedMotionUrl, storedMotionModel]);
@@ -83,8 +91,11 @@ export function SettingsModal() {
     setComfyLiveGenerate(live);
     setMotionGenUrl(motionUrl);
     setMotionGenModel(motionModel);
+    setTripoApiKey(tripoKey);
+    setModelGenVersion(modelVersion);
     resetComfyCapability(); // next getComfyCapability() re-probes the new server
     resetMotionCapability(); // same session-cache hazard on the motion side
+    resetModelCapability(); // and again for the mesh-generation capability
     close();
   };
 
@@ -246,6 +257,67 @@ export function SettingsModal() {
                 ))}
               </ul>
             )}
+          </label>
+        </section>
+
+        <section className="flex flex-col gap-2 border-t border-border pt-3">
+          <h3 className="text-xs font-medium text-fg/80">Text to 3D</h3>
+
+          <label className="flex flex-col gap-1">
+            <span className="flex items-center gap-1.5 text-[11px] text-fg/60">
+              Tripo API key{' '}
+              <span className="text-fg/40">(empty generates with the offline stub)</span>
+            </span>
+            <input
+              type="password"
+              data-testid="settings-tripo-key"
+              value={tripoKey}
+              spellCheck={false}
+              onChange={(e) => setTripoKey(e.target.value)}
+              placeholder="tsk_…"
+              className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+            {/* Shape is checked WHILE TYPING for the same reason the checkpoint's
+                verdict is: a key from the wrong field otherwise fails as an
+                opaque 401 seconds later, which sends the reader to the wrong
+                problem. */}
+            <span data-testid="settings-tripo-key-shape" className="text-[11px]">
+              {tripoKey.trim() === '' ? (
+                <span className="text-fg/50">○ Not set — the offline stub will generate</span>
+              ) : tripoKey.startsWith('tsk_') ? (
+                <span className="text-accent">● Key shape looks right</span>
+              ) : (
+                <span className="text-fg/70">
+                  ● A Tripo key begins with &ldquo;tsk_&rdquo; — copy it from
+                  platform.tripo3d.ai/api-keys
+                </span>
+              )}
+            </span>
+            {/* Said plainly rather than buried: the key is stored in the clear,
+                exactly as the ComfyUI auth header above it is. */}
+            <span className="text-[11px] text-fg/40">
+              Stored unencrypted in this browser. Scope and rotate it at the provider.
+            </span>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-fg/60">Model version</span>
+            <input
+              type="text"
+              data-testid="settings-model-version"
+              value={modelVersion}
+              spellCheck={false}
+              onChange={(e) => setModelVersion(e.target.value)}
+              placeholder="v2.5-20250123"
+              className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+            {/* No per-version licence verdict, and the absence is the point: a
+                hosted service ships no weights, so what governs use is ONE
+                agreement about the service and a version is a menu choice inside
+                it. The verdict is consulted once, on the service. */}
+            <span data-testid="settings-model-service-licence" className="text-[11px] text-fg/50">
+              ○ Tripo&rsquo;s terms are not yet recorded — generation refuses until they are
+            </span>
           </label>
         </section>
 

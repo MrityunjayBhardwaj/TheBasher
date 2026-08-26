@@ -71,6 +71,7 @@ describe('tool registry', () => {
       'dag.inspect',
       'library.import',
       'mesh.add',
+      'model.generate',
       'motion.generate',
     ]);
     expect(tools).toHaveLength(names.length);

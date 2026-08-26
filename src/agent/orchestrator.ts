@@ -41,6 +41,7 @@ import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/st
 import type { Op, NodeId } from '../core/dag/types';
 import type { ComfyUICapability } from '../core/comfy';
 import type { MotionGenerationCapability } from '../core/motiongen';
+import type { ModelGenerationCapability } from '../core/modelgen';
 import type { StorageCapability } from '../core/storage';
 
 // Bumped 4 → 8 (2026-05-08, post-PR-#9 live smoke). Single user intents
@@ -163,6 +164,8 @@ export interface TurnOptions {
    */
   motionCapability?: MotionGenerationCapability;
   motionModel?: string;
+  modelCapability?: ModelGenerationCapability;
+  modelVersion?: string;
 }
 
 /**
@@ -182,6 +185,8 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
     storage,
     motionCapability,
     motionModel,
+    modelCapability,
+    modelVersion,
   } = options;
   const sessionStore = useAgentSessionStore.getState();
 
@@ -413,6 +418,8 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         storage,
         motionCapability,
         motionModel,
+        modelCapability,
+        modelVersion,
       };
 
       // Iterate by accumulator index (insertion order).

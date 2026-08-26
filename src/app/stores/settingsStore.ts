@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import { DEFAULT_COMFYUI_URL } from '../../core/comfy';
 import { DEFAULT_MOTIONGEN_MODEL, DEFAULT_MOTIONGEN_URL } from '../../core/motiongen';
+import { DEFAULT_MODEL_VERSION } from '../../core/modelgen';
 import { modelRecordFor } from '../../core/licensing/allowedModels';
 
 const STORAGE_KEY = 'basher.settings.v1';
@@ -44,14 +45,38 @@ export interface PersistedSettings {
    * of source text cannot see a value that lives in a user's localStorage.
    */
   motionGenModel: string;
+  /**
+   * Tripo API key (`tsk_`-prefixed). Empty means text-to-3D runs on the offline
+   * stub, which is the default and costs nothing.
+   *
+   * 🔴 Stored in localStorage in the clear, like `comfyAuthHeader` beside it.
+   * That is a real exposure — any script on this origin can read it — and it is
+   * accepted rather than hidden: a key the app must send cannot be meaningfully
+   * protected in a browser, and the Blender plugin's XOR "encryption" of its own
+   * key file is the same theatre with more steps. The honest mitigations are
+   * scoping and rotation at the provider, not obfuscation here.
+   */
+  tripoApiKey: string;
+  /** Tripo model version, e.g. `v2.5-20250123`. A menu choice inside one service
+   *  agreement, NOT a separately-licensed checkpoint — which is why, unlike
+   *  `motionGenModel`, no per-value licence verdict is consulted. */
+  modelGenVersion: string;
 }
 
-const DEFAULT_SETTINGS: PersistedSettings = {
+/** The independent declaration of WHICH fields persist. Exported so the
+ *  persistence test can derive its expectation from something other than
+ *  `persistedSliceOf` — which is the function that writes the blob, so comparing
+ *  the blob against it would hold for every implementation, including one that
+ *  dropped a field. These two restate the same shape on purpose; the test's whole
+ *  job is to catch them diverging. */
+export const DEFAULT_SETTINGS: PersistedSettings = {
   comfyUrl: DEFAULT_COMFYUI_URL,
   comfyAuthHeader: '',
   comfyLiveGenerate: false,
   motionGenUrl: DEFAULT_MOTIONGEN_URL,
   motionGenModel: DEFAULT_MOTIONGEN_MODEL,
+  tripoApiKey: '',
+  modelGenVersion: DEFAULT_MODEL_VERSION,
 };
 
 export interface SettingsStore extends PersistedSettings {
@@ -64,6 +89,8 @@ export interface SettingsStore extends PersistedSettings {
   setComfyLiveGenerate: (on: boolean) => void;
   setMotionGenUrl: (url: string) => void;
   setMotionGenModel: (model: string) => void;
+  setTripoApiKey: (key: string) => void;
+  setModelGenVersion: (version: string) => void;
 }
 
 function safeGetItem(key: string): string | null {
@@ -120,6 +147,12 @@ function readPersisted(): PersistedSettings {
         modelRecordFor(parsed.motionGenModel)?.verdict !== 'BLOCKED'
           ? parsed.motionGenModel
           : DEFAULT_SETTINGS.motionGenModel,
+      tripoApiKey:
+        typeof parsed.tripoApiKey === 'string' ? parsed.tripoApiKey : DEFAULT_SETTINGS.tripoApiKey,
+      modelGenVersion:
+        typeof parsed.modelGenVersion === 'string' && parsed.modelGenVersion.trim()
+          ? parsed.modelGenVersion
+          : DEFAULT_SETTINGS.modelGenVersion,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -142,6 +175,8 @@ function persistedSliceOf(state: SettingsStore): PersistedSettings {
     comfyLiveGenerate: state.comfyLiveGenerate,
     motionGenUrl: state.motionGenUrl,
     motionGenModel: state.motionGenModel,
+    tripoApiKey: state.tripoApiKey,
+    modelGenVersion: state.modelGenVersion,
   };
 }
 
@@ -181,6 +216,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const trimmed = model.trim();
     const blocked = modelRecordFor(trimmed)?.verdict === 'BLOCKED';
     set({ motionGenModel: !trimmed || blocked ? DEFAULT_MOTIONGEN_MODEL : trimmed });
+    writePersisted(persistedSliceOf(get()));
+  },
+  setTripoApiKey(key) {
+    // Stored as typed, including a malformed one. The shape check lives at the
+    // capability, where the use would happen, for the same reason the motion
+    // checkpoint's does: a setter that silently blanked a mistyped key would
+    // hide the typo instead of letting the director see the refusal and fix it.
+    set({ tripoApiKey: key.trim() });
+    writePersisted(persistedSliceOf(get()));
+  },
+  setModelGenVersion(version) {
+    set({ modelGenVersion: version.trim() || DEFAULT_MODEL_VERSION });
     writePersisted(persistedSliceOf(get()));
   },
 }));
