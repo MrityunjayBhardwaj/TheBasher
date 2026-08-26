@@ -81,6 +81,11 @@ describe('#638 the count is a leaf', () => {
     //
     // 🔴 WIDENED AGAIN at ns-2 step 12.5, by one, for the same reason: `scopeQuery` is a
     // leaf with no imports at all, and a scoped build has to know WHICH triangles survive.
+    //
+    // 🔴 WIDENED AGAIN at #716 (P2), by one: `pointIdentity` imports TWO TYPES and nothing
+    // else, so it is a leaf by the same measure as the four before it. The registry needs
+    // it because the descriptor's point arithmetic can only be checked against a geometry,
+    // and this is the one place a built geometry and its descriptor are both in hand.
     expect(importsOf('src/app/geometryRegistry.ts')).toEqual([
       'three',
       'three/examples/jsm/utils/BufferGeometryUtils.js',
@@ -88,6 +93,7 @@ describe('#638 the count is a leaf', () => {
       '../nodes/attributes',
       './attributeStore',
       './faceCount',
+      './pointIdentity',
       './materialGroups',
       '../nodes/scopeQuery',
     ]);
@@ -100,6 +106,9 @@ describe('#638 the count is a leaf', () => {
     expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
     expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types', '../nodes/scopeQuery']);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
+    // #716 — the leaf added at P2. Two type imports, no value imports at all, which is what
+    // made widening the registry's set above safe rather than merely convenient.
+    expect(importsOf('src/app/pointIdentity.ts')).toEqual(['three', '../nodes/types']);
     expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
 });
