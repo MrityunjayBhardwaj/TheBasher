@@ -13,7 +13,8 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from './stores/settingsStore';
 import { probeComfyUI, type ComfyProbeResult } from '../core/comfy';
-import { resetComfyCapability } from './boot';
+import { resetComfyCapability, resetMotionCapability } from './boot';
+import { modelRecordFor } from '../core/licensing/allowedModels';
 
 type TestState = { status: 'idle' | 'testing' } | ({ status: 'done' } & ComfyProbeResult);
 
@@ -26,11 +27,17 @@ export function SettingsModal() {
   const setComfyUrl = useSettingsStore((s) => s.setComfyUrl);
   const setComfyAuthHeader = useSettingsStore((s) => s.setComfyAuthHeader);
   const setComfyLiveGenerate = useSettingsStore((s) => s.setComfyLiveGenerate);
+  const storedMotionUrl = useSettingsStore((s) => s.motionGenUrl);
+  const storedMotionModel = useSettingsStore((s) => s.motionGenModel);
+  const setMotionGenUrl = useSettingsStore((s) => s.setMotionGenUrl);
+  const setMotionGenModel = useSettingsStore((s) => s.setMotionGenModel);
 
   // Draft state — edits commit only on Save, so Cancel/Esc discards them.
   const [url, setUrl] = useState(storedUrl);
   const [auth, setAuth] = useState(storedAuth);
   const [live, setLive] = useState(storedLive);
+  const [motionUrl, setMotionUrl] = useState(storedMotionUrl);
+  const [motionModel, setMotionModel] = useState(storedMotionModel);
   const [test, setTest] = useState<TestState>({ status: 'idle' });
 
   // Re-seed the draft from the store each time the modal opens.
@@ -39,9 +46,11 @@ export function SettingsModal() {
       setUrl(storedUrl);
       setAuth(storedAuth);
       setLive(storedLive);
+      setMotionUrl(storedMotionUrl);
+      setMotionModel(storedMotionModel);
       setTest({ status: 'idle' });
     }
-  }, [isOpen, storedUrl, storedAuth, storedLive]);
+  }, [isOpen, storedUrl, storedAuth, storedLive, storedMotionUrl, storedMotionModel]);
 
   // Esc dismisses (discards the draft). Bound only while open.
   useEffect(() => {
@@ -52,6 +61,10 @@ export function SettingsModal() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, close]);
+
+  // Read live off the draft, so the verdict tracks what is being typed rather
+  // than what was last saved.
+  const motionVerdict = modelRecordFor(motionModel.trim())?.verdict;
 
   if (!isOpen) return null;
 
@@ -65,7 +78,10 @@ export function SettingsModal() {
     setComfyUrl(url);
     setComfyAuthHeader(auth);
     setComfyLiveGenerate(live);
+    setMotionGenUrl(motionUrl);
+    setMotionGenModel(motionModel);
     resetComfyCapability(); // next getComfyCapability() re-probes the new server
+    resetMotionCapability(); // same session-cache hazard on the motion side
     close();
   };
 
@@ -163,6 +179,61 @@ export function SettingsModal() {
               ) : null}
             </span>
           </div>
+        </section>
+
+        <section className="flex flex-col gap-2.5">
+          <span className="text-xs font-medium uppercase tracking-wide text-fg/60">
+            Text to Motion
+          </span>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-fg/60">
+              Service URL{' '}
+              <span className="text-fg/40">(unreachable falls back to the offline stub)</span>
+            </span>
+            <input
+              type="text"
+              data-testid="settings-motion-url"
+              value={motionUrl}
+              spellCheck={false}
+              onChange={(e) => setMotionUrl(e.target.value)}
+              placeholder="http://127.0.0.1:8600"
+              className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[11px] text-fg/60">Checkpoint</span>
+            <input
+              type="text"
+              data-testid="settings-motion-model"
+              value={motionModel}
+              spellCheck={false}
+              onChange={(e) => setMotionModel(e.target.value)}
+              placeholder="nvidia/Kimodo-SOMA-RP-v1.1"
+              className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+            />
+            {/* The verdict is shown WHILE TYPING, not on save. A licence refusal
+                discovered at generation time has already cost the director a
+                round trip, and a blocked id is refused on save anyway — telling
+                them here is the difference between a rule and an ambush. */}
+            <span data-testid="settings-motion-licence" className="text-[11px]">
+              {motionVerdict === 'BLOCKED' ? (
+                <span className="text-fg/70">
+                  ● Blocked — this checkpoint&rsquo;s terms forbid this use, and it will not be
+                  saved
+                </span>
+              ) : motionVerdict === 'ALLOWED_WITH_CONDITIONS' ? (
+                <span className="text-accent">● Allowed, with conditions to honour</span>
+              ) : motionVerdict === 'ALLOWED' ? (
+                <span className="text-accent">● Allowed</span>
+              ) : (
+                <span className="text-fg/50">
+                  ○ No recorded licence verdict — generation will refuse it
+                </span>
+              )}
+            </span>
+          </label>
         </section>
 
         <div className="flex items-center justify-end gap-2 border-t border-border pt-3">
