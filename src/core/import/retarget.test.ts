@@ -182,9 +182,18 @@ describe('BONE_NAME_MAP_PRESETS catalog', () => {
     }
   });
 
-  it('every preset includes the Mixamo Hips entry as the load-bearing root mapping', () => {
+  it('every preset maps its source rig root — the load-bearing entry', () => {
+    // Written as `p.map['mixamorig_Hips']` while every preset was Mixamo-sourced.
+    // The literal was standing in for the property, and it went false the moment
+    // a SOMA-sourced preset arrived while the property itself stayed true — SOMA
+    // spells the same joint `Hips`. So assert the property, and keep the Mixamo
+    // case as its own line rather than quietly trading the old coverage away.
     for (const p of BONE_NAME_MAP_PRESETS) {
-      expect(p.map['mixamorig_Hips']).toBeDefined();
+      const rootKeys = Object.keys(p.map).filter((k) => /(^|_)Hips$/.test(k));
+      expect(rootKeys, `${p.id} maps no root bone`).toHaveLength(1);
+    }
+    for (const p of BONE_NAME_MAP_PRESETS.filter((preset) => preset.source === 'Mixamo')) {
+      expect(p.map['mixamorig_Hips'], `${p.id} lost its Mixamo root`).toBeDefined();
     }
   });
 
