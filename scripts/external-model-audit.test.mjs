@@ -11,6 +11,7 @@ import {
   entryCheckedAt,
   listSourceFiles,
   SCAN_ROOTS,
+  SCAN_ROOT_FILES,
   EXEMPT,
 } from './external-model-audit.mjs';
 
@@ -124,6 +125,66 @@ describe('scan coverage — the roots and their exemptions (#737)', () => {
       expect(path.extname(e)).not.toBe('');
       expect(SCAN_ROOTS).not.toContain(e);
     }
+  });
+
+  it('covers public/, whose contents are SERVED to the client (#750)', () => {
+    // A JSON file under public/ reaches the browser as surely as an import does,
+    // and the scan read none of it.
+    expect(SCAN_ROOTS).toContain('public');
+  });
+
+  it('covers the repo root, where eleven config files that run actually live (#750)', () => {
+    // vite.config.ts, vitest/playwright/eslint/tailwind/postcss configs, the
+    // tsconfigs, package.json and its lock. A model id reaches production
+    // through a `define`, an npm script, or a dependency name.
+    expect(SCAN_ROOT_FILES).toContain('.');
+  });
+
+  it('covers tools/, which holds repo gates and a vite plugin', () => {
+    // Build-path code by any reading. It was reachable only by recursing from the
+    // root, which is to say it was covered by accident or not at all.
+    expect(SCAN_ROOTS).toContain('tools');
+  });
+
+  it('the repo root contributes its own files', () => {
+    const repoRoot = path.resolve(here, '..');
+    const files = listSourceFiles(repoRoot);
+    expect(files).toContain('vite.config.ts');
+    expect(files).toContain('package.json');
+    expect(files.some((f) => f.startsWith('node_modules/'))).toBe(false);
+  });
+
+  it('the NAMED roots are the whole covered set — recursion would add nothing', () => {
+    // The property flatness actually buys: the covered set is CHOSEN. This reds
+    // the day a directory with scannable files appears outside every named root,
+    // which is exactly when somebody should decide whether it belongs.
+    //
+    // An earlier version of this check asserted "no duplicate paths", which
+    // listSourceFiles dedupes anyway — so it passed with the root made recursive
+    // and proved nothing. This one fails under that same change if any unnamed
+    // directory has matching files.
+    const repoRoot = path.resolve(here, '..');
+    const named = listSourceFiles(repoRoot);
+    const recursive = listSourceFiles(repoRoot, [...SCAN_ROOTS, '.'], EXEMPT, undefined, []);
+    expect(recursive.filter((f) => !named.includes(f))).toEqual([]);
+  });
+
+  it('finds a blocked id planted in a root config file and under public/', () => {
+    // The acceptance test the fix was written against, run without touching the
+    // real tree: both locations produced a CLEAN PASS before this.
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json'),
+        'utf8',
+      ),
+    );
+    const blocked = manifest.models.find((m) => m.verdict === 'BLOCKED');
+    const planted = {
+      'vite.config.ts': `// ${blocked.name.split(',')[0].trim()}`,
+      'public/served.json': JSON.stringify({ model: blocked.id }),
+    };
+    const hits = findBlockedReferences(manifest, Object.keys(planted), (f) => planted[f]);
+    expect(hits.map((h) => h.file).sort()).toEqual(['public/served.json', 'vite.config.ts']);
   });
 
   it('excludes the three self-naming files but still returns real source', () => {

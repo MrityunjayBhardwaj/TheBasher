@@ -19,7 +19,33 @@ export const VERDICTS = new Set(['ALLOWED', 'ALLOWED_WITH_CONDITIONS', 'BLOCKED'
 
 // Every root where a model id could be referenced by code that actually runs.
 // `docs/` is absent on purpose: prose must be able to name a blocked model.
-export const SCAN_ROOTS = ['src', 'tests', 'scripts'];
+//
+// `public/` is here because its contents are SERVED — a JSON file naming a
+// checkpoint reaches the client as surely as a TypeScript import does, and the
+// scan read none of it (#750).
+// `tools/` holds the repo's structural gates AND a vite plugin — build-path code
+// by any reading. It is named here rather than swept in by recursion, because a
+// covered root should be a decision somebody took.
+export const SCAN_ROOTS = ['src', 'tests', 'scripts', 'public', 'tools'];
+
+// The repo root, scanned FLAT. Eleven config files live here that very much run —
+// vite.config.ts, vitest.config.ts, playwright.config.ts, eslint.config.js,
+// tailwind/postcss configs, the tsconfigs, package.json and its lock — and a
+// model id reaches production perfectly well through a `define`, an npm script,
+// or a dependency name. Measured before the fix: a blocked checkpoint planted in
+// vite.config.ts and in public/ produced a CLEAN PASS.
+//
+// Flat rather than recursive, and the reason is about decisions rather than cost.
+// Measured: with every root above named, recursing from `.` adds exactly ZERO
+// further files — so recursion buys nothing today. What it would cost is the
+// property that the covered set is CHOSEN: a directory added tomorrow would enter
+// the scan because it exists, not because anyone decided it should, and a root
+// nobody decided on is a root nobody re-examines. (Recursion's only current
+// difference, before `tools` was named, was six files under tools/ — found by
+// measuring rather than by the reasoning in an earlier draft of this comment,
+// which claimed coverage/ and .git and was simply wrong: EXTS excludes their
+// contents.)
+export const SCAN_ROOT_FILES = ['.'];
 
 // The three files whose job is to name blocked models. Without this the gate reds
 // on its own record — and since the manifest moved under src/ so runtime code can
@@ -151,6 +177,16 @@ export function blockedNeedles(manifest) {
 
 const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'];
 
+/** The matching files directly inside `dir`, never descending. */
+function listFilesFlat(dir, exts) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((e) => e.isFile() && exts.includes(path.extname(e.name)))
+    .map((e) => path.join(dir, e.name));
+}
+
 function walkDir(dir, exts, out) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs
@@ -173,14 +209,30 @@ function walkDir(dir, exts, out) {
  * comparing absolute paths would make every exemption silently fail to match, and
  * the gate would then red on its own manifest (#737).
  */
-export function listSourceFiles(repoRoot, roots = SCAN_ROOTS, exempt = EXEMPT, exts = EXTS) {
+export function listSourceFiles(
+  repoRoot,
+  roots = SCAN_ROOTS,
+  exempt = EXEMPT,
+  exts = EXTS,
+  flatRoots = SCAN_ROOT_FILES,
+) {
   const exemptSet = new Set(exempt);
+  const seen = new Set();
   const out = [];
+  const add = (abs) => {
+    const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
+    // Deduped because a flat root and a named root can name the same file if the
+    // lists ever overlap; a file counted twice would report one reference twice
+    // and inflate the count, the same hazard blockedNeedles dedupes for.
+    if (exemptSet.has(rel) || seen.has(rel)) return;
+    seen.add(rel);
+    out.push(rel);
+  };
   for (const root of roots) {
-    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) {
-      const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
-      if (!exemptSet.has(rel)) out.push(rel);
-    }
+    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) add(abs);
+  }
+  for (const root of flatRoots) {
+    for (const abs of listFilesFlat(path.join(repoRoot, root), exts)) add(abs);
   }
   return out;
 }
@@ -247,7 +299,8 @@ export function auditExternalModels({ manifestPath, repoRoot, now = new Date() }
   console.log(
     `✓ External-model audit passed: ${manifest.models.length} recorded ` +
       `(${counts.ALLOWED} allowed, ${counts.ALLOWED_WITH_CONDITIONS} conditional, ${counts.BLOCKED} blocked), ` +
-      `${files.length} files scanned across ${SCAN_ROOTS.join(', ')} (${EXEMPT.length} exempt), ` +
+      `${files.length} files scanned across ${[...SCAN_ROOTS, ...SCAN_ROOT_FILES].join(', ')} ` +
+      `(${EXEMPT.length} exempt), ` +
       `checked ${manifest.checkedAt}.`,
   );
   return 0;
