@@ -12,6 +12,9 @@ import {
   listSourceFiles,
   SCAN_ROOTS,
   SCAN_ROOT_FILES,
+  buildNotice,
+  checkNotice,
+  NOTICE_PATH,
   EXEMPT,
 } from './external-model-audit.mjs';
 
@@ -259,5 +262,84 @@ describe('checkManifest — per-entry dates', () => {
       models: [{ ...manifest.models[0], checkedAt: 'last spring' }],
     };
     expect(checkManifest(bad).join(' ')).toMatch(/not YYYY-MM-DD/);
+  });
+});
+
+describe('a recorded condition is honoured, not merely identified (#749)', () => {
+  const manifestPath = path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json');
+  const manifest = () => JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const repoRoot = path.resolve(here, '..');
+
+  it('the shipped NOTICE matches what the manifest entails', () => {
+    expect(checkNotice(repoRoot, manifest())).toEqual([]);
+  });
+
+  it('a MISSING notice fails the audit — the acceptance test for this gate', () => {
+    // Constructed rather than observed: the pass above proves nothing on its own.
+    const problems = checkNotice(repoRoot, manifest(), () => {
+      throw new Error('ENOENT');
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/missing/i);
+  });
+
+  it('a notice that DRIFTED from the manifest fails too', () => {
+    // The likelier failure in practice, and the more dangerous one: a stale
+    // notice reads as compliance while describing terms that have moved.
+    const problems = checkNotice(repoRoot, manifest(), () => 'NOTICE\n\nsomething else entirely');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/does not match/i);
+  });
+
+  it("carries the licence's required sentence VERBATIM, not a paraphrase", () => {
+    // The whole point. The NVIDIA grant demands a notice reading a specific
+    // sentence; a generated file that said "Licensed under: X" would identify the
+    // obligation and not discharge it.
+    const m = manifest();
+    const text = buildNotice(m);
+    for (const model of m.models) {
+      if (model.verdict === 'BLOCKED' || !model.conditions?.length) continue;
+      expect(model.attribution, `${model.id} records no attribution`).toBeTruthy();
+      // As its own LINE, not merely as a substring. The condition's prose QUOTES
+      // the required sentence, so a `toContain` here is reached on every run and
+      // discriminates on none — it passed with the attribution replaced by a
+      // paraphrase, which is exactly the defect it was written to catch.
+      expect(text.split('\n')).toContain(model.attribution);
+    }
+  });
+
+  it('lists every recorded condition, so none can be silently dropped', () => {
+    const m = manifest();
+    const text = buildNotice(m);
+    for (const model of m.models) {
+      if (model.verdict === 'BLOCKED') continue;
+      for (const c of model.conditions ?? []) expect(text).toContain(c);
+    }
+  });
+
+  it('names no BLOCKED model — we owe nothing for what we do not use', () => {
+    // And a blocked name here would trip the scan two functions up, on a file the
+    // repo generates itself.
+    const m = manifest();
+    const text = buildNotice(m).toLowerCase();
+    for (const { needle } of blockedNeedles(m)) expect(text).not.toContain(needle);
+  });
+
+  it('the manifest check REQUIRES an attribution on any conditional grant', () => {
+    // Without this, a future conditional record ships a NOTICE with a blank line
+    // where its obligation should be, and every test above still passes.
+    const m = manifest();
+    const stripped = {
+      ...m,
+      models: m.models.map((x) =>
+        x.verdict === 'ALLOWED_WITH_CONDITIONS' ? { ...x, attribution: '' } : x,
+      ),
+    };
+    expect(checkManifest(stripped).join(' ')).toMatch(/attribution/);
+  });
+
+  it('the generated file lives at the conventional path', () => {
+    expect(NOTICE_PATH).toBe('NOTICE');
+    expect(fs.existsSync(path.join(repoRoot, NOTICE_PATH))).toBe(true);
   });
 });

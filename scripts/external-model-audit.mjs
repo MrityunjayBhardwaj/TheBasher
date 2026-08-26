@@ -148,6 +148,17 @@ export function checkManifest(manifest) {
     ) {
       problems.push(`${id}: ALLOWED_WITH_CONDITIONS but lists no conditions`);
     }
+    // The exact wording a licence demands is DATA, not prose buried inside a
+    // condition. The NVIDIA grant requires a notice reading a specific sentence;
+    // a generator that paraphrased it would produce a NOTICE that identifies the
+    // obligation and does not discharge it — which is the failure this whole file
+    // is about, one level in.
+    if (m?.verdict === 'ALLOWED_WITH_CONDITIONS' && !String(m?.attribution ?? '').trim()) {
+      problems.push(
+        `${id}: ALLOWED_WITH_CONDITIONS but no "attribution" — the exact notice text the ` +
+          'licence demands must be recorded verbatim so NOTICE can carry it, not paraphrase it',
+      );
+    }
   }
   return problems;
 }
@@ -237,6 +248,95 @@ export function listSourceFiles(
   return out;
 }
 
+/** The NOTICE file's repo-relative path. Conventional name, repo root, so a
+ *  recipient finds it where every other project puts it. */
+export const NOTICE_PATH = 'NOTICE';
+
+const NOTICE_HEADER = [
+  'NOTICE',
+  '',
+  'This file is GENERATED from src/core/licensing/external-models.json.',
+  'Do not edit it by hand — run `npm run notice` and commit the result.',
+  '',
+  'It exists because a licence condition that is only RECORDED is not honoured.',
+  'The manifest names the obligations; this file is the repo carrying one of them',
+  'out, and the external-model audit fails if the two disagree.',
+  '',
+];
+
+/**
+ * The NOTICE text a manifest entails, derived from the recorded conditions of
+ * every non-blocked model that has any.
+ *
+ * Generated rather than written because a hand-maintained notice and a recorded
+ * obligation drift the moment either moves, and the drift is silent in the
+ * direction that matters: the notice keeps saying something reassuring while the
+ * terms it describes have changed. Blocked models are excluded — we owe nothing
+ * for something we do not use, and naming one here would trip the blocked-model
+ * scan besides.
+ */
+export function buildNotice(manifest) {
+  const lines = [...NOTICE_HEADER];
+  const owing = (manifest?.models ?? []).filter(
+    (m) => m.verdict !== 'BLOCKED' && Array.isArray(m.conditions) && m.conditions.length > 0,
+  );
+  if (owing.length === 0) {
+    lines.push('No external model currently in use carries licence conditions.', '');
+    return lines.join('\n');
+  }
+  for (const m of owing) {
+    // The attribution line goes FIRST and verbatim, because it is the obligation
+    // itself rather than a description of one.
+    lines.push(`${m.attribution}`, '');
+    lines.push(`  Applies to: ${m.name}`, `  Source: ${m.source}`, '');
+    lines.push('  Conditions this project is obliged to honour:');
+    for (const c of m.conditions) lines.push(`    - ${c}`);
+    lines.push('');
+    if (Array.isArray(m.citations) && m.citations.length) {
+      // "Pass a copy of the agreement to recipients" is discharged here by
+      // reference, not by bundling. Stated plainly rather than left ambiguous:
+      // the agreement is not vendored into this repo, and if a distribution ever
+      // needs the text itself rather than a link, that is a further step nobody
+      // has taken.
+      lines.push('  A copy of the agreement, by reference:');
+      for (const c of m.citations) lines.push(`    ${c}`);
+      lines.push('');
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Does the shipped NOTICE match what the manifest entails? Returns problem
+ * strings.
+ *
+ * This is the half of the gate with teeth. Checking that a conditional verdict
+ * LISTS conditions — which the manifest check already did — asks whether we have
+ * identified an obligation. It never asks whether anything carries one out, and
+ * the first recorded condition is literally "ship a NOTICE file". Identification
+ * is not prevention.
+ */
+export function checkNotice(repoRoot, manifest, readFile = (f) => fs.readFileSync(f, 'utf8')) {
+  const expected = buildNotice(manifest);
+  let actual;
+  try {
+    actual = readFile(path.join(repoRoot, NOTICE_PATH));
+  } catch {
+    return [
+      `${NOTICE_PATH} is missing, and the manifest records conditions that require it. ` +
+        'Run `npm run notice` and commit the result.',
+    ];
+  }
+  if (actual.trimEnd() !== expected.trimEnd()) {
+    return [
+      `${NOTICE_PATH} does not match the manifest's recorded conditions. ` +
+        'A notice that disagrees with the terms it describes is worse than none, ' +
+        'because it reads as compliance. Run `npm run notice` and commit the result.',
+    ];
+  }
+  return [];
+}
+
 /** Returns [{file, id, needle}] for every BLOCKED model referenced in the given files. */
 export function findBlockedReferences(
   manifest,
@@ -282,6 +382,13 @@ export function auditExternalModels({ manifestPath, repoRoot, now = new Date() }
     return 3;
   }
   for (const w of warnings) console.warn(`⚠ ${w}`);
+
+  const noticeProblems = checkNotice(repoRoot, manifest);
+  if (noticeProblems.length) {
+    console.error(`✗ Licence conditions are not honoured (${noticeProblems.length}):`);
+    for (const n of noticeProblems) console.error(`  ${n}`);
+    return 3;
+  }
 
   const files = listSourceFiles(repoRoot);
   const hits = findBlockedReferences(manifest, files, (f) =>

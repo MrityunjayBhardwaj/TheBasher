@@ -14,7 +14,7 @@ import { useEffect, useState } from 'react';
 import { useSettingsStore } from './stores/settingsStore';
 import { probeComfyUI, type ComfyProbeResult } from '../core/comfy';
 import { resetComfyCapability, resetMotionCapability } from './boot';
-import { modelRecordFor } from '../core/licensing/allowedModels';
+import { conditionsFor, modelRecordFor } from '../core/licensing/allowedModels';
 
 type TestState = { status: 'idle' | 'testing' } | ({ status: 'done' } & ComfyProbeResult);
 
@@ -65,6 +65,9 @@ export function SettingsModal() {
   // Read live off the draft, so the verdict tracks what is being typed rather
   // than what was last saved.
   const motionVerdict = modelRecordFor(motionModel.trim())?.verdict;
+  // Listed, not merely announced. "Allowed, with conditions" tells a director a
+  // category; the conditions tell them what they have just agreed to.
+  const motionConditions = motionVerdict === 'BLOCKED' ? [] : conditionsFor(motionModel.trim());
 
   if (!isOpen) return null;
 
@@ -233,6 +236,16 @@ export function SettingsModal() {
                 </span>
               )}
             </span>
+            {motionConditions.length > 0 && (
+              <ul
+                data-testid="settings-motion-conditions"
+                className="ml-3 list-disc space-y-0.5 text-[11px] text-fg/50"
+              >
+                {motionConditions.map((c) => (
+                  <li key={c}>{c}</li>
+                ))}
+              </ul>
+            )}
           </label>
         </section>
 

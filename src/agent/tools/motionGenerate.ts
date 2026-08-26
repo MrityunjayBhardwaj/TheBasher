@@ -27,6 +27,7 @@
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { buildGeneratedMotionOps } from '../../core/motiongen';
+import { conditionsFor } from '../../core/licensing/allowedModels';
 import { MAX_MOTION_FPS, MAX_MOTION_SECONDS } from '../../core/motiongen';
 
 export const motionGenerateSchema = z.object({
@@ -112,13 +113,22 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       };
     }
 
+    // A conditional grant's obligations, at the point of use. The NOTICE file
+    // discharges the shipping condition; this is the other half — an obligation
+    // nobody can see at the moment they incur it is one nobody weighs.
+    const conditions = conditionsFor(ctx.motionModel);
+    const owed = conditions.length
+      ? ` This checkpoint is licensed WITH CONDITIONS: ${conditions.join(' ')}`
+      : '';
+
     return {
       ops: result.ops,
       text:
         `Generated "${args.name ?? args.prompt}" with ${ctx.motionModel} ` +
         `(job ${result.jobId}) — Skeleton ${result.skeletonId}, AnimationClip ` +
         `${result.clipId}. It is an ordinary clip: retarget it onto a character ` +
-        `with mutator.animation.retarget, or layer it like any imported motion.`,
+        `with mutator.animation.retarget, or layer it like any imported motion.` +
+        owed,
     };
   },
 };

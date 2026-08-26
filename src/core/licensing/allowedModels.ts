@@ -27,6 +27,13 @@ export interface ModelLicenceRecord {
   readonly verdict: LicenceVerdict;
   readonly reason: string;
   readonly conditions: readonly string[];
+  /**
+   * The exact notice text the licence demands, recorded verbatim. Data rather
+   * than prose inside a condition, because the NOTICE file has to CARRY this
+   * sentence — a paraphrase identifies the obligation without discharging it.
+   * Present on every conditional grant; the audit requires it.
+   */
+  readonly attribution?: string;
   readonly citations: readonly string[];
 }
 
