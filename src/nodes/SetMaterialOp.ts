@@ -286,7 +286,11 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     // the input changes is to test the new input's shape instead. "Does this assignment reach
     // every face?" is the question every input answers, asked once — which is why deleting one
     // of two inputs changed nothing here but the argument list.
-    const targeted = mintTargetedAttributes(source.geometry.descriptor, selection, 'evaluate');
+    // THE HANDLE, not its descriptor (#722): the mint carries the source's own attributes
+    // forward and replaces `material_index` in them, so it needs the key the handle names
+    // as well as the shape it describes. A scoped write used to emit a set of exactly one
+    // entry, and this arm folded it on in place of everything the source carried.
+    const targeted = mintTargetedAttributes(source.geometry, selection, 'evaluate');
 
     if (targeted !== null && targeted.covered < targeted.faces) {
       // THE APPEND ARM. The source's own material stays on slot 0 for the faces outside

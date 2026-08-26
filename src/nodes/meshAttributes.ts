@@ -46,11 +46,12 @@ import {
   emptyLike,
   isKnownDomain,
   type AttributeData,
+  type AttributeSet,
   type DomainId,
   type KnownDomain,
 } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
-import type { GeometryDescriptor } from './types';
+import type { GeometryDescriptor, GeometryRef } from './types';
 // TYPE ONLY, and that is the whole relationship: this module reads a selection through its
 // accessor and can never construct one, so the memoized total stays un-forgeable here.
 import type { ComponentSelection } from './componentSelection';
@@ -179,11 +180,43 @@ export function faceRangeMaterialAttributes(
  *
  * The key is content-derived, so two different targeted sets key apart automatically.
  *
+ * ── `carried` — THE SOURCE'S OWN SET, AND WHY IT IS REQUIRED (#722) ───────────────────
+ *
+ * This used to mint a set of EXACTLY ONE entry, and the operator's append arm then folded
+ * that key onto the outgoing handle IN PLACE OF the source's. So a scoped material operator
+ * returned a mesh with its per-face slots right and every other attribute — at every class —
+ * gone, while the same operator with no scope took the replace arm, rode the source handle
+ * through untouched, and preserved all of them. One behaviour, two answers, chosen by a param
+ * value; a census that probed the default could not see it.
+ *
+ * The carry is VERBATIM, and the asymmetry with {@link mintTiledModifierAttributes} is the
+ * point rather than an inconsistency. A generator merges copies, so every attribute needs an
+ * ORDER to be gathered through and `CLASS_CARRIAGE` has to say which classes have one. This
+ * operator merges nothing: the geometry rides through with the same descriptor and the same
+ * element counts, so every carried attribute still fits its own domain element-for-element
+ * and the correct carriage is the IDENTITY. No order, no gather, no per-class verdict to take
+ * — which is why `point` and `edge` survive here and are dropped there.
+ *
+ * `material_index` is REPLACED, never merged with: the spread puts the minted index last, so
+ * a source that carried one of its own loses it to the assignment this call exists to write.
+ *
+ * AND NO FIT CHECK, unlike the tiled road's — deliberately, for the reason written there. A
+ * misfit set is a hazard when something GATHERS through an order, because the right slots land
+ * on the wrong elements; carried verbatim onto an unchanged descriptor it lands exactly where
+ * it already was. The premise the tiled road records holds here too: a ref's key and its
+ * `attributeKey` are minted in one expression, so a source's set fits its own descriptor.
+ * Refusing one here would mean this operator silently repairing a set it did not produce.
+ *
+ * REQUIRED rather than defaulted, and `null` is the answer for "the source carries nothing".
+ * A defaulted parameter is the shape this defect already had once — a call site that says
+ * nothing about the source's set reads exactly like one that has considered it.
+ *
  * Returns `null` when the face count is not derivable from the descriptor.
  */
 export function targetedMaterialAttributes(
   descriptor: GeometryDescriptor,
   selection: ComponentSelection | null,
+  carried: AttributeSet | null,
 ): MintedAttributes | null {
   const faces = faceCountOf(descriptor);
   if (faces === null) return null;
@@ -197,7 +230,9 @@ export function targetedMaterialAttributes(
   }
 
   const materialIndex: AttributeData = { domain: 'face', type: 'int', count: faces, data };
-  return mintAttributes({ [MATERIAL_INDEX]: materialIndex });
+  // The minted index goes LAST, so it replaces a `material_index` the source carried rather
+  // than losing to it. Everything else comes through by reference, untouched.
+  return mintAttributes({ ...carried, [MATERIAL_INDEX]: materialIndex });
 }
 
 /**
@@ -215,15 +250,28 @@ export function targetedMaterialAttributes(
  * selection and the range would be a second implementation of this function's arithmetic —
  * two spellings that agree today and diverge the first time either is touched. One walk,
  * one answer.
+ *
+ * ⚠️ IT TAKES THE HANDLE, NOT THE DESCRIPTOR, AND #722 IS WHY. The carry-forward needs the
+ * source's descriptor AND the key of the set that source carries, and those two are one fact
+ * about one handle. Taking them as two arguments would let a caller pass a descriptor beside
+ * some other geometry's key — a pairing nothing downstream could detect, since both halves
+ * are individually well-formed. Its sibling {@link mintMeshAttributes} still takes the
+ * descriptor, for the opposite and equally specific reason: #638 folded the attribute key
+ * into `GeometryRef.key`, so for a geometry being MINTED the handle does not exist yet.
  */
 export function mintTargetedAttributes(
-  descriptor: GeometryDescriptor,
+  geometry: GeometryRef,
   selection: ComponentSelection | null,
   via: AttributeGrowthSource,
 ): { readonly key: string; readonly covered: number; readonly faces: number } | null {
   refuseUnattributedGrowth(via);
+  const { descriptor } = geometry;
   const faces = faceCountOf(descriptor);
-  const minted = targetedMaterialAttributes(descriptor, selection);
+  // `undefined` is "this geometry carries no attributes" (absent, never present-and-undefined
+  // — see `GeometryRef`), and a key the store cannot resolve reads the same way here: there is
+  // nothing to carry forward either way, and inventing a set would be worse than carrying none.
+  const carried = geometry.attributeKey === undefined ? null : read(geometry.attributeKey);
+  const minted = targetedMaterialAttributes(descriptor, selection, carried);
   if (minted === null || faces === null) return null;
   insert(minted.key, minted.set, via);
   const assigned = minted.set[MATERIAL_INDEX].data;
@@ -264,6 +312,14 @@ interface TiledLayout {
 
 /**
  * WHAT THIS ROAD DOES WITH EACH ATOM CLASS — the carriage table (#715).
+ *
+ * ⚠️ "THIS ROAD" IS THE TILED ONE, and since #722 this module has two. The table speaks for
+ * {@link mintTiledModifierAttributes}, where a generator merges copies and every attribute
+ * therefore needs an ORDER to be gathered through. {@link targetedMaterialAttributes} merges
+ * nothing — same descriptor, same element counts, so the correct carriage there is the
+ * IDENTITY and every class survives, `point` and `edge` included. The two answers differ
+ * because the questions do, and reading this table as the module's single verdict would say
+ * a material operator drops what it in fact carries.
  *
  * ── WHY THE VERDICT IS KEYED ON THE CLASS AND NOT ON THE OPERATOR ─────────────────────
  *
