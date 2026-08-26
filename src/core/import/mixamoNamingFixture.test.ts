@@ -101,3 +101,33 @@ describe('the shipped preset lands on BOTH roads — the regression this guards'
     expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
   });
 });
+
+describe('the same fixtures, with the roads swapped — the TARGET side', () => {
+  it('retargets a BVH-spelled source onto an FBX-derived TARGET rig', () => {
+    // The mirror of the regression above, and it failed just as completely: before
+    // the target side was resolved this reported 22 of 22 target bones unbound and
+    // 0 keyframes — no throw, no warning, an empty clip. Reachable because parseFbx
+    // really does produce a skeletonParams.bones list, so an FBX rig can be the
+    // TARGET and not only the source.
+    const src = parseBvh(fixture('mixamo-naming.bvh').toString('utf8'), 'bvh');
+    const tgt = parseFbx(fixture('mixamo-naming.fbx').buffer as ArrayBuffer, 'fbx');
+
+    // An identity map in the underscore spelling — what an author writes after
+    // looking at a glTF import, applied to a rig that arrived by FBX.
+    const nameMap: Record<string, string> = {};
+    for (const bone of src.skeletonParams.bones) {
+      if (!bone.name.startsWith('ENDSITE')) nameMap[bone.name] = bone.name;
+    }
+
+    const result = retargetClip({
+      sourceBones: src.skeletonParams.bones,
+      sourceClip: src.clipParams,
+      targetBones: tgt.skeletonParams.bones,
+      nameMap,
+    });
+
+    expect(tgt.skeletonParams.bones).toHaveLength(22);
+    expect(result.unboundTargetBones).toEqual([]);
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+  });
+});

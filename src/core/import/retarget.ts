@@ -87,58 +87,99 @@ export function canonicalBoneKey(name: string): string {
 }
 
 /**
- * Rewrite a name map's SOURCE keys to the names the source skeleton actually uses,
- * matching separator-insensitively only when an exact key is absent.
+ * Resolve authored bone names onto the names a skeleton actually carries, matching
+ * separator-insensitively only when an exact name is absent. Returns every authored
+ * name mapped to its resolution — to ITSELF when nothing resolves it, so a caller
+ * substitutes unconditionally and an unresolved name still reaches the diagnostics
+ * as authored rather than the map quietly shrinking.
  *
  * Deliberately conservative in three ways, and each one is a silent wrong answer
  * that would otherwise be available:
  *
- *   1. An exact key always wins, so an author who spelled a name precisely is
- *      never second-guessed — and no inexact key may later revise that entry.
- *   2. A canonical form shared by two different SOURCE BONES is left UNRESOLVED
- *      rather than guessed at.
- *   3. A source bone claimed by two different MAP KEYS is left unresolved for the
+ *   1. An exact name always wins, so an author who spelled a name precisely is
+ *      never second-guessed — and no inexact name may later revise that entry.
+ *   2. A canonical form shared by two different BONES is left UNRESOLVED rather
+ *      than guessed at.
+ *   3. A bone claimed by two different AUTHORED NAMES is left unresolved for the
  *      same reason. Writing a preset that covers both import roads' spellings is
  *      the natural reaction to the bug this function exists to fix, and resolving
- *      in one pass silently kept whichever key happened to come last.
+ *      in one pass silently kept whichever name happened to come last.
  *
- * An unresolved key is kept as authored, so the diagnostics report it as unmapped
- * instead of the map quietly shrinking.
+ * Rules 1 and 3 hold regardless of input order because the pass COUNTS claims
+ * before it writes any of them; deciding and writing in the same iteration made
+ * the stated priority depend on key order, which is not a rule at all.
  */
-export function resolveNameMapToSource(
-  nameMap: Readonly<Record<string, string>>,
-  sourceBones: readonly BoneSpec[],
+export function resolveBoneNames(
+  authored: readonly string[],
+  bones: readonly BoneSpec[],
 ): Record<string, string> {
-  const exact = new Set(sourceBones.map((b) => b.name));
+  const exact = new Set(bones.map((b) => b.name));
   const byCanonical = new Map<string, string | null>();
-  for (const b of sourceBones) {
+  for (const b of bones) {
     const key = canonicalBoneKey(b.name);
     // null marks "two bones share this canonical form" — ambiguous, so no match.
     byCanonical.set(key, byCanonical.has(key) ? null : b.name);
   }
 
-  const entries = Object.entries(nameMap);
-  const exactEntries = entries.filter(([key]) => exact.has(key));
-  const inexactEntries = entries.filter(([key]) => !exact.has(key));
-  const takenByExact = new Set(exactEntries.map(([key]) => key));
+  // Distinct spellings, because rule 3 is about two DIFFERENT names claiming one
+  // bone. Two source bones may legitimately map onto a single target bone, and
+  // that repeat is one authored name, not a collision.
+  const names = [...new Set(authored)];
+  const exactNames = names.filter((n) => exact.has(n));
+  const inexactNames = names.filter((n) => !exact.has(n));
+  const takenByExact = new Set(exactNames);
 
-  // Settle the exact keys first, then count how many inexact keys land on each
-  // remaining bone. Counting before writing is what makes rules 1 and 3 hold
-  // regardless of key order — resolving as we went made the result depend on it.
   const hitFor = new Map<string, string>();
   const claims = new Map<string, number>();
-  for (const [key] of inexactEntries) {
-    const hit = byCanonical.get(canonicalBoneKey(key));
+  for (const n of inexactNames) {
+    const hit = byCanonical.get(canonicalBoneKey(n));
     if (!hit || takenByExact.has(hit)) continue;
-    hitFor.set(key, hit);
+    hitFor.set(n, hit);
     claims.set(hit, (claims.get(hit) ?? 0) + 1);
   }
 
   const out: Record<string, string> = {};
-  for (const [key, targetName] of exactEntries) out[key] = targetName;
-  for (const [key, targetName] of inexactEntries) {
-    const hit = hitFor.get(key);
-    out[hit !== undefined && claims.get(hit) === 1 ? hit : key] = targetName;
+  for (const n of exactNames) out[n] = n;
+  for (const n of inexactNames) {
+    const hit = hitFor.get(n);
+    out[n] = hit !== undefined && claims.get(hit) === 1 ? hit : n;
+  }
+  return out;
+}
+
+/**
+ * Rewrite a name map's SOURCE keys to the names the source skeleton actually uses.
+ */
+export function resolveNameMapToSource(
+  nameMap: Readonly<Record<string, string>>,
+  sourceBones: readonly BoneSpec[],
+): Record<string, string> {
+  const resolved = resolveBoneNames(Object.keys(nameMap), sourceBones);
+  const out: Record<string, string> = {};
+  for (const [key, targetName] of Object.entries(nameMap)) out[resolved[key] ?? key] = targetName;
+  return out;
+}
+
+/**
+ * Rewrite a name map's TARGET values to the names the target skeleton actually uses.
+ *
+ * The mirror of the above, and it exists because a match has two sides while the
+ * mechanism that corrupts the names — a loader's sanitiser — does not care which
+ * side a name is standing on. Fixing only the reported side left the other failing
+ * exactly as completely: a BVH-spelled clip retargeted onto an FBX-derived skeleton
+ * through an underscore-spelled map bound 0 of 22 target bones and emitted no
+ * keyframes, with no throw and no warning. It is reachable because `parseFbx` really
+ * does produce a `skeletonParams.bones` list, so an FBX rig can be the TARGET and not
+ * only the source.
+ */
+export function resolveNameMapToTarget(
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): Record<string, string> {
+  const resolved = resolveBoneNames(Object.values(nameMap), targetBones);
+  const out: Record<string, string> = {};
+  for (const [key, targetName] of Object.entries(nameMap)) {
+    out[key] = resolved[targetName] ?? targetName;
   }
   return out;
 }
@@ -168,9 +209,13 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // options.names[targetBoneName] to find the matching source bone.
   // Our public API takes the natural source→target direction; invert
   // here so callers don't have to think in THREE-internal terms.
-  // Resolve the map against the names this source skeleton actually carries
-  // BEFORE inverting, so a map authored in either road's spelling lands.
-  const nameMap = resolveNameMapToSource(args.nameMap, args.sourceBones);
+  // Resolve the map against the names each skeleton actually carries, BOTH sides
+  // and BEFORE inverting, so a map authored in either road's spelling lands
+  // whichever road each operand arrived by.
+  const nameMap = resolveNameMapToTarget(
+    resolveNameMapToSource(args.nameMap, args.sourceBones),
+    args.targetBones,
+  );
   const targetToSource: Record<string, string> = {};
   for (const [sourceName, targetName] of Object.entries(nameMap)) {
     targetToSource[targetName] = sourceName;
