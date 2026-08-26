@@ -201,7 +201,9 @@ export const MaterialOverrideOpNode: NodeDefinition<MaterialOverrideOpParams, Ob
     // selection, exactly as `SetMaterialOp` chooses its own: "does this reach every face?" is
     // the question every input answers, and asking the selection's shape instead is how the
     // test drifts the first time the input changes.
-    const targeted = mintTargetedAttributes(source.geometry.descriptor, selection, 'evaluate');
+    // THE HANDLE, not its descriptor (#722) — same reason as `SetMaterialOp`'s call: the
+    // mint carries the source's own attributes forward, which needs the key the handle names.
+    const targeted = mintTargetedAttributes(source.geometry, selection, 'evaluate');
 
     if (targeted !== null && targeted.covered < targeted.faces) {
       // THE APPEND ARM. The source's material stays on slot 0 for the faces OUTSIDE the

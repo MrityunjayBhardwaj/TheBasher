@@ -141,7 +141,9 @@ const PRODUCERS: readonly Producer[] = [
   {
     module: 'src/nodes/meshAttributes.ts',
     what: 'targetedMaterialAttributes',
-    probe: () => targetedMaterialAttributes(boxDescriptor(), null)!.set,
+    // `null` carried set — this census's subject is what a producer MINTS, and a source
+    // whose attributes were carried through would put another producer's output in the row.
+    probe: () => targetedMaterialAttributes(boxDescriptor(), null, null)!.set,
   },
   {
     module: 'src/nodes/meshAttributes.ts',
