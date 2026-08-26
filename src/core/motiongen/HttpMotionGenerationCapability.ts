@@ -83,11 +83,26 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
             `{ jobId, bvh, model } with bvh as the clip payload.`,
         );
       }
-      return {
-        jobId: payload.jobId ?? 'unknown',
-        bvh: payload.bvh,
-        model: payload.model ?? request.model,
-      };
+      // The check above guarded what we ASKED for. This one guards what the
+      // service says it actually ran — a fallback, a routing rule or a
+      // misconfiguration can answer with a different checkpoint, and the licence
+      // varies per checkpoint inside a single release. Accepting the substitution
+      // would reintroduce exactly the silent pick that naming `model` explicitly
+      // exists to prevent, and for these terms the USE is the violation, so the
+      // refusal has to land before the clip is handed back.
+      const ran = payload.model ?? request.model;
+      if (ran !== request.model) {
+        // Licence first, so a BLOCKED substitution reports its verdict rather
+        // than a generic mismatch. Then refuse regardless: an allowed but
+        // unrequested checkpoint is still not the one that was cleared here.
+        assertModelAllowed(ran);
+        throw new Error(
+          `Motion generation ran "${ran}" but "${request.model}" was requested and ` +
+            `licence-checked. Refusing the result: a substituted checkpoint has not been ` +
+            `cleared for this use.`,
+        );
+      }
+      return { jobId: payload.jobId ?? 'unknown', bvh: payload.bvh, model: ran };
     } finally {
       clearTimeout(timer);
     }

@@ -90,11 +90,20 @@ export function canonicalBoneKey(name: string): string {
  * Rewrite a name map's SOURCE keys to the names the source skeleton actually uses,
  * matching separator-insensitively only when an exact key is absent.
  *
- * Deliberately conservative in two ways. An exact key always wins, so an author who
- * spelled a name precisely is never second-guessed. And a canonical form shared by
- * two different source bones is left UNRESOLVED rather than guessed at — an ambiguous
- * auto-match would be a silent wrong answer, which is the very failure class this
- * function exists to remove.
+ * Deliberately conservative in three ways, and each one is a silent wrong answer
+ * that would otherwise be available:
+ *
+ *   1. An exact key always wins, so an author who spelled a name precisely is
+ *      never second-guessed — and no inexact key may later revise that entry.
+ *   2. A canonical form shared by two different SOURCE BONES is left UNRESOLVED
+ *      rather than guessed at.
+ *   3. A source bone claimed by two different MAP KEYS is left unresolved for the
+ *      same reason. Writing a preset that covers both import roads' spellings is
+ *      the natural reaction to the bug this function exists to fix, and resolving
+ *      in one pass silently kept whichever key happened to come last.
+ *
+ * An unresolved key is kept as authored, so the diagnostics report it as unmapped
+ * instead of the map quietly shrinking.
  */
 export function resolveNameMapToSource(
   nameMap: Readonly<Record<string, string>>,
@@ -108,14 +117,28 @@ export function resolveNameMapToSource(
     byCanonical.set(key, byCanonical.has(key) ? null : b.name);
   }
 
+  const entries = Object.entries(nameMap);
+  const exactEntries = entries.filter(([key]) => exact.has(key));
+  const inexactEntries = entries.filter(([key]) => !exact.has(key));
+  const takenByExact = new Set(exactEntries.map(([key]) => key));
+
+  // Settle the exact keys first, then count how many inexact keys land on each
+  // remaining bone. Counting before writing is what makes rules 1 and 3 hold
+  // regardless of key order — resolving as we went made the result depend on it.
+  const hitFor = new Map<string, string>();
+  const claims = new Map<string, number>();
+  for (const [key] of inexactEntries) {
+    const hit = byCanonical.get(canonicalBoneKey(key));
+    if (!hit || takenByExact.has(hit)) continue;
+    hitFor.set(key, hit);
+    claims.set(hit, (claims.get(hit) ?? 0) + 1);
+  }
+
   const out: Record<string, string> = {};
-  for (const [sourceName, targetName] of Object.entries(nameMap)) {
-    if (exact.has(sourceName)) {
-      out[sourceName] = targetName;
-      continue;
-    }
-    const hit = byCanonical.get(canonicalBoneKey(sourceName));
-    out[hit ?? sourceName] = targetName;
+  for (const [key, targetName] of exactEntries) out[key] = targetName;
+  for (const [key, targetName] of inexactEntries) {
+    const hit = hitFor.get(key);
+    out[hit !== undefined && claims.get(hit) === 1 ? hit : key] = targetName;
   }
   return out;
 }

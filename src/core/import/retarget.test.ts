@@ -270,6 +270,36 @@ describe('bone-name spelling across import roads', () => {
     expect(resolved).toEqual({ 'arm.L': 'target' });
   });
 
+  it('never lets an inexact key revise an entry an exact key already claimed', () => {
+    // Constructed from the failure: resolving in one pass wrote both keys onto the
+    // same bone, so the LAST one won and the exact spelling lost to the fuzzy one.
+    // Which of the two won depended on key order, which is no rule at all.
+    const bones: BoneSpec[] = [
+      { name: 'arm_L', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    expect(resolveNameMapToSource({ arm_L: 'exact', 'arm.L': 'fuzzy' }, bones)).toEqual({
+      arm_L: 'exact',
+      'arm.L': 'fuzzy',
+    });
+    // …and the same holds when the fuzzy key is authored first.
+    expect(resolveNameMapToSource({ 'arm.L': 'fuzzy', arm_L: 'exact' }, bones)).toEqual({
+      arm_L: 'exact',
+      'arm.L': 'fuzzy',
+    });
+  });
+
+  it('leaves a bone claimed by TWO inexact keys unresolved rather than keeping one', () => {
+    // The likely case in the field: an author covering both import roads' spellings
+    // in one preset. Silently dropping half of it is exactly the class of silent
+    // wrong answer this resolver exists to remove.
+    const bones: BoneSpec[] = [
+      { name: 'mixamorigHips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    const resolved = resolveNameMapToSource({ 'mixamorig:Hips': 'a', mixamorig_Hips: 'b' }, bones);
+    expect(resolved).toEqual({ 'mixamorig:Hips': 'a', mixamorig_Hips: 'b' });
+    expect(resolved.mixamorigHips).toBeUndefined();
+  });
+
   it('retargets a clip whose bones use the FBX spelling through the glTF-spelled preset', () => {
     // The end-to-end form of the bug: before this fix the result was 0 keyframes.
     const sourceBones: BoneSpec[] = [

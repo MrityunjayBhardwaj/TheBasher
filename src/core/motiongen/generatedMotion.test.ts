@@ -248,6 +248,45 @@ describe('the HTTP capability', () => {
     );
   });
 
+  it('refuses a BLOCKED checkpoint the service says it ran, not just the one we asked for', async () => {
+    // Constructed from the failure: the gate guarded `request.model` and then took
+    // `payload.model` on trust, so a service that fell back to a blocked checkpoint
+    // handed us its clip and we recorded it as the provenance. These terms forbid
+    // USE, so the violation completes the moment the result is accepted.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ jobId: 'j1', bvh: 'HIERARCHY', model: BLOCKED_MODEL }), {
+          status: 200,
+        }),
+    );
+    const cap = new HttpMotionGenerationCapability({
+      serverUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(cap.generate({ prompt: 'p', model: ALLOWED_MODEL })).rejects.toThrow(
+      ModelNotLicensedError,
+    );
+  });
+
+  it('refuses an ALLOWED substitution too — a cleared checkpoint is not any checkpoint', async () => {
+    // 'Kimodo-G1-RP-v1' is a sibling under the same verdict, so this is refused for
+    // the substitution itself rather than for its terms. The `model` param is named
+    // explicitly precisely so nothing downstream picks a checkpoint silently.
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ jobId: 'j1', bvh: 'HIERARCHY', model: 'Kimodo-G1-RP-v1' }), {
+          status: 200,
+        }),
+    );
+    const cap = new HttpMotionGenerationCapability({
+      serverUrl: 'http://x',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await expect(cap.generate({ prompt: 'p', model: ALLOWED_MODEL })).rejects.toThrow(
+      /was requested and licence-checked/,
+    );
+  });
+
   it('reports unavailable rather than throwing when the host is down', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('ECONNREFUSED');
