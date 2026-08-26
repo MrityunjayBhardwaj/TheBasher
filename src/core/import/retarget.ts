@@ -64,6 +64,62 @@ export interface RetargetResult {
  * Retarget a clip from sourceBones onto targetBones via the name map.
  * Pure: same inputs → same output. No DOM / clock side effects.
  */
+/**
+ * A separator-insensitive key for a bone name.
+ *
+ * The two import roads sanitise the SAME Mixamo bone differently, and neither is
+ * wrong on its own terms:
+ *
+ *   FBX  — three's `PropertyBinding.sanitizeNodeName` REMOVES reserved characters
+ *          (`PropertyBinding.js`), so `mixamorig:Hips` arrives as `mixamorigHips`.
+ *          It runs inside `FBXLoader` before our code ever sees the name.
+ *   glTF — our own `sanitizeBoneName` REPLACES them with `_` (`threeAdapter.ts`),
+ *          so the same bone arrives as `mixamorig_Hips`.
+ *
+ * A name map authored against one spelling therefore matched NOTHING on the other,
+ * and the failure was silent: every track dropped, an empty clip, no error. Measured
+ * on a real Mixamo export — the shipped Mixamo→glTF preset matched 0 of 22 bones and
+ * produced 0 keyframes. Canonicalising both sides is what makes a map portable across
+ * the two roads without migrating anyone's stored bone names.
+ */
+export function canonicalBoneKey(name: string): string {
+  return name.toLowerCase().replace(/[_:.\-\s]/g, '');
+}
+
+/**
+ * Rewrite a name map's SOURCE keys to the names the source skeleton actually uses,
+ * matching separator-insensitively only when an exact key is absent.
+ *
+ * Deliberately conservative in two ways. An exact key always wins, so an author who
+ * spelled a name precisely is never second-guessed. And a canonical form shared by
+ * two different source bones is left UNRESOLVED rather than guessed at — an ambiguous
+ * auto-match would be a silent wrong answer, which is the very failure class this
+ * function exists to remove.
+ */
+export function resolveNameMapToSource(
+  nameMap: Readonly<Record<string, string>>,
+  sourceBones: readonly BoneSpec[],
+): Record<string, string> {
+  const exact = new Set(sourceBones.map((b) => b.name));
+  const byCanonical = new Map<string, string | null>();
+  for (const b of sourceBones) {
+    const key = canonicalBoneKey(b.name);
+    // null marks "two bones share this canonical form" — ambiguous, so no match.
+    byCanonical.set(key, byCanonical.has(key) ? null : b.name);
+  }
+
+  const out: Record<string, string> = {};
+  for (const [sourceName, targetName] of Object.entries(nameMap)) {
+    if (exact.has(sourceName)) {
+      out[sourceName] = targetName;
+      continue;
+    }
+    const hit = byCanonical.get(canonicalBoneKey(sourceName));
+    out[hit ?? sourceName] = targetName;
+  }
+  return out;
+}
+
 export function retargetClip(args: RetargetArgs): RetargetResult {
   const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(args.sourceBones);
   const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(args.targetBones);
@@ -89,8 +145,11 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // options.names[targetBoneName] to find the matching source bone.
   // Our public API takes the natural source→target direction; invert
   // here so callers don't have to think in THREE-internal terms.
+  // Resolve the map against the names this source skeleton actually carries
+  // BEFORE inverting, so a map authored in either road's spelling lands.
+  const nameMap = resolveNameMapToSource(args.nameMap, args.sourceBones);
   const targetToSource: Record<string, string> = {};
-  for (const [sourceName, targetName] of Object.entries(args.nameMap)) {
+  for (const [sourceName, targetName] of Object.entries(nameMap)) {
     targetToSource[targetName] = sourceName;
   }
   const retargeted: ThreeAnimationClip = threeRetargetClip(targetWrap, sourceWrap, sourceClip, {
@@ -107,8 +166,10 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
       loop: true,
       keyframes,
     },
-    unmappedSourceBones: findUnmappedSource(args.sourceBones, args.nameMap, args.targetBones),
-    unboundTargetBones: findUnboundTarget(args.sourceBones, args.nameMap, args.targetBones),
+    // The RESOLVED map, not the argument — otherwise the report describes a
+    // lookup that did not happen and calls a bound bone unmapped.
+    unmappedSourceBones: findUnmappedSource(args.sourceBones, nameMap, args.targetBones),
+    unboundTargetBones: findUnboundTarget(args.sourceBones, nameMap, args.targetBones),
   };
 }
 
