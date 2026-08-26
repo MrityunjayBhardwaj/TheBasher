@@ -371,10 +371,24 @@ export const CLASS_CARRIAGE: Readonly<Record<KnownDomain, ClassVerdict>> = {
   corner: { kind: 'laid-out', by: 'corner-order', noun: 'corners' },
   point: {
     kind: 'dropped',
+    // 🔴 RESTATED AT #716, AND THE OLD REASON IS QUOTED BECAUSE IT WENT FALSE RATHER THAN
+    // STALE. It read: *"`point` still means the renderer's split buffer (24 positions on a
+    // box, not 8), so there is no stable element to gather to"*. P2 built exactly that stable
+    // element — a box's 8 topological points, with a deterministic split -> topological map —
+    // so the sentence that justified this drop no longer describes the system. A declared drop
+    // whose reason has quietly become false is worse than an undeclared one, because it is the
+    // thing a reader trusts instead of checking.
+    //
+    // The drop SURVIVES, on a different and narrower reason: the weld gives a stable
+    // DESTINATION, and this road needs a stable ORDER. Gathering through an Array means
+    // knowing which SOURCE point each merged point came from, and that correspondence is a
+    // property of the merged geometry, not of the descriptor this module reasons from. #717
+    // is where the order arrives; this is the entry it was waiting on.
     why:
-      "a point attribute has no order to ride: `point` still means the renderer's split " +
-      'buffer (24 positions on a box, not 8), so there is no stable element to gather to',
-    until: '#716',
+      'the weld gives `point` a stable element to gather TO (#716), but this road still has ' +
+      'no point ORDER to gather THROUGH: which source point each merged point came from is a ' +
+      'property of the built geometry, not of the descriptor',
+    until: '#717',
   },
   edge: {
     kind: 'dropped',

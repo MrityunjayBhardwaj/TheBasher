@@ -129,13 +129,12 @@ const DOMAIN_NOT_APPLICABLE: readonly {
   readonly domain: KnownDomain;
   readonly reason: string;
 }[] = [
-  {
-    module: 'src/nodes/componentSelection.ts',
-    what: 'componentCountOf',
-    domain: 'point',
-    reason:
-      'a point count is not derivable from a descriptor — a box tessellates to 24 seam-split points, not 8, so the number cannot be read off the params (ns-2 D4)',
-  },
+  // 🔑 THE `point` EXEMPTION IS GONE AT #716, AND ITS REASON IS WHY. It read: *"a point count
+  // is not derivable from a descriptor — a box tessellates to 24 seam-split points, not 8, so
+  // the number cannot be read off the params"*. That conflated two counts. The SPLIT count is
+  // indeed not 8; the TOPOLOGICAL count is 8 and is derivable, and P2 derives it. An exemption
+  // whose stated reason has become false is the failure mode this list exists to make visible,
+  // so removing it is the phase honouring its own gate rather than editing around one.
   {
     module: 'src/nodes/componentSelection.ts',
     what: 'componentCountOf',
@@ -146,8 +145,11 @@ const DOMAIN_NOT_APPLICABLE: readonly {
     module: 'src/nodes/componentSelection.ts',
     what: 'componentCountOf',
     domain: 'corner',
+    // Restated at #716 so it stands on its own. It used to read "deferred with `point`",
+    // which stopped being true the moment `point` was answered — a reason that decays
+    // silently when its neighbour moves.
     reason:
-      'a corner count follows the point count and inherits its problem; it is deferred with `point`',
+      'a corner count is 3 x the face count only while a face IS a triangle, and whether it stays one is exactly what #736 decides; deriving it now would bake the disputed unit into a second site',
   },
 ];
 
@@ -201,7 +203,6 @@ describe('#633 domain census — every known domain has an answer at every dispa
     // pinned by (module, what, domain) and every entry is re-checked below against the
     // registered sites and the known domains.
     expect(DOMAIN_NOT_APPLICABLE.map((e) => `${e.module} ${e.what} ${e.domain}`)).toEqual([
-      'src/nodes/componentSelection.ts componentCountOf point',
       'src/nodes/componentSelection.ts componentCountOf edge',
       'src/nodes/componentSelection.ts componentCountOf corner',
     ]);
