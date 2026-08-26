@@ -60,10 +60,18 @@ const REPO = join(__dirname, '../..');
  */
 export function importsOf(file: string): string[] {
   const source = stripComments(readFileSync(join(REPO, file), 'utf8'));
-  const out: string[] = [];
+  // #756 — EVERY PASS BELOW RECORDS WHERE IT MATCHED, AND THE ORDER IS IMPOSED AT THE END.
+  // The three passes used to append to one list in turn, so a specifier's position in the
+  // answer was decided by WHICH PATTERN found it rather than by where it sits in the file —
+  // and since Prettier wraps a clause the moment it names three or four symbols, every
+  // wrapped import sorted to the back. Measured on `geometryRegistry.ts`: adding one symbol
+  // to an existing clause moved `./pointIdentity` from 7th to 9th with no specifier added or
+  // removed, reddening an ordered `toEqual` on a pure reformat. The set was never wrong; the
+  // sequence the doc above promises was.
+  const found: { specifier: string; at: number }[] = [];
   const re = /(?:^|\n)\s*(?:import|export)\b[^;\n]*?\bfrom\s*['"]([^'"]+)['"]/g;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
+  while ((m = re.exec(source)) !== null) found.push({ specifier: m[1], at: m.index });
   // A NAMED clause written across several lines — `import { a,\n b } from '…'`. #676: the
   // scan above anchors at a line start and then refuses to cross a newline, so it was blind
   // to every import written this way, which is how one is written as soon as it names more
@@ -84,9 +92,17 @@ export function importsOf(file: string): string[] {
   // a brace. Verified by diffing both answers over every source file.
   const braced =
     /(?:^|\n)\s*(?:import|export)\s+(?:type\s+)?(?:[A-Za-z_$][\w$]*\s*,\s*)?\{[^{}]*\}\s*from\s*['"]([^'"]+)['"]/g;
-  while ((m = braced.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
+  while ((m = braced.exec(source)) !== null) found.push({ specifier: m[1], at: m.index });
   // `import './side-effect'` has no `from` clause and is a dependency all the same.
   const bare = /(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
-  while ((m = bare.exec(source)) !== null) if (!out.includes(m[1])) out.push(m[1]);
+  while ((m = bare.exec(source)) !== null) found.push({ specifier: m[1], at: m.index });
+
+  // Sorted by position, THEN deduplicated — that order matters. A single-line braced import
+  // is matched by two of the passes above at the same offset, so deduplicating first would
+  // keep whichever pass ran first and discard the position agreement rather than use it.
+  // `sort` is stable in every engine this runs on, so equal offsets keep pass order.
+  found.sort((a, b) => a.at - b.at);
+  const out: string[] = [];
+  for (const { specifier } of found) if (!out.includes(specifier)) out.push(specifier);
   return out;
 }
