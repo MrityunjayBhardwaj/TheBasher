@@ -47,10 +47,13 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('tool registry', () => {
-  it('registers all fifteen tools', () => {
+  it('registers exactly the first-party catalogue — no more, no fewer', () => {
+    // The list IS the assertion; the count is derived from it rather than
+    // spelled, because a spelled count says nothing the list does not and goes
+    // stale on its own schedule. (It did: this test was named "all fifteen" and
+    // reported failure on correct code the day a sixteenth tool was registered.)
     registerAllTools();
     const tools = listTools();
-    expect(tools).toHaveLength(15);
     const names = tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'agent.getMutator',
@@ -68,7 +71,9 @@ describe('tool registry', () => {
       'dag.inspect',
       'library.import',
       'mesh.add',
+      'motion.generate',
     ]);
+    expect(tools).toHaveLength(names.length);
   });
 
   it('refuses duplicate registration', () => {

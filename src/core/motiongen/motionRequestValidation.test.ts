@@ -14,6 +14,10 @@ import {
 } from './MotionGenerationCapability';
 import { StubMotionGenerationCapability, synthesiseBvh } from './StubMotionGenerationCapability';
 import { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability';
+import { aBlockedRecord } from '../licensing/blockedModelForTests';
+
+// Derived, never spelled — see blockedModelForTests.
+const BLOCKED = aBlockedRecord().id;
 
 const ALLOWED = 'Kimodo-SOMA-RP-v1.1';
 const ok = { prompt: 'a figure walks forward', model: ALLOWED };
@@ -133,8 +137,6 @@ describe('both implementations enforce it, and so does the synthesiser', () => {
     // first would bury the fact that matters behind whichever field also happened
     // to be wrong.
     const cap = new StubMotionGenerationCapability();
-    await expect(
-      cap.generate({ prompt: 'x', model: 'Kimodo-SMPLX-RP-v1', fps: 0 }),
-    ).rejects.toThrow(/BLOCKED/);
+    await expect(cap.generate({ prompt: 'x', model: BLOCKED, fps: 0 })).rejects.toThrow(/BLOCKED/);
   });
 });

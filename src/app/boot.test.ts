@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { beforeUnloadIfDirty, getMotionCapability, resetMotionCapability } from './boot';
 import { useSettingsStore } from './stores/settingsStore';
+import { aBlockedRecord } from '../core/licensing/blockedModelForTests';
 
 describe('beforeUnloadIfDirty', () => {
   it('blocks the unload when dirty (preventDefault + returnValue set)', () => {
@@ -66,7 +67,7 @@ describe('getMotionCapability', () => {
     // is the check that would still fire if one arrived by any other route.
     const cap = await getMotionCapability();
     await expect(
-      cap.generate({ prompt: 'a figure walks', model: 'Kimodo-SMPLX-RP-v1' }),
+      cap.generate({ prompt: 'a figure walks', model: aBlockedRecord().id }),
     ).rejects.toThrow(/BLOCKED/);
   });
 

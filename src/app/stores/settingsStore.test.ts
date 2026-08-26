@@ -28,6 +28,15 @@ beforeAll(() => {
 import { useSettingsStore } from './settingsStore';
 import { DEFAULT_COMFYUI_URL } from '../../core/comfy';
 import { DEFAULT_MOTIONGEN_MODEL, DEFAULT_MOTIONGEN_URL } from '../../core/motiongen';
+import {
+  aBlockedHuggingFaceRecord,
+  aBlockedRecord,
+  qualifiedIdOf,
+} from '../../core/licensing/blockedModelForTests';
+
+// Derived, never spelled — see blockedModelForTests.
+const BLOCKED = aBlockedRecord().id;
+const BLOCKED_QUALIFIED = qualifiedIdOf(aBlockedHuggingFaceRecord())!;
 
 const KEY = 'basher.settings.v1';
 
@@ -104,7 +113,7 @@ describe('settingsStore', () => {
     // localStorage outlives a verdict. A checkpoint recorded usable today can be
     // re-recorded BLOCKED tomorrow, and an id already sitting in a browser would
     // be read back as configuration by a session that has no idea it was refused.
-    useSettingsStore.getState().setMotionGenModel('Kimodo-SMPLX-RP-v1');
+    useSettingsStore.getState().setMotionGenModel(BLOCKED);
     expect(useSettingsStore.getState().motionGenModel).toBe(DEFAULT_MOTIONGEN_MODEL);
   });
 
@@ -120,7 +129,7 @@ describe('settingsStore', () => {
         comfyAuthHeader: '',
         comfyLiveGenerate: false,
         motionGenUrl: DEFAULT_MOTIONGEN_URL,
-        motionGenModel: 'nvidia/Kimodo-SMPLX-RP-v1',
+        motionGenModel: BLOCKED_QUALIFIED,
       }),
     );
     vi.resetModules();

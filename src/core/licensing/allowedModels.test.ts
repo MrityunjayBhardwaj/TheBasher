@@ -11,6 +11,17 @@ import {
   assertModelAllowed,
   modelRecordFor,
 } from './allowedModels';
+import {
+  aBlockedHuggingFaceRecord,
+  qualifiedIdOf,
+  repoPathOf,
+  blockedRecords,
+} from './blockedModelForTests';
+
+// Derived, never spelled: naming a blocked checkpoint in source is what the
+// build-time gate reds on, and it cannot tell "uses it" from "refuses it".
+const BLOCKED_HF = aBlockedHuggingFaceRecord();
+const BLOCKED_QUALIFIED = qualifiedIdOf(BLOCKED_HF)!;
 
 describe('a checkpoint resolves by every form a caller can hold (#748)', () => {
   it('resolves the bare name', () => {
@@ -27,8 +38,8 @@ describe('a checkpoint resolves by every form a caller can hold (#748)', () => {
     // The sharp half. Unqualified, this reported BLOCKED. Qualified, it reported
     // UNRECORDED — still refused, but the message invited the reader to "record it
     // in external-models.json", which is precisely the record we refused to write.
-    expect(modelRecordFor('nvidia/Kimodo-SMPLX-RP-v1')?.verdict).toBe('BLOCKED');
-    expect(() => assertModelAllowed('nvidia/Kimodo-SMPLX-RP-v1')).toThrow(/BLOCKED/);
+    expect(modelRecordFor(BLOCKED_QUALIFIED)?.verdict).toBe('BLOCKED');
+    expect(() => assertModelAllowed(BLOCKED_QUALIFIED)).toThrow(/BLOCKED/);
   });
 
   it('is case- and whitespace-insensitive, as an id typed into a field will be', () => {
@@ -50,9 +61,12 @@ describe('resolution stays default-deny — the qualification is not a prefix st
   });
 
   it('refuses a qualified form built on a code repository rather than a model page', () => {
-    // PartField's source is a GitHub owner/repo. `nv-tlabs/PartField` is a repo
-    // path, not a checkpoint address, so no qualified key is minted for it.
-    expect(modelRecordFor('nv-tlabs/PartField')).toBeUndefined();
+    // A GitHub owner/repo is a repo path, not a checkpoint address, so no
+    // qualified key is minted for it. Derived from whichever blocked record is
+    // github-sourced, so it stays true if the manifest changes.
+    const repoSourced = blockedRecords().find((r) => r.source.includes('github.com/'));
+    expect(repoSourced, 'no github-sourced blocked record to exercise').toBeTruthy();
+    expect(modelRecordFor(repoPathOf(repoSourced!)!)).toBeUndefined();
   });
 
   it('refuses an unrecorded id outright', () => {
