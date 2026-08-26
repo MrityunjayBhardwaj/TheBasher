@@ -44,6 +44,7 @@ import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/exampl
 import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
+import { pickMotionGeneration, type MotionGenerationCapability } from '../core/motiongen';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -90,6 +91,8 @@ let cachedStorage: StorageCapability | null = null;
 let cachedBridge: BlenderBridgeCapability | null = null;
 let cachedComfyUI: ComfyUICapability | null = null;
 let comfyUIPromise: Promise<ComfyUICapability> | null = null;
+let cachedMotionGen: MotionGenerationCapability | null = null;
+let motionGenPromise: Promise<MotionGenerationCapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
@@ -148,6 +151,44 @@ export function getComfyCapability(): Promise<ComfyUICapability> {
 export function resetComfyCapability(): void {
   cachedComfyUI = null;
   comfyUIPromise = null;
+}
+
+/**
+ * Resolve the motion-generation capability for this runtime — Http if a service
+ * answers at the configured URL, Stub otherwise. Cached and promise-guarded for
+ * exactly the reasons getComfyCapability is: one instance per session, and
+ * concurrent first callers await one probe instead of racing two.
+ *
+ * This function is where the run-time half of the licence gate finally has a
+ * caller. The checkpoint id comes from the settings store — a value that lives in
+ * a browser, is typed by a director or authored by a model, and is therefore
+ * invisible to any scan of source text. `generate` refuses it if the manifest
+ * says so; this is simply the path that supplies it.
+ */
+export function getMotionCapability(): Promise<MotionGenerationCapability> {
+  if (cachedMotionGen) return Promise.resolve(cachedMotionGen);
+  if (!motionGenPromise) {
+    const { motionGenUrl } = useSettingsStore.getState();
+    motionGenPromise = pickMotionGeneration(motionGenUrl).then((cap) => {
+      cachedMotionGen = cap;
+      return cap;
+    });
+  }
+  return motionGenPromise;
+}
+
+/** Forget the cached motion capability so the next call re-probes a changed URL.
+ *  Same session-cache hazard as resetComfyCapability. */
+export function resetMotionCapability(): void {
+  cachedMotionGen = null;
+  motionGenPromise = null;
+}
+
+/** Test-only: inject a motion capability so tests hit a deterministic stub
+ *  without going through pickMotionGeneration's HTTP probe. */
+export function __setMotionCapabilityForTests(cap: MotionGenerationCapability | null): void {
+  cachedMotionGen = cap;
+  motionGenPromise = cap ? Promise.resolve(cap) : null;
 }
 
 /**
@@ -898,6 +939,8 @@ export function __resetBootForTests(): void {
   bootPromise = null;
   cachedComfyUI = null;
   comfyUIPromise = null;
+  cachedMotionGen = null;
+  motionGenPromise = null;
 }
 
 /**
