@@ -38,7 +38,12 @@ import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
 import { faceCountMismatch, zeroIndexRefusal } from './faceCount';
-import { pointCountMismatch } from './pointIdentity';
+import {
+  derivedSourceOf,
+  pointCountMismatch,
+  weldByPosition,
+  type PointWeld,
+} from './pointIdentity';
 import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // ns-2 step 12.5 — which triangles a scoped generator keeps. A LEAF with zero value
 // imports, which is what keeps the registry's declared import set honest: every module
@@ -509,6 +514,25 @@ export function sweep(live: ReadonlySet<BufferGeometry>): GeometrySweepResult {
  * zero — so the heterogeneity that hid the granularity error is gone for every geometry the
  * registry builds.
  */
+/**
+ * The WELD of the geometry `descriptor` derives from, or `null` when it derives from none.
+ *
+ * #754 — what {@link pointCountMismatch} needs to check a derived geometry's layout, and the
+ * one place this module reaches back for a source outside a builder. `get` is the same
+ * memoised door the builders used moments ago, so this is a cache hit rather than a rebuild,
+ * and `weldByPosition` is memoised on the geometry the source's own parity already welded.
+ *
+ * `'internal'` for the reason the builders give: this caches a SOURCE box/sphere, which no
+ * consumer attaches (#586). A source that cannot build synchronously answers `null`, which
+ * the parity reports rather than skips.
+ */
+function sourceWeldFor(descriptor: GeometryDescriptor): PointWeld | null {
+  const source = derivedSourceOf(descriptor);
+  if (source === null) return null;
+  const geometry = get(source, 'internal');
+  return geometry === null ? null : weldByPosition(geometry);
+}
+
 function build(ref: GeometryRef): BufferGeometry | null {
   const built = buildFromDescriptor(ref.descriptor);
   if (built === null) return null;
@@ -540,13 +564,21 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // changed one of them. Refusing the build would turn a bookkeeping drift into a missing
   // mesh, which is a worse answer than the question deserves.
   //
-  // ⚠️ WHAT THIS COSTS, STATED EXACTLY RATHER THAN "IT IS CHEAP". The check welds only when
-  // the descriptor derives a number, and `pointCountOf` derives one for `box` and `sphere`
-  // alone — so this pays a weld for the two primitive kinds and returns before touching a
-  // position for every other kind. Builds are memoised on `ref.key` at the door above and the
-  // weld is memoised on the geometry, so it is once per geometry, not once per read: measured
-  // at 1.1 ms for 8 k points and 4.2 ms for 33 k. Everything else welds on first demand
-  // instead, through the same memo, which is where #717 will meet it.
+  // ⚠️ WHAT THIS COSTS, STATED EXACTLY RATHER THAN "IT IS CHEAP", AND RE-STATED AT #754
+  // BECAUSE THE OLD FIGURE STOPPED DESCRIBING IT. It used to read "this pays a weld for the
+  // two primitive kinds and returns before touching a position for every other kind", which
+  // was true while the derived arms refused. They now compose, so:
+  //
+  //   PRIMITIVE  welds the built geometry, as before — 1.1 ms at 8 k points, 4.2 ms at 33 k.
+  //   DERIVED    welds its SOURCE, never itself. The source was built moments ago through the
+  //              same memoised door and its own parity already welded it, so this is a
+  //              `WeakMap` hit. The merged buffer — the big one — is never welded here at all,
+  //              because the check is on the LAYOUT and needs only a length.
+  //
+  // So the expensive half went DOWN: an Array x5 of a 33 k sphere used to be skipped and now
+  // costs a length comparison, where the naive "weld the result" reading would have cost a
+  // 165 k-point walk. Builds are memoised on `ref.key` at the door above and the weld on the
+  // geometry, so either way it is once per geometry, not once per read.
   //
   // 🔴 AND NOTHING CONSTRUCTS ITS FAILURE TODAY, which is said here rather than left implied.
   // The registry builds the geometry FROM the descriptor, so the two agree by construction;
@@ -555,7 +587,11 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // as "no objection" forever, so `pointIdentity.gate.test.ts` exercises the refusal directly
   // by pairing a box descriptor with a sphere's geometry. Same treatment `zeroIndexRefusal`
   // above already gets, for the same reason.
-  const pointDisagreement = pointCountMismatch(ref.descriptor, built);
+  const pointDisagreement = pointCountMismatch(
+    ref.descriptor,
+    built,
+    sourceWeldFor(ref.descriptor),
+  );
   if (pointDisagreement !== null) console.warn(pointDisagreement);
 
   if (ref.attributeKey === undefined) return built;
