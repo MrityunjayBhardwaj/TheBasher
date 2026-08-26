@@ -36,13 +36,38 @@ export const MODEL_RECORDS = manifest.models as readonly ModelLicenceRecord[];
 const RECORDS = MODEL_RECORDS;
 
 /**
- * Every string a record answers to: its id, plus each comma-separated name. A
- * record can cover a family — six Kimodo checkpoints share one verdict — so the
- * caller's concrete checkpoint name has to resolve, not just the family id.
+ * The publishing org a record's checkpoints are addressed under, when the source
+ * is a Hugging Face model page. HF addresses a checkpoint as `<org>/<name>`, and
+ * that qualified form — not the bare name — is what a settings field, a config
+ * value, or an agent-authored param actually holds.
+ *
+ * Derived from `source` rather than recorded by hand so the two cannot drift, and
+ * scoped to huggingface.co deliberately: a GitHub `owner/repo` path is a code
+ * repository, not a checkpoint address, and qualifying names with it would mint
+ * keys nobody uses.
+ */
+function huggingFaceOrgOf(record: ModelLicenceRecord): string | undefined {
+  const match = /^https?:\/\/huggingface\.co\/([^/]+)\//.exec(record.source.trim());
+  return match?.[1];
+}
+
+/**
+ * Every string a record answers to: its id, plus each comma-separated name, plus
+ * each name qualified by the record's Hugging Face org. A record can cover a
+ * family — six Kimodo checkpoints share one verdict — so the caller's concrete
+ * checkpoint name has to resolve, not just the family id.
+ *
+ * The qualified form is enumerated rather than matched by stripping the caller's
+ * own prefix, and the difference is the whole safety property: `nvidia/Kimodo-…`
+ * resolves because THIS record claims that org, while `someoneelse/Kimodo-…`
+ * stays UNRECORDED and is refused. A last-path-segment match would have cleared
+ * an unrelated org's re-upload against a verdict written about NVIDIA's weights.
  */
 function keysFor(record: ModelLicenceRecord): string[] {
   const names = record.name.split(',').map((n) => n.trim());
-  return [record.id, ...names].filter(Boolean).map((k) => k.toLowerCase());
+  const org = huggingFaceOrgOf(record);
+  const qualified = org ? names.filter(Boolean).map((n) => `${org}/${n}`) : [];
+  return [record.id, ...names, ...qualified].filter(Boolean).map((k) => k.toLowerCase());
 }
 
 /** The record covering `modelId`, or undefined when nothing covers it. */
