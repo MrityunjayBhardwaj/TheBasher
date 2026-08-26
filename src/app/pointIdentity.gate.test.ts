@@ -271,7 +271,7 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     // A guard that cannot be made to fire is a description. This pairs a box descriptor with a
     // sphere's geometry, which is the disagreement the production call exists to catch.
     const sphere = new SphereGeometry(1, 8, 6);
-    const message = pointCountMismatch(boxDescriptor([1, 1, 1]), sphere, null);
+    const message = pointCountMismatch(boxDescriptor([1, 1, 1]), sphere, () => null);
     expect(message).not.toBeNull();
     expect(message).toContain('derives 8');
     expect(message).toContain('welds to 42');
@@ -288,7 +288,7 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     const arrayed = arrayGeometryRef(box, 3, [2, 0, 0]);
     const real = weldByPosition(built(box));
     const compacted = { map: real.map.slice(0, 12), points: real.points };
-    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), compacted);
+    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), () => compacted);
     expect(message).not.toBeNull();
     expect(message).toContain('#712');
     expect(message).toContain('72'); // what the buffer actually holds
@@ -299,7 +299,7 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     // A parity check that silently skips is the covered-but-unhonoured grade: it reads as "no
     // objection" forever. `null` is legitimate for a primitive and a defect for a generator.
     const arrayed = arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 3, [2, 0, 0]);
-    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), null);
+    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), () => null);
     expect(message).not.toBeNull();
     expect(message).toContain('none was supplied');
   });
@@ -311,26 +311,59 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     const box = boxGeometryRef([1, 1, 1], null);
     const arrayed = arrayGeometryRef(box, 3, [2, 0, 0]);
     const real = weldByPosition(built(box));
-    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), {
+    const message = pointCountMismatch(arrayed.descriptor, built(arrayed), () => ({
       map: real.map,
       points: 7,
-    });
+    }));
     expect(message).not.toBeNull();
     expect(message).toContain('welds to 7');
   });
 
+  it('🔴 never ASKS for the source weld on a path that declines — the laziness is the point', () => {
+    // A weld is a walk of a whole position buffer. Passed eagerly, an Array over an imported
+    // mesh would weld that mesh on every first build to feed a check that returns null on its
+    // first line. Counted rather than asserted in prose, because "it is lazy" is exactly the
+    // kind of claim that survives the refactor that stops making it true.
+    let asked = 0;
+    const supplier = () => {
+      asked++;
+      return null;
+    };
+    const box = boxGeometryRef([1, 1, 1], null);
+    const gltfRef = {
+      key: 'g',
+      descriptor: { kind: 'gltf' as const, assetRef: 'a', childName: 'c' },
+    };
+    // A refusing descriptor, and a GENERATOR standing on one — the case that would have cost
+    // the most, since it has a real source geometry to walk.
+    expect(pointCountMismatch(gltfRef.descriptor, built(box), supplier)).toBeNull();
+    expect(
+      pointCountMismatch(
+        { kind: 'array', source: gltfRef, count: 3, offset: [2, 0, 0] },
+        built(box),
+        supplier,
+      ),
+    ).toBeNull();
+    expect(asked).toBe(0);
+
+    // ...and it IS asked when the check actually runs, or the count above proves nothing.
+    const arrayed = arrayGeometryRef(box, 3, [2, 0, 0]);
+    pointCountMismatch(arrayed.descriptor, built(arrayed), supplier);
+    expect(asked).toBe(1);
+  });
+
   it('says nothing when they agree — primitive and derived alike, at every offset', () => {
     const box = boxGeometryRef([1, 1, 1], null);
-    expect(pointCountMismatch(boxDescriptor([1, 1, 1]), built(box), null)).toBeNull();
+    expect(pointCountMismatch(boxDescriptor([1, 1, 1]), built(box), () => null)).toBeNull();
     const source = weldByPosition(built(box));
     for (const dx of [2, 1, 0.5, 0] as const) {
       const arrayed = arrayGeometryRef(box, 3, [dx, 0, 0]);
-      expect(pointCountMismatch(arrayed.descriptor, built(arrayed), source)).toBeNull();
+      expect(pointCountMismatch(arrayed.descriptor, built(arrayed), () => source)).toBeNull();
     }
     const mirrored = mirrorGeometryRef(box, 'x', 0);
-    expect(pointCountMismatch(mirrored.descriptor, built(mirrored), source)).toBeNull();
+    expect(pointCountMismatch(mirrored.descriptor, built(mirrored), () => source)).toBeNull();
     // A refusal is not a disagreement — the same rule `faceCountMismatch` holds.
     const gltf = { kind: 'gltf' as const, assetRef: 'a', childName: 'c' };
-    expect(pointCountMismatch(gltf, built(box), null)).toBeNull();
+    expect(pointCountMismatch(gltf, built(box), () => null)).toBeNull();
   });
 });

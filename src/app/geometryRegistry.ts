@@ -587,9 +587,7 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // as "no objection" forever, so `pointIdentity.gate.test.ts` exercises the refusal directly
   // by pairing a box descriptor with a sphere's geometry. Same treatment `zeroIndexRefusal`
   // above already gets, for the same reason.
-  const pointDisagreement = pointCountMismatch(
-    ref.descriptor,
-    built,
+  const pointDisagreement = pointCountMismatch(ref.descriptor, built, () =>
     sourceWeldFor(ref.descriptor),
   );
   if (pointDisagreement !== null) console.warn(pointDisagreement);

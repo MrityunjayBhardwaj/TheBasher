@@ -356,14 +356,22 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
  * every scope. It reds the day a copy stops carrying the full source buffer — which is #712,
  * by name, in the message.
  *
- * `source` is REQUIRED rather than optional, and `null` is a legitimate value meaning "this
- * descriptor derives from nothing". A derived descriptor arriving with `null` is itself
- * reported, because a parity check that silently skips is the covered-but-unhonoured grade.
+ * `sourceWeld` is REQUIRED rather than optional, and a `null` RESULT is a legitimate value
+ * meaning "this descriptor derives from nothing". A derived descriptor whose supplier answers
+ * `null` is itself reported, because a parity check that silently skips is the
+ * covered-but-unhonoured grade.
+ *
+ * ⚠️ IT IS A SUPPLIER AND NOT A VALUE SO THAT THE REFUSING PATH PAYS NOTHING. A weld is a walk
+ * of a whole position buffer, and the arms that decline here — `gltf` and `baked`, and every
+ * generator standing on one — return before the source is needed. Passed eagerly, an Array
+ * over an imported mesh would weld that mesh on every first build to feed a check that
+ * returns `null` on its first line. Measured cost of the walk it skips: 4.2 ms at 33 k points,
+ * and an imported asset is routinely larger than that.
  */
 export function pointCountMismatch(
   descriptor: GeometryDescriptor,
   geometry: BufferGeometry,
-  source: PointWeld | null,
+  sourceWeld: () => PointWeld | null,
 ): string | null {
   const expected = pointCountOf(descriptor);
   if (expected.kind !== 'counted') return null;
@@ -377,6 +385,7 @@ export function pointCountMismatch(
   }
 
   const { source: from, copies } = tiling;
+  const source = sourceWeld();
   if (source === null)
     return `pointCount: descriptor '${descriptor.kind}' derives from a '${from.descriptor.kind}', so its parity needs that source's weld — none was supplied, and the composed count ${expected.count} is unchecked`;
 
