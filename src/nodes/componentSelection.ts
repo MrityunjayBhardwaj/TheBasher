@@ -125,6 +125,7 @@ import type { KnownDomain, ScopeDomain } from './attributes';
 export type { ScopeDomain };
 import type { GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
+import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
 
@@ -258,10 +259,21 @@ export function componentCountOf(
       // is carried as its own value rather than as a number.
       return faceCountOf(descriptor);
     case 'point':
+      // #716 — the TOPOLOGICAL count, which is derivable for the two primitive kinds. The
+      // three derived kinds come back `null` from there, because a welded count depends on
+      // whether copies COINCIDE, and that is a function of an operator's offset rather than
+      // of its structure — measured, and written up at `pointCountOf`.
+      //
+      // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, which is worth saying because
+      // it looks like it should. A scope's domain is chosen by an OPERATOR'S DECLARATION, and
+      // `ScopeDomain` is still `['face']` — so no operator can name `'point'` until that const
+      // is widened, which is #667's work. The type refuses it today rather than allowing it
+      // quietly, so this arm is reachable from a test and from #667, and from nothing else.
+      return pointCountOf(descriptor);
     case 'edge':
     case 'corner':
       return refuse(
-        `domain '${domain}' is not resolvable from a descriptor — ns-2 ships 'face' only`,
+        `domain '${domain}' is not resolvable from a descriptor — ns-2 shipped 'face', #716 added 'point'`,
       );
     default: {
       const unreachable: never = domain;

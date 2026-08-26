@@ -38,6 +38,7 @@ import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
 import { faceCountMismatch, zeroIndexRefusal } from './faceCount';
+import { pointCountMismatch } from './pointIdentity';
 import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // ns-2 step 12.5 — which triangles a scoped generator keeps. A LEAF with zero value
 // imports, which is what keeps the registry's declared import set honest: every module
@@ -525,6 +526,37 @@ function build(ref: GeometryRef): BufferGeometry | null {
     built.dispose();
     return null;
   }
+
+  // #716 — the descriptor's POINT arithmetic against the geometry that was actually built.
+  // Placed above the `attributeKey` return on purpose: unlike the face parity below, this
+  // one is not a precondition for deriving groups, it is the check that keeps a second
+  // spelling of three.js's tessellation honest — so it has to see every build, not only the
+  // builds that carry a material index.
+  //
+  // A WARN rather than a refusal, and the asymmetry with `zeroIndexRefusal` above is
+  // deliberate. An empty index makes the object silently absent, which is a rendering
+  // failure. A point-count disagreement changes nothing about what renders today; it is a
+  // statement that `pointCountOf` and the tessellation have drifted, addressed to whoever
+  // changed one of them. Refusing the build would turn a bookkeeping drift into a missing
+  // mesh, which is a worse answer than the question deserves.
+  //
+  // ⚠️ WHAT THIS COSTS, STATED EXACTLY RATHER THAN "IT IS CHEAP". The check welds only when
+  // the descriptor derives a number, and `pointCountOf` derives one for `box` and `sphere`
+  // alone — so this pays a weld for the two primitive kinds and returns before touching a
+  // position for every other kind. Builds are memoised on `ref.key` at the door above and the
+  // weld is memoised on the geometry, so it is once per geometry, not once per read: measured
+  // at 1.1 ms for 8 k points and 4.2 ms for 33 k. Everything else welds on first demand
+  // instead, through the same memo, which is where #717 will meet it.
+  //
+  // 🔴 AND NOTHING CONSTRUCTS ITS FAILURE TODAY, which is said here rather than left implied.
+  // The registry builds the geometry FROM the descriptor, so the two agree by construction;
+  // this fires only when the arithmetic and three.js's tessellation drift apart — a version
+  // bump, or an edit to one of the two spellings. A guard whose subject never arrives reads
+  // as "no objection" forever, so `pointIdentity.gate.test.ts` exercises the refusal directly
+  // by pairing a box descriptor with a sphere's geometry. Same treatment `zeroIndexRefusal`
+  // above already gets, for the same reason.
+  const pointDisagreement = pointCountMismatch(ref.descriptor, built);
+  if (pointDisagreement !== null) console.warn(pointDisagreement);
 
   if (ref.attributeKey === undefined) return built;
   const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
