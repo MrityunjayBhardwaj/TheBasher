@@ -465,6 +465,21 @@ const FOREIGN: ClassCarriage = { kind: 'foreign' };
  * (Vertex Groups). The FACE arm's grounding is weaker — it rests on Houdini's *"Vertex
  * overrides Point overrides Primitive overrides Detail"* implying `N`/`Cd` at Primitive class,
  * implied rather than stated — and it is recorded as such rather than smoothed over.
+ *
+ * 🔴 THIS DOES NOT ANSWER THE MIRROR QUESTION, ONLY THE TYPE-KEYED HALF OF IT (#763). Said
+ * here because a reader who finds a refusal at this name will reasonably conclude it did. A
+ * per-point bone WEIGHT is a `float`, so it rides through a Mirror unrefused and the reflected
+ * half keeps the SOURCE side's bone assignment — silently, and it is exactly the victim #717
+ * was filed to protect. No type-keyed list can catch it: a weight's correct mirror behaviour is
+ * to be remapped to its opposite-side partner, which is a fact about the datum's NAME. Blender
+ * agrees and keys it the same way — the *Vertex Groups* control quoted above pairs by the
+ * *".R"/".L"* suffix and declines when no partner exists. Blocked behind #389/#605, which is
+ * when a weight first enters this model and the gap stops being latent.
+ *
+ * ⚠️ EXACTLY ONE MEMBER, AND THE WARNING BELOW DEPENDS ON THAT — it takes one `why` from
+ * `refused[0]` while naming every refused attribute, which is correct only while all refusals
+ * share a reason. `classCarriage.gate.test.ts` row 9 reds the day this list grows, and says
+ * what the message must do first. Widen it there, not here.
  */
 const REFLECTION_REFUSES: readonly AttributeType[] = ['float3'];
 

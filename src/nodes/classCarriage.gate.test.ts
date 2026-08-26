@@ -27,11 +27,12 @@
 // reds. Restating it here would be a second statement free to drift from the first.
 //
 // REF: src/nodes/meshAttributes.ts (`CLASS_CARRIAGE`, `carriageForDomain`);
-//      ref/architecture/polygonal-atoms.md (P1); issues #715, #716, #717, #723, #718, #722.
+//      ref/architecture/polygonal-atoms.md (P1); issues #715, #716, #717, #723, #763, #718,
+//      #722.
 
 import { describe, expect, it } from 'vitest';
 import { CLASS_CARRIAGE, carriageForDomain } from './meshAttributes';
-import { KNOWN_DOMAINS } from './attributes';
+import { ATTRIBUTE_TYPES, KNOWN_DOMAINS } from './attributes';
 import { boxGeometryRef } from '../app/modifierGeometry';
 import { arrayGeometryRef } from '../app/modifierGeometry';
 import { tiledCornerOrder, tiledFaceOrder } from '../app/faceCount';
@@ -216,5 +217,40 @@ describe('the per-class carriage census', () => {
     if (refusal.kind !== 'refused') throw new Error('unreachable — asserted above');
     expect(refusal.why.length).toBeGreaterThan(20);
     expect(refusal.until).toMatch(/^#\d+$/);
+  });
+  it("9 — 🔴 #717 EXACTLY ONE TYPE IS REFUSED, AND THE WARNING'S SHAPE RESTS ON THAT", () => {
+    // A TRIPWIRE, NOT A DESCRIPTION. `mintTiledModifierAttributes` names EVERY refused
+    // attribute in one warning and then takes the `why` and the `until` from `refused[0]`.
+    // That is correct for exactly as long as every refusal shares one reason — true while the
+    // refused set holds a single type, and false the moment a second joins it, at which point
+    // the message lists an attribute of one type beside a reason interpolated for another.
+    //
+    // Which is the defect #717 has already fixed once, one field over: the misfit message used
+    // to print a global `N faces / M corners` pair instead of the denominator the check
+    // actually applied, and a point misfit named two numbers that had nothing to do with it.
+    // Same shape, same file, a different field — so it is worth catching before it ships
+    // rather than after someone reads a reason that belongs to a different datum.
+    //
+    // ⚠️ THE FIX IS DEFERRED ON PURPOSE, AND THIS ROW IS THE DEFERRAL. A per-datum message
+    // could be written today, but nothing could exercise it — there is no second refused type
+    // — and an arm nobody has ever run reads as "no objection" forever, which is the argument
+    // this file's own row 3 makes about declared drops. So the decision waits for a test that
+    // reds when it becomes takeable: add a type to `REFLECTION_REFUSES` and this row fails,
+    // naming what the warning must do before that addition can ship.
+    //
+    // Censused over the CLOSED type list rather than asserted type by type, so a new member of
+    // `ATTRIBUTE_TYPES` is examined without an edit here. A type added and NOT refused leaves
+    // this row green, correctly — the message only breaks when the refused SET grows.
+    const { faces, corners, points } = tilingOfArrayedBox();
+    const refused = ATTRIBUTE_TYPES.filter(
+      (type) =>
+        carriageForDomain(at('point', type), 'mirror', faces, corners, points).kind === 'refused',
+    );
+    expect(
+      refused,
+      'a second refused type means the refusal warning can no longer take one `why` from ' +
+        '`refused[0]` — give each refused attribute its own reason in `meshAttributes.ts` ' +
+        'before widening this set',
+    ).toEqual(['float3']);
   });
 });
