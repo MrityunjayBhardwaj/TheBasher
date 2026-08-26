@@ -12,6 +12,7 @@
 // REF: src/core/comfy/HttpComfyUICapability.ts; docs/EXTERNAL-MODEL-LICENCES.md.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
+import { assertValidMotionRequest } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
   MotionGenerationRequest,
@@ -52,6 +53,9 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
 
   async generate(request: MotionGenerationRequest): Promise<MotionGenerationResult> {
     assertModelAllowed(request.model);
+    // Licence BEFORE shape — same ordering and the same reason as the stub. Both
+    // land before the request is issued, which is the property that matters here.
+    assertValidMotionRequest(request);
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
