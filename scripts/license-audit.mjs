@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 // License audit (V5).
+// Two populations, because they arrive by different roads:
+//   1. External AI models and weights, reached over HTTP — scripts/external-models.json.
+//   2. npm production dependencies — the tree walk below.
 // Walks the production dependency tree (`npm ls --omit=dev --all --json`),
 // reads each package.json's `license`/`licenses` field, and fails the build
 // if any dependency is not on the permissive allowlist.
@@ -9,6 +12,9 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { auditExternalModels } from './external-model-audit.mjs';
 
 const ALLOW = new Set([
   'MIT',
@@ -118,6 +124,16 @@ function walk(node, results = new Map()) {
 }
 
 function main() {
+  // External models and weights first: they are reached over HTTP, so they are not
+  // in the npm tree below and nothing else in CI can see them. Cheap, and it runs
+  // even when the dependency walk is broken.
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const externalCode = auditExternalModels({
+    manifestPath: path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json'),
+    repoRoot: path.resolve(here, '..'),
+  });
+  if (externalCode !== 0) process.exit(externalCode);
+
   const out = execSync('npm ls --omit=dev --all --json', {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'ignore'],

@@ -1,7 +1,9 @@
 // Retarget core + preset catalog tests.
 
 import { describe, expect, it } from 'vitest';
-import { retargetClip } from './retarget';
+import { PropertyBinding } from 'three';
+import { retargetClip, canonicalBoneKey, resolveNameMapToSource } from './retarget';
+import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
@@ -203,5 +205,125 @@ describe('BONE_GROUP_PRESETS catalog', () => {
     expect(upper?.bones).toContain('spine');
     expect(upper?.bones).toContain('neck');
     expect(upper?.bones).toContain('upper_arm.L');
+  });
+});
+
+// ── Two import roads, two spellings, one map ───────────────────────────────
+// Measured 2026-08-26 on a real Mixamo export (67-joint rig, 28k keyframes):
+// the shipped Mixamo→glTF preset matched 0 of 22 source bones and produced an
+// EMPTY clip, with no error. The cause is upstream of us — three's FBXLoader
+// sanitises bone names by REMOVING reserved characters, while our glTF road
+// REPLACES them with '_'. These tests pin the mechanism, not just the symptom.
+
+describe('bone-name spelling across import roads', () => {
+  it("three's sanitiser REMOVES the colon — this is the upstream fact everything else follows from", () => {
+    // If this ever changes, the canonical matching below becomes unnecessary
+    // rather than wrong — and this test is where you find that out.
+    expect(PropertyBinding.sanitizeNodeName('mixamorig:Hips')).toBe('mixamorigHips');
+  });
+
+  it('our sanitiser REPLACES it with an underscore — the other spelling', () => {
+    expect(sanitizeBoneName('mixamorig:Hips')).toBe('mixamorig_Hips');
+  });
+
+  it('canonicalBoneKey collapses both spellings onto one key', () => {
+    const fromFbx = PropertyBinding.sanitizeNodeName('mixamorig:LeftForeArm');
+    const fromGltf = sanitizeBoneName('mixamorig:LeftForeArm');
+    expect(fromFbx).not.toBe(fromGltf); // they really are different strings
+    expect(canonicalBoneKey(fromFbx)).toBe(canonicalBoneKey(fromGltf));
+  });
+
+  it('every shipped preset key resolves against the FBX spelling of its own bone', () => {
+    // The preset is authored in the glTF spelling. Each key must still find the
+    // bone when the clip arrived by FBX — which is the case that was broken.
+    const preset = getBoneNameMapPreset('mixamoToGltf');
+    expect(preset).toBeTruthy();
+    const fbxSpelled = Object.keys(preset!.map).map((k) => ({
+      name: PropertyBinding.sanitizeNodeName(k.replace(/_/g, ':')),
+      parent: -1,
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+    }));
+    const resolved = resolveNameMapToSource(preset!.map, fbxSpelled);
+    const names = new Set(fbxSpelled.map((b) => b.name));
+    const landed = Object.keys(resolved).filter((k) => names.has(k));
+    expect(landed).toHaveLength(Object.keys(preset!.map).length);
+  });
+
+  it('an exact key is never second-guessed', () => {
+    const bones: BoneSpec[] = [
+      { name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'mixamorigHips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    const resolved = resolveNameMapToSource({ mixamorig_Hips: 'hips' }, bones);
+    expect(resolved).toEqual({ mixamorig_Hips: 'hips' });
+  });
+
+  it('leaves an AMBIGUOUS canonical form unresolved rather than guessing', () => {
+    // Two source bones collapsing to one key must not silently pick a winner —
+    // a wrong bound bone is worse than an unbound one, because it looks right.
+    const bones: BoneSpec[] = [
+      { name: 'arm_L', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'armL', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    const resolved = resolveNameMapToSource({ 'arm.L': 'target' }, bones);
+    expect(resolved).toEqual({ 'arm.L': 'target' });
+  });
+
+  it('never lets an inexact key revise an entry an exact key already claimed', () => {
+    // Constructed from the failure: resolving in one pass wrote both keys onto the
+    // same bone, so the LAST one won and the exact spelling lost to the fuzzy one.
+    // Which of the two won depended on key order, which is no rule at all.
+    const bones: BoneSpec[] = [
+      { name: 'arm_L', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    expect(resolveNameMapToSource({ arm_L: 'exact', 'arm.L': 'fuzzy' }, bones)).toEqual({
+      arm_L: 'exact',
+      'arm.L': 'fuzzy',
+    });
+    // …and the same holds when the fuzzy key is authored first.
+    expect(resolveNameMapToSource({ 'arm.L': 'fuzzy', arm_L: 'exact' }, bones)).toEqual({
+      arm_L: 'exact',
+      'arm.L': 'fuzzy',
+    });
+  });
+
+  it('leaves a bone claimed by TWO inexact keys unresolved rather than keeping one', () => {
+    // The likely case in the field: an author covering both import roads' spellings
+    // in one preset. Silently dropping half of it is exactly the class of silent
+    // wrong answer this resolver exists to remove.
+    const bones: BoneSpec[] = [
+      { name: 'mixamorigHips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    const resolved = resolveNameMapToSource({ 'mixamorig:Hips': 'a', mixamorig_Hips: 'b' }, bones);
+    expect(resolved).toEqual({ 'mixamorig:Hips': 'a', mixamorig_Hips: 'b' });
+    expect(resolved.mixamorigHips).toBeUndefined();
+  });
+
+  it('retargets a clip whose bones use the FBX spelling through the glTF-spelled preset', () => {
+    // The end-to-end form of the bug: before this fix the result was 0 keyframes.
+    const sourceBones: BoneSpec[] = [
+      { name: 'mixamorigHips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { name: 'mixamorigSpine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    ];
+    const targetBones: BoneSpec[] = [
+      { name: 'hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { name: 'spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    ];
+    const keyframes: AnimationKeyframe[] = [
+      { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
+      { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+      { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
+    ];
+    const result = retargetClip({
+      sourceBones,
+      sourceClip: { name: 'walk', duration: 1, keyframes },
+      targetBones,
+      nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
+    });
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.unmappedSourceBones).toEqual([]);
+    expect(result.unboundTargetBones).toEqual([]);
   });
 });
