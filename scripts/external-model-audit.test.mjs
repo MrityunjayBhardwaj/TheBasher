@@ -11,6 +11,10 @@ import {
   entryCheckedAt,
   listSourceFiles,
   SCAN_ROOTS,
+  SCAN_ROOT_FILES,
+  buildNotice,
+  checkNotice,
+  NOTICE_PATH,
   EXEMPT,
 } from './external-model-audit.mjs';
 
@@ -126,6 +130,66 @@ describe('scan coverage — the roots and their exemptions (#737)', () => {
     }
   });
 
+  it('covers public/, whose contents are SERVED to the client (#750)', () => {
+    // A JSON file under public/ reaches the browser as surely as an import does,
+    // and the scan read none of it.
+    expect(SCAN_ROOTS).toContain('public');
+  });
+
+  it('covers the repo root, where eleven config files that run actually live (#750)', () => {
+    // vite.config.ts, vitest/playwright/eslint/tailwind/postcss configs, the
+    // tsconfigs, package.json and its lock. A model id reaches production
+    // through a `define`, an npm script, or a dependency name.
+    expect(SCAN_ROOT_FILES).toContain('.');
+  });
+
+  it('covers tools/, which holds repo gates and a vite plugin', () => {
+    // Build-path code by any reading. It was reachable only by recursing from the
+    // root, which is to say it was covered by accident or not at all.
+    expect(SCAN_ROOTS).toContain('tools');
+  });
+
+  it('the repo root contributes its own files', () => {
+    const repoRoot = path.resolve(here, '..');
+    const files = listSourceFiles(repoRoot);
+    expect(files).toContain('vite.config.ts');
+    expect(files).toContain('package.json');
+    expect(files.some((f) => f.startsWith('node_modules/'))).toBe(false);
+  });
+
+  it('the NAMED roots are the whole covered set — recursion would add nothing', () => {
+    // The property flatness actually buys: the covered set is CHOSEN. This reds
+    // the day a directory with scannable files appears outside every named root,
+    // which is exactly when somebody should decide whether it belongs.
+    //
+    // An earlier version of this check asserted "no duplicate paths", which
+    // listSourceFiles dedupes anyway — so it passed with the root made recursive
+    // and proved nothing. This one fails under that same change if any unnamed
+    // directory has matching files.
+    const repoRoot = path.resolve(here, '..');
+    const named = listSourceFiles(repoRoot);
+    const recursive = listSourceFiles(repoRoot, [...SCAN_ROOTS, '.'], EXEMPT, undefined, []);
+    expect(recursive.filter((f) => !named.includes(f))).toEqual([]);
+  });
+
+  it('finds a blocked id planted in a root config file and under public/', () => {
+    // The acceptance test the fix was written against, run without touching the
+    // real tree: both locations produced a CLEAN PASS before this.
+    const manifest = JSON.parse(
+      fs.readFileSync(
+        path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json'),
+        'utf8',
+      ),
+    );
+    const blocked = manifest.models.find((m) => m.verdict === 'BLOCKED');
+    const planted = {
+      'vite.config.ts': `// ${blocked.name.split(',')[0].trim()}`,
+      'public/served.json': JSON.stringify({ model: blocked.id }),
+    };
+    const hits = findBlockedReferences(manifest, Object.keys(planted), (f) => planted[f]);
+    expect(hits.map((h) => h.file).sort()).toEqual(['public/served.json', 'vite.config.ts']);
+  });
+
   it('excludes the three self-naming files but still returns real source', () => {
     const repoRoot = path.resolve(here, '..');
     const files = listSourceFiles(repoRoot);
@@ -198,5 +262,84 @@ describe('checkManifest — per-entry dates', () => {
       models: [{ ...manifest.models[0], checkedAt: 'last spring' }],
     };
     expect(checkManifest(bad).join(' ')).toMatch(/not YYYY-MM-DD/);
+  });
+});
+
+describe('a recorded condition is honoured, not merely identified (#749)', () => {
+  const manifestPath = path.resolve(here, '..', 'src', 'core', 'licensing', 'external-models.json');
+  const manifest = () => JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const repoRoot = path.resolve(here, '..');
+
+  it('the shipped NOTICE matches what the manifest entails', () => {
+    expect(checkNotice(repoRoot, manifest())).toEqual([]);
+  });
+
+  it('a MISSING notice fails the audit — the acceptance test for this gate', () => {
+    // Constructed rather than observed: the pass above proves nothing on its own.
+    const problems = checkNotice(repoRoot, manifest(), () => {
+      throw new Error('ENOENT');
+    });
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/missing/i);
+  });
+
+  it('a notice that DRIFTED from the manifest fails too', () => {
+    // The likelier failure in practice, and the more dangerous one: a stale
+    // notice reads as compliance while describing terms that have moved.
+    const problems = checkNotice(repoRoot, manifest(), () => 'NOTICE\n\nsomething else entirely');
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatch(/does not match/i);
+  });
+
+  it("carries the licence's required sentence VERBATIM, not a paraphrase", () => {
+    // The whole point. The NVIDIA grant demands a notice reading a specific
+    // sentence; a generated file that said "Licensed under: X" would identify the
+    // obligation and not discharge it.
+    const m = manifest();
+    const text = buildNotice(m);
+    for (const model of m.models) {
+      if (model.verdict === 'BLOCKED' || !model.conditions?.length) continue;
+      expect(model.attribution, `${model.id} records no attribution`).toBeTruthy();
+      // As its own LINE, not merely as a substring. The condition's prose QUOTES
+      // the required sentence, so a `toContain` here is reached on every run and
+      // discriminates on none — it passed with the attribution replaced by a
+      // paraphrase, which is exactly the defect it was written to catch.
+      expect(text.split('\n')).toContain(model.attribution);
+    }
+  });
+
+  it('lists every recorded condition, so none can be silently dropped', () => {
+    const m = manifest();
+    const text = buildNotice(m);
+    for (const model of m.models) {
+      if (model.verdict === 'BLOCKED') continue;
+      for (const c of model.conditions ?? []) expect(text).toContain(c);
+    }
+  });
+
+  it('names no BLOCKED model — we owe nothing for what we do not use', () => {
+    // And a blocked name here would trip the scan two functions up, on a file the
+    // repo generates itself.
+    const m = manifest();
+    const text = buildNotice(m).toLowerCase();
+    for (const { needle } of blockedNeedles(m)) expect(text).not.toContain(needle);
+  });
+
+  it('the manifest check REQUIRES an attribution on any conditional grant', () => {
+    // Without this, a future conditional record ships a NOTICE with a blank line
+    // where its obligation should be, and every test above still passes.
+    const m = manifest();
+    const stripped = {
+      ...m,
+      models: m.models.map((x) =>
+        x.verdict === 'ALLOWED_WITH_CONDITIONS' ? { ...x, attribution: '' } : x,
+      ),
+    };
+    expect(checkManifest(stripped).join(' ')).toMatch(/attribution/);
+  });
+
+  it('the generated file lives at the conventional path', () => {
+    expect(NOTICE_PATH).toBe('NOTICE');
+    expect(fs.existsSync(path.join(repoRoot, NOTICE_PATH))).toBe(true);
   });
 });

@@ -13,6 +13,7 @@
 // REF: src/core/comfy/StubComfyUICapability.ts; src/core/import/bvh.ts.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
+import { assertValidMotionRequest } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
   MotionGenerationRequest,
@@ -67,8 +68,14 @@ ROOT Hips
 /**
  * Synthesise BVH whose motion is a function of the request digest. Deterministic
  * by construction: no clock, no randomness, no ambient state.
+ *
+ * Validates too, and not only because `generate` already did. This is the function
+ * that CONSTRUCTS the malformed artefact — `Frame Time: Infinity`, `Frames: NaN` —
+ * and it is exported from the barrel, so guarding only the two call sites that were
+ * in mind leaves the door that actually produces the bytes standing open.
  */
 export function synthesiseBvh(request: MotionGenerationRequest): string {
+  assertValidMotionRequest(request);
   const seedHash = digest(requestKey(request));
   const fps = request.fps ?? 30;
   const seconds = request.seconds ?? 2;
@@ -120,6 +127,10 @@ export class StubMotionGenerationCapability implements MotionGenerationCapabilit
     // enforces the same licence rule as the HTTP impl on purpose: a stub that
     // skipped it would let a test prove a blocked model "works".
     assertModelAllowed(request.model);
+    // Licence BEFORE shape, so a blocked checkpoint reports its verdict rather
+    // than whichever field also happened to be malformed. Both refuse before any
+    // work, so the ordering costs nothing and decides only which fact is named.
+    assertValidMotionRequest(request);
 
     const queued = this.options.errorQueue?.shift();
     if (queued) throw queued;

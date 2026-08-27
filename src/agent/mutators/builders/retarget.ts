@@ -82,10 +82,21 @@ export type RetargetSpec = z.infer<typeof RetargetSpec>;
 
 export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   name: 'mutator.animation.retarget',
+  // The preset list is DERIVED, not spelled. It used to be the literal
+  // "mixamoToGltf, mixamoToReze, mixamoToRigify", which was already one short
+  // when the glTF bar-rig bridge shipped and went two short when the SOMA
+  // presets did. A preset the agent cannot read about is a preset the agent can
+  // only reach by guessing wrong first and reading the rejection — the
+  // rejections have always enumerated the catalogue, and the description is
+  // where the choice is actually made. Deriving it means a new preset is
+  // announced by the act of registering it.
   description:
     'Retarget an AnimationClip from one Skeleton onto another via a ' +
-    'bone-name map. Pass mapPresetId for known rig pairs (mixamoToGltf, ' +
-    'mixamoToReze, mixamoToRigify) or customMap for arbitrary rigs. ' +
+    'bone-name map. Pass mapPresetId for a known rig pair (' +
+    listBoneNameMapPresets()
+      .map((p) => p.id)
+      .join(', ') +
+    ') or customMap for arbitrary rigs. ' +
     'Emits a new AnimationClip with target-bone-named tracks; the ' +
     'source clip is left untouched.',
   spec: RetargetSpec,

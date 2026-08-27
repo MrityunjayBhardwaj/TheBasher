@@ -1,0 +1,24 @@
+NOTICE
+
+This file is GENERATED from src/core/licensing/external-models.json.
+Do not edit it by hand — run `npm run notice` and commit the result.
+
+It exists because a licence condition that is only RECORDED is not honoured.
+The manifest names the obligations; this file is the repo carrying one of them
+out, and the external-model audit fails if the two disagree.
+
+Licensed by NVIDIA Corporation under the NVIDIA Open Model License
+
+  Applies to: Kimodo-SOMA-RP-v1.1, Kimodo-SOMA-SEED-v1.1, Kimodo-SOMA-RP-v1, Kimodo-G1-RP-v1, Kimodo-SOMA-SEED-v1, Kimodo-G1-SEED-v1
+  Source: https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.1
+
+  Conditions this project is obliged to honour:
+    - Ship a NOTICE file reading 'Licensed by NVIDIA Corporation under the NVIDIA Open Model License' and pass a copy of the agreement to recipients (section 3.1).
+    - Use must stay consistent with NVIDIA's Trustworthy AI terms, incorporated by reference (section 2.3).
+    - Rights terminate automatically on bypassing or weakening any safety guardrail (section 2.1), and on instituting copyright or patent litigation against NVIDIA (section 2.1).
+    - The grant is revocable (section 2.2). Treat availability as a dependency that can be withdrawn.
+
+  A copy of the agreement, by reference:
+    https://github.com/nv-tlabs/kimodo#models
+    https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/
+

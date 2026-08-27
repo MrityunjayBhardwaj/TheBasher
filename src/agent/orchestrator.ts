@@ -40,6 +40,7 @@ import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
 import type { ComfyUICapability } from '../core/comfy';
+import type { MotionGenerationCapability } from '../core/motiongen';
 import type { StorageCapability } from '../core/storage';
 
 // Bumped 4 → 8 (2026-05-08, post-PR-#9 live smoke). Single user intents
@@ -153,6 +154,15 @@ export interface TurnOptions {
    * wires from boot's getStorage().
    */
   storage?: StorageCapability;
+  /**
+   * A1: text-to-motion capability + the configured checkpoint, for
+   * `motion.generate`. Caller wires from boot's getMotionCapability() and the
+   * settings store. Undefined leaves the tool returning a structured "not
+   * configured" error rather than crashing — the same shape the ComfyUI tools
+   * use when their capability is absent.
+   */
+  motionCapability?: MotionGenerationCapability;
+  motionModel?: string;
 }
 
 /**
@@ -163,7 +173,16 @@ export interface TurnOptions {
  * Bounded by MAX_ROUNDS and the per-turn token budget.
  */
 export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Promise<TurnResult> {
-  const { message, mode, signal, selectedNodeIds, comfyCapability, storage } = options;
+  const {
+    message,
+    mode,
+    signal,
+    selectedNodeIds,
+    comfyCapability,
+    storage,
+    motionCapability,
+    motionModel,
+  } = options;
   const sessionStore = useAgentSessionStore.getState();
 
   // F7: clear any stale pending diff before starting.
@@ -392,6 +411,8 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         selectedNodeIds,
         comfyCapability,
         storage,
+        motionCapability,
+        motionModel,
       };
 
       // Iterate by accumulator index (insertion order).

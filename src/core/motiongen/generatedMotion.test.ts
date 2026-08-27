@@ -15,7 +15,8 @@ import { parseBvh } from '../import/bvh';
 import { StubMotionGenerationCapability, synthesiseBvh } from './StubMotionGenerationCapability';
 import { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability';
 import { buildGeneratedMotionOps } from './generatedMotionChain';
-import { ModelNotLicensedError, MODEL_RECORDS } from '../licensing/allowedModels';
+import { ModelNotLicensedError } from '../licensing/allowedModels';
+import { aBlockedRecord } from '../licensing/blockedModelForTests';
 import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import type { DagState } from '../dag/state';
 
@@ -25,12 +26,9 @@ const ALLOWED_MODEL = 'Kimodo-SOMA-RP-v1.1';
 // checkpoint here would make the build-time gate red on this very file, and the
 // gate is right to: it cannot tell "uses it" from "tests that we refuse it".
 // Deriving removes the need for an exemption altogether, and keeps the test
-// correct if a verdict ever changes.
-const BLOCKED_MODEL = (() => {
-  const blocked = MODEL_RECORDS.find((r) => r.verdict === 'BLOCKED');
-  if (!blocked) throw new Error('No BLOCKED model recorded — this suite has nothing to prove.');
-  return blocked.id;
-})();
+// correct if a verdict ever changes. Four files now need this, so it lives in
+// one place rather than being rediscovered per suite.
+const BLOCKED_MODEL = aBlockedRecord().id;
 const IDS = { skeleton: 'gen_skel', clip: 'gen_clip' };
 
 beforeEach(() => {
