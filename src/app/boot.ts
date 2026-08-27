@@ -45,6 +45,7 @@ import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickMotionGeneration, type MotionGenerationCapability } from '../core/motiongen';
+import { pickModelGeneration, type ModelGenerationCapability } from '../core/modelgen';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -93,6 +94,8 @@ let cachedComfyUI: ComfyUICapability | null = null;
 let comfyUIPromise: Promise<ComfyUICapability> | null = null;
 let cachedMotionGen: MotionGenerationCapability | null = null;
 let motionGenPromise: Promise<MotionGenerationCapability> | null = null;
+let cachedModelGen: ModelGenerationCapability | null = null;
+let modelGenPromise: Promise<ModelGenerationCapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
@@ -182,6 +185,8 @@ export function getMotionCapability(): Promise<MotionGenerationCapability> {
 export function resetMotionCapability(): void {
   cachedMotionGen = null;
   motionGenPromise = null;
+  cachedModelGen = null;
+  modelGenPromise = null;
 }
 
 /** Test-only: inject a motion capability so tests hit a deterministic stub
@@ -189,6 +194,43 @@ export function resetMotionCapability(): void {
 export function __setMotionCapabilityForTests(cap: MotionGenerationCapability | null): void {
   cachedMotionGen = cap;
   motionGenPromise = cap ? Promise.resolve(cap) : null;
+}
+
+/**
+ * The text-to-3D / image-to-3D capability, probed once per session.
+ *
+ * The key comes from the settings store, so with none configured this never
+ * constructs the Tripo client at all and the offline stub answers — which is
+ * what keeps CI deterministic and the default free.
+ *
+ * Availability is not permission. A reachable service with a valid key still
+ * refuses to generate while its terms are unrecorded; that refusal lives at
+ * `generate`, and this is only the path that supplies the client.
+ */
+export function getModelCapability(): Promise<ModelGenerationCapability> {
+  if (cachedModelGen) return Promise.resolve(cachedModelGen);
+  if (!modelGenPromise) {
+    const { tripoApiKey } = useSettingsStore.getState();
+    modelGenPromise = pickModelGeneration(tripoApiKey).then((cap) => {
+      cachedModelGen = cap;
+      return cap;
+    });
+  }
+  return modelGenPromise;
+}
+
+/** Forget the cached model capability so the next call re-probes a changed key.
+ *  Same session-cache hazard as resetComfyCapability. */
+export function resetModelCapability(): void {
+  cachedModelGen = null;
+  modelGenPromise = null;
+}
+
+/** Test-only: inject a model capability so tests hit a deterministic stub
+ *  without going through pickModelGeneration's HTTP probe. */
+export function __setModelCapabilityForTests(cap: ModelGenerationCapability | null): void {
+  cachedModelGen = cap;
+  modelGenPromise = cap ? Promise.resolve(cap) : null;
 }
 
 /**

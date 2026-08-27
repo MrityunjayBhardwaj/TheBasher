@@ -26,10 +26,22 @@ rather than built against and discovered at ship time.
 | **PartField** (code + weights)   | element perception (A6)     | NVIDIA License (non-standard) | 🔴 **BLOCKED**                 |
 | SAMPart3D (code + weights)       | element perception (A6)     | MIT                           | ✅ **ALLOWED**                 |
 | UniRig (code + weights)          | auto-rigging (unscheduled)  | MIT                           | ✅ **ALLOWED**                 |
+| TRELLIS (code)                   | text-to-3D (A4)             | MIT (the _majority_ of it)    | ✅ **ALLOWED**                 |
+| TRELLIS (weights)                | text-to-3D weights (A4)     | MIT                           | ✅ **ALLOWED**                 |
+| InstantMesh (code)               | text-to-3D (A4)             | Apache-2.0                    | ✅ **ALLOWED**                 |
+| InstantMesh (weights)            | text-to-3D weights (A4)     | Apache-2.0                    | ✅ **ALLOWED**                 |
+| **nvdiffrast**                   | mesh extraction (A4)        | NVIDIA Source Code (1-Way)    | 🔴 **BLOCKED**                 |
+| **diff-gaussian-rasterization**  | rendering, via TRELLIS (A4) | Gaussian-Splatting License    | 🔴 **BLOCKED**                 |
+| **Hunyuan3D 2.0**                | text-to-3D (A4)             | Tencent Community License     | 🔴 **BLOCKED**                 |
 
 **A1 has a subject.** Kimodo's code is Apache-2.0 and six of its seven checkpoints are
 commercially usable. **A6 has a subject too, but not the one to reach for first** — PartField
 is blocked and SAMPart3D is the unblocked alternative.
+
+🔴 **A4 does NOT yet have a subject, and the reason is finding 3 below.** Both leading
+open text-to-3D candidates have genuinely permissive weights **and** reach the mesh through
+`nvdiffrast`, whose terms forbid commercial use. The four ✅ rows above are true and, read
+alone, would send someone straight into a pipeline they may not ship.
 
 ---
 
@@ -61,6 +73,42 @@ intended for use non-commercially."_ Running it on our own server to serve a pay
 
 🔴 **So the ComfyUI precedent must not be cited for a non-commercially-licensed model.** It is
 a distribution argument being applied to a use restriction.
+
+### 3. The licence varies per _pipeline stage_, not only per checkpoint
+
+Finding 1 says a release can carry two licences across its checkpoints. This is the same
+shape one level up, and it is what decides phase A4.
+
+A text-to-3D model earns its keep by producing a **mesh**. Neither leading open candidate
+produces one from its weights alone — both reach it through a differentiable rasteriser, and
+that stage is where the permissive story stops:
+
+| component                                 | licence                    | restricts | verdict |
+| ----------------------------------------- | -------------------------- | --------- | ------- |
+| TRELLIS weights                           | MIT                        | —         | ✅      |
+| InstantMesh weights                       | Apache-2.0                 | —         | ✅      |
+| `nvdiffrast` (**both** need it)           | NVIDIA Source Code (1-Way) | **use**   | 🔴      |
+| `diff-gaussian-rasterization` (→ TRELLIS) | Gaussian-Splatting License | **use**   | 🔴      |
+
+This is not a transitive-dependency technicality. InstantMesh's `requirements.txt` installs
+nvdiffrast **directly**, as a line of its own:
+
+```
+git+https://github.com/NVlabs/nvdiffrast/
+```
+
+And nvdiffrast §3.3 is _verbatim_ the clause PartField is already blocked under — so by
+finding 2, standing it behind our own HTTP server changes nothing.
+
+**"TRELLIS is MIT" is true and it is not the answer to the question A4 asks.** The question
+is whether we may run the thing that makes the mesh.
+
+⚠️ **What this does NOT establish**, stated so nobody reads more into it than was measured:
+whether an inference-only GLB path can avoid the encumbered rasteriser altogether — marching
+cubes is the obvious candidate, and `PyMCubes` (MIT) already sits in InstantMesh's
+requirements. That question is answerable by reading the inference code and was not answered
+here. Nor does this cover the hosted APIs (Meshy, Tripo, fal), where the terms are a contract
+rather than a licence and would need their own verdicts.
 
 ---
 
@@ -165,6 +213,104 @@ no error.
 - <https://huggingface.co/VAST-AI/UniRig>
 
 ---
+
+### TRELLIS — inference code · ✅ ALLOWED (the MIT part of it)
+
+`LICENSE`: **MIT License, Copyright (c) Microsoft Corporation.**
+
+The README's grant is worded carefully, and the wording is the finding:
+
+> "TRELLIS models and the majority of the code are licensed under the MIT License."
+
+**"the majority"** is doing real work. Two submodules are carved out — `diffoctreerast`,
+which the README states is "derived from the diff-gaussian-rasterization project", and a
+modified Flexicubes. Both carry their own terms and both are recorded separately below.
+
+**Sources:** `github.com/microsoft/TRELLIS/blob/main/LICENSE`, `github.com/microsoft/TRELLIS#license`
+
+### TRELLIS — weights · ✅ ALLOWED
+
+The `microsoft/TRELLIS-image-large` model card declares **MIT**, with no separate weights
+licence and no non-commercial clause. The weights really are unencumbered.
+
+That is worth stating precisely because it is the half that misleads: what a director wants
+from A4 is a mesh, and the weights are not what produce one. See finding 3.
+
+**Source:** `huggingface.co/microsoft/TRELLIS-image-large`
+
+### InstantMesh — code + weights · ✅ ALLOWED
+
+`LICENSE` is the **Apache License 2.0**; the model card declares `apache-2.0`. Both sit on
+the audit's existing permissive allowlist.
+
+Its dependency set does not. See the next entry, and note that this one is not buried in a
+lockfile — it is a line in `requirements.txt`.
+
+**Sources:** `github.com/TencentARC/InstantMesh/blob/main/LICENSE`,
+`huggingface.co/TencentARC/InstantMesh`
+
+### nvdiffrast · 🔴 BLOCKED — and it is the entry that decides A4
+
+**Nvidia Source Code License (1-Way Commercial)**, §3.3:
+
+> "The Work and any derivative works thereof only may be used or intended for use
+> non-commercially. The Work or derivative works thereof may be used or intended for use by
+> Nvidia or its affiliates commercially or non-commercially. As used herein,
+> 'non-commercially' means for research or evaluation purposes only and not for any direct
+> or indirect monetary gain."
+
+This restricts **use**, not distribution — so finding 2 applies and the over-HTTP carve-out
+does not reach it. It is also, word for word, the clause PartField is blocked under.
+
+What makes it decisive rather than incidental is that **both** A4 candidates need it.
+InstantMesh's `requirements.txt` ends with `git+https://github.com/NVlabs/nvdiffrast/`, and
+TRELLIS's installation instructions name it alongside `diffoctreerast`, `kaolin`, `spconv`
+and `flash-attn`. Mesh extraction is the stage A4 exists to reach.
+
+**Sources:** `github.com/NVlabs/nvdiffrast/blob/main/LICENSE.txt`,
+`github.com/TencentARC/InstantMesh/blob/main/requirements.txt`,
+`github.com/microsoft/TRELLIS#installation`
+
+### diff-gaussian-rasterization · 🔴 BLOCKED
+
+The **Gaussian-Splatting License** (Inria / MPII):
+
+> "The _Software_ may be used 'non-commercially', i.e., for research and/or evaluation
+> purposes only."
+>
+> "THE USER CANNOT USE, EXPLOIT OR DISTRIBUTE THE _SOFTWARE_ FOR COMMERCIAL PURPOSES WITHOUT
+> PRIOR AND EXPLICIT CONSENT OF LICENSORS."
+
+A use restriction, with a named contact for commercial consent
+(`stip-sophia.transfert@inria.fr`). TRELLIS's `diffoctreerast` is stated by TRELLIS's own
+README to derive from this project, so the restriction travels with the derivative.
+
+**Source:** `github.com/graphdeco-inria/diff-gaussian-rasterization/blob/main/LICENSE.md`
+
+### Hunyuan3D 2.0 · 🔴 BLOCKED — three ways, independently
+
+The **Tencent Hunyuan 3D 2.0 Community License Agreement**. Not OSI-approved, and it fails
+the repo's posture on three separate grounds, any one of which is sufficient:
+
+1. **Territorial.** In capitals, at the top of the agreement:
+
+   > "THIS LICENSE AGREEMENT DOES NOT APPLY IN THE EUROPEAN UNION, UNITED KINGDOM AND SOUTH
+   > KOREA"
+
+   The defined Territory is "the worldwide territory, excluding the territory of the European
+   Union, United Kingdom and South Korea." For a user there, there is no grant at all.
+
+2. **Scale.** Above **1 million monthly active users** as of the release date, a separate
+   licence must be requested from Tencent.
+
+3. **Conduct.** An Acceptable Use Policy is incorporated by reference, so the terms can move
+   without the licence file moving — the same revocability concern recorded for the NVIDIA
+   Open Model grant.
+
+A licence that stops applying based on **where a user lives** is not one a shipped feature
+can rest on. Recorded by name rather than quietly passed over, which is A0's stated exit.
+
+**Source:** `github.com/Tencent-Hunyuan/Hunyuan3D-2/blob/main/LICENSE`
 
 ## The gate
 

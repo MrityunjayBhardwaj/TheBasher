@@ -25,7 +25,7 @@ beforeAll(() => {
   });
 });
 
-import { useSettingsStore } from './settingsStore';
+import { DEFAULT_SETTINGS, useSettingsStore } from './settingsStore';
 import { DEFAULT_COMFYUI_URL } from '../../core/comfy';
 import { DEFAULT_MOTIONGEN_MODEL, DEFAULT_MOTIONGEN_URL } from '../../core/motiongen';
 import {
@@ -101,11 +101,13 @@ describe('settingsStore', () => {
     useSettingsStore.getState().open();
     useSettingsStore.getState().setComfyAuthHeader('Bearer abc');
     const persisted = JSON.parse(localStorage.getItem(KEY)!) as Record<string, unknown>;
-    // Derived from a fresh store's own persisted slice, not restated, so a field
-    // added tomorrow is covered by the act of adding it.
-    expect(Object.keys(persisted).sort()).toEqual(
-      ['comfyAuthHeader', 'comfyLiveGenerate', 'comfyUrl', 'motionGenModel', 'motionGenUrl'].sort(),
-    );
+    // Derived from DEFAULT_SETTINGS — the INDEPENDENT declaration of which
+    // fields persist — and deliberately not from `persistedSliceOf`, which is
+    // the function that writes this blob. Comparing the blob against its own
+    // writer would hold for every implementation, including one that silently
+    // dropped a field. These two restate the same shape, and catching them
+    // diverging is this test's entire job.
+    expect(Object.keys(persisted).sort()).toEqual(Object.keys(DEFAULT_SETTINGS).sort());
     expect(persisted).not.toHaveProperty('isOpen');
   });
 
