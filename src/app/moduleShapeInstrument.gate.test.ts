@@ -32,12 +32,67 @@ const looksLikeSpecifier = (s: string): boolean => /^[@a-zA-Z0-9._~/-]+$/.test(s
 
 describe('#676 importsOf sees a multi-line import', () => {
   it('reports a multi-line import sitting BESIDE single-line ones', () => {
-    // `modifierGeometry.ts` opens with a nine-line `import type { … }` followed by five
-    // single-line imports. The old parse returned the five and looked entirely healthy —
-    // a partial answer is harder to disbelieve than an empty one.
+    // The old parse returned only the single-line imports and looked entirely healthy — a
+    // partial answer is harder to disbelieve than an empty one.
+    //
+    // ⚠️ THIS ROW'S SUBJECT HAS SINCE BEEN REFORMATTED, and the sentence that used to sit here
+    // is corrected rather than left: it read *"`modifierGeometry.ts` opens with a nine-line
+    // `import type { … }` followed by five single-line imports"*, and that module's import
+    // type is one line today. The row still passes because it asserts membership, which the
+    // reformat does not touch — but the reason it gave for choosing this module had quietly
+    // stopped being true, which is why #756's row below is repo-wide and counts its own
+    // liveness instead of naming a module's formatting.
     const imports = importsOf('src/app/modifierGeometry.ts');
     expect(imports).toContain('../nodes/types'); // the multi-line one
     expect(imports).toContain('../core/dag/evaluator'); // a single-line one
+  });
+});
+
+describe('#756 importsOf reports SOURCE order, wrapped imports included', () => {
+  it('reports every module in source order, and says how many files actually WRAP one', () => {
+    // The doc promises "in source order". It used to be false for any module where an import
+    // happened to WRAP, because the three passes appended in turn and the wrapped-clause pass
+    // ran last. Measured on `geometryRegistry.ts`: adding one symbol to an existing clause
+    // made Prettier wrap it and moved that specifier from 7th to 9th with no import added or
+    // removed — an ordered `toEqual` reddening on a pure reformat, printing the same nine
+    // strings on both sides of the diff.
+    //
+    // 🔴 A FALSE GREEN WAS ALSO CONSTRUCTIBLE, which is why this is a row and not a comment on
+    // the fix. Because every wrapped specifier landed at the back, two changes swapping a
+    // wrapped and an unwrapped import left the reported sequence untouched — so the gate
+    // passed on a file whose order genuinely moved, the property it exists to hold.
+    //
+    // ⚠️ REPO-WIDE RATHER THAN ONE NAMED MODULE, and that is not thoroughness for its own
+    // sake. The first draft named `modifierGeometry.ts`, on this file's own #676 comment
+    // saying it "opens with a nine-line `import type`" — which has since been reformatted to
+    // one line. A row anchored to one module's formatting decays exactly the way that comment
+    // did. The WRAPPED count below is the liveness check: it is what makes a green here mean
+    // the property was exercised rather than never reached.
+    const files = sourceFiles();
+    let wrapped = 0;
+    const outOfOrder: string[] = [];
+    for (const [path, raw] of files) {
+      const source = stripComments(raw);
+      if (/(?:^|\n)\s*(?:import|export)[^;\n]*\{[^}]*\n[^}]*\}\s*from/.test(source)) wrapped++;
+      const reported = importsOf(path);
+      const at = (s: string) => {
+        const single = source.indexOf(`'${s}'`);
+        const double = source.indexOf(`"${s}"`);
+        return single === -1 ? double : double === -1 ? single : Math.min(single, double);
+      };
+      const byPosition = [...reported].sort((a, b) => at(a) - at(b));
+      if (reported.join('|') !== byPosition.join('|'))
+        outOfOrder.push(
+          `${path}\n  reported: ${reported.join(', ')}\n  in file:  ${byPosition.join(', ')}`,
+        );
+    }
+    // The denominator, beside the verdict: a zero with no denominator cannot be told from a
+    // walk that never ran.
+    expect({ files: files.length > 200, wrapped: wrapped > 100, outOfOrder }).toEqual({
+      files: true,
+      wrapped: true,
+      outOfOrder: [],
+    });
   });
 });
 
