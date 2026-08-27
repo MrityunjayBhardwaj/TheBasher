@@ -25,7 +25,7 @@ import { boxGeometryRef, boxDescriptor } from './modifierGeometry';
 import { mintMeshAttributes } from '../nodes/meshAttributes';
 import {
   boxFromFaceIndices,
-  nonAlignedMaterialMeshData,
+  mixedArityMaterialMeshData,
   sparseSlotMaterialMeshData,
   twoMaterialMeshData,
 } from '../test-utils/twoMaterialMesh';
@@ -89,13 +89,17 @@ describe('#638 resolveMeshMaterial — when an array is the answer', () => {
     expect(geometry!.groups.map((g) => g.materialIndex)).toEqual([0, 3]);
   });
 
-  it('the non-aligned fixture resolves too — the boundary is the geometry’s business', () => {
+  it('the MIXED-ARITY fixture resolves too — the boundary is the geometry’s business', () => {
+    // ⚠️ THIS WAS THE NON-ALIGNED BOX AND ITS SUBJECT MOVED AT #770. A box's polygons are its
+    // cube sides now, so the layout that fixture existed to reject became correct; the class it
+    // guarded — resolving at the wrong granularity — moved to the arity, which only a
+    // mixed-arity source carries. Same assertion, same `start: 3`, different denominator.
     const materials = hydrated(8);
-    const { geometry, draw } = drawFor(nonAlignedMaterialMeshData(), materials);
+    const { geometry, draw } = drawFor(mixedArityMaterialMeshData(), materials);
     expect(draw!.material).toEqual([materials[0], materials[1]]);
     expect(geometry!.groups.map((g) => [g.start, g.count])).toEqual([
       [0, 3],
-      [3, 33],
+      [3, 237],
     ]);
   });
 });
@@ -173,7 +177,9 @@ describe('#651 the single material is the one the faces USE', () => {
     // material with nothing reported, and the built layout would say `materialIndex: 1`
     // while a single material ignored it. Measured before the fix: groups [{0,36,1}],
     // read road slot 1, render road slot 0, refusal null.
-    const indices = new Int32Array(12);
+    // Six, not twelve: a box has six FACES since #770 and a twelve-entry index misfits its own
+    // geometry, which drops every group and makes this row assert against an empty layout.
+    const indices = new Int32Array(6);
     indices.fill(1);
     const data = boxFromFaceIndices(indices);
     const slots = objectSlotsOf(null, data);
@@ -194,7 +200,7 @@ describe('#651 the single material is the one the faces USE', () => {
   it('falls back to slot 0 when the table reaches further than the caller hydrated', () => {
     // A slot past the end has no material, and an undefined one draws in three.js's
     // default white. The cap that produces this state reports separately.
-    const indices = new Int32Array(12);
+    const indices = new Int32Array(6);
     indices.fill(3);
     const data = boxFromFaceIndices(indices, [null, null, null, null]);
     const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data));

@@ -23,7 +23,9 @@
 // comments — so the shape cost is real and the cycle claim would have been false. Pinned by
 // `tools/gates/moduleShape.ts`, so the leaf cannot quietly regrow a graph.
 //
-// This module imports ONE type and nothing else. That is the invariant it exists to hold.
+// This module imports two LEAVES and one type. The invariant it exists to hold is not a
+// number — it is that nothing it depends on can depend back on it, which the leaf gate checks
+// by pinning both the set and the emptiness of what each member imports.
 //
 // REF: src/nodes/meshAttributes.ts (the mint); src/app/geometryRegistry.ts (the gate);
 //      src/app/faceCount.gate.test.ts (the count is checked against BUILT geometry);
@@ -37,6 +39,11 @@ import type { GeometryDescriptor } from '../nodes/types';
 // served, because it imports this module — a measured cycle, and the reason the language
 // moved below all three of its consumers rather than into one of them.
 import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
+// #770 — the ARITY of a generated polygon, which is where the polygon claim is grounded.
+// `polygonLayout.ts` imports one TYPE and nothing else, so this edge cannot come back: the
+// property this module holds is not a number of imports, it is that nothing it depends on can
+// depend back on it. The leaf gate carries the same reasoning beside its widened literal.
+import { polygonArityOf } from './polygonLayout';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -63,15 +70,23 @@ import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
 export function faceCountOf(descriptor: GeometryDescriptor): number | null {
   switch (descriptor.kind) {
     case 'box':
-      // Six quads, two triangles each — independent of size, and independent of the
-      // segment counts the descriptor does not carry.
-      return 12;
+      // #770 — SIX, and it read 12 until this phase. A box is six quads; the twelve was the
+      // triangle count, which is now what those six quads MATERIALISE to rather than what
+      // they are. Independent of size, and independent of the segment counts the descriptor
+      // does not carry.
+      return 6;
     case 'sphere': {
-      // three.js clamps to its own minimum before tessellating, so this clamps first too;
-      // the poles contribute one triangle per column instead of two, hence (h - 1).
+      // three.js clamps to its own minimum before tessellating, so this clamps first too.
+      //
+      // ⚠️ `w * h`, NOT `w * (h - 1)`, AND THE SUBTRACTION IS WHAT THE OLD TRIANGLE FORMULA
+      // MEANT. Every grid cell yields exactly one polygon; a cell in a pole row yields a
+      // TRIANGLE rather than nothing, so the pole rows are counted rather than subtracted.
+      // The old `2 * w * (h - 1)` was the triangle total — two per cell, minus the one each
+      // pole cell skips — and it is now `faceArityOf`'s sum, checked against the built buffer
+      // by the parity gate rather than restated here.
       const w = Math.max(3, Math.floor(descriptor.widthSegments));
       const h = Math.max(2, Math.floor(descriptor.heightSegments));
-      return 2 * w * (h - 1);
+      return w * h;
     }
     // ── ns-2 step 12.5 — THE SCOPED ARMS ────────────────────────────────────────────
     //
@@ -352,6 +367,98 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
 }
 
 /**
+ * How many triangles each FACE materialises to, in build order — or `null` when that is not
+ * derivable from params alone (#770).
+ *
+ * ── WHY THIS EXISTS AT ALL, AND WHY IT IS THE THING THAT MADE THE FLIP ATOMIC ──────────
+ *
+ * A face is a POLYGON now, and the index buffer is what a polygon materialises to. Every
+ * consumer that used to multiply a face count by three needs this instead, because the three
+ * is no longer a constant: a quad fans to two triangles and a sphere's pole cell to one.
+ * Four of them, all in this commit — {@link faceCountMismatch} for how many index entries a
+ * descriptor should build to, `materialGroups` for where a run of polygons starts and ends,
+ * `faceSubset` for which triangles a kept polygon owns, and {@link tiledCornerOrder} for how
+ * many corners a face carries.
+ *
+ * ── IT COMPOSES THROUGH THE DERIVED ARMS BY GATHER, NOT BY A SECOND DERIVATION ─────────
+ *
+ * `polygonLayoutOf` refuses `array`, `mirror` and `subset`, and that refusal is correct and
+ * does not obstruct this: it is a refusal to state a RIM in a merged geometry's vertex
+ * numbering, which needs a split vertex count nothing descriptor-side has. An arity carries no
+ * vertex numbering, so it rides through the SAME face order a per-face attribute is already
+ * gathered through — `arity[i] = sourceArity[order[i]]`. Measured against the geometry three
+ * actually builds, at five shapes: an Array x3 of a box gives 18 polygons / 36 triangles / 108
+ * index entries against a built 108, a Mirror of a sphere w=8 h=6 gives 96 / 160 / 480 against
+ * a built 480, and the parity gate holds the rest.
+ *
+ * ⚠️ AND THE SUM IS DELIBERATELY NOT WHAT {@link faceCountOf} RETURNS. That one answers how
+ * many faces there are and stays allocation-free because it runs per operator per evaluate on
+ * the drag road; this one allocates an array per distinct layout and runs on the BUILD road.
+ * They are two spellings of one tessellation, which is the hazard this module already names
+ * for `faceCountOf` against three.js itself, and it is held the same way: `faceCount.gate.test.ts`
+ * asserts `faceCountOf(d) === faceArityOf(d).length` and `sum x 3 === built index.count` for
+ * every sync-buildable descriptor, rather than either being trusted.
+ */
+const arityCache = new WeakMap<readonly number[], WeakMap<readonly number[], readonly number[]>>();
+
+export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] | null {
+  const generated = polygonArityOf(descriptor);
+  if (generated !== null) return generated;
+
+  // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
+  // for exactly these three kinds, but that is its invariant and not something the type system
+  // carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
+  // same reason.
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
+    return null;
+  const sourceArity = faceArityOf(descriptor.source.descriptor);
+  if (sourceArity === null) return null;
+  const tiled = tiledFaceOrder(descriptor);
+  if (tiled === null) return null;
+
+  // 🔴 KEYED ON BOTH IDENTITIES, AND ONE WOULD HAVE BEEN A SILENT WRONG ANSWER. `orderCache`
+  // above keys on `sourceFaces|scope|repeats` and deliberately omits the source's KIND,
+  // because two descriptors with the same face count genuinely share a face LAYOUT. They do
+  // not share an arity: a box and a sphere at w=3 h=2 both have six faces and hand back the
+  // same `order` object, but the box is six quads and the sphere six pole triangles. Keying
+  // this memo on the order alone would serve whichever built first to both — the same trap
+  // the corner cache below documents, one domain over.
+  const perOrder = arityCache.get(tiled.order);
+  const hit = perOrder?.get(sourceArity);
+  if (hit !== undefined) return hit;
+
+  const arity = tiled.order.map((face) => sourceArity[face]);
+  if (perOrder === undefined) arityCache.set(tiled.order, new WeakMap([[sourceArity, arity]]));
+  else perOrder.set(sourceArity, arity);
+  return arity;
+}
+
+/** The triangles a face arity materialises to — one statement, since three callers need it. */
+export function materialisedTriangles(arity: readonly number[]): number {
+  let total = 0;
+  for (const a of arity) total += a;
+  return total;
+}
+
+/**
+ * Where each face's triangles START, as triangle indices — the prefix sum of an arity.
+ *
+ * Separate from the arity because the two answer different questions and every consumer needs
+ * exactly one of them: an arity says how big a face is, a start says where it sits. Returning
+ * both from one walk is what keeps `materialGroups`, `faceSubset` and the corner order from
+ * each writing their own running total.
+ */
+export function faceTriangleStarts(arity: readonly number[]): readonly number[] {
+  const starts: number[] = [];
+  let running = 0;
+  for (const a of arity) {
+    starts.push(running);
+    running += a;
+  }
+  return starts;
+}
+
+/**
  * The corner-domain sibling of {@link TiledFaceOrder} — which SOURCE corner each corner of a
  * generator's built geometry came from (#694).
  *
@@ -362,13 +469,33 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
  * which copies exist. Every decision about the layout — the preserved input first, the
  * subset, how many times it repeats — is still taken exactly once, in {@link tiledFaceOrder}.
  *
- * ── THE PER-FACE CORNER COUNT IS 3, AND THAT IS A FACT ABOUT THE ROAD ─────────────────
+ * ── THE PER-FACE CORNER COUNT WAS 3, AND #770 TOOK THE CONSTANT AWAY ──────────────────
  *
  * #694 was filed saying a corner order "cannot [be produced] without the builders' per-face
- * corner counts". Measured, that is not the obstacle: every descriptor this module answers
- * for is TRIANGLE-INDEXED — `faceCountMismatch` right below defines a face as three index
- * entries, and `faceSubset` takes whole triangles — so the per-face corner count is the
- * constant 3 rather than something the builders have to be asked for.
+ * corner counts". Measured then, that was not the obstacle: every descriptor was
+ * TRIANGLE-INDEXED, so the per-face corner count was the constant 3 rather than something the
+ * builders had to be asked for. #770 made a face a POLYGON and that reasoning expired — a
+ * quad's face carries two triangles' worth of corners and a pole cell's carries one.
+ *
+ * 🔴 AND IT EXPIRED SILENTLY, WHICH IS THE PART WORTH RECORDING. `sourceCorners` read
+ * `sourceFaces * CORNERS_PER_FACE`. Observed on an Array x3 of a box before the flip:
+ * `sourceCorners` 36, `order.length` 108, built index 108 — correct. The instant `faceCountOf`
+ * answered 6 the same expression read 18, which is wrong under EVERY reading of the word: 36
+ * if a corner is a triangle corner, 24 if it is a Blender loop. Nothing would have failed to
+ * compile. The ten-file consumer census on #736 counted this file and still did not see it,
+ * because a census over imports finds modules that reach for a thing and this is a consumer
+ * sitting beside it.
+ *
+ * ── A CORNER IS STILL A TRIANGLE CORNER, WHICH IS A DECISION AND NOT AN OMISSION ───────
+ *
+ * #770 took it deliberately: a corner is a corner of the MATERIALISED triangle buffer, so a
+ * box keeps 36 and only the denominator's derivation moves — from the face count to the
+ * arity's triangle total. Blender's reading is the polygon corner, its `loop`, where a box has
+ * 24; that is the eventual destination and is #776, kept out of this commit because it moves a
+ * second meaning through ten consumers that are already moving and because it reaches the UV
+ * road. One thing that looks like evidence for taking it early is not: `uvAttributes.ts`
+ * reports 24 for a box, but that is the split VERTEX count and the agreement is a coincidence
+ * of `BoxGeometry`'s layout that does not survive a sphere.
  *
  * 🔴 WINDING IS THE OBSTACLE, AND IT IS A FACT ABOUT THE BUILDERS. `buildMirror` runs
  * `reverseWinding` over its reflected half (`geometryRegistry.ts`), which swaps the 2nd and
@@ -390,8 +517,8 @@ export interface TiledCornerOrder {
   readonly order: readonly number[];
 }
 
-/** Corners per face on this road. See the block above — a face IS a triangle here. */
-const CORNERS_PER_FACE = 3;
+/** Corners per TRIANGLE. A face is a polygon since #770, so this is no longer per face. */
+const CORNERS_PER_TRIANGLE = 3;
 
 /**
  * Memoised on the FACE order's identity, so this cache cannot outlive the layout it expands
@@ -407,55 +534,91 @@ const CORNERS_PER_FACE = 3;
  * alone hands whichever generator built first to both — measured, and it is what the gate's
  * mirrored-corner row reds on.
  */
-const cornerOrderCache = new WeakMap<readonly number[], Map<boolean, TiledCornerOrder>>();
+const cornerOrderCache = new WeakMap<
+  readonly number[],
+  WeakMap<readonly number[], Map<boolean, TiledCornerOrder>>
+>();
 
 export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrder | null {
   const faces = tiledFaceOrder(descriptor);
   if (faces === null) return null;
+  // The SOURCE's arity, not the merged one: this order gathers FROM the source's corners, so
+  // the denominator and every base offset below are the source's. Narrowed the same way
+  // {@link faceArityOf} narrows, and for the same reason.
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
+    return null;
+  const sourceArity = faceArityOf(descriptor.source.descriptor);
+  if (sourceArity === null) return null;
 
   // Whether the copies AFTER the preserved source are wound backwards. The single fact that
   // separates two corner layouts sharing one face layout, so it is what the cache splits on.
   const reversesCopies = descriptor.kind === 'mirror';
 
+  // 🔴 AND THE SOURCE ARITY IS THE SECOND KEY SINCE #770, FOR THE REASON `faceArityOf`'s memo
+  // states: a box and a sphere at w=3 h=2 both have six faces, share one `order` object, and
+  // have completely different corner layouts — six quads against six pole triangles. Keying on
+  // the order alone was correct while every face carried three corners and became a silently
+  // wrong answer the moment that stopped being true.
   const perOrder = cornerOrderCache.get(faces.order);
-  const hit = perOrder?.get(reversesCopies);
+  const perArity = perOrder?.get(sourceArity);
+  const hit = perArity?.get(reversesCopies);
   if (hit !== undefined) return hit;
 
   const { sourceFaces, order } = faces;
   // Faces at or after this index are copies that `reverseWinding` flipped. `Infinity` rather
   // than a boolean beside the loop so the comparison below is the same shape in both arms.
   const reversedFrom = reversesCopies ? sourceFaces : Infinity;
+  // Where each SOURCE face's triangles begin, so a face's corners can be addressed without a
+  // running total written a second time here.
+  const sourceStart = faceTriangleStarts(sourceArity);
 
   const corners: number[] = [];
   for (let face = 0; face < order.length; face++) {
-    const base = order[face] * CORNERS_PER_FACE;
-    if (face >= reversedFrom) corners.push(base, base + 2, base + 1);
-    else corners.push(base, base + 1, base + 2);
+    const sourceFace = order[face];
+    // Every triangle the source face materialises to, in the order the fan emits them.
+    // `reverseWinding` swaps the 2nd and 3rd corner of each TRIANGLE and reorders nothing, so
+    // the reversal stays inside this inner loop rather than reversing the loop itself.
+    for (let t = 0; t < sourceArity[sourceFace]; t++) {
+      const base = (sourceStart[sourceFace] + t) * CORNERS_PER_TRIANGLE;
+      if (face >= reversedFrom) corners.push(base, base + 2, base + 1);
+      else corners.push(base, base + 1, base + 2);
+    }
   }
 
   const resolved: TiledCornerOrder = {
-    sourceCorners: sourceFaces * CORNERS_PER_FACE,
+    sourceCorners: materialisedTriangles(sourceArity) * CORNERS_PER_TRIANGLE,
     order: corners,
   };
   if (perOrder === undefined) {
-    cornerOrderCache.set(faces.order, new Map([[reversesCopies, resolved]]));
+    cornerOrderCache.set(
+      faces.order,
+      new WeakMap([[sourceArity, new Map([[reversesCopies, resolved]])]]),
+    );
+  } else if (perArity === undefined) {
+    perOrder.set(sourceArity, new Map([[reversesCopies, resolved]]));
   } else {
-    perOrder.set(reversesCopies, resolved);
+    perArity.set(reversesCopies, resolved);
   }
   return resolved;
 }
 
 /**
- * Why a built geometry disagrees with its descriptor's face count, or `null` when they
- * agree — the refusal ns-1b step 4 consults before deriving groups from an index.
+ * Why a built geometry disagrees with what its descriptor's faces materialise to, or `null`
+ * when they agree — the refusal ns-1b step 4 consults before deriving groups from an index.
  *
- * A triangle-indexed geometry carries `3 × faceCount` index entries. When it does not, the
- * per-face attribute and the geometry are describing different meshes, and a group layout
- * derived from the index would be silently wrong — covering some other mesh's triangles.
- * Refusing BY NAME is the difference between a message that says which two numbers
- * disagreed and a mesh that renders one material for reasons nobody can reconstruct.
+ * 🔴 #770 CHANGED WHAT THIS ASSERTS, AND `faces x 3` IS NOW THE WRONG QUESTION. A face is a
+ * POLYGON, so three is no longer a constant: a box's quad fans to two triangles and a sphere's
+ * pole cell to one. The expected index entry count comes from the ARITY — `sum(arity) x 3` —
+ * which is the whole reason {@link faceArityOf} exists. Asking `faces x 3` here after the flip
+ * would have refused every correct box build, at the exact spot whose failure mode is a mesh
+ * that renders in one material with no error.
  *
- * Returns `null` — meaning "no objection" — for a descriptor with no derivable count
+ * When the two disagree, the per-face attribute and the geometry are describing different
+ * meshes, and a group layout derived from the index would be silently wrong — covering some
+ * other mesh's triangles. Refusing BY NAME is the difference between a message that says which
+ * numbers disagreed and a mesh that renders one material for reasons nobody can reconstruct.
+ *
+ * Returns `null` — meaning "no objection" — for a descriptor with no derivable arity
  * (`gltf` / `baked`), because there is nothing to disagree with, and for a geometry with no
  * index, which is a different condition with a different answer and is not this gate's to
  * refuse.
@@ -464,11 +627,12 @@ export function faceCountMismatch(
   descriptor: GeometryDescriptor,
   indexCount: number | null,
 ): string | null {
-  const faces = faceCountOf(descriptor);
-  if (faces === null || indexCount === null) return null;
-  const expected = faces * 3;
+  const arity = faceArityOf(descriptor);
+  if (arity === null || indexCount === null) return null;
+  const triangles = materialisedTriangles(arity);
+  const expected = triangles * 3;
   if (indexCount === expected) return null;
-  return `faceCount: descriptor '${descriptor.kind}' derives ${faces} faces (${expected} index entries) but the built geometry carries ${indexCount}`;
+  return `faceCount: descriptor '${descriptor.kind}' derives ${arity.length} faces materialising to ${triangles} triangles (${expected} index entries) but the built geometry carries ${indexCount}`;
 }
 
 /**

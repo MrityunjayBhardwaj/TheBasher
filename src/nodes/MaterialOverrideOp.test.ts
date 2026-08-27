@@ -65,7 +65,7 @@ describe('#682 — a scoped override composes onto the selection only', () => {
     // the two slots must say different things: the faces outside the selection are still
     // wearing what they arrived in. An implementation that composed onto everything and only
     // re-keyed the geometry would pass the honouring cross-check and red here.
-    const out = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
+    const out = evalOp({ [SCOPE_PARAM]: '0-2' }, boxData()) as ModifiedDataValue;
 
     expect(out.materialSlots).toBeDefined();
     expect(out.materialSlots).toHaveLength(2);
@@ -99,7 +99,7 @@ describe('#682 — a scoped override composes onto the selection only', () => {
     // `0-11` names every face of a box, so it is a total selection spelled the long way. The
     // arm is chosen from the COVERAGE and not from whether a query was authored, which is
     // what stops a director who typed the full range from getting a slot table nobody needs.
-    const explicit = evalOp({ [SCOPE_PARAM]: '0-11' }, boxData()) as ModifiedDataValue;
+    const explicit = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
     expect(explicit.materialSlots).toBeUndefined();
     expect(Object.keys(explicit).sort()).toEqual(['geometry', 'kind', 'material']);
   });
@@ -113,7 +113,7 @@ describe('#682 — a scoped override composes onto the selection only', () => {
     // 🔴 THE SCOPE HERE IS BLANK, AND THAT IS NOT AN ARBITRARY FIXTURE CHOICE — IT IS THE
     // ONLY WAY THIS ARM IS REACHABLE. Measured: an AUTHORED scope over a glTF source never
     // arrives, because the resolver refuses it first by name ("has no derivable face count
-    // … so the authored scope '0-5' cannot be honoured"). So `targeted === null` inside
+    // … so the authored scope '0-2' cannot be honoured"). So `targeted === null` inside
     // `evaluate` means a TOTAL selection over an underivable source, never a narrowed one,
     // and the second half of that is asserted below rather than assumed.
     const gltfSource: MeshDataValue = {
@@ -133,7 +133,7 @@ describe('#682 — a scoped override composes onto the selection only', () => {
 
     // The authored case, refused upstream — so the limit is enforced where the director can
     // be told about it, not silently absorbed into an arm that drops the scope.
-    expect(() => evalOp({ [SCOPE_PARAM]: '0-5' }, gltfSource)).toThrow(
+    expect(() => evalOp({ [SCOPE_PARAM]: '0-2' }, gltfSource)).toThrow(
       /has no derivable face count/,
     );
   });
@@ -183,14 +183,14 @@ describe('#699 — the declared limit this shares with SetMaterialOp, pinned on 
   // whole, so the lower op's table IS reachable here. The append arm does not read it.
 
   it('override OVER override — two slots, not three, and the ORIGINAL base is gone', () => {
-    const first = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
+    const first = evalOp({ [SCOPE_PARAM]: '0-2' }, boxData()) as ModifiedDataValue;
     expect(first.materialSlots).toHaveLength(2);
     expect(first.materialSlots![0]).toBe(SOURCE_MATERIAL);
 
     // A DISJOINT scope on the second op — the case a director reaches for wanting three
     // materials. Disjoint matters: overlapping ranges could yield two slots for a reason
     // with nothing to do with the collapse, and the row would pin the wrong thing.
-    const second = evalOp({ [SCOPE_PARAM]: '6-11' }, first) as ModifiedDataValue;
+    const second = evalOp({ [SCOPE_PARAM]: '3-5' }, first) as ModifiedDataValue;
     expect(second.materialSlots).toHaveLength(2);
 
     // 🔴 THE DISCRIMINATING ASSERTION. Slot 0 is now the FIRST op's composed material, so the
@@ -207,10 +207,10 @@ describe('#699 — the declared limit this shares with SetMaterialOp, pinned on 
   });
 
   it('override over a SetMaterialOp collapses the same way — the mixed stack is not special', () => {
-    const set = evalSet({ scope: '0-5' }, boxData()) as ModifiedDataValue;
+    const set = evalSet({ scope: '0-2' }, boxData()) as ModifiedDataValue;
     expect(set.materialSlots).toHaveLength(2);
 
-    const over = evalOp({ [SCOPE_PARAM]: '6-11' }, set) as ModifiedDataValue;
+    const over = evalOp({ [SCOPE_PARAM]: '3-5' }, set) as ModifiedDataValue;
     expect(over.materialSlots).toHaveLength(2);
     expect(over.materialSlots![0]).toBe(set.material);
     expect(over.materialSlots![0]).not.toBe(SOURCE_MATERIAL);
@@ -219,8 +219,8 @@ describe('#699 — the declared limit this shares with SetMaterialOp, pinned on 
   it('and the reverse order collapses too — SetMaterialOp over an override', () => {
     // Both orders, because a merge rule landing on one operator would leave the other free
     // to disagree about what stacking means, and nothing today would red.
-    const over = evalOp({ [SCOPE_PARAM]: '0-5' }, boxData()) as ModifiedDataValue;
-    const set = evalSet({ scope: '6-11' }, over) as ModifiedDataValue;
+    const over = evalOp({ [SCOPE_PARAM]: '0-2' }, boxData()) as ModifiedDataValue;
+    const set = evalSet({ scope: '3-5' }, over) as ModifiedDataValue;
 
     expect(set.materialSlots).toHaveLength(2);
     expect(set.materialSlots![0]).toBe(over.material);

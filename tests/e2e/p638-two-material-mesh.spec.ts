@@ -297,15 +297,22 @@ test('a box assigned two materials DRAWS with both, and can still be picked', as
   expect(facts).not.toBeNull();
   expect(facts!.isArray).toBe(true);
   expect(facts!.materialCount).toBe(2);
-  // Faces 0–1 are one run and the remaining ten are another: two groups, never six.
+  // Faces 0–1 are one run and the remaining four are another: two groups, never six.
   expect(facts!.groupCount).toBe(2);
-  // THE GRANULARITY, ON THE LIVE INSTANCE. Faces 0–1 are index elements [0,6) and the
-  // remaining ten are [6,36) — the triangle boundary. A cube-side implementation would put
-  // the split at 12 and still cover all 36, which is the error the aligned 6/6 fixture
-  // cannot see and the reason this asserts the boundary rather than the coverage.
+  // THE GRANULARITY, ON THE LIVE INSTANCE, AND #770 MOVED WHICH GRANULARITY IT IS. A face is
+  // a POLYGON now, so faces 0–1 are two whole SIDES — index elements [0,12) — and the
+  // remaining four are [12,36). It read [0,6) and [6,36) before, which was two TRIANGLES: one
+  // side and half of another.
+  //
+  // ⚠️ SO THIS ROW IS NO LONGER A GRANULARITY DETECTOR AND SAYS SO. It used to reject a
+  // cube-side implementation, which would have split at 12 while still covering 36. That
+  // implementation is now the correct one, and on a box a constant arity cannot be wrong at
+  // all — every polygon is a quad. What still lives here is the live-instance evidence that
+  // the assignment reached the built geometry; the granularity class moved to a mixed-arity
+  // source and is guarded by the sphere fixture in `materialGroups.test.ts`.
   expect(facts!.groups).toEqual([
-    { start: 0, count: 6, materialIndex: 1 },
-    { start: 6, count: 30, materialIndex: 0 },
+    { start: 0, count: 12, materialIndex: 1 },
+    { start: 12, count: 24, materialIndex: 0 },
   ]);
 
   // THE STANDING PROBE, on the mesh that broke it. `__basher_mesh_material` is what the
@@ -436,7 +443,9 @@ test('two boxes with the SAME assignment share one BufferGeometry, and editing o
   // move — not its instance, not its material count.
   await dispatch(
     page,
-    [{ type: 'setParam', nodeId: 'n_setmat2', paramPath: 'scope', value: '0-5' }],
+    // `'0-3'`, not `'0-5'` — #770 made `'0-5'` name every face of a six-face box, which would
+    // put the whole mesh on one slot and collapse the two-material state this row measures.
+    [{ type: 'setParam', nodeId: 'n_setmat2', paramPath: 'scope', value: '0-3' }],
     'widen',
   );
   await page.waitForFunction(

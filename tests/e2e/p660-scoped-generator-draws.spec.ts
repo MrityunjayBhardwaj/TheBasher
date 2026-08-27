@@ -48,14 +48,23 @@ const BLUE = '#0000ff';
 
 // ── THE ARITHMETIC, RESTATED AS THE RENDERER SEES IT ──────────────────────────────────
 //
-// A box is 12 triangles = 36 index elements. `1-6` is six of those triangles — half —
-// and it is written `1-6` rather than `0-5` for the reason step 15 records: `0-5` is
-// ALSO exactly cube sides 0/1/2, so it agrees with a cube-side implementation and a
-// triangle one at once. `1-6` has the same cardinality and separates them.
+// A box is SIX FACES since #770 — six quads — materialising to 12 triangles = 36 index
+// elements. `1-3` is three of those faces, half, and the query moved there from `1-6` in the
+// same phase: over six faces `1-6` names five of them, so the scoped and unscoped renders
+// would have nearly converged and the pixel clause below would have stopped discriminating.
+//
+// ⚠️ THE OLD REASON FOR PREFERRING `1-6` OVER `0-5` IS GONE, AND ITS REPLACEMENT IS NOT A
+// BOUNDARY. It read: *"`0-5` is ALSO exactly cube sides 0/1/2, so it agrees with a cube-side
+// implementation and a triangle one at once; `1-6` has the same cardinality and separates
+// them."* #770 named the polygon as the face, so a box's faces ARE its cube sides and no box
+// query can separate those two readings any more. What survives is cardinality: the scope must
+// name a PROPER, non-empty subset, which is all this constant is now chosen for.
 //
 // A scoped array of `count` preserves its whole input and generates from the subset:
-// 12 + 6 + 6 = 24 triangles = 72 index elements. Unscoped: 3 x 12 = 36 = 108.
-const SCOPE_HALF = '1-6';
+// 6 + 3 + 3 = 12 faces = 24 triangles = 72 index elements. Unscoped: 3 x 6 = 18 = 108. Both
+// index figures are UNCHANGED across the flip, which is the same coincidence the unit tier
+// records: three quads and six triangles occupy the same eighteen entries.
+const SCOPE_HALF = '1-3';
 const SCOPED_INDEX = 72;
 const UNSCOPED_INDEX = 108;
 
@@ -436,7 +445,10 @@ test('two scoped arrays share one BufferGeometry, and stop sharing when their sc
   // Diverge ONE of them. Same box, same count, same offset — only the scope differs.
   await dispatch(
     page,
-    [{ type: 'setParam', nodeId: 'n660_b_op', paramPath: 'scope', value: '2-7' }],
+    // `'2-4'`, not `'2-7'` — three faces, the SAME cardinality as `SCOPE_HALF`, which is what
+    // makes the row below a claim about the scope's identity rather than its size. Over six
+    // faces `'2-7'` names four, and the index counts would have differed for the wrong reason.
+    [{ type: 'setParam', nodeId: 'n660_b_op', paramPath: 'scope', value: '2-4' }],
     'diverge b',
   );
   await waitForRebuild(page, 'n660_b', b!.uuid);

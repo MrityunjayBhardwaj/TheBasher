@@ -37,7 +37,13 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
-import { faceCountMismatch, zeroIndexRefusal } from './faceCount';
+import {
+  faceArityOf,
+  faceCountMismatch,
+  faceTriangleStarts,
+  materialisedTriangles,
+  zeroIndexRefusal,
+} from './faceCount';
 import {
   derivedSourceOf,
   pointCountMismatch,
@@ -608,9 +614,28 @@ function build(ref: GeometryRef): BufferGeometry | null {
     return built;
   }
 
-  const groups = groupsFromMaterialIndex(index.data, indexCount);
+  // #770 — THE LAYOUT THE GROUPS ARE DERIVED THROUGH, and it is asked for here rather than
+  // inside the derivation because `materialGroups.ts` imports nothing at all, which is the
+  // property that made widening this module's import set safe in the first place.
+  //
+  // 🔴 A `null` HERE HAS AN EMPTY POPULATION, AND THAT IS CENSUSED RATHER THAN ASSERTED. An
+  // arity is null on exactly the descriptors whose face COUNT is — `gltf`, `baked`, or a chain
+  // reaching one — which `faceCount.gate.test.ts` holds as a set rather than a number, and
+  // those mint no `material_index` at all because `uniformMaterialAttributes` returns null for
+  // them. So nothing can arrive here today. It is refused BY NAME anyway, on the same
+  // principle the two refusals below it follow: the alternative is a mesh that renders in one
+  // material with nothing said, which is the state this whole road exists to make impossible.
+  const arity = faceArityOf(ref.descriptor);
+  if (arity === null) {
+    console.warn(
+      `geometryRegistry: descriptor '${ref.descriptor.kind}' carries a material index but no derivable polygon layout, so its groups cannot be laid out — this mesh draws with its first material only`,
+    );
+    return built;
+  }
+
+  const groups = groupsFromMaterialIndex(index.data, indexCount, arity);
   if (groups === null) {
-    const why = groupsRefusal(index.data, indexCount);
+    const why = groupsRefusal(index.data, indexCount, arity);
     if (why !== null) console.warn(why);
     return built;
   }
@@ -696,13 +721,16 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
 function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGeometry | null {
   const source = get(d.source, 'internal');
   if (!source) return null;
+  // Resolved ONCE, outside the loop: it does not vary per copy, and asking per copy would put
+  // a memo lookup on the inside of the only loop in this function for no answer that changes.
+  const sourceArity = faceArityOf(d.source.descriptor);
   const copies: BufferGeometry[] = [];
   for (let i = 0; i < d.count; i++) {
     const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
     // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
     // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
     // scope selecting nothing the identity rather than an empty mesh.
-    const copy = i === 0 ? source.clone() : elementSubset(source, d.scope, d.domain);
+    const copy = i === 0 ? source.clone() : elementSubset(source, sourceArity, d.scope, d.domain);
     if (copy === null) return null;
     copies.push(copy.applyMatrix4(m));
   }
@@ -748,6 +776,14 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
  */
 function elementSubset(
   source: BufferGeometry,
+  // #770 — THE SOURCE'S POLYGON ARITY, because a scope names polygons now and a polygon owns a
+  // variable number of triangles. Threaded from the caller rather than derived here for the
+  // reason every other descriptor fact in this module is: the builders hold the descriptor and
+  // this function holds a `BufferGeometry`, and re-deriving one from the other is the second
+  // spelling this file exists to avoid. `null` is a source whose arity is not derivable, which
+  // no caller can construct today — a `gltf` source never builds through here at all — and is
+  // refused by name rather than assumed away.
+  sourceArity: readonly number[] | null,
   scope: string | undefined,
   // Paired with `scope` by `scopeField`, so "a query at no class" has no constructor. Read
   // as a pair here too: a lone half is a defect in the producer, not an authoring state, and
@@ -764,7 +800,7 @@ function elementSubset(
   if (scope === undefined || domain === undefined) return source.clone();
   switch (domain) {
     case 'face':
-      return faceSubset(source, scope, keep);
+      return faceSubset(source, sourceArity, scope, keep);
     default: {
       const unreachable: never = domain;
       console.error(
@@ -777,8 +813,27 @@ function elementSubset(
   }
 }
 
-/** The `face` arm of {@link elementSubset}: an index subset over unchanged attribute buffers. */
-function faceSubset(source: BufferGeometry, scope: string, keep: boolean): BufferGeometry | null {
+/**
+ * The `face` arm of {@link elementSubset}: an index subset over unchanged attribute buffers.
+ *
+ * 🔴 #770 — A KEPT FACE IS A WHOLE POLYGON, AND THE FACE COUNT NO LONGER COMES OFF THE INDEX.
+ * This read `index.count / 3` and took three entries per selected face, which was the same
+ * statement while a face was a triangle. Under polygons it is wrong twice over: it would
+ * resolve a scope against the TRIANGLE count — so `'0-5'` on a box would name six triangles
+ * where the author wrote six sides — and it would slice a quad in half. Both from one line,
+ * and neither would have raised anything: the result still builds, still draws, and is simply
+ * a different mesh than the one that was asked for.
+ *
+ * The arity is the source's, so `'0-2'` on a box keeps polygons 0, 1 and 2 — triangles 0..5,
+ * 18 index entries — and on a sphere the same range keeps a different number of triangles per
+ * polygon, which is the whole point of carrying an arity rather than a constant.
+ */
+function faceSubset(
+  source: BufferGeometry,
+  sourceArity: readonly number[] | null,
+  scope: string,
+  keep: boolean,
+): BufferGeometry | null {
   const index = source.getIndex();
   if (index === null) {
     console.error(
@@ -786,12 +841,36 @@ function faceSubset(source: BufferGeometry, scope: string, keep: boolean): Buffe
     );
     return null;
   }
-  const faces = index.count / 3;
-  const { mask } = scopeSelection(scope, faces);
+  if (sourceArity === null) {
+    console.error(
+      `geometryRegistry: cannot take the face subset '${scope}' — the source has no derivable polygon layout, so nothing here can say which triangles a selected face owns`,
+    );
+    return null;
+  }
+  // Refused BY NAME rather than trusted, because this is the one place a descriptor-side
+  // layout and a built buffer meet on the SUBSET road, and a layout that disagrees with the
+  // geometry would silently take the wrong triangles for every kept face. Its population is
+  // empty for the same reason `pointCountMismatch`'s is — the registry builds the geometry
+  // FROM the descriptor, so the two agree by construction, and this fires only if the arity
+  // and three.js's tessellation drift apart. The parity gate is what would catch that first.
+  const triangles = materialisedTriangles(sourceArity);
+  if (triangles * 3 !== index.count) {
+    console.error(
+      `geometryRegistry: cannot take the face subset '${scope}' — the source's ${sourceArity.length} faces materialise to ${triangles} triangles (${triangles * 3} index entries) but its geometry carries ${index.count}`,
+    );
+    return null;
+  }
+
+  const starts = faceTriangleStarts(sourceArity);
+  const { mask } = scopeSelection(scope, sourceArity.length);
   const kept: number[] = [];
-  for (let f = 0; f < faces; f++) {
+  for (let f = 0; f < sourceArity.length; f++) {
     if ((mask[f] === 1) !== keep) continue;
-    kept.push(index.getX(f * 3), index.getX(f * 3 + 1), index.getX(f * 3 + 2));
+    // Every triangle this face owns, whole. The fan emits a polygon's triangles consecutively,
+    // which is what makes a face's span a range rather than a gather.
+    for (let t = starts[f]; t < starts[f] + sourceArity[f]; t++) {
+      kept.push(index.getX(t * 3), index.getX(t * 3 + 1), index.getX(t * 3 + 2));
+    }
   }
   const subset = source.clone();
   subset.setIndex(kept);
@@ -813,7 +892,7 @@ function faceSubset(source: BufferGeometry, scope: string, keep: boolean): Buffe
 function buildSubset(d: Extract<GeometryDescriptor, { kind: 'subset' }>): BufferGeometry | null {
   const source = get(d.source, 'internal');
   if (!source) return null;
-  return elementSubset(source, d.scope, d.domain, d.keep);
+  return elementSubset(source, faceArityOf(d.source.descriptor), d.scope, d.domain, d.keep);
 }
 
 /**
@@ -841,7 +920,7 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
   // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
   // primitives to mirror, so the original is never subset and the reflection always is.
   const original = source.clone();
-  const subset = elementSubset(source, d.scope, d.domain);
+  const subset = elementSubset(source, faceArityOf(d.source.descriptor), d.scope, d.domain);
   if (subset === null) return null;
   const reflected = reverseWinding(subset.applyMatrix4(reflect));
   const merged = mergeGeometries([original, reflected]);

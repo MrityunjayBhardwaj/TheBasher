@@ -13,19 +13,30 @@
 //
 // On a box AND a sphere, in the unit tier, through the operator. No browser, no pixels.
 //
-// ── 🔴 WHY THE BOUNDARY IS NOT `0-5`, AND WHY THAT IS THE WHOLE POINT ─────────────────
+// ── 🔴 THE ERROR CLASS THIS FILE GUARDS MOVED AT #770, AND THE FIXTURE MOVED WITH IT ──
 //
-// Steps 12.5, 13a and 13b all scope a box to `0-5`. A box's twelve faces are six sides of
-// two triangles each in build order, so `0-5` is exactly sides 0, 1 and 2 — a boundary
-// every cube side agrees with. An implementation that resolved a scope at CUBE-SIDE
-// granularity, snapping each selected triangle to its partner, produces byte-identical
-// answers for every one of those rows. The claim they are quoted for — that a scope
-// selects FACES — is not the claim they test.
+// What it used to guard: steps 12.5, 13a and 13b all scoped a box to `0-5`. A box's twelve
+// faces were six sides of two TRIANGLES each, so `0-5` was exactly sides 0, 1 and 2 — a
+// boundary every cube side agrees with, and an implementation resolving at CUBE-SIDE
+// granularity produced byte-identical answers for every one of those rows. So this file
+// scoped to `1-6` and `3-42`, whose endpoints land mid-side.
 //
-// This file scopes to `1-6` (box) and `3-42` (sphere). Same cardinality, same numbers,
-// but both endpoints land mid-side, so a granularity error moves the count. The numbers
-// are stated for both boundaries at the end of this block: they are equal, which IS the
-// finding — the arithmetic is a property of how many faces were selected, never of which.
+// #770 made a face a POLYGON. A box's faces ARE its cube sides now, so cube-side granularity
+// is not an error a box can express — every boundary is aligned, and no box fixture can tell
+// a granularity error from correct behaviour any more. The old `1-6` is not merely stale; it
+// selects five of six faces, which is nearly the whole mesh.
+//
+// The class did not disappear. It became ARITY: an index range is no longer `faces x 3`,
+// because a quad owns two triangles and a sphere's pole cell owns one. So the rival
+// implementation is one that expands a polygon scope at a CONSTANT arity, and the fixture that
+// separates it from the truth is a sphere, where the two arities coexist.
+//
+// This file scopes a box to `1-3` and a sphere to `4-27`. The box numbers are unchanged from
+// the pre-flip tree — 72 against 108, 54 against 72 — which is itself the clearest statement
+// of why a box is not the discriminator: three quads and six triangles occupy the same index
+// entries. The sphere numbers are new, and the control at the end is a SECOND scope of the
+// same cardinality over a different mix of arities: same face count, different index count.
+// The arithmetic is a property of how many faces were selected AND of which.
 //
 // ── 🔴 EVERY EXPECTATION IS A LITERAL FROM THE ARITHMETIC ([[V210]]) ──────────────────
 //
@@ -105,17 +116,21 @@ import type { MeshDataValue, ModifiedDataValue, ObjectData } from '../nodes/type
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
+/** A box scoped to half — three of its six faces (#770; it read `1-6` over twelve). */
+const BOX_HALF = '1-3';
 /**
- * A box scoped to half at a boundary NO cube side agrees with — faces 1..6 span half of
- * side 0, all of sides 1 and 2, and half of side 3. Six faces, same as `0-5`.
+ * A sphere scoped to half its faces, MIXING ARITIES — sphere(8,6) is 48 polygons whose first
+ * and last rows of eight are pole TRIANGLES and whose middle thirty-two are quads. `4-27` is
+ * four pole triangles and twenty quads: 24 faces, 44 triangles, 132 index entries.
  */
-const BOX_HALF = '1-6';
-/** The rounding a cube-side implementation would apply to {@link BOX_HALF}: eight faces. */
-const BOX_HALF_ROUNDED = '0-7';
-/** sphere(8,6) is 80 faces in rings of 8 / 16 / 16 / 16 / 16 / 8. Forty faces, mid-ring at both ends. */
-const SPHERE_HALF = '3-42';
-/** The same rounding applied to {@link SPHERE_HALF}: forty-two faces. */
-const SPHERE_HALF_ROUNDED = '2-43';
+const SPHERE_HALF = '4-27';
+/**
+ * 🔴 THE CONTROL, AND IT IS THE RIVAL IMPLEMENTATION MADE CONSTRUCTIBLE. Twenty-four faces
+ * again — the SAME cardinality as {@link SPHERE_HALF} — but all of them quads, so 48 triangles
+ * rather than 44. An implementation expanding a polygon scope at a constant arity gives these
+ * two scopes the same answer; reading each face's real arity gives them different ones.
+ */
+const SPHERE_HALF_ALL_QUADS = '8-31';
 
 function boxSource(): MeshDataValue {
   const descriptor = boxDescriptor([1, 1, 1]);
@@ -146,6 +161,19 @@ function sphereSource(): MeshDataValue {
 }
 
 /** Index entries in the BUILT geometry — NEVER `position.count`, see this file's header. */
+/**
+ * How many FACES a scope names on a source — asserted so the control below is a claim about
+ * arity and not accidentally about cardinality.
+ *
+ * Goes through the same resolver the operators do, so a scope that stopped meaning what these
+ * rows think it means shows up here rather than as a puzzling index count.
+ */
+function selectedFaceCount(source: MeshDataValue, scope: string): number {
+  const resolved = resolveComponentSelection(source, { scope }, 'face');
+  if (resolved === null) throw new Error(`the fixture could not resolve '${scope}'`);
+  return resolved.count;
+}
+
 function builtIndex(value: ObjectData | undefined): number {
   const geom = geometryRegistry.getForRead((value as ModifiedDataValue).geometry);
   expect(geom, 'the registry could not build this handle').not.toBeNull();
@@ -189,7 +217,9 @@ beforeEach(() => {
 
 describe('ns-2 exit clause 3 — the arithmetic, on a BOX, at a non-aligned boundary', () => {
   it('🔴 THE DIFFERING CASE FIRST — an array x3 scoped to half is 72, not 108', () => {
-    // 12 preserved + 6 + 6 = 24 faces = 72 index entries, against 36 faces = 108 unscoped.
+    // 6 preserved + 3 + 3 = 12 faces = 24 triangles = 72 index entries, against 18 faces = 36
+    // triangles = 108 unscoped. ⚠️ BOTH LITERALS SURVIVED #770 UNCHANGED while every face count
+    // in the sentence halved — which is the reason the sphere rows below exist.
     // This is the row that proves the scope was HONOURED, and it is the one the discard
     // perturbation reds. Everything else in this file is context for it.
     const src = boxSource();
@@ -203,38 +233,40 @@ describe('ns-2 exit clause 3 — the arithmetic, on a BOX, at a non-aligned boun
     // cannot fail while the implementation compiles — it is reported, not counted as
     // evidence. The `≠` leg above is the one carrying proof. Recorded here so a later
     // reader cannot quote the triple as three independent findings.
-    expect(arrayIndex(boxSource(), 3, '0-11')).toBe(108);
+    expect(arrayIndex(boxSource(), 3, '0-5')).toBe(108);
   });
 
   it('🔴 a mirror scoped to half is 54, not 72', () => {
-    // 12 preserved + 6 reflected = 18 faces = 54 index. The GROUNDED half of the rule.
+    // 6 preserved + 3 reflected = 9 faces = 18 triangles = 54 index. The GROUNDED half.
     const src = boxSource();
     expect(mirrorIndex(src, BOX_HALF)).toBe(54);
     expect(mirrorIndex(src, '')).toBe(72);
   });
 
   it('…and scoped to EVERYTHING it is 72 — by construction again, same caveat', () => {
-    expect(mirrorIndex(boxSource(), '0-11')).toBe(72);
+    expect(mirrorIndex(boxSource(), '0-5')).toBe(72);
   });
 });
 
 describe('ns-2 exit clause 3 — the same arithmetic on a SPHERE', () => {
-  // Box-only fixtures are the shape that lets `12` be hard-coded somewhere and pass.
-  // sphere(8,6) tessellates to 80 faces = 240 index; `3-42` selects 40 of them.
-  it('🔴 an array x3 scoped to half is 480, not 720; scoped to everything, 720', () => {
-    // 80 preserved + 40 + 40 = 160 faces = 480, against 240 faces = 720 unscoped.
+  // Box-only fixtures are the shape that lets a constant be hard-coded somewhere and pass —
+  // doubly so since #770, when a box became the shape on which the constant is CORRECT.
+  // sphere(8,6) is 48 polygons materialising to 80 triangles = 240 index; `4-27` selects 24 of
+  // those faces, and because four of them are pole triangles they are 44 triangles, not 48.
+  it('🔴 an array x3 scoped to half is 504, not 720; scoped to everything, 720', () => {
+    // 80 preserved + 44 + 44 = 168 triangles = 504, against 240 triangles = 720 unscoped.
     const src = sphereSource();
-    expect(arrayIndex(src, 3, SPHERE_HALF)).toBe(480);
+    expect(arrayIndex(src, 3, SPHERE_HALF)).toBe(504);
     expect(arrayIndex(src, 3, '')).toBe(720);
-    expect(arrayIndex(src, 3, '0-79')).toBe(720); // by construction — see the box row above
+    expect(arrayIndex(src, 3, '0-47')).toBe(720); // by construction — see the box row above
   });
 
-  it('🔴 a mirror scoped to half is 360, not 480; scoped to everything, 480', () => {
-    // 80 preserved + 40 reflected = 120 faces = 360.
+  it('🔴 a mirror scoped to half is 372, not 480; scoped to everything, 480', () => {
+    // 80 preserved + 44 reflected = 124 triangles = 372.
     const src = sphereSource();
-    expect(mirrorIndex(src, SPHERE_HALF)).toBe(360);
+    expect(mirrorIndex(src, SPHERE_HALF)).toBe(372);
     expect(mirrorIndex(src, '')).toBe(480);
-    expect(mirrorIndex(src, '0-79')).toBe(480); // by construction
+    expect(mirrorIndex(src, '0-47')).toBe(480); // by construction
   });
 });
 
@@ -255,27 +287,37 @@ describe('ns-2 exit clause 3 — the semantic discriminator', () => {
   });
 });
 
-describe('ns-2 exit clause 3 — the boundary is doing work, stated as the rival number', () => {
-  it('🔴 rounding either scope to whole cube sides gives a DIFFERENT number', () => {
-    // THE FIXTURE'S OWN CONTROL, and it exists because this file's only difference from
-    // its three predecessors is the choice of boundary. If someone later "tidies" `1-6`
-    // to `0-5`, every row above still passes and the file silently stops testing the one
-    // thing it was written for ([[H370]] — a row that reads its own subject as a literal
-    // goes green without opening it).
+describe('ns-2 exit clause 3 — the arity is doing work, stated as the rival number', () => {
+  it('🔴 two scopes of the SAME cardinality over different arities give different numbers', () => {
+    // THE FIXTURE'S OWN CONTROL, and it exists because this file's only difference from its
+    // three predecessors is the choice of boundary. If someone later "tidies" the sphere scope
+    // to one that lands inside a single arity band, every row above still passes and the file
+    // silently stops testing the thing it was written for — a row that reads its own subject
+    // as a literal goes green without opening it.
     //
-    // So the rival implementation's answer is named here as a number rather than left
-    // implicit: a cube-side-granularity resolver snaps each selected triangle to its
-    // partner, turning `1-6` into `0-7` (eight faces) and `3-42` into `2-43` (forty-two).
-    // Those are the values the mirror rows above would read under that error — 60 and 366
-    // against 54 and 360. Both differ, so both boundaries discriminate.
+    // 🔴 THE RIVAL IS DIFFERENT SINCE #770 AND IT IS NOW CONSTRUCTIBLE RATHER THAN NAMED. The
+    // old control quoted the number a cube-side-granularity resolver WOULD produce, because
+    // nothing could run one. A box's faces are its cube sides now, so that error is
+    // unexpressible; the error that replaced it is expanding a polygon scope at a constant
+    // arity, and the difference between the two implementations is exactly the difference
+    // between these two scopes.
+    //
+    // `4-27` and `8-31` both name TWENTY-FOUR faces. The first is four pole triangles and
+    // twenty quads (44 triangles); the second is twenty-four quads (48). A constant-arity
+    // implementation cannot tell them apart — it answers 48 for both, so both mirrors would
+    // read 384. Reading each face's real arity gives 372 and 384.
     //
     // Asserted through the same road as everything else, so it cannot drift from it.
-    const box = boxSource();
-    expect(mirrorIndex(box, BOX_HALF_ROUNDED)).toBe(60);
-    expect(mirrorIndex(box, BOX_HALF)).toBe(54);
-
     const sphere = sphereSource();
-    expect(mirrorIndex(sphere, SPHERE_HALF_ROUNDED)).toBe(366);
-    expect(mirrorIndex(sphere, SPHERE_HALF)).toBe(360);
+    expect(selectedFaceCount(sphere, SPHERE_HALF), 'the two scopes must be the same SIZE').toBe(
+      selectedFaceCount(sphere, SPHERE_HALF_ALL_QUADS),
+    );
+    expect(mirrorIndex(sphere, SPHERE_HALF)).toBe(372);
+    expect(mirrorIndex(sphere, SPHERE_HALF_ALL_QUADS)).toBe(384);
+
+    // And the box, which CANNOT carry the class — stated as a measurement rather than left
+    // implied, because the temptation to "restore" a box control here is the whole hazard.
+    const box = boxSource();
+    expect(mirrorIndex(box, '1-3')).toBe(mirrorIndex(box, '2-4'));
   });
 });

@@ -294,14 +294,22 @@ describe('ns-2 step 10 — row 1: the OPERATOR puts its scope in the key, and th
     // The discriminator this row carried while the sweep read 1, kept now that it reads 121
     // because it still separates two different things: a sweep whose frames each mint a key
     // because the resolver genuinely discriminates, and one that would mint keys off a
-    // string the resolver never looked at. A twelve-face box gives `0-N` twelve distinct
-    // answers, and those twelve are what the operator's selection is built from.
+    // string the resolver never looked at.
+    //
+    // ⚠️ A BOX GIVES SIX DISTINCT ANSWERS SINCE #770, NOT TWELVE, and the row is written over
+    // TWELVE frames on purpose: the second six all clamp to 6, which is the honest shape of
+    // `0-N` past the end of a six-face mesh and would otherwise look like the resolver going
+    // inert exactly where this row is checking that it does not. What discriminates is the
+    // RISE, so it is asserted as the rise plus the plateau rather than as one flat list.
     const mesh = meshOf('box') as ObjectData;
     const counts = Array.from({ length: 12 }, (_, n) => {
       const selection = resolveComponentSelection(mesh, { scope: `0-${n}` }, 'face');
       return selection === null ? -1 : selection.count;
     });
-    expect(counts).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(counts).toEqual([1, 2, 3, 4, 5, 6, 6, 6, 6, 6, 6, 6]);
+    // Stated separately so a future edit cannot satisfy the list above with a constant: the
+    // distinct answers are what the operator's selection is built from, and there are six.
+    expect(new Set(counts).size).toBe(6);
   });
 
   it('…and the query reaches the parser THROUGH the evaluator, on the sweep’s own road', () => {

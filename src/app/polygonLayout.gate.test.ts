@@ -18,7 +18,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { BoxGeometry, SphereGeometry, type BufferGeometry } from 'three';
-import { fanToTriangles, polygonLayoutOf, type PolygonRim } from './polygonLayout';
+import { fanToTriangles, polygonArityOf, polygonLayoutOf, type PolygonRim } from './polygonLayout';
 import { faceCountOf } from './faceCount';
 import type { GeometryDescriptor } from '../nodes/types';
 
@@ -109,13 +109,29 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
     }
   });
 
-  it('the TRIANGLE total still agrees with faceCountOf — this changes no count', () => {
-    // The half of the claim that says this phase is additive. If the fan produced a different
-    // number of triangles than the face arithmetic derives, the flip would already have
-    // happened here by accident.
+  it('the POLYGON total is what faceCountOf answers, and the fan is what it materialises to', () => {
+    // 🔴 THIS ROW INVERTED AT #770, WHICH IS THE FLIP IN ONE ASSERTION. It read *"the TRIANGLE
+    // total still agrees with faceCountOf — this changes no count"*, and that was the half of
+    // #769's claim which said the phase was additive: the fan produced exactly as many
+    // triangles as the face arithmetic derived, so nothing had moved yet.
+    //
+    // #770 moved it. `faceCountOf` answers POLYGONS now, so the count it agrees with is
+    // `polygons.length` and the fan is what those polygons MATERIALISE to. Both halves are
+    // asserted rather than only the new one, because the pair is the whole content of the
+    // phase — a box is 6 faces and 12 triangles, and either number alone reads as the other's
+    // old value.
     for (const d of [box(), sphere(8, 6), sphere(16, 12), sphere(5, 3), sphere(3, 2)]) {
-      const fanned = fanToTriangles(polygonsOf(d)).length / 3;
-      expect(fanned, `${d.kind}`).toBe(faceCountOf(d));
+      const polygons = polygonsOf(d);
+      const fanned = fanToTriangles(polygons).length / 3;
+      expect(polygons.length, `${d.kind} faces`).toBe(faceCountOf(d));
+      // The arity is the projection every consumer of the flip actually gathers through, so it
+      // is checked here against the fan it projects rather than trusted as a second walk.
+      const arity = polygonArityOf(d)!;
+      expect(arity.length, `${d.kind} arity length`).toBe(polygons.length);
+      expect(
+        arity.reduce((a, b) => a + b, 0),
+        `${d.kind} triangles`,
+      ).toBe(fanned);
     }
   });
 
@@ -131,8 +147,8 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
 
   it('🔴 the derived kinds REFUSE by name, and a refusal is not an absence', () => {
     // Two different answers, kept apart because a caller can act on only one of them. The
-    // reasons are measured, not hedged: a scope addresses triangles and keeps half a polygon,
-    // and an unscoped copy needs a split vertex count only a built geometry knows.
+    // reason is measured, not hedged: a copy's rim needs a split vertex count only a built
+    // geometry knows.
     const src = { key: 'k', descriptor: box() } as never;
     const derived: GeometryDescriptor[] = [
       { kind: 'array', source: src, count: 3, offset: [2, 0, 0] } as unknown as GeometryDescriptor,
@@ -145,12 +161,24 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
       if (v.kind !== 'not-yet') throw new Error('unreachable — asserted above');
       // The same two fields a carriage refusal carries: a reason to act on, and its end.
       expect(v.why.length, d.kind).toBeGreaterThan(20);
-      expect(v.until, d.kind).toBe('#770');
+      // ⚠️ IT POINTED AT #770 UNTIL #770 SHIPPED. An `until` naming a phase that has landed is
+      // a refusal telling its reader to wait for something that already happened, which is
+      // worse than naming nothing — so the field moves with the obstruction it describes.
+      expect(v.until, d.kind).toBe('#777');
     }
 
-    // 🔴 AND THE REASON IS THE ONE THAT APPLIES, WHICH IS A SEPARATE CLAIM FROM HAVING ONE.
-    // These kinds are blocked two different ways and only one holds per descriptor. An
-    // unscoped Array told about a scope sends its author to look at a field that is not there.
+    // 🔴 THE SCOPED AND UNSCOPED ARMS NOW GIVE THE SAME REASON, AND THAT IS THE POINT.
+    //
+    // This row used to assert the opposite: these kinds were blocked TWO ways, only one held
+    // per descriptor, and an unscoped Array told about a scope sent its author to look at a
+    // field that is not there. The discipline was right and its subject is gone — #770 made a
+    // scope address POLYGONS, so a subset keeps whole polygons by construction and the
+    // scope-shaped obstruction dissolved rather than being worked around.
+    //
+    // So what is checked now is that the retired reason did not survive its own repair. A
+    // refusal still citing "half a polygon" after this phase would be naming a condition the
+    // code no longer has — the decayed-premise failure, in the one place a reader looks to
+    // find out why something is unavailable.
     const scopedArray = polygonLayoutOf({
       kind: 'array',
       source: src,
@@ -167,19 +195,21 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
     } as unknown as GeometryDescriptor);
     if (scopedArray.kind !== 'not-yet' || bareArray.kind !== 'not-yet')
       throw new Error('both array arms must refuse');
-    expect(scopedArray.why, 'a scoped array is blocked by the scope').toContain('half a polygon');
-    expect(bareArray.why, 'an unscoped array is blocked by the split count').toContain(
-      'SPLIT vertex count',
-    );
-    // Keyed on the scope-specific CLAIM, not on the substring 'scope' — the unscoped message
-    // contains the word 'unscoped', so the crude spelling of this assertion reds on the right
-    // behaviour. It did, which is the only reason the distinction is written down here.
-    expect(bareArray.why, 'and must NOT cite a scope it does not carry').not.toContain(
-      'half a polygon',
-    );
-    expect(bareArray.why, 'nor the triangle-addressing reason').not.toContain(
-      'addresses TRIANGLES',
-    );
+    for (const [label, v] of [
+      ['scoped', scopedArray],
+      ['unscoped', bareArray],
+    ] as const) {
+      expect(v.why, `${label}: blocked by the split count`).toContain('SPLIT vertex count');
+      // Keyed on the retired CLAIM, never on the substring 'scope' — the message contains the
+      // word 'scope' nowhere but the crude spelling of this assertion has reddened on correct
+      // behaviour in this file before, which is the only reason it is spelled this way.
+      expect(v.why, `${label}: must not cite the retired scope reason`).not.toContain(
+        'half a polygon',
+      );
+      expect(v.why, `${label}: nor the triangle-addressing reason`).not.toContain(
+        'addresses TRIANGLES',
+      );
+    }
 
     for (const d of [
       { kind: 'gltf', assetRef: 'a', childName: 'n' } as GeometryDescriptor,

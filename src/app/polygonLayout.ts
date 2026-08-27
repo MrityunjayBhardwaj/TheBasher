@@ -62,6 +62,47 @@ export type PolygonLayoutVerdict =
  * same windings, same order, so pixels and group ranges are untouched; the flat index array is
  * not identical, and the gate therefore compares triples up to rotation rather than by `===`.
  */
+/**
+ * How many triangles each polygon fans to, in the same order — the projection of a rim layout
+ * that every consumer of the flip actually wants (#770).
+ *
+ * ── WHY THE ARITY AND NOT THE RIM IS WHAT TRAVELS ─────────────────────────────────────
+ *
+ * Not one consumer of a face count wants a rim. What they want is the number that turns a
+ * polygon index into an INDEX RANGE: `faceCountMismatch` needs how many index entries a
+ * descriptor should materialise to, `materialGroups` needs where a run of polygons starts and
+ * ends in the index buffer, `faceSubset` needs which triangles a kept polygon owns, and
+ * `tiledCornerOrder` needs how many corners a face carries. All four are arithmetic over one
+ * number per polygon.
+ *
+ * 🔴 AND THE ARITY SURVIVES THE GATHER THAT A RIM DOES NOT, which is why the derived kinds'
+ * refusal above does not block the flip. A rim is stated in the SOURCE's vertex numbering, so
+ * expressing a copy's rim in a merged geometry needs each copy offset by the source's split
+ * vertex count — the number that does not exist descriptor-side, and the reason `array` and
+ * `mirror` answer `not-yet`. An arity is a plain count with no vertex numbering in it at all,
+ * so `arity[i] = sourceArity[order[i]]` through the face order a per-face attribute already
+ * gathers through. `faceCount.ts` composes it that way; this function answers for the two
+ * kinds that GENERATE geometry, which is where the claim has to be grounded.
+ *
+ * `rim.length - 2` is {@link fanToTriangles}'s own loop count rather than a second statement
+ * of it: that loop runs `i` from 1 while `i + 1 < rim.length`, which is exactly this many
+ * times. A quad fans to 2, a triangle to 1.
+ */
+const arityCache = new WeakMap<readonly PolygonRim[], readonly number[]>();
+
+export function polygonArityOf(descriptor: GeometryDescriptor): readonly number[] | null {
+  const verdict = polygonLayoutOf(descriptor);
+  if (verdict.kind !== 'laid-out') return null;
+  // Memoised on the LAYOUT's identity, so this cache cannot outlive the layout it projects
+  // and needs no ceiling of its own — the same discipline `faceCount.ts`'s corner cache keeps
+  // against its face order.
+  const hit = arityCache.get(verdict.polygons);
+  if (hit !== undefined) return hit;
+  const arity = verdict.polygons.map((rim) => rim.length - 2);
+  arityCache.set(verdict.polygons, arity);
+  return arity;
+}
+
 export function fanToTriangles(polygons: readonly PolygonRim[]): number[] {
   const out: number[] = [];
   for (const rim of polygons)
@@ -165,23 +206,24 @@ function spherePolygons(widthSegments: number, heightSegments: number): readonly
  *
  * ── WHY THE DERIVED KINDS REFUSE, AND WHY THAT IS NOT A GAP ───────────────────────────
  *
- * **Anything carrying a scope** — every `subset`, and the scoped arms of `array` and `mirror` —
- * waits on #770. Not because the derivation is impure: a subset's surviving triangles follow
- * from the scope string and the source face count with nothing read off a built geometry. The
- * obstruction is that the RESULT is not a polygon set. A scope addresses TRIANGLES, so a range
- * routinely keeps half a polygon — measured over `scopeSelection`, the one door the real code
- * uses: on a box, `"2-8"` keeps 7 triangles across 4 polygons with 1 of them partial, `"1-6"`
- * leaves 2 partial, and `"0"` keeps half of polygon 0 and nothing else. `tiledFaceOrder`
- * resolves a scoped generator through that identical call, so its copies inherit the same
- * halves. #770 makes a scope address polygons, and the problem dissolves rather than needing a
- * special case here.
+ * **All three wait on one thing, and it used to be two.** Expressing a copy's rim in the MERGED
+ * index space needs each copy's vertices offset by the source's SPLIT vertex count — 24 for a
+ * box, not the 8 topological points `pointCountOf` answers with. The only thing that knows that
+ * number is `weldByPosition(geometry: BufferGeometry)`, which reads a BUILT geometry. A
+ * descriptor-side spelling of three's vertex layout would be a fresh grounded claim, not a
+ * propagation of this one, so it is named rather than guessed at. That is #777.
  *
- * **The unscoped `array` and `mirror`** wait on something that does not exist yet. Expressing a
- * copy's rim in the MERGED index space needs each copy's vertices offset by the source's SPLIT
- * vertex count — 24 for a box, not the 8 topological points `pointCountOf` answers with. The
- * only thing that knows that number is `weldByPosition(geometry: BufferGeometry)`, which reads
- * a BUILT geometry. A descriptor-side spelling of three's vertex layout would be a fresh
- * grounded claim, not a propagation of this one, so it is named rather than guessed at.
+ * 🔴 THE SECOND REASON IS GONE AT #770, AND IT WENT BY BEING SOLVED. #769 also refused anything
+ * carrying a scope, because a scope addressed TRIANGLES and a range routinely kept half a
+ * polygon — measured over `scopeSelection`, on a box `"2-8"` kept 7 triangles across 4 polygons
+ * with 1 partial and `"0"` kept half of polygon 0. #770 made a scope address polygons, so a
+ * subset keeps whole polygons by construction. #769 predicted exactly that dissolution, and the
+ * prediction is recorded here because a refusal whose stated reason has quietly gone false is
+ * the thing a reader trusts instead of checking.
+ *
+ * ⚠️ AND THE REMAINING REFUSAL BLOCKS NO CONSUMER. Every one of #770's four wanted an ARITY
+ * rather than a rim — see {@link polygonArityOf} — and an arity carries no vertex numbering, so
+ * it composes through these kinds by gather while a rim cannot.
  */
 export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVerdict {
   switch (descriptor.kind) {
@@ -205,22 +247,30 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
     case 'array':
     case 'mirror':
     case 'subset': {
-      // 🔴 ONE REASON PER CASE, NOT BOTH EVERY TIME. These kinds are blocked for two different
-      // reasons and only one applies to any given descriptor — an unscoped Array has no scope
-      // to keep half a polygon, and telling its author about one sends them to look at a field
-      // that is not there. A message naming a reason the check did not apply is the same defect
-      // the attribute misfit warning carried until #717, one field over.
-      const scoped = descriptor.kind === 'subset' || descriptor.scope !== undefined;
+      // 🔴 ONE REASON NOW, AND IT WAS TWO UNTIL #770 — the branch is gone because the condition
+      // it split on is gone, not because it was tidied away.
+      //
+      // The retired half read: *"a scope addresses TRIANGLES, so it keeps half a polygon —
+      // measured on a box, '2-8' keeps 7 triangles across 4 polygons with 1 of them partial,
+      // and '0' keeps half of polygon 0 and nothing else"*. That was true and it is now false:
+      // #770 made a scope address POLYGONS, so a subset keeps whole polygons by construction
+      // and the obstruction dissolved rather than being worked around — which is exactly what
+      // #769 said would happen, so it is recorded as a prediction that held rather than deleted.
+      //
+      // What survives applies to every one of these kinds equally, scoped or not, which is why
+      // there is no longer a branch: a RIM is stated in vertex indices, so a copy's rim needs
+      // the source's SPLIT vertex count, and nothing descriptor-side has it.
+      //
+      // ⚠️ AND THIS DOES NOT BLOCK A CONSUMER, WHICH IS WHY THE REFUSAL CAN STAND. #770's four
+      // consumers all wanted an ARITY — a count per polygon with no vertex numbering in it —
+      // which composes through these kinds by gather. See {@link polygonArityOf}.
       return {
         kind: 'not-yet',
-        why: scoped
-          ? `a '${descriptor.kind}' scope addresses TRIANGLES, so it keeps half a polygon — ` +
-            `measured on a box, '2-8' keeps 7 triangles across 4 polygons with 1 of them ` +
-            `partial, and '0' keeps half of polygon 0 and nothing else`
-          : `an unscoped '${descriptor.kind}' needs each copy's vertices offset by the source's ` +
-            `SPLIT vertex count (24 for a box, not the 8 topological points 'pointCountOf' ` +
-            `answers with), and the only thing that knows it reads a BUILT geometry`,
-        until: '#770',
+        why:
+          `a '${descriptor.kind}' rim needs each copy's vertices offset by the source's SPLIT ` +
+          `vertex count (24 for a box, not the 8 topological points 'pointCountOf' answers ` +
+          `with), and the only thing that knows it reads a BUILT geometry`,
+        until: '#777',
       };
     }
     case 'gltf':

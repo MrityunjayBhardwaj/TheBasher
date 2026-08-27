@@ -412,8 +412,8 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
   }
 
   it('🔴 THE DISCRIMINATING ROW — a box arrayed x3 and scoped to half is 72, not 108', () => {
-    // THE DIFFERING CASE, FIRST. 12 preserved + 6 + 6 = 24 faces = 72 index entries,
-    // against 36 faces = 108 for the same array unscoped. Written as the two NUMBERS and
+    // THE DIFFERING CASE, FIRST. 6 preserved + 3 + 3 = 12 faces = 24 triangles = 72 index
+    // entries, against 18 faces = 36 triangles = 108 for the same array unscoped. Written as the two NUMBERS and
     // not as a ratio: an expression over the unscoped figure would inherit exactly the
     // omission this row exists to catch.
     //
@@ -422,20 +422,21 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
     // beside the `count = 1` row below, which cannot make that claim.
     const src = boxSource();
     expect(
-      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, src)),
+      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-2' }, src)),
     ).toBe(72);
     expect(builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src))).toBe(108);
   });
 
   it('…and the same on a SPHERE, so the arithmetic is not a property of twelve faces', () => {
-    // sphere(8,6) tessellates to 80 faces (2 x 8 x 5), so x3 unscoped is 240 faces = 720
-    // index. Scoped to `0-39` — half — it is 80 + 40 + 40 = 160 faces = 480.
-    // The face count is read from the descriptor's own derivation rather than from the
-    // requested segments, because three.js clamps segments silently ([[H324]]).
+    // sphere(8,6) is 48 polygons materialising to 80 triangles, so x3 unscoped is 240
+    // triangles = 720 index. ⚠️ SCOPED TO `4-27` SINCE #770 — twenty-four faces, four of them
+    // pole TRIANGLES, so 44 triangles rather than 48: 80 + 44 + 44 = 168 = 504. `0-39` named
+    // forty of eighty triangles and would now name forty of forty-eight polygons, so the
+    // scoped leg would nearly converge with the unscoped one.
     const src = sphereData();
     expect(
-      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-39' }, src)),
-    ).toBe(480);
+      builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '4-27' }, src)),
+    ).toBe(504);
     expect(builtIndex(evalMod({ count: 3, offset: [2, 0, 0], muted: false }, src))).toBe(720);
   });
 
@@ -453,7 +454,7 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
     // trap. The proof of honouring is the 72-vs-108 row above. Cite them together.
     const src = boxSource();
     expect(
-      builtIndex(evalMod({ count: 1, offset: [2, 0, 0], muted: false, scope: '0-5' }, src)),
+      builtIndex(evalMod({ count: 1, offset: [2, 0, 0], muted: false, scope: '0-2' }, src)),
     ).toBe(36);
     expect(builtIndex(evalMod({ count: 1, offset: [2, 0, 0], muted: false }, src))).toBe(36);
   });
@@ -463,17 +464,14 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
     // the authored text. `5,4,3,2,1,0` and `0-5` are one cached geometry rather than two
     // byte-identical ones.
     const src = boxSource();
-    const written = evalMod(
-      { count: 3, offset: [2, 0, 0], muted: false, scope: '5,4,3,2,1,0' },
-      src,
-    );
-    const canonical = evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, src);
+    const written = evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '2,1,0' }, src);
+    const canonical = evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-2' }, src);
     expect((written as ModifiedDataValue).geometry.key).toBe(
       (canonical as ModifiedDataValue).geometry.key,
     );
     expect((written as ModifiedDataValue).geometry.descriptor).toMatchObject({
       kind: 'array',
-      scope: '0-5',
+      scope: '0-2',
     });
   });
 
@@ -482,6 +480,12 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
     // their keys must be unchanged — an omitted field, never `{scope: undefined}`
     // ([[H265]]'s shape). A blank query is the same authoring state as none.
     //
+    //
+    // 🔴 THE LITERAL MOVED AT #770 AND THE CLAIM DID NOT. A face-domain attribute carries one
+    // element per POLYGON now, so a box's `material_index` went from twelve entries to six —
+    // different content, so a different content hash, necessarily. What this row asserts is
+    // that an UNSCOPED key has no scope segment in it, which is unaffected; the hash is read
+    // off this tree and still reds on the next unintended re-key.
     // ⚠️ WHAT HOLDS THIS IS `scopeField`, NOT the resolver's `null` — measured, because the
     // first draft credited the wrong one. Replacing `canonicalQuery: null` with `''` leaves
     // this row GREEN: the collapse happens at the ONE place a scope becomes a key. So this
@@ -502,7 +506,7 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
     // is untouched, and the discriminating half below (`blank === bare`) never moved. Only
     // the incidental half is restated ([[H342]]: keep the discriminating half a literal,
     // and when a neighbour reds, check the neighbour still examines something).
-    expect(bare.geometry.key).toBe('array|box|1,1,1|3|2,0,0|a:faeec10a');
+    expect(bare.geometry.key).toBe('array|box|1,1,1|3|2,0,0|a:21ea791e');
     expect(blank.geometry.key).toBe(bare.geometry.key);
     expect(Object.keys(bare.geometry.descriptor).sort()).toEqual([
       'count',
@@ -540,7 +544,7 @@ describe('ArrayModifier — a scoped generator, through the operator', () => {
       closed: false,
     };
     expect(() =>
-      evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-5' }, curve),
+      evalMod({ count: 3, offset: [2, 0, 0], muted: false, scope: '0-2' }, curve),
     ).toThrow(/cannot be honoured/);
     // …and an UNSCOPED array over a curve still passes it straight through, as it has all
     // along. The two conditions are separated, which is the whole of [[V205]].

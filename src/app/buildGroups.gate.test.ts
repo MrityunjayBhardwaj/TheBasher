@@ -34,7 +34,7 @@ import {
   growthBySource as attributeGrowthBySource,
   resetGrowth as resetAttributeGrowth,
 } from './attributeStore';
-import { nonAlignedMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
+import { mixedArityMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
 
 // `materialIndex` is OPTIONAL, because that is how three.js declares it on a live
 // `BufferGeometry.groups` — and this helper is asked about built instances, not only about
@@ -49,25 +49,34 @@ beforeEach(() => {
 });
 
 describe('#638 build() writes the group layout from the ref’s per-face index', () => {
-  it('a two-material box splits at the TRIANGLE boundary, covering the whole index', () => {
+  it('a two-material box splits at the POLYGON boundary, covering the whole index', () => {
     const built = getForRead(twoMaterialMeshData().geometry)!;
     expect(built).not.toBeNull();
     expect(layoutOf(built)).toEqual([
       [0, 18, 0],
       [18, 18, 1],
     ]);
-    // 6 faces × 3 index entries = 18 per run, 36 in total — the geometry's whole index.
+    // 3 faces × 2 triangles × 3 index entries = 18 per run, 36 in total — the geometry's whole
+    // index. ⚠️ IT READ `6 faces × 3` UNTIL #770 AND THE PRODUCT IS UNCHANGED, which is exactly
+    // why a box cannot be the discriminator: the two arithmetics land on the same number here.
     expect(built.getIndex()!.count).toBe(36);
   });
 
-  it('the NON-ALIGNED case splits at start 3, not at start 6 — the granularity that can be wrong', () => {
-    // A cube-side implementation yields [[0,6,1],[6,30,0]] here, which still covers 36 of 36
-    // and looks right in pixels and in draw-call count. The BOUNDARY is what discriminates.
-    const built = getForRead(nonAlignedMaterialMeshData().geometry)!;
+  it('the MIXED-ARITY case splits at start 3, not at start 6 — the granularity that can be wrong', () => {
+    // 🔴 THIS ROW USED TO BE A BOX AND COULD NOT STAY ONE. It asserted the same boundary against
+    // a cube-side implementation's `[[0,6,1],[6,30,0]]` — and #770 makes that layout CORRECT for
+    // a box, since a box's polygons are its cube sides. The instrument inverted, so it moved to
+    // the shape that still carries the class: a sphere, whose pole rows are triangles.
+    //
+    // An implementation assuming every polygon is a quad yields [[0,6,1],[6,234,0]] here, which
+    // still covers 240 of 240 and looks right in pixels and in draw-call count. The BOUNDARY is
+    // what discriminates — the same sentence, and the same number, one granularity along.
+    const built = getForRead(mixedArityMaterialMeshData().geometry)!;
     expect(layoutOf(built)).toEqual([
       [0, 3, 1],
-      [3, 33, 0],
+      [3, 237, 0],
     ]);
+    expect(built.getIndex()!.count).toBe(240);
   });
 
   it('a uniform sphere gets exactly ONE group covering everything', () => {

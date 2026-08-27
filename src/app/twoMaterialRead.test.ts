@@ -49,14 +49,16 @@ describe('#634 a mesh assigning two materials across its faces reads as TWO', ()
   it('carries the per-face index the geometry declares, not a synthesised one', () => {
     const mesh = twoValued();
     expect(mesh.materials.indices).not.toBeNull();
-    expect([...mesh.materials.indices!]).toEqual([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]);
+    // SIX entries since #770 — one per FACE, and a box's faces are its six quads. It read
+    // twelve while a face was a triangle; the assignment is the same three-a-side split.
+    expect([...mesh.materials.indices!]).toEqual([0, 0, 0, 1, 1, 1]);
   });
 
   it('reports it through the diagnostic seam a browser observation reads', () => {
     expect(materialAssignmentReport(twoValued().materials)).toEqual({
       slotCount: 2,
       assignedSlots: [0, 1],
-      faces: 12,
+      faces: 6,
     });
   });
 
@@ -83,11 +85,11 @@ describe('#634 the uniform case is unchanged by all of this', () => {
     ).toBe(data.material);
   });
 
-  it('covers all 12 of the box’s faces, so "uniform" is a measured answer', () => {
+  it('covers all 6 of the box’s faces, so "uniform" is a measured answer', () => {
     expect(materialAssignmentReport(uniform().materials)).toEqual({
       slotCount: 1,
       assignedSlots: [0],
-      faces: 12,
+      faces: 6,
     });
   });
 });

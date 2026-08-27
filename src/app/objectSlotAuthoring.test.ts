@@ -72,7 +72,7 @@ function withTwoSlots(state: DagState, dataId: string, objectId: string): DagSta
       nodeType: 'Material',
       params: { material: { name: 'blue', base: { color: BLUE } } },
     },
-    { type: 'addNode', nodeId: 'setmat', nodeType: 'SetMaterialOp', params: { scope: '0-5' } },
+    { type: 'addNode', nodeId: 'setmat', nodeType: 'SetMaterialOp', params: { scope: '0-2' } },
     {
       type: 'connect',
       from: { node: dataId, socket: 'out' },

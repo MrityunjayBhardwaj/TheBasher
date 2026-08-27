@@ -82,7 +82,7 @@ import {
   sphereGeometryRef,
   subsetGeometryRef,
 } from './modifierGeometry';
-import { faceCountOf, tiledFaceOrder } from './faceCount';
+import { faceArityOf, faceCountOf, tiledFaceOrder } from './faceCount';
 import { clear, getForRead } from './geometryRegistry';
 import { faceRangeMaterialAttributes, uniformMaterialAttributes } from '../nodes/meshAttributes';
 import { insert, read } from './attributeStore';
@@ -101,8 +101,18 @@ const boxDescriptor = () => boxGeometryRef(BOX_SIZE, null).descriptor;
  * row below tiles. Anchored on `faceRangeMaterialAttributes`, the untouched #638 producer,
  * so the fixture does not route through any code this file is checking ([[V210]]).
  */
+/**
+ * A box's corners — TRIANGLE corners, so twelve triangles' worth (#770, and #776 is where a
+ * corner becomes a polygon corner instead). Named rather than spelled `faces * 3`, which was
+ * the same number before the flip and is now off by half.
+ */
+const BOX_TRIANGLE_CORNERS = 36;
+
 function twoMaterialBox(): GeometryRef {
-  const minted = faceRangeMaterialAttributes(boxDescriptor(), 6, 11);
+  // #770 — FACES 3..5, and it read 6..11 while a face was a triangle. A box has six faces
+  // now, so the old range clamps to nothing and every face stays on slot 0: the fixture would
+  // silently become the one-material control it is here to be contrasted with.
+  const minted = faceRangeMaterialAttributes(boxDescriptor(), 3, 5);
   expect(minted, 'the two-material fixture failed to mint').not.toBeNull();
   insert(minted!.key, minted!.set, 'evaluate');
   return boxGeometryRef(BOX_SIZE, minted!.key);
@@ -148,13 +158,16 @@ beforeEach(() => {
 
 describe('#644 — ARRAY tiles the source assignment across its copies', () => {
   it('🔴 an array x3 over a two-material box lays out SIX groups, alternating 18 index entries', () => {
-    // 12 source faces -> 36 (12 + 12 x 2), tiled as [src, src, src]. Each half of the source
-    // is 6 faces = 18 index entries, so the runs alternate 0,1,0,1,0,1 at a constant 18.
+    // 6 source faces -> 18 (6 + 6 x 2), tiled as [src, src, src]. Each half of the source is
+    // 3 faces = 3 quads = 18 index entries, so the runs alternate 0,1,0,1,0,1 at a constant 18.
+    // ⚠️ THE LAYOUT BELOW IS BYTE-IDENTICAL ACROSS #770 AND THE FACE COUNT HALVED, which is the
+    // clearest single statement of why a box cannot discriminate an arity mistake: three quads
+    // and six triangles occupy the same eighteen index entries.
     // Written as the numbers. Before this change the layout is `[]` — `build()` returns at
     // `ref.attributeKey === undefined` before `addGroup`.
     const ref = arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0]);
 
-    expect(faceCountOf(ref.descriptor)).toBe(36);
+    expect(faceCountOf(ref.descriptor)).toBe(18);
     expect(builtIndexCount(ref)).toBe(108);
     expect(layoutOf(ref)).toEqual([
       [0, 18, 0],
@@ -166,23 +179,28 @@ describe('#644 — ARRAY tiles the source assignment across its copies', () => {
     ]);
   });
 
-  it('🔴 a SCOPED array x3 (`1-6`) tiles only the subset, and the subset is 5 slot-0 faces + 1 slot-1', () => {
+  it('🔴 a SCOPED array x3 (`1-4`) tiles only the subset, and the subset straddles the slot split', () => {
     // The arm that separates "tiles correctly" from "tiles the whole source regardless of
-    // scope". Faces 1..6 of the source are slots [0,0,0,0,0,1], so each generated copy
-    // contributes a 15-entry slot-0 run followed by a 3-entry slot-1 run. 12 + 6 x 2 = 24
-    // faces. A tiling that ignored scope would produce the unscoped six-group layout above
-    // and a 108-entry index; a tiling that took the subset for copy 0 too would produce 18.
-    const ref = arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0], '1-6');
+    // scope". ⚠️ THE QUERY MOVED FROM `1-6` TO `1-4` AT #770 AND HAD TO: over six faces
+    // `'1-6'` names 1..5, which is five of six — nearly the whole source, so a tiling that
+    // ignored scope would look almost right. `'1-4'` names four of six and still straddles the
+    // slot boundary, which is the property the row was written for.
+    //
+    // Faces 1..4 are slots [0,0,1,1], so each generated copy contributes a 12-entry slot-0 run
+    // then a 12-entry slot-1 run. 6 + 4 x 2 = 14 faces. A tiling that ignored scope would
+    // produce the unscoped six-group layout above and a 108-entry index; one that took the
+    // subset for copy 0 too would produce 12 faces.
+    const ref = arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0], '1-4');
 
-    expect(faceCountOf(ref.descriptor)).toBe(24);
-    expect(builtIndexCount(ref)).toBe(72);
+    expect(faceCountOf(ref.descriptor)).toBe(14);
+    expect(builtIndexCount(ref)).toBe(84);
     expect(layoutOf(ref)).toEqual([
       [0, 18, 0],
       [18, 18, 1],
-      [36, 15, 0],
-      [51, 3, 1],
-      [54, 15, 0],
-      [69, 3, 1],
+      [36, 12, 0],
+      [48, 12, 1],
+      [60, 12, 0],
+      [72, 12, 1],
     ]);
   });
 
@@ -198,15 +216,15 @@ describe('#644 — ARRAY tiles the source assignment across its copies', () => {
 
 describe('#644 — MIRROR tiles the source assignment onto the reflected half', () => {
   it('🔴 a mirror over a two-material box lays out FOUR groups — and the reflected half keeps its slots', () => {
-    // 12 + 12 = 24 faces, tiled as [src, src]. This is the row that measures the winding
+    // 6 + 6 = 12 faces, tiled as [src, src]. This is the row that measures the winding
     // claim: `reverseWinding` swaps vertices inside a triangle and leaves triangle order
     // alone, so the reflected half's slots are the source's in the SAME order. A
-    // concatenation reversed to "correct for winding" would put [1,1,1,1,1,1] first in the
-    // second half and produce [[0,18,0],[18,18,1],[36,18,1],[54,18,0]] — three groups after
-    // the runs merge, which is why the length alone would not have caught it.
+    // concatenation reversed to "correct for winding" would put [1,1,1] first in the second
+    // half and produce [[0,18,0],[18,18,1],[36,18,1],[54,18,0]] — three groups after the runs
+    // merge, which is why the length alone would not have caught it.
     const ref = mirrorGeometryRef(twoMaterialBox(), 'x', 0);
 
-    expect(faceCountOf(ref.descriptor)).toBe(24);
+    expect(faceCountOf(ref.descriptor)).toBe(12);
     expect(builtIndexCount(ref)).toBe(72);
     expect(layoutOf(ref)).toEqual([
       [0, 18, 0],
@@ -216,17 +234,18 @@ describe('#644 — MIRROR tiles the source assignment onto the reflected half', 
     ]);
   });
 
-  it('🔴 a SCOPED mirror (`1-6`) reflects only the subset, carrying its 5+1 slot split', () => {
-    // 12 + 6 = 18 faces. The reflected half is faces 1..6 -> [0,0,0,0,0,1].
-    const ref = mirrorGeometryRef(twoMaterialBox(), 'x', 0, '1-6');
+  it('🔴 a SCOPED mirror (`1-4`) reflects only the subset, carrying its 2+2 slot split', () => {
+    // 6 + 4 = 10 faces. The reflected half is faces 1..4 -> [0,0,1,1]. Same query change as the
+    // scoped array above, for the same reason.
+    const ref = mirrorGeometryRef(twoMaterialBox(), 'x', 0, '1-4');
 
-    expect(faceCountOf(ref.descriptor)).toBe(18);
-    expect(builtIndexCount(ref)).toBe(54);
+    expect(faceCountOf(ref.descriptor)).toBe(10);
+    expect(builtIndexCount(ref)).toBe(60);
     expect(layoutOf(ref)).toEqual([
       [0, 18, 0],
       [18, 18, 1],
-      [36, 15, 0],
-      [51, 3, 1],
+      [36, 12, 0],
+      [48, 12, 1],
     ]);
   });
 });
@@ -240,35 +259,39 @@ describe("#719 — SUBSET carries the surviving faces' slots, so a Mask keeps it
     // — so this box built with `groups: []`, drew entirely in slot 0, and raised nothing.
     //
     // 🔴 THE SCOPE SPANS THE SOURCE'S OWN MATERIAL BOUNDARY, WHICH IS WHAT MAKES THIS A
-    // DETECTOR. The two-material fixture puts faces 0-5 on slot 0 and 6-11 on slot 1, so
-    // keeping `2-8` keeps four slot-0 faces and three slot-1 ones. A scope landing inside one
-    // material would produce a SINGLE group, and a single group is also what the defect
-    // produces once `addGroup` is reached at all — the two are told apart only by a mask that
-    // has to survive a boundary. Written as the numbers for the reason this whole file is:
-    // 7 faces -> 21 index entries, 4 x 3 = 12 on slot 0 then 3 x 3 = 9 on slot 1.
-    const ref = subsetGeometryRef(twoMaterialBox(), '2-8', true);
+    // DETECTOR. The two-material fixture puts faces 0-2 on slot 0 and 3-5 on slot 1, so keeping
+    // `2-3` keeps one of each. A scope landing inside one material would produce a SINGLE
+    // group, and a single group is also what the defect produces once `addGroup` is reached at
+    // all — the two are told apart only by a mask that has to survive a boundary.
+    //
+    // ⚠️ THE QUERY MOVED FROM `2-8` AT #770. Over six faces `'2-8'` names 2..5, whose
+    // COMPLEMENT is [0,0] — one material — so the inverse row below would have stopped
+    // straddling anything. `'2-3'` straddles on both sides, which is what the pair needs.
+    // Written as the numbers for the reason this whole file is: 2 faces -> 2 quads -> 12 index
+    // entries, 6 on slot 0 then 6 on slot 1.
+    const ref = subsetGeometryRef(twoMaterialBox(), '2-3', true);
 
-    expect(faceCountOf(ref.descriptor)).toBe(7);
-    expect(builtIndexCount(ref)).toBe(21);
+    expect(faceCountOf(ref.descriptor)).toBe(2);
+    expect(builtIndexCount(ref)).toBe(12);
     expect(layoutOf(ref)).toEqual([
-      [0, 12, 0],
-      [12, 9, 1],
+      [0, 6, 0],
+      [6, 6, 1],
     ]);
   });
 
   it('🔴 the INVERSE mask keeps the complement, and its slot split is the complement too', () => {
-    // `keep: false` over the same query — faces 0,1 (slot 0) and 9,10,11 (slot 1) survive.
-    // The polarity is asserted here rather than left to the descriptor's own row because the
-    // gather reads `order`, and an order built from the wrong side of the mask would produce a
-    // valid layout over the wrong faces: 5 faces and 15 entries either way, differing only in
-    // WHICH slots they carry. 2 x 3 = 6 on slot 0, then 3 x 3 = 9 on slot 1.
-    const ref = subsetGeometryRef(twoMaterialBox(), '2-8', false);
+    // `keep: false` over the same query — faces 0,1 (slot 0) and 4,5 (slot 1) survive. The
+    // polarity is asserted here rather than left to the descriptor's own row because the gather
+    // reads `order`, and an order built from the wrong side of the mask would produce a valid
+    // layout over the wrong faces: 4 faces and 24 entries either way, differing only in WHICH
+    // slots they carry. 2 quads = 12 on slot 0, then 2 quads = 12 on slot 1.
+    const ref = subsetGeometryRef(twoMaterialBox(), '2-3', false);
 
-    expect(faceCountOf(ref.descriptor)).toBe(5);
-    expect(builtIndexCount(ref)).toBe(15);
+    expect(faceCountOf(ref.descriptor)).toBe(4);
+    expect(builtIndexCount(ref)).toBe(24);
     expect(layoutOf(ref)).toEqual([
-      [0, 6, 0],
-      [6, 9, 1],
+      [0, 12, 0],
+      [12, 12, 1],
     ]);
   });
 });
@@ -281,10 +304,10 @@ describe('#644 — the tiled index and the derived face count agree, so groups a
   // non-empty layout is the observable proof the gate was passed, not merely not tripped.
   const cases: ReadonlyArray<readonly [string, () => GeometryRef]> = [
     ['array unscoped', () => arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0])],
-    ['array scoped', () => arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0], '1-6')],
-    ['array count=1', () => arrayGeometryRef(twoMaterialBox(), 1, [2, 0, 0], '1-6')],
+    ['array scoped', () => arrayGeometryRef(twoMaterialBox(), 3, [2, 0, 0], '1-4')],
+    ['array count=1', () => arrayGeometryRef(twoMaterialBox(), 1, [2, 0, 0], '1-4')],
     ['mirror unscoped', () => mirrorGeometryRef(twoMaterialBox(), 'x', 0)],
-    ['mirror scoped', () => mirrorGeometryRef(twoMaterialBox(), 'x', 0, '1-6')],
+    ['mirror scoped', () => mirrorGeometryRef(twoMaterialBox(), 'x', 0, '1-4')],
     [
       'nested array->mirror',
       () => mirrorGeometryRef(arrayGeometryRef(twoMaterialBox(), 2, [2, 0, 0]), 'z', 0),
@@ -296,7 +319,11 @@ describe('#644 — the tiled index and the derived face count agree, so groups a
     const geom = built(ref);
     const indexCount = geom.getIndex()!.count;
 
-    expect(faceCountOf(ref.descriptor)! * 3).toBe(indexCount);
+    // ⚠️ `faces x 3` UNTIL #770; a face is a polygon now, so what has to equal the index count
+    // is what those faces MATERIALISE to. The old expression is off by a factor of two on a box
+    // and by a varying factor on a sphere.
+    expect(faceArityOf(ref.descriptor)!.reduce((a, b) => a + b, 0) * 3).toBe(indexCount);
+    expect(faceArityOf(ref.descriptor)!.length).toBe(faceCountOf(ref.descriptor));
     expect(geom.groups.length).toBeGreaterThan(0);
     expect(geom.groups.reduce((sum, g) => sum + g.count, 0)).toBe(indexCount);
     expect(geom.groups[0].start).toBe(0);
@@ -322,12 +349,12 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     // The day #718 lays edges out, this row has nowhere left to move, and that is the honest
     // outcome rather than a failure: "a difference the merged geometry does not express" will
     // be an empty category, and the row should be deleted with #649 recorded as fully closed.
-    const faces = 12;
+    const faces = 6;
     const materialIndex: AttributeData = {
       domain: 'face',
       type: 'int',
       count: faces,
-      data: new Int32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+      data: new Int32Array([0, 0, 0, 1, 1, 1]),
     };
     const bare = mintAttributes({ [MATERIAL_INDEX]: materialIndex })!;
     const withEdge = mintAttributes({
@@ -359,12 +386,12 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     // and the sharing loss is a statement about identity rather than about pixels. What is
     // deliberately NOT claimed here is that anything draws differently; see the corner-layout
     // row below for the part that would catch a wrong layout.
-    const faces = 12;
+    const faces = 6;
     const materialIndex: AttributeData = {
       domain: 'face',
       type: 'int',
       count: faces,
-      data: new Int32Array([0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1]),
+      data: new Int32Array([0, 0, 0, 1, 1, 1]),
     };
     const bare = mintAttributes({ [MATERIAL_INDEX]: materialIndex })!;
     const withUv = mintAttributes({
@@ -372,8 +399,13 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       [UV_MAP]: {
         domain: 'corner',
         type: 'float2',
-        count: faces * 3,
-        data: new Float32Array(faces * 3 * 2).fill(0.25),
+        // ⚠️ NOT `faces * 3`, WHICH IS WHAT IT SAID UNTIL #770 AND WAS THE SAME NUMBER THEN. A
+        // corner is a corner of a TRIANGLE (#776 is where it becomes a polygon corner), and a
+        // box's six faces materialise to twelve triangles — so the source carries 36 corners,
+        // not 18. At `faces * 3` the attribute misfits, the whole set is refused, and this row
+        // asserts against a store that holds nothing.
+        count: BOX_TRIANGLE_CORNERS,
+        data: new Float32Array(BOX_TRIANGLE_CORNERS * 2).fill(0.25),
       },
     })!;
     insert(bare.key, bare.set, 'evaluate');
@@ -409,7 +441,7 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
     // pair drops the set instead of carrying a stale one. So it is exercised by direct
     // construction, which is the only way to run it at all: a named guard whose subject
     // never arrives reads as "no objection" forever, and a reader who finds it stops
-    // looking. Constructed by handing a 12-face box the key of a 36-face assignment.
+    // looking. Constructed by handing a 6-face box the key of a 36-face assignment.
     const wrongSize = mintAttributes({
       [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 36, data: new Int32Array(36) },
     })!;
@@ -487,20 +519,20 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       const asArray = tiledFaceOrder(arrayGeometryRef(source, 2, [2, 0, 0]).descriptor);
       const asMirror = tiledFaceOrder(mirrorGeometryRef(source, 'x', 0).descriptor);
       expect(asArray!.order).toBe(asMirror!.order);
-      // And the shared layout is the RIGHT one: the whole 12-face source, then one copy.
-      expect(asArray!.order).toHaveLength(24);
-      expect(asMirror!.sourceFaces).toBe(12);
+      // And the shared layout is the RIGHT one: the whole 6-face source, then one copy.
+      expect(asArray!.order).toHaveLength(12);
+      expect(asMirror!.sourceFaces).toBe(6);
     });
 
     it('two scopes over one source do NOT share a layout', () => {
       // The over-eager direction, which is the one that would ship a wrong picture: a cache
       // keyed too loosely gives the second modifier the first one's face order.
       const source = twoMaterialBox();
-      const wide = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0], '1-6').descriptor);
+      const wide = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0], '1-4').descriptor);
       const narrow = tiledFaceOrder(arrayGeometryRef(source, 3, [2, 0, 0], '1-2').descriptor);
       expect(wide!.order).not.toBe(narrow!.order);
-      expect(wide!.order).toHaveLength(24); // 12 + 2 x 6
-      expect(narrow!.order).toHaveLength(16); // 12 + 2 x 2
+      expect(wide!.order).toHaveLength(14); // 6 + 2 x 4
+      expect(narrow!.order).toHaveLength(10); // 6 + 2 x 2
     });
 
     it('past the cache ceiling the answers stay correct', () => {
@@ -513,13 +545,13 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
         const order = tiledFaceOrder(arrayGeometryRef(source, count, [2, 0, 0]).descriptor)!.order;
         lengths.push(order.length);
         // Every layout starts with the whole preserved source, whatever the cache did.
-        expect(order.slice(0, 12)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+        expect(order.slice(0, 6)).toEqual([0, 1, 2, 3, 4, 5]);
       }
-      // 12 faces x count, for count 2..10 — and it agrees with the count road, which is the
+      // 6 faces x count, for count 2..10 — and it agrees with the count road, which is the
       // agreement `build()` consults before it derives any groups at all.
-      expect(lengths).toEqual([24, 36, 48, 60, 72, 84, 96, 108, 120]);
+      expect(lengths).toEqual([12, 18, 24, 30, 36, 42, 48, 54, 60]);
       for (let count = 2; count <= 10; count++) {
-        expect(faceCountOf(arrayGeometryRef(source, count, [2, 0, 0]).descriptor)).toBe(12 * count);
+        expect(faceCountOf(arrayGeometryRef(source, count, [2, 0, 0]).descriptor)).toBe(6 * count);
       }
     });
 
@@ -563,7 +595,9 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       // shrinking it would change what this row covers in exchange for nothing.
       const sphereDescriptor = sphereGeometryRef(1, 32, 16, null).descriptor;
       const sourceFaces = faceCountOf(sphereDescriptor);
-      expect(sourceFaces, 'the sphere fixture has no derivable face count').toBe(960);
+      // 512 = w x h since #770, where it was 960 = 2 x w x (h - 1) triangles. The figure moved
+      // and what the row measures — one gather per distinct source — did not.
+      expect(sourceFaces, 'the sphere fixture has no derivable face count').toBe(512);
 
       // Annotated, not inferred. An evolving `[]` would be `any[]` here — an error neither
       // `npm run typecheck` (it excludes tests) nor vitest's esbuild transpile can see.
@@ -574,7 +608,7 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
         sources.push(sphereGeometryRef(1, 32, 16, minted!.key));
       }
 
-      const COPIES = 8; // 960 source faces x 8 = 7,680 merged
+      const COPIES = 8; // 512 source faces x 8 = 4,096 merged
       const RUNS = 20;
 
       // Spied through the NAMESPACE rather than the named import, because that is the binding
@@ -690,9 +724,9 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
 
   /** The two-material split as a bare attribute, identical on every source built from it. */
   function splitSlots(): AttributeData {
-    const data = new Int32Array(12);
-    data.fill(1, 6);
-    return { domain: 'face', type: 'int', count: 12, data };
+    const data = new Int32Array(6);
+    data.fill(1, 3);
+    return { domain: 'face', type: 'int', count: 6, data };
   }
 
   /** A box carrying `material_index` plus whatever else the caller names. */
@@ -720,9 +754,9 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     // Measured on `e84ff4a`: both keys are `array|box|1,1,1|3|2,0,0|a:ea2140ba` and this row
     // reds on the first assertion. The layouts being equal is asserted too, because that is
     // what stops the row from being satisfied by the two simply differing in some other way.
-    const a = boxCarrying({ face_group: faceOrdinal(12) });
+    const a = boxCarrying({ face_group: faceOrdinal(6) });
     const b = boxCarrying({
-      face_group: { domain: 'face', type: 'int', count: 12, data: new Int32Array(12).fill(7) },
+      face_group: { domain: 'face', type: 'int', count: 6, data: new Int32Array(6).fill(7) },
     });
     expect(a.key, 'the fixture needs two different SOURCE keys to be a test').not.toBe(b.key);
 
@@ -737,35 +771,35 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     // Not merely "the key differs" — the data has to arrive. `face_group` holds the face index,
     // so the tiled values ARE the order, readable as a literal: the whole source, then two more
     // passes over the whole source, because this array is unscoped.
-    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(12) }), 3, [2, 0, 0]);
+    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(6) }), 3, [2, 0, 0]);
     const set = tiledSet(ref);
 
     expect(Object.keys(set).sort()).toEqual(['face_group', 'material_index']);
     expect(Array.from(set.face_group.data)).toEqual([
-      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ...[0, 1, 2, 3, 4, 5],
+      ...[0, 1, 2, 3, 4, 5],
+      ...[0, 1, 2, 3, 4, 5],
     ]);
     // Domain and type are FORWARDED, not re-declared — a gather that rebuilt them from a
     // literal would be a second place deciding what the tiled attribute is.
     expect(set.face_group.domain).toBe('face');
     expect(set.face_group.type).toBe('int');
-    expect(set.face_group.count).toBe(36);
+    expect(set.face_group.count).toBe(18);
   });
 
   it('🔴 a SCOPED generator takes the second attribute through the SUBSET, not the whole source', () => {
     // The arm that separates "gathers the second attribute" from "gathers it ignoring scope".
-    // `1-6` keeps faces 1..6, so the order is the whole source followed by two passes over
-    // exactly those six — and because `face_group` is the face index, that subset is legible
+    // `1-4` keeps faces 1..4, so the order is the whole source followed by two passes over
+    // exactly those four — and because `face_group` is the face index, that subset is legible
     // as a literal rather than as a count.
-    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(12) }), 3, [2, 0, 0], '1-6');
+    const ref = arrayGeometryRef(boxCarrying({ face_group: faceOrdinal(6) }), 3, [2, 0, 0], '1-4');
     const set = tiledSet(ref);
 
-    expect(faceCountOf(ref.descriptor)).toBe(24);
+    expect(faceCountOf(ref.descriptor)).toBe(14);
     expect(Array.from(set.face_group.data)).toEqual([
-      ...[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-      ...[1, 2, 3, 4, 5, 6],
-      ...[1, 2, 3, 4, 5, 6],
+      ...[0, 1, 2, 3, 4, 5],
+      ...[1, 2, 3, 4],
+      ...[1, 2, 3, 4],
     ]);
   });
 
@@ -776,7 +810,7 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     // literal values and not a length check. Face f holds (f, f+100, f+200); a stride-1 gather
     // puts (1, 100, 200) at f=0... and (100, 200, 1) at f=1, so the first triple alone does
     // not discriminate and the second one does.
-    const faces = 12;
+    const faces = 6;
     const data = new Float32Array(faces * 3);
     for (let face = 0; face < faces; face++) {
       data[face * 3] = face;
@@ -791,11 +825,11 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     const set = tiledSet(ref);
 
     expect(set.face_colour.type).toBe('float3');
-    expect(set.face_colour.count).toBe(24);
-    expect(set.face_colour.data.length).toBe(72);
+    expect(set.face_colour.count).toBe(12);
+    expect(set.face_colour.data.length).toBe(36);
     // The first two elements of each of the two copies, which is where a stride error shows.
     expect(Array.from(set.face_colour.data.slice(0, 6))).toEqual([0, 100, 200, 1, 101, 201]);
-    expect(Array.from(set.face_colour.data.slice(36, 42))).toEqual([0, 100, 200, 1, 101, 201]);
+    expect(Array.from(set.face_colour.data.slice(18, 24))).toEqual([0, 100, 200, 1, 101, 201]);
   });
 
   it("🔴 each tiled attribute keeps its SOURCE's array class, per attribute (#696)", () => {
@@ -815,8 +849,8 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
         face_colour: {
           domain: 'face',
           type: 'float3',
-          count: 12,
-          data: new Float32Array(36),
+          count: 6,
+          data: new Float32Array(18),
         },
       }),
       2,
@@ -828,13 +862,33 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     expect(set.face_colour.data).toBeInstanceOf(Float32Array);
   });
 
-  it('CONTROL — the single-attribute population keys BYTE-IDENTICALLY to before the widening', () => {
-    // The regression row, and its two literals were read off `e84ff4a` rather than off this
-    // tree. A generator key is also a cache key, so a widening that re-hashed the existing
-    // population would quietly invalidate every build in the wild.
+  it('the single-attribute population RE-HASHED at #770, once and on purpose', () => {
+    // 🔴 THIS ROW'S CLAIM INVERTED, AND IT IS NOT REPAIRABLE BY UPDATING THE LITERALS QUIETLY.
+    //
+    // It read *"keys BYTE-IDENTICALLY to before the widening"*, with two literals taken off
+    // `e84ff4a`, and its reason was that a generator key is also a cache key: a widening that
+    // re-hashed the existing population would invalidate every build in the wild with nothing
+    // saying so. #688 was a widening and correctly left the keys alone.
+    //
+    // #770 is not a widening. A face-domain attribute now carries ONE ELEMENT PER POLYGON, so
+    // a box's `material_index` went from twelve entries to six — different content, therefore a
+    // different content hash, necessarily and by design. There is no version of this phase that
+    // keeps these strings, so the honest row records the move rather than asserting a stability
+    // that stopped being available:
+    //
+    //     BEFORE  array|box|1,1,1|3|2,0,0|a:ea2140ba   mirror|box|1,1,1|x|0|a:33d7e0b5
+    //     AFTER   array|box|1,1,1|3|2,0,0|a:a864052d   mirror|box|1,1,1|x|0|a:1204cccc
+    //
+    // ⚠️ AND THE CONSEQUENCE IS STATED RATHER THAN LEFT TO BE DISCOVERED: every cached build
+    // keyed on a face-domain attribute misses once after this lands. That is the correct
+    // outcome — the old entries describe geometry laid out at the wrong granularity — but it is
+    // a real one-time cost and not a free rename.
+    //
+    // The row keeps its job for everything after this: the literals are read off THIS tree and
+    // the next unintended re-hash still reds here.
     const source = twoMaterialBox();
-    expect(arrayGeometryRef(source, 3, [2, 0, 0]).key).toBe('array|box|1,1,1|3|2,0,0|a:ea2140ba');
-    expect(mirrorGeometryRef(source, 'x', 0).key).toBe('mirror|box|1,1,1|x|0|a:33d7e0b5');
+    expect(arrayGeometryRef(source, 3, [2, 0, 0]).key).toBe('array|box|1,1,1|3|2,0,0|a:a864052d');
+    expect(mirrorGeometryRef(source, 'x', 0).key).toBe('mirror|box|1,1,1|x|0|a:1204cccc');
   });
 
   it('a CORNER-domain attribute now REACHES the tiled set, still by domain and not by name', () => {
@@ -1015,8 +1069,8 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
         .map((c) => String(c[0]))
         .filter((m) => m.includes('cannot tile'));
       expect(tiling).toHaveLength(1);
-      expect(tiling[0]).toContain("'material_index' over 36 faces (this source has 12)");
-      expect(tiling[0]).toContain("'zz_group' over 36 faces (this source has 12)");
+      expect(tiling[0]).toContain("'material_index' over 36 faces (this source has 6)");
+      expect(tiling[0]).toContain("'zz_group' over 36 faces (this source has 6)");
     } finally {
       warn.mockRestore();
     }
@@ -1035,7 +1089,10 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     // the message cannot name a denominator the check did not apply, and a fourth domain needs
     // no edit here at all.
     const wrong = mintAttributes({
-      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 12, data: new Int32Array(12) },
+      // Twelve is a MISFIT now — a box has six faces since #770 — but this row's subject is the
+      // point attribute below, so the material index must FIT or it joins the message and the
+      // assertion stops measuring what it names.
+      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 6, data: new Int32Array(6) },
       // A box has 8 topological points; 24 is its SPLIT count, which is the exact mistake the
       // fixtures in this file used to make and the one a reader is most likely to repeat.
       zz_pts: { domain: 'point', type: 'int', count: 24, data: new Int32Array(24) },

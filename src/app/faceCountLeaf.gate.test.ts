@@ -51,8 +51,19 @@ describe('#638 the count is a leaf', () => {
     // shape preference. So the language moved below both, into `scopeQuery.ts`, which has
     // ZERO value imports (asserted below). What this gate protects is not "one import", it
     // is that nothing this module depends on can depend back on it.
-    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types', '../nodes/scopeQuery']);
+    //
+    // 🔴 WIDENED AGAIN at #770, and by the same test rather than by the same excuse. A face is
+    // a POLYGON now, so the count's checks are against what a polygon MATERIALISES to, and the
+    // arity that says so is grounded in three's own tessellation — which lives in
+    // `polygonLayout.ts`. That module imports ONE TYPE and nothing else (asserted below), so
+    // it cannot depend back on this one, which is the property rather than the number.
+    expect(importsOf('src/app/faceCount.ts')).toEqual([
+      '../nodes/types',
+      '../nodes/scopeQuery',
+      './polygonLayout',
+    ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
+    expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
   });
 
   it('is where the mint reads the count from — not `modifierGeometry`', () => {
@@ -104,8 +115,15 @@ describe('#638 the count is a leaf', () => {
     // re-opens the graph through the registry, and nothing else would notice.
     expect(importsOf('src/app/materialGroups.ts')).toEqual([]);
     expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
-    expect(importsOf('src/app/faceCount.ts')).toEqual(['../nodes/types', '../nodes/scopeQuery']);
+    expect(importsOf('src/app/faceCount.ts')).toEqual([
+      '../nodes/types',
+      '../nodes/scopeQuery',
+      './polygonLayout',
+    ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
+    // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
+    // one type import, no value imports at all.
+    expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
     // #716 — the leaf added at P2. Two type imports, no value imports at all, which is what
     // made widening the registry's set above safe rather than merely convenient.
     expect(importsOf('src/app/pointIdentity.ts')).toEqual(['three', '../nodes/types']);
@@ -120,17 +138,30 @@ describe('#638 a count disagreement is refused by name', () => {
     // `modifierAttributeTiling.gate.test.ts` holds the rows that construct the disagreement
     // and assert the message. What this leaf still owes that refusal is the NUMBERS, so they
     // are pinned here: a mirror doubles its source and an array multiplies it.
-    expect(faceCountOf(box())).toBe(12);
-    expect(faceCountOf(mirror())).toBe(24);
-    expect(faceCountOf(sphere())).toBe(2 * 8 * 3);
+    //
+    // 🔴 EVERY NUMBER HERE MOVED AT #770, AND THE RELATIONSHIPS DID NOT. A face is a POLYGON,
+    // so a box is 6 rather than 12 and a sphere is `w * h` rather than `2 * w * (h - 1)` —
+    // but a mirror still doubles its source and an array still multiplies it, which is what
+    // these rows were pinned for.
+    expect(faceCountOf(box())).toBe(6);
+    expect(faceCountOf(mirror())).toBe(12);
+    expect(faceCountOf(sphere())).toBe(8 * 4);
   });
 
   it('refuses a built geometry whose index disagrees with the descriptor', () => {
-    // The build-time half: a triangle-indexed geometry carries 3x the face count.
+    // The build-time half. ⚠️ IT IS NO LONGER `3 x faceCount` — #770 made a face a polygon, so
+    // the expected index entry count is `3 x sum(arity)`: a box's 6 quads fan to 12 triangles
+    // and 36 entries. The two arrive at the same 36 here, which is exactly why the row is kept
+    // rather than rewritten — a box is the shape where the old arithmetic still lands right,
+    // and the sphere rows in `faceCount.gate.test.ts` are where it separates.
     const why = faceCountMismatch(box(), 12);
     expect(why).not.toBeNull();
     expect(why).toContain('36');
     expect(why).toContain('12');
+    // The faces, the triangles they materialise to, and what the geometry actually carried —
+    // three numbers now, because the middle one stopped being derivable from the first.
+    expect(why).toContain('6 faces');
+    expect(why).toContain('12 triangles');
     expect(faceCountMismatch(box(), 36)).toBeNull();
   });
 

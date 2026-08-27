@@ -141,18 +141,18 @@ describe('#638 SetMaterialOp — a partial range APPENDS, which nothing could ex
     expect(out.materialSlots![1]).toMatchObject({ base: { color: '#00ff00' } });
     expect(out.attributeKey).toEqual(expect.any(String));
 
-    // The index itself — faces 0 and 1 on slot 1, the other ten on slot 0. A query range is
+    // The index itself — faces 0 and 1 on slot 1, the other four on slot 0. A query range is
     // INCLUSIVE at both ends (Houdini's group ranges are), so `0-1` is two faces, not one.
     const index = readAttributes(out.attributeKey!)![MATERIAL_INDEX];
-    expect([...index.data]).toEqual([1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
-    expect(index.count).toBe(12);
+    expect([...index.data]).toEqual([1, 1, 0, 0, 0, 0]);
+    expect(index.count).toBe(6);
     expect(index.domain).toBe('face');
   });
 
   it('the geometry is RE-MINTED, so two assignments cannot collide on one cached build', () => {
     const src = boxData();
     const a = evalOp({ scope: '0-1' }, src) as ModifiedDataValue;
-    const b = evalOp({ scope: '0-5' }, src) as ModifiedDataValue;
+    const b = evalOp({ scope: '0-2' }, src) as ModifiedDataValue;
 
     expect(a.geometry.key).not.toBe(src.geometry.key);
     expect(a.geometry.key).not.toBe(b.geometry.key);
@@ -507,7 +507,7 @@ describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source',
     // PREDICATE, which a JSON-shaped expectation cannot see — the probe that drafted this row
     // stringified the value and the function vanished from the picture entirely.
     expect(sel!.domain).toBe('face');
-    expect(sel!.length).toBe(12);
+    expect(sel!.length).toBe(6);
     expect(sel!.count).toBe(2);
     expect(sel!.canonicalQuery).toBe('0-1');
     // And the predicate agrees with the range it was migrated from: faces 0 and 1, no others.

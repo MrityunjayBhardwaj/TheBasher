@@ -137,8 +137,11 @@ describe('#638 a full render-side derivation leaves the stored bytes alone', () 
     const stored = set.material_index.data as Int32Array;
     const before = Array.from(stored);
 
-    // The derivation the renderer runs, over the resident bytes — not over a copy.
-    const groups = groupsFromMaterialIndex(stored, values.length * 3);
+    // The derivation the renderer runs, over the resident bytes — not over a copy. The arity
+    // is one triangle per face here: this row's subject is mutation, not tessellation, and a
+    // mixed arity would only obscure that.
+    const arity = values.map(() => 1);
+    const groups = groupsFromMaterialIndex(stored, values.length * 3, arity);
     expect(groups).not.toBeNull();
     expect(groups!.length).toBeGreaterThan(1); // it really did walk and coalesce
     expect(coveredIndexCount(groups!, 3)).toBe(values.length * 3);

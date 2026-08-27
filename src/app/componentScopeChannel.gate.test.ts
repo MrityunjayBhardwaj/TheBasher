@@ -192,19 +192,20 @@ describe('ns-2 step 9b — the evaluator hands a scoped operator its selection',
   it('a `source` operator receives a resolved selection with the mesh’s own face count', () => {
     registerRecorder('Ns2SourceRecorder', 'source');
     evaluateNodeAlone('Ns2SourceRecorder', { muted: false, scope: '' }, { target: MESH });
-    // A sphere(8,6) tessellates to 2*8*(6-1) = 80 faces. Asserted as a NUMBER, not as
+    // A sphere(8,6) is 8*6 = 48 FACES since #770 (it read 2*8*(6-1) = 80 triangles, which is
+    // what those 48 polygons materialise to). Asserted as a NUMBER, not as
     // "truthy": a hand-off that supplied some other mesh's selection would be invisible to
     // a presence check, and this is the value an operator will branch on.
     expect(handed.called).toBe(true);
-    expect(handed.scope?.length).toBe(80);
-    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.length).toBe(48);
+    expect(handed.scope?.count).toBe(48);
     expect(handed.scope?.domain).toBe('face');
   });
 
   it('a `target` operator receives one too — the hand-off is per DECLARATION, not per lane', () => {
     registerRecorder('Ns2TargetRecorder', 'target');
     evaluateNodeAlone('Ns2TargetRecorder', { muted: false, scope: '' }, { target: MESH });
-    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.count).toBe(48);
   });
 
   it('🔴 an authored query narrows it — and reaches the operator RESOLVED, plus an identity', () => {
@@ -212,7 +213,7 @@ describe('ns-2 step 9b — the evaluator hands a scoped operator its selection',
     evaluateNodeAlone('Ns2QueryRecorder', { muted: false, [SCOPE_PARAM]: '0-9' }, { target: MESH });
     // Ten of eighty, and the operator was handed a resolved answer.
     expect(handed.scope?.count).toBe(10);
-    expect(handed.scope?.length).toBe(80);
+    expect(handed.scope?.length).toBe(48);
     expect(handed.scope?.has(0)).toBe(true);
     expect(handed.scope?.has(10)).toBe(false);
 
@@ -259,7 +260,7 @@ describe('ns-2 step 9b — the evaluator hands a scoped operator its selection',
     // between a declared `null` and an omitted `undefined` ([[V205]]).
     registerRecorder('Ns2NoScopeRecorder', 'source');
     evaluateNodeAlone('Ns2NoScopeRecorder', { muted: false }, { target: MESH });
-    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.count).toBe(48);
     expect(handed.scope?.canonicalQuery).toBeNull();
 
     registerRecorder('Ns2TotalQueryRecorder', 'source');
@@ -268,7 +269,7 @@ describe('ns-2 step 9b — the evaluator hands a scoped operator its selection',
       { muted: false, [SCOPE_PARAM]: '0-79' },
       { target: MESH },
     );
-    expect(handed.scope?.count).toBe(80);
+    expect(handed.scope?.count).toBe(48);
     expect(handed.scope?.canonicalQuery).toBe('0-79');
   });
 
