@@ -124,6 +124,11 @@ export function groupsRefusal(
   if (indices.length !== arity.length) {
     return `materialGroups: the face-domain index carries ${indices.length} faces but the polygon layout has ${arity.length} — they describe different meshes`;
   }
+  // ⚠️ SUMMED HERE RATHER THAN THROUGH `faceCount.ts`'s `materialisedTriangles`, WHICH IS THE
+  // ONE PLACE THIS ARITHMETIC IS OTHERWISE STATED. This module imports NOTHING — that is the
+  // property that made it safe to widen the registry's import set to reach it, and it is
+  // asserted by the leaf gate. A three-line sum is the price of keeping it, and it is a sum
+  // rather than a rule: there is no version of "add these numbers up" that can drift.
   let triangles = 0;
   for (const a of arity) triangles += a;
   if (triangles * 3 !== indexCount) {

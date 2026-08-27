@@ -37,7 +37,13 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
-import { faceArityOf, faceCountMismatch, faceTriangleStarts, zeroIndexRefusal } from './faceCount';
+import {
+  faceArityOf,
+  faceCountMismatch,
+  faceTriangleStarts,
+  materialisedTriangles,
+  zeroIndexRefusal,
+} from './faceCount';
 import {
   derivedSourceOf,
   pointCountMismatch,
@@ -847,8 +853,7 @@ function faceSubset(
   // empty for the same reason `pointCountMismatch`'s is — the registry builds the geometry
   // FROM the descriptor, so the two agree by construction, and this fires only if the arity
   // and three.js's tessellation drift apart. The parity gate is what would catch that first.
-  let triangles = 0;
-  for (const a of sourceArity) triangles += a;
+  const triangles = materialisedTriangles(sourceArity);
   if (triangles * 3 !== index.count) {
     console.error(
       `geometryRegistry: cannot take the face subset '${scope}' — the source's ${sourceArity.length} faces materialise to ${triangles} triangles (${triangles * 3} index entries) but its geometry carries ${index.count}`,
