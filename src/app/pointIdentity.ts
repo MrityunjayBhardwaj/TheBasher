@@ -178,6 +178,25 @@ export function composePointWeld(source: PointWeld, copies: number): PointWeld {
   return { map, points: source.points * copies };
 }
 
+/** The gather order for a per-point attribute — {@link TiledFaceOrder}'s shape, at `point`. */
+export interface TiledPointOrder {
+  /** Points in the SOURCE — what a per-point attribute being gathered from must carry. */
+  readonly sourcePoints: number;
+  /** `order[i]` is the source point that point `i` of the merged geometry came from. */
+  readonly order: readonly number[];
+}
+
+/**
+ * Keyed on `sourcePoints|copies` and NOT on the descriptor, because those two numbers are the
+ * whole of what the order depends on — an Array x3 of a box and an Array x3 of any other
+ * 8-point mesh have the same gather order, and a drag that moves only the offset does not move
+ * it at all. `faceCount.ts` bounds its own order cache the same way and states the arithmetic
+ * there; this one's entries are smaller (`copies x sourcePoints` numbers, against a face
+ * order's `copies x sourceFaces`), so the same ceiling is more than sufficient.
+ */
+const pointOrderCache = new Map<string, TiledPointOrder>();
+const POINT_ORDER_CACHE_LIMIT = 8;
+
 /**
  * A derived descriptor's source, and how many copies of its POINT SET the build emits.
  *
@@ -248,6 +267,53 @@ export function derivedSourceOf(descriptor: GeometryDescriptor): GeometryRef | n
 /** A counted verdict, so the three producers below spell the shape once. */
 function counted(count: number): CountVerdict {
   return { kind: 'counted', count };
+}
+
+/**
+ * Which SOURCE point each point of a derived geometry came from — or `null` when the
+ * descriptor is not derived or its source's point count is not derivable (#717).
+ *
+ * `order[i] === p` means point `i` of the merged geometry is a copy of source point `p`, so a
+ * per-point attribute propagates by a gather — `tiled[i] = source[order[i]]` — with no
+ * arithmetic at the consumer. The same contract `tiledFaceOrder` holds, deliberately: a reader
+ * who knows one knows this one.
+ *
+ * ── IT IS `[0..P-1]` REPEATED PER COPY, AND THAT IS GROUNDED, NOT ASSUMED ─────────────
+ *
+ * A copy takes its source's per-element data verbatim, in source order; per-copy VARIATION is
+ * a declared opt-in. Blender's Array *"creates an array of copies of the base object, with
+ * each copy being offset from the previous one"*, and the per-copy variation it does offer is
+ * an explicit option — *"Offset U/V — shifts UVs of each new duplicate by a settable amount"*,
+ * which only means anything if a duplicate carries its source's UVs to begin with. Same shape
+ * as Merge being opt-in (see {@link composePointWeld}).
+ *
+ * 🔴 CHECKED AGAINST POSITIONS, NOT AGAINST ITSELF. Copy `c`'s point `i` was measured to sit
+ * at source point `i` transformed — at offsets 2 / 1 / 0.5, at scopes `(none)`, `0-5`, `0-1`,
+ * `0` and `6-11`, and for the mirror's REFLECTED copy, whose point `i` is source point `i`
+ * reflected. So no geometry is needed to DERIVE this order, only to check it — which is what
+ * separates it from the point COUNT, whose scoped arms lean on #712's dead weight. The order
+ * does not: a scoped copy's point set is its source's whether or not the positions it carries
+ * are all referenced.
+ */
+export function tiledPointOrder(descriptor: GeometryDescriptor): TiledPointOrder | null {
+  const tiling = pointTilingOf(descriptor);
+  if (tiling === null) return null;
+  // `tiling.source`, not `descriptor.source` — the tiling already narrowed which kinds have
+  // one, and asking the descriptor again would be a second statement of that same list.
+  const source = pointCountOf(tiling.source.descriptor);
+  if (source.kind !== 'counted') return null;
+  const sourcePoints = source.count;
+
+  const cacheKey = `${sourcePoints}|${tiling.copies}`;
+  const hit = pointOrderCache.get(cacheKey);
+  if (hit !== undefined) return hit;
+
+  const order: number[] = [];
+  for (let c = 0; c < tiling.copies; c++) for (let p = 0; p < sourcePoints; p++) order.push(p);
+  const resolved: TiledPointOrder = { sourcePoints, order };
+  if (pointOrderCache.size >= POINT_ORDER_CACHE_LIMIT) pointOrderCache.clear();
+  pointOrderCache.set(cacheKey, resolved);
+  return resolved;
 }
 
 /**

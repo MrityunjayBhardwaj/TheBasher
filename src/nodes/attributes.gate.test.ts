@@ -53,6 +53,7 @@ import { componentCountOf } from './componentSelection';
 import { carriageForDomain } from './meshAttributes';
 import { arrayGeometryRef, boxGeometryRef } from '../app/modifierGeometry';
 import { tiledCornerOrder, tiledFaceOrder } from '../app/faceCount';
+import { tiledPointOrder } from '../app/pointIdentity';
 import type { GeometryDescriptor } from './types';
 
 /** A twelve-face box — the descriptor the second dispatch site is probed against. */
@@ -71,8 +72,10 @@ const ARRAYED_BOX = (() => {
   const ref = arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 3, [2, 0, 0]);
   const faces = tiledFaceOrder(ref.descriptor);
   const corners = tiledCornerOrder(ref.descriptor);
-  if (faces === null || corners === null) throw new Error('fixture: arrayed box has no tiling');
-  return { faces, corners };
+  const points = tiledPointOrder(ref.descriptor);
+  if (faces === null || corners === null || points === null)
+    throw new Error('fixture: arrayed box has no tiling');
+  return { faces, corners, points };
 })();
 
 /** A site that dispatches on the CLOSED domain type, and how to ask it for an answer. */
@@ -109,7 +112,21 @@ const DISPATCH_SITES: readonly DispatchSite[] = [
     // is an answer — which is the whole difference between a declared drop and a `null`.
     module: 'src/nodes/meshAttributes.ts',
     what: 'carriageForDomain',
-    probe: (domain) => carriageForDomain(domain, ARRAYED_BOX.faces, ARRAYED_BOX.corners),
+    // 🔴 #717 — THIS PROBE WENT TYPE-WRONG AND STAYED GREEN, WHICH IS WHY IT IS SPELLED OUT.
+    // `carriageForDomain` took `(domain, faces, corners)` and now takes the DATUM plus the
+    // operator. The old call passed a domain STRING where an `AttributeData` goes, and the
+    // test tier is type-blind (esbuild transpiles, it does not check), so at runtime
+    // `data.domain` read `undefined`, `isKnownDomain(undefined)` was false, and this probe
+    // answered `foreign` for EVERY domain — a census that passes while examining nothing. It
+    // was caught by the changed-file `tsc` sweep (#472), not by the suite.
+    probe: (domain) =>
+      carriageForDomain(
+        { domain, type: 'int', count: 1, data: new Int32Array(1) },
+        'array',
+        ARRAYED_BOX.faces,
+        ARRAYED_BOX.corners,
+        ARRAYED_BOX.points,
+      ),
   },
 ];
 
