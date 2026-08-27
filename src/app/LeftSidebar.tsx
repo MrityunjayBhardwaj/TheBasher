@@ -4,8 +4,8 @@
 //   header   — project name + collapse chevron
 //   tabstrip — Outliner | Assets
 //   Outliner — search + Scenes label + SceneTree (DAG projection)
-//   Assets   — Import… button + AssetLibrary (bundled samples + my imports),
-//              Blender's asset-browser model
+//   Assets   — Import… button + Generate… panel + AssetLibrary (bundled
+//              samples + my imports), Blender's asset-browser model
 //
 // UX backlog #6 re-homed the asset Library here. The old footer (Library ·
 // Import · Help & Feedback) is gone: Library became the Assets tab, Import is
@@ -30,6 +30,7 @@ import { useState, type ReactNode } from 'react';
 import { useProjectStore } from '../core/project/store';
 import { SceneTree } from './SceneTree';
 import { AssetLibrary } from './AssetLibrary';
+import { GeneratePanel } from './GeneratePanel';
 import { openImportPicker } from './asset/importPicker';
 import { useChromeStore } from './stores/chromeStore';
 import { useLeftSidebarStore, type LeftSidebarTab } from './stores/leftSidebarStore';
@@ -200,6 +201,10 @@ export function LeftSidebar(): ReactNode {
             <span aria-hidden>＋</span>
             <span>Import…</span>
           </button>
+          {/* Generate… — the prompt road, beside the file road. Both end in the
+              same library and the same Ops; a separate "AI" home would have
+              said generated assets are a different kind of thing (#764). */}
+          <GeneratePanel />
           <AssetLibrary />
         </div>
       )}
