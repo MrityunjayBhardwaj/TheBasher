@@ -25,7 +25,7 @@ import { boxGeometryRef, subsetGeometryRef, descriptorParamFields } from '../app
 import { faceCountOf, tiledFaceOrder } from '../app/faceCount';
 
 /** The box fixture's face count — three.js tessellates a box to 6 quads = 12 triangles. */
-const BOX_FACES = 12;
+const BOX_FACES = 6;
 
 const box = () => boxGeometryRef([1, 1, 1], null);
 
@@ -36,29 +36,32 @@ beforeEach(() => {
 });
 
 describe('#671 — the subset descriptor: how many faces survive', () => {
-  it('🔴 KEEPING a 4-face selection of a 12-face box derives 4 — THE NUMBER 4', () => {
+  it('🔴 KEEPING a 4-face selection of a 6-face box derives 4 — THE NUMBER 4', () => {
     // `0-3` names four faces (0,1,2,3). Deliberately NOT half: a scope selecting exactly
     // half would let `keep` and its complement agree, and the row below could not tell the
     // two polarities apart.
     expect(faceCountOf(subsetGeometryRef(box(), '0-3', true).descriptor)).toBe(4);
   });
 
-  it('🔴 …and DROPPING the same selection derives 8, which is the asymmetry that separates them', () => {
-    expect(faceCountOf(subsetGeometryRef(box(), '0-3', false).descriptor)).toBe(8);
+  it('🔴 …and DROPPING the same selection derives 2, which is the asymmetry that separates them', () => {
+    expect(faceCountOf(subsetGeometryRef(box(), '0-3', false).descriptor)).toBe(2);
     // Stated rather than implied: the two polarities partition the source exactly, so a
     // defect that returned the selection's count for both would show up here as 4 + 4.
-    expect(4 + 8).toBe(BOX_FACES);
+    expect(4 + 2).toBe(BOX_FACES);
   });
 
-  it('the BUILT geometry carries exactly three index entries per derived face', () => {
+  it('the BUILT geometry carries every triangle of each derived face, and no half of one', () => {
     // The other half of the pair. `faceCountOf` above is the descriptor's claim; this is what
     // three.js actually holds after `faceSubset` ran. Parity between them is what `build()`
     // consults before deriving a group layout, and a disagreement of one silently drops every
     // material group.
     const kept = geometryRegistry.getForRead(subsetGeometryRef(box(), '0-3', true));
     const dropped = geometryRegistry.getForRead(subsetGeometryRef(box(), '0-3', false));
-    expect(kept?.getIndex()?.count).toBe(4 * 3);
-    expect(dropped?.getIndex()?.count).toBe(8 * 3);
+    // ⚠️ SIX ENTRIES PER FACE, NOT THREE, SINCE #770 — a box's faces are quads, so each owns
+    // two triangles. `faceSubset` takes a kept face's triangles WHOLE; taking three entries
+    // per face would slice every quad in half and still build a geometry that draws.
+    expect(kept?.getIndex()?.count).toBe(4 * 2 * 3);
+    expect(dropped?.getIndex()?.count).toBe(2 * 2 * 3);
   });
 
   it('the two polarities are two GEOMETRIES, not one shared build', () => {
@@ -106,7 +109,7 @@ describe('#668 — the per-face attribute survives a mask', () => {
 
     // The complement, and it is the surviving faces IN SOURCE ORDER — not a re-index.
     const dropped = tiledFaceOrder(subsetGeometryRef(box(), '0-3', false).descriptor);
-    expect(dropped).toEqual({ sourceFaces: BOX_FACES, order: [4, 5, 6, 7, 8, 9, 10, 11] });
+    expect(dropped).toEqual({ sourceFaces: BOX_FACES, order: [4, 5] });
   });
 
   it('the order length IS the derived face count, for both polarities', () => {

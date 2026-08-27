@@ -58,7 +58,7 @@ import type { GeometryRef, MeshDataValue, ModifiedDataValue, ObjectData } from '
 const BOX: [number, number, number] = [1, 1, 1];
 
 /** A box is 12 triangles and 36 corners — the two counts this road can derive. */
-const FACES = 12;
+const FACES = 6; // #770 — a box's six POLYGONS; the twelve was its triangles.
 const CORNERS = 36;
 /** The renderer's split buffer, which is what `point` still means in this build (#716). */
 const POINTS = 24;
@@ -137,7 +137,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     // Faces 0-5 only, so this is the append arm — the one road that mints.
     const targeted = mintTargetedAttributes(
       source.ref,
-      resolveComponentSelection(meshOver(source.ref), { scope: '0-5' }, 'face'),
+      resolveComponentSelection(meshOver(source.ref), { scope: '0-2' }, 'face'),
       'evaluate',
     );
     const out = fromStore(targeted?.key, 'the targeted minter');
@@ -154,7 +154,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     const source = sourceWithEveryClass();
     const targeted = mintTargetedAttributes(
       source.ref,
-      resolveComponentSelection(meshOver(source.ref), { scope: '0-5' }, 'face'),
+      resolveComponentSelection(meshOver(source.ref), { scope: '0-2' }, 'face'),
       'evaluate',
     );
     const out = fromStore(targeted?.key, 'the targeted minter');
@@ -164,10 +164,10 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     expect(index.count).toBe(FACES);
     // 1 inside the selection, 0 outside it. The source's own index was all ones, so this row
     // reds if the carry-forward spread the wrong way round and kept the source's entry.
-    expect(Array.from(index.data)).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(index.data)).toEqual([1, 1, 1, 0, 0, 0]);
     expect(index).not.toBe(source.set[MATERIAL_INDEX]);
     // And the coverage the operator chooses its arm from still counts the operator's faces.
-    expect(targeted?.covered).toBe(6);
+    expect(targeted?.covered).toBe(3);
     expect(targeted?.faces).toBe(FACES);
   });
 
@@ -175,7 +175,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     const bare = boxGeometryRef(BOX, null);
     const targeted = mintTargetedAttributes(
       bare,
-      resolveComponentSelection(meshOver(bare), { scope: '0-5' }, 'face'),
+      resolveComponentSelection(meshOver(bare), { scope: '0-2' }, 'face'),
       'evaluate',
     );
     expect(Object.keys(fromStore(targeted?.key, 'the bare-source mint'))).toEqual([MATERIAL_INDEX]);
@@ -184,7 +184,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
   it('4 — 🔴 IT REACHES THE OUTPUT of a scoped SetMaterialOp', () => {
     const source = sourceWithEveryClass();
     const src = meshOver(source.ref);
-    const params = { muted: false, scope: '0-5' };
+    const params = { muted: false, scope: '0-2' };
     const out = SetMaterialOpNode.evaluate(
       params,
       { target: src, material: WIRED },
@@ -206,7 +206,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     // onto its output — never reaching the minter's answer at all — emits a set with exactly
     // this key list. Measured: that inverse edit passes a names-only row. The assignment the
     // operator exists to write is the only thing that tells the two apart.
-    expect(Array.from(carried[MATERIAL_INDEX].data)).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(carried[MATERIAL_INDEX].data)).toEqual([1, 1, 1, 0, 0, 0]);
     expect(carried.zz_corner).toBe(source.set.zz_corner);
     // The append arm is the one under test — two slots is what says so.
     expect(out.materialSlots).toHaveLength(2);
@@ -218,7 +218,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     const params = MaterialOverrideOpParams.parse({
       color: '#00ff00',
       overridden: { color: true },
-      scope: '0-5',
+      scope: '0-2',
     });
     const out = MaterialOverrideOpNode.evaluate(
       params,
@@ -236,7 +236,7 @@ describe('#722 — a scoped material operator carries its source forward', () =>
     ]);
     // 🔴 THE VALUE — same reason as the row above: the source's own set wears the same four
     // names, so only the written assignment distinguishes the minter's answer from the source's.
-    expect(Array.from(carried[MATERIAL_INDEX].data)).toEqual([1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0]);
+    expect(Array.from(carried[MATERIAL_INDEX].data)).toEqual([1, 1, 1, 0, 0, 0]);
     expect(carried.zz_corner).toBe(source.set.zz_corner);
     expect(out.materialSlots).toHaveLength(2);
   });

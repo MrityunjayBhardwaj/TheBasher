@@ -81,8 +81,8 @@ beforeEach(() => {
 describe('#645 — divergent materials over one shared geometry', () => {
   it('the two branches wear DIFFERENT materials, and the shared one is never written', () => {
     const shared = sharedBoxData();
-    const a = evalOverride('#00ff00', '0-5', shared);
-    const b = evalOverride('#0000ff', '0-5', shared);
+    const a = evalOverride('#00ff00', '0-2', shared);
+    const b = evalOverride('#0000ff', '0-2', shared);
 
     // They differ where the override landed.
     expect(a.materialSlots?.[1]).not.toEqual(b.materialSlots?.[1]);
@@ -96,8 +96,8 @@ describe('#645 — divergent materials over one shared geometry', () => {
 
   it('🔑 AND THEY STILL RESOLVE TO ONE BufferGeometry — the row Blender cannot match', () => {
     const shared = sharedBoxData();
-    const a = evalOverride('#00ff00', '0-5', shared);
-    const b = evalOverride('#0000ff', '0-5', shared);
+    const a = evalOverride('#00ff00', '0-2', shared);
+    const b = evalOverride('#0000ff', '0-2', shared);
 
     // The key is the same because the TABLE is not in it — only the attribute index is.
     expect(a.geometry.key).toBe(b.geometry.key);
@@ -119,8 +119,8 @@ describe('#645 — divergent materials over one shared geometry', () => {
 
   it('differently-scoped branches re-mint, so two scopes cannot collide on one build', () => {
     const shared = sharedBoxData();
-    const a = evalOverride('#00ff00', '0-5', shared);
-    const c = evalOverride('#00ff00', '6-11', shared);
+    const a = evalOverride('#00ff00', '0-2', shared);
+    const c = evalOverride('#00ff00', '3-5', shared);
 
     // Same colour, different faces — if the key ignored the index these would share a build
     // and one of the two would draw the other's groups.

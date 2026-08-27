@@ -24,17 +24,19 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
     const attribute = minted!.set[MATERIAL_INDEX];
     expect(attribute.domain).toBe('face');
     expect(attribute.type).toBe('int');
-    expect(attribute.count).toBe(12); // a box tessellates to 12 triangles
-    expect(attribute.data.length).toBe(12);
-    expect([...attribute.data]).toEqual(new Array(12).fill(0));
+    expect(attribute.count).toBe(6); // a box has six FACES — six quads, since #770
+    expect(attribute.data.length).toBe(6);
+    expect([...attribute.data]).toEqual(new Array(6).fill(0));
   });
 
   it('follows the geometry’s own tessellation rather than a fixed number', () => {
+    // `w x h` polygons since #770, where these read `2 x w x (h - 1)` triangles. The row's
+    // point is unchanged — the count follows the segments rather than a constant.
     expect(uniformMaterialAttributes(sphereDescriptor(1, 8, 4))!.set[MATERIAL_INDEX].count).toBe(
-      48,
+      32,
     );
     expect(uniformMaterialAttributes(sphereDescriptor(1, 32, 16))!.set[MATERIAL_INDEX].count).toBe(
-      960,
+      512,
     );
   });
 
@@ -49,7 +51,7 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
   it('puts the derived set in the store under the key it hands back', () => {
     const key = mintMeshAttributes(boxDescriptor([3, 3, 3]), 'evaluate');
     expect(key).not.toBeNull();
-    expect(read(key!)?.[MATERIAL_INDEX].count).toBe(12);
+    expect(read(key!)?.[MATERIAL_INDEX].count).toBe(6);
   });
 
   it('is content-keyed, so two equal geometries converge on one key', () => {
@@ -68,13 +70,13 @@ describe('#634 both primitive producers carry the key', () => {
     const params = BoxDataParams.parse({ size: [1, 1, 1], material: {} });
     const value = BoxDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
     expect(value.attributeKey).not.toBeNull();
-    expect(read(value.attributeKey!)?.[MATERIAL_INDEX].count).toBe(12);
+    expect(read(value.attributeKey!)?.[MATERIAL_INDEX].count).toBe(6);
   });
 
   it('SphereData mints one, sized to its own segments', () => {
     const params = SphereDataParams.parse({ radius: 1, widthSegments: 8, heightSegments: 4 });
     const value = SphereDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
     expect(value.attributeKey).not.toBeNull();
-    expect(read(value.attributeKey!)?.[MATERIAL_INDEX].count).toBe(48);
+    expect(read(value.attributeKey!)?.[MATERIAL_INDEX].count).toBe(32);
   });
 });

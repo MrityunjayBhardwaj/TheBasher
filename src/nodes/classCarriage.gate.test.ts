@@ -110,7 +110,9 @@ describe('the per-class carriage census', () => {
     expect(point.layout.sourceElements).toBe(points.sourcePoints);
     expect(point.layout.noun).toBe('points');
     // ...and its length is a THIRD distinct value, so no two arms can pass by agreeing:
-    // 24 faces, 72 corners, 24 points on an Array x3 of a box.
+    // 18 faces, 108 corners, 24 points on an Array x3 of a box (#770 — it read 36 / 108 / 24,
+    // and the POINT figure is the one that did not move, since points were never counted in
+    // triangles).
     expect(points.order.length).toBe(24);
 
     // Order IDENTITY, not equality: `faceCount.ts` returns the same object for an unchanged
@@ -127,7 +129,17 @@ describe('the per-class carriage census', () => {
 
     // And the two orders are genuinely different lengths, so row 4 could not pass by the two
     // arms accidentally agreeing.
-    expect(corners.order.length).toBe(faces.order.length * 3);
+    //
+    // 🔴 IT IS NOT `faces * 3` SINCE #770, AND THE EXPRESSION THAT REPLACED IT IS THE POINT. A
+    // face is a POLYGON, so the corners it owns depend on how many TRIANGLES it materialises
+    // to — two per quad on a box. Keeping `faces.order.length * 3` would have asserted 54
+    // against a real 108 and read as a corner order half the size it needs to be.
+    // Written as the three literals rather than as an expression: `sourceCorners * 3` would
+    // be right here only because this array makes three copies, and would read as "three
+    // corners per face" — the very relation this phase removed.
+    expect(faces.order.length).toBe(18); // 6 source polygons x 3 copies
+    expect(corners.order.length).toBe(108); // 12 source triangles x 3 corners x 3 copies
+    expect(corners.sourceCorners).toBe(36);
   });
 
   it('5 — a dropped class resolves to its verdict, and to the SAME object', () => {

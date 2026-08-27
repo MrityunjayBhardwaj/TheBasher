@@ -178,7 +178,11 @@ describe("#754 the composition — a generator's point identity comes from its s
     // the point count does not, which is the whole tell (a parameter that should have
     // mattered and did not).
     const box = boxGeometryRef([1, 1, 1], null);
-    const rows = ([null, '0-5', '0-1', '0', '6-11'] as const).map((scope) => {
+    // ⚠️ THE QUERIES MOVED AT #770 AND TWO OF THEM HAD TO. A box has six FACES now, so `'0-5'`
+    // names all of them and `'6-11'` names none — the first would have collapsed onto the
+    // unscoped row and the second onto the empty one, leaving three distinct index figures
+    // where this row needs four. `'0-2'` and `'3-5'` are proper halves at the new count.
+    const rows = ([null, '0-2', '0-1', '0', '3-5'] as const).map((scope) => {
       const ref = arrayGeometryRef(box, 3, [2, 0, 0], scope);
       const verdict = pointCountOf(ref.descriptor);
       return {
@@ -189,13 +193,15 @@ describe("#754 the composition — a generator's point identity comes from its s
     });
     expect(rows).toEqual([
       { scope: '(none)', points: 24, index: 108 },
-      { scope: '0-5', points: 24, index: 72 },
-      { scope: '0-1', points: 24, index: 48 },
-      { scope: '0', points: 24, index: 42 },
-      { scope: '6-11', points: 24, index: 72 },
+      { scope: '0-2', points: 24, index: 72 },
+      { scope: '0-1', points: 24, index: 60 },
+      { scope: '0', points: 24, index: 48 },
+      { scope: '3-5', points: 24, index: 72 },
     ]);
     // The sixth figure, on the other side of the same defect: a subset of a sphere keeping ONE
     // face still reports its source's 42 points, because it still carries all 63 positions.
+    // Face 0 of a sphere is a POLE cell, so it is one triangle — the index below reads 3 both
+    // before and after #770, which is a coincidence of the pole row and not a constant.
     const sphere = sphereGeometryRef(1, 8, 6, null);
     const one = subsetGeometryRef(sphere, '0', true);
     expect(pointCountOf(one.descriptor)).toEqual(counted(42));

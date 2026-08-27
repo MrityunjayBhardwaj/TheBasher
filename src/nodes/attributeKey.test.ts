@@ -34,7 +34,7 @@ import {
 } from '../app/modifierGeometry';
 import { mintMeshAttributes } from './meshAttributes';
 import { hashValue } from '../core/dag/hash';
-import { nonAlignedMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
+import { mixedArityMaterialMeshData, twoMaterialMeshData } from '../test-utils/twoMaterialMesh';
 import { BoxDataNode, BoxDataParams } from './BoxData';
 import type { GeometryRef, MeshDataValue, Vec3 } from './types';
 import { attributeKeyOf, mintAttributes } from './attributeKey';
@@ -178,10 +178,10 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
 
     // The point of the whole phase: same size, DIFFERENT per-face assignment ⇒ different
     // geometry ⇒ a different cache key ⇒ two built instances that can carry two layouts.
-    const twoValued = new Int32Array(12);
-    twoValued.fill(1, 6);
+    const twoValued = new Int32Array(6);
+    twoValued.fill(1, 3);
     const split = mintAttributes({
-      material_index: { domain: 'face', type: 'int', count: 12, data: twoValued },
+      material_index: { domain: 'face', type: 'int', count: 6, data: twoValued },
     })!;
     expect(boxGeometryRef([1, 1, 1], split.key).key).not.toBe(folded.key);
   });
@@ -234,7 +234,7 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
     const value = twoMaterialMeshData();
     expect(value.geometry.attributeKey).toBe(value.attributeKey);
     expect(value.geometry.key).toBe(`box|1,1,1|a:${value.attributeKey}`);
-    expect(value.geometry.key).not.toBe(nonAlignedMaterialMeshData().geometry.key);
+    expect(value.geometry.key).not.toBe(mixedArityMaterialMeshData().geometry.key);
   });
 
   it('the descriptor union has gained no attribute-bearing member', () => {

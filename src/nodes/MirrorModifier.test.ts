@@ -33,13 +33,16 @@ import { read } from '../app/attributeStore';
 import { MATERIAL_INDEX } from './attributes';
 
 /**
- * The merged face count of an unscoped mirror over the sphere fixture — MEASURED (160), not
- * derived. The fixture's sphere(1, 8, 6) tessellates to 80 triangles and an unscoped mirror
- * keeps the whole input and reflects all of it, so 160 is `2 x 80`. Written as a literal on
- * purpose: computing it from `faceCountOf` here would route the assertion through the same
- * arithmetic the production road uses, and it would then agree with a wrong answer.
+ * The merged FACE count of an unscoped mirror over the sphere fixture — MEASURED (96), not
+ * derived. The fixture's sphere(1, 8, 6) is 48 POLYGONS and an unscoped mirror keeps the whole
+ * input and reflects all of it, so 96 is `2 x 48`. Written as a literal on purpose: computing
+ * it from `faceCountOf` here would route the assertion through the same arithmetic the
+ * production road uses, and it would then agree with a wrong answer.
+ *
+ * ⚠️ IT READ 160 UNTIL #770 — `2 x 80` triangles. The 80 is still real and is what these 96
+ * faces materialise to; it is no longer what a face-domain attribute is counted in.
  */
-const MIRRORED_FACES = 160;
+const MIRRORED_FACES = 96;
 import { hydrateInlineMaterial } from './materialSchema';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { buildAddModifierOps, resolveStackBase } from '../app/operatorStack';
@@ -247,14 +250,15 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
   it('🔴 THE DISCRIMINATING ROW — a box mirrored and scoped to half is 54, not 72', () => {
     // THE DIFFERING CASE, FIRST, AND AS A LITERAL. The whole input is preserved (12 faces =
     // 36 index) and the selected half is reflected (6 faces = 18 index): 36 + 18 = 54. The
-    // unscoped mirror is 12 + 12 = 24 faces = 72. Both numbers are written out; neither is
+    // unscoped mirror is 6 + 6 = 12 faces = 24 triangles = 72. Both numbers are written out;
+    // neither is
     // derived from the other, and neither is derived through the helper under test.
     //
     // This is the row that proves the scope was HONOURED, and it is the row that must red
     // when `MirrorModifier.evaluate` discards its fourth argument — while the array rows one
     // file over stay green, because a per-operator hand-off is what this step adds.
     const src = boxSource();
-    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-5' }, src))).toBe(54);
+    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-2' }, src))).toBe(54);
     expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false }, src))).toBe(72);
   });
 
@@ -268,22 +272,24 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     // cannot quote the triple as three independent findings.
     const src = boxSource();
     expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false }, src))).toBe(72);
-    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-11' }, src))).toBe(
-      72,
-    );
-    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-5' }, src))).toBe(54);
+    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-5' }, src))).toBe(72);
+    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-2' }, src))).toBe(54);
   });
 
   it('…and the same on a SPHERE, so the arithmetic is not a property of twelve faces', () => {
-    // sphere(8,6) tessellates to 80 faces = 240 index — read from the BUILT geometry at the
-    // measurement, never from the requested segments, because three.js clamps segments
-    // silently ([[H324]]): the source row below is what makes the two after it legible.
-    // Mirrored unscoped that is 160 faces = 480 index; scoped to `0-39`, half, it is
-    // 80 + 40 = 120 faces = 360. Literals again, for the reason in this block's header.
+    // sphere(8,6) is 48 polygons materialising to 80 triangles = 240 index — read from the
+    // BUILT geometry at the measurement, never from the requested segments, because three.js
+    // clamps segments silently ([[H324]]).
+    //
+    // ⚠️ THE SCOPE MOVED TO `4-27` AT #770 AND IT IS NOT COSMETIC. `0-39` named forty of
+    // eighty triangles; over forty-eight polygons it names forty of them — five sixths of the
+    // mesh — so the scoped and unscoped legs would nearly converge. `4-27` is twenty-four
+    // faces, and because four of them are pole TRIANGLES it is 44 triangles rather than 48:
+    // 80 + 44 = 124 triangles = 372. That gap is the arity, and a box cannot produce it.
     const src = sphereData();
     expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false }, src))).toBe(480);
-    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '0-39' }, src))).toBe(
-      360,
+    expect(builtIndex(evalMod({ axis: 'x', offset: 3, muted: false, scope: '4-27' }, src))).toBe(
+      372,
     );
   });
 
@@ -292,14 +298,14 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     // authored text. `5,4,3,2,1,0` and `0-5` are one cached geometry rather than two
     // byte-identical ones.
     const src = boxSource();
-    const written = evalMod({ axis: 'x', muted: false, scope: '5,4,3,2,1,0' }, src);
-    const canonical = evalMod({ axis: 'x', muted: false, scope: '0-5' }, src);
+    const written = evalMod({ axis: 'x', muted: false, scope: '2,1,0' }, src);
+    const canonical = evalMod({ axis: 'x', muted: false, scope: '0-2' }, src);
     expect((written as ModifiedDataValue).geometry.key).toBe(
       (canonical as ModifiedDataValue).geometry.key,
     );
     expect((written as ModifiedDataValue).geometry.descriptor).toMatchObject({
       kind: 'mirror',
-      scope: '0-5',
+      scope: '0-2',
     });
   });
 
@@ -308,6 +314,12 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     // their keys must be unchanged — the field OMITTED, never `{scope: undefined}`
     // ([[H265]]'s shape). A blank query is the same authoring state as none.
     //
+    //
+    // 🔴 THE LITERAL MOVED AT #770 AND THE CLAIM DID NOT. A face-domain attribute carries one
+    // element per POLYGON now, so a box's `material_index` went from twelve entries to six —
+    // different content, so a different content hash, necessarily. What this row asserts is
+    // that an UNSCOPED key has no scope segment in it, which is unaffected; the hash is read
+    // off this tree and still reds on the next unintended re-key.
     // ⚠️ WHAT HOLDS THIS IS `scopeField`, NOT the resolver's `null` — measured at step 13a,
     // where the first draft credited the wrong one. This row therefore guards the KEY
     // BUILDER's treatment of the unscoped case; the resolver's separate `null`/`''` claim is
@@ -320,7 +332,7 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
     // SOURCE's embedded mid-key but the MIRROR's own tiled one, appended at the end — a
     // #644 change, not a scope change. The row's subject (does an unscoped generator pick
     // up a suffix?) is untouched, and the discriminating half below never moved ([[H342]]).
-    expect(bare.geometry.key).toBe('mirror|box|1,1,1|x|0|a:06770795');
+    expect(bare.geometry.key).toBe('mirror|box|1,1,1|x|0|a:3c7d7ccc');
     expect(blank.geometry.key).toBe(bare.geometry.key);
     expect(Object.keys(bare.geometry.descriptor).sort()).toEqual([
       'axis',
@@ -359,7 +371,7 @@ describe('MirrorModifier — a scoped generator, through the operator', () => {
       ],
       closed: false,
     };
-    expect(() => evalMod({ axis: 'x', muted: false, scope: '0-5' }, curve)).toThrow(
+    expect(() => evalMod({ axis: 'x', muted: false, scope: '0-2' }, curve)).toThrow(
       /cannot be honoured/,
     );
     // …and an UNSCOPED mirror over a curve still passes it straight through, as it always

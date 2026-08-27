@@ -95,7 +95,9 @@ const boxDescriptor = () => boxGeometryRef(BOX_SIZE, null).descriptor;
  * driven independently below.
  */
 function twoMaterialBoxRef() {
-  const minted = faceRangeMaterialAttributes(boxDescriptor(), 6, 11);
+  // #770 — FACES 3..5. A box has six faces now, so the old `6, 11` clamps to nothing and every
+  // face stays on slot 0: the source would silently stop being two-material.
+  const minted = faceRangeMaterialAttributes(boxDescriptor(), 3, 5);
   expect(minted, 'the two-material source failed to mint').not.toBeNull();
   insert(minted!.key, minted!.set, 'evaluate');
   return boxGeometryRef(BOX_SIZE, minted!.key);
@@ -304,18 +306,15 @@ describe('#688 the tiled modifier key carries the whole face-domain set', () => 
 
   it('carries the source`s assignment rather than merely a set of the right shape', () => {
     // Guards the row above against passing on a tiling that mints the right NAME and the
-    // wrong VALUES — a gather bug would keep the key set identical. 12 source faces, faces
-    // 6..11 on slot 1, arrayed x3 => 36 faces repeating the source's 6+6 split three times.
+    // wrong VALUES — a gather bug would keep the key set identical. 6 source faces, faces
+    // 3..5 on slot 1, arrayed x3 => 18 faces repeating the source's 3+3 split three times.
     const array = arrayGeometryRef(twoMaterialBoxRef(), 3, [2, 0, 0]);
     const tiled = fromStore(mintTiledModifierAttributes(array.descriptor), 'the tiled minter');
     const assignment = tiled[MATERIAL_INDEX];
 
     expect(assignment.domain).toBe('face');
-    expect(assignment.count).toBe(36);
-    expect([...assignment.data]).toEqual([
-      0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1,
-      1, 1, 1, 1, 1,
-    ]);
+    expect(assignment.count).toBe(18);
+    expect([...assignment.data]).toEqual([0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1]);
   });
 });
 

@@ -27,10 +27,24 @@ import { stripComments } from '../test-utils/sourceScan';
 import { faceCountOf } from '../app/faceCount';
 import type { ObjectData } from './types';
 
-/** A twelve-face box on the data lane — the population every row below resolves against. */
-const BOX: ObjectData = {
+/**
+ * A TWELVE-FACE mesh on the data lane — the population every row below resolves against.
+ *
+ * ⚠️ IT WAS A BOX AND IS A SPHERE SINCE #770, AND THE FIXTURE MOVED SO THE ROWS DID NOT. A face
+ * is a polygon now, so a box answers 6 where it used to answer 12 — which would have quietly
+ * halved the span of every query literal in this file. `'0-11:3'` would select `[0, 3]` instead
+ * of `[0, 3, 6, 9]` and still pass a rewritten assertion, and `'9-99'` would select nothing
+ * where it is meant to demonstrate CLAMPING rather than emptiness. A sphere at w=4 h=3 is twelve
+ * polygons, so every literal below keeps the population it was written against.
+ *
+ * Nothing here is about a box; this file tests the query LANGUAGE, and the mesh is the length.
+ */
+const TWELVE_FACE_MESH: ObjectData = {
   kind: 'MeshData',
-  geometry: { key: 'box|1,1,1', descriptor: { kind: 'box', size: [1, 1, 1] } },
+  geometry: {
+    key: 'sphere|1|4|3',
+    descriptor: { kind: 'sphere', radius: 1, widthSegments: 4, heightSegments: 3 },
+  },
   material: null,
 };
 
@@ -68,7 +82,7 @@ const CAMERA: ObjectData = {
  * Resolve against the box fixture, refusing the `null` answer HERE rather than at every
  * caller (ns-2 step 9b made the resolver's return nullable).
  *
- * The narrowing is an assertion, not a cast: `BOX` is a resolvable value, so a `null` from
+ * The narrowing is an assertion, not a cast: `TWELVE_FACE_MESH` is a resolvable value, so a `null` from
  * it means the resolver changed its mind about what a mesh is, and every row below would
  * otherwise report that as a property of the QUERY it was testing.
  */
@@ -86,7 +100,8 @@ function mustResolve(
   return resolved;
 }
 
-const scope = (query: string): ComponentSelection => mustResolve(BOX, { [SCOPE_PARAM]: query });
+const scope = (query: string): ComponentSelection =>
+  mustResolve(TWELVE_FACE_MESH, { [SCOPE_PARAM]: query });
 
 /** The selected indices, read only through the accessor. */
 const selected = (s: ComponentSelection): number[] =>
@@ -103,7 +118,7 @@ describe('#607 the three degenerate cases, decided here', () => {
     // 🔴 `{}` — an ABSENT param, not a blank one. Routing this through `scope('')` would
     // have type-checked and tested the wrong thing: blank-means-absent is a separate row
     // below, and collapsing the two would leave the absent case with no witness at all.
-    const s = mustResolve(BOX, {});
+    const s = mustResolve(TWELVE_FACE_MESH, {});
     expect({ count: s.count, length: s.length, domain: s.domain }).toEqual({
       count: 12,
       length: 12,
@@ -116,7 +131,7 @@ describe('#607 the three degenerate cases, decided here', () => {
   it('a query resolving to ZERO elements selects nothing — and is distinct BY VALUE from a total', () => {
     // Asserted as its own row rather than as "not everything". A collapse and a default
     // agree on every degenerate population, so the two ends have to be pinned separately.
-    const nothing = scope('50-99'); // wholly outside a twelve-face box
+    const nothing = scope('50-99'); // wholly outside a twelve-face mesh
     expect({ count: nothing.count, length: nothing.length }).toEqual({ count: 0, length: 12 });
     expect(nothing.has(0)).toBe(false);
 
@@ -209,7 +224,7 @@ describe('#607 a selection cannot be built against a count that does not exist',
     // The one branch that does not depend on the spine: a param declared as something
     // other than a string can only come from a schema, and guessing at its meaning is how
     // a scope gets lost.
-    expect(() => resolveComponentSelection(BOX, { [SCOPE_PARAM]: 7 }, 'face')).toThrow(
+    expect(() => resolveComponentSelection(TWELVE_FACE_MESH, { [SCOPE_PARAM]: 7 }, 'face')).toThrow(
       /must be a string/,
     );
   });

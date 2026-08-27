@@ -552,7 +552,7 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
     },
   });
 
-  it('CONTROL — a box keeps the same component across a size write (12 faces at every size)', () => {
+  it('CONTROL — a box keeps the same component across a size write (6 faces at every size)', () => {
     const attributeKey = mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate');
     const base = {
       kind: 'SceneChild' as const,
@@ -606,7 +606,12 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
     // Two producers under one label is one number pretending to be two, and the store ships
     // growth attribution by origin INSTEAD of eviction — so losing the attribution loses
     // the only instrument that road has.
-    mintMeshAttributes(sphereDescriptor(1, 12, 7), 'evaluate');
+    // ⚠️ THE PRIMING DESCRIPTOR MOVED AT #770 BECAUSE IT STARTED COLLIDING. The overlay below
+    // rebuilds at sphere(1, 21, 4), which is 21 x 4 = 84 polygons — and sphere(1, 12, 7) is
+    // also 84. A uniform assignment is content-keyed, so two equal counts are ONE key: the
+    // re-mint became a store HIT and this row read zero growth for a road that had run. Under
+    // the old triangle arithmetic the two were 126 and 144 and could not meet.
+    mintMeshAttributes(sphereDescriptor(1, 12, 6), 'evaluate');
     const before = mintMeshAttributes(sphereDescriptor(1, 9, 5), 'evaluate')!;
     resetAttributeGrowth();
 
@@ -628,10 +633,11 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
     // Non-uniform at a CHANGED face count has no correct answer without a resampling policy
     // this phase does not have. Degrading to one material is visible; an empty group layout
     // under a material array is not — it removes the object.
-    const split = new Int32Array(48);
-    split.fill(1, 24);
+    // 32 = 8 x 4 polygons since #770, where it was 48 = 2 x 8 x 3 triangles.
+    const split = new Int32Array(32);
+    split.fill(1, 16);
     const nonUniform = mintAttributes({
-      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 48, data: split },
+      [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: 32, data: split },
     })!;
     insertAttributes(nonUniform.key, nonUniform.set, 'evaluate');
 
@@ -645,6 +651,6 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
     // indistinguishable from a mesh that genuinely has one material.
     const dropped = rebuiltMeshAttributes(nonUniform.key, sphereDescriptor(1, 16, 4));
     expect(dropped.key).toBeNull();
-    expect(dropped.reason).toMatch(/48 faces cannot follow 'sphere' to 96 faces/);
+    expect(dropped.reason).toMatch(/32 faces cannot follow 'sphere' to 64 faces/);
   });
 });

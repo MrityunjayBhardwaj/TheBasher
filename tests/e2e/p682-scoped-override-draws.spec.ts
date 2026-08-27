@@ -40,11 +40,18 @@ import type { Page } from '@playwright/test';
 /** Unmistakable against the seed scene, whose cube is standard grey and carries no blue. */
 const BLUE = '#0000ff';
 
-// A box is 12 triangles = 36 index elements. `1-6` is six of them — half — and is written
-// `1-6` rather than `0-5` for the reason ns-2 step 15 records: `0-5` is ALSO exactly cube
-// sides 0/1/2, so it agrees with a cube-side implementation and a triangle one at once.
-// `1-6` has the same cardinality and separates them.
-const SCOPE_HALF = '1-6';
+// A box is SIX FACES since #770 — six quads — materialising to 12 triangles = 36 index
+// elements. `1-3` is three of those faces, half, and the query moved there from `1-6` in the
+// same phase: over six faces `1-6` names five of them, so the scoped and unscoped renders
+// would have nearly converged and the pixel clause below would have stopped discriminating.
+//
+// ⚠️ THE OLD REASON FOR PREFERRING `1-6` OVER `0-5` IS GONE, AND ITS REPLACEMENT IS NOT A
+// BOUNDARY. It read: *"`0-5` is ALSO exactly cube sides 0/1/2, so it agrees with a cube-side
+// implementation and a triangle one at once; `1-6` has the same cardinality and separates
+// them."* #770 named the polygon as the face, so a box's faces ARE its cube sides and no box
+// query can separate those two readings any more. What survives is cardinality: the scope must
+// name a PROPER, non-empty subset, which is all this constant is now chosen for.
+const SCOPE_HALF = '1-3';
 
 /** Both renders must clear this, or "scoped < total" is satisfiable by drawing nothing. */
 const DRAWS_AT_ALL = 5_000;
@@ -221,7 +228,7 @@ test.beforeEach(async ({ page }) => {
 });
 
 // ── CLAUSE 1 — the mesh the renderer actually mounts ──────────────────────────────────
-test('a scoped override mounts a TWO-material mesh split at the triangle boundary', async ({
+test('a scoped override mounts a TWO-material mesh that partitions its index exactly', async ({
   page,
 }) => {
   await dispatch(page, authorOverrideOps('n_box_data', 'n_box', 'n_ovr', SCOPE_HALF), 'override');
@@ -232,20 +239,26 @@ test('a scoped override mounts a TWO-material mesh split at the triangle boundar
   expect(facts!.isArray).toBe(true);
   expect(facts!.materialCount).toBe(2);
   // THREE runs, not two — and the number is the measurement correcting the assumption that
-  // wrote this row. `1-6` is a run in the MIDDLE of the box, so the remainder is TWO
+  // wrote this row. `1-3` is a run in the MIDDLE of the box, so the remainder is TWO
   // stretches (before and after), not one. p638's `0-1` starts at zero and yields two; the
   // shape does not carry across, and a row that asserted 2 here would have been asserting
   // the fixture's alignment rather than the operator's behaviour.
   expect(facts!.groupCount).toBe(3);
 
-  // 🔴 THE GRANULARITY, ON THE LIVE INSTANCE, AS AN EXACT PARTITION. Faces 1–6 are triangles
-  // 1..6 = index elements [3,21). The boundaries land on multiples of 3 (a TRIANGLE), never
-  // on multiples of 6 (a cube SIDE) — which is the error an aligned fixture cannot see, and
-  // the whole reason ns-2 step 15 chose `1-6` over `0-5`.
+  // 🔴 THE PARTITION, ON THE LIVE INSTANCE. Faces 1–3 are three whole SIDES since #770 — six
+  // triangles, index elements [6,24) — where they used to be three triangles at [3,21).
+  //
+  // ⚠️ AND THE BOUNDARY NO LONGER DISCRIMINATES A GRANULARITY, WHICH IS SAID HERE RATHER THAN
+  // LEFT AS A STALE CLAIM. This row read: *"the boundaries land on multiples of 3 (a TRIANGLE),
+  // never on multiples of 6 (a cube SIDE) — the error an aligned fixture cannot see"*. #770
+  // named the polygon as the face, so multiples of 6 are now the CORRECT answer on a box and
+  // that error is unexpressible here. What this row still measures is that a mid-box scope
+  // partitions the index exactly, in three runs, with nothing lost — which is what the sum
+  // below is for.
   expect(facts!.groups).toEqual([
-    { start: 0, count: 3, materialIndex: 0 },
-    { start: 3, count: 18, materialIndex: 1 },
-    { start: 21, count: 15, materialIndex: 0 },
+    { start: 0, count: 6, materialIndex: 0 },
+    { start: 6, count: 18, materialIndex: 1 },
+    { start: 24, count: 12, materialIndex: 0 },
   ]);
   // Every index element covered exactly once — 36 for a box. A scope that dropped faces
   // would leave a hole here and the mesh would draw gaps.

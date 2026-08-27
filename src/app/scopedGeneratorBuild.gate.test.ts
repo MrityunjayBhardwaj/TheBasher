@@ -31,10 +31,15 @@
 //
 // ROW 2 is SCOPE-SENSITIVITY, AS A LITERAL:
 //
-//     faceCountOf({array, count: 3, scope: '0-5'}) over a box  ===  24
+//     faceCountOf({array, count: 3, scope: '0-2'}) over a box  ===  12
 //
-// asserted as THE NUMBER 24, never as an expression over the unscoped count — an expression
-// would inherit the same omission it is meant to catch. Under the rule below, `12 + 6 x 2`.
+// asserted as THE NUMBER 12, never as an expression over the unscoped count — an expression
+// would inherit the same omission it is meant to catch. Under the rule below, `6 + 3 x 2`.
+//
+// ⚠️ THE QUERY MOVED FROM `0-5` AT #770 AND HAD TO. A face is a POLYGON, so a box has six of
+// them and `0-5` names ALL of them — every scoped row would have collapsed to its unscoped
+// twin, which is precisely the correlated-omission state this file exists to detect, arrived
+// at by leaving a literal alone. `0-2` is half of six, which is what `0-5` was of twelve.
 // A correlated omission (both sides ignoring the field) reds this immediately, and leaves
 // row 1 green. That asymmetry is the proof row 2 does work row 1 cannot.
 //
@@ -127,23 +132,23 @@ it('the registry is still seeded on a test that is not the first — the row bel
 });
 
 describe('ns-2 step 12.5 — ROW 2: the scoped count is scope-SENSITIVE, as a literal', () => {
-  it('🔴 an array x3 over a box scoped to `0-5` derives 24 faces — THE NUMBER 24', () => {
-    // The whole detector. Written as `24` and not as `12 + 6 * 2`, and not as anything
-    // derived from `faceCountOf` of the unscoped descriptor: an expression over the
-    // unscoped count inherits exactly the omission this row exists to catch.
-    expect(faceCountOf(arrayGeometryRef(box(), 3, [2, 0, 0], '0-5').descriptor)).toBe(24);
+  it('🔴 an array x3 over a box scoped to `0-2` derives 12 faces — THE NUMBER 12', () => {
+    // The whole detector. Written as `12` and not as `6 + 3 * 2`, and not as anything derived
+    // from `faceCountOf` of the unscoped descriptor: an expression over the unscoped count
+    // inherits exactly the omission this row exists to catch.
+    expect(faceCountOf(arrayGeometryRef(box(), 3, [2, 0, 0], '0-2').descriptor)).toBe(12);
   });
 
-  it('🔴 …and a mirror over a box scoped to `0-5` derives 18', () => {
-    // 12 preserved + 6 generated. The mirror figure is the GROUNDED half of §2.2's rule.
-    expect(faceCountOf(mirrorGeometryRef(box(), 'x', 1, '0-5').descriptor)).toBe(18);
+  it('🔴 …and a mirror over a box scoped to `0-2` derives 9', () => {
+    // 6 preserved + 3 generated. The mirror figure is the GROUNDED half of §2.2's rule.
+    expect(faceCountOf(mirrorGeometryRef(box(), 'x', 1, '0-2').descriptor)).toBe(9);
   });
 
   it('the unscoped counts are untouched, so the arms did not simply change meaning', () => {
     // The control for the two rows above. An implementation that subtracted from every
     // array would satisfy them and break every shipped graph.
-    expect(faceCountOf(arrayGeometryRef(box(), 3, [2, 0, 0]).descriptor)).toBe(36);
-    expect(faceCountOf(mirrorGeometryRef(box(), 'x', 1).descriptor)).toBe(24);
+    expect(faceCountOf(arrayGeometryRef(box(), 3, [2, 0, 0]).descriptor)).toBe(18);
+    expect(faceCountOf(mirrorGeometryRef(box(), 'x', 1).descriptor)).toBe(12);
   });
 
   it('a scope selecting NOTHING is the IDENTITY, not an empty geometry', () => {
@@ -151,8 +156,8 @@ describe('ns-2 step 12.5 — ROW 2: the scoped count is scope-SENSITIVE, as a li
     // is preserved and nothing is generated from it, so a box arrayed x3 over an empty
     // subset is a box. Parity holds here too, correctly — which is why the zero-index
     // refusal below has no reachable input.
-    const nothing = arrayGeometryRef(box(), 3, [2, 0, 0], '!0-11');
-    expect(faceCountOf(nothing.descriptor)).toBe(12);
+    const nothing = arrayGeometryRef(box(), 3, [2, 0, 0], '!0-5');
+    expect(faceCountOf(nothing.descriptor)).toBe(6);
     expect(builtIndex(nothing)).toBe(36);
   });
 });
@@ -162,8 +167,8 @@ describe('ns-2 step 12.5 — the KEY carries the scope, so two scopes are two ge
     // Pre-mortem 3. Without the scope in the key both of these resolve to
     // `array|box|1,1,1|3|2,0,0` and share one cached `BufferGeometry` — and both draw
     // something, which is what makes it silent.
-    const half = arrayGeometryRef(box(), 3, [2, 0, 0], '0-5');
-    const other = arrayGeometryRef(box(), 3, [2, 0, 0], '6-11');
+    const half = arrayGeometryRef(box(), 3, [2, 0, 0], '0-2');
+    const other = arrayGeometryRef(box(), 3, [2, 0, 0], '3-5');
     expect(half.key).not.toBe(other.key);
 
     const a = built(half);
@@ -176,20 +181,20 @@ describe('ns-2 step 12.5 — the KEY carries the scope, so two scopes are two ge
     // The other direction, which the row above cannot see. A key that folded something
     // per-call (an object identity, a counter) would pass the two-instances row and mint a
     // geometry per frame.
-    const a = arrayGeometryRef(box(), 3, [2, 0, 0], '0-5');
-    const b = arrayGeometryRef(box(), 3, [2, 0, 0], '0-5');
+    const a = arrayGeometryRef(box(), 3, [2, 0, 0], '0-2');
+    const b = arrayGeometryRef(box(), 3, [2, 0, 0], '0-2');
     expect(a.key).toBe(b.key);
     expect(built(a)).toBe(built(b));
   });
 
   it('the key folds the CANONICAL query, so two spellings of one scope share a build', () => {
     // D9's stated choice: the canonical query string, not a hash of the resolved mask. The
-    // canonicaliser is `scopeQuery`'s, so `5,4,3,2,1,0` and `0-5` are one entry rather than
-    // two byte-identical geometries.
-    const written = arrayGeometryRef(box(), 3, [2, 0, 0], '5,4,3,2,1,0');
-    const canonical = arrayGeometryRef(box(), 3, [2, 0, 0], '0-5');
+    // canonicaliser is `scopeQuery`'s, so `2,1,0` and `0-2` are one entry rather than two
+    // byte-identical geometries.
+    const written = arrayGeometryRef(box(), 3, [2, 0, 0], '2,1,0');
+    const canonical = arrayGeometryRef(box(), 3, [2, 0, 0], '0-2');
     expect(written.key).toBe(canonical.key);
-    expect(written.descriptor).toMatchObject({ kind: 'array', scope: '0-5' });
+    expect(written.descriptor).toMatchObject({ kind: 'array', scope: '0-2' });
   });
 
   it('canonicalisation is IDEMPOTENT, because the rebuild road re-feeds its own output', () => {
@@ -225,12 +230,12 @@ describe('ns-2 step 12.5 — P3, re-run THROUGH the descriptor rather than stand
   // live. These are the same three numbers, produced by the registry from a handle.
 
   it('array x3 over a box: unscoped 108, scoped-to-half 72 — the DIFFERING case first', () => {
-    expect(builtIndex(arrayGeometryRef(box(), 3, [2, 0, 0], '0-5'))).toBe(72);
+    expect(builtIndex(arrayGeometryRef(box(), 3, [2, 0, 0], '0-2'))).toBe(72);
     expect(builtIndex(arrayGeometryRef(box(), 3, [2, 0, 0]))).toBe(108);
   });
 
   it('mirror over a box: unscoped 72, scoped-to-half 54', () => {
-    expect(builtIndex(mirrorGeometryRef(box(), 'x', 1, '0-5'))).toBe(54);
+    expect(builtIndex(mirrorGeometryRef(box(), 'x', 1, '0-2'))).toBe(54);
     expect(builtIndex(mirrorGeometryRef(box(), 'x', 1))).toBe(72);
   });
 
@@ -240,18 +245,21 @@ describe('ns-2 step 12.5 — P3, re-run THROUGH the descriptor rather than stand
     // attribute buffers, so the positions of the faces it dropped are still in the buffer;
     // `mergeGeometries` copies them out verbatim. A mirror over a box scoped to half has 54
     // index entries and 48 positions — 24 from each half, none of them removed.
-    const geom = built(mirrorGeometryRef(box(), 'x', 1, '0-5'));
+    const geom = built(mirrorGeometryRef(box(), 'x', 1, '0-2'));
     expect(geom.getIndex()!.count).toBe(54);
     expect(geom.getAttribute('position').count).toBe(48);
   });
 
   it('a scoped sphere lands the same arithmetic on a mesh whose count is not 12', () => {
-    // Box-only fixtures are the shape that lets `12` be hard-coded somewhere and pass.
-    // sphere(8, 4) tessellates to 2 * 8 * 3 = 48 faces; `0-23` selects 24 of them.
+    // Box-only fixtures are the shape that lets a constant be hard-coded somewhere and pass.
+    // sphere(8, 4) is 8 x 4 = 32 polygons; `0-15` selects 16 of them. ⚠️ THE INDEX FIGURE IS
+    // NO LONGER `faces x 3`: the selected half is rows 0 and 1 — eight pole TRIANGLES and eight
+    // quads, 24 triangles rather than the 32 a constant arity would give — which is exactly
+    // the arithmetic a box cannot show. 48 source triangles + 24 + 24 = 96 = 288 index entries.
     const sphere = sphereGeometryRef(1, 8, 4, null);
-    expect(faceCountOf(sphere.descriptor)).toBe(48);
-    expect(faceCountOf(arrayGeometryRef(sphere, 3, [2, 0, 0], '0-23').descriptor)).toBe(96);
-    expect(builtIndex(arrayGeometryRef(sphere, 3, [2, 0, 0], '0-23'))).toBe(288);
+    expect(faceCountOf(sphere.descriptor)).toBe(32);
+    expect(faceCountOf(arrayGeometryRef(sphere, 3, [2, 0, 0], '0-15').descriptor)).toBe(64);
+    expect(builtIndex(arrayGeometryRef(sphere, 3, [2, 0, 0], '0-15'))).toBe(288);
   });
 });
 
@@ -262,7 +270,7 @@ describe('ns-2 step 12.5 — the zero-index refusal, and the size of its populat
     // positions and `merge([empty])` returns index 0 — a VALID geometry that draws nothing,
     // which is more silent than a null would have been. So the trigger is the built index,
     // not a null from the merge.
-    const why = zeroIndexRefusal(arrayGeometryRef(box(), 3, [2, 0, 0], '0-5').descriptor, 0);
+    const why = zeroIndexRefusal(arrayGeometryRef(box(), 3, [2, 0, 0], '0-2').descriptor, 0);
     expect(why).not.toBeNull();
     expect(why).toContain('array');
     expect(why).toContain('0');
@@ -286,7 +294,7 @@ describe('ns-2 step 12.5 — the zero-index refusal, and the size of its populat
     // The claim, checked: every sync-buildable descriptor this phase can construct — scoped
     // to everything, to half, or to nothing — builds a non-empty index.
     const source = box();
-    const scopes = [undefined, '0-11', '0-5', '!0-11', '0-11:2'] as const;
+    const scopes = [undefined, '0-5', '0-2', '!0-5', '0-5:2'] as const;
     const empties: string[] = [];
     for (const scope of scopes) {
       for (const ref of [
@@ -308,16 +316,16 @@ describe('ns-2 step 12.5 — the scope survives the overlay rebuild road', () =>
     // builder, and an arm that dropped `d.scope` would silently unscope a handle the moment
     // any animated param on that modifier moved — with every existing test green, because no
     // existing fixture is scoped.
-    const scoped = arrayGeometryRef(box(), 3, [2, 0, 0], '0-5');
+    const scoped = arrayGeometryRef(box(), 3, [2, 0, 0], '0-2');
     const rebuilt = rebuildGeometryRef(scoped, { count: 5 });
-    expect(rebuilt.descriptor).toMatchObject({ kind: 'array', count: 5, scope: '0-5' });
-    expect(faceCountOf(rebuilt.descriptor)).toBe(12 + 6 * 4);
+    expect(rebuilt.descriptor).toMatchObject({ kind: 'array', count: 5, scope: '0-2' });
+    expect(faceCountOf(rebuilt.descriptor)).toBe(6 + 3 * 4);
 
-    const mirrored = mirrorGeometryRef(box(), 'x', 1, '0-5');
+    const mirrored = mirrorGeometryRef(box(), 'x', 1, '0-2');
     expect(rebuildGeometryRef(mirrored, { offset: 3 }).descriptor).toMatchObject({
       kind: 'mirror',
       offset: 3,
-      scope: '0-5',
+      scope: '0-2',
     });
   });
 
@@ -325,7 +333,7 @@ describe('ns-2 step 12.5 — the scope survives the overlay rebuild road', () =>
     // The overlay finds what to fold by asking the descriptor for its own field names, and
     // the correspondence it rests on is that a descriptor field is named exactly like the
     // param that feeds it. `scope` is such a field the moment a generator carries one.
-    expect(descriptorParamFields(arrayGeometryRef(box(), 3, [2, 0, 0], '0-5').descriptor)).toEqual([
+    expect(descriptorParamFields(arrayGeometryRef(box(), 3, [2, 0, 0], '0-2').descriptor)).toEqual([
       'count',
       'offset',
       'scope',

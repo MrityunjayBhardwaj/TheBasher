@@ -174,7 +174,7 @@ test.beforeEach(async ({ page }) => {
 
 test('a two-material box under an Array x3 draws with BOTH materials', async ({ page }) => {
   // 1 — the source alone. This is the state that already worked.
-  await dispatch(page, authorOps('0-5'), 'assign');
+  await dispatch(page, authorOps('0-2'), 'assign');
   await page.waitForFunction(
     () => (window as unknown as W).__basher_mesh_material?.('n_box')?.materialCount === 2,
     undefined,

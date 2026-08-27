@@ -25,7 +25,7 @@
 // REF: src/app/materialAssignment.ts; src/app/resolveEvaluatedMesh.ts
 //      (`evaluatedMeshFromMeshData`); src/nodes/attributes.ts; issues #634, #633, #638.
 
-import { boxGeometryRef } from '../app/modifierGeometry';
+import { boxGeometryRef, sphereGeometryRef } from '../app/modifierGeometry';
 import { insert } from '../app/attributeStore';
 import { MATERIAL_INDEX, type AttributeData } from '../nodes/attributes';
 import { mintAttributes } from '../nodes/attributeKey';
@@ -48,37 +48,59 @@ export const TWO_MATERIAL_TRANSFORM: MeshTransform = {
 };
 
 /**
- * A box whose 12 faces split evenly between two material slots: the first six on slot 0, the
- * last six on slot 1.
+ * A box whose 6 faces split evenly between two material slots: the first three on slot 0, the
+ * last three on slot 1.
+ *
+ * ⚠️ IT WAS TWELVE UNTIL #770, and the change is the phase in one line. A box has six faces
+ * because a face is a POLYGON; the twelve was the triangle count, which is now what those six
+ * quads materialise to. Every fixture here moved for the same reason and none of them changed
+ * what they are FOR.
  *
  * The attribute is put in the store as a side effect, exactly as a producer's `evaluate`
  * would do it, so a consumer resolving through `attributeKey` finds it the same way.
  */
 export function twoMaterialMeshData(): MeshDataValue {
-  const indices = new Int32Array(12);
-  indices.fill(1, 6);
+  const indices = new Int32Array(6);
+  indices.fill(1, 3);
   return boxFromFaceIndices(indices);
 }
 
 /**
- * A box with **face 0 alone** on slot 1 and the other eleven on slot 0 — the NON-ALIGNED
- * fixture (#638).
+ * A sphere at w=8 h=6 with **pole polygon 0 alone** on slot 1 and the other 47 on slot 0 —
+ * the MIXED-ARITY fixture (#770), and the successor to a box fixture that inverted.
  *
- * ⚠️ THIS EXISTS BECAUSE THE 6/6 SPLIT ABOVE CANNOT DETECT A WHOLE ERROR CLASS. Two things
- * are both honestly called "a box's faces" and they differ by 2×: the attribute domain
- * `face` means TRIANGLES (12), while `BoxGeometry.groups` means CUBE SIDES (6, two triangles
- * each). The 6/6 split lands exactly on a cube-side boundary — sides 0,1,2 against sides
- * 3,4,5 — so an implementation resolving at cube-side granularity renders three sides of
- * each material and looks correct on that fixture, in pixels AND in draw-call count.
+ * ⚠️ THIS EXISTS BECAUSE THE 3/3 SPLIT ABOVE CANNOT DETECT A WHOLE ERROR CLASS, exactly as its
+ * predecessor did — but the class moved and the box could not follow it.
  *
- * Face 0 alone does not align to a cube side. The correct layout is `[{0,3,1},{3,33,0}]`; a
- * cube-side implementation yields `[{0,6,1},{6,30,0}]`, which still covers 36 of 36. **So the
- * assertion that discriminates is on the group BOUNDARY (`start: 3`), never on coverage.**
+ * What it used to guard: two things were both honestly called "a box's faces" and differed by
+ * 2× — the attribute domain `face` meant TRIANGLES (12) while `BoxGeometry.groups` meant CUBE
+ * SIDES (6). #770 resolved that by naming the polygon as the face, so both readings now answer
+ * 6 and the ambiguity is gone at its root.
+ *
+ * What can still be wrong is the ARITY. **On a box, assuming every polygon is a quad is
+ * CORRECT** — every polygon is one — so the old fixture does not merely break under #770, it
+ * inverts: the layout it was minted to reject, `[{0,6,1},{6,30,0}]`, is the right answer now.
+ * Deleting it would have left the class unguarded with the suite green, which is the failure
+ * mode it was created to prevent.
+ *
+ * A sphere carries both arities at once: its pole rows are triangles and its middle rows are
+ * quads. Polygon 0 is a pole triangle, so it owns ONE triangle — three index entries:
+ *
+ *     correct      [{0,3,1},{3,237,0}]   covers 240 of 240
+ *     constant-2   [{0,6,1},{6,234,0}]   covers 240 of 240   ← same coverage, wrong boundary
+ *
+ * **So the assertion that discriminates is on the group BOUNDARY (`start: 3`), never on
+ * coverage** — the same sentence its predecessor carried, one granularity along, and the same
+ * number underneath it.
  */
-export function nonAlignedMaterialMeshData(): MeshDataValue {
-  const indices = new Int32Array(12);
+export const MIXED_ARITY_WIDTH_SEGMENTS = 8;
+export const MIXED_ARITY_HEIGHT_SEGMENTS = 6;
+
+export function mixedArityMaterialMeshData(): MeshDataValue {
+  // 48 polygons: 16 pole triangles and 32 quads, materialising to 80 triangles.
+  const indices = new Int32Array(MIXED_ARITY_WIDTH_SEGMENTS * MIXED_ARITY_HEIGHT_SEGMENTS);
   indices[0] = 1;
-  return boxFromFaceIndices(indices);
+  return sphereFromFaceIndices(indices);
 }
 
 /**
@@ -95,8 +117,8 @@ export function nonAlignedMaterialMeshData(): MeshDataValue {
  * The empty slots are real: an object may declare four slots and leave two unassigned.
  */
 export function sparseSlotMaterialMeshData(): MeshDataValue {
-  const indices = new Int32Array(12);
-  indices.fill(3, 8);
+  const indices = new Int32Array(6);
+  indices.fill(3, 4);
   return boxFromFaceIndices(indices, [SLOT_0_MATERIAL, null, null, SLOT_1_MATERIAL]);
 }
 
@@ -110,6 +132,31 @@ export function sparseSlotMaterialMeshData(): MeshDataValue {
 export function boxFromFaceIndices(
   indices: Int32Array,
   slots: readonly (InlineMaterialSpec | null)[] = [SLOT_0_MATERIAL, SLOT_1_MATERIAL],
+): MeshDataValue {
+  return fromFaceIndices(indices, slots, (key) => boxGeometryRef([1, 1, 1], key));
+}
+
+/**
+ * The mixed-arity sibling of {@link boxFromFaceIndices} — the same mint, over a sphere.
+ *
+ * It exists because a box cannot carry the error class {@link mixedArityMaterialMeshData}
+ * guards: every one of its polygons is a quad, so a constant arity is right there. Sharing
+ * {@link fromFaceIndices} rather than copying it keeps the two from drifting in how they mint,
+ * store or describe an assignment — the property the single builder was written for.
+ */
+export function sphereFromFaceIndices(
+  indices: Int32Array,
+  slots: readonly (InlineMaterialSpec | null)[] = [SLOT_0_MATERIAL, SLOT_1_MATERIAL],
+): MeshDataValue {
+  return fromFaceIndices(indices, slots, (key) =>
+    sphereGeometryRef(1, MIXED_ARITY_WIDTH_SEGMENTS, MIXED_ARITY_HEIGHT_SEGMENTS, key),
+  );
+}
+
+function fromFaceIndices(
+  indices: Int32Array,
+  slots: readonly (InlineMaterialSpec | null)[],
+  refOf: (attributeKey: string) => MeshDataValue['geometry'],
 ): MeshDataValue {
   const materialIndex: AttributeData = {
     domain: 'face',
@@ -128,7 +175,7 @@ export function boxFromFaceIndices(
   // two-length material array would draw twelve of thirty-six triangles. The fixture
   // would be the constructor for the exact failure it exists to detect. It cannot be
   // built that way now — the builder does not compile without an answer.
-  const geometry = boxGeometryRef([1, 1, 1], minted.key);
+  const geometry = refOf(minted.key);
 
   return {
     kind: 'MeshData',
