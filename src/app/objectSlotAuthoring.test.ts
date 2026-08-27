@@ -84,9 +84,12 @@ function withTwoSlots(state: DagState, dataId: string, objectId: string): DagSta
       to: { node: 'setmat', socket: 'material' },
     },
     {
+      // Splicing the writer in displaces the object's existing data edge —
+      // declared, because #759 refuses a silent one.
       type: 'connect',
       from: { node: 'setmat', socket: 'out' },
       to: { node: objectId, socket: 'data' },
+      replace: true,
     },
   ]);
 }

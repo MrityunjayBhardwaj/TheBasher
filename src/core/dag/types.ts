@@ -744,6 +744,16 @@ export const OpConnectSchema = z.object({
    * type.
    */
   index: z.number().int().nonnegative().optional(),
+  /**
+   * Opt-in to displacing the edge already bound to a `single`-cardinality
+   * socket (#759). Omitted, a connect onto an occupied single socket is
+   * REFUSED and names the incumbent, because the silent replacement it used
+   * to perform is indistinguishable from a connect onto an empty socket —
+   * to a director wiring a second producer in, and to an agent proposing a
+   * plan. Like `index`, this is a parameter on `connect`, not a sixth Op
+   * type. Ignored for `list` sockets, which append.
+   */
+  replace: z.boolean().optional(),
 });
 
 export const OpDisconnectSchema = z.object({

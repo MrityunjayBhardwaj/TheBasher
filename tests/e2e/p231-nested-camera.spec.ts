@@ -92,6 +92,8 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           type: 'connect',
           from: { node: cam, socket: 'out' },
           to: { node: 'n_scene', socket: 'camera' },
+          // Displaces the seed camera on a single socket — declared, not silent (#759).
+          replace: true,
         });
       },
       { grp: GRP, cam: CAM, camOps: CAM_OPS },
@@ -192,6 +194,8 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
           type: 'connect',
           from: { node: cam, socket: 'out' },
           to: { node: 'n_scene', socket: 'camera' },
+          // Displaces the seed camera on a single socket — declared, not silent (#759).
+          replace: true,
         });
         (window as unknown as W).__basher_selection!.getState().select(cam);
       },
