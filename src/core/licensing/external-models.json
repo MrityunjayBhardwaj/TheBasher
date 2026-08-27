@@ -1,0 +1,102 @@
+{
+  "comment": "External AI models and weights, and whether this repo's permissive-only posture (THESIS.md 35) permits them. Not npm dependencies -- scripts/license-audit.mjs walks the npm production tree and cannot see any of this. Verdicts are recorded here so a restricted model is named as blocked rather than discovered at ship time. See docs/EXTERNAL-MODEL-LICENCES.md for the cited text behind every verdict.",
+  "verdicts": {
+    "ALLOWED": "Permissive terms. Usable on the same footing as an npm dependency.",
+    "ALLOWED_WITH_CONDITIONS": "Commercial use is granted, but the grant carries obligations or is revocable. Conditions are listed and must be honoured at the point of use.",
+    "BLOCKED": "Terms forbid commercial or production use, or grant nothing. Must not be designed into a feature."
+  },
+  "staleness": {
+    "comment": "A recorded verdict is a measurement with a shelf life. The NVIDIA Open Model grant is revocable and incorporates acceptable-use terms by reference, so it can change without this file moving. Past warnAfterDays the audit warns; past failAfterDays it fails. A per-model checkedAt overrides the manifest-wide one, so re-checking one model does not claim the others were re-checked.",
+    "warnAfterDays": 180,
+    "failAfterDays": 365
+  },
+  "checkedAt": "2026-08-26",
+  "models": [
+    {
+      "id": "kimodo-code",
+      "name": "Kimodo (inference code)",
+      "role": "text-to-motion, phase A1",
+      "source": "https://github.com/nv-tlabs/kimodo",
+      "licence": "Apache-2.0",
+      "verdict": "ALLOWED",
+      "reason": "GitHub-detected SPDX Apache-2.0; on the audit's existing permissive allowlist.",
+      "conditions": [],
+      "citations": ["https://github.com/nv-tlabs/kimodo/blob/main/LICENSE"]
+    },
+    {
+      "id": "kimodo-open-model-checkpoints",
+      "name": "Kimodo-SOMA-RP-v1.1, Kimodo-SOMA-SEED-v1.1, Kimodo-SOMA-RP-v1, Kimodo-G1-RP-v1, Kimodo-SOMA-SEED-v1, Kimodo-G1-SEED-v1",
+      "role": "text-to-motion weights, phase A1",
+      "source": "https://huggingface.co/nvidia/Kimodo-SOMA-RP-v1.1",
+      "licence": "NVIDIA Open Model License",
+      "verdict": "ALLOWED_WITH_CONDITIONS",
+      "reason": "The licence states models are commercially usable and grants sell/offer-for-sale/distribute rights. But the grant is revocable, which MIT and Apache-2.0 are not, so it is not equivalent to a permissive licence and is recorded separately.",
+      "conditions": [
+        "Ship a NOTICE file reading 'Licensed by NVIDIA Corporation under the NVIDIA Open Model License' and pass a copy of the agreement to recipients (section 3.1).",
+        "Use must stay consistent with NVIDIA's Trustworthy AI terms, incorporated by reference (section 2.3).",
+        "Rights terminate automatically on bypassing or weakening any safety guardrail (section 2.1), and on instituting copyright or patent litigation against NVIDIA (section 2.1).",
+        "The grant is revocable (section 2.2). Treat availability as a dependency that can be withdrawn."
+      ],
+      "citations": [
+        "https://github.com/nv-tlabs/kimodo#models",
+        "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
+      ]
+    },
+    {
+      "id": "kimodo-smplx-rp-v1",
+      "name": "Kimodo-SMPLX-RP-v1",
+      "role": "text-to-motion weights, SMPL-X skeleton variant",
+      "source": "https://huggingface.co/nvidia/Kimodo-SMPLX-RP-v1",
+      "licence": "NVIDIA Internal Scientific Research and Development Model License",
+      "verdict": "BLOCKED",
+      "reason": "Section 3.1 forbids distribution, deployment and production use outright, and forbids using the model to generate works for sale or distribution. That is exactly what this product does. The other six Kimodo checkpoints are NOT blocked -- the licence varies per checkpoint within one release.",
+      "conditions": [],
+      "citations": [
+        "https://github.com/nv-tlabs/kimodo#models",
+        "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-internal-scientific-research-and-development-model-license/"
+      ]
+    },
+    {
+      "id": "partfield",
+      "name": "PartField (code and weights)",
+      "role": "candidate for element-level perception, phase A6",
+      "source": "https://github.com/nv-tlabs/PartField",
+      "licence": "NVIDIA License (non-standard; GitHub reports NOASSERTION)",
+      "verdict": "BLOCKED",
+      "reason": "Section 3.3 is an explicit use limitation: the work and any derivative works may be used only non-commercially, defined as non-commercial research and education. This restricts USE, not merely distribution, so serving it over HTTP does not escape it. Separately, the published checkpoint is hosted on a personal account with no declared licence at all, which grants nothing.",
+      "conditions": [],
+      "citations": [
+        "https://github.com/nv-tlabs/PartField/blob/main/LICENSE",
+        "https://huggingface.co/mikaelaangel/partfield-ckpt"
+      ]
+    },
+    {
+      "id": "sampart3d",
+      "name": "SAMPart3D (code and weights)",
+      "role": "candidate for element-level perception, phase A6",
+      "source": "https://github.com/Pointcept/SAMPart3D",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "MIT on both halves: GitHub-detected SPDX MIT on the repository, and the Hugging Face model card declares mit, ungated. The unblocked alternative to PartField for A6.",
+      "conditions": [],
+      "citations": [
+        "https://github.com/Pointcept/SAMPart3D/blob/main/LICENSE",
+        "https://huggingface.co/yhyang-myron/SAMPart3D"
+      ]
+    },
+    {
+      "id": "unirig",
+      "name": "UniRig (code and weights)",
+      "role": "candidate for auto-rigging, unscheduled and gated on the geometry track",
+      "source": "https://github.com/VAST-AI-Research/UniRig",
+      "licence": "MIT",
+      "verdict": "ALLOWED",
+      "reason": "MIT on both halves: GitHub-detected SPDX MIT on the repository, and the Hugging Face model card declares mit, ungated. Licensing is not what gates this one -- point-data survival on the geometry track is.",
+      "conditions": [],
+      "citations": [
+        "https://github.com/VAST-AI-Research/UniRig/blob/main/LICENSE",
+        "https://huggingface.co/VAST-AI/UniRig"
+      ]
+    }
+  ]
+}
