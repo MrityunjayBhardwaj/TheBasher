@@ -191,7 +191,10 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
       return remember('box', { kind: 'laid-out', polygons: boxPolygons() });
     }
     case 'sphere': {
-      const key = `sphere|${descriptor.widthSegments}|${descriptor.heightSegments}`;
+      // Keyed on the CLAMPED segments, not the raw ones: three clamps before tessellating, so
+      // `(8.9, 6.9)` and `(8, 6)` are the same geometry and must not be two entries in a cache
+      // that holds eight.
+      const key = `sphere|${Math.max(3, Math.floor(descriptor.widthSegments))}|${Math.max(2, Math.floor(descriptor.heightSegments))}`;
       const hit = layoutCache.get(key);
       if (hit !== undefined) return hit;
       return remember(key, {
@@ -201,16 +204,25 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
     }
     case 'array':
     case 'mirror':
-    case 'subset':
+    case 'subset': {
+      // 🔴 ONE REASON PER CASE, NOT BOTH EVERY TIME. These kinds are blocked for two different
+      // reasons and only one applies to any given descriptor — an unscoped Array has no scope
+      // to keep half a polygon, and telling its author about one sends them to look at a field
+      // that is not there. A message naming a reason the check did not apply is the same defect
+      // the attribute misfit warning carried until #717, one field over.
+      const scoped = descriptor.kind === 'subset' || descriptor.scope !== undefined;
       return {
         kind: 'not-yet',
-        why:
-          `a '${descriptor.kind}' addresses its source by TRIANGLE, so a scope keeps half a ` +
-          `polygon (measured: '2-8' on a box leaves one of four polygons partial), and an ` +
-          `unscoped copy still needs the source's SPLIT vertex count, which only a built ` +
-          `geometry knows`,
+        why: scoped
+          ? `a '${descriptor.kind}' scope addresses TRIANGLES, so it keeps half a polygon — ` +
+            `measured on a box, '2-8' keeps 7 triangles across 4 polygons with 1 of them ` +
+            `partial, and '0' keeps half of polygon 0 and nothing else`
+          : `an unscoped '${descriptor.kind}' needs each copy's vertices offset by the source's ` +
+            `SPLIT vertex count (24 for a box, not the 8 topological points 'pointCountOf' ` +
+            `answers with), and the only thing that knows it reads a BUILT geometry`,
         until: '#770',
       };
+    }
     case 'gltf':
       return {
         kind: 'outside-the-descriptor',

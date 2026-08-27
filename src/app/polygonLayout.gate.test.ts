@@ -17,7 +17,7 @@
 //      node_modules/three/src/geometries/{Sphere,Box}Geometry.js; issues #769, #770, #736.
 
 import { describe, expect, it } from 'vitest';
-import { BoxGeometry, SphereGeometry } from 'three';
+import { BoxGeometry, SphereGeometry, type BufferGeometry } from 'three';
 import { fanToTriangles, polygonLayoutOf, type PolygonRim } from './polygonLayout';
 import { faceCountOf } from './faceCount';
 import type { GeometryDescriptor } from '../nodes/types';
@@ -63,8 +63,8 @@ function arity(polygons: readonly PolygonRim[]): Record<number, number> {
  * The whole gate, as one function: the fan of the derived layout IS the built index buffer.
  * Returns nothing — it throws through `expect`, so a caller cannot forget to assert on it.
  */
-function agreesWithBuiltBuffer(name: string, d: GeometryDescriptor, built: { index: unknown }) {
-  const index = (built as { index: { array: ArrayLike<number> } | null }).index;
+function agreesWithBuiltBuffer(name: string, d: GeometryDescriptor, built: BufferGeometry) {
+  const index = built.index;
   expect(
     index,
     `${name}: the fixture must be INDEXED or these rows compare nothing`,
@@ -147,6 +147,39 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
       expect(v.why.length, d.kind).toBeGreaterThan(20);
       expect(v.until, d.kind).toBe('#770');
     }
+
+    // 🔴 AND THE REASON IS THE ONE THAT APPLIES, WHICH IS A SEPARATE CLAIM FROM HAVING ONE.
+    // These kinds are blocked two different ways and only one holds per descriptor. An
+    // unscoped Array told about a scope sends its author to look at a field that is not there.
+    const scopedArray = polygonLayoutOf({
+      kind: 'array',
+      source: src,
+      count: 3,
+      offset: [2, 0, 0],
+      scope: '2-8',
+      scopeDomain: 'face',
+    } as unknown as GeometryDescriptor);
+    const bareArray = polygonLayoutOf({
+      kind: 'array',
+      source: src,
+      count: 3,
+      offset: [2, 0, 0],
+    } as unknown as GeometryDescriptor);
+    if (scopedArray.kind !== 'not-yet' || bareArray.kind !== 'not-yet')
+      throw new Error('both array arms must refuse');
+    expect(scopedArray.why, 'a scoped array is blocked by the scope').toContain('half a polygon');
+    expect(bareArray.why, 'an unscoped array is blocked by the split count').toContain(
+      'SPLIT vertex count',
+    );
+    // Keyed on the scope-specific CLAIM, not on the substring 'scope' — the unscoped message
+    // contains the word 'unscoped', so the crude spelling of this assertion reds on the right
+    // behaviour. It did, which is the only reason the distinction is written down here.
+    expect(bareArray.why, 'and must NOT cite a scope it does not carry').not.toContain(
+      'half a polygon',
+    );
+    expect(bareArray.why, 'nor the triangle-addressing reason').not.toContain(
+      'addresses TRIANGLES',
+    );
 
     for (const d of [
       { kind: 'gltf', assetRef: 'a', childName: 'n' } as GeometryDescriptor,
