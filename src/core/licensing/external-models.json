@@ -37,6 +37,7 @@
         "Rights terminate automatically on bypassing or weakening any safety guardrail (section 2.1), and on instituting copyright or patent litigation against NVIDIA (section 2.1).",
         "The grant is revocable (section 2.2). Treat availability as a dependency that can be withdrawn."
       ],
+      "attribution": "Licensed by NVIDIA Corporation under the NVIDIA Open Model License",
       "citations": [
         "https://github.com/nv-tlabs/kimodo#models",
         "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"

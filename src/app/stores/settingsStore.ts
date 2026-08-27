@@ -14,6 +14,8 @@
 
 import { create } from 'zustand';
 import { DEFAULT_COMFYUI_URL } from '../../core/comfy';
+import { DEFAULT_MOTIONGEN_MODEL, DEFAULT_MOTIONGEN_URL } from '../../core/motiongen';
+import { modelRecordFor } from '../../core/licensing/allowedModels';
 
 const STORAGE_KEY = 'basher.settings.v1';
 
@@ -31,12 +33,25 @@ export interface PersistedSettings {
    * expensive, and server-dependent.
    */
   comfyLiveGenerate: boolean;
+  /** Text-to-motion service base URL. No such service ships yet — see
+   *  DEFAULT_MOTIONGEN_URL. Unreachable simply means the stub generates. */
+  motionGenUrl: string;
+  /**
+   * The checkpoint text-to-motion generates with, org-qualified.
+   *
+   * This is the field the licence gate exists for. It is the one place a
+   * BLOCKED checkpoint can enter the app by being typed, and a build-time scan
+   * of source text cannot see a value that lives in a user's localStorage.
+   */
+  motionGenModel: string;
 }
 
 const DEFAULT_SETTINGS: PersistedSettings = {
   comfyUrl: DEFAULT_COMFYUI_URL,
   comfyAuthHeader: '',
   comfyLiveGenerate: false,
+  motionGenUrl: DEFAULT_MOTIONGEN_URL,
+  motionGenModel: DEFAULT_MOTIONGEN_MODEL,
 };
 
 export interface SettingsStore extends PersistedSettings {
@@ -47,6 +62,8 @@ export interface SettingsStore extends PersistedSettings {
   setComfyUrl: (url: string) => void;
   setComfyAuthHeader: (header: string) => void;
   setComfyLiveGenerate: (on: boolean) => void;
+  setMotionGenUrl: (url: string) => void;
+  setMotionGenModel: (model: string) => void;
 }
 
 function safeGetItem(key: string): string | null {
@@ -87,6 +104,22 @@ function readPersisted(): PersistedSettings {
         typeof parsed.comfyLiveGenerate === 'boolean'
           ? parsed.comfyLiveGenerate
           : DEFAULT_SETTINGS.comfyLiveGenerate,
+      motionGenUrl:
+        typeof parsed.motionGenUrl === 'string' && parsed.motionGenUrl.trim()
+          ? parsed.motionGenUrl
+          : DEFAULT_SETTINGS.motionGenUrl,
+      // A persisted checkpoint id is COERCED against the licence manifest on the
+      // way in, not merely on the way out. localStorage survives the verdict that
+      // blocked it: a checkpoint recorded as usable today can be re-recorded as
+      // BLOCKED tomorrow, and the id sitting in a browser from before that change
+      // would otherwise be read back as configuration and used. Falling back to
+      // the default is the safe reading — refusing to boot is not.
+      motionGenModel:
+        typeof parsed.motionGenModel === 'string' &&
+        parsed.motionGenModel.trim() &&
+        modelRecordFor(parsed.motionGenModel)?.verdict !== 'BLOCKED'
+          ? parsed.motionGenModel
+          : DEFAULT_SETTINGS.motionGenModel,
     };
   } catch {
     return DEFAULT_SETTINGS;
@@ -95,6 +128,21 @@ function readPersisted(): PersistedSettings {
 
 function writePersisted(state: PersistedSettings): void {
   safeSetItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+/**
+ * The persisted slice of the live store. Named explicitly rather than spread,
+ * so `isOpen` and the actions cannot leak into localStorage, and so the
+ * PersistedSettings type reds every setter the day a field is added.
+ */
+function persistedSliceOf(state: SettingsStore): PersistedSettings {
+  return {
+    comfyUrl: state.comfyUrl,
+    comfyAuthHeader: state.comfyAuthHeader,
+    comfyLiveGenerate: state.comfyLiveGenerate,
+    motionGenUrl: state.motionGenUrl,
+    motionGenModel: state.motionGenModel,
+  };
 }
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
@@ -108,29 +156,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ isOpen: false });
   },
   setComfyUrl(url) {
-    const comfyUrl = url.trim() || DEFAULT_COMFYUI_URL;
-    set({ comfyUrl });
-    writePersisted({
-      comfyUrl,
-      comfyAuthHeader: get().comfyAuthHeader,
-      comfyLiveGenerate: get().comfyLiveGenerate,
-    });
+    set({ comfyUrl: url.trim() || DEFAULT_COMFYUI_URL });
+    writePersisted(persistedSliceOf(get()));
   },
   setComfyAuthHeader(header) {
-    const comfyAuthHeader = header.trim();
-    set({ comfyAuthHeader });
-    writePersisted({
-      comfyUrl: get().comfyUrl,
-      comfyAuthHeader,
-      comfyLiveGenerate: get().comfyLiveGenerate,
-    });
+    set({ comfyAuthHeader: header.trim() });
+    writePersisted(persistedSliceOf(get()));
   },
   setComfyLiveGenerate(on) {
     set({ comfyLiveGenerate: on });
-    writePersisted({
-      comfyUrl: get().comfyUrl,
-      comfyAuthHeader: get().comfyAuthHeader,
-      comfyLiveGenerate: on,
-    });
+    writePersisted(persistedSliceOf(get()));
+  },
+  setMotionGenUrl(url) {
+    set({ motionGenUrl: url.trim() || DEFAULT_MOTIONGEN_URL });
+    writePersisted(persistedSliceOf(get()));
+  },
+  setMotionGenModel(model) {
+    // Stores whatever the director typed, INCLUDING an unrecorded id — the
+    // refusal that matters lives at `generate`, where the use would happen, and
+    // a setter that silently substituted would hide the typo rather than let it
+    // be corrected. A BLOCKED id is the exception: it never becomes
+    // configuration, because persisting it is how it survives to a later session
+    // whose reader has no idea it was refused.
+    const trimmed = model.trim();
+    const blocked = modelRecordFor(trimmed)?.verdict === 'BLOCKED';
+    set({ motionGenModel: !trimmed || blocked ? DEFAULT_MOTIONGEN_MODEL : trimmed });
+    writePersisted(persistedSliceOf(get()));
   },
 }));

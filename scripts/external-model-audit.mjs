@@ -19,7 +19,33 @@ export const VERDICTS = new Set(['ALLOWED', 'ALLOWED_WITH_CONDITIONS', 'BLOCKED'
 
 // Every root where a model id could be referenced by code that actually runs.
 // `docs/` is absent on purpose: prose must be able to name a blocked model.
-export const SCAN_ROOTS = ['src', 'tests', 'scripts'];
+//
+// `public/` is here because its contents are SERVED — a JSON file naming a
+// checkpoint reaches the client as surely as a TypeScript import does, and the
+// scan read none of it (#750).
+// `tools/` holds the repo's structural gates AND a vite plugin — build-path code
+// by any reading. It is named here rather than swept in by recursion, because a
+// covered root should be a decision somebody took.
+export const SCAN_ROOTS = ['src', 'tests', 'scripts', 'public', 'tools'];
+
+// The repo root, scanned FLAT. Eleven config files live here that very much run —
+// vite.config.ts, vitest.config.ts, playwright.config.ts, eslint.config.js,
+// tailwind/postcss configs, the tsconfigs, package.json and its lock — and a
+// model id reaches production perfectly well through a `define`, an npm script,
+// or a dependency name. Measured before the fix: a blocked checkpoint planted in
+// vite.config.ts and in public/ produced a CLEAN PASS.
+//
+// Flat rather than recursive, and the reason is about decisions rather than cost.
+// Measured: with every root above named, recursing from `.` adds exactly ZERO
+// further files — so recursion buys nothing today. What it would cost is the
+// property that the covered set is CHOSEN: a directory added tomorrow would enter
+// the scan because it exists, not because anyone decided it should, and a root
+// nobody decided on is a root nobody re-examines. (Recursion's only current
+// difference, before `tools` was named, was six files under tools/ — found by
+// measuring rather than by the reasoning in an earlier draft of this comment,
+// which claimed coverage/ and .git and was simply wrong: EXTS excludes their
+// contents.)
+export const SCAN_ROOT_FILES = ['.'];
 
 // The three files whose job is to name blocked models. Without this the gate reds
 // on its own record — and since the manifest moved under src/ so runtime code can
@@ -122,6 +148,17 @@ export function checkManifest(manifest) {
     ) {
       problems.push(`${id}: ALLOWED_WITH_CONDITIONS but lists no conditions`);
     }
+    // The exact wording a licence demands is DATA, not prose buried inside a
+    // condition. The NVIDIA grant requires a notice reading a specific sentence;
+    // a generator that paraphrased it would produce a NOTICE that identifies the
+    // obligation and does not discharge it — which is the failure this whole file
+    // is about, one level in.
+    if (m?.verdict === 'ALLOWED_WITH_CONDITIONS' && !String(m?.attribution ?? '').trim()) {
+      problems.push(
+        `${id}: ALLOWED_WITH_CONDITIONS but no "attribution" — the exact notice text the ` +
+          'licence demands must be recorded verbatim so NOTICE can carry it, not paraphrase it',
+      );
+    }
   }
   return problems;
 }
@@ -151,6 +188,16 @@ export function blockedNeedles(manifest) {
 
 const EXTS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'];
 
+/** The matching files directly inside `dir`, never descending. */
+function listFilesFlat(dir, exts) {
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .filter((e) => e.isFile() && exts.includes(path.extname(e.name)))
+    .map((e) => path.join(dir, e.name));
+}
+
 function walkDir(dir, exts, out) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs
@@ -173,16 +220,121 @@ function walkDir(dir, exts, out) {
  * comparing absolute paths would make every exemption silently fail to match, and
  * the gate would then red on its own manifest (#737).
  */
-export function listSourceFiles(repoRoot, roots = SCAN_ROOTS, exempt = EXEMPT, exts = EXTS) {
+export function listSourceFiles(
+  repoRoot,
+  roots = SCAN_ROOTS,
+  exempt = EXEMPT,
+  exts = EXTS,
+  flatRoots = SCAN_ROOT_FILES,
+) {
   const exemptSet = new Set(exempt);
+  const seen = new Set();
   const out = [];
+  const add = (abs) => {
+    const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
+    // Deduped because a flat root and a named root can name the same file if the
+    // lists ever overlap; a file counted twice would report one reference twice
+    // and inflate the count, the same hazard blockedNeedles dedupes for.
+    if (exemptSet.has(rel) || seen.has(rel)) return;
+    seen.add(rel);
+    out.push(rel);
+  };
   for (const root of roots) {
-    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) {
-      const rel = path.relative(repoRoot, abs).split(path.sep).join('/');
-      if (!exemptSet.has(rel)) out.push(rel);
-    }
+    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) add(abs);
+  }
+  for (const root of flatRoots) {
+    for (const abs of listFilesFlat(path.join(repoRoot, root), exts)) add(abs);
   }
   return out;
+}
+
+/** The NOTICE file's repo-relative path. Conventional name, repo root, so a
+ *  recipient finds it where every other project puts it. */
+export const NOTICE_PATH = 'NOTICE';
+
+const NOTICE_HEADER = [
+  'NOTICE',
+  '',
+  'This file is GENERATED from src/core/licensing/external-models.json.',
+  'Do not edit it by hand — run `npm run notice` and commit the result.',
+  '',
+  'It exists because a licence condition that is only RECORDED is not honoured.',
+  'The manifest names the obligations; this file is the repo carrying one of them',
+  'out, and the external-model audit fails if the two disagree.',
+  '',
+];
+
+/**
+ * The NOTICE text a manifest entails, derived from the recorded conditions of
+ * every non-blocked model that has any.
+ *
+ * Generated rather than written because a hand-maintained notice and a recorded
+ * obligation drift the moment either moves, and the drift is silent in the
+ * direction that matters: the notice keeps saying something reassuring while the
+ * terms it describes have changed. Blocked models are excluded — we owe nothing
+ * for something we do not use, and naming one here would trip the blocked-model
+ * scan besides.
+ */
+export function buildNotice(manifest) {
+  const lines = [...NOTICE_HEADER];
+  const owing = (manifest?.models ?? []).filter(
+    (m) => m.verdict !== 'BLOCKED' && Array.isArray(m.conditions) && m.conditions.length > 0,
+  );
+  if (owing.length === 0) {
+    lines.push('No external model currently in use carries licence conditions.', '');
+    return lines.join('\n');
+  }
+  for (const m of owing) {
+    // The attribution line goes FIRST and verbatim, because it is the obligation
+    // itself rather than a description of one.
+    lines.push(`${m.attribution}`, '');
+    lines.push(`  Applies to: ${m.name}`, `  Source: ${m.source}`, '');
+    lines.push('  Conditions this project is obliged to honour:');
+    for (const c of m.conditions) lines.push(`    - ${c}`);
+    lines.push('');
+    if (Array.isArray(m.citations) && m.citations.length) {
+      // "Pass a copy of the agreement to recipients" is discharged here by
+      // reference, not by bundling. Stated plainly rather than left ambiguous:
+      // the agreement is not vendored into this repo, and if a distribution ever
+      // needs the text itself rather than a link, that is a further step nobody
+      // has taken.
+      lines.push('  A copy of the agreement, by reference:');
+      for (const c of m.citations) lines.push(`    ${c}`);
+      lines.push('');
+    }
+  }
+  return lines.join('\n');
+}
+
+/**
+ * Does the shipped NOTICE match what the manifest entails? Returns problem
+ * strings.
+ *
+ * This is the half of the gate with teeth. Checking that a conditional verdict
+ * LISTS conditions — which the manifest check already did — asks whether we have
+ * identified an obligation. It never asks whether anything carries one out, and
+ * the first recorded condition is literally "ship a NOTICE file". Identification
+ * is not prevention.
+ */
+export function checkNotice(repoRoot, manifest, readFile = (f) => fs.readFileSync(f, 'utf8')) {
+  const expected = buildNotice(manifest);
+  let actual;
+  try {
+    actual = readFile(path.join(repoRoot, NOTICE_PATH));
+  } catch {
+    return [
+      `${NOTICE_PATH} is missing, and the manifest records conditions that require it. ` +
+        'Run `npm run notice` and commit the result.',
+    ];
+  }
+  if (actual.trimEnd() !== expected.trimEnd()) {
+    return [
+      `${NOTICE_PATH} does not match the manifest's recorded conditions. ` +
+        'A notice that disagrees with the terms it describes is worse than none, ' +
+        'because it reads as compliance. Run `npm run notice` and commit the result.',
+    ];
+  }
+  return [];
 }
 
 /** Returns [{file, id, needle}] for every BLOCKED model referenced in the given files. */
@@ -231,6 +383,13 @@ export function auditExternalModels({ manifestPath, repoRoot, now = new Date() }
   }
   for (const w of warnings) console.warn(`⚠ ${w}`);
 
+  const noticeProblems = checkNotice(repoRoot, manifest);
+  if (noticeProblems.length) {
+    console.error(`✗ Licence conditions are not honoured (${noticeProblems.length}):`);
+    for (const n of noticeProblems) console.error(`  ${n}`);
+    return 3;
+  }
+
   const files = listSourceFiles(repoRoot);
   const hits = findBlockedReferences(manifest, files, (f) =>
     fs.readFileSync(path.join(repoRoot, f), 'utf8'),
@@ -247,7 +406,8 @@ export function auditExternalModels({ manifestPath, repoRoot, now = new Date() }
   console.log(
     `✓ External-model audit passed: ${manifest.models.length} recorded ` +
       `(${counts.ALLOWED} allowed, ${counts.ALLOWED_WITH_CONDITIONS} conditional, ${counts.BLOCKED} blocked), ` +
-      `${files.length} files scanned across ${SCAN_ROOTS.join(', ')} (${EXEMPT.length} exempt), ` +
+      `${files.length} files scanned across ${[...SCAN_ROOTS, ...SCAN_ROOT_FILES].join(', ')} ` +
+      `(${EXEMPT.length} exempt), ` +
       `checked ${manifest.checkedAt}.`,
   );
   return 0;

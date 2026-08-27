@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "license-audit": "node scripts/license-audit.mjs",
+    "notice": "node scripts/gen-notice.mjs",
     "seed:assets": "node scripts/seed-sample-assets.mjs"
   },
   "dependencies": {

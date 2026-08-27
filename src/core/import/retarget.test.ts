@@ -2,7 +2,12 @@
 
 import { describe, expect, it } from 'vitest';
 import { PropertyBinding } from 'three';
-import { retargetClip, canonicalBoneKey, resolveNameMapToSource } from './retarget';
+import {
+  retargetClip,
+  canonicalBoneKey,
+  resolveNameMapToSource,
+  resolveNameMapToTarget,
+} from './retarget';
 import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
@@ -182,9 +187,18 @@ describe('BONE_NAME_MAP_PRESETS catalog', () => {
     }
   });
 
-  it('every preset includes the Mixamo Hips entry as the load-bearing root mapping', () => {
+  it('every preset maps its source rig root — the load-bearing entry', () => {
+    // Written as `p.map['mixamorig_Hips']` while every preset was Mixamo-sourced.
+    // The literal was standing in for the property, and it went false the moment
+    // a SOMA-sourced preset arrived while the property itself stayed true — SOMA
+    // spells the same joint `Hips`. So assert the property, and keep the Mixamo
+    // case as its own line rather than quietly trading the old coverage away.
     for (const p of BONE_NAME_MAP_PRESETS) {
-      expect(p.map['mixamorig_Hips']).toBeDefined();
+      const rootKeys = Object.keys(p.map).filter((k) => /(^|_)Hips$/.test(k));
+      expect(rootKeys, `${p.id} maps no root bone`).toHaveLength(1);
+    }
+    for (const p of BONE_NAME_MAP_PRESETS.filter((preset) => preset.source === 'Mixamo')) {
+      expect(p.map['mixamorig_Hips'], `${p.id} lost its Mixamo root`).toBeDefined();
     }
   });
 
@@ -325,5 +339,91 @@ describe('bone-name spelling across import roads', () => {
     expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
     expect(result.unmappedSourceBones).toEqual([]);
     expect(result.unboundTargetBones).toEqual([]);
+  });
+});
+
+// The mirror of the block above. A match has two sides, and the loader sanitiser
+// that corrupts the names does not care which side a name is standing on — so the
+// side nobody reported the bug from had the identical defect, and every test
+// written for the first fix passed while it did.
+describe("the map's TARGET values resolve by the same rule as its source keys", () => {
+  const fbxRig: BoneSpec[] = [
+    { name: 'mixamorigHips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'mixamorigSpine', parent: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+  ];
+
+  it('lands an underscore-spelled target value on an FBX-spelled target bone', () => {
+    // The reported failure, at unit scale: authored against a glTF import, run
+    // against an FBX-derived skeleton. Before this it resolved to nothing.
+    expect(resolveNameMapToTarget({ src: 'mixamorig_Hips' }, fbxRig)).toEqual({
+      src: 'mixamorigHips',
+    });
+  });
+
+  it('an exact target value is never second-guessed', () => {
+    const bones: BoneSpec[] = [
+      { name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'mixamorigHips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    expect(resolveNameMapToTarget({ src: 'mixamorig_Hips' }, bones)).toEqual({
+      src: 'mixamorig_Hips',
+    });
+  });
+
+  it('leaves an AMBIGUOUS canonical form unresolved rather than guessing', () => {
+    const bones: BoneSpec[] = [
+      { name: 'arm_L', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'armL', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    expect(resolveNameMapToTarget({ src: 'arm.L' }, bones)).toEqual({ src: 'arm.L' });
+  });
+
+  it('never lets an inexact value revise a bone an exact value already claimed', () => {
+    const bones: BoneSpec[] = [
+      { name: 'arm_L', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ];
+    expect(resolveNameMapToTarget({ a: 'arm_L', b: 'arm.L' }, bones)).toEqual({
+      a: 'arm_L',
+      b: 'arm.L',
+    });
+    // …and the same holds when the fuzzy value is authored first, because the pass
+    // counts claims before it writes any of them.
+    expect(resolveNameMapToTarget({ b: 'arm.L', a: 'arm_L' }, bones)).toEqual({
+      a: 'arm_L',
+      b: 'arm.L',
+    });
+  });
+
+  it('leaves a bone claimed by TWO inexact values unresolved rather than keeping one', () => {
+    const resolved = resolveNameMapToTarget({ a: 'mixamorig:Hips', b: 'mixamorig_Hips' }, fbxRig);
+    expect(resolved).toEqual({ a: 'mixamorig:Hips', b: 'mixamorig_Hips' });
+  });
+
+  it('a value REPEATED across two source bones is one authored name, not a collision', () => {
+    // Two source bones legitimately driving one target bone. The repeat is the same
+    // spelling, so rule 3 — about two DIFFERENT spellings claiming one bone — must
+    // not fire and strand both of them.
+    expect(resolveNameMapToTarget({ a: 'mixamorig_Hips', b: 'mixamorig_Hips' }, fbxRig)).toEqual({
+      a: 'mixamorigHips',
+      b: 'mixamorigHips',
+    });
+  });
+
+  it('retargets end to end onto an FBX-spelled target through a glTF-spelled map', () => {
+    const sourceBones: BoneSpec[] = [
+      { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { name: 'mixamorig_Spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    ];
+    const result = retargetClip({
+      sourceBones,
+      sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
+      targetBones: fbxRig,
+      nameMap: { mixamorig_Hips: 'mixamorig_Hips', mixamorig_Spine: 'mixamorig_Spine' },
+    });
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    // The diagnostics are computed from the RESOLVED map, so they describe the
+    // lookup that actually happened rather than the one that was authored.
+    expect(result.unboundTargetBones).toEqual([]);
+    expect(result.unmappedSourceBones).toEqual([]);
   });
 });

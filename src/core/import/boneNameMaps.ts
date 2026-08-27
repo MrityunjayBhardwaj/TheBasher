@@ -128,6 +128,91 @@ const MIXAMO_TO_GLTF_BAR_RIG: Readonly<Record<string, string>> = {
   mixamorig_Spine: 'Bone1',
 };
 
+// SOMA — the skeleton the text-to-motion generator emits (phase A1). Read from
+// the generator's own source, not from its docs: `kimodo/skeleton/definitions.py`
+// `SOMASkeleton77.bone_order_names_with_parents` (77 joints, verified by count),
+// and `kimodo/exports/bvh.py::motion_to_bvh`, which names joints straight from
+// `skeleton.bone_order_names` with no namespace prefix. So a generated clip
+// arrives on BARE names — `Hips`, `Spine1` — and our sanitiser leaves them alone.
+//
+// 🔴 SOMA AND MIXAMO DISAGREE ABOUT WHAT A "LEG" IS, and the disagreement is
+// silent because both vocabularies contain the word:
+//
+//     SOMA    Hips → LeftLeg  → LeftShin → LeftFoot → LeftToeBase
+//     Mixamo  Hips → LeftUpLeg → LeftLeg  → LeftFoot → LeftToeBase
+//
+// SOMA's `LeftLeg` is the THIGH; Mixamo's `LeftLeg` is the SHIN. A map built by
+// matching names would bind the thigh onto the shin on both sides of the body —
+// a rig that animates, looks broken in a way nobody can name, and raises no
+// error anywhere. The maps below are written against the PARENTAGE, which is why
+// `LeftLeg` appears on the left of one row and the right of another.
+//
+// Two further mismatches, handled by mapping structurally rather than by name:
+// SOMA's spine is Spine1 → Spine2 → Chest where Mixamo's is Spine → Spine1 →
+// Spine2, and SOMA has two neck joints (Neck1, Neck2) where the targets have
+// one. Neck1 takes it, being the joint in the same position — the direct child
+// of the chest. SOMA's fingers, jaw, eyes and end-effectors have no counterpart
+// in either target vocabulary and are deliberately left out; the retarget path
+// reports them through `unmappedSourceBones`, which is the honest answer.
+//
+// REF: https://github.com/nv-tlabs/kimodo — kimodo/skeleton/definitions.py,
+// kimodo/exports/bvh.py. Licence verdict for the checkpoints that produce this
+// skeleton: src/core/licensing/external-models.json.
+const SOMA_TO_GLTF_HUMANOID: Readonly<Record<string, string>> = {
+  Hips: 'hips',
+  Spine1: 'spine',
+  Spine2: 'spine.001',
+  Chest: 'spine.002',
+  Neck1: 'neck',
+  Head: 'head',
+  LeftShoulder: 'shoulder.L',
+  LeftArm: 'upper_arm.L',
+  LeftForeArm: 'forearm.L',
+  LeftHand: 'hand.L',
+  RightShoulder: 'shoulder.R',
+  RightArm: 'upper_arm.R',
+  RightForeArm: 'forearm.R',
+  RightHand: 'hand.R',
+  LeftLeg: 'thigh.L', // SOMA's LeftLeg is the thigh — see the note above.
+  LeftShin: 'shin.L',
+  LeftFoot: 'foot.L',
+  LeftToeBase: 'toe.L',
+  RightLeg: 'thigh.R',
+  RightShin: 'shin.R',
+  RightFoot: 'foot.R',
+  RightToeBase: 'toe.R',
+};
+
+// The A1 story in one map: a generated clip driving an imported Mixamo character.
+// Targets are spelled `mixamorig_*` because that is what both roads that carry a
+// CHARACTER produce — glTF through our sanitiser, and BVH likewise. (FBX removes
+// the separator instead, but `fbx.ts` defers SkinnedMesh import by design, so an
+// FBX file supplies motion, never the character being driven.)
+const SOMA_TO_MIXAMO: Readonly<Record<string, string>> = {
+  Hips: 'mixamorig_Hips',
+  Spine1: 'mixamorig_Spine',
+  Spine2: 'mixamorig_Spine1',
+  Chest: 'mixamorig_Spine2',
+  Neck1: 'mixamorig_Neck',
+  Head: 'mixamorig_Head',
+  LeftShoulder: 'mixamorig_LeftShoulder',
+  LeftArm: 'mixamorig_LeftArm',
+  LeftForeArm: 'mixamorig_LeftForeArm',
+  LeftHand: 'mixamorig_LeftHand',
+  RightShoulder: 'mixamorig_RightShoulder',
+  RightArm: 'mixamorig_RightArm',
+  RightForeArm: 'mixamorig_RightForeArm',
+  RightHand: 'mixamorig_RightHand',
+  LeftLeg: 'mixamorig_LeftUpLeg', // thigh → thigh, NOT LeftLeg → LeftLeg.
+  LeftShin: 'mixamorig_LeftLeg', // shin → shin.
+  LeftFoot: 'mixamorig_LeftFoot',
+  LeftToeBase: 'mixamorig_LeftToeBase',
+  RightLeg: 'mixamorig_RightUpLeg',
+  RightShin: 'mixamorig_RightLeg',
+  RightFoot: 'mixamorig_RightFoot',
+  RightToeBase: 'mixamorig_RightToeBase',
+};
+
 export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
   {
     id: 'mixamoToGltf',
@@ -156,6 +241,20 @@ export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
     source: 'Mixamo',
     target: 'glTF (native joint keys)',
     map: MIXAMO_TO_GLTF_BAR_RIG,
+  },
+  {
+    id: 'somaToGltf',
+    name: 'SOMA → glTF humanoid',
+    source: 'SOMA (generated motion)',
+    target: 'glTF',
+    map: SOMA_TO_GLTF_HUMANOID,
+  },
+  {
+    id: 'somaToMixamo',
+    name: 'SOMA → Mixamo humanoid',
+    source: 'SOMA (generated motion)',
+    target: 'Mixamo',
+    map: SOMA_TO_MIXAMO,
   },
 ];
 

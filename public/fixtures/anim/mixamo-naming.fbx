@@ -1,0 +1,266 @@
+; FBX 7.4.0 project file
+; ----------------------------------------------------
+
+FBXHeaderExtension:  {
+	FBXHeaderVersion: 1003
+	FBXVersion: 7400
+	Creator: "basher-test"
+}
+GlobalSettings:  {
+	Version: 1000
+	Properties70:  {
+		P: "UnitScaleFactor", "double", "Number", "",1
+	}
+}
+
+Definitions:  {
+	Version: 100
+	Count: 26
+	ObjectType: "Model" {
+		Count: 22
+	}
+	ObjectType: "AnimationStack" {
+		Count: 1
+	}
+	ObjectType: "AnimationLayer" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurveNode" {
+		Count: 1
+	}
+	ObjectType: "AnimationCurve" {
+		Count: 1
+	}
+}
+
+Objects:  {
+	Model: 100, "Model::mixamorig:Hips", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 110, "Model::mixamorig:Spine", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 120, "Model::mixamorig:Spine1", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.12,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 130, "Model::mixamorig:Spine2", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.12,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 140, "Model::mixamorig:Neck", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.15,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 150, "Model::mixamorig:Head", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,0.1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 160, "Model::mixamorig:LeftShoulder", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0.05,0.1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 170, "Model::mixamorig:LeftArm", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0.12,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 180, "Model::mixamorig:LeftForeArm", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0.26,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 190, "Model::mixamorig:LeftHand", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0.24,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 200, "Model::mixamorig:RightShoulder", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-0.05,0.1,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 210, "Model::mixamorig:RightArm", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-0.12,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 220, "Model::mixamorig:RightForeArm", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-0.26,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 230, "Model::mixamorig:RightHand", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-0.24,0,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 240, "Model::mixamorig:LeftUpLeg", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0.09,-0.05,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 250, "Model::mixamorig:LeftLeg", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.4,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 260, "Model::mixamorig:LeftFoot", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.4,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 270, "Model::mixamorig:LeftToeBase", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.08,0.12
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 280, "Model::mixamorig:RightUpLeg", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",-0.09,-0.05,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 290, "Model::mixamorig:RightLeg", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.4,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 300, "Model::mixamorig:RightFoot", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.4,0
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	Model: 310, "Model::mixamorig:RightToeBase", "LimbNode" {
+		Version: 232
+		Properties70:  {
+			P: "Lcl Translation", "Lcl Translation", "", "A",0,-0.08,0.12
+		}
+		Shading: T
+		Culling: "CullingOff"
+	}
+	AnimationStack: 1000, "AnimStack::Take 001", "" {
+		Properties70:  {
+			P: "LocalStop", "KTime", "Time", "",46186158000
+		}
+	}
+	AnimationLayer: 1100, "AnimLayer::BaseLayer", "" {
+	}
+	AnimationCurveNode: 1200, "AnimCurveNode::T", "" {
+		Properties70:  {
+			P: "d|X", "Number", "", "A",0
+			P: "d|Y", "Number", "", "A",0
+			P: "d|Z", "Number", "", "A",0
+		}
+	}
+	AnimationCurve: 1300, "AnimCurve::", "" {
+		Default: 0
+		KeyVer: 4009
+		KeyTime: *2 {
+			a: 0,46186158000
+		}
+		KeyValueFloat: *2 {
+			a: 0,2
+		}
+	}
+}
+
+Connections:  {
+	C: "OO",110,100
+	C: "OO",120,110
+	C: "OO",130,120
+	C: "OO",140,130
+	C: "OO",150,140
+	C: "OO",160,130
+	C: "OO",170,160
+	C: "OO",180,170
+	C: "OO",190,180
+	C: "OO",200,130
+	C: "OO",210,200
+	C: "OO",220,210
+	C: "OO",230,220
+	C: "OO",240,100
+	C: "OO",250,240
+	C: "OO",260,250
+	C: "OO",270,260
+	C: "OO",280,100
+	C: "OO",290,280
+	C: "OO",300,290
+	C: "OO",310,300
+	C: "OO",100,0
+	C: "OO",1100,1000
+	C: "OO",1200,1100
+	C: "OP",1200,100, "Lcl Translation"
+	C: "OP",1300,1200, "d|X"
+}

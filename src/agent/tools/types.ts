@@ -13,6 +13,7 @@
 
 import type { z } from 'zod';
 import type { ComfyUICapability } from '../../core/comfy';
+import type { MotionGenerationCapability } from '../../core/motiongen';
 import type { Op } from '../../core/dag/types';
 import type { DagState } from '../../core/dag/state';
 import type { StorageCapability } from '../../core/storage';
@@ -39,6 +40,18 @@ export interface ToolContext {
    * loader uses.
    */
   storage?: StorageCapability;
+  /**
+   * A1: text-to-motion capability for `motion.generate`. Boot resolves Http vs
+   * Stub via pickMotionGeneration(). Undefined when nothing is wired.
+   */
+  motionCapability?: MotionGenerationCapability;
+  /**
+   * A1: the checkpoint `motion.generate` runs. Carried here rather than taken as
+   * a tool argument because it is configuration, not a per-call choice — and
+   * because it must be NAMED by somebody: the licence varies per checkpoint
+   * within a single release, so a hidden default would pick one silently.
+   */
+  motionModel?: string;
 }
 
 /**
