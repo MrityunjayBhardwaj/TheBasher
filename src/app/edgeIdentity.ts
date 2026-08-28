@@ -268,11 +268,33 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
  * copy 1's, with no re-sort. A canonical `(min, max)` sort would be equally deterministic and
  * would agree on the derived kinds, but it relates this domain to nothing else. Worth
  * re-checking against a live Blender before edge attributes ship, when indices become visible.
+ *
+ * ── COST, AND WHY THERE IS NO MEMO ───────────────────────────────────────────────────────
+ *
+ * Measured: 0.004 ms for a box, 0.089 ms at a 32x16 sphere (992 edges), 0.397 ms at 64x32
+ * (4,032), and 2.94 ms for an Array x8 of that sphere (32,256). Linear in edges, as the walk is.
+ *
+ * NOT memoised, deliberately, and the last figure is why that needs saying rather than assuming:
+ * 2.94 ms would be unaffordable per operator per evaluate, and affordable once per build. Today
+ * the only caller is `componentCountOf`'s `edge` arm, which no operator can reach because
+ * `ScopeDomain` is `['face']` — so the access pattern is not yet observable, and a cache
+ * installed now would be sized for a guess. #667 is the first caller that will know whether it
+ * wants this per build or per gather; `tiledFaceOrder` records the same reasoning and the same
+ * outcome, having measured its own road before adding its cache.
  */
 export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
   const rims = weldedPolygonsOf(descriptor);
   if (rims === null) return null;
+  const points = pointCountOf(descriptor);
+  if (points.kind !== 'counted') return null;
 
+  // ⚠️ THE RADIX IS THE POINT COUNT, NOT 2^32, AND THAT IS A CORRECTNESS FIX RATHER THAN A
+  // TIGHTENING. Both ids are strictly below `points`, so `lo * points + hi` is injective and the
+  // largest key is `points ** 2` — safe as a float until ~94 million points. Pairing on 2^32
+  // instead is injective too, but its largest key passes `Number.MAX_SAFE_INTEGER` at only ~2.1
+  // million, and past that two DIFFERENT edges round to one key and the set silently loses one.
+  // A count that high is reachable by array-copying a dense sphere, and nothing would have said.
+  const radix = points.count;
   const seen = new Set<number>();
   const pairs: number[] = [];
   for (const rim of rims) {
@@ -281,10 +303,10 @@ export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
       const q = rim[(i + 1) % rim.length];
       const lo = p < q ? p : q;
       const hi = p < q ? q : p;
-      // A numeric key rather than a string: the two ids are bounded by the point count, and a
-      // pairing is one multiply against the hash of a template literal. `weldByPosition` pays
-      // the string cost because it keys on three rounded floats; this keys on two integers.
-      const key = lo * 4294967296 + hi;
+      // A numeric key rather than a string: a pairing is one multiply against the hash of a
+      // template literal. `weldByPosition` pays the string cost because it keys on three rounded
+      // floats; this keys on two integers already bounded by the mesh.
+      const key = lo * radix + hi;
       if (seen.has(key)) continue;
       seen.add(key);
       pairs.push(lo, hi);

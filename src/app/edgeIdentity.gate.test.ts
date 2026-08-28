@@ -101,7 +101,7 @@ function declaredWeld(ref: GeometryRef): PointWeld {
 }
 
 /** Every distinct welded point PAIR the built index buffer joins — edges plus fan diagonals. */
-function weldedIndexPairs(ref: GeometryRef): Set<number> {
+function weldedIndexPairs(ref: GeometryRef, radix: number): Set<number> {
   const geom = getForRead(ref);
   expect(geom, `registry could not build ${ref.key}`).not.toBeNull();
   const index = geom!.getIndex();
@@ -118,7 +118,7 @@ function weldedIndexPairs(ref: GeometryRef): Set<number> {
       [c, a],
     ]) {
       if (p === q) continue;
-      pairs.add(p < q ? p * 4294967296 + q : q * 4294967296 + p);
+      pairs.add(p < q ? p * radix + q : q * radix + p);
     }
   }
   return pairs;
@@ -147,10 +147,13 @@ describe('#718 — the edge set agrees with the built geometry', () => {
       const arity = faceArityOf(ref.descriptor);
       expect(arity, `no arity for ${ref.key}`).not.toBeNull();
 
-      const built = weldedIndexPairs(ref);
+      const pts = pointCountOf(ref.descriptor);
+      expect(pts.kind).toBe('counted');
+      const radix = (pts as { count: number }).count;
+      const built = weldedIndexPairs(ref, radix);
       // Containment — every edge this module claims is a pair the geometry actually joins.
       for (let i = 0; i < set!.count; i++) {
-        const key = set!.pairs[2 * i] * 4294967296 + set!.pairs[2 * i + 1];
+        const key = set!.pairs[2 * i] * radix + set!.pairs[2 * i + 1];
         expect(built.has(key), `${ref.key}: derived edge ${i} is not in the built mesh`).toBe(true);
       }
       // Size — the diagonals are the whole of the difference, and they are counted from the
@@ -203,7 +206,7 @@ describe('#718 — the edge set agrees with the built geometry', () => {
         const hi = set.pairs[2 * i + 1];
         expect(lo, `${ref.key}: edge ${i} is not low-id-first`).toBeLessThan(hi);
         expect(hi, `${ref.key}: edge ${i} names a point outside the mesh`).toBeLessThan(P);
-        const key = lo * 4294967296 + hi;
+        const key = lo * P + hi;
         expect(seen.has(key), `${ref.key}: edge ${i} is a duplicate`).toBe(false);
         seen.add(key);
       }
