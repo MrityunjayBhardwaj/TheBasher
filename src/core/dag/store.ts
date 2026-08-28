@@ -12,6 +12,7 @@
 
 import { create } from 'zustand';
 import { applyOp, validateOp } from './ops';
+import type { Reportable } from './ops';
 import { findDanglingIdRef } from './idRefSweep';
 import type { DagState } from './state';
 import { emptyDagState } from './state';
@@ -25,6 +26,15 @@ export interface ActivityEntry {
   source: OpSource;
   op: Op;
   description?: string;
+  /**
+   * A surfaced signal from `applyOp` — the op was ACCEPTED but did something
+   * the author probably did not intend (#423 a stripped write, #759 a
+   * displaced edge). Carried here because the diff surface only sees ops the
+   * AGENT proposes: a direct UI dispatch never passes through a fork, so
+   * without this the report would exist and be visible on exactly one of the
+   * roads that can produce it. Absent on an ordinary op.
+   */
+  reportable?: Reportable;
 }
 
 /**
@@ -137,7 +147,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
 
   dispatch(op, source = 'user', description) {
     const validated = validateOp(op);
-    const { next, inverse } = applyOp(get().state, validated);
+    const { next, inverse, reportable } = applyOp(get().state, validated);
     assertNoDanglingIdRef([validated], next); // #435
     const inv: InverseOp = { forward: validated, inverse };
     // Inside a drag transaction: mutate state, buffer the undo/activity record.
@@ -156,6 +166,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
       source,
       op: validated,
       description,
+      ...(reportable ? { reportable } : {}),
     };
     set((s) => ({
       state: next,

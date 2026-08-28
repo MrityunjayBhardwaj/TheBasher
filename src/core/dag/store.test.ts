@@ -323,4 +323,54 @@ describe('DagStore — #435 id-reference dangle guard', () => {
     expect(useDagStore.getState().state.nodes.subject).toBeUndefined();
     expect(useDagStore.getState().state.nodes.ref).toBeUndefined();
   });
+  // #759 — the report has to reach the road it happened on. The agent's diff
+  // surface renders reportables from its FORK; a direct UI dispatch never
+  // forks, so before this an edge destroyed by a UI action was recorded in
+  // activity as an ordinary, unremarkable connect.
+  it('a plain dispatch that displaces an edge records the report on its activity entry', () => {
+    const store = useDagStore.getState();
+    for (const id of ['a', 'b']) {
+      store.dispatch({ type: 'addNode', nodeId: id, nodeType: 'TestNumber', params: { value: 1 } });
+    }
+    store.dispatch({ type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} });
+    store.dispatch({
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    store.dispatch({
+      type: 'connect',
+      from: { node: 'b', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    const activity = useDagStore.getState().activity;
+    const last = activity[activity.length - 1];
+    expect(last.reportable?.badge).toBe('displaced-edge');
+    expect(last.reportable?.reason).toContain('"a.out"');
+    // CONTROL — the connect that filled the EMPTY socket is unremarkable, so
+    // the entry before it carries nothing. Without this the assertion above
+    // would pass just as well if every entry were badged.
+    expect(activity[activity.length - 2].reportable).toBeUndefined();
+  });
+
+  it('a DECLARED displacement dispatches clean — no report on the entry', () => {
+    const store = useDagStore.getState();
+    for (const id of ['a', 'b']) {
+      store.dispatch({ type: 'addNode', nodeId: id, nodeType: 'TestNumber', params: { value: 1 } });
+    }
+    store.dispatch({ type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} });
+    store.dispatch({
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    store.dispatch({
+      type: 'connect',
+      from: { node: 'b', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+      replace: true,
+    });
+    const activity = useDagStore.getState().activity;
+    expect(activity[activity.length - 1].reportable).toBeUndefined();
+  });
 });

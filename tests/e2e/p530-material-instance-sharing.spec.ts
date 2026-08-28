@@ -309,6 +309,8 @@ test('#530 half 2 — an override operator SPLITS one object off the shared inst
             type: 'connect',
             from: { node: a.op, socket: 'out' },
             to: { node: a.c3, socket: 'data' },
+            // Splicing the operator in displaces the object's data edge (#759).
+            replace: true,
           },
         ],
         'e2e',

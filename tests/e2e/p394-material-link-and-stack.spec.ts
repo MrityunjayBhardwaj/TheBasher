@@ -230,6 +230,8 @@ test('#394 S3d — MASK PRECEDENCE: the operator names its own field, the link n
             type: 'connect',
             from: { node: a.op, socket: 'out' },
             to: { node: a.cube, socket: 'data' },
+            // Splicing the operator in displaces the object's data edge (#759).
+            replace: true,
           },
           {
             type: 'connect',
@@ -450,6 +452,8 @@ test('#529 — an operator at its defaults changes nothing; an edit authors and 
             type: 'connect',
             from: { node: a.op, socket: 'out' },
             to: { node: a.cube, socket: 'data' },
+            // Splicing the operator in displaces the object's data edge (#759).
+            replace: true,
           },
           {
             type: 'connect',
@@ -581,6 +585,8 @@ test('#394 S5 — three objects, one material: edit once and all three move, and
             type: 'connect',
             from: { node: a.op3, socket: 'out' },
             to: { node: a.cube3, socket: 'data' },
+            // Splicing the operator in displaces the object's data edge (#759).
+            replace: true,
           },
           toScene(a.cube),
           toScene(a.cube2),

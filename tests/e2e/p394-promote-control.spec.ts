@@ -117,6 +117,8 @@ test.beforeEach(async ({ page }) => {
             type: 'connect',
             from: { node: op, socket: 'out' },
             to: { node: cube, socket: 'data' },
+            // Splicing the operator in displaces the object's data edge (#759).
+            replace: true,
           },
           {
             type: 'connect',
