@@ -389,11 +389,29 @@ export const CLASS_CARRIAGE: Readonly<Record<KnownDomain, ClassVerdict>> = {
     noun: 'points',
   },
   edge: {
+    // 🔴 THE REASON WENT FALSE AT #718 AND IS RE-DERIVED, NOT PATCHED — the discipline the
+    // `point` entry above names after its own justification went false twice. What stood here
+    // read: *"the edge domain has no elements at all in this build — no buffer, no order, and
+    // `MeshElementCounts.edges` has no producer"*. Every clause of that is now untrue. #718 gave
+    // the domain a deterministic order (first encounter over the face order), an identity (a
+    // pair of topological points, from #716's weld), and an answer from `componentCountOf` where
+    // it used to refuse.
+    //
+    // So the drop is no longer an ABSENCE, it is a SCOPE DECISION, and it is stated as one: a
+    // domain that can store what nothing writes and nothing reads is a table awaiting its first
+    // consumer. The same rule descriptor kinds are already held to — a new kind cannot ship
+    // without its producing node.
+    //
+    // ⚠️ AND THE DEPENDENCY IS HARD RATHER THAN COSMETIC. A fragment shader has no edge input,
+    // so an edge value is inert until it is promoted to corner or point at materialisation —
+    // which means the promotion rule has to be designed WITH the first attribute, not after it.
+    // That is why this waits on a consumer instead of shipping storage now and reading later.
     kind: 'dropped',
     why:
-      'the edge domain has no elements at all in this build — no buffer, no order, and ' +
-      '`MeshElementCounts.edges` has no producer',
-    until: '#718',
+      'the edge domain has elements since #718 — an order, an identity and a count — but ' +
+      'nothing writes an edge attribute and nothing reads one, and an edge value cannot reach ' +
+      'a fragment shader until it is promoted to corner or point',
+    until: '#783',
   },
 };
 

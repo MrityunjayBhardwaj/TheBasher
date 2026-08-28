@@ -125,6 +125,7 @@ import type { KnownDomain, ScopeDomain } from './attributes';
 export type { ScopeDomain };
 import type { CountVerdict, GeometryDescriptor, ObjectData } from './types';
 import { faceCountOf } from '../app/faceCount';
+import { edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
@@ -292,9 +293,19 @@ export function componentCountOf(
       // quietly, so this arm is reachable from a test and from #667, and from nothing else.
       return pointCountOf(descriptor);
     case 'edge':
+      // #718 gave this arm an answer, and it is the LAST of the four to get one. An edge is a
+      // pair of topological points, so it waited on #716's weld for something to be a pair OF —
+      // an edge set read off the index buffer counts a box's 12 edges as 24, because two faces
+      // sharing an edge do not share point indices on a split buffer.
+      //
+      // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, for exactly the reason the
+      // `point` arm above records: `ScopeDomain` is still `['face']`, so no operator can name an
+      // edge scope until #667 widens it. This arm is reachable from a test and from #667, and
+      // from nothing else.
+      return edgeCountOf(descriptor);
     case 'corner':
       return refuse(
-        `domain '${domain}' is not resolvable from a descriptor — ns-2 shipped 'face', #716 added 'point'`,
+        `domain '${domain}' is not resolvable from a descriptor — ns-2 shipped 'face', #716 added 'point', #718 added 'edge'`,
       );
     default: {
       const unreachable: never = domain;
