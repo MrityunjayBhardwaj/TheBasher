@@ -296,6 +296,121 @@ describe('applyOp — connect/disconnect', () => {
       }),
     ).toThrow(OpError);
   });
+
+  // #759 — displacing an occupied `single` socket. Before this, a second
+  // connect silently replaced the first: no warning, no record. A director
+  // wiring a second producer in to see the two combine got the first one
+  // deleted instead, and an agent proposing it had no signal at all — the
+  // plan validated, applied, and quietly did half of what it said.
+  //
+  // The op still APPLIES (reportable policy, like #423's stripped write) and
+  // now carries a badge naming the edge it deleted. Refusing was built and
+  // measured first; it broke a production road under load by turning a
+  // pre-existing socket race into a hard failure, so the trace is what ships
+  // and the race is filed on its own.
+
+  it('an undeclared displacement still applies, but REPORTS the edge it deleted', () => {
+    let state = buildPair();
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    }).next;
+    const { next, reportable } = applyOp(state, {
+      type: 'connect',
+      from: { node: 'b', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    // The effect is unchanged - this is reportable policy, not a refusal.
+    expect(next.nodes.s.inputs.a).toEqual({ node: 'b', socket: 'out' });
+    // ...but it is no longer anonymous.
+    expect(reportable).toBeDefined();
+    expect(reportable!.badge).toBe('displaced-edge');
+    expect(reportable!.nodeId).toBe('s');
+    expect(reportable!.paramPath).toBe('a');
+    // Keyed on the incumbent REF, not a bare 'a' - that would match
+    // "already" and "carries" and pass for the wrong reason.
+    expect(reportable!.reason).toContain('"a.out"');
+  });
+
+  it('CONTROL - connecting into an EMPTY single socket reports NOTHING', () => {
+    // Without this the badge could be firing on every connect and every test
+    // above would still be green. A badge that is always on is not a signal.
+    const state = buildPair();
+    const { next, reportable } = applyOp(state, {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    expect(next.nodes.s.inputs.a).toEqual({ node: 'a', socket: 'out' });
+    expect(reportable).toBeUndefined();
+  });
+
+  it('replace: true declares the displacement, so it reports nothing', () => {
+    let state = buildPair();
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    }).next;
+    const { next, inverse, reportable } = applyOp(state, {
+      type: 'connect',
+      from: { node: 'b', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+      replace: true,
+    });
+    expect(next.nodes.s.inputs.a).toEqual({ node: 'b', socket: 'out' });
+    // Declared on purpose, so no badge. That is what keeps the badge meaning
+    // "nobody asked for this" rather than "a rewire happened".
+    expect(reportable).toBeUndefined();
+    // Undo must put the displaced edge back, not merely clear the socket...
+    const undone = applyOp(next, inverse);
+    expect(undone.next.nodes.s.inputs.a).toEqual({ node: 'a', socket: 'out' });
+    // ...and must not badge the user for a state they did not author.
+    expect(undone.reportable).toBeUndefined();
+  });
+
+  it('re-connecting the SAME edge displaces nothing, so it reports nothing', () => {
+    let state = buildPair();
+    const op: Op = {
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    };
+    state = applyOp(state, op).next;
+    const { next, reportable } = applyOp(state, op);
+    expect(next.nodes.s.inputs.a).toEqual({ node: 'a', socket: 'out' });
+    expect(reportable).toBeUndefined();
+  });
+
+  it('a LIST socket still appends — the refusal does not leak into the other branch', () => {
+    let state = emptyDagState();
+    for (const id of ['a', 'b']) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'TestNumber',
+        params: { value: 1 },
+      }).next;
+    }
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'sl',
+      nodeType: 'TestSumList',
+      params: {},
+    }).next;
+    for (const id of ['a', 'b']) {
+      state = applyOp(state, {
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: 'sl', socket: 'items' },
+      }).next;
+    }
+    expect(state.nodes.sl.inputs.items).toEqual([
+      { node: 'a', socket: 'out' },
+      { node: 'b', socket: 'out' },
+    ]);
+  });
 });
 
 describe('applyOp — setParam', () => {

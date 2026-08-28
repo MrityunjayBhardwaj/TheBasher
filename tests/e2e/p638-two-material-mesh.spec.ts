@@ -135,6 +135,8 @@ function authorOps(
       type: 'connect',
       from: { node: opId, socket: 'out' },
       to: { node: objectId, socket: 'data' },
+      // Splicing the operator in displaces the object's data edge (#759).
+      replace: true,
     },
   ];
 }

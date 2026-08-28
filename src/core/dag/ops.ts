@@ -229,6 +229,7 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   const prior = consumer.inputs[op.to.socket];
   let nextBinding: InputBinding;
   let inverse: Op;
+  let reportable: Reportable | undefined;
 
   // #608 — AT MOST ONE PRODUCER PER ROLE on a list socket. A list is the right
   // shape for "several passes feed this job" and the wrong shape for "two of them
@@ -261,9 +262,42 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   } else {
     nextBinding = ref;
     if (prior && !Array.isArray(prior)) {
+      // #759 — a single socket carries ONE edge, so binding a second producer
+      // DISPLACES the first. That used to happen with NO trace at all: same
+      // call shape, same success, nothing recording that an edge was dropped.
+      // A director wiring a second producer in to watch the two combine got
+      // the first one deleted; an agent proposing it had no signal, so the
+      // plan validated, applied, and quietly did half of what it said.
+      //
+      // REPORTABLE, not refused — and the choice was measured, not assumed.
+      // Refusing was built first and ran green across the unit tier, but under
+      // e2e load it turned a glTF import into a hard failure: some production
+      // path races two writers onto one socket, and replace-by-default had
+      // been papering over it. Refusing converts that latent race into a
+      // crash; reporting makes it VISIBLE without breaking the road. The race
+      // is real and is filed separately — this op is not the place to fix it.
+      //
+      // Re-binding the edge that is already there displaces nothing, so it
+      // reports nothing, and stays idempotent for callers re-asserting state.
+      // `replace: true` is the caller declaring the displacement on purpose:
+      // still applied, but no longer anonymous, so the badge stays a signal
+      // rather than noise every deliberate rewire has to be read past.
+      if ((prior.node !== ref.node || prior.socket !== ref.socket) && op.replace !== true) {
+        reportable = {
+          badge: 'displaced-edge',
+          nodeId: consumer.id,
+          paramPath: op.to.socket,
+          reason: `disconnected "${prior.node}.${prior.socket}" — a single socket carries one edge`,
+        };
+      }
       // Disconnect the old single binding as part of the inverse so undo
       // restores it. We model this as a follow-up connect in the inverse.
-      inverse = { type: 'connect', from: prior, to: op.to };
+      //
+      // The inverse carries `replace` because it lands on the socket THIS op
+      // just filled: undoing a displacement is itself a displacement, and it
+      // is a deliberate one, so it declares itself rather than badging the
+      // user's undo with a warning about a state THEY did not author.
+      inverse = { type: 'connect', from: prior, to: op.to, replace: true };
     } else {
       inverse = { type: 'disconnect', from: ref, to: op.to };
     }
@@ -277,7 +311,7 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
     ...state,
     nodes: { ...state.nodes, [consumer.id]: nextNode },
   };
-  return { next, inverse };
+  return reportable ? { next, inverse, reportable } : { next, inverse };
 }
 
 function applyDisconnect(state: DagState, op: Extract<Op, { type: 'disconnect' }>): ApplyResult {

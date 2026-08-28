@@ -81,6 +81,8 @@ function authorOps(scope: string): Op[] {
       type: 'connect',
       from: { node: 'n_setmat', socket: 'out' },
       to: { node: 'n_box', socket: 'data' },
+      // Splicing the operator in displaces the object's data edge (#759).
+      replace: true,
     },
   ];
 }
@@ -103,6 +105,8 @@ function arrayOps(): Op[] {
       type: 'connect',
       from: { node: 'n_array', socket: 'out' },
       to: { node: 'n_box', socket: 'data' },
+      // Splicing the operator in displaces the object's data edge (#759).
+      replace: true,
     },
   ];
 }

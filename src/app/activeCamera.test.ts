@@ -92,11 +92,13 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
       from: { node: 'n_cam2', socket: 'out' },
       to: { node: 'n_camsel', socket: 'cameras' },
     }).next;
-    // Single-cardinality scene.camera → this REPLACES the direct n_camera wiring.
+    // Single-cardinality scene.camera → this REPLACES the direct n_camera wiring,
+    // which #759 now makes the caller declare rather than perform silently.
     state = applyOp(state, {
       type: 'connect',
       from: { node: 'n_camsel', socket: 'out' },
       to: { node: 'n_scene', socket: 'camera' },
+      replace: true,
     }).next;
     return state;
   }
@@ -213,6 +215,7 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
       type: 'connect',
       from: { node: 'n_cam2', socket: 'out' },
       to: { node: 'n_scene', socket: 'camera' },
+      replace: true,
     }).next;
     return state;
   }

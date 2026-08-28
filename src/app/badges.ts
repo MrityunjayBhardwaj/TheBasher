@@ -15,7 +15,7 @@
 // Adding a kind: extend `BadgeKind` + `BADGES`. `badges.test.ts` walks the
 // registry so a kind with no entry fails loudly.
 
-export type BadgeKind = 'stripped-write';
+export type BadgeKind = 'stripped-write' | 'displaced-edge';
 
 export type BadgeTone = 'warning' | 'error' | 'info';
 
@@ -40,6 +40,19 @@ export const BADGES: Record<BadgeKind, BadgeDef> = {
       `Ignored ${paramPath ?? 'write'} on ${nodeId ?? '?'}` +
       (reason ? ` — ${reason}` : '') +
       ' (changed nothing)',
+  },
+  // #759 — a connect onto an OCCUPIED single-cardinality socket. The op is
+  // real: it applied, and it deleted an edge to do so. Tone is 'error', not
+  // 'warning', because unlike a stripped write this one CHANGED the graph —
+  // it destroyed a connection the author never asked to remove. A caller that
+  // means it says `replace: true` and gets no badge at all, so anything
+  // wearing this one is an undeclared displacement.
+  'displaced-edge': {
+    kind: 'displaced-edge',
+    tone: 'error',
+    label: ({ paramPath, nodeId, reason }) =>
+      `Replaced the edge on ${paramPath ?? 'a socket'} of ${nodeId ?? '?'}` +
+      (reason ? ` — ${reason}` : ''),
   },
 };
 
