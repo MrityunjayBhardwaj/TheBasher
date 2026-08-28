@@ -146,28 +146,27 @@ const DOMAIN_NOT_APPLICABLE: readonly {
   readonly domain: KnownDomain;
   readonly reason: string;
 }[] = [
-  // 🔑 THE `point` EXEMPTION IS GONE AT #716, AND ITS REASON IS WHY. It read: *"a point count
-  // is not derivable from a descriptor — a box tessellates to 24 seam-split points, not 8, so
-  // the number cannot be read off the params"*. That conflated two counts. The SPLIT count is
-  // indeed not 8; the TOPOLOGICAL count is 8 and is derivable, and P2 derives it. An exemption
-  // whose stated reason has become false is the failure mode this list exists to make visible,
-  // so removing it is the phase honouring its own gate rather than editing around one.
-  {
-    module: 'src/nodes/componentSelection.ts',
-    what: 'componentCountOf',
-    domain: 'edge',
-    reason: 'there is no edge buffer on a built geometry, so there is nothing to count',
-  },
-  {
-    module: 'src/nodes/componentSelection.ts',
-    what: 'componentCountOf',
-    domain: 'corner',
-    // Restated at #716 so it stands on its own. It used to read "deferred with `point`",
-    // which stopped being true the moment `point` was answered — a reason that decays
-    // silently when its neighbour moves.
-    reason:
-      'a corner count is 3 x the face count only while a face IS a triangle, and whether it stays one is exactly what #736 decides; deriving it now would bake the disputed unit into a second site',
-  },
+  // 🔑 THE LIST IS EMPTY AT #776, AND EVERY ENTRY IT EVER HELD LEFT BECAUSE ITS STATED REASON
+  // WENT FALSE — which is the whole job of writing the reason down.
+  //
+  //   `point`  — left at #716. It read *"a point count is not derivable from a descriptor — a
+  //              box tessellates to 24 seam-split points, not 8"*. That conflated the SPLIT
+  //              count with the TOPOLOGICAL one; the second is 8 and is derivable.
+  //   `edge`   — left at #776, having been made false at #718 and outlived it by a phase. It
+  //              read *"there is no edge buffer on a built geometry, so there is nothing to
+  //              count"*. #718 gave the domain an identity (a pair of topological points), a
+  //              deterministic order, and an answer from `componentCountOf` — and left the
+  //              exemption standing, which quietly kept this gate from probing an arm that had
+  //              started answering. An exemption outliving its reason is not inert: it is a
+  //              hole with a permanent excuse, and here it excused a site that was already
+  //              correct, so nothing was red and nothing was checked.
+  //   `corner` — left at #776. It read *"a corner count is 3 x the face count only while a
+  //              face IS a triangle, and whether it stays one is exactly what #736 decides"*.
+  //              #770 decided it, and #776 answers the arm.
+  //
+  // ⚠️ EMPTY IS AN ASSERTION, NOT AN ABSENCE. The list is compared whole below, so an
+  // exemption cannot be added back without this file being read, and all four domains are now
+  // probed at every registered dispatch site with nothing skipped.
 ];
 
 /** The module that DECLARES the vocabulary is not a consumer of it. */
@@ -219,10 +218,7 @@ describe('#633 domain census — every known domain has an answer at every dispa
     // Exact, not a floor. An exemption is how a hole gets a permanent excuse, so the set is
     // pinned by (module, what, domain) and every entry is re-checked below against the
     // registered sites and the known domains.
-    expect(DOMAIN_NOT_APPLICABLE.map((e) => `${e.module} ${e.what} ${e.domain}`)).toEqual([
-      'src/nodes/componentSelection.ts componentCountOf edge',
-      'src/nodes/componentSelection.ts componentCountOf corner',
-    ]);
+    expect(DOMAIN_NOT_APPLICABLE.map((e) => `${e.module} ${e.what} ${e.domain}`)).toEqual([]);
 
     // Should one ever be added: it must name a REGISTERED site and a KNOWN domain, or the
     // exemption exempts nothing and the hole it hides stays open.

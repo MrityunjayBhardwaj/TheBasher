@@ -40,7 +40,7 @@ import { read } from './attributeStore';
 import {
   faceArityOf,
   faceCountMismatch,
-  faceTriangleStarts,
+  faceElementStarts,
   materialisedTriangles,
   zeroIndexRefusal,
 } from './faceCount';
@@ -861,7 +861,7 @@ function faceSubset(
     return null;
   }
 
-  const starts = faceTriangleStarts(sourceArity);
+  const starts = faceElementStarts(sourceArity);
   const { mask } = scopeSelection(scope, sourceArity.length);
   const kept: number[] = [];
   for (let f = 0; f < sourceArity.length; f++) {

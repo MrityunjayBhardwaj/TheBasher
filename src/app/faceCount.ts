@@ -43,7 +43,7 @@ import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
 // `polygonLayout.ts` imports one TYPE and nothing else, so this edge cannot come back: the
 // property this module holds is not a number of imports, it is that nothing it depends on can
 // depend back on it. The leaf gate carries the same reasoning beside its widened literal.
-import { polygonArityOf } from './polygonLayout';
+import { polygonArityOf, polygonCornersOf, reversedCornerAt } from './polygonLayout';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -433,6 +433,60 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
   return arity;
 }
 
+/**
+ * How many CORNERS each face has, in build order — or `null` when params alone cannot say.
+ *
+ * A corner is a POLYGON corner since #776 — Blender's loop, Houdini's vertex, Maya's
+ * face-vertex. A box has 24 and not 36, which is the number `MeshElementCounts` has declared
+ * for a box since ns-1 and the number `tiledCornerOrder` disagreed with until #776.
+ *
+ * ── IT COMPOSES THE WAY AN ARITY DOES, FOR THE SAME REASON ────────────────────────────
+ *
+ * A corner COUNT carries no vertex numbering, so it rides the face order a per-face attribute
+ * already gathers through — `corners[i] = sourceCorners[order[i]]`. That is the whole of the
+ * derived arm, and it is why `polygonLayoutOf`'s refusal (#777) does not obstruct this any
+ * more than it obstructed {@link faceArityOf}. A corner's IDENTITY is a different question and
+ * a harder one; this answers how many there are.
+ *
+ * ⚠️ NOT MEMOISED, DELIBERATELY, AND THE ACCESS PATTERN IS WHY RATHER THAN THE COST. The
+ * generated arm is already cached on the layout's identity by `polygonCornersOf`; what is left
+ * is one `map` over the face order. Its two callers are {@link tiledCornerOrder}, which is
+ * itself memoised and therefore reaches this only on a miss, and `componentCountOf`'s `corner`
+ * arm, which no operator can reach because `ScopeDomain` is still `['face']`. So this is not on
+ * the drag road, and a cache installed now would be sized for a guess — the same reading
+ * `edgeIdentity` recorded for `edgeSetOf`, and `tiledFaceOrder` measured before adding its own.
+ */
+export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[] | null {
+  const generated = polygonCornersOf(descriptor);
+  if (generated !== null) return generated;
+
+  // Narrowed explicitly for the reason {@link faceArityOf} states one function up.
+  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
+    return null;
+  const sourceCorners = faceCornersOf(descriptor.source.descriptor);
+  if (sourceCorners === null) return null;
+  const tiled = tiledFaceOrder(descriptor);
+  if (tiled === null) return null;
+  return tiled.order.map((face) => sourceCorners[face]);
+}
+
+/**
+ * How many corners a descriptor has in total — the `corner` answer `componentCountOf` used to
+ * refuse, and the fourth and last domain to get one (#776, after #716's points and #718's edges).
+ *
+ * `number | null` rather than a `CountVerdict`, matching {@link faceCountOf} and not
+ * `pointCountOf`: the `null` here has only ever meant one thing, a `gltf` or `baked` somewhere
+ * up the source chain, and `componentSelection` lifts it into a named absence at the one site
+ * that needs the reason. A corner hangs off a face, so it answers exactly where a face does.
+ */
+export function cornerCountOf(descriptor: GeometryDescriptor): number | null {
+  const corners = faceCornersOf(descriptor);
+  if (corners === null) return null;
+  let total = 0;
+  for (const c of corners) total += c;
+  return total;
+}
+
 /** The triangles a face arity materialises to — one statement, since three callers need it. */
 export function materialisedTriangles(arity: readonly number[]): number {
   let total = 0;
@@ -441,19 +495,24 @@ export function materialisedTriangles(arity: readonly number[]): number {
 }
 
 /**
- * Where each face's triangles START, as triangle indices — the prefix sum of an arity.
+ * Where each face's run STARTS, given how long each face's run is — a prefix sum.
  *
- * Separate from the arity because the two answer different questions and every consumer needs
- * exactly one of them: an arity says how big a face is, a start says where it sits. Returning
+ * Separate from the counts because the two answer different questions and every consumer needs
+ * exactly one of them: a count says how big a face is, a start says where it sits. Returning
  * both from one walk is what keeps `materialGroups`, `faceSubset` and the corner order from
  * each writing their own running total.
+ *
+ * 🔴 NAMED FOR THE FACE AND NOT FOR THE UNIT SINCE #776, WHICH IS THE POINT. Fed an ARITY it
+ * gives triangle starts; fed {@link faceCornersOf} it gives corner starts. They are one walk
+ * over "how many of these does each face own", and a second copy of it under a second name is
+ * how the two readings of the word `corner` got to disagree in the first place.
  */
-export function faceTriangleStarts(arity: readonly number[]): readonly number[] {
+export function faceElementStarts(perFace: readonly number[]): readonly number[] {
   const starts: number[] = [];
   let running = 0;
-  for (const a of arity) {
+  for (const n of perFace) {
     starts.push(running);
-    running += a;
+    running += n;
   }
   return starts;
 }
@@ -469,42 +528,37 @@ export function faceTriangleStarts(arity: readonly number[]): readonly number[] 
  * which copies exist. Every decision about the layout — the preserved input first, the
  * subset, how many times it repeats — is still taken exactly once, in {@link tiledFaceOrder}.
  *
- * ── THE PER-FACE CORNER COUNT WAS 3, AND #770 TOOK THE CONSTANT AWAY ──────────────────
+ * ── A CORNER IS A POLYGON CORNER SINCE #776, AND IT WAS A TRIANGLE CORNER UNTIL THEN ──
  *
  * #694 was filed saying a corner order "cannot [be produced] without the builders' per-face
  * corner counts". Measured then, that was not the obstacle: every descriptor was
- * TRIANGLE-INDEXED, so the per-face corner count was the constant 3 rather than something the
- * builders had to be asked for. #770 made a face a POLYGON and that reasoning expired — a
- * quad's face carries two triangles' worth of corners and a pole cell's carries one.
+ * TRIANGLE-INDEXED, so the per-face corner count was the constant 3. #770 made a face a
+ * POLYGON and re-based this on the arity's triangle total — a box's 36 — which was the smaller
+ * of the two readings and deliberately not Blender's. #776 takes the other one: a corner is a
+ * LOOP, one slot per (face, point) incidence, and a box has 24.
  *
- * 🔴 AND IT EXPIRED SILENTLY, WHICH IS THE PART WORTH RECORDING. `sourceCorners` read
- * `sourceFaces * CORNERS_PER_FACE`. Observed on an Array x3 of a box before the flip:
- * `sourceCorners` 36, `order.length` 108, built index 108 — correct. The instant `faceCountOf`
- * answered 6 the same expression read 18, which is wrong under EVERY reading of the word: 36
- * if a corner is a triangle corner, 24 if it is a Blender loop. Nothing would have failed to
- * compile. The ten-file consumer census on #736 counted this file and still did not see it,
- * because a census over imports finds modules that reach for a thing and this is a consumer
- * sitting beside it.
+ * 🔴 THE MODEL'S OWN DECLARED NUMBERS ALREADY SAID 24, which is what decided it rather than a
+ * preference for Blender's vocabulary. `MeshElementCounts` has read `{points: 8, edges: 12,
+ * faces: 6, corners: 24}` for a box since ns-1, and `elementCountFor` has dispatched on it
+ * that whole time — so this file was the one place disagreeing with the table every other
+ * domain resolves against. The same shape #770 found one domain over, where the plan's own
+ * face numbers turned out to have been n-gon numbers all along.
  *
- * ── A CORNER IS STILL A TRIANGLE CORNER, WHICH IS A DECISION AND NOT AN OMISSION ───────
- *
- * #770 took it deliberately: a corner is a corner of the MATERIALISED triangle buffer, so a
- * box keeps 36 and only the denominator's derivation moves — from the face count to the
- * arity's triangle total. Blender's reading is the polygon corner, its `loop`, where a box has
- * 24; that is the eventual destination and is #776, kept out of this commit because it moves a
- * second meaning through ten consumers that are already moving and because it reaches the UV
- * road. One thing that looks like evidence for taking it early is not: `uvAttributes.ts`
- * reports 24 for a box, but that is the split VERTEX count and the agreement is a coincidence
- * of `BoxGeometry`'s layout that does not survive a sphere.
+ * ⚠️ AND A BOX CANNOT TELL THE THREE READINGS APART, so nothing here is checked on one. A box
+ * is 24 loops / 36 triangle corners / 24 split render vertices; an 8x6 sphere is 176 / 240 /
+ * 63. The middle column is what this function used to answer and the last is what
+ * `uvAttributes.ts` still lifts — three different numbers that all get called "corner", which
+ * is why the gate runs a sphere and a one-face subset beside every box row.
  *
  * 🔴 WINDING IS THE OBSTACLE, AND IT IS A FACT ABOUT THE BUILDERS. `buildMirror` runs
- * `reverseWinding` over its reflected half (`geometryRegistry.ts`), which swaps the 2nd and
- * 3rd corner of every triangle so the reflected faces are not back-facing. Observed on a
- * box: source face 0 is `[0,2,1]` and its mirrored copy is `[0,1,2]`. So a corner order of
- * `3·face + k` would be correct for an Array and would put every mirrored face's corners in
- * the wrong places — silently, because a UV lands somewhere plausible rather than nowhere.
- * `buildArray` applies translations only and never reverses, which is why the array arm is
- * the identity and the mirror arm is not.
+ * `reverseWinding` over its reflected half (`geometryRegistry.ts`), so a reflected face
+ * traverses its corners the other way round. A corner order of `k` per face would be correct
+ * for an Array and would put every mirrored face's corners in the wrong places — silently,
+ * because a UV lands somewhere plausible rather than nowhere. `buildArray` applies
+ * translations only and never reverses, which is why the array arm is the identity.
+ *
+ * The reversal itself is {@link reversedCornerAt}, shared with `weldedPolygonsOf` rather than
+ * spelled twice: #785 is what happens when one of the two spellings is missing.
  *
  * ⚠️ THE REVERSED COPIES ARE THE ONES AFTER THE SOURCE. `buildMirror` merges
  * `[original, reflected]` and this module puts the preserved source first, so the boundary
@@ -516,9 +570,6 @@ export interface TiledCornerOrder {
   /** `order[i]` is the source corner that corner `i` of the merged geometry came from. */
   readonly order: readonly number[];
 }
-
-/** Corners per TRIANGLE. A face is a polygon since #770, so this is no longer per face. */
-const CORNERS_PER_TRIANGLE = 3;
 
 /**
  * Memoised on the FACE order's identity, so this cache cannot outlive the layout it expands
@@ -542,25 +593,25 @@ const cornerOrderCache = new WeakMap<
 export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrder | null {
   const faces = tiledFaceOrder(descriptor);
   if (faces === null) return null;
-  // The SOURCE's arity, not the merged one: this order gathers FROM the source's corners, so
-  // the denominator and every base offset below are the source's. Narrowed the same way
-  // {@link faceArityOf} narrows, and for the same reason.
+  // The SOURCE's corner counts, not the merged one: this order gathers FROM the source's
+  // corners, so the denominator and every base offset below are the source's. Narrowed the
+  // same way {@link faceArityOf} narrows, and for the same reason.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
     return null;
-  const sourceArity = faceArityOf(descriptor.source.descriptor);
-  if (sourceArity === null) return null;
+  const sourceCorners = faceCornersOf(descriptor.source.descriptor);
+  if (sourceCorners === null) return null;
 
   // Whether the copies AFTER the preserved source are wound backwards. The single fact that
   // separates two corner layouts sharing one face layout, so it is what the cache splits on.
   const reversesCopies = descriptor.kind === 'mirror';
 
-  // 🔴 AND THE SOURCE ARITY IS THE SECOND KEY SINCE #770, FOR THE REASON `faceArityOf`'s memo
-  // states: a box and a sphere at w=3 h=2 both have six faces, share one `order` object, and
-  // have completely different corner layouts — six quads against six pole triangles. Keying on
-  // the order alone was correct while every face carried three corners and became a silently
-  // wrong answer the moment that stopped being true.
+  // 🔴 AND THE SOURCE'S CORNER COUNTS ARE THE SECOND KEY SINCE #770, FOR THE REASON
+  // `faceArityOf`'s memo states: a box and a sphere at w=3 h=2 both have six faces, share one
+  // `order` object, and have completely different corner layouts — six quads against six pole
+  // triangles. Keying on the order alone was correct while every face carried three corners and
+  // became a silently wrong answer the moment that stopped being true.
   const perOrder = cornerOrderCache.get(faces.order);
-  const perArity = perOrder?.get(sourceArity);
+  const perArity = perOrder?.get(sourceCorners);
   const hit = perArity?.get(reversesCopies);
   if (hit !== undefined) return hit;
 
@@ -568,34 +619,41 @@ export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrd
   // Faces at or after this index are copies that `reverseWinding` flipped. `Infinity` rather
   // than a boolean beside the loop so the comparison below is the same shape in both arms.
   const reversedFrom = reversesCopies ? sourceFaces : Infinity;
-  // Where each SOURCE face's triangles begin, so a face's corners can be addressed without a
+  // Where each SOURCE face's corners begin, so a face's corners can be addressed without a
   // running total written a second time here.
-  const sourceStart = faceTriangleStarts(sourceArity);
+  const sourceStart = faceElementStarts(sourceCorners);
 
   const corners: number[] = [];
   for (let face = 0; face < order.length; face++) {
     const sourceFace = order[face];
-    // Every triangle the source face materialises to, in the order the fan emits them.
-    // `reverseWinding` swaps the 2nd and 3rd corner of each TRIANGLE and reorders nothing, so
-    // the reversal stays inside this inner loop rather than reversing the loop itself.
-    for (let t = 0; t < sourceArity[sourceFace]; t++) {
-      const base = (sourceStart[sourceFace] + t) * CORNERS_PER_TRIANGLE;
-      if (face >= reversedFrom) corners.push(base, base + 2, base + 1);
-      else corners.push(base, base + 1, base + 2);
+    const rim = sourceCorners[sourceFace];
+    const base = sourceStart[sourceFace];
+    // One slot per corner of the source polygon, in rim order — or in the reversed rim order
+    // for a reflected copy. The reversal holds corner 0 fixed, which is what makes a mirror of
+    // a mirror the identity rather than a rotation; {@link reversedCornerAt} is where that is
+    // decided, once, for this and for `weldedPolygonsOf` both.
+    for (let k = 0; k < rim; k++) {
+      corners.push(base + (face >= reversedFrom ? reversedCornerAt(k, rim) : k));
     }
   }
 
   const resolved: TiledCornerOrder = {
-    sourceCorners: materialisedTriangles(sourceArity) * CORNERS_PER_TRIANGLE,
+    // Summed from the SAME array the offsets above index rather than re-derived through
+    // `cornerCountOf`: a denominator that could disagree with the numbering it denominates is
+    // the one arithmetic here worth not writing twice. A reduce rather than `last start + last
+    // count` because a source CAN have no faces at all — `array(subset(box, "99"), 2)` — and
+    // that shortcut reads `undefined + undefined` there, which is a `NaN` denominator that
+    // every size check downstream would compare against and silently fail.
+    sourceCorners: sourceCorners.reduce((total, n) => total + n, 0),
     order: corners,
   };
   if (perOrder === undefined) {
     cornerOrderCache.set(
       faces.order,
-      new WeakMap([[sourceArity, new Map([[reversesCopies, resolved]])]]),
+      new WeakMap([[sourceCorners, new Map([[reversesCopies, resolved]])]]),
     );
   } else if (perArity === undefined) {
-    perOrder.set(sourceArity, new Map([[reversesCopies, resolved]]));
+    perOrder.set(sourceCorners, new Map([[reversesCopies, resolved]]));
   } else {
     perArity.set(reversesCopies, resolved);
   }

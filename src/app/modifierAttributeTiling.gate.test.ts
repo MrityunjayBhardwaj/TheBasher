@@ -102,11 +102,15 @@ const boxDescriptor = () => boxGeometryRef(BOX_SIZE, null).descriptor;
  * so the fixture does not route through any code this file is checking ([[V210]]).
  */
 /**
- * A box's corners — TRIANGLE corners, so twelve triangles' worth (#770, and #776 is where a
- * corner becomes a polygon corner instead). Named rather than spelled `faces * 3`, which was
- * the same number before the flip and is now off by half.
+ * A box's corners — POLYGON corners since #776, so six quads' worth of rim.
+ *
+ * Named rather than spelled, because every plausible expression for it is wrong in a way that
+ * still produces a number: `faces * 3` read 36 while a face was a triangle and reads 18 now,
+ * and the triangle total's `12 * 3` reads 36, which is what this constant held until #776. A
+ * box's split VERTEX count is also 24 and that agreement is a coincidence of `BoxGeometry`'s
+ * layout — a sphere separates them at 176 loops against 63 vertices.
  */
-const BOX_TRIANGLE_CORNERS = 36;
+const BOX_CORNERS = 24;
 
 function twoMaterialBox(): GeometryRef {
   // #770 — FACES 3..5, and it read 6..11 while a face was a triangle. A box has six faces
@@ -399,13 +403,11 @@ describe('#649 — the modifier key names what the merged geometry carries, and 
       [UV_MAP]: {
         domain: 'corner',
         type: 'float2',
-        // ⚠️ NOT `faces * 3`, WHICH IS WHAT IT SAID UNTIL #770 AND WAS THE SAME NUMBER THEN. A
-        // corner is a corner of a TRIANGLE (#776 is where it becomes a polygon corner), and a
-        // box's six faces materialise to twelve triangles — so the source carries 36 corners,
-        // not 18. At `faces * 3` the attribute misfits, the whole set is refused, and this row
-        // asserts against a store that holds nothing.
-        count: BOX_TRIANGLE_CORNERS,
-        data: new Float32Array(BOX_TRIANGLE_CORNERS * 2).fill(0.25),
+        // ⚠️ A CORNER IS A POLYGON CORNER SINCE #776, so a box's six quads carry 24 and not
+        // the 36 triangle corners this said before. At the wrong count the attribute misfits,
+        // the whole set is refused, and this row asserts against a store that holds nothing.
+        count: BOX_CORNERS,
+        data: new Float32Array(BOX_CORNERS * 2).fill(0.25),
       },
     })!;
     insert(bare.key, bare.set, 'evaluate');
@@ -902,15 +904,15 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     const uv: AttributeData = {
       domain: 'corner',
       type: 'float2',
-      count: 36,
-      data: new Float32Array(72),
+      count: BOX_CORNERS,
+      data: new Float32Array(BOX_CORNERS * 2),
     };
     const withUv = arrayGeometryRef(boxCarrying({ [UV_MAP]: uv }), 3, [2, 0, 0]);
     const bare = arrayGeometryRef(boxCarrying({}), 3, [2, 0, 0]);
 
     expect(Object.keys(tiledSet(withUv)).sort()).toEqual([MATERIAL_INDEX, UV_MAP].sort());
     // The tiled corner attribute spans the merged geometry's corners, not the source's.
-    expect(tiledSet(withUv)[UV_MAP].count).toBe(36 * 3);
+    expect(tiledSet(withUv)[UV_MAP].count).toBe(BOX_CORNERS * 3);
     expect(withUv.key).not.toBe(bare.key);
   });
 
@@ -1007,16 +1009,15 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
   it('🔴 a MIRRORED copy takes its corners in REVERSED winding — the row a wrong layout reds', () => {
     // THE DISCRIMINATING ROW. Everything above this is satisfied by a corner order that is
     // merely the right LENGTH; this is the one that reds if the values land in the wrong
-    // places. `buildMirror` runs `reverseWinding` over its reflected half, swapping each
-    // triangle's 2nd and 3rd corner so the reflected faces are not back-facing — observed on
-    // a box, source face 0 is [0,2,1] and its mirrored copy is [0,1,2]. So `3·face + k` is
-    // correct for an Array and WRONG for a Mirror, and it is wrong quietly: a UV lands
-    // somewhere plausible rather than nowhere.
+    // places. `buildMirror` runs `reverseWinding` over its reflected half so the reflected
+    // faces are not back-facing, which at the POLYGON level means a copied face traverses its
+    // rim the other way round (#785 measured it, per face, against the built index buffer). So
+    // a corner order that just counts up is correct for an Array and WRONG for a Mirror, and it
+    // is wrong quietly: a UV lands somewhere plausible rather than nowhere.
     //
     // Every corner carries its own source index as its value, so the gathered array IS the
     // order and a misplacement is readable rather than inferred.
-    const faces = 12;
-    const corners = faces * 3;
+    const corners = BOX_CORNERS;
     const stamped = mintAttributes({
       [UV_MAP]: {
         domain: 'corner',
@@ -1033,10 +1034,17 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
     const mirrored = tiledSet(mirrorGeometryRef(source, 'x', 0))[UV_MAP];
     const read = (element: number) => mirrored.data[element * 2];
 
-    // The preserved original comes first and is NOT reversed.
-    expect([read(0), read(1), read(2)]).toEqual([0, 1, 2]);
-    // The reflected half is, and it is the SAME source face read in swapped order.
-    expect([read(corners + 0), read(corners + 1), read(corners + 2)]).toEqual([0, 2, 1]);
+    // The preserved original comes first and is NOT reversed: face 0's four rim corners in
+    // rim order.
+    expect([read(0), read(1), read(2), read(3)]).toEqual([0, 1, 2, 3]);
+    // The reflected half is, and it is the SAME source face read the other way round with
+    // corner 0 held fixed — `[0, 3, 2, 1]` and not `[3, 2, 1, 0]`. Which of those two it is is
+    // pinned by the built index buffer rather than chosen: the two fans split a quad along
+    // different diagonals, and `cornerCount.gate.test.ts` row 6 reds on the wrong one.
+    // `reversedCornerAt` is the one place that states it, shared with `weldedPolygonsOf`.
+    expect([read(corners + 0), read(corners + 1), read(corners + 2), read(corners + 3)]).toEqual([
+      0, 3, 2, 1,
+    ]);
     expect(mirrored.count).toBe(corners * 2);
 
     // An ARRAY never reverses — `buildArray` applies translations only — so the same fixture
@@ -1047,7 +1055,8 @@ describe('#688 — the tiling carries EVERY face-domain attribute, selected by d
       arrayed.data[corners * 2],
       arrayed.data[corners * 2 + 2],
       arrayed.data[corners * 2 + 4],
-    ]).toEqual([0, 1, 2]);
+      arrayed.data[corners * 2 + 6],
+    ]).toEqual([0, 1, 2, 3]);
   });
 
   it('the refusal names EVERY misfit attribute, not just the alphabetically first', () => {

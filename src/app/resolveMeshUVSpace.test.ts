@@ -70,6 +70,48 @@ describe('resolveMeshUVSpace — miss semantics per availability class (#405)', 
     expect(space.uvs.uvs).toBeNull();
   });
 
+  it('🔴 #776 — a MODIFIER geometry still draws, though its corner layer cannot be lifted', () => {
+    // THE ROW THE #776 CHANGE COULD HAVE BROKEN, and it covers a case none of the three UV e2e
+    // specs reach: they all resolve a bare primitive or a glTF child.
+    //
+    // `readMeshUVs` reports two things that used to be one. The corner-domain LAYER is gathered
+    // through the polygon rims, which an Array has none of in its own vertex numbering (#777),
+    // so that half is now a named refusal. The ISLANDS come off the built geometry directly and
+    // have never needed the layer. Before they were separated, a lift that could not produce
+    // the attribute returned `none` for the whole read — the status meaning "there are
+    // genuinely no UVs and waiting will not help" — and the panel would have shown its empty
+    // state for a mesh whose UVs it can draw.
+    const { state, objectId, dataId } = makeSplitCube(emptyDagState(), { objectId: 'cube' });
+    let s = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'arr',
+      nodeType: 'ArrayModifier',
+      params: { count: 3 },
+    }).next;
+    s = applyOp(s, {
+      type: 'disconnect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: objectId, socket: 'data' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: 'arr', socket: 'target' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'arr', socket: 'out' },
+      to: { node: objectId, socket: 'data' },
+    }).next;
+
+    const space = resolveMeshUVSpace(s, objectId);
+    expect(space.uvs.status).toBe('ok');
+    // Three copies of a box: 36 triangles, and the island shape is asserted rather than a bare
+    // 'ok' so an empty resolve cannot satisfy this.
+    expect(space.uvs.uvs!.triangleCount).toBe(36);
+    expect(space.uvs.uvs!.islands.length).toBeGreaterThan(0);
+  });
+
   it('a PROCEDURAL geometry resolves real islands (registry builds on demand)', () => {
     const { state, objectId } = makeSplitCube(emptyDagState(), { objectId: 'cube' });
     const space = resolveMeshUVSpace(state, objectId);

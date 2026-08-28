@@ -28,7 +28,7 @@
 //      issues #718, #607, #716, #777.
 
 import type { CountVerdict, GeometryDescriptor } from '../nodes/types';
-import { type PolygonRim, polygonLayoutOf } from './polygonLayout';
+import { type PolygonRim, polygonLayoutOf, reverseRim } from './polygonLayout';
 import { tiledFaceOrder } from './faceCount';
 import { pointCountOf } from './pointIdentity';
 
@@ -236,6 +236,24 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
       // this refuses instead of flooring: a named absence is recoverable, a wrong edge set is not.
       if (!Number.isInteger(blockSize)) return null;
 
+      // 🔴 #785 — A REFLECTED COPY IS WOUND THE OTHER WAY, AND COPYING THE RIM VERBATIM SAID
+      // OTHERWISE. `buildMirror` runs `reverseWinding` over its reflected half, so the copied
+      // faces in the built geometry traverse their corners in the opposite cyclic direction
+      // from the faces they came from. Measured, per face, against the built index buffer in
+      // composed-topological ids: `mirror(box)` is 6 faces wound as the source and 6 wound
+      // OPPOSITE, `mirror(sphere 8x6)` is 48 and 48, and every Array and Subset row is 0.
+      //
+      // This was invisible until #776 because the only consumer was `edgeSetOf`, and an edge
+      // is an UNORDERED pair — reversing a rim leaves the edge set identical, so the gate's
+      // count and containment checks were both blind to it by construction. A claim with no
+      // reader can be wrong and green at the same time.
+      //
+      // Corner 0 is held fixed rather than reversing the whole array, so the permutation is
+      // `k -> (k === 0 ? 0 : rim.length - k)` and a corner order can state the same reversal
+      // as an index map. `tiledCornerOrder` reverses on this same `sourceFaces` boundary, for
+      // this same reason, and the two agree because they name one fact rather than two.
+      const reversesCopies = descriptor.kind === 'mirror';
+
       const rims: PolygonRim[] = [];
       for (let face = 0; face < order.length; face++) {
         const copy =
@@ -243,7 +261,8 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
             ? 0
             : 1 + Math.floor((face - sourceFaces) / blockSize);
         const offset = copy * sourcePoints.count;
-        rims.push(sourceRims[order[face]].map((p) => p + offset));
+        const rim = sourceRims[order[face]].map((p) => p + offset);
+        rims.push(reversesCopies && copy > 0 ? reverseRim(rim) : rim);
       }
       return rims;
     }
