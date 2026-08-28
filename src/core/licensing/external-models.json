@@ -219,6 +219,21 @@
       "conditions": [],
       "checkedAt": "2026-08-27",
       "citations": ["https://github.com/VAST-AI-Research/tripo-3d-for-blender/blob/main/LICENSE"]
+    },
+    {
+      "id": "tripo-api",
+      "name": "Tripo AI hosted generation API (the service)",
+      "role": "the text-to-3D / image-to-3D / rigging service Basher calls, phases A4 and the rig road — an ENDPOINT, not a checkpoint",
+      "source": "https://api.tripo3d.ai/v2/openapi",
+      "licence": "Commercial terms of service (not an open-source licence)",
+      "verdict": "ALLOWED",
+      "reason": "THE EVIDENCE FOR THIS VERDICT IS THE PRODUCT OWNER'S DECISION, NOT A READING OF THE TERMS DOCUMENT. Recorded verbatim, 2026-08-29: \"since tripo has api its fine to use it in any application. don't worry about TOS\". Stated plainly so nobody later mistakes this for the cited-text standard every other record here meets — the Terms of Service were measured UNREADABLE from this environment (403 on www.tripo3d.ai/terms, /legal/terms and /terms-of-service; platform.tripo3d.ai/terms serves a client-rendered SPA shell), so no quotable text was available to cite and none is claimed. The manifest's ordinary staleness clock still applies, which is the right behaviour here: in 180 days it asks whether the DECISION still holds, and that is a question with an owner. What this record does NOT assert: anything about whether commercial rights attach to a billing tier, or survive a plan downgrade. See #762, which stays open for the structural half — the gate's blocked-id scan cannot see an endpoint, so a hosted service passes it vacuously.",
+      "conditions": [],
+      "checkedAt": "2026-08-29",
+      "citations": [
+        "https://www.tripo3d.ai/terms — the governing document; NOT retrieved (HTTP 403 from this environment) and therefore NOT quoted anywhere in this record",
+        "https://github.com/MrityunjayBhardwaj/TheBasher/issues/762#issuecomment-5458149469 — the owner's decision, recorded"
+      ]
     }
   ]
 }
