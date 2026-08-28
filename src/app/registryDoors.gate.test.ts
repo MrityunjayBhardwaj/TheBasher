@@ -134,6 +134,13 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // answer off the resolved value and imports only the CLASSIFIER (`availabilityOf`), which
   // hands back no instance and therefore opens no door. Two consumers became one.
   'src/app/uvAttributes.ts': 'read',
+  // #786 — the rims `uvAttributes.ts` gathers through now come off the BUILT index buffer, so
+  // that walk lives here. It opens a door for one reason: a derived kind's weld is COMPOSED from
+  // its source's (#754 — position-welding a merged buffer would fuse a mirror's two copies), and
+  // the recursion bottoms out at the primitive, whose geometry only the registry has. It takes
+  // the top geometry as a PARAMETER and reaches for source geometries alone; it computes a weld
+  // and rims and writes to neither.
+  'src/app/builtRims.ts': 'read',
   // Clones before it writes, so the shared instance is untouched — a reader that happens to
   // own a copy afterwards, which is the rule working rather than an exception to it.
   'src/app/animate/dispatchApplyTransform.ts': 'read',

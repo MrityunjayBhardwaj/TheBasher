@@ -33,9 +33,11 @@
 //      src/nodes/attributes.ts (`UV_MAP`); src/app/uvIslands.ts (the display projection);
 //      src/app/resolveMeshUVSpace.ts (the consumer); issues #635, #633, #630.
 
-import type { BufferAttribute } from 'three';
+import type { BufferAttribute, BufferGeometry } from 'three';
 import { readGeometry } from './geometryRegistry';
 import { polygonLayoutOf } from './polygonLayout';
+import { alignedSplitRims } from './builtRims';
+import { faceArityOf } from './faceCount';
 import { insert } from './attributeStore';
 import { extractUVIslands } from './uvIslands';
 import { UV_MAP, type AttributeData } from '../nodes/attributes';
@@ -101,34 +103,43 @@ const NONE: MeshUVRead = { status: 'none' };
  */
 function uvAttributeOf(
   uv: BufferAttribute,
-  descriptor: GeometryDescriptor,
+  ref: GeometryRef,
+  geometry: BufferGeometry,
 ): AttributeData | UVAttributeVerdict {
-  const layout = polygonLayoutOf(descriptor);
-  if (layout.kind !== 'laid-out')
-    // 🔑 PROPAGATED VERBATIM, NEVER RE-WORDED — the discipline `edgeCountOf` keeps one domain
-    // over. `polygonLayoutOf` refuses for two unrelated reasons: a derived kind's rim needs a
-    // SPLIT vertex count only a built geometry has (`not-yet`, until #777), and a `gltf` or
-    // `baked` keeps its buffers outside the descriptor entirely (`outside-the-descriptor`,
-    // permanent). Minting one message here would have to pick one of them, and the first draft
-    // of this did: it cited #777 at every arm, so a PRIMED baked mesh — which reaches this line,
-    // the registry having built it — would have named an issue that has nothing to do with it.
+  // 🔑 THE RIMS COME OFF THE BUILT GEOMETRY, WHICH IS WHY A DERIVED KIND ANSWERS NOW (#786).
+  //
+  // This used to ask `polygonLayoutOf` alone and refuse `array` / `mirror` / `subset`, citing
+  // #777 — the issue for teaching a DESCRIPTOR to state a copy's split vertex count. The refusal
+  // was real and its reason was true, and this module was its only blocked consumer. What was
+  // wrong was the call site: `readMeshUVs` already holds the built geometry (it hands it to
+  // `extractUVIslands` on the line above) and passed only the descriptor. The count the refusal
+  // says nothing has, a built buffer has by construction — so the rims are recovered from it,
+  // and no descriptor-side derivation is needed. `polygonLayoutOf`'s refusal stands, permanently
+  // and correctly; nothing is waiting on it.
+  //
+  // `alignedSplitRims` serves BOTH roads — for `box` and `sphere` it recovers exactly the rims
+  // the descriptor states, corner for corner (gated), so there is one source here rather than a
+  // primitive path and a derived path that can drift.
+  const polygons = alignedSplitRims(ref, geometry);
+  if (polygons === null)
+    // 🔑 STILL PROPAGATED VERBATIM, NEVER RE-WORDED — the discipline `edgeCountOf` keeps one
+    // domain over, and the reason is the same as it was: minting a message here would have to
+    // guess which refusal fired. What CAN reach this line has narrowed to one case. A `gltf` or
+    // `baked` descriptor has no face arity, so there is nothing to walk the buffer against, and
+    // `polygonLayoutOf` says exactly why — its buffers live outside the descriptor. That verdict
+    // is permanent and is not #777's.
     //
-    // ⚠️ AND #777 IS WHY THIS MATTERS RATHER THAN BEING TIDINESS. This is that refusal's FIRST
-    // BLOCKED consumer: every previous caller wanted something composing without a derived rim
-    // — an arity, a welded rim — and a UV cannot, because it lives on a SPLIT vertex. The
-    // `until` travels with the reason so the issue number is the layout's to state, not this
-    // module's to remember.
-    return {
-      kind: 'not-derivable',
-      why: layout.kind === 'not-yet' ? `${layout.why} — until ${layout.until}` : layout.why,
-    };
+    // The other way to arrive is a genuine disagreement: an arity exists, rims were recovered,
+    // and no rotation of one reproduces the substrate's welded rim. That is a defect rather than
+    // a wait, so it says so instead of borrowing a reason that would make it look expected.
+    return refusalFor(ref.descriptor);
 
   const components = 2;
   let corners = 0;
-  for (const rim of layout.polygons) corners += rim.length;
+  for (const rim of polygons) corners += rim.length;
   const data = new Float32Array(corners * components);
   let at = 0;
-  for (const rim of layout.polygons) {
+  for (const rim of polygons) {
     for (const vertex of rim) {
       data[at] = uv.getX(vertex);
       data[at + 1] = uv.getY(vertex);
@@ -136,6 +147,45 @@ function uvAttributeOf(
     }
   }
   return { domain: 'corner', type: 'float2', count: corners, data };
+}
+
+/**
+ * The reason no corner-domain rims could be produced for `descriptor`.
+ *
+ * ⚠️ THE ARMS ARE KEPT APART ON PURPOSE, AND THE FIRST DRAFT OF THIS COLLAPSED THEM. Asking
+ * `polygonLayoutOf` alone is not enough: an `array` whose SOURCE is a `gltf` or `baked` mesh has
+ * no face arity, so there is nothing to walk the index buffer against — but the layout verdict
+ * for the ARRAY is `not-yet`, so a single `outside-the-descriptor` test falls through and reports
+ * a DEFECT for what is an ordinary missing buffer. That is the same shape of error this module
+ * already carries a warning about — a refusal borrowing a reason that belongs to another arm.
+ * So the chain is walked to the descriptor that actually owns the absence.
+ */
+function refusalFor(descriptor: GeometryDescriptor): UVAttributeVerdict {
+  const layout = polygonLayoutOf(descriptor);
+  if (layout.kind === 'outside-the-descriptor') return { kind: 'not-derivable', why: layout.why };
+
+  // No arity anywhere in the chain means a source's buffers are outside the descriptor. Name
+  // that source's own reason rather than this one's.
+  if (faceArityOf(descriptor) === null) {
+    let base = descriptor;
+    while (base.kind === 'array' || base.kind === 'mirror' || base.kind === 'subset')
+      base = base.source.descriptor;
+    const root = polygonLayoutOf(base);
+    return {
+      kind: 'not-derivable',
+      why:
+        root.kind === 'outside-the-descriptor'
+          ? `${root.why} — and a derived kind over it inherits that`
+          : `a '${base.kind}' source states no face arity, so its polygons cannot be walked`,
+    };
+  }
+
+  return {
+    kind: 'not-derivable',
+    why:
+      "the built index and the substrate disagree about this mesh's polygon rims — a recovered " +
+      'rim could not be aligned onto the welded one, which is a defect rather than a missing feature',
+  };
 }
 
 /**
@@ -165,7 +215,7 @@ export function readMeshUVs(ref: GeometryRef): MeshUVRead {
       // comes off the built geometry directly and has never needed the attribute; the two are
       // reported separately now because exactly one of them can be absent on its own.
       const islands = extractUVIslands(result.geometry);
-      const lifted = uvAttributeOf(uv, ref.descriptor);
+      const lifted = uvAttributeOf(uv, ref, result.geometry);
       if ('kind' in lifted) return { status: 'ok', islands, attribute: lifted };
 
       const minted = mintAttributes({ [UV_MAP]: lifted });
