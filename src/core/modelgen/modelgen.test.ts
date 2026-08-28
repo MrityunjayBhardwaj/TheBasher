@@ -15,7 +15,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState } from '../dag';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildGltfImportOps } from '../import/gltfImportChain';
 import { parseGltfContainer } from '../import/glb';
-import { ModelNotLicensedError } from '../licensing/allowedModels';
+import { ModelNotLicensedError, assertModelAllowed } from '../licensing/allowedModels';
 import {
   MAX_FACE_LIMIT,
   ModelRequestInvalidError,
@@ -180,33 +180,55 @@ describe('the request contract refuses rather than clamps', () => {
   });
 });
 
-describe('the service licence gate refuses BEFORE any request is issued', () => {
-  it('has no recorded verdict for the Tripo service — the premise, stated', () => {
-    // This test is the guard's PREMISE, asserted where a reader can see it. It
-    // reds the day someone records the terms, which is exactly when the refusal
-    // below must be revisited rather than left to look like a bug.
-    expect(MODEL_RECORDS.map((r) => r.id)).not.toContain(TRIPO_SERVICE_ID);
+describe('the service licence gate, now that the Tripo verdict is recorded', () => {
+  // This block used to assert the OPPOSITE — that the service had no verdict and
+  // every generation refused. That was correct while the terms were unread, and
+  // the premise test was written to red "the day someone records the terms, which
+  // is exactly when the refusal below must be revisited rather than left to look
+  // like a bug". It redded. This is that revisit.
+  //
+  // What must NOT be lost in the rewrite is the property that actually had teeth:
+  // an unrecorded service still refuses, and refuses before any call. Deleting
+  // these tests along with their premise would have quietly retired the gate.
+
+  it('the Tripo service has a verdict, and the record says what it rests on', () => {
+    const record = MODEL_RECORDS.find((r) => r.id === TRIPO_SERVICE_ID);
+    expect(record).toBeDefined();
+    expect(record!.verdict).toBe('ALLOWED');
+    // The honesty of the record is itself worth pinning. Every other verdict here
+    // meets a cited-text standard; this one rests on the product owner's decision,
+    // and the reason field has to keep saying so — otherwise a later reader takes
+    // it for a reading of the terms, which nobody has done.
+    expect(record!.reason).toMatch(/OWNER'S DECISION, NOT A READING OF THE TERMS/i);
   });
 
-  it('refuses to generate, and issues no HTTP call at all', async () => {
-    // The load-bearing assertion is `not.toHaveBeenCalled()`. Under unread terms
-    // for a paid service, making the call IS the thing to prevent — an error
-    // raised after the request has gone out has already done it.
-    const fetchImpl = vi.fn();
+  it('the gate still has teeth — an UNRECORDED service is refused, by name', () => {
+    // The load-bearing half, retargeted. Recording one verdict must not turn the
+    // gate off; it must only answer differently for the id that was recorded.
+    expect(() => assertModelAllowed('some-service-nobody-recorded')).toThrow(ModelNotLicensedError);
+    expect(() => assertModelAllowed('some-service-nobody-recorded')).toThrow(
+      /no recorded licence verdict/,
+    );
+  });
+
+  it('with the verdict recorded, a generation now REACHES the network', async () => {
+    // The other side of the same coin, and the reason this is a test rather than
+    // a comment: it proves the gate was ENABLED rather than removed. Before the
+    // record, `fetchImpl` was never called; now it is, and by the licence gate's
+    // leave rather than around it.
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ data: { task_id: 't1' } }), { status: 200 }),
+    );
     const cap = new TripoModelGenerationCapability({
       apiKey: KEY,
+      timeoutMs: 20,
+      pollIntervalMs: 0,
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
-    await expect(cap.generate(TEXT)).rejects.toThrow(ModelNotLicensedError);
-    expect(fetchImpl).not.toHaveBeenCalled();
-  });
-
-  it('says what is missing, so the refusal is actionable rather than opaque', async () => {
-    const cap = new TripoModelGenerationCapability({
-      apiKey: KEY,
-      fetchImpl: vi.fn() as unknown as typeof fetch,
-    });
-    await expect(cap.generate(TEXT)).rejects.toThrow(/no recorded licence verdict/);
+    // It will fail later, on the poll — what is under test is that it got past
+    // the gate and issued the create call at all.
+    await expect(cap.generate(TEXT)).rejects.toThrow();
+    expect(fetchImpl).toHaveBeenCalled();
   });
 
   it('the stub is NOT gated — it reaches no service, so no terms govern it', async () => {
