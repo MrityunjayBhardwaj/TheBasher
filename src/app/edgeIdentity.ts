@@ -228,6 +228,13 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
       // into the rest. A subset descriptor has no repeats at all and falls out as copy 0.
       const blocks = copies - 1;
       const blockSize = blocks > 0 ? (order.length - sourceFaces) / blocks : 0;
+      // 🔴 A FRACTIONAL BLOCK IS A WRONG ANSWER, NOT A ROUNDING QUESTION. The repeats divide the
+      // order evenly by construction — measured at six scoped generators — so a fraction here
+      // means the layout has stopped being "the whole input, then N copies of the subset" and the
+      // copy attribution below would silently offset some faces into the wrong copy's point
+      // range. Every edge would still be a plausible pair of real ids, which is precisely why
+      // this refuses instead of flooring: a named absence is recoverable, a wrong edge set is not.
+      if (!Number.isInteger(blockSize)) return null;
 
       const rims: PolygonRim[] = [];
       for (let face = 0; face < order.length; face++) {

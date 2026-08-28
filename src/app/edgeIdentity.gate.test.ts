@@ -70,6 +70,21 @@ const SYNC_BUILDABLE: readonly GeometryRef[] = [
   subsetGeometryRef(box, '0-2', true),
   subsetGeometryRef(box, '0-2', false),
   subsetGeometryRef(sphere, '0-9', true),
+  // 🔴 SCOPED GENERATORS, BECAUSE THE COPY BLOCKS ARE WHERE A SCOPE CHANGES THE SHAPE. An
+  // unscoped order is `copies x sourceFaces` and divides evenly by inspection; a scoped one is
+  // "the whole input, then repeats of the subset", so the block arithmetic that attributes a
+  // face to a copy — and therefore picks its point offset — is only exercised here.
+  //
+  // The discrimination is exact rather than likely: for an unscoped generator
+  // `(order.length - sourceFaces) / blocks` IS `sourceFaces`, so the two expressions agree on
+  // every fixture above and no unscoped case can tell them apart. Replacing the divisor with
+  // `sourceFaces` — the natural wrong simplification — reds only because these rows exist.
+  arrayGeometryRef(box, 3, [2, 0, 0], '0-2'),
+  arrayGeometryRef(box, 3, [2, 0, 0], '0'),
+  arrayGeometryRef(box, 4, [2, 0, 0], '1-2'),
+  mirrorGeometryRef(box, 'x', 1, '0-2'),
+  mirrorGeometryRef(box, 'x', 1, '0'),
+  arrayGeometryRef(sphere, 2, [0, 3, 0], '0-9'),
 ];
 
 /**
