@@ -7,11 +7,11 @@
 
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_MOTION_FPS,
   MAX_MOTION_SECONDS,
   MotionRequestInvalidError,
   assertValidMotionRequest,
 } from './MotionGenerationCapability';
+import type { MotionGenerationRequest } from './MotionGenerationCapability';
 import { StubMotionGenerationCapability, synthesiseBvh } from './StubMotionGenerationCapability';
 import { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability';
 import { aBlockedRecord } from '../licensing/blockedModelForTests';
@@ -31,7 +31,6 @@ describe('a well-formed request is accepted unchanged (#751)', () => {
     expect(() =>
       assertValidMotionRequest({
         ...ok,
-        fps: MAX_MOTION_FPS,
         seconds: MAX_MOTION_SECONDS,
         seed: -1,
         constraints: { waypoints: [{ x: 0, z: 0 }] },
@@ -40,14 +39,34 @@ describe('a well-formed request is accepted unchanged (#751)', () => {
   });
 });
 
+describe('the sampling rate cannot be requested at all (#790)', () => {
+  // `fps` used to be a field here, and the arms below used to be about its
+  // degenerate values: `fps: 0` produced `Frames: 2 | Frame Time: Infinity |
+  // 0 1 0 0 NaN 0 0 NaN 0`, well-formed BVH as far as any consumer could tell.
+  //
+  // It is gone, because the rate is the generator's to decide and two of the
+  // three measured backends cannot honour a requested one. What is tested now is
+  // one rung further up: not that a bad rate is refused, but that ASKING is.
+  it('refuses the field by name rather than silently ignoring it', () => {
+    // The whole point of a strict schema. A permissive object would STRIP the
+    // unknown key and succeed, so the caller would believe a rate it named had
+    // been honoured — which is exactly the quiet failure the removal ends.
+    expect(() => assertValidMotionRequest({ ...ok, fps: 30 } as MotionGenerationRequest)).toThrow(
+      /fps/,
+    );
+  });
+
+  it('refuses it whatever its value — the value was never the problem', () => {
+    for (const fps of [30, 0, -1, Number.NaN, Number.POSITIVE_INFINITY, 1e6]) {
+      expect(() => assertValidMotionRequest({ ...ok, fps } as MotionGenerationRequest)).toThrow(
+        MotionRequestInvalidError,
+      );
+    }
+  });
+});
+
 describe('degenerate numbers are refused, not clamped (#751)', () => {
-  // `fps: 0` produced `Frames: 2 | Frame Time: Infinity | 0 1 0 0 NaN 0 0 NaN 0`.
-  // Well-formed BVH text as far as any consumer can tell.
   it.each([
-    ['fps: 0 — the reported case, which produced Frame Time: Infinity', { fps: 0 }],
-    ['fps: NaN — produced a header claiming Frames: NaN over no rows at all', { fps: NaN }],
-    ['fps: Infinity', { fps: Infinity }],
-    ['fps negative', { fps: -30 }],
     ['seconds: -5 — was silently clamped to two frames', { seconds: -5 }],
     ['seconds: 0', { seconds: 0 }],
     ['seconds: NaN', { seconds: NaN }],
@@ -55,14 +74,16 @@ describe('degenerate numbers are refused, not clamped (#751)', () => {
     expect(() => assertValidMotionRequest({ ...ok, ...patch })).toThrow(MotionRequestInvalidError);
   });
 
-  it('refuses a runaway fps×seconds product before it can be asked for', () => {
-    // Positive and finite is NOT enough: fps 1e6 over 60s asks for 60,000,000
-    // motion rows and hangs the tab that requested it. The bound is a resource
-    // limit, and the entry to generate is the only place that sees the pair.
-    expect(() => assertValidMotionRequest({ ...ok, fps: 1e6, seconds: 60 })).toThrow(
+  it('bounds the clip length, the one number a caller still supplies', () => {
+    // The bound used to guard a PAIR — `fps: 1e6, seconds: 60` asked for
+    // 60,000,000 motion rows and hung the tab. With the rate no longer the
+    // caller's, `seconds` alone decides how much gets synthesised, so the limit
+    // moved onto it rather than being kept for a product that can no longer
+    // be formed.
+    expect(() => assertValidMotionRequest({ ...ok, seconds: MAX_MOTION_SECONDS + 1 })).toThrow(
       MotionRequestInvalidError,
     );
-    expect(() => assertValidMotionRequest({ ...ok, seconds: MAX_MOTION_SECONDS + 1 })).toThrow();
+    expect(() => assertValidMotionRequest({ ...ok, seconds: MAX_MOTION_SECONDS })).not.toThrow();
   });
 
   it('refuses an empty prompt and an empty model', () => {
@@ -85,23 +106,25 @@ describe('degenerate numbers are refused, not clamped (#751)', () => {
 describe('the refusal names the offending field, so a caller can learn from it', () => {
   it('reports the field path, not a generic failure', () => {
     try {
-      assertValidMotionRequest({ ...ok, fps: 0 });
+      assertValidMotionRequest({ ...ok, seconds: 0 });
       expect.unreachable('should have thrown');
     } catch (error) {
       expect(error).toBeInstanceOf(MotionRequestInvalidError);
-      expect((error as MotionRequestInvalidError).issues).toEqual([expect.stringContaining('fps')]);
+      expect((error as MotionRequestInvalidError).issues).toEqual([
+        expect.stringContaining('seconds'),
+      ]);
     }
   });
 
   it('reports EVERY offending field, not just the first', () => {
     // A model authoring a request gets one round trip, not one field per round trip.
     try {
-      assertValidMotionRequest({ prompt: '', model: ALLOWED, fps: 0, seed: 1.5 });
+      assertValidMotionRequest({ prompt: '', model: ALLOWED, seconds: 0, seed: 1.5 });
       expect.unreachable('should have thrown');
     } catch (error) {
       const { issues } = error as MotionRequestInvalidError;
       expect(issues.join(' ')).toMatch(/prompt/);
-      expect(issues.join(' ')).toMatch(/fps/);
+      expect(issues.join(' ')).toMatch(/seconds/);
       expect(issues.join(' ')).toMatch(/seed/);
     }
   });
@@ -110,7 +133,7 @@ describe('the refusal names the offending field, so a caller can learn from it',
 describe('both implementations enforce it, and so does the synthesiser', () => {
   it('the stub refuses at generate', async () => {
     const cap = new StubMotionGenerationCapability();
-    await expect(cap.generate({ ...ok, fps: 0 })).rejects.toThrow(MotionRequestInvalidError);
+    await expect(cap.generate({ ...ok, seconds: 0 })).rejects.toThrow(MotionRequestInvalidError);
   });
 
   it('the http impl refuses BEFORE issuing the request', async () => {
@@ -122,14 +145,16 @@ describe('both implementations enforce it, and so does the synthesiser', () => {
         throw new Error('the service must not have been reached');
       }) as unknown as typeof fetch,
     });
-    await expect(cap.generate({ ...ok, fps: 0 })).rejects.toThrow(MotionRequestInvalidError);
+    await expect(cap.generate({ ...ok, seconds: 0 })).rejects.toThrow(MotionRequestInvalidError);
     expect(calls).toBe(0);
   });
 
   it('synthesiseBvh refuses directly — it is the function that builds the bytes', () => {
     // Exported from the barrel, so guarding only generate would leave the door
-    // that actually produces `Frame Time: Infinity` standing open.
-    expect(() => synthesiseBvh({ ...ok, fps: 0 })).toThrow(MotionRequestInvalidError);
+    // that actually produces the rows standing open. `Frame Time: Infinity` is no
+    // longer reachable from here — the rate is the stub's own constant — but
+    // `seconds` still decides the row count on its own.
+    expect(() => synthesiseBvh({ ...ok, seconds: 0 })).toThrow(MotionRequestInvalidError);
   });
 
   it('the licence verdict is reported BEFORE the shape complaint', async () => {
@@ -137,6 +162,8 @@ describe('both implementations enforce it, and so does the synthesiser', () => {
     // first would bury the fact that matters behind whichever field also happened
     // to be wrong.
     const cap = new StubMotionGenerationCapability();
-    await expect(cap.generate({ prompt: 'x', model: BLOCKED, fps: 0 })).rejects.toThrow(/BLOCKED/);
+    await expect(cap.generate({ prompt: 'x', model: BLOCKED, seconds: 0 })).rejects.toThrow(
+      /BLOCKED/,
+    );
   });
 });

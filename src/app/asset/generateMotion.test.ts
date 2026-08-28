@@ -96,9 +96,13 @@ describe('a failure surfaces in the banner, never only in the console', () => {
   });
 
   it('reports a malformed request rather than generating nonsense', async () => {
-    const result = await generateMotionIntoScene('a figure walks', { fps: 0 });
+    // `seconds`, because `fps` is no longer an option a director can pass (#790)
+    // — the generator decides the rate. What is under test is unchanged: a
+    // degenerate number reaches the banner instead of becoming a clip full of
+    // nonsense that nothing complains about.
+    const result = await generateMotionIntoScene('a figure walks', { seconds: 0 });
     expect(result.ok).toBe(false);
-    expect(Object.values(useAssetErrorStore.getState().errors)[0]!).toMatch(/fps/);
+    expect(Object.values(useAssetErrorStore.getState().errors)[0]!).toMatch(/seconds/);
   });
 
   it('never throws — the caller can always return to idle', async () => {

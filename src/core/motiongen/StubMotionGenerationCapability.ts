@@ -13,7 +13,8 @@
 // REF: src/core/comfy/StubComfyUICapability.ts; src/core/import/bvh.ts.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
-import { assertValidMotionRequest } from './MotionGenerationCapability';
+import { BVH_UNIT_SCALE_METRES } from '../import/bvh';
+import { assertValidMotionRequest, assertValidMotionResult } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
   MotionGenerationRequest,
@@ -37,12 +38,30 @@ function digest(text: string): number {
   return h >>> 0;
 }
 
+/**
+ * The rate the stub samples at. A CONSTANT of this implementation, not a default
+ * filled in for an absent request field: the stub is a generator, and a generator
+ * decides its own rate. It is written into the `Frame Time` header like any other
+ * producer's, so every consumer reads it from the clip rather than from here.
+ */
+export const STUB_MOTION_FPS = 30;
+
+/**
+ * The stub authors its rig in METRES — a 1-unit hip and a 2-unit figure — so it
+ * declares a scale of 1.
+ *
+ * Worth stating rather than assuming, because the stub and the real backend
+ * disagree here: a Kimodo clip is in centimetres. Two implementations of one
+ * capability emitting lengths 100x apart is fine as long as each says which; it is
+ * only fatal when neither does, which is the state this replaced.
+ */
+export const STUB_UNIT_SCALE = BVH_UNIT_SCALE_METRES;
+
 function requestKey(request: MotionGenerationRequest): string {
   return JSON.stringify({
     prompt: request.prompt,
     model: request.model,
     seconds: request.seconds ?? 2,
-    fps: request.fps ?? 30,
     seed: request.seed ?? 0,
     constraints: request.constraints ?? null,
   });
@@ -69,18 +88,27 @@ ROOT Hips
  * Synthesise BVH whose motion is a function of the request digest. Deterministic
  * by construction: no clock, no randomness, no ambient state.
  *
- * Validates too, and not only because `generate` already did. This is the function
- * that CONSTRUCTS the malformed artefact — `Frame Time: Infinity`, `Frames: NaN` —
- * and it is exported from the barrel, so guarding only the two call sites that were
- * in mind leaves the door that actually produces the bytes standing open.
+ * Validates too, and not only because `generate` already did. It is exported from
+ * the barrel, so guarding only the two call sites that were in mind leaves the
+ * door that actually produces the bytes standing open.
+ *
+ * The header it used to be able to produce — `Frame Time: Infinity`, `Frames: NaN`
+ * — is now unconstructible from here: the rate is this implementation's own
+ * constant rather than a caller's number. What the check still buys is the other
+ * half, `seconds`: unbounded, it decides the row count on its own.
  */
 export function synthesiseBvh(request: MotionGenerationRequest): string {
   assertValidMotionRequest(request);
   const seedHash = digest(requestKey(request));
-  const fps = request.fps ?? 30;
+  const fps = STUB_MOTION_FPS;
   const seconds = request.seconds ?? 2;
   const frames = Math.max(2, Math.round(fps * seconds));
-  const frameTime = (1 / fps).toFixed(7);
+  // FULL precision, not a rounded 7 places. The rate is derived from this header
+  // rather than reported beside the clip, so the header has to carry enough digits
+  // to derive it: `(1/30).toFixed(7)` reads back as 30.00003, and a producer whose
+  // own rate is not recoverable from its own file has not really stated it. The
+  // real exporter writes 0.03333333333333333 for the same reason.
+  const frameTime = String(1 / fps);
 
   // A phase and amplitude drawn from the digest, so different prompts move
   // differently and the same prompt always moves the same way.
@@ -140,11 +168,17 @@ export class StubMotionGenerationCapability implements MotionGenerationCapabilit
     }
 
     this.jobCounter += 1;
-    return {
+    const result = {
       jobId: `stub-motion-${this.jobCounter}`,
       bvh: synthesiseBvh(request),
       model: request.model,
+      unitScale: STUB_UNIT_SCALE,
     };
+    // Check the way out too, and for the same reason the licence check runs here
+    // rather than only in the HTTP impl: a stub exempt from a rule lets a test
+    // prove the rule holds when it does not.
+    assertValidMotionResult(result);
+    return result;
   }
 
   async cancel(): Promise<void> {

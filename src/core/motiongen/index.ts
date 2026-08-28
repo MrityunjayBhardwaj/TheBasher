@@ -54,9 +54,16 @@ export {
   MAX_MOTION_SECONDS,
   MotionGenerationRequestSchema,
   MotionRequestInvalidError,
+  MotionResultInvalidError,
   assertValidMotionRequest,
+  assertValidMotionResult,
 } from './MotionGenerationCapability';
-export { StubMotionGenerationCapability, synthesiseBvh } from './StubMotionGenerationCapability';
+export {
+  StubMotionGenerationCapability,
+  synthesiseBvh,
+  STUB_MOTION_FPS,
+  STUB_UNIT_SCALE,
+} from './StubMotionGenerationCapability';
 export { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability';
 export { buildGeneratedMotionOps } from './generatedMotionChain';
 export type { GeneratedMotionArgs, GeneratedMotionResult } from './generatedMotionChain';
