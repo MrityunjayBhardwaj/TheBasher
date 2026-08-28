@@ -90,17 +90,60 @@ describe('#635 a built geometry yields a CORNER-domain UV attribute', () => {
       expect(carried.has(`${attribute.data[c * 2]},${attribute.data[c * 2 + 1]}`)).toBe(true);
   });
 
-  it('names the refusal for a descriptor with no rims of its own — #777', () => {
-    // An Array has no rims in its own vertex numbering, so a UV cannot be placed on one of its
-    // corners. The ISLANDS still arrive, which is the half that used to be lost with them: this
-    // arm returned `none` before #776, the status meaning "there are genuinely no UVs".
+  it('a derived kind now LIFTS, where it used to name a refusal — #786', () => {
+    // 🔴 THIS ROW ASSERTED THE OPPOSITE UNTIL #786, AND THE REFUSAL IT PINNED WAS REAL.
+    //
+    // An Array has no rims in its own vertex numbering that a DESCRIPTOR can state, which is
+    // what `polygonLayoutOf` refuses and what #777 was opened for. It is still true. What
+    // changed is that this module stopped needing the descriptor to state them: `readMeshUVs`
+    // holds the built geometry, and the split vertex count the refusal says nothing has is
+    // exactly what a built buffer has. So the rims are walked off the index buffer instead.
     const arrayed = arrayGeometryRef(boxGeometryRef([1, 1, 1], null), 3, [2, 0, 0]);
     const result = readMeshUVs(arrayed);
     expect(result.status).toBe('ok');
-    if (result.status !== 'ok') return;
+    if (result.status !== 'ok' || result.attribute.kind !== 'resident') {
+      throw new Error('the array did not reach the minting arm');
+    }
     expect(result.islands.triangleCount).toBeGreaterThan(0);
+
+    // The count is the corner domain's size — three copies of a box's 24 loops.
+    const attribute = read(result.attribute.key)![UV_MAP];
+    expect(attribute.count).toBe(cornerCountOf(arrayed.descriptor));
+    expect(attribute.count).toBe(72);
+    expect(attribute.data.length).toBe(144);
+
+    // Gathered, not resampled: every value is one a render vertex of the MERGED buffer carries.
+    const uv = getForRead(arrayed)!.getAttribute('uv')!;
+    const carried = new Set<string>();
+    for (let v = 0; v < uv.count; v++) carried.add(`${uv.getX(v)},${uv.getY(v)}`);
+    for (let c = 0; c < attribute.count; c++)
+      expect(carried.has(`${attribute.data[c * 2]},${attribute.data[c * 2 + 1]}`)).toBe(true);
+  });
+
+  it("an Array over a BAKED source names the SOURCE's reason, not a defect — #786", () => {
+    // 🔴 THE ARM THE SELF-REVIEW CAUGHT. `alignedSplitRims` refuses here because a baked source
+    // states no face arity, so there is nothing to walk the index buffer against. But
+    // `polygonLayoutOf` on the ARRAY answers `not-yet`, so a refusal that tested only for
+    // `outside-the-descriptor` fell through and announced that the built index and the substrate
+    // DISAGREE — reporting a defect for an ordinary missing buffer, which is the same shape of
+    // mis-citation this module already carries a warning about.
+    const arrayedBaked = arrayGeometryRef(bakedRef('baked-under-an-array'), 2, [1, 0, 0]);
+    const uvd = new BufferGeometry();
+    uvd.setAttribute(
+      'position',
+      new BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3),
+    );
+    uvd.setAttribute('uv', new BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1]), 2));
+    prime(bakedRef('baked-under-an-array'), uvd);
+
+    const result = readMeshUVs(arrayedBaked);
+    if (result.status !== 'ok') return;
     expect(result.attribute.kind).toBe('not-derivable');
-    expect(result.attribute.kind === 'not-derivable' && result.attribute.why).toContain('#777');
+    const why = result.attribute.kind === 'not-derivable' ? result.attribute.why : '';
+    expect(why).not.toContain('disagree');
+    expect(why).not.toContain('defect');
+    expect(why).toContain('not derivable here');
+    expect(why).toContain('inherits that');
   });
 
   it('keys two equal geometries onto one attribute entry', () => {
