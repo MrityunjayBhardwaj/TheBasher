@@ -124,7 +124,7 @@ import type { KnownDomain, ScopeDomain } from './attributes';
  */
 export type { ScopeDomain };
 import type { CountVerdict, GeometryDescriptor, ObjectData } from './types';
-import { faceCountOf } from '../app/faceCount';
+import { cornerCountOf, faceCountOf } from '../app/faceCount';
 import { edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
@@ -220,8 +220,12 @@ function refuse(why: string): never {
 }
 
 /**
- * How many elements a domain has for a given descriptor — as a {@link CountVerdict} — or a
- * named refusal when the DOMAIN is not one ns-2 resolves at.
+ * How many elements a domain has for a given descriptor, as a {@link CountVerdict}.
+ *
+ * 🔑 EVERY DOMAIN ANSWERS SINCE #776, AND THE REFUSAL ARM IS GONE. ns-2 shipped `face` alone;
+ * #716 added `point`, #718 `edge`, #776 `corner`. The `never` below now closes a question that
+ * has no exceptions left — a fifth domain is a compile error at the site that must answer for
+ * it, rather than one more candidate for the refusal the other three used to share.
  *
  * Closed by a `never` over {@link KnownDomain}, so a fifth domain is a compile error at the
  * site that must answer for it.
@@ -303,10 +307,27 @@ export function componentCountOf(
       // edge scope until #667 widens it. This arm is reachable from a test and from #667, and
       // from nothing else.
       return edgeCountOf(descriptor);
-    case 'corner':
-      return refuse(
-        `domain '${domain}' is not resolvable from a descriptor — ns-2 shipped 'face', #716 added 'point', #718 added 'edge'`,
-      );
+    case 'corner': {
+      // #776 gave this arm an answer, and it is the fourth and last. A corner is a POLYGON
+      // corner — Blender's loop — so a box has 24 and not the 36 `tiledCornerOrder` laid out
+      // until this phase. That is the number `MeshElementCounts` has declared for a box since
+      // ns-1, so this arm now agrees with the table every other domain resolves against.
+      //
+      // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, for exactly the reason the
+      // `point` and `edge` arms above record: `ScopeDomain` is still `['face']`, so no operator
+      // can name a corner scope until #667 widens it.
+      //
+      // Lifted from `number | null` the same way the `face` arm above is, and for the same
+      // reason — a corner hangs off a face, so `cornerCountOf` answers exactly where
+      // `faceCountOf` does and its `null` carries exactly one meaning.
+      const corners = cornerCountOf(descriptor);
+      return corners === null
+        ? {
+            kind: 'outside-the-descriptor',
+            why: `descriptor '${descriptor.kind}' resolves to a 'gltf' or 'baked' source, whose polygons live outside the descriptor`,
+          }
+        : { kind: 'counted', count: corners };
+    }
     default: {
       const unreachable: never = domain;
       return refuse(`undeclared domain ${String(unreachable)}`);

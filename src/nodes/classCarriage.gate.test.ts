@@ -130,16 +130,15 @@ describe('the per-class carriage census', () => {
     // And the two orders are genuinely different lengths, so row 4 could not pass by the two
     // arms accidentally agreeing.
     //
-    // 🔴 IT IS NOT `faces * 3` SINCE #770, AND THE EXPRESSION THAT REPLACED IT IS THE POINT. A
-    // face is a POLYGON, so the corners it owns depend on how many TRIANGLES it materialises
-    // to — two per quad on a box. Keeping `faces.order.length * 3` would have asserted 54
-    // against a real 108 and read as a corner order half the size it needs to be.
-    // Written as the three literals rather than as an expression: `sourceCorners * 3` would
-    // be right here only because this array makes three copies, and would read as "three
-    // corners per face" — the very relation this phase removed.
+    // 🔴 A CORNER IS A POLYGON CORNER SINCE #776, AND EVERY PLAUSIBLE EXPRESSION FOR IT IS
+    // WRONG WITH A NUMBER ATTACHED. `faces.order.length * 3` reads 54; the triangle reading
+    // this held until #776 reads 108; the truth is 72, six quads' worth of rim per copy. Which
+    // is why these are three literals rather than an expression — `sourceCorners * 3` would be
+    // right here only because this array makes three copies, and would read as a per-face
+    // relation that no longer exists.
     expect(faces.order.length).toBe(18); // 6 source polygons x 3 copies
-    expect(corners.order.length).toBe(108); // 12 source triangles x 3 corners x 3 copies
-    expect(corners.sourceCorners).toBe(36);
+    expect(corners.order.length).toBe(72); // 6 source quads x 4 rim corners x 3 copies
+    expect(corners.sourceCorners).toBe(24);
   });
 
   it('5 — a dropped class resolves to its verdict, and to the SAME object', () => {

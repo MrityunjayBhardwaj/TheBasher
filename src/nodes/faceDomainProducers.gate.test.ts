@@ -163,7 +163,10 @@ const PRODUCERS: readonly Producer[] = [
     probe: () => {
       const result = readMeshUVs(boxGeometryRef(BOX_SIZE, null));
       expect(result.status, 'the UV read did not reach its minting arm').toBe('ok');
-      return fromStore(result.status === 'ok' ? result.attributeKey : null, 'the UV read');
+      // #776 — the layer is a VERDICT now, because a descriptor with no rims of its own has a
+      // uv buffer and no corner to put it on. A box has rims, so this producer still mints.
+      const attribute = result.status === 'ok' ? result.attribute : null;
+      return fromStore(attribute?.kind === 'resident' ? attribute.key : null, 'the UV read');
     },
   },
   {

@@ -2,7 +2,8 @@
 //
 // ── WHAT THIS IS FOR, AND WHY IT HAS NO CONSUMER ──────────────────────────────────────
 //
-// A face in this substrate is a TRIANGLE (`faceCount.ts`, `CORNERS_PER_FACE = 3`). #770 makes
+// A face in this substrate is a TRIANGLE (`faceCount.ts`, a `CORNERS_PER_FACE` of 3 at the
+// time of writing; the constant is gone since #776). #770 makes
 // it a polygon, and that flip is atomic: `faceCountOf` is the single source of "how many
 // faces", and the instant it answers 6 for a box, a twelve-entry `material_index` misfits its
 // own source AND `scope: "0-5"` starts selecting six whole sides. Material assignment and
@@ -103,11 +104,79 @@ export function polygonArityOf(descriptor: GeometryDescriptor): readonly number[
   return arity;
 }
 
+/**
+ * How many CORNERS each polygon has, in the same order — Blender's loop count per face (#776).
+ *
+ * ── WHY THIS READS THE RIM RATHER THAN ADDING TWO TO THE ARITY ────────────────────────
+ *
+ * `corners = arity + 2` is true and it is the fan rule read backwards. {@link polygonArityOf}
+ * above already states that rule once, in the direction {@link fanToTriangles} implements it;
+ * writing the inverse here would make this module the SECOND place that decides how a rim and
+ * a triangle count relate, free to drift from the first the day a polygon is triangulated by
+ * anything other than a fan from corner 0. A rim's length restates nothing at all.
+ *
+ * The two are still checked against each other — `cornerCount.gate.test.ts` asserts
+ * `corners[i] === arity[i] + 2` at every sync-buildable descriptor — but as an agreement
+ * between two independent derivations rather than as one derived from the other.
+ *
+ * 🔴 A CORNER IS A POLYGON CORNER SINCE #776, NOT A TRIANGLE CORNER. A box has 24 of them and
+ * not 36, which is what `MeshElementCounts` has declared for a box since ns-1 and what
+ * `tiledCornerOrder` disagreed with until #776. A sphere separates the two readings from a
+ * third that also gets called "corner": 176 loops, 240 triangle corners, and 63 split render
+ * vertices, all of one 8x6 sphere. A box makes all three look like 24/36/24 and cannot tell
+ * the first from the last, which is why nothing here is checked on a box alone.
+ */
+const cornerCache = new WeakMap<readonly PolygonRim[], readonly number[]>();
+
+export function polygonCornersOf(descriptor: GeometryDescriptor): readonly number[] | null {
+  const verdict = polygonLayoutOf(descriptor);
+  if (verdict.kind !== 'laid-out') return null;
+  // Keyed on the LAYOUT's identity for the reason the arity cache above states, and held in a
+  // second map rather than as a pair in one: a consumer wants exactly one of these two numbers.
+  const hit = cornerCache.get(verdict.polygons);
+  if (hit !== undefined) return hit;
+  const corners = verdict.polygons.map((rim) => rim.length);
+  cornerCache.set(verdict.polygons, corners);
+  return corners;
+}
+
 export function fanToTriangles(polygons: readonly PolygonRim[]): number[] {
   const out: number[] = [];
   for (const rim of polygons)
     for (let i = 1; i + 1 < rim.length; i++) out.push(rim[0], rim[i], rim[i + 1]);
   return out;
+}
+
+/**
+ * Which corner of a REFLECTED copy sits where corner `k` of the source did (#785, #776).
+ *
+ * `buildMirror` runs `reverseWinding` over its reflected half, so a copied face traverses its
+ * corners the other way round. Corner 0 is held fixed and the rest run backwards, which makes
+ * this an involution — applying it twice is the identity — and lets one statement serve both
+ * readers: {@link reverseRim} turns a rim around with it, and `tiledCornerOrder` gathers a
+ * corner attribute through it. Two spellings of one reversal is exactly the drift this area
+ * names by name everywhere else.
+ *
+ * 🔴 THE FIXED CORNER IS NOT A FREE CHOICE, AND THE FIRST DRAFT OF THIS COMMENT SAID IT WAS.
+ * It claimed every rotation of a reversed rim fans to the same wound triangles, so which corner
+ * kept the name 0 was ours to pick. Falsified by substituting the rotation-free `corners - 1 -
+ * k` and re-running: `cornerCount.gate.test.ts` row 6 reds. A fan from corner 0 over `[r0, r3,
+ * r2, r1]` splits a quad along `r0-r2`; a fan over `[r3, r2, r1, r0]` splits it along `r3-r1`.
+ * Same corners, same direction, DIFFERENT DIAGONAL — and the built index buffer has exactly one
+ * of them. Only a triangle is rotation-blind, which is why a sphere's pole rows cannot pin this
+ * and its quad rows can.
+ *
+ * So this is grounded, and it is additionally an INVOLUTION — applied twice it is the identity,
+ * which is what makes a mirror of a mirror come back in source order. That property is checked
+ * on its own because it is the one thing an unbuilt permutation can still get wrong.
+ */
+export function reversedCornerAt(k: number, corners: number): number {
+  return k === 0 ? 0 : corners - k;
+}
+
+/** A rim traversed the other way round — {@link reversedCornerAt} applied to a whole face. */
+export function reverseRim(rim: PolygonRim): PolygonRim {
+  return rim.map((_, k) => rim[reversedCornerAt(k, rim.length)]);
 }
 
 /**

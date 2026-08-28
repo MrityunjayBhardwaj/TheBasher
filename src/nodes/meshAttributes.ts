@@ -615,17 +615,24 @@ export function carriageForDomain(
  * closed. `tiledCornerOrder` expands the face order into corners, and {@link CLASS_CARRIAGE}
  * is the single place that says which order lays out which domain.
  *
- * 🔴 THE OBSTACLE WAS NEVER THE PER-FACE CORNER COUNT, WHICH IS WHAT #694 WAS FILED SAYING.
- * Every descriptor this module answers for is triangle-indexed, so that count is 3. The
- * obstacle was WINDING: `buildMirror` reverses its reflected half, so a corner order of
- * `3·face + k` is right for an Array and silently wrong for a Mirror. Recorded because a
- * reader who trusts the issue will go looking for per-face corner counts that do not exist.
+ * 🔴 THE PER-FACE CORNER COUNT WAS NOT THE OBSTACLE AT #694 AND IT IS ONE NOW, WHICH IS WHY
+ * THIS PARAGRAPH IS RE-DERIVED RATHER THAN PATCHED. It read: *"every descriptor this module
+ * answers for is triangle-indexed, so that count is 3 ... a reader who trusts the issue will go
+ * looking for per-face corner counts that do not exist"*. #694 was right and early. #770 made a
+ * face a polygon and #776 made a corner a POLYGON corner, so the count is per-face, it varies
+ * (4 on a box quad, 3 on a sphere's pole cell), and `faceCornersOf` is where it lives.
  *
- * ✅ POINT AND EDGE ARE STILL DROPPED — AND THE DROP IS NOW DECLARED (#715). It was a bare
- * `null` arm and a paragraph here; it is now a row in {@link CLASS_CARRIAGE} carrying the
- * reason and the issue that closes it (`point` → #716, `edge` → #718), censused exactly by
- * `classCarriage.gate.test.ts` so the population can only shrink deliberately. The sharing
- * loss itself is unchanged and stays open — what changed is that it is sayable.
+ * The WINDING obstacle #694 did name is unchanged and is the other half: `buildMirror` reverses
+ * its reflected half, so a corner order that merely counts up is right for an Array and
+ * silently wrong for a Mirror. `reversedCornerAt` states that reversal once, for the corner
+ * order and for `weldedPolygonsOf` both — #785 is what the missing second spelling cost.
+ *
+ * ✅ EDGE IS STILL DROPPED, AND POINT IS NOT — the drop is DECLARED either way (#715). It was a
+ * bare `null` arm and a paragraph here; it is now a row in {@link CLASS_CARRIAGE} carrying the
+ * reason and the issue that closes it, censused exactly by `classCarriage.gate.test.ts` so the
+ * population can only shrink deliberately. `point` left that population at #717 and `edge`
+ * remains, waiting on #783 for a consumer rather than on a derivation. The sharing loss itself
+ * is unchanged and stays open — what changed is that it is sayable.
  *
  * ── THE ORDER IS TAKEN FROM THE BUILDER, NOT FROM THE ARITHMETIC ──────────────────────
  *
