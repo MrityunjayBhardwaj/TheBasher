@@ -13,6 +13,7 @@
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes } from './threeAdapter';
+import { readPosedJoints } from './bvhProfile';
 
 export interface BvhSkeletonParams {
   readonly bones: readonly BoneSpec[];
@@ -76,7 +77,11 @@ export function parseBvh(
   const parsed = loader.parse(text);
 
   const bones = bonesToSpec(parsed.skeleton.bones);
-  const keyframes = clipToKeyframes(parsed.clip, bones);
+  const keyframes = replaceRestOffsetOnPosedJoints(
+    clipToKeyframes(parsed.clip, bones),
+    bones,
+    text,
+  );
 
   return {
     skeletonParams: { bones: scaleBonePositions(bones, unitScale) },
@@ -87,6 +92,58 @@ export function parseBvh(
       keyframes: scaleKeyframePositions(keyframes, unitScale),
     },
   };
+}
+
+/**
+ * Undo three's addition of a joint's rest OFFSET to its animated position.
+ *
+ * `BVHLoader.js:375-377` composes an animated joint's local translation as
+ * `frame.position + bone.offset`. For the conventional root, whose OFFSET is
+ * `0 0 0`, that is the same as taking the channel — which is why this has never
+ * shown up. For a joint declaring BOTH a non-zero OFFSET and position channels it
+ * counts the rest pose TWICE, and the character sits one whole rest offset off the
+ * floor for the entire clip.
+ *
+ * The channel IS the translation; the OFFSET is that same translation's REST
+ * value. Four independent witnesses, none of them plausibility:
+ *
+ *   - Blender's reference importer subtracts it —
+ *     `Matrix.Translation(Vector(bvh_loc) - bvh_node.rest_head_local)` in
+ *     `io_anim_bvh/import_bvh.py`, applied as a pose delta so the final position
+ *     is exactly the channel. Identical in Blender 4.5 and 5.1.
+ *   - Blender's EXPORTER writes `OFFSET = bone.head_local` made relative to the
+ *     parent — the rest head — and the animated position into the channels.
+ *   - Kimodo's exporter sets the Hips OFFSET from the skeleton's NEUTRAL pose and
+ *     writes the root trajectory into the channels (`kimodo/exports/bvh.py`).
+ *   - Kimodo's own shipped T-pose reference has `Hips OFFSET 0 100 0` and a Hips
+ *     position channel of `0 100 0`. A delta convention would write zero there.
+ *     Under three's rule that reference T-pose imports at twice its own height,
+ *     which is as close to a self-refuting artefact as this format offers.
+ *
+ * ONLY posed joints are corrected, and that is why this reads the header rather
+ * than working from the offsets alone. A rotation-only joint has no position
+ * channel, so three's `0 + offset` already IS its correct local translation;
+ * subtracting there would collapse every limb onto its parent.
+ */
+function replaceRestOffsetOnPosedJoints(
+  keyframes: readonly AnimationKeyframe[],
+  bones: readonly BoneSpec[],
+  text: string,
+): readonly AnimationKeyframe[] {
+  const posed = new Set(readPosedJoints(text));
+  if (posed.size === 0) return keyframes;
+  return keyframes.map((kf) => {
+    const bone = bones[kf.bone];
+    if (!bone || !posed.has(bone.name)) return kf;
+    return {
+      ...kf,
+      position: [
+        kf.position[0] - bone.position[0],
+        kf.position[1] - bone.position[1],
+        kf.position[2] - bone.position[2],
+      ] as Vec3,
+    };
+  });
 }
 
 const scaled = (v: Vec3, by: number): Vec3 => [v[0] * by, v[1] * by, v[2] * by];

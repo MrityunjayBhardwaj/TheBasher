@@ -150,24 +150,35 @@ describe('HTTP: the unit scale is required, never defaulted', () => {
   });
 });
 
-describe('#792 — the rest offset is still added to the animated position', () => {
-  // A characterisation test, not an endorsement. It asserts what the importer
-  // does TODAY so the defect is written down somewhere that runs, and it goes RED
-  // the moment the composition rule changes — which is exactly when someone
-  // should be reading #792 rather than wondering what they broke.
-  it('a Hips-posed clip lands one rest-offset too high, and #792 owns the decision', () => {
+describe('#792 — a posed joint’s rest offset is REPLACED, not added', () => {
+  it('a Hips-posed clip lands at its animated pelvis height, not twice it', () => {
     const parsed = parseBvh(somaBvh(), 'soma', BVH_UNIT_SCALE_CENTIMETRES);
     const bones = parsed.skeletonParams.bones;
     const hips = bones.findIndex((b) => b.name === 'Hips');
 
-    // The fixture's Hips: OFFSET 100cm (the rest pelvis) and a 96cm position
-    // channel (the animated pelvis) — the same quantity written twice, per the
-    // exporter's source.
+    // The fixture's Hips carries the same quantity twice, exactly as the real
+    // exporter writes it: OFFSET 100cm is the REST pelvis, and a 96cm position
+    // channel is the ANIMATED pelvis.
     expect(bones[hips].position[1]).toBeCloseTo(1, 6);
 
     const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === hips);
     expect(keyed.length).toBeGreaterThan(0);
-    // 0.96 would be the pelvis. 1.96 is the pelvis plus its own rest height.
-    expect(keyed[0].position[1]).toBeCloseTo(1.96, 6);
+    // 0.96 is the pelvis. 1.96 was the pelvis plus its own rest height — a
+    // character floating exactly one rest offset off the floor for the whole clip.
+    expect(keyed[0].position[1]).toBeCloseTo(0.96, 6);
+  });
+
+  it('a rotation-only joint keeps its OFFSET as its translation', () => {
+    // The other half of the rule, and the one that would collapse the skeleton if
+    // the correction were applied everywhere: a joint with no position channel has
+    // no animated translation, so its OFFSET IS its local translation and must
+    // survive untouched.
+    const parsed = parseBvh(somaBvh(), 'soma', BVH_UNIT_SCALE_CENTIMETRES);
+    const bones = parsed.skeletonParams.bones;
+    const spine = bones.findIndex((b) => b.name === 'Spine1');
+    expect(bones[spine].position[1]).toBeCloseTo(0.1, 6);
+
+    const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === spine);
+    expect(keyed[0].position[1]).toBeCloseTo(0.1, 6);
   });
 });
