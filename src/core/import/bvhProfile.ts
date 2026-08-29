@@ -52,6 +52,17 @@ export interface BvhProfile {
   /** Joint names in declaration order, including the root. */
   readonly joints: readonly string[];
   /**
+   * The joints that declare position channels — the ones whose translation is
+   * ANIMATED rather than fixed at their rest OFFSET.
+   *
+   * The distinction decides how a joint's local translation is composed, so it
+   * has to be read off the header: for a posed joint the channel IS the
+   * translation and the OFFSET is that translation's rest value, while for a
+   * rotation-only joint the OFFSET is the translation. Applying either rule to
+   * the other kind of joint is wrong, and wrong by a whole rest offset.
+   */
+  readonly posedJoints: readonly string[];
+  /**
    * The first joint, in declaration order, whose position channels actually
    * change across the clip — the joint carrying world translation. `null` when
    * nothing translates, which is a stationary clip rather than a malformed one.
@@ -62,6 +73,27 @@ export interface BvhProfile {
    * the Kimodo case.
    */
   readonly rootMotionJoint: string | null;
+}
+
+/**
+ * The joints that declare position channels, read from the HEADER alone.
+ *
+ * Split out from `readBvhProfile` deliberately. The composition rule in
+ * `parseBvh` needs exactly this one fact and nothing from the MOTION block, and
+ * `readBvhProfile` refuses a clip whose frame count or frame time is degenerate —
+ * correctly, at the capability boundary where a producer's output is being
+ * judged. Routing the importer through that check would have quietly NARROWED
+ * what a dropped file is allowed to be, as a side effect of a change about
+ * offsets. A function should not be able to reject an input over a fact it never
+ * reads.
+ */
+export function readPosedJoints(text: string): readonly string[] {
+  const lines = text.split(/\r?\n/);
+  const motionAt = lines.findIndex((line) => line.trim() === 'MOTION');
+  const header = motionAt === -1 ? lines : lines.slice(0, motionAt);
+  return readChannelLayout(header)
+    .filter((j) => j.positionColumns !== null)
+    .map((j) => j.name);
 }
 
 export class BvhProfileError extends Error {
@@ -101,6 +133,7 @@ export function readBvhProfile(text: string): BvhProfile {
     frames,
     duration: (frames - 1) * frameTime,
     joints: joints.map((j) => j.name),
+    posedJoints: joints.filter((j) => j.positionColumns !== null).map((j) => j.name),
     rootMotionJoint: findTranslatingJoint(joints, rows),
   };
 }

@@ -89,3 +89,76 @@ describe('parseBvh', () => {
     expect(() => parseBvh('not a bvh file')).toThrow();
   });
 });
+
+describe('a posed joint’s rest OFFSET is replaced by its channel, never added (#792)', () => {
+  // three's BVHLoader composes an animated joint's translation as
+  // `frame.position + bone.offset` (BVHLoader.js:375-377). For the conventional
+  // root, whose OFFSET is 0 0 0, that is the same as taking the channel — which
+  // is why nothing here ever noticed. For a joint that declares BOTH a non-zero
+  // OFFSET and position channels, it counts the rest pose twice.
+
+  /**
+   * A REST frame: the pelvis's position channel equals its own OFFSET. This is
+   * the shape of the T-pose reference the real generator ships, and it is what
+   * settles the convention — a delta encoding would write zero in the channel.
+   */
+  const REST_FRAME = `HIERARCHY
+ROOT Root
+{
+  OFFSET 0 0 0
+  CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+  JOINT Hips
+  {
+    OFFSET 0 100 0
+    CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+    JOINT Spine
+    {
+      OFFSET 0 10 0
+      CHANNELS 3 Zrotation Yrotation Xrotation
+    }
+  }
+}
+MOTION
+Frames: 2
+Frame Time: 0.0333333333333333
+0 0 0 0 0 0 0 100 0 0 0 0 0 0 0
+0 0 0 0 0 0 0 100 5 0 0 0 0 3 0
+`;
+
+  const posOf = (name: string, text = REST_FRAME) => {
+    const parsed = parseBvh(text, 'rule');
+    const i = parsed.skeletonParams.bones.findIndex((b) => b.name === name);
+    return parsed.clipParams.keyframes.filter((k) => k.bone === i)[0].position;
+  };
+
+  it('a rest frame imports at its stated height, not at twice it', () => {
+    // The self-refuting case: a reference pose whose whole purpose is to state
+    // the rest height, importing at 200 when it says 100.
+    expect(posOf('Hips')[1]).toBeCloseTo(100, 6);
+  });
+
+  it('a rotation-only joint keeps its OFFSET — the correction is not applied to it', () => {
+    // The half that would collapse every limb onto its parent if the rule were
+    // applied to joints that have no position channel: for those, three's
+    // `0 + offset` already IS the correct local translation.
+    expect(posOf('Spine')[1]).toBeCloseTo(10, 6);
+  });
+
+  it('a root at OFFSET 0 is unaffected — which is why this never surfaced', () => {
+    expect(posOf('Root')).toEqual([0, 0, 0]);
+  });
+
+  it('the animated channel still moves — replacing the offset is not zeroing it', () => {
+    const parsed = parseBvh(REST_FRAME, 'rule');
+    const hips = parsed.skeletonParams.bones.findIndex((b) => b.name === 'Hips');
+    const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === hips);
+    expect(keyed[0].position[2]).toBeCloseTo(0, 6);
+    expect(keyed[1].position[2]).toBeCloseTo(5, 6);
+  });
+
+  it('the bind pose is untouched — only the keyed translation is recomposed', () => {
+    const bones = parseBvh(REST_FRAME, 'rule').skeletonParams.bones;
+    const hips = bones.find((b) => b.name === 'Hips')!;
+    expect(hips.position).toEqual([0, 100, 0]);
+  });
+});
