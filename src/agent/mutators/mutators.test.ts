@@ -144,9 +144,11 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(27);
+    expect(mutators).toHaveLength(28);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
+      // #803 — makes a retargeted clip actually drive the rendered rig.
+      'mutator.animation.bakeClipOntoRig',
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
@@ -2225,7 +2227,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(27);
+    expect(parsed.mutators).toHaveLength(28);
   });
 });
 
@@ -3852,6 +3854,7 @@ import {
   addStitchMutator as _addStitchM,
   randomizeMutator as _randomizeM,
   bakeGltfChannelMutator as _bakeGltfM,
+  bakeClipOntoRigMutator as _bakeClipOntoRigM,
   addModifierMutator as _addModifierM,
   addChannelModifierMutator as _addChannelModifierM,
   setChannelExtendMutator as _setChannelExtendM,
@@ -3981,6 +3984,76 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       nodeType: 'GltfChild',
       params: {
         assetRef: BAKE_ASSET,
+        childName: 'bone_1',
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        overridden: { position: false, rotation: false, scale: false },
+      },
+    }).next;
+    return s;
+  }
+
+  // #803 — a probe scene for bakeClipOntoRig: GltfAsset (carrying a one-joint
+  // skin so GltfSkeleton can project a NAMED bone) -> GltfSkeleton -> an
+  // AnimationClip whose keyframes are keyed by bone INDEX and whose `skeleton`
+  // edge is what the mutator reads the rig from. The GltfChild for `bone_1`
+  // exists because the emitted channels carry its dagId as `params.target`.
+  const CLIPBAKE_ASSET = 'asset-clipbake';
+  function buildSceneForClipBake(): DagState {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cb_asset',
+      nodeType: 'GltfAsset',
+      params: {
+        assetRef: CLIPBAKE_ASSET,
+        nodeNameMap: { bone_1: gltfChildDagId(CLIPBAKE_ASSET, 'bone_1') },
+        skins: [
+          {
+            jointKeys: ['bone_1'],
+            bindTRS: [{ time: 0, position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }],
+            parentJointIndex: [-1],
+            inverseBindMatrices: [],
+          },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cb_skel',
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cb_asset', socket: 'out' },
+      to: { node: 'cb_skel', socket: 'asset' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cb_clip',
+      nodeType: 'AnimationClip',
+      params: {
+        name: 'retargeted',
+        duration: 1,
+        keyframes: [
+          { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+          { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 90, 0] },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'cb_skel', socket: 'out' },
+      to: { node: 'cb_clip', socket: 'skeleton' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: gltfChildDagId(CLIPBAKE_ASSET, 'bone_1'),
+      nodeType: 'GltfChild',
+      params: {
+        assetRef: CLIPBAKE_ASSET,
         childName: 'bone_1',
         position: [0, 0, 0],
         rotation: [0, 0, 0],
@@ -4172,6 +4245,14 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _bakeGltfM as MutatorDefinition<unknown>,
       build: buildSceneForBake,
       spec: { assetRef: BAKE_ASSET, childName: 'bone_1' },
+    },
+    // #803 — the clip-sourced sibling of the bake above. Same op-shape family
+    // (KeyframeChannelVec3 addNodes, ZERO connects), different SOURCE: a
+    // retargeted AnimationClip rather than the asset's own TransformClip.
+    'mutator.animation.bakeClipOntoRig': {
+      mutator: _bakeClipOntoRigM as MutatorDefinition<unknown>,
+      build: buildSceneForClipBake,
+      spec: { clipId: 'cb_clip' },
     },
     // #498 — RE-ANCHORED onto the SPLIT cube. This entry used `buildScene`, whose 'box'
     // is a fused `BoxMesh` — a retired relic that emits 'SceneObject', not 'ObjectData'.

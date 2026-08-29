@@ -142,6 +142,11 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
   'src/agent/mutators/builders/retarget.ts': authored('fixed-ctx-by-design'),
+  // #803 — same classification as `retarget` above, and for the same reason: it
+  // evaluates a `GltfSkeleton` at a FIXED bind-pose ctx (frame 0), never the
+  // playhead. A skeleton's bind pose is import-time static, so any frame yields
+  // the same projection; it reads the bone NAMES, which do not move.
+  'src/agent/mutators/builders/bakeClipOntoRig.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -193,7 +198,12 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // last one was: the Object's slot list is read off the RESOLVED mesh, because an
     // object's slot count is its data's and only the evaluated chain knows what that is.
     // A shape-only read would have added no importer here and answered the wrong question.
-    expect(evaluatorConsumers()).toHaveLength(37);
+    // 37 → 38 at #803, and it earns its sentence too: making a retargeted clip
+    // actually drive a rendered rig needs the bone NAMES, and on a `GltfSkeleton`
+    // those exist only in the evaluated projection — the node has no `params.bones`
+    // by design (D-02). Reading names is what forced the evaluate; a params-only
+    // read would have had nothing to map the clip's bone INDEXES onto.
+    expect(evaluatorConsumers()).toHaveLength(38);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
