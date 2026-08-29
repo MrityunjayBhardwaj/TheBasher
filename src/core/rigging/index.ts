@@ -6,7 +6,11 @@
 // REF: ref/architecture/ai-track.md phase A4; issue #795.
 
 import { StubRiggingCapability } from './StubRiggingCapability';
-import { TripoModelGenerationCapability } from '../modelgen/TripoModelGenerationCapability';
+import {
+  TripoModelGenerationCapability,
+  tripoFallbackOf,
+  type TripoFallback,
+} from '../modelgen/TripoModelGenerationCapability';
 import type { TripoApiVersion } from '../modelgen/tripoDialect';
 import type { RiggingCapability } from './RiggingCapability';
 
@@ -27,10 +31,22 @@ export async function pickRigging(
     readonly fetchImpl?: typeof fetch;
     readonly apiVersion?: TripoApiVersion;
   } = {},
+  onFallback?: (fallback: TripoFallback) => void,
 ): Promise<RiggingCapability> {
   if (!apiKey?.trim()) return new StubRiggingCapability();
   const tripo = new TripoModelGenerationCapability({ apiKey: apiKey.trim(), ...opts });
-  if (await tripo.isAvailable()) return tripo;
+  const probe = await tripo.probe();
+  if (probe.ok) return tripo;
+  // 🔑 THE SAME ANNOUNCEMENT `pickModelGeneration` MAKES, AND FOR A SHARPER
+  // REASON. `StubRiggingCapability` returns a real skinned GLB with real bone
+  // names, so a stub rig imports, binds, and animates — a retarget onto it
+  // succeeds. A silent fall-through here does not produce a visibly wrong
+  // result; it produces a plausible one, which is worse.
+  //
+  // This has no app surface yet. It is fixed now rather than when one lands,
+  // because the defect is already written and a wiring commit is exactly the
+  // change that would not think to look for it.
+  onFallback?.(tripoFallbackOf(probe));
   return new StubRiggingCapability();
 }
 

@@ -13,8 +13,10 @@ import {
   pickModelGeneration,
   StubModelGenerationCapability,
   type ModelGenerationFallback,
+  type TripoFallback,
   type TripoUnavailable,
 } from './index';
+import { pickRigging, StubRiggingCapability } from '../rigging';
 
 const KEY = 'tsk_test_key_that_is_long_enough_to_pass';
 
@@ -165,5 +167,47 @@ describe('the fall-through to the stub is announced', () => {
   it('the callback is optional — a caller that does not pass one still gets a stub', async () => {
     const cap = await pickModelGeneration(KEY, { fetchImpl: failToFetch() });
     expect(cap).toBeInstanceOf(StubModelGenerationCapability);
+  });
+});
+
+describe('pickRigging announces the same way — the sharper case', () => {
+  // `StubRiggingCapability` returns a real skinned GLB with real bone names, so
+  // a stub rig imports, binds, and a retarget onto it succeeds. Silence here
+  // does not produce a visibly wrong result; it produces a plausible one.
+
+  it('reports when a configured key could not be used', async () => {
+    const seen: TripoFallback[] = [];
+    const cap = await pickRigging(KEY, { fetchImpl: failToFetch() }, (f) => seen.push(f));
+    expect(cap).toBeInstanceOf(StubRiggingCapability);
+    expect(seen).toHaveLength(1);
+    expect(seen[0].cause).toBe('unreachable');
+  });
+
+  it('says nothing with no key — same documented default', async () => {
+    const seen: TripoFallback[] = [];
+    const cap = await pickRigging('', {}, (f) => seen.push(f));
+    expect(cap).toBeInstanceOf(StubRiggingCapability);
+    expect(seen).toEqual([]);
+  });
+
+  it('returns the real capability when the service answers', async () => {
+    const seen: TripoFallback[] = [];
+    const cap = await pickRigging(
+      KEY,
+      { fetchImpl: respondWith(200, { code: 0, data: { balance: 5, frozen: 0 } }) },
+      (f) => seen.push(f),
+    );
+    expect(cap).toBeInstanceOf(TripoModelGenerationCapability);
+    expect(seen).toEqual([]);
+  });
+
+  it('both pickers report the SAME shape for the same failure', async () => {
+    const opts = { fetchImpl: respondWith(401, { code: 1002, message: 'Authentication failed' }) };
+    const fromModel: TripoFallback[] = [];
+    const fromRig: TripoFallback[] = [];
+    await pickModelGeneration(KEY, opts, (f) => fromModel.push(f));
+    await pickRigging(KEY, opts, (f) => fromRig.push(f));
+    // What a person reads must not depend on which entry point happened to probe.
+    expect(fromRig).toEqual(fromModel);
   });
 });

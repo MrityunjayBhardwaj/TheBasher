@@ -9,9 +9,9 @@
 import { StubModelGenerationCapability } from './StubModelGenerationCapability';
 import {
   TripoModelGenerationCapability,
-  describeTripoUnavailable,
+  tripoFallbackOf,
+  type TripoFallback,
   type TripoOptions,
-  type TripoUnavailableCause,
 } from './TripoModelGenerationCapability';
 import type { ModelGenerationCapability } from './ModelGenerationCapability';
 import { DEFAULT_TRIPO_API_VERSION, type TripoApiVersion } from './tripoDialect';
@@ -71,22 +71,13 @@ export async function pickModelGeneration(
   // settings panel already says the offline stub will generate — and announcing
   // an intended state on every boot is noise that teaches people to ignore the
   // surface that matters.
-  onFallback?.({
-    cause: probe.cause,
-    detail: probe.detail,
-    message: describeTripoUnavailable(probe),
-  });
+  onFallback?.(tripoFallbackOf(probe));
   return new StubModelGenerationCapability();
 }
 
-/** Why the caller is holding a stub rather than the service it asked for. */
-export interface ModelGenerationFallback {
-  readonly cause: TripoUnavailableCause;
-  /** The underlying failure, verbatim. */
-  readonly detail: string;
-  /** A sentence a person can act on. */
-  readonly message: string;
-}
+/** Why the caller is holding a stub rather than the service it asked for.
+ *  Shared with `pickRigging` — same service, same key, same report. */
+export type ModelGenerationFallback = TripoFallback;
 
 export {
   assertValidModelRequest,
@@ -119,7 +110,9 @@ export {
   TripoTaskFailedError,
   assertTripoKeyShape,
   describeTripoUnavailable,
+  tripoFallbackOf,
   TRIPO_SERVICE_ID,
+  type TripoFallback,
   type TripoOptions,
   type TripoProbeResult,
   type TripoUnavailable,

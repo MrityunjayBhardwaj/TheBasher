@@ -221,6 +221,27 @@ export function describeTripoUnavailable(result: TripoUnavailable): string {
   }
 }
 
+/**
+ * Why a caller is holding a stub rather than the service it asked for.
+ *
+ * One shape for every picker over this transport. Generation and rigging are the
+ * same service behind the same key, so a second declaration would be a second
+ * thing to keep in step for no gain — and the report a person reads should not
+ * depend on which entry point happened to probe.
+ */
+export interface TripoFallback {
+  readonly cause: TripoUnavailableCause;
+  /** The underlying failure, verbatim. */
+  readonly detail: string;
+  /** A sentence a person can act on. */
+  readonly message: string;
+}
+
+/** Turn a failed probe into the report a picker hands its caller. */
+export function tripoFallbackOf(probe: TripoUnavailable): TripoFallback {
+  return { cause: probe.cause, detail: probe.detail, message: describeTripoUnavailable(probe) };
+}
+
 /** Thrown when a task reaches a terminal non-success status. Distinct from a
  *  transport error, because the two ask the caller for different things: retry
  *  versus change the request. */
