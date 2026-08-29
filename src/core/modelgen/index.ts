@@ -32,6 +32,8 @@ export async function pickModelGeneration(
   opts: Omit<TripoOptions, 'apiKey'> = {},
 ): Promise<ModelGenerationCapability> {
   if (!apiKey?.trim()) return new StubModelGenerationCapability();
+  // `apiVersion` rides along in `opts` and defaults inside the client, so the
+  // API generation is one constructor argument rather than a branch here.
   const tripo = new TripoModelGenerationCapability({ apiKey: apiKey.trim(), ...opts });
   if (await tripo.isAvailable()) return tripo;
   return new StubModelGenerationCapability();
@@ -67,7 +69,23 @@ export {
   TripoApiError,
   TripoTaskFailedError,
   assertTripoKeyShape,
-  TRIPO_BASE_URL,
   TRIPO_SERVICE_ID,
   type TripoOptions,
 } from './TripoModelGenerationCapability';
+
+export {
+  DEFAULT_TRIPO_API_VERSION,
+  TRIPO_API_VERSIONS,
+  TRIPO_V2_BASE_URL,
+  TRIPO_V3_BASE_URL,
+  TRIPO_V2_DIALECT,
+  TRIPO_V3_DIALECT,
+  TRIPO_V3_DEFAULT_MODEL_VERSION,
+  tripoDialect,
+  type TripoApiVersion,
+  type TripoDialect,
+  type TripoTaskOutput,
+  type TripoUploads,
+  type TripoWireCall,
+  type UploadedFile,
+} from './tripoDialect';

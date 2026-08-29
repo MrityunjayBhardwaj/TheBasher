@@ -37,9 +37,13 @@ const { synthesiseGlb } = await import('./StubModelGenerationCapability');
 const KEY = 'tsk_test_key';
 const TEXT = { source: 'text', prompt: 'a red chair' } as const;
 
+/** Every assertion in this file is about the v2 wire, so the version is STATED.
+ *  It used to be the client's default; it is not any more, and a suite that
+ *  silently followed the default would quietly stop testing what it names. */
 function client(fetchImpl: unknown, over: Record<string, unknown> = {}) {
   return new TripoModelGenerationCapability({
     apiKey: KEY,
+    apiVersion: 'v2',
     fetchImpl: fetchImpl as typeof fetch,
     sleepImpl: async () => {},
     ...over,
@@ -47,11 +51,29 @@ function client(fetchImpl: unknown, over: Record<string, unknown> = {}) {
 }
 
 describe('the key is checked for shape before anything else', () => {
-  it('rejects a key that is not tsk_-prefixed', () => {
+  it('rejects a key that is not tsk_-prefixed UNDER v2, where the prefix is documented', () => {
     // A key pasted from the wrong field otherwise fails as an opaque 401 several
     // seconds later, which sends the reader to the wrong problem.
-    expect(() => assertTripoKeyShape('sk-wrong-field')).toThrow(/tsk_/);
-    expect(() => assertTripoKeyShape(KEY)).not.toThrow();
+    expect(() => assertTripoKeyShape('sk-wrong-field', 'v2')).toThrow(/tsk_/);
+    expect(() => assertTripoKeyShape(KEY, 'v2')).not.toThrow();
+  });
+
+  it('does NOT invent a prefix rule for v3, where the vendor documents none', () => {
+    // The failing arm of the version scoping, constructed. v3's documentation
+    // states no key format; a rule guessed from one observed key would refuse
+    // valid keys of a form nobody here has seen, and say why with confidence.
+    // The service's own 401 is the authority instead.
+    expect(() => assertTripoKeyShape('tcli_whatever_the_console_issues', 'v3')).not.toThrow();
+    expect(() => assertTripoKeyShape('sk-wrong-field', 'v3')).not.toThrow();
+  });
+
+  it('refuses an EMPTY key under both, because that one is not a guess', () => {
+    // Emptiness means nothing was configured. That is knowable without any
+    // vendor documentation, so it is the one shape rule both versions share.
+    for (const version of ['v2', 'v3'] as const) {
+      expect(() => assertTripoKeyShape('', version)).toThrow(/No Tripo API key/);
+      expect(() => assertTripoKeyShape('   ', version)).toThrow(/No Tripo API key/);
+    }
   });
 
   it('a malformed key issues no request', async () => {

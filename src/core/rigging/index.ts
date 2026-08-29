@@ -7,6 +7,7 @@
 
 import { StubRiggingCapability } from './StubRiggingCapability';
 import { TripoModelGenerationCapability } from '../modelgen/TripoModelGenerationCapability';
+import type { TripoApiVersion } from '../modelgen/tripoDialect';
 import type { RiggingCapability } from './RiggingCapability';
 
 /**
@@ -21,7 +22,11 @@ import type { RiggingCapability } from './RiggingCapability';
  */
 export async function pickRigging(
   apiKey: string | undefined,
-  opts: { readonly baseUrl?: string; readonly fetchImpl?: typeof fetch } = {},
+  opts: {
+    readonly baseUrl?: string;
+    readonly fetchImpl?: typeof fetch;
+    readonly apiVersion?: TripoApiVersion;
+  } = {},
 ): Promise<RiggingCapability> {
   if (!apiKey?.trim()) return new StubRiggingCapability();
   const tripo = new TripoModelGenerationCapability({ apiKey: apiKey.trim(), ...opts });
