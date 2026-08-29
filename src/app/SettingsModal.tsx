@@ -13,7 +13,12 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from './stores/settingsStore';
 import { probeComfyUI, type ComfyProbeResult } from '../core/comfy';
-import { resetComfyCapability, resetMotionCapability, resetModelCapability } from './boot';
+import {
+  resetComfyCapability,
+  resetMotionCapability,
+  resetModelCapability,
+  resetRiggingCapability,
+} from './boot';
 import { conditionsFor, modelRecordFor } from '../core/licensing/allowedModels';
 import { DEFAULT_TRIPO_API_VERSION, tripoDialect } from '../core/modelgen';
 
@@ -104,6 +109,7 @@ export function SettingsModal() {
     resetComfyCapability(); // next getComfyCapability() re-probes the new server
     resetMotionCapability(); // same session-cache hazard on the motion side
     resetModelCapability(); // and again for the mesh-generation capability
+    resetRiggingCapability(); // and the rig side, which shares the same key
     close();
   };
 

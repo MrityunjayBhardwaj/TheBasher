@@ -114,3 +114,100 @@ test('a director types a prompt and gets the pair a .bvh import would have lande
   await expect(submit).toBeDisabled();
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });
+
+// ---------------------------------------------------------------------------
+// The Character road and the reference-image slot.
+//
+// Both are JSX decisions, so e2e is their only witness — `canSubmit`,
+// `acceptsImage` and `runGeneration` are unit-tested as functions, and nothing
+// but a browser can show that the shell actually renders and wires them.
+// ---------------------------------------------------------------------------
+
+test('the image slot appears exactly where a road exists for it', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('top-toolbar-assets').click();
+  await expect(page.getByTestId('generate-panel')).toBeVisible();
+
+  // 🔑 Motion has NO image road in `motiongen`. A slot rendered there would be
+  // an affordance for something that cannot happen — the lying label again.
+  await page.getByTestId('generate-kind-motion').click();
+  await expect(page.getByTestId('generate-image-slot')).toHaveCount(0);
+
+  for (const kind of ['model', 'character']) {
+    await page.getByTestId(`generate-kind-${kind}`).click();
+    await expect(page.getByTestId('generate-image-slot')).toBeVisible();
+  }
+});
+
+test('an attached image satisfies submit on its own, and takes over from the prompt', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  await page.getByTestId('top-toolbar-assets').click();
+  await page.getByTestId('generate-kind-model').click();
+
+  // Empty prompt, nothing attached: refused.
+  await expect(page.getByTestId('generate-submit')).toBeDisabled();
+
+  // A 1x1 PNG is enough — this asserts the WIRING, not the decoder.
+  await page.getByTestId('generate-image-input').setInputFiles({
+    name: 'reference.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+
+  await expect(page.getByTestId('generate-image-name')).toHaveText('reference.png');
+  // 🔑 `ImageModelRequest` carries no prompt — the image REPLACES the text. So
+  // the button unlocks with an empty prompt, and the prompt goes read-only
+  // rather than sitting there implying it will be sent.
+  await expect(page.getByTestId('generate-submit')).toBeEnabled();
+  await expect(page.getByTestId('generate-prompt')).toBeDisabled();
+
+  // Clearing it puts the prompt back in charge.
+  await page.getByTestId('generate-image-clear').click();
+  await expect(page.getByTestId('generate-image-name')).toHaveCount(0);
+  await expect(page.getByTestId('generate-prompt')).toBeEnabled();
+  await expect(page.getByTestId('generate-submit')).toBeDisabled();
+});
+
+test('the Character road lands a rigged mesh on the ordinary glTF import road', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  await page.waitForFunction(() => Boolean((window as unknown as DagWindow).__basher_dag));
+  await page.getByTestId('top-toolbar-assets').click();
+
+  await page.getByTestId('generate-kind-character').click();
+  await page.getByTestId('generate-prompt').fill('a stocky dwarf blacksmith');
+
+  const before = await page.evaluate(nodeTypes);
+  await page.getByTestId('generate-submit').click();
+  await expect(page.getByTestId('generate-submit')).toContainText('Generate', { timeout: 60_000 });
+  await page.waitForFunction(
+    (n) =>
+      Object.keys((window as unknown as DagWindow).__basher_dag?.getState().state.nodes ?? {})
+        .length > n,
+    before.length,
+    { timeout: 60_000 },
+  );
+  const after = await page.evaluate(nodeTypes);
+
+  // 🔑 THE SHAPE, NOT THE COUNT — the same discipline the motion road uses. A
+  // rigged character arrives as the trio a dropped .glb produces, and its
+  // SKELETON shows up as GltfChild nodes. "More nodes appeared" would pass for
+  // an unrigged mesh, which is the one failure this road exists to avoid.
+  expect(after).toContain('GltfAsset');
+  expect(after).toContain('Group');
+  expect(after.filter((t) => t === 'GltfChild').length).toBeGreaterThan(
+    before.filter((t) => t === 'GltfChild').length + 5,
+  );
+
+  await expect(page.getByTestId('generate-prompt')).toHaveValue('');
+  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
+});
