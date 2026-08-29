@@ -40,6 +40,7 @@ const {
   TRIPO_V3_DIALECT,
   TRIPO_V3_BASE_URL,
   TRIPO_V3_DEFAULT_MODEL_VERSION,
+  TRIPO_V2_RETIREMENT,
   DEFAULT_TRIPO_API_VERSION,
 } = await import('./tripoDialect');
 
@@ -286,13 +287,27 @@ describe('uploads moved too, and the token changed its name', () => {
     image: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' },
   } as const;
 
-  it('posts to /files and reads data.file_token', async () => {
+  it('posts to /files and passes the token back as a PLAIN STRING `input`', async () => {
     const { fetchImpl, sent } = transport(V3_OUTPUT);
     await client(fetchImpl).generate(IMAGE);
 
     expect(sent[0].url).toBe('http://tripo.test/files');
     expect(sent[1].url).toBe('http://tripo.test/generation/image-to-model');
-    expect(sent[1].body).toMatchObject({ file: { type: 'png', file_token: 'ftok' } });
+    // v3 unified `file`/`file_token`/`url`/`object` under one `input` and infers
+    // the type. v2's `{type, file_token}` wrapper is not a v3 shape.
+    expect(sent[1].body).toMatchObject({ input: 'ftok' });
+    expect(sent[1].body).not.toHaveProperty('file');
+  });
+
+  it('v2 still sends the wrapped object, so the unification is a v3 property', () => {
+    // The comparison arm. Without it, "v3 sends a plain string" cannot be told
+    // apart from "the wrapper was dropped everywhere".
+    const uploaded = { single: { type: 'png', file_token: 'ftok' } };
+    const image = { source: 'image', image: IMAGE.image } as const;
+    expect(TRIPO_V2_DIALECT.modelCall(image, uploaded).body).toMatchObject({
+      file: { type: 'png', file_token: 'ftok' },
+    });
+    expect(TRIPO_V3_DIALECT.modelCall(image, uploaded).body).toMatchObject({ input: 'ftok' });
   });
 
   it('a v2-shaped upload response is NOT accepted under v3', async () => {
@@ -307,6 +322,66 @@ describe('uploads moved too, and the token changed its name', () => {
     }) as unknown as typeof fetch;
 
     await expect(client(fetchImpl).generate(IMAGE)).rejects.toThrow(/upload failed/);
+  });
+});
+
+describe('a multiview hole is REFUSED on v3, not guessed', () => {
+  const four = [1, 2, 3, 4].map((n) => ({ type: 'png', file_token: `t${n}` }));
+  const multiview = {
+    source: 'multiview',
+    views: { front: { bytes: new Uint8Array([1]), mimeType: 'image/png' } },
+  } as const;
+
+  it('sends four positional plain-string tokens when all four are supplied', () => {
+    expect(TRIPO_V3_DIALECT.modelCall(multiview, { views: four }).body).toMatchObject({
+      inputs: ['t1', 't2', 't3', 't4'],
+    });
+  });
+
+  it('throws rather than shifting the remaining views onto the wrong faces', () => {
+    // The array is POSITIONAL and no reachable document says how v3 writes an
+    // omitted slot. A wrong guess does not error — it returns a confidently
+    // wrong model, with the left image treated as the back.
+    const withHole = [four[0], null, four[2], four[3]];
+    expect(() => TRIPO_V3_DIALECT.modelCall(multiview, { views: withHole })).toThrow(
+      /needs all four views/,
+    );
+  });
+
+  it('v2 takes the null hole, so this is a v3 limit and not a lost capability', () => {
+    const withHole = [four[0], null, four[2], four[3]];
+    expect(TRIPO_V2_DIALECT.modelCall(multiview, { views: withHole }).body).toMatchObject({
+      files: withHole,
+    });
+  });
+});
+
+describe('v2 has a published death date, and this is the alarm', () => {
+  it('🔴 REDS AT THE FEATURE FREEZE — delete the v2 dialect when it fires', () => {
+    // Tripo has announced v2's retirement:
+    //   2026-10-01 00:00 UTC+8 — no further features or support
+    //   2026-11-01 00:00 UTC+8 — all v2 endpoints stop accepting requests
+    //
+    // The v2 dialect is kept until then because the vendor states both versions
+    // operate concurrently, and a transport with live callers is removed on
+    // evidence rather than tidiness. The evidence now exists AND has a date — so
+    // the removal is scheduled rather than remembered.
+    //
+    // WHEN THIS GOES RED: delete TRIPO_V2_DIALECT, its branch of every dialect
+    // method, the `apiVersion` option, and the v2 suites — then this test too.
+    // It fires a month before the endpoints go dark, which is the runway.
+    const now = Date.now();
+    expect(TRIPO_V2_RETIREMENT.featureFreeze).toBeLessThan(TRIPO_V2_RETIREMENT.endpointsOff);
+    expect(
+      now < TRIPO_V2_RETIREMENT.featureFreeze,
+      `Tripo v2 reached its feature freeze on ${new Date(TRIPO_V2_RETIREMENT.featureFreeze).toISOString()} ` +
+        `and its endpoints stop accepting requests on ${new Date(TRIPO_V2_RETIREMENT.endpointsOff).toISOString()}. ` +
+        'Remove the v2 dialect and everything that selects it — see the comment above this assertion.',
+    ).toBe(true);
+  });
+
+  it('the default is the version that is NOT being retired', () => {
+    expect(DEFAULT_TRIPO_API_VERSION).toBe('v3');
   });
 });
 

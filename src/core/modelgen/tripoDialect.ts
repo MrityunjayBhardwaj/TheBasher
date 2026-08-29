@@ -19,19 +19,26 @@
 //        `ref/sources/tripo-python-sdk/`, and cross-checked against its Blender
 //        plugin. That SDK (`tripo3d` 0.4.2) is still the latest release on PyPI.
 //
-//   v3 — VENDOR-DOCUMENTED ONLY. There is no v3 source to read: Tripo's own SDK
-//        is v2, and `openapi.tripo3d.ai/openapi.json` answers 401 rather than
-//        404 — a schema exists, published behind authentication. The fullest
-//        description reachable without a key is a third-party OpenAPI file whose
-//        own `info.description` states it is "locally maintained from
-//        https://developers.tripo3d.ai/en/docs because Tripo does not publish an
-//        unauthenticated OpenAPI schema". That is a transcription of the vendor's
-//        prose, not an independent witness of the wire.
+//   v3 — VENDOR-DOCUMENTED. There is no v3 source to read (Tripo's own SDK is
+//        v2, and `openapi.tripo3d.ai/openapi.json` answers 401 rather than 404 —
+//        a schema exists, published behind authentication). But the critical
+//        path is corroborated by TWO first-party documents rather than one
+//        third-party transcription, and where they disagreed the migration guide
+//        won:
+//          - every endpoint path        migration guide's own mapping table
+//          - `type` field removed       migration guide, "Request Field Changes"
+//          - `input` is a PLAIN STRING  migration guide, "Unified Input Handling"
+//          - output.model_url           quick-start's completed-task response
+//          - `model` required           quick-start's text-to-model example
+//          - the {code,data} envelope   quick-start's completed-task response
 //
-// So NOTHING in the v3 dialect has been observed against the real service. The
-// gap has a known closing move, and it should be taken before any billable run:
-// fetch the authenticated schema with a working key and re-verify this table
-// against it. Until then, treat a v3 field name as a claim.
+//        Still uncorroborated, and marked at their site: the multiview `inputs`
+//        shape, and the option fields each request schema accepts. Those come
+//        from the third-party transcription only.
+//
+// NOTHING here has yet been observed against the running service. The last gap
+// closes by fetching the authenticated schema with a working key — worth doing
+// before any billable run.
 //
 // REF: ref/sources/tripo-python-sdk/tripo3d/client.py (v2, all of it);
 //      https://developers.tripo3d.ai/en/docs (v3, prose); issue #797.
@@ -151,6 +158,29 @@ function sharedModelOptions(request: ModelGenerationRequest): Record<string, unk
 
 /** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:25. */
 export const TRIPO_V2_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
+
+/**
+ * 🔴 v2 HAS A PUBLISHED DEATH DATE. Both instants are UTC.
+ *
+ *   featureFreeze — 2026-10-01 00:00 UTC+8. No further feature updates or
+ *                   technical support.
+ *   endpointsOff  — 2026-11-01 00:00 UTC+8. "All V2 API endpoints will stop
+ *                   accepting requests."
+ *
+ * This is why the v2 dialect is not simply deleted today: the vendor states v2
+ * and v3 operate concurrently until then, and a transport with live callers is
+ * removed on evidence rather than on tidiness. The evidence now exists and has a
+ * date, so the removal is SCHEDULED rather than forgotten — `tripoV3.test.ts`
+ * carries a gate that goes red at the freeze, which is a month before the
+ * endpoints go dark. A decision you cannot take yet is a test that reds when it
+ * becomes takeable.
+ *
+ * REF: https://developers.tripo3d.ai/en/docs/migration-v2-to-v3.
+ */
+export const TRIPO_V2_RETIREMENT = {
+  featureFreeze: Date.parse('2026-09-30T16:00:00Z'),
+  endpointsOff: Date.parse('2026-10-31T16:00:00Z'),
+} as const;
 
 export const TRIPO_V2_DIALECT: TripoDialect = {
   version: 'v2',
@@ -291,7 +321,12 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
         path: '/generation/image-to-model',
         body: {
           ...shared,
-          file: uploads.single,
+          // 🔑 A PLAIN STRING, not v2's `{type, file_token}` object. v3 unified
+          // `file` / `file_token` / `url` / `object` under one `input` field and
+          // infers the type: `{ "input": "file_token_abc123" }`. Sending v2's
+          // wrapper here is the defect this replaced.
+          // REF: migration guide, "Unified Input Handling".
+          input: uploads.single?.file_token,
           // v3's image request DOES list these two.
           ...compact({
             texture_alignment: request.textureAlignment,
@@ -301,13 +336,29 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
       };
     }
 
+    // 🔴 A MISSING VIEW IS REFUSED RATHER THAN GUESSED. v3's four-slot array is
+    // POSITIONAL — front, left, back, right — and no document reachable from
+    // here says how an omitted slot is written. Guessing wrong does not error:
+    // it shifts the remaining views up a position, so a left image is read as a
+    // back image and the service returns a confidently wrong model. An open gap
+    // beats a covered-but-unhonoured one.
+    const views = uploads.views ?? [];
+    const missing = views.some((view) => view === null);
+    if (missing || views.length !== 4) {
+      throw new Error(
+        'Multiview generation on the v3 API needs all four views (front, left, back, right). ' +
+          'How v3 writes an omitted slot in its positional array is not documented, and ' +
+          'guessing shifts the remaining views onto the wrong faces rather than failing. ' +
+          'Supply four views, or use the v2 API, which takes a null hole.',
+      );
+    }
     return {
       path: '/generation/multiview-to-model',
       body: {
         ...shared,
-        // The documented legacy four-slot array, front/left/back/right. v3 wants
-        // an EMPTY OBJECT for an omitted view where v2 wanted null.
-        files: (uploads.views ?? []).map((view) => view ?? {}),
+        // Plain-string tokens, positional. REF: the transcribed v3 schema's
+        // `inputs` (oneOf string | view object) — NOT corroborated first-party.
+        inputs: views.map((view) => view!.file_token),
         ...compact({
           texture_alignment: request.textureAlignment,
           orientation: request.orientation,
