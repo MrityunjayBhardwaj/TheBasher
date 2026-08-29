@@ -45,7 +45,11 @@ import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickMotionGeneration, type MotionGenerationCapability } from '../core/motiongen';
-import { pickModelGeneration, type ModelGenerationCapability } from '../core/modelgen';
+import {
+  browserTripoOptions,
+  pickModelGeneration,
+  type ModelGenerationCapability,
+} from '../core/modelgen';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -211,7 +215,12 @@ export function getModelCapability(): Promise<ModelGenerationCapability> {
   if (cachedModelGen) return Promise.resolve(cachedModelGen);
   if (!modelGenPromise) {
     const { tripoApiKey } = useSettingsStore.getState();
-    modelGenPromise = pickModelGeneration(tripoApiKey).then((cap) => {
+    // 🔑 THE PAGE CALLS THE PROXY, NOT TRIPO. Tripo answers no CORS preflight,
+    // so a direct call from here is blocked before it is sent (#804) — and it
+    // was blocked in silence, because the failed probe fell through to the stub.
+    // `browserTripoOptions` is the only place a page-origin base URL is formed,
+    // and it hands back the version with it so the two cannot disagree.
+    modelGenPromise = pickModelGeneration(tripoApiKey, browserTripoOptions()).then((cap) => {
       cachedModelGen = cap;
       return cap;
     });

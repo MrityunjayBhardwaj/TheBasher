@@ -12,6 +12,27 @@ import {
   type TripoOptions,
 } from './TripoModelGenerationCapability';
 import type { ModelGenerationCapability } from './ModelGenerationCapability';
+import { DEFAULT_TRIPO_API_VERSION, type TripoApiVersion } from './tripoDialect';
+import { tripoBrowserBaseUrl } from './tripoProxy';
+
+/**
+ * The options a call ORIGINATING IN A PAGE needs: a same-origin base URL,
+ * because Tripo answers no CORS preflight (#804).
+ *
+ * 🔑 THE VERSION AND ITS BASE URL ARE ONE FACT AND THIS RETURNS THEM TOGETHER.
+ * Passing them separately is exactly how they drift — a v3 base URL under a v2
+ * dialect sends v2 paths to a v3 route and fails as a 404, which reads like the
+ * service being down rather than like a caller mistake. There is no way to hold
+ * one of these without the other.
+ *
+ * Callers that are NOT a page — a node harness, a test — pass nothing and get
+ * the dialect's own address, which is reachable from anywhere.
+ */
+export function browserTripoOptions(
+  version: TripoApiVersion = DEFAULT_TRIPO_API_VERSION,
+): Pick<TripoOptions, 'apiVersion' | 'baseUrl'> {
+  return { apiVersion: version, baseUrl: tripoBrowserBaseUrl(version) };
+}
 
 /**
  * Choose an implementation. Mirrors `pickMotionGeneration`: reach for the real
@@ -72,6 +93,15 @@ export {
   TRIPO_SERVICE_ID,
   type TripoOptions,
 } from './TripoModelGenerationCapability';
+
+export {
+  TRIPO_PROXY_PREFIX,
+  TRIPO_PROXY_ROUTES,
+  rewriteTripoProxyPath,
+  tripoBrowserBaseUrl,
+  tripoProxyRoute,
+  type TripoProxyRoute,
+} from './tripoProxy';
 
 export {
   DEFAULT_TRIPO_API_VERSION,
