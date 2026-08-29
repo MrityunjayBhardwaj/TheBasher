@@ -482,6 +482,31 @@ export function dispatchRetargetThenBake(args: RetargetThenBakeArgs): DispatchRe
     return { ok: false, reason: `bakeClipOntoRig rejected: ${bResult.reason}` };
   }
 
+  // 🔑 ZERO OPS IS A REFUSAL, NOT A QUIET SUCCESS.
+  //
+  // A baked channel's id is content-addressed on assetRef + bone + component and
+  // NOT on the clip, and the shared emitter skips a channel that already exists.
+  // That guard is right for the sibling consumer, whose source is the asset's own
+  // embedded clip, where re-baking the same bone genuinely is a no-op. It is not
+  // right here: this consumer's source is a retargeted clip that can carry a
+  // COMPLETELY DIFFERENT motion, so "this bone already has a channel" does not
+  // mean "the values would be the same".
+  //
+  // Measured before this guard existed: dropping a second, different clip on the
+  // same character left the channel count at 46 and the rendered pose
+  // byte-identical at five bones across three times — while the action reported
+  // success. Reporting the truth is the floor; REPLACING the existing motion is a
+  // real decision with a real cost (baked channels are editable, and overwriting
+  // them discards hand edits), so it is filed rather than guessed at here.
+  if (bResult.ops.length === 0) {
+    return {
+      ok: false,
+      reason:
+        'this rig already carries baked motion on those bones, and binding a second ' +
+        'clip would silently change nothing. Remove the existing baked channels first.',
+    };
+  }
+
   // 4 — propose retarget + bake as ONE diff with the COMBINED closure, then
   //     accept → one dispatchAtomic → one Cmd+Z reverts the whole binding (K6).
   return proposeAndAccept(
