@@ -41,6 +41,20 @@
 // REF: ref/architecture/ai-track.md phase A4; issues #732, #761, #762.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
+import { parseGltfContainer } from '../import/glb';
+import {
+  DEFAULT_RIG_SPEC,
+  RIG_TYPES,
+  assertValidRigRequest,
+  classifyRigSpec,
+  type RigProgress,
+  type RigRequest,
+  type RigResult,
+  type RigSubject,
+  type RiggableCheck,
+  type RigType,
+  type RiggingCapability,
+} from '../rigging/RiggingCapability';
 import {
   assertValidModelRequest,
   type ModelGenerationCapability,
@@ -64,6 +78,16 @@ export const TRIPO_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
 
 /** REF: ref/sources/tripo-python-sdk/tripo3d/models.py:39-48. */
 const TERMINAL_FAILURE_STATUSES = new Set(['failed', 'cancelled', 'banned', 'expired', 'unknown']);
+
+/** The task output fields this client reads. `riggable` and `rig_type` are what a
+ *  pre-rig check answers with. REF: tripo3d/models.py:64-90 (TaskOutput). */
+interface TripoTaskOutput {
+  model?: string;
+  base_model?: string;
+  pbr_model?: string;
+  riggable?: boolean;
+  rig_type?: string;
+}
 
 export interface TripoOptions {
   /** `tsk_`-prefixed key. The Blender plugin validates that prefix before use;
@@ -119,7 +143,9 @@ export function assertTripoKeyShape(apiKey: string): void {
   }
 }
 
-export class TripoModelGenerationCapability implements ModelGenerationCapability {
+export class TripoModelGenerationCapability
+  implements ModelGenerationCapability, RiggingCapability
+{
   readonly id = 'tripo-model-generation';
   readonly kind = 'http' as const;
 
@@ -210,11 +236,96 @@ export class TripoModelGenerationCapability implements ModelGenerationCapability
     this.cancelled.add(taskId);
   }
 
+  // ---------------------------------------------------------------------------
+  // RiggingCapability. One service, one key, one transport — so this class
+  // implements both interfaces rather than duplicating the client. The SEAM is
+  // still real: a rigging-only backend (UniRig is already in the manifest) plugs
+  // in as its own class without touching generation, because callers take
+  // `RiggingCapability` and never this type.
+  // ---------------------------------------------------------------------------
+
+  /** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:1126 (`check_riggable`). */
+  async checkRiggable(subject: RigSubject): Promise<RiggableCheck> {
+    assertModelAllowed(TRIPO_SERVICE_ID);
+    assertTripoKeyShape(this.apiKey);
+
+    const deadline = Date.now() + this.timeoutMs;
+    const created = await this.request<{ task_id?: string }>('POST', '/task', {
+      type: 'animate_prerigcheck',
+      original_model_task_id: subject.sourceTaskId,
+    });
+    const taskId = created.task_id;
+    if (!taskId)
+      throw new TripoApiError('Tripo accepted the pre-rig check but returned no task_id.');
+
+    const output = await this.pollUntilDone(taskId, deadline);
+    return {
+      taskId,
+      riggable: output.riggable === true,
+      // An unrecognised or absent value becomes null, NOT `others`. "I could not
+      // tell" and "it is some other body plan" are different answers, and
+      // collapsing them turns silence into a positive claim.
+      detectedRigType: isRigType(output.rig_type) ? output.rig_type : null,
+    };
+  }
+
+  /** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:1156 (`rig_model`). */
+  async rig(request: RigRequest, onProgress?: (p: RigProgress) => void): Promise<RigResult> {
+    assertModelAllowed(TRIPO_SERVICE_ID);
+    assertValidRigRequest(request);
+    assertTripoKeyShape(this.apiKey);
+
+    const spec = request.spec ?? DEFAULT_RIG_SPEC;
+    const deadline = Date.now() + this.timeoutMs;
+    const created = await this.request<{ task_id?: string }>('POST', '/task', {
+      type: 'animate_rig',
+      original_model_task_id: request.sourceTaskId,
+      // `out_format` is pinned to glb rather than exposed: the whole contract is
+      // that a rigged mesh takes the SAME import road a dropped .glb takes, and
+      // fbx would fork it. REF: client.py:1160.
+      out_format: 'glb',
+      rig_type: request.rigType ?? 'biped',
+      spec,
+    });
+    const taskId = created.task_id;
+    if (!taskId) throw new TripoApiError('Tripo accepted the rig but returned no task_id.');
+
+    const output = await this.pollUntilDone(taskId, deadline, (p) => onProgress?.(p));
+    const url = output.model ?? output.pbr_model ?? output.base_model;
+    if (!url) {
+      throw new TripoApiError(
+        `Tripo rig ${taskId} succeeded but its output carried no model URL ` +
+          '(expected one of model, pbr_model, base_model).',
+      );
+    }
+    const glb = await this.download(url, deadline);
+
+    // READ THE SKELETON THAT ARRIVED. Asking for `mixamo` and being handed the
+    // service's own convention is a broken contract that is otherwise invisible:
+    // the call succeeded, the request said mixamo, and the retarget downstream
+    // silently binds nothing. Refusing here is the right trade because a rig in
+    // the wrong vocabulary has no use downstream at all — there is no road it
+    // half-works on.
+    const joints = jointNamesOf(glb);
+    if (spec === 'mixamo' && joints !== null) {
+      const arrived = classifyRigSpec(joints);
+      if (arrived !== 'mixamo') {
+        throw new TripoApiError(
+          `Tripo rig ${taskId} was requested with spec "mixamo" but returned a skeleton whose ` +
+            `bone names are not Mixamo's. Nothing downstream can drive it: Basher's retarget ` +
+            'maps onto Mixamo names. Re-run with spec "tripo" if that skeleton is what you want.',
+        );
+      }
+    }
+
+    return { taskId, glb, requestedSpec: spec };
+  }
+
   private async pollUntilDone(
     taskId: string,
     deadline: number,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<{ model?: string; base_model?: string; pbr_model?: string }> {
+  ): Promise<TripoTaskOutput> {
     for (;;) {
       if (this.cancelled.has(taskId)) {
         this.cancelled.delete(taskId);
@@ -230,7 +341,7 @@ export class TripoModelGenerationCapability implements ModelGenerationCapability
       const task = await this.request<{
         status?: string;
         progress?: number;
-        output?: { model?: string; base_model?: string; pbr_model?: string };
+        output?: TripoTaskOutput;
       }>('GET', `/task/${encodeURIComponent(taskId)}`);
 
       const status = task.status ?? 'unknown';
@@ -388,4 +499,31 @@ function mimeToExt(mimeType: string): string {
   if (m.includes('png')) return 'png';
   if (m.includes('webp')) return 'webp';
   return 'jpg';
+}
+
+function isRigType(value: unknown): value is RigType {
+  return typeof value === 'string' && (RIG_TYPES as readonly string[]).includes(value);
+}
+
+/**
+ * The skin joint names inside a GLB, read from its JSON chunk.
+ *
+ * Deliberately NOT a full import: this runs at the transport boundary, on every
+ * rig, and all it needs is the names. Parsing the container is cheap and the
+ * joints are node indices into a list that is already in hand.
+ */
+function jointNamesOf(glb: ArrayBuffer): string[] | null {
+  try {
+    const { json } = parseGltfContainer(glb);
+    const nodes = (json.nodes ?? []) as { name?: string }[];
+    const skins = (json.skins ?? []) as { joints?: number[] }[];
+    return skins.flatMap((skin) => (skin.joints ?? []).map((i) => nodes[i]?.name ?? ''));
+  } catch {
+    // NULL, not an empty list, and the distinction is load-bearing. An empty list
+    // is a real answer — a GLB that parsed and carries no skin, which IS a failed
+    // rig. Unparseable bytes are a different failure with a different owner, and
+    // returning `[]` for them would report a vocabulary mismatch for a file that
+    // was never read. Let the ordinary import road name that one.
+    return null;
+  }
 }
