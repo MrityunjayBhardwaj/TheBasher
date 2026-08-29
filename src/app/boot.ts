@@ -50,6 +50,11 @@ import {
   pickModelGeneration,
   type ModelGenerationCapability,
 } from '../core/modelgen';
+import { useAssetErrorStore } from './stores/assetErrorStore';
+
+/** The banner row a degraded text-to-3D reports under. Named for what a person
+ *  asked for, because the banner renders "<ref> — <reason>". */
+export const MODEL_GENERATION_ERROR_REF = 'Text-to-3D';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -220,7 +225,21 @@ export function getModelCapability(): Promise<ModelGenerationCapability> {
     // was blocked in silence, because the failed probe fell through to the stub.
     // `browserTripoOptions` is the only place a page-origin base URL is formed,
     // and it hands back the version with it so the two cannot disagree.
-    modelGenPromise = pickModelGeneration(tripoApiKey, browserTripoOptions()).then((cap) => {
+    modelGenPromise = pickModelGeneration(tripoApiKey, browserTripoOptions(), (fallback) => {
+      // A configured key that could not be used is a SURPRISE, and until now it
+      // was a silent one: the stub returns a real GLB that imports and renders,
+      // so a synthesised mesh arrived looking exactly like a generation. The
+      // banner is the surface every other degraded asset path already reports
+      // to, so this joins it rather than inventing a second place to look.
+      useAssetErrorStore.getState().report(
+        MODEL_GENERATION_ERROR_REF,
+        // The actionable sentence leads; what happened instead follows. The
+        // banner prefixes its own "asset failed:", so a message that opened
+        // with the consequence read as two clauses before saying anything a
+        // person could act on.
+        `${fallback.message} Generated with the offline stub instead.`,
+      );
+    }).then((cap) => {
       cachedModelGen = cap;
       return cap;
     });
@@ -233,6 +252,11 @@ export function getModelCapability(): Promise<ModelGenerationCapability> {
 export function resetModelCapability(): void {
   cachedModelGen = null;
   modelGenPromise = null;
+  // Clear the degraded-generation row too. It reports the verdict of a probe
+  // that is about to be re-run, so leaving it up would show the OLD key's
+  // failure beside a newly corrected one — and the banner is dismissible, which
+  // would make the stale message look like it had been re-confirmed.
+  useAssetErrorStore.getState().clear(MODEL_GENERATION_ERROR_REF);
 }
 
 /** Test-only: inject a model capability so tests hit a deterministic stub

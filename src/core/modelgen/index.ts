@@ -9,7 +9,9 @@
 import { StubModelGenerationCapability } from './StubModelGenerationCapability';
 import {
   TripoModelGenerationCapability,
+  describeTripoUnavailable,
   type TripoOptions,
+  type TripoUnavailableCause,
 } from './TripoModelGenerationCapability';
 import type { ModelGenerationCapability } from './ModelGenerationCapability';
 import { DEFAULT_TRIPO_API_VERSION, type TripoApiVersion } from './tripoDialect';
@@ -51,13 +53,39 @@ export function browserTripoOptions(
 export async function pickModelGeneration(
   apiKey: string | undefined,
   opts: Omit<TripoOptions, 'apiKey'> = {},
+  onFallback?: (fallback: ModelGenerationFallback) => void,
 ): Promise<ModelGenerationCapability> {
   if (!apiKey?.trim()) return new StubModelGenerationCapability();
   // `apiVersion` rides along in `opts` and defaults inside the client, so the
   // API generation is one constructor argument rather than a branch here.
   const tripo = new TripoModelGenerationCapability({ apiKey: apiKey.trim(), ...opts });
-  if (await tripo.isAvailable()) return tripo;
+  const probe = await tripo.probe();
+  if (probe.ok) return tripo;
+  // 🔑 THE FALL-THROUGH IS ANNOUNCED, BECAUSE THE STUB IS INDISTINGUISHABLE FROM
+  // A RESULT. It returns a real GLB that imports and renders, and its own
+  // `isAvailable()` is unconditionally true, so nothing downstream can tell that
+  // the service was never reached. Silence here is what made a configured key
+  // and a synthesised mesh look like a successful generation.
+  //
+  // Only when a key WAS configured. No key is the documented default — the
+  // settings panel already says the offline stub will generate — and announcing
+  // an intended state on every boot is noise that teaches people to ignore the
+  // surface that matters.
+  onFallback?.({
+    cause: probe.cause,
+    detail: probe.detail,
+    message: describeTripoUnavailable(probe),
+  });
   return new StubModelGenerationCapability();
+}
+
+/** Why the caller is holding a stub rather than the service it asked for. */
+export interface ModelGenerationFallback {
+  readonly cause: TripoUnavailableCause;
+  /** The underlying failure, verbatim. */
+  readonly detail: string;
+  /** A sentence a person can act on. */
+  readonly message: string;
 }
 
 export {
@@ -90,8 +118,12 @@ export {
   TripoApiError,
   TripoTaskFailedError,
   assertTripoKeyShape,
+  describeTripoUnavailable,
   TRIPO_SERVICE_ID,
   type TripoOptions,
+  type TripoProbeResult,
+  type TripoUnavailable,
+  type TripoUnavailableCause,
 } from './TripoModelGenerationCapability';
 
 export {
