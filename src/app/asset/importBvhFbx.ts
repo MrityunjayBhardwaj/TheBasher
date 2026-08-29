@@ -32,6 +32,21 @@ import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { importGltfFromOpfs } from './importGltf';
+import { bindMotionToCharacter } from './bindMotionToCharacter';
+
+/**
+ * What a motion import produced, so a caller can act on it (#807).
+ *
+ * These two ids were always minted and always thrown away: `buildBvhImportOps`
+ * returns them and this module destructured `{ ops }` alone, which left the
+ * clip that had just landed unaddressable by anything downstream. Returning them
+ * is what lets a drop bind the motion to a character instead of stopping at "the
+ * nodes exist somewhere".
+ */
+export interface MotionImportResult {
+  readonly skeletonId: string;
+  readonly clipId: string;
+}
 
 /** Strip the directory + extension to a display name for the import label. */
 function nameFromPath(path: string): string {
@@ -46,19 +61,26 @@ function nameFromPath(path: string): string {
  * (or a TimeSource-less project) throws inside `buildBvhImportOps`; the catch
  * routes it to assetErrorStore so the failure is visible, not swallowed.
  */
-export async function importBvhFromOpfs(path: string): Promise<void> {
+export async function importBvhFromOpfs(path: string): Promise<MotionImportResult | null> {
   try {
     const storage = await getStorage();
     const bytes = await storage.read(path);
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
-    const { ops } = buildBvhImportOps({ text, name: nameFromPath(path) }, dag.state);
+    const { ops, skeletonId, clipId } = buildBvhImportOps(
+      { text, name: nameFromPath(path) },
+      dag.state,
+    );
     dag.dispatchAtomic(ops, 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
+    return { skeletonId, clipId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
+    // `null` means "nothing landed", and the banner is already showing why. It is
+    // NOT an empty success — a caller that went on to bind would find no clip.
+    return null;
   }
 }
 
@@ -70,18 +92,23 @@ export async function importBvhFromOpfs(path: string): Promise<void> {
  * ArrayBuffer (the OPFS read may back a SharedArrayBuffer) so the parser gets a
  * plain buffer — mirror of the glTF detach in buildGltfImportOpsFromOpfs.
  */
-export async function importFbxFromOpfs(path: string): Promise<void> {
+export async function importFbxFromOpfs(path: string): Promise<MotionImportResult | null> {
   try {
     const storage = await getStorage();
     const bytes = await storage.read(path);
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     const dag = useDagStore.getState();
-    const { ops } = buildFbxImportOps({ data: copy.buffer, name: nameFromPath(path) }, dag.state);
+    const { ops, skeletonId, clipId } = buildFbxImportOps(
+      { data: copy.buffer, name: nameFromPath(path) },
+      dag.state,
+    );
     dag.dispatchAtomic(ops, 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
+    return { skeletonId, clipId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
+    return null;
   }
 }
 
@@ -98,12 +125,30 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
   if (lower.endsWith('.gltf') || lower.endsWith('.glb')) {
     await importGltfFromOpfs(entryPath);
   } else if (lower.endsWith('.bvh')) {
-    await importBvhFromOpfs(entryPath);
+    bindImportedMotion(await importBvhFromOpfs(entryPath));
   } else if (lower.endsWith('.fbx')) {
-    await importFbxFromOpfs(entryPath);
+    bindImportedMotion(await importFbxFromOpfs(entryPath));
   } else {
     useAssetErrorStore
       .getState()
       .report(entryPath, 'import failed: unsupported format (expected .gltf/.glb/.bvh/.fbx)');
   }
+}
+
+/**
+ * Put a just-imported motion clip onto a character (#807).
+ *
+ * This sits at the extension dispatcher rather than in the drop handler on
+ * purpose: the drop zone, the Import… picker and the Library all funnel through
+ * here, and motion that animates a character when it is dropped but not when it
+ * is picked would be a difference no director could predict. `null` means the
+ * import itself failed and already reported — there is nothing to bind, and
+ * saying anything more would be a second message about one problem.
+ *
+ * `bindMotionToCharacter` surfaces its own outcome, so there is nothing to
+ * report here; the result is ignored deliberately rather than by omission.
+ */
+function bindImportedMotion(imported: MotionImportResult | null): void {
+  if (!imported) return;
+  bindMotionToCharacter(imported);
 }
