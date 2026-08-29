@@ -309,6 +309,39 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
  * outcome, having measured its own road before adding its cache.
  */
 export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
+  const pairs: number[] = [];
+  const count = walkEdgeIncidences(descriptor, (_edge, _face, lo, hi, first) => {
+    if (first) pairs.push(lo, hi);
+  });
+  return count === null ? null : { pairs: Uint32Array.from(pairs), count };
+}
+
+/**
+ * ONE WALK OVER THE WELDED RIMS, numbering each undirected edge on FIRST ENCOUNTER.
+ *
+ * ── WHY THIS IS SHARED RATHER THAN WRITTEN TWICE ─────────────────────────────────────────
+ *
+ * {@link edgeSetOf} wants the pairs; {@link edgeFaceAdjacencyOf} wants the faces the walk goes
+ * past on its way. They are two readings of ONE traversal, and the thing that must not be
+ * duplicated is the RADIX: an index built against a different radix keys the same edge to a
+ * different number, so two answers derived separately would be silently unrelatable — every
+ * edge a plausible number, and the adjacency attached to the wrong one. Measured while building
+ * #800: a probe that chose `max(id) + 1` instead of the point count produced exactly that, and
+ * nothing about the shape of either answer showed it.
+ *
+ * That is the same failure `faceElementStarts` was unified to prevent, one domain over: a second
+ * copy under a second name is how two readings of one quantity get to disagree.
+ *
+ * ⚠️ THE VISITOR IS CALLED PER INCIDENCE, NOT PER EDGE — `first` says which. A manifold edge is
+ * visited twice, a boundary edge once, a non-manifold edge three or more times, and that
+ * multiplicity IS the adjacency. `edgeSetOf` discarded it by `continue`ing on the second sighting,
+ * which is why the adjacency read as absent until someone looked at the loop rather than the
+ * result.
+ */
+function walkEdgeIncidences(
+  descriptor: GeometryDescriptor,
+  visit: (edge: number, face: number, lo: number, hi: number, first: boolean) => void,
+): number | null {
   const rims = weldedPolygonsOf(descriptor);
   if (rims === null) return null;
   const points = pointCountOf(descriptor);
@@ -321,24 +354,68 @@ export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
   // million, and past that two DIFFERENT edges round to one key and the set silently loses one.
   // A count that high is reachable by array-copying a dense sphere, and nothing would have said.
   const radix = points.count;
-  const seen = new Set<number>();
-  const pairs: number[] = [];
-  for (const rim of rims) {
+  // A numeric key rather than a string: a pairing is one multiply against the hash of a template
+  // literal. `weldByPosition` pays the string cost because it keys on three rounded floats; this
+  // keys on two integers already bounded by the mesh.
+  const seen = new Map<number, number>();
+  for (let f = 0; f < rims.length; f++) {
+    const rim = rims[f];
     for (let i = 0; i < rim.length; i++) {
       const p = rim[i];
       const q = rim[(i + 1) % rim.length];
       const lo = p < q ? p : q;
       const hi = p < q ? q : p;
-      // A numeric key rather than a string: a pairing is one multiply against the hash of a
-      // template literal. `weldByPosition` pays the string cost because it keys on three rounded
-      // floats; this keys on two integers already bounded by the mesh.
       const key = lo * radix + hi;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      pairs.push(lo, hi);
+      const known = seen.get(key);
+      if (known === undefined) {
+        // The index is the count BEFORE insertion, so edges are numbered in encounter order —
+        // which is the order `edgeSetOf` lays its pairs down in, so `faces[i]` and `pairs[2i]`
+        // describe the same edge without either function saying so.
+        const edge = seen.size;
+        seen.set(key, edge);
+        visit(edge, f, lo, hi, true);
+      } else {
+        visit(known, f, lo, hi, false);
+      }
     }
   }
-  return { pairs: Uint32Array.from(pairs), count: pairs.length / 2 };
+  return seen.size;
+}
+
+/**
+ * Which faces touch each edge — the multiplicity {@link edgeSetOf} deduplicates away.
+ *
+ * `faces[i]` are the faces incident to edge `i` of {@link edgeSetOf}'s set, in first-encounter
+ * order, and the two are index-aligned because one walk numbers both.
+ *
+ * ⚠️ THE LENGTH OF EACH ENTRY IS THE MANIFOLDNESS, AND CALLERS MUST READ IT. Two is a manifold
+ * edge; one is a boundary edge, which every open mesh has and every `subset` produces; three or
+ * more is non-manifold, which nothing in this project builds today but a `gltf` import could.
+ * A caller that assumes two gets a wrong answer on a shape this substrate already ships.
+ */
+export interface EdgeAdjacency {
+  /**
+   * `faces[i]` are the faces incident to edge `i`, in first-encounter order.
+   *
+   * ⚠️ NO `count` FIELD BESIDE THIS, DELIBERATELY, THOUGH {@link EdgeSet} HAS ONE. That one
+   * exists so a caller never restates `pairs.length / 2` — there is arithmetic to get wrong.
+   * Here `faces.length` IS the edge count already, so a second field would be state that has
+   * to agree with itself and could stop.
+   */
+  readonly faces: readonly (readonly number[])[];
+}
+
+/**
+ * Every edge's incident faces. `null` for exactly the descriptors {@link edgeSetOf} refuses,
+ * because it is the same walk and the same refusals.
+ */
+export function edgeFaceAdjacencyOf(descriptor: GeometryDescriptor): EdgeAdjacency | null {
+  const faces: number[][] = [];
+  const count = walkEdgeIncidences(descriptor, (edge, face, _lo, _hi, first) => {
+    if (first) faces.push([face]);
+    else faces[edge].push(face);
+  });
+  return count === null ? null : { faces };
 }
 
 /**
