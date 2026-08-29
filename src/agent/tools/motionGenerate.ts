@@ -42,7 +42,7 @@ import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { buildGeneratedMotionOps } from '../../core/motiongen';
 import { conditionsFor } from '../../core/licensing/allowedModels';
-import { MAX_MOTION_FPS, MAX_MOTION_SECONDS } from '../../core/motiongen';
+import { MAX_MOTION_SECONDS } from '../../core/motiongen';
 
 export const motionGenerateSchema = z.object({
   prompt: z
@@ -55,12 +55,9 @@ export const motionGenerateSchema = z.object({
     .max(MAX_MOTION_SECONDS)
     .optional()
     .describe('Clip length in seconds (default 2)'),
-  fps: z
-    .number()
-    .positive()
-    .max(MAX_MOTION_FPS)
-    .optional()
-    .describe('Frames per second (default 30)'),
+  // No `fps` argument, deliberately. The rate belongs to the generator, and the
+  // clip states it in its own header — so a model calling this tool is not offered
+  // a knob that two of the three real backends cannot turn.
   seed: z.number().int().optional().describe('Determinism handle — same seed, same motion'),
   name: z.string().optional().describe('Name for the resulting clip (defaults to the prompt)'),
 });
@@ -108,7 +105,6 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
             prompt: args.prompt,
             model: ctx.motionModel,
             ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
-            ...(args.fps !== undefined ? { fps: args.fps } : {}),
             ...(args.seed !== undefined ? { seed: args.seed } : {}),
           },
           ...(args.name !== undefined ? { name: args.name } : {}),

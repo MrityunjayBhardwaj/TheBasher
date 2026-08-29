@@ -115,43 +115,90 @@ const SOMA77 = [
 const FPS = 30;
 const FRAMES = 6;
 
+/**
+ * CENTIMETRES, because the real exporter emits centimetres.
+ *
+ * `kimodo/exports/bvh.py` multiplies both the neutral skeleton and the root
+ * trajectory by 100 before writing, and defaults the pelvis offset to
+ * `[0, 100, 0]` with the comment "1 m in cm". Measured on a real generated clip:
+ * `Hips OFFSET 0.0 100.0 0.0`, hip channel 93-99, 4.58 m of travel in 4.0 s.
+ *
+ * The first version of this fixture used metres, because a skeleton DEFINITION
+ * says nothing about units and metres is what a reader assumes. That is the shape
+ * of the whole correction here: everything the source stated was transcribed
+ * correctly, and everything it did not state was filled in with the plausible
+ * default and was wrong. The numbers below are synthetic; the SCALE is measured.
+ */
+const HIP_HEIGHT_CM = 100;
+const LIMB_OFFSET_CM = 10;
+
 const childrenOf = (name) => SOMA77.filter(([, parent]) => parent === name).map(([n]) => n);
 
 /** Deterministic — the fixture must be byte-stable across regenerations. */
 const angleFor = (i, f) => Number((9 * Math.sin(((i * 29 + f * 20) * Math.PI) / 180)).toFixed(4));
 
 // The exporter's channel order, not ours.
-const ROOT_CHANNELS = 'CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation';
-const JOINT_CHANNELS = 'CHANNELS 3 Zrotation Yrotation Xrotation';
+const POSED_CHANNELS = 'CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation';
+const ROTATION_CHANNELS = 'CHANNELS 3 Zrotation Yrotation Xrotation';
 
 function buildBvh() {
-  const lines = ['HIERARCHY', 'ROOT Root', '{', '  OFFSET 0 0 0', `  ${ROOT_CHANNELS}`];
+  const lines = ['HIERARCHY', 'ROOT Root', '{', '  OFFSET 0 0 0', `  ${POSED_CHANNELS}`];
+
+  // Declaration order and the per-joint channel count, collected AS the hierarchy
+  // is written rather than assumed alongside it. The previous version declared
+  // Hips with 3 channels and then wrote 6 values for it, so the header promised
+  // 237 channels and every row carried 240 — every joint after Hips read its
+  // predecessor's rotation. Nothing caught it: three's loader does not check, and
+  // the tests over this fixture assert names and parentage, which the shift does
+  // not touch.
+  const layout = [{ name: 'Root', channels: 6 }];
 
   // Faithful to the exporter: leaves get NO End Site block. Our other fixtures
   // all have one, so this is the only file in the corpus that tests the absence.
   const emit = (name, depth) => {
     const pad = '  '.repeat(depth);
+    // Hips carries the root motion, so it is POSED (6 channels) exactly as the
+    // exporter writes it. Its OFFSET is the pelvis's REST height; the position
+    // channels are its ANIMATED height. Both are present in the real file, and
+    // that they are the same quantity written twice is issue #792.
+    const posed = name === 'Hips';
     lines.push(`${pad}JOINT ${name}`);
     lines.push(`${pad}{`);
-    lines.push(`${pad}  OFFSET 0 0.1 0`);
-    lines.push(`${pad}  ${JOINT_CHANNELS}`);
+    lines.push(`${pad}  OFFSET 0 ${posed ? HIP_HEIGHT_CM : LIMB_OFFSET_CM} 0`);
+    lines.push(`${pad}  ${posed ? POSED_CHANNELS : ROTATION_CHANNELS}`);
+    layout.push({ name, channels: posed ? 6 : 3 });
     for (const kid of childrenOf(name)) emit(kid, depth + 1);
     lines.push(`${pad}}`);
   };
   emit('Hips', 1);
   lines.push('}');
 
+  const declared = layout.reduce((n, j) => n + j.channels, 0);
+
   lines.push('MOTION');
   lines.push(`Frames: ${FRAMES}`);
-  lines.push(`Frame Time: ${(1 / FPS).toFixed(7)}`);
+  // Full precision — a rounded 7 places reads back as 30.00003 fps, and the whole
+  // contract is that a consumer DERIVES the rate from this line.
+  lines.push(`Frame Time: ${1 / FPS}`);
   for (let f = 0; f < FRAMES; f += 1) {
     // Root carries zero, exactly as the exporter writes it; Hips carries the
-    // root motion; every other joint carries its local rotation.
-    const row = [0, 0, 0, 0, 0, 0];
-    SOMA77.forEach(([name], i) => {
-      if (name === 'Hips') row.push(0, 1, Number((f * 0.03).toFixed(4)));
-      row.push(0, angleFor(i, f), 0);
-    });
+    // root motion in centimetres; every other joint carries its local rotation.
+    const row = [];
+    for (const joint of layout) {
+      const i = layout.indexOf(joint);
+      if (joint.name === 'Root') row.push(0, 0, 0, 0, 0, 0);
+      else if (joint.name === 'Hips')
+        row.push(0, HIP_HEIGHT_CM - 4, Number((f * 3).toFixed(4)), 0, angleFor(i, f), 0);
+      else row.push(0, angleFor(i, f), 0);
+    }
+    // The gate this file did not have. A row that disagrees with the header is
+    // still valid-looking BVH that every reader accepts and silently misreads, so
+    // the only place it can be caught is where both are constructed.
+    if (row.length !== declared) {
+      throw new Error(
+        `fixture is malformed: header declares ${declared} channels, row ${f} carries ${row.length}`,
+      );
+    }
     lines.push(row.join(' '));
   }
   return `${lines.join('\n')}\n`;

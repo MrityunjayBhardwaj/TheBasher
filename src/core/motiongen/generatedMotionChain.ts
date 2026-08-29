@@ -48,6 +48,12 @@ export async function buildGeneratedMotionOps(
       name: args.name ?? args.request.prompt,
       ids: args.ids,
       timeSourceId: args.timeSourceId,
+      // The one thing the generator knows that the clip does not say. Passed as
+      // an ARGUMENT to the shared import function rather than handled here, so
+      // this file still adds no step a file import does not also take — a
+      // generated clip and a dropped one differ in what fills this parameter and
+      // in nothing else.
+      unitScale: generated.unitScale,
     },
     state,
   );

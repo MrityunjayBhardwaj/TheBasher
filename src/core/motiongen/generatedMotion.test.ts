@@ -12,7 +12,12 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { buildBvhImportOps, __resetBvhImportCounterForTests } from '../import/bvhImportChain';
 import { retargetClip } from '../import/retarget';
 import { parseBvh } from '../import/bvh';
-import { StubMotionGenerationCapability, synthesiseBvh } from './StubMotionGenerationCapability';
+import { readBvhProfile } from '../import/bvhProfile';
+import {
+  StubMotionGenerationCapability,
+  synthesiseBvh,
+  STUB_MOTION_FPS,
+} from './StubMotionGenerationCapability';
 import { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability';
 import { buildGeneratedMotionOps } from './generatedMotionChain';
 import { ModelNotLicensedError } from '../licensing/allowedModels';
@@ -72,7 +77,6 @@ describe('the stub is deterministic, and actually generates', () => {
     const { bvh } = await cap.generate({
       prompt: 'wave',
       model: ALLOWED_MODEL,
-      fps: 30,
       seconds: 1,
     });
     const parsed = parseBvh(bvh, 'generated');
@@ -80,9 +84,14 @@ describe('the stub is deterministic, and actually generates', () => {
     expect(parsed.clipParams.keyframes.length).toBeGreaterThan(0);
   });
 
-  it('honours fps and duration in the frame count', async () => {
-    const bvh = synthesiseBvh({ prompt: 'x', model: ALLOWED_MODEL, fps: 24, seconds: 2 });
-    expect(bvh).toContain('Frames: 48');
+  it('samples at ITS OWN rate, and the clip states it (#790)', async () => {
+    // The rate is the stub's constant, not a request field, so the frame count
+    // follows from the requested LENGTH and the implementation's own sampling.
+    // Read back off the clip rather than compared to what was asked for: the
+    // header is where a consumer will find it.
+    const bvh = synthesiseBvh({ prompt: 'x', model: ALLOWED_MODEL, seconds: 2 });
+    expect(bvh).toContain(`Frames: ${STUB_MOTION_FPS * 2}`);
+    expect(readBvhProfile(bvh).fps).toBeCloseTo(STUB_MOTION_FPS, 5);
   });
 });
 
@@ -215,16 +224,23 @@ describe('the HTTP capability', () => {
     // because it excludes test files.
     const fetchImpl = vi.fn(
       async (_url: string, _init?: RequestInit) =>
-        new Response(JSON.stringify({ jobId: 'j1', bvh: 'HIERARCHY', model: ALLOWED_MODEL }), {
-          status: 200,
-        }),
+        new Response(
+          JSON.stringify({
+            jobId: 'j1',
+            bvh: synthesiseBvh({ prompt: 'x', model: ALLOWED_MODEL, seconds: 1 }),
+            model: ALLOWED_MODEL,
+            unitScale: 1,
+          }),
+          { status: 200 },
+        ),
     );
     const cap = new HttpMotionGenerationCapability({
       serverUrl: 'http://localhost:9999/',
       fetchImpl: fetchImpl as unknown as typeof fetch,
     });
     const result = await cap.generate({ prompt: 'a slow walk', model: ALLOWED_MODEL });
-    expect(result.bvh).toBe('HIERARCHY');
+    expect(result.bvh).toContain('HIERARCHY');
+    expect(result.unitScale).toBe(1);
     const [url, init] = fetchImpl.mock.calls[0];
     expect(url).toBe('http://localhost:9999/generate'); // trailing slash normalised
     expect(JSON.parse(init?.body as string)).toMatchObject({

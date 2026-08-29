@@ -5,50 +5,50 @@ ROOT Root
   CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
   JOINT Hips
   {
-    OFFSET 0 0.1 0
-    CHANNELS 3 Zrotation Yrotation Xrotation
+    OFFSET 0 100 0
+    CHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
     JOINT Spine1
     {
-      OFFSET 0 0.1 0
+      OFFSET 0 10 0
       CHANNELS 3 Zrotation Yrotation Xrotation
       JOINT Spine2
       {
-        OFFSET 0 0.1 0
+        OFFSET 0 10 0
         CHANNELS 3 Zrotation Yrotation Xrotation
         JOINT Chest
         {
-          OFFSET 0 0.1 0
+          OFFSET 0 10 0
           CHANNELS 3 Zrotation Yrotation Xrotation
           JOINT Neck1
           {
-            OFFSET 0 0.1 0
+            OFFSET 0 10 0
             CHANNELS 3 Zrotation Yrotation Xrotation
             JOINT Neck2
             {
-              OFFSET 0 0.1 0
+              OFFSET 0 10 0
               CHANNELS 3 Zrotation Yrotation Xrotation
               JOINT Head
               {
-                OFFSET 0 0.1 0
+                OFFSET 0 10 0
                 CHANNELS 3 Zrotation Yrotation Xrotation
                 JOINT HeadEnd
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                 }
                 JOINT Jaw
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                 }
                 JOINT LeftEye
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                 }
                 JOINT RightEye
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                 }
               }
@@ -56,35 +56,35 @@ ROOT Root
           }
           JOINT LeftShoulder
           {
-            OFFSET 0 0.1 0
+            OFFSET 0 10 0
             CHANNELS 3 Zrotation Yrotation Xrotation
             JOINT LeftArm
             {
-              OFFSET 0 0.1 0
+              OFFSET 0 10 0
               CHANNELS 3 Zrotation Yrotation Xrotation
               JOINT LeftForeArm
               {
-                OFFSET 0 0.1 0
+                OFFSET 0 10 0
                 CHANNELS 3 Zrotation Yrotation Xrotation
                 JOINT LeftHand
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                   JOINT LeftHandThumb1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT LeftHandThumb2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT LeftHandThumb3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT LeftHandThumbEnd
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                         }
                       }
@@ -92,23 +92,23 @@ ROOT Root
                   }
                   JOINT LeftHandIndex1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT LeftHandIndex2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT LeftHandIndex3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT LeftHandIndex4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT LeftHandIndexEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -117,23 +117,23 @@ ROOT Root
                   }
                   JOINT LeftHandMiddle1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT LeftHandMiddle2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT LeftHandMiddle3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT LeftHandMiddle4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT LeftHandMiddleEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -142,23 +142,23 @@ ROOT Root
                   }
                   JOINT LeftHandRing1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT LeftHandRing2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT LeftHandRing3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT LeftHandRing4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT LeftHandRingEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -167,23 +167,23 @@ ROOT Root
                   }
                   JOINT LeftHandPinky1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT LeftHandPinky2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT LeftHandPinky3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT LeftHandPinky4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT LeftHandPinkyEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -196,35 +196,35 @@ ROOT Root
           }
           JOINT RightShoulder
           {
-            OFFSET 0 0.1 0
+            OFFSET 0 10 0
             CHANNELS 3 Zrotation Yrotation Xrotation
             JOINT RightArm
             {
-              OFFSET 0 0.1 0
+              OFFSET 0 10 0
               CHANNELS 3 Zrotation Yrotation Xrotation
               JOINT RightForeArm
               {
-                OFFSET 0 0.1 0
+                OFFSET 0 10 0
                 CHANNELS 3 Zrotation Yrotation Xrotation
                 JOINT RightHand
                 {
-                  OFFSET 0 0.1 0
+                  OFFSET 0 10 0
                   CHANNELS 3 Zrotation Yrotation Xrotation
                   JOINT RightHandThumb1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT RightHandThumb2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT RightHandThumb3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT RightHandThumbEnd
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                         }
                       }
@@ -232,23 +232,23 @@ ROOT Root
                   }
                   JOINT RightHandIndex1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT RightHandIndex2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT RightHandIndex3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT RightHandIndex4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT RightHandIndexEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -257,23 +257,23 @@ ROOT Root
                   }
                   JOINT RightHandMiddle1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT RightHandMiddle2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT RightHandMiddle3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT RightHandMiddle4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT RightHandMiddleEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -282,23 +282,23 @@ ROOT Root
                   }
                   JOINT RightHandRing1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT RightHandRing2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT RightHandRing3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT RightHandRing4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT RightHandRingEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -307,23 +307,23 @@ ROOT Root
                   }
                   JOINT RightHandPinky1
                   {
-                    OFFSET 0 0.1 0
+                    OFFSET 0 10 0
                     CHANNELS 3 Zrotation Yrotation Xrotation
                     JOINT RightHandPinky2
                     {
-                      OFFSET 0 0.1 0
+                      OFFSET 0 10 0
                       CHANNELS 3 Zrotation Yrotation Xrotation
                       JOINT RightHandPinky3
                       {
-                        OFFSET 0 0.1 0
+                        OFFSET 0 10 0
                         CHANNELS 3 Zrotation Yrotation Xrotation
                         JOINT RightHandPinky4
                         {
-                          OFFSET 0 0.1 0
+                          OFFSET 0 10 0
                           CHANNELS 3 Zrotation Yrotation Xrotation
                           JOINT RightHandPinkyEnd
                           {
-                            OFFSET 0 0.1 0
+                            OFFSET 0 10 0
                             CHANNELS 3 Zrotation Yrotation Xrotation
                           }
                         }
@@ -339,23 +339,23 @@ ROOT Root
     }
     JOINT LeftLeg
     {
-      OFFSET 0 0.1 0
+      OFFSET 0 10 0
       CHANNELS 3 Zrotation Yrotation Xrotation
       JOINT LeftShin
       {
-        OFFSET 0 0.1 0
+        OFFSET 0 10 0
         CHANNELS 3 Zrotation Yrotation Xrotation
         JOINT LeftFoot
         {
-          OFFSET 0 0.1 0
+          OFFSET 0 10 0
           CHANNELS 3 Zrotation Yrotation Xrotation
           JOINT LeftToeBase
           {
-            OFFSET 0 0.1 0
+            OFFSET 0 10 0
             CHANNELS 3 Zrotation Yrotation Xrotation
             JOINT LeftToeEnd
             {
-              OFFSET 0 0.1 0
+              OFFSET 0 10 0
               CHANNELS 3 Zrotation Yrotation Xrotation
             }
           }
@@ -364,23 +364,23 @@ ROOT Root
     }
     JOINT RightLeg
     {
-      OFFSET 0 0.1 0
+      OFFSET 0 10 0
       CHANNELS 3 Zrotation Yrotation Xrotation
       JOINT RightShin
       {
-        OFFSET 0 0.1 0
+        OFFSET 0 10 0
         CHANNELS 3 Zrotation Yrotation Xrotation
         JOINT RightFoot
         {
-          OFFSET 0 0.1 0
+          OFFSET 0 10 0
           CHANNELS 3 Zrotation Yrotation Xrotation
           JOINT RightToeBase
           {
-            OFFSET 0 0.1 0
+            OFFSET 0 10 0
             CHANNELS 3 Zrotation Yrotation Xrotation
             JOINT RightToeEnd
             {
-              OFFSET 0 0.1 0
+              OFFSET 0 10 0
               CHANNELS 3 Zrotation Yrotation Xrotation
             }
           }
@@ -391,10 +391,10 @@ ROOT Root
 }
 MOTION
 Frames: 6
-Frame Time: 0.0333333
-0 0 0 0 0 0 0 1 0 0 0 0 0 4.3633 0 0 7.6324 0 0 8.9877 0 0 8.0891 0 0 5.1622 0 0 0.9408 0 0 -3.5166 0 0 -7.0921 0 0 -8.8892 0 0 -8.4572 0 0 -5.9045 0 0 -1.8712 0 0 2.6313 0 0 6.4741 0 0 8.6933 0 0 8.7327 0 0 6.5822 0 0 2.7812 0 0 -1.7173 0 0 -5.7851 0 0 -8.4022 0 0 -8.9124 0 0 -7.1877 0 0 -3.6606 0 0 0.7844 0 0 5.0327 0 0 8.0191 0 0 8.9945 0 0 7.7145 0 0 4.5 0 0 0.1571 0 0 -4.2252 0 0 -7.548 0 0 -8.9781 0 0 -8.1568 0 0 -5.2901 0 0 -1.0968 0 0 3.3715 0 0 6.9943 0 0 8.8633 0 0 8.5097 0 0 6.0222 0 0 2.0246 0 0 -2.4807 0 0 -6.364 0 0 -8.6514 0 0 -8.7693 0 0 -6.6883 0 0 -2.9301 0 0 1.5628 0 0 5.6639 0 0 8.3447 0 0 8.9329 0 0 7.2812 0 0 3.8036 0 0 -0.6278 0 0 -4.9018 0 0 -7.9465 0 0 -8.9986 0 0 -7.7942 0 0 -4.6353 0 0 -0.3141 0 0 4.0859 0 0 7.4613 0 0 8.9658 0 0 8.2219 0 0 5.4163 0 0 1.2526 0 0 -3.2253 0 0 -6.8944 0 0 -8.8346 0 0 -8.5595 0 0 -6.138 0 0 -2.1773 0 0 2.3294 0 0 6.2519 0
-0 0 0 0 0 0 0 1 0.03 0 3.0782 0 0 6.7924 0 0 8.8033 0 0 8.6067 0 0 6.2519 0 0 2.3294 0 0 -2.1773 0 0 -6.138 0 0 -8.5595 0 0 -8.8346 0 0 -6.8944 0 0 -3.2253 0 0 1.2526 0 0 5.4163 0 0 8.2219 0 0 8.9658 0 0 7.4613 0 0 4.0859 0 0 -0.3141 0 0 -4.6353 0 0 -7.7942 0 0 -8.9986 0 0 -7.9465 0 0 -4.9018 0 0 -0.6278 0 0 3.8036 0 0 7.2812 0 0 8.9329 0 0 8.3447 0 0 5.6639 0 0 1.5628 0 0 -2.9301 0 0 -6.6883 0 0 -8.7693 0 0 -8.6514 0 0 -6.364 0 0 -2.4807 0 0 2.0246 0 0 6.0222 0 0 8.5097 0 0 8.8633 0 0 6.9943 0 0 3.3715 0 0 -1.0968 0 0 -5.2901 0 0 -8.1568 0 0 -8.9781 0 0 -7.548 0 0 -4.2252 0 0 0.1571 0 0 4.5 0 0 7.7145 0 0 8.9945 0 0 8.0191 0 0 5.0327 0 0 0.7844 0 0 -3.6606 0 0 -7.1877 0 0 -8.9124 0 0 -8.4022 0 0 -5.7851 0 0 -1.7173 0 0 2.7812 0 0 6.5822 0 0 8.7327 0 0 8.6933 0 0 6.4741 0 0 2.6313 0 0 -1.8712 0 0 -5.9045 0 0 -8.4572 0 0 -8.8892 0 0 -7.0921 0 0 -3.5166 0 0 0.9408 0 0 5.1622 0 0 8.0891 0
-0 0 0 0 0 0 0 1 0.06 0 5.7851 0 0 8.4022 0 0 8.9124 0 0 7.1877 0 0 3.6606 0 0 -0.7844 0 0 -5.0327 0 0 -8.0191 0 0 -8.9945 0 0 -7.7145 0 0 -4.5 0 0 -0.1571 0 0 4.2252 0 0 7.548 0 0 8.9781 0 0 8.1568 0 0 5.2901 0 0 1.0968 0 0 -3.3715 0 0 -6.9943 0 0 -8.8633 0 0 -8.5097 0 0 -6.0222 0 0 -2.0246 0 0 2.4807 0 0 6.364 0 0 8.6514 0 0 8.7693 0 0 6.6883 0 0 2.9301 0 0 -1.5628 0 0 -5.6639 0 0 -8.3447 0 0 -8.9329 0 0 -7.2812 0 0 -3.8036 0 0 0.6278 0 0 4.9018 0 0 7.9465 0 0 8.9986 0 0 7.7942 0 0 4.6353 0 0 0.3141 0 0 -4.0859 0 0 -7.4613 0 0 -8.9658 0 0 -8.2219 0 0 -5.4163 0 0 -1.2526 0 0 3.2253 0 0 6.8944 0 0 8.8346 0 0 8.5595 0 0 6.138 0 0 2.1773 0 0 -2.3294 0 0 -6.2519 0 0 -8.6067 0 0 -8.8033 0 0 -6.7924 0 0 -3.0782 0 0 1.4079 0 0 5.541 0 0 8.2845 0 0 8.9507 0 0 7.3724 0 0 3.9453 0 0 -0.471 0 0 -4.7693 0 0 -7.8716 0 0 -9 0 0 -7.8716 0 0 -4.7693 0 0 -0.471 0 0 3.9453 0 0 7.3724 0 0 8.9507 0
-0 0 0 0 0 0 0 1 0.09 0 7.7942 0 0 8.9986 0 0 7.9465 0 0 4.9018 0 0 0.6278 0 0 -3.8036 0 0 -7.2812 0 0 -8.9329 0 0 -8.3447 0 0 -5.6639 0 0 -1.5628 0 0 2.9301 0 0 6.6883 0 0 8.7693 0 0 8.6514 0 0 6.364 0 0 2.4807 0 0 -2.0246 0 0 -6.0222 0 0 -8.5097 0 0 -8.8633 0 0 -6.9943 0 0 -3.3715 0 0 1.0968 0 0 5.2901 0 0 8.1568 0 0 8.9781 0 0 7.548 0 0 4.2252 0 0 -0.1571 0 0 -4.5 0 0 -7.7145 0 0 -8.9945 0 0 -8.0191 0 0 -5.0327 0 0 -0.7844 0 0 3.6606 0 0 7.1877 0 0 8.9124 0 0 8.4022 0 0 5.7851 0 0 1.7173 0 0 -2.7812 0 0 -6.5822 0 0 -8.7327 0 0 -8.6933 0 0 -6.4741 0 0 -2.6313 0 0 1.8712 0 0 5.9045 0 0 8.4572 0 0 8.8892 0 0 7.0921 0 0 3.5166 0 0 -0.9408 0 0 -5.1622 0 0 -8.0891 0 0 -8.9877 0 0 -7.6324 0 0 -4.3633 0 0 0 0 0 4.3633 0 0 7.6324 0 0 8.9877 0 0 8.0891 0 0 5.1622 0 0 0.9408 0 0 -3.5166 0 0 -7.0921 0 0 -8.8892 0 0 -8.4572 0 0 -5.9045 0 0 -1.8712 0 0 2.6313 0 0 6.4741 0 0 8.6933 0 0 8.7327 0
-0 0 0 0 0 0 0 1 0.12 0 8.8633 0 0 8.5097 0 0 6.0222 0 0 2.0246 0 0 -2.4807 0 0 -6.364 0 0 -8.6514 0 0 -8.7693 0 0 -6.6883 0 0 -2.9301 0 0 1.5628 0 0 5.6639 0 0 8.3447 0 0 8.9329 0 0 7.2812 0 0 3.8036 0 0 -0.6278 0 0 -4.9018 0 0 -7.9465 0 0 -8.9986 0 0 -7.7942 0 0 -4.6353 0 0 -0.3141 0 0 4.0859 0 0 7.4613 0 0 8.9658 0 0 8.2219 0 0 5.4163 0 0 1.2526 0 0 -3.2253 0 0 -6.8944 0 0 -8.8346 0 0 -8.5595 0 0 -6.138 0 0 -2.1773 0 0 2.3294 0 0 6.2519 0 0 8.6067 0 0 8.8033 0 0 6.7924 0 0 3.0782 0 0 -1.4079 0 0 -5.541 0 0 -8.2845 0 0 -8.9507 0 0 -7.3724 0 0 -3.9453 0 0 0.471 0 0 4.7693 0 0 7.8716 0 0 9 0 0 7.8716 0 0 4.7693 0 0 0.471 0 0 -3.9453 0 0 -7.3724 0 0 -8.9507 0 0 -8.2845 0 0 -5.541 0 0 -1.4079 0 0 3.0782 0 0 6.7924 0 0 8.8033 0 0 8.6067 0 0 6.2519 0 0 2.3294 0 0 -2.1773 0 0 -6.138 0 0 -8.5595 0 0 -8.8346 0 0 -6.8944 0 0 -3.2253 0 0 1.2526 0 0 5.4163 0 0 8.2219 0 0 8.9658 0 0 7.4613 0
-0 0 0 0 0 0 0 1 0.15 0 8.8633 0 0 6.9943 0 0 3.3715 0 0 -1.0968 0 0 -5.2901 0 0 -8.1568 0 0 -8.9781 0 0 -7.548 0 0 -4.2252 0 0 0.1571 0 0 4.5 0 0 7.7145 0 0 8.9945 0 0 8.0191 0 0 5.0327 0 0 0.7844 0 0 -3.6606 0 0 -7.1877 0 0 -8.9124 0 0 -8.4022 0 0 -5.7851 0 0 -1.7173 0 0 2.7812 0 0 6.5822 0 0 8.7327 0 0 8.6933 0 0 6.4741 0 0 2.6313 0 0 -1.8712 0 0 -5.9045 0 0 -8.4572 0 0 -8.8892 0 0 -7.0921 0 0 -3.5166 0 0 0.9408 0 0 5.1622 0 0 8.0891 0 0 8.9877 0 0 7.6324 0 0 4.3633 0 0 0 0 0 -4.3633 0 0 -7.6324 0 0 -8.9877 0 0 -8.0891 0 0 -5.1622 0 0 -0.9408 0 0 3.5166 0 0 7.0921 0 0 8.8892 0 0 8.4572 0 0 5.9045 0 0 1.8712 0 0 -2.6313 0 0 -6.4741 0 0 -8.6933 0 0 -8.7327 0 0 -6.5822 0 0 -2.7812 0 0 1.7173 0 0 5.7851 0 0 8.4022 0 0 8.9124 0 0 7.1877 0 0 3.6606 0 0 -0.7844 0 0 -5.0327 0 0 -8.0191 0 0 -8.9945 0 0 -7.7145 0 0 -4.5 0 0 -0.1571 0 0 4.2252 0 0 7.548 0 0 8.9781 0 0 8.1568 0 0 5.2901 0
+Frame Time: 0.03333333333333333
+0 0 0 0 0 0 0 96 0 0 4.3633 0 0 7.6324 0 0 8.9877 0 0 8.0891 0 0 5.1622 0 0 0.9408 0 0 -3.5166 0 0 -7.0921 0 0 -8.8892 0 0 -8.4572 0 0 -5.9045 0 0 -1.8712 0 0 2.6313 0 0 6.4741 0 0 8.6933 0 0 8.7327 0 0 6.5822 0 0 2.7812 0 0 -1.7173 0 0 -5.7851 0 0 -8.4022 0 0 -8.9124 0 0 -7.1877 0 0 -3.6606 0 0 0.7844 0 0 5.0327 0 0 8.0191 0 0 8.9945 0 0 7.7145 0 0 4.5 0 0 0.1571 0 0 -4.2252 0 0 -7.548 0 0 -8.9781 0 0 -8.1568 0 0 -5.2901 0 0 -1.0968 0 0 3.3715 0 0 6.9943 0 0 8.8633 0 0 8.5097 0 0 6.0222 0 0 2.0246 0 0 -2.4807 0 0 -6.364 0 0 -8.6514 0 0 -8.7693 0 0 -6.6883 0 0 -2.9301 0 0 1.5628 0 0 5.6639 0 0 8.3447 0 0 8.9329 0 0 7.2812 0 0 3.8036 0 0 -0.6278 0 0 -4.9018 0 0 -7.9465 0 0 -8.9986 0 0 -7.7942 0 0 -4.6353 0 0 -0.3141 0 0 4.0859 0 0 7.4613 0 0 8.9658 0 0 8.2219 0 0 5.4163 0 0 1.2526 0 0 -3.2253 0 0 -6.8944 0 0 -8.8346 0 0 -8.5595 0 0 -6.138 0 0 -2.1773 0 0 2.3294 0 0 6.2519 0 0 8.6067 0
+0 0 0 0 0 0 0 96 3 0 6.7924 0 0 8.8033 0 0 8.6067 0 0 6.2519 0 0 2.3294 0 0 -2.1773 0 0 -6.138 0 0 -8.5595 0 0 -8.8346 0 0 -6.8944 0 0 -3.2253 0 0 1.2526 0 0 5.4163 0 0 8.2219 0 0 8.9658 0 0 7.4613 0 0 4.0859 0 0 -0.3141 0 0 -4.6353 0 0 -7.7942 0 0 -8.9986 0 0 -7.9465 0 0 -4.9018 0 0 -0.6278 0 0 3.8036 0 0 7.2812 0 0 8.9329 0 0 8.3447 0 0 5.6639 0 0 1.5628 0 0 -2.9301 0 0 -6.6883 0 0 -8.7693 0 0 -8.6514 0 0 -6.364 0 0 -2.4807 0 0 2.0246 0 0 6.0222 0 0 8.5097 0 0 8.8633 0 0 6.9943 0 0 3.3715 0 0 -1.0968 0 0 -5.2901 0 0 -8.1568 0 0 -8.9781 0 0 -7.548 0 0 -4.2252 0 0 0.1571 0 0 4.5 0 0 7.7145 0 0 8.9945 0 0 8.0191 0 0 5.0327 0 0 0.7844 0 0 -3.6606 0 0 -7.1877 0 0 -8.9124 0 0 -8.4022 0 0 -5.7851 0 0 -1.7173 0 0 2.7812 0 0 6.5822 0 0 8.7327 0 0 8.6933 0 0 6.4741 0 0 2.6313 0 0 -1.8712 0 0 -5.9045 0 0 -8.4572 0 0 -8.8892 0 0 -7.0921 0 0 -3.5166 0 0 0.9408 0 0 5.1622 0 0 8.0891 0 0 8.9877 0
+0 0 0 0 0 0 0 96 6 0 8.4022 0 0 8.9124 0 0 7.1877 0 0 3.6606 0 0 -0.7844 0 0 -5.0327 0 0 -8.0191 0 0 -8.9945 0 0 -7.7145 0 0 -4.5 0 0 -0.1571 0 0 4.2252 0 0 7.548 0 0 8.9781 0 0 8.1568 0 0 5.2901 0 0 1.0968 0 0 -3.3715 0 0 -6.9943 0 0 -8.8633 0 0 -8.5097 0 0 -6.0222 0 0 -2.0246 0 0 2.4807 0 0 6.364 0 0 8.6514 0 0 8.7693 0 0 6.6883 0 0 2.9301 0 0 -1.5628 0 0 -5.6639 0 0 -8.3447 0 0 -8.9329 0 0 -7.2812 0 0 -3.8036 0 0 0.6278 0 0 4.9018 0 0 7.9465 0 0 8.9986 0 0 7.7942 0 0 4.6353 0 0 0.3141 0 0 -4.0859 0 0 -7.4613 0 0 -8.9658 0 0 -8.2219 0 0 -5.4163 0 0 -1.2526 0 0 3.2253 0 0 6.8944 0 0 8.8346 0 0 8.5595 0 0 6.138 0 0 2.1773 0 0 -2.3294 0 0 -6.2519 0 0 -8.6067 0 0 -8.8033 0 0 -6.7924 0 0 -3.0782 0 0 1.4079 0 0 5.541 0 0 8.2845 0 0 8.9507 0 0 7.3724 0 0 3.9453 0 0 -0.471 0 0 -4.7693 0 0 -7.8716 0 0 -9 0 0 -7.8716 0 0 -4.7693 0 0 -0.471 0 0 3.9453 0 0 7.3724 0 0 8.9507 0 0 8.2845 0
+0 0 0 0 0 0 0 96 9 0 8.9986 0 0 7.9465 0 0 4.9018 0 0 0.6278 0 0 -3.8036 0 0 -7.2812 0 0 -8.9329 0 0 -8.3447 0 0 -5.6639 0 0 -1.5628 0 0 2.9301 0 0 6.6883 0 0 8.7693 0 0 8.6514 0 0 6.364 0 0 2.4807 0 0 -2.0246 0 0 -6.0222 0 0 -8.5097 0 0 -8.8633 0 0 -6.9943 0 0 -3.3715 0 0 1.0968 0 0 5.2901 0 0 8.1568 0 0 8.9781 0 0 7.548 0 0 4.2252 0 0 -0.1571 0 0 -4.5 0 0 -7.7145 0 0 -8.9945 0 0 -8.0191 0 0 -5.0327 0 0 -0.7844 0 0 3.6606 0 0 7.1877 0 0 8.9124 0 0 8.4022 0 0 5.7851 0 0 1.7173 0 0 -2.7812 0 0 -6.5822 0 0 -8.7327 0 0 -8.6933 0 0 -6.4741 0 0 -2.6313 0 0 1.8712 0 0 5.9045 0 0 8.4572 0 0 8.8892 0 0 7.0921 0 0 3.5166 0 0 -0.9408 0 0 -5.1622 0 0 -8.0891 0 0 -8.9877 0 0 -7.6324 0 0 -4.3633 0 0 0 0 0 4.3633 0 0 7.6324 0 0 8.9877 0 0 8.0891 0 0 5.1622 0 0 0.9408 0 0 -3.5166 0 0 -7.0921 0 0 -8.8892 0 0 -8.4572 0 0 -5.9045 0 0 -1.8712 0 0 2.6313 0 0 6.4741 0 0 8.6933 0 0 8.7327 0 0 6.5822 0
+0 0 0 0 0 0 0 96 12 0 8.5097 0 0 6.0222 0 0 2.0246 0 0 -2.4807 0 0 -6.364 0 0 -8.6514 0 0 -8.7693 0 0 -6.6883 0 0 -2.9301 0 0 1.5628 0 0 5.6639 0 0 8.3447 0 0 8.9329 0 0 7.2812 0 0 3.8036 0 0 -0.6278 0 0 -4.9018 0 0 -7.9465 0 0 -8.9986 0 0 -7.7942 0 0 -4.6353 0 0 -0.3141 0 0 4.0859 0 0 7.4613 0 0 8.9658 0 0 8.2219 0 0 5.4163 0 0 1.2526 0 0 -3.2253 0 0 -6.8944 0 0 -8.8346 0 0 -8.5595 0 0 -6.138 0 0 -2.1773 0 0 2.3294 0 0 6.2519 0 0 8.6067 0 0 8.8033 0 0 6.7924 0 0 3.0782 0 0 -1.4079 0 0 -5.541 0 0 -8.2845 0 0 -8.9507 0 0 -7.3724 0 0 -3.9453 0 0 0.471 0 0 4.7693 0 0 7.8716 0 0 9 0 0 7.8716 0 0 4.7693 0 0 0.471 0 0 -3.9453 0 0 -7.3724 0 0 -8.9507 0 0 -8.2845 0 0 -5.541 0 0 -1.4079 0 0 3.0782 0 0 6.7924 0 0 8.8033 0 0 8.6067 0 0 6.2519 0 0 2.3294 0 0 -2.1773 0 0 -6.138 0 0 -8.5595 0 0 -8.8346 0 0 -6.8944 0 0 -3.2253 0 0 1.2526 0 0 5.4163 0 0 8.2219 0 0 8.9658 0 0 7.4613 0 0 4.0859 0
+0 0 0 0 0 0 0 96 15 0 6.9943 0 0 3.3715 0 0 -1.0968 0 0 -5.2901 0 0 -8.1568 0 0 -8.9781 0 0 -7.548 0 0 -4.2252 0 0 0.1571 0 0 4.5 0 0 7.7145 0 0 8.9945 0 0 8.0191 0 0 5.0327 0 0 0.7844 0 0 -3.6606 0 0 -7.1877 0 0 -8.9124 0 0 -8.4022 0 0 -5.7851 0 0 -1.7173 0 0 2.7812 0 0 6.5822 0 0 8.7327 0 0 8.6933 0 0 6.4741 0 0 2.6313 0 0 -1.8712 0 0 -5.9045 0 0 -8.4572 0 0 -8.8892 0 0 -7.0921 0 0 -3.5166 0 0 0.9408 0 0 5.1622 0 0 8.0891 0 0 8.9877 0 0 7.6324 0 0 4.3633 0 0 0 0 0 -4.3633 0 0 -7.6324 0 0 -8.9877 0 0 -8.0891 0 0 -5.1622 0 0 -0.9408 0 0 3.5166 0 0 7.0921 0 0 8.8892 0 0 8.4572 0 0 5.9045 0 0 1.8712 0 0 -2.6313 0 0 -6.4741 0 0 -8.6933 0 0 -8.7327 0 0 -6.5822 0 0 -2.7812 0 0 1.7173 0 0 5.7851 0 0 8.4022 0 0 8.9124 0 0 7.1877 0 0 3.6606 0 0 -0.7844 0 0 -5.0327 0 0 -8.0191 0 0 -8.9945 0 0 -7.7145 0 0 -4.5 0 0 -0.1571 0 0 4.2252 0 0 7.548 0 0 8.9781 0 0 8.1568 0 0 5.2901 0 0 1.0968 0
