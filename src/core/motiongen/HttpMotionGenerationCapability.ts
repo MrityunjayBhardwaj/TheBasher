@@ -12,7 +12,7 @@
 // REF: src/core/comfy/HttpComfyUICapability.ts; docs/EXTERNAL-MODEL-LICENCES.md.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
-import { assertValidMotionRequest } from './MotionGenerationCapability';
+import { assertValidMotionRequest, assertValidMotionResult } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
   MotionGenerationRequest,
@@ -67,7 +67,6 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
           prompt: request.prompt,
           model: request.model,
           seconds: request.seconds ?? 2,
-          fps: request.fps ?? 30,
           seed: request.seed ?? 0,
           constraints: request.constraints ?? null,
           format: 'bvh',
@@ -80,13 +79,24 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
             `from ${this.serverUrl}/generate`,
         );
       }
-      const payload = (await response.json()) as { jobId?: string; bvh?: string; model?: string };
+      const payload = (await response.json()) as {
+        jobId?: string;
+        bvh?: string;
+        model?: string;
+        unitScale?: number;
+      };
       if (typeof payload.bvh !== 'string' || payload.bvh.length === 0) {
         throw new Error(
           `Motion generation returned no BVH text. The service must return ` +
-            `{ jobId, bvh, model } with bvh as the clip payload.`,
+            `{ jobId, bvh, model, unitScale } with bvh as the clip payload.`,
         );
       }
+      // Licence BEFORE the rest of the payload's shape, the same ordering the
+      // request checks use and for the same reason: a blocked checkpoint must
+      // report its verdict rather than whichever other field also happened to be
+      // missing. Both refuse before the clip is handed back, so the ordering costs
+      // nothing and decides only which fact gets named.
+      //
       // The check above guarded what we ASKED for. This one guards what the
       // service says it actually ran — a fallback, a routing rule or a
       // misconfiguration can answer with a different checkpoint, and the licence
@@ -106,7 +116,27 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
             `cleared for this use.`,
         );
       }
-      return { jobId: payload.jobId ?? 'unknown', bvh: payload.bvh, model: ran };
+      // REQUIRED, never defaulted. BVH carries no unit, so a service that does not
+      // say leaves us with a number we would have to invent — and the plausible
+      // invention, metres, is wrong for every real generator measured so far. A
+      // default here would turn "nobody knows the scale" into "everybody agrees
+      // it is 1", which is the same silence with more confidence behind it.
+      if (typeof payload.unitScale !== 'number') {
+        throw new Error(
+          `Motion generation returned no unitScale. BVH declares no unit, so the ` +
+            `service must state metres-per-BVH-unit (1 for metres, 0.01 for ` +
+            `centimetres) — a clip whose scale nobody states imports at whatever ` +
+            `scale the consumer assumes.`,
+        );
+      }
+      const result = {
+        jobId: payload.jobId ?? 'unknown',
+        bvh: payload.bvh,
+        model: ran,
+        unitScale: payload.unitScale,
+      };
+      assertValidMotionResult(result);
+      return result;
     } finally {
       clearTimeout(timer);
     }

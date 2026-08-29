@@ -7,7 +7,7 @@
 //
 // Library UI / drop-zone routing lands in Wave B alongside FBX.
 
-import { parseBvh } from './bvh';
+import { BVH_UNIT_SCALE_METRES, parseBvh } from './bvh';
 import type { Op } from '../../core/dag/types';
 import type { DagState } from '../../core/dag/state';
 
@@ -28,6 +28,18 @@ export interface BvhImportChainArgs {
    * `n_time` but a stripped project must add one first).
    */
   readonly timeSourceId?: string;
+  /**
+   * Metres per BVH length unit. BVH declares no unit, so the road cannot derive
+   * one and whoever produced the clip has to say. Defaults to 1 — what a file
+   * import has always assumed — so an existing caller is unchanged.
+   *
+   * That this is an argument rather than a branch is the point: a generated clip
+   * and an imported one take the SAME function with the same parameter, one
+   * filling it from what the generator declared and one from the default. A
+   * second import road for generated motion is exactly what phase A1 exists to
+   * avoid.
+   */
+  readonly unitScale?: number;
 }
 
 let counter = 0;
@@ -46,7 +58,11 @@ export function __resetBvhImportCounterForTests(): void {
 }
 
 export function buildBvhImportOps(args: BvhImportChainArgs, state: DagState): BvhImportChainResult {
-  const parsed = parseBvh(args.text, args.name ?? 'imported-bvh');
+  const parsed = parseBvh(
+    args.text,
+    args.name ?? 'imported-bvh',
+    args.unitScale ?? BVH_UNIT_SCALE_METRES,
+  );
 
   const ids = args.ids ?? {
     skeleton: uniqueId('bvh_skel'),

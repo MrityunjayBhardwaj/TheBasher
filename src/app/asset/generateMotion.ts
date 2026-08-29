@@ -30,7 +30,8 @@ import { useImportRefreshStore } from '../stores/importRefreshStore';
 
 export interface GenerateMotionOptions {
   readonly seconds?: number;
-  readonly fps?: number;
+  // No `fps`: the generator decides its own rate and the clip states it. See
+  // MotionGenerationRequest.
   readonly seed?: number;
   /** Clip name — defaults to the prompt, exactly as an import defaults to the filename. */
   readonly name?: string;
@@ -74,7 +75,6 @@ export async function generateMotionIntoScene(
           prompt,
           model: motionGenModel,
           ...(options.seconds !== undefined ? { seconds: options.seconds } : {}),
-          ...(options.fps !== undefined ? { fps: options.fps } : {}),
           ...(options.seed !== undefined ? { seed: options.seed } : {}),
         },
         ...(options.name !== undefined ? { name: options.name } : {}),
