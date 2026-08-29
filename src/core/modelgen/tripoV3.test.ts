@@ -3,12 +3,14 @@
 //
 // 🔴 A NOTE ON WHAT THIS FILE CAN AND CANNOT PROVE. v2's suite asserts a wire
 // read out of Tripo's own SDK source. This one asserts a wire read out of
-// Tripo's DOCUMENTATION, because there is no v3 source to read and the vendor's
-// machine-readable schema is published behind authentication. So these tests pin
-// what we BELIEVE v3's contract is, and they will hold that belief steady
-// through refactors — which is worth having — but a green run here is not
-// evidence about the running service. The moment a working key exists, fetch the
-// authenticated schema and re-verify this file against it.
+// Tripo's DOCUMENTATION — there is no v3 source, and no machine-readable schema
+// either: with a valid key every schema path answers 404, so the prose is the
+// whole of it. (An earlier note here said the schema was published behind
+// authentication. That was inferred from a 401 and measured false once a key
+// existed — the 401 was an auth gate ahead of routing.) So these tests pin what
+// we BELIEVE v3's contract is, and hold that belief steady through refactors,
+// which is worth having — but a green run here is not evidence about the running
+// service, and only a live call can now supply that.
 //
 // The tests that DO carry full weight regardless are the cross-version ones: a
 // v2-shaped response read by the v3 dialect, and the reverse. Those assert an

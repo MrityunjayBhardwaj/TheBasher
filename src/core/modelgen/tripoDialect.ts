@@ -19,9 +19,14 @@
 //        `ref/sources/tripo-python-sdk/`, and cross-checked against its Blender
 //        plugin. That SDK (`tripo3d` 0.4.2) is still the latest release on PyPI.
 //
-//   v3 — VENDOR-DOCUMENTED. There is no v3 source to read (Tripo's own SDK is
-//        v2, and `openapi.tripo3d.ai/openapi.json` answers 401 rather than 404 —
-//        a schema exists, published behind authentication). But the critical
+//   v3 — VENDOR-DOCUMENTED. There is no v3 source to read and no machine-
+//        readable schema at all: Tripo's own SDK is v2, and with a VALID KEY
+//        every schema path (`/openapi.json`, `/v3/openapi.json`, `/docs`,
+//        `/swagger.json`) answers 404 "No endpoint found". The earlier 401s on
+//        those paths were the blanket auth gate firing ahead of routing, and
+//        reading them as "a schema exists behind auth" was an inference, not an
+//        observation — measured false 2026-08-29. Prose is all there is. But the
+//        critical
 //        path is corroborated by TWO first-party documents rather than one
 //        third-party transcription, and where they disagreed the migration guide
 //        won:
@@ -36,9 +41,12 @@
 //        shape, and the option fields each request schema accepts. Those come
 //        from the third-party transcription only.
 //
-// NOTHING here has yet been observed against the running service. The last gap
-// closes by fetching the authenticated schema with a working key — worth doing
-// before any billable run.
+// NOTHING here has yet been observed against the running service, and there is
+// no document left to close that gap with — only a live call can. What HAS been
+// observed with a valid key: the `{code, status, data}` envelope on
+// `/account/balance`, and the error envelope's shape on a refused task
+// (`{code, status, message, suggestion, request_id}`, HTTP 403, code 2010 for
+// insufficient credit). Both match what this client already reads.
 //
 // REF: ref/sources/tripo-python-sdk/tripo3d/client.py (v2, all of it);
 //      https://developers.tripo3d.ai/en/docs (v3, prose); issue #797.
