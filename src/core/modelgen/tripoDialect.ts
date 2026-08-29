@@ -79,6 +79,8 @@ export interface TripoRigWireArgs {
   readonly sourceTaskId: string;
   readonly rigType: string;
   readonly spec: string;
+  /** The auto-rigging model version. v3 needs one; v2 has no such field. */
+  readonly modelVersion?: string;
 }
 
 /** The task fields this client reads. A superset across both versions: each
@@ -245,6 +247,10 @@ export const TRIPO_V2_DIALECT: TripoDialect = {
     body: { type: 'animate_prerigcheck', original_model_task_id: sourceTaskId },
   }),
 
+  // NOTE: `modelVersion` is DROPPED here — v2's rig call has no such field.
+  // Same shape as `style` on v3: a real option one version carries and the other
+  // does not, pinned by a test so it reads as a version property rather than an
+  // accident.
   rigCall: ({ sourceTaskId, rigType, spec }) => ({
     path: '/task',
     body: {
@@ -280,6 +286,51 @@ export const TRIPO_V3_BASE_URL = 'https://openapi.tripo3d.ai/v3';
  * v3.0-20250812, v2.5-20250123, and P1-20260311."
  */
 export const TRIPO_V3_DEFAULT_MODEL_VERSION = 'v3.1-20260211';
+
+/**
+ * The auto-rigging model version — a DIFFERENT menu from the generation one,
+ * which must be sent explicitly and whose NEWER option is the wrong choice.
+ *
+ * 🔑 BOTH FACTS HERE WERE MEASURED AGAINST THE LIVE SERVICE, not read anywhere.
+ *
+ * FIRST, it cannot be omitted. A rig call with no `model` is refused:
+ *
+ *   400 code 1004 — invalid model 'v2.5-20250123',
+ *                   allowed values: v1.0-20240301, v2.5-20260210
+ *
+ * on a request that never mentioned `v2.5-20250123` — so the service's own
+ * default sits outside its own allowed set, and that error is the most
+ * authoritative statement of the allowed set available: the service, about
+ * itself, at the moment of refusal.
+ *
+ * SECOND, and this is the one that matters: **`spec: "mixamo"` is honoured ONLY
+ * by `v1.0-20240301`.** Rigging the same mesh twice, changing nothing but this
+ * field:
+ *
+ *   v2.5-20260210 → tripo::Root, tripo::0_Left_Limb_0, …   spec IGNORED
+ *   v1.0-20240301 → mixamorig:Hips, mixamorig:Spine, …     spec honoured
+ *
+ * Both tasks echoed `spec: "mixamo"` back in their own input record. The newer
+ * model accepts the parameter, reports it, and disregards it — which is a lying
+ * label at the service's own boundary, and exactly why `rig()` reads the bone
+ * names out of the returned GLB instead of trusting what it asked for.
+ *
+ * So the default is the OLDER version, deliberately. Newer-is-better is the
+ * normal instinct and here it selects the one option that breaks the only spec
+ * anything downstream can drive — the same rule as `DEFAULT_RIG_SPEC` above: a
+ * default that produces an unusable rig is worse than one that looks behind.
+ *
+ * Callers who want the newer topology can pass `modelVersion` and will get a
+ * `tripo::` skeleton — which `rig()` then refuses for a `mixamo` request, by
+ * design.
+ *
+ * v2's rig call has no such field at all, which is why mirroring v2 dropped it.
+ */
+export const TRIPO_V3_DEFAULT_RIG_MODEL = 'v1.0-20240301';
+
+/** The newer auto-rigging model. Named so the one that IGNORES `spec` is a value
+ *  a test can point at, rather than a string in a comment. */
+export const TRIPO_V3_RIG_MODEL_IGNORING_SPEC = 'v2.5-20260210';
 
 export const TRIPO_V3_DIALECT: TripoDialect = {
   version: 'v3',
@@ -380,9 +431,17 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
     body: { input: sourceTaskId },
   }),
 
-  rigCall: ({ sourceTaskId, rigType, spec }) => ({
+  rigCall: ({ sourceTaskId, rigType, spec, modelVersion }) => ({
     path: '/animations/rig',
-    body: { input: sourceTaskId, rig_type: rigType, spec, out_format: 'glb' },
+    body: {
+      input: sourceTaskId,
+      rig_type: rigType,
+      spec,
+      out_format: 'glb',
+      // Always explicit, because the service's own default is invalid — see the
+      // constant. A caller's choice wins; absent one, a version known to work.
+      model: modelVersion ?? TRIPO_V3_DEFAULT_RIG_MODEL,
+    },
   }),
 
   // v3 renamed the output URL. Reading v2's names here would find nothing and

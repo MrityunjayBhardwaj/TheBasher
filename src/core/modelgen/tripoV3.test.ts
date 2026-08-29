@@ -43,6 +43,8 @@ const {
   TRIPO_V3_BASE_URL,
   TRIPO_V3_DEFAULT_MODEL_VERSION,
   TRIPO_V2_RETIREMENT,
+  TRIPO_V3_DEFAULT_RIG_MODEL,
+  TRIPO_V3_RIG_MODEL_IGNORING_SPEC,
   DEFAULT_TRIPO_API_VERSION,
 } = await import('./tripoDialect');
 
@@ -269,6 +271,9 @@ describe('the rig road, on v3', () => {
       rig_type: 'biped',
       spec: 'mixamo',
       out_format: 'glb',
+      // Required in practice, and the OLDER version on purpose — it is the only
+      // one that honours `spec: mixamo`. See the rig-model describe block.
+      model: TRIPO_V3_DEFAULT_RIG_MODEL,
     });
   });
 
@@ -324,6 +329,39 @@ describe('uploads moved too, and the token changed its name', () => {
     }) as unknown as typeof fetch;
 
     await expect(client(fetchImpl).generate(IMAGE)).rejects.toThrow(/upload failed/);
+  });
+});
+
+describe('the auto-rigging model is sent, and the default is the OLDER one on purpose', () => {
+  const args = { sourceTaskId: 'm', rigType: 'biped', spec: 'mixamo' } as const;
+
+  it('always sends a model, because the service’s own default is not valid', () => {
+    // Measured: omitting it returns 400 code 1004 "invalid model
+    // 'v2.5-20250123'" — a version the request never mentioned.
+    expect(TRIPO_V3_DIALECT.rigCall(args).body).toMatchObject({
+      model: TRIPO_V3_DEFAULT_RIG_MODEL,
+    });
+  });
+
+  it('🔑 defaults to the version that HONOURS spec: mixamo, not the newer one', () => {
+    // Measured on the live service, same mesh, one field changed:
+    //   v2.5-20260210 → tripo::Root, tripo::0_Left_Limb_0 …   spec ignored
+    //   v1.0-20240301 → mixamorig:Hips, mixamorig:Spine …     spec honoured
+    // Both echoed `spec: "mixamo"` back. Newer-is-better picks the broken one.
+    expect(TRIPO_V3_DEFAULT_RIG_MODEL).toBe('v1.0-20240301');
+    expect(TRIPO_V3_DEFAULT_RIG_MODEL).not.toBe(TRIPO_V3_RIG_MODEL_IGNORING_SPEC);
+  });
+
+  it('a caller’s explicit choice still wins', () => {
+    expect(
+      TRIPO_V3_DIALECT.rigCall({ ...args, modelVersion: TRIPO_V3_RIG_MODEL_IGNORING_SPEC }).body,
+    ).toMatchObject({ model: TRIPO_V3_RIG_MODEL_IGNORING_SPEC });
+  });
+
+  it('v2 has no such field, so it is dropped rather than sent somewhere it means nothing', () => {
+    const body = TRIPO_V2_DIALECT.rigCall({ ...args, modelVersion: 'v1.0-20240301' }).body;
+    expect(body).not.toHaveProperty('model');
+    expect(body).toMatchObject({ type: 'animate_rig', spec: 'mixamo' });
   });
 });
 

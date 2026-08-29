@@ -334,6 +334,7 @@ export class TripoModelGenerationCapability
       sourceTaskId: request.sourceTaskId,
       rigType: request.rigType ?? 'biped',
       spec,
+      ...(request.modelVersion !== undefined ? { modelVersion: request.modelVersion } : {}),
     });
     const created = await this.request<{ task_id?: string }>('POST', call.path, call.body);
     const taskId = created.task_id;
