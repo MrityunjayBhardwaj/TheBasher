@@ -569,6 +569,74 @@ export type GeometryDescriptor =
       readonly domain: ScopeDomain;
       /** `true` keeps the selected faces and drops the rest; `false` drops the selection. */
       readonly keep: boolean;
+    }
+  // `bevel` (#814) — THE FIRST OPERATOR IN THIS PROJECT THAT MINTS ELEMENTS.
+  //
+  // Every derived kind above MAPS: each output face came from exactly one source face, which
+  // is why `TiledFaceOrder.order` could be `readonly number[]` for as long as it was. A bevel
+  // replaces each source edge with a quad and each source point with an n-gon, and those faces
+  // came from no source face at all. #812 widened the order to admit that hole; this is the
+  // thing that puts one there.
+  //
+  // 🔴 SEGMENTS = 1, NO CLAMP — and neither is a field, because a parameter whose only valid
+  // value is 1 is not a parameter. `amount` moves positions and moves nothing about what is
+  // connected to what.
+  //
+  // 🔴 "ALL EDGES, NO MITER" WENT FALSE AT #827 AND IS RE-DERIVED, NOT PATCHED — the third
+  // reason in this arc to need that treatment. What stood here read: *"the output topology is a
+  // pure function of the SOURCE'S TOPOLOGY alone: there is no selection here, so unlike the
+  // generators above there is no `scope`/`domain` pair."* The first clause is still true and the
+  // second is not: the topology is a pure function of the source's topology AND of which edges
+  // are chamfered, so the selection joins the descriptor and the `scope`/`domain` pair below is
+  // the generators' own. It is `'edge'` and can be nothing else — a bevel names edges.
+  //
+  // The layout is closed form and lives in `bevelLayout.ts`: `F + E + V` faces, one output
+  // point per source face-corner, `2E + corners` edges. It was predicted from that formula and
+  // then observed in a running Blender 5.1.1 at two shapes before a line of it was written —
+  // see #814 for the table, and note that the arity multiset is what makes the check bite,
+  // since a count-only comparison passes on a wrong rule.
+  | {
+      readonly kind: 'bevel';
+      readonly source: GeometryRef;
+      /**
+       * WHICH edges are chamfered, as the canonical component-scope query (#827).
+       *
+       * Absent means every edge, which is what a bevel meant before there was a choice — and
+       * absent rather than `undefined` for the reason the generators above give: it keeps every
+       * unscoped key byte-identical to what it was, so nothing that already builds re-keys.
+       *
+       * 🔴 IT CHANGES THE TOPOLOGY, WHICH IS THE ONE THING `amount` DOES NOT. A bevel's face,
+       * point and edge counts are a closed form over which edges are selected — a vertex with
+       * `k` chamfered edges out of `n` contributes `k` output points when `k >= 2` and one when
+       * `k = 0` — so unlike `amount` this MUST reach `bevelLayoutOf`'s cache key, and it does.
+       */
+      readonly scope?: string;
+      /**
+       * Always `'edge'` when {@link scope} is present, and paired with it by `scopeField` so
+       * "a query at no class" has no constructor.
+       *
+       * Carried rather than assumed even though only one value is legal, because that is what
+       * #714 established and what makes the key say what it names: a query is a string of
+       * indices that says nothing about what it indexes, and a descriptor that dropped the class
+       * would let one key name two different geometries the day a bevel could scope at a second.
+       */
+      readonly domain?: ScopeDomain;
+      /**
+       * How far the chamfer cuts back from each original edge, in the source's local units.
+       *
+       * ⚠️ IT IS A POSITION PARAMETER AND NOTHING ELSE. The face, point and edge counts this
+       * descriptor derives do not read it, which is what makes them a pure function of the
+       * source's topology — and it is also the one thing that can make them disagree with the
+       * built geometry. `pointCountOf` derives one point per source corner STRUCTURALLY, while
+       * `pointCountMismatch` asks the built buffer how many distinct POSITIONS it holds, and at
+       * an amount large enough for two chamfered corners to land on each other those are
+       * different questions with different answers. That is the instrument confusion #754
+       * already named one domain over, it warns rather than refuses, and clamping is
+       * out of scope by decision rather than by oversight — and its cost is measured on #817
+       * rather than described: past the crossing point the count comes back RIGHT and nothing
+       * warns at all, which is the quieter half.
+       */
+      readonly amount: number;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

@@ -163,6 +163,15 @@ const ROWS = [
     hash: 'af33c5df',
   },
   {
+    type: 'BevelModifier',
+    src: meshSrc('#666666'),
+    // #818 — the amount must be POSITIVE for this row to have anything to bypass: at zero
+    // the operator is transparent by design (the reference's own `is_disabled`), which would
+    // make a bypass test indistinguishable from its subject.
+    params: { amount: 0.1 },
+    hash: '0c8c55e1',
+  },
+  {
     type: 'ColorCorrect',
     src: imageSrc,
     params: { brightness: 0.5, contrast: 0, saturation: 0 },
@@ -235,8 +244,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   it('THE INSTRUMENT CONTROL: the registry and the corpus both answered', () => {
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this step's own thesis — the most expensive kind of agreement.
-    expect(listNodeTypes()).toHaveLength(81);
-    expect(operators()).toHaveLength(8);
+    expect(listNodeTypes()).toHaveLength(82);
+    expect(operators()).toHaveLength(9);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.
@@ -248,7 +257,7 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   });
 
   // ── DETECTOR ────────────────────────────────────────────────────────────────────────
-  it('DETECTOR: `evaluate` is BLIND to the bypass param — the guard is gone from all five', () => {
+  it('DETECTOR: `evaluate` is BLIND to the bypass param — the guard is gone from all seven', () => {
     // The sharpest statement of the whole step. Before it, each operator decided for
     // itself what its mute meant; after it, an operator's `evaluate` is its WORK and
     // nothing else, and the category's bypass is applied above it. So flipping the param
@@ -265,7 +274,7 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   });
 
   it('DETECTOR: no source file outside the one application site reads a bypass param raw', () => {
-    // Derived from the declarations, so an eighth operator is covered the day it registers
+    // Derived from the declarations, so a tenth operator is covered the day it registers
     // rather than the day someone remembers to add it here.
     const raw = declaredBypassParams().flatMap((param) => {
       const re = new RegExp(`params\\.${param}\\b|as\\s*\\{[^}]*\\b${param}\\??:[^}]*\\}`, 'g');
@@ -279,7 +288,7 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     expect(operators()).not.toContain('Strip');
 
     // The same claim stated the other way, and this is the half that cannot pass
-    // vacuously: not one of the seven operator files reads its OWN declared bypass param.
+    // vacuously: not one of the nine operator files reads its OWN declared bypass param.
     const selfReaders = operators().filter((type) => {
       const bypass = getNodeType(type)!.chain!.bypass;
       if (bypass.kind !== 'passthrough') return false;
@@ -292,13 +301,19 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   });
 
   // ── CONFIRMATION ────────────────────────────────────────────────────────────────────
-  it('CONFIRMATION: the five bypassed outputs are byte-identical to before the migration', () => {
+  it('CONFIRMATION: the seven bypassed outputs are byte-identical to before the migration', () => {
     // These literals were measured on the tree as it stood BEFORE step 5. They pass here
     // both before and after, deliberately: they are not a detector, they are the evidence
     // that moving the honouring upstream changed no output. What makes them non-vacuous is
     // the control on the next line — an un-muted run that must NOT hash the same.
     //
-    // 🔴 FIVE OF THE SIX LITERALS MOVED AT #770, AND NOT BECAUSE THE BYPASS DID. A face-domain
+    // 🔴 THE SEVENTH LITERAL ARRIVED AT #818 (`BevelModifier`), MEASURED ON THIS TREE rather
+    // than carried from before the migration — there was no before for it. That makes it
+    // weaker evidence than its six neighbours by construction, and the control on the third
+    // line of the loop is what keeps it worth having: its un-muted run must NOT hash the
+    // same, which is the half a freshly-measured literal cannot fake.
+    //
+    // 🔴 FIVE OF THE SIX ORIGINAL LITERALS MOVED AT #770, AND NOT BECAUSE THE BYPASS DID. A face-domain
     // attribute carries one element per POLYGON now, so the fixture spine's `material_index`
     // changed content and therefore its content key — which these hashes cover. The row's
     // claim is unchanged and still checked beside them: a bypassed output is the spine input

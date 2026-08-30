@@ -189,11 +189,14 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(importsOf('src/core/dag/socketMembership.ts')).toEqual(['./types']);
   });
 
-  it('THE LANE MAP: all seven chain declarers land on a lane, none unreadable', () => {
+  it('THE LANE MAP: all eight chain declarers land on a lane, none unreadable', () => {
     // Stated as a literal rather than derived a second way. Two derivations checked against
     // each other agree when BOTH are wrong; a literal is the row that cannot.
     expect(laneMap()).toEqual({
       ArrayModifier: 'ObjectData',
+      // #818 — the fourth geometry modifier. It lands on the data lane by having the sockets,
+      // exactly as the row below insists is a DIFFERENT question from which stack offers it.
+      BevelModifier: 'ObjectData',
       ColorCorrect: 'Image',
       MaskModifier: 'ObjectData',
       MaterialOverride: 'SceneObject',
@@ -205,7 +208,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(Object.values(laneMap())).not.toContain('NO LANE');
   });
 
-  it('THE LANE IS NOT THE SECTION: five on the data lane, three in the modifier set', () => {
+  it('THE LANE IS NOT THE SECTION: six on the data lane, four in the modifier set', () => {
     // The discrepancy is the finding, not a defect. The lane answers a question about SHAPE
     // ("does this kind of value flow through?") and every node with that shape has to be
     // walked past. Which STACK offers an operator is a different question with a different
@@ -214,6 +217,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // steps and not one.
     expect(laneMembers('ObjectData')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -221,6 +225,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     ]);
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);
@@ -238,6 +243,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
 
     expect(laneMembers('ObjectData')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -254,6 +260,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // having the right sockets).
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);

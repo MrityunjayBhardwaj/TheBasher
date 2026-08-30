@@ -50,6 +50,7 @@ import {
   subsetGeometryRef,
   rebuildGeometryRef,
   sphereGeometryRef,
+  bevelGeometryRef,
 } from './modifierGeometry';
 import { declaredParamKeys } from './inspectorSectionBody';
 import { __resetRegistryForTests } from '../core/dag/registry';
@@ -113,6 +114,18 @@ const HANDLE_KINDS: Record<
     // `keep` is the only non-`scope` field, and the probe must MOVE the key: the two
     // polarities over one query are two different geometries.
     probe: false,
+  },
+  bevel: {
+    // 🔑 #818 SPENT THE FUSE #814 LEFT HERE. The entry read `producer: null` with the note
+    // *"the day a `BevelModifier` exists it names `amount` here and this row starts asking
+    // whether that param can reach the handle"* — a row exempted from the reach check because
+    // the kind genuinely had no producer, which is the defect #818 exists to close. Naming the
+    // producer is what un-exempts it, and it is worth saying plainly that until this line
+    // changed, this file was GREEN on a kind nothing could build.
+    producer: 'BevelModifier',
+    ref: bevelGeometryRef(boxGeometryRef([1, 1, 1], null), 0.1),
+    // Must MOVE the key: two amounts are two geometries, even though they are one topology.
+    probe: 0.25,
   },
   gltf: {
     producer: null,
