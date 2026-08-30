@@ -831,6 +831,23 @@ function elementSubset(
   switch (domain) {
     case 'face':
       return faceSubset(source, sourceArity, scope, keep);
+    case 'edge':
+      // 🔴 REFUSED BY NAME, AND IT IS A PRODUCER DEFECT RATHER THAN AN AUTHORING STATE. #827
+      // widened `ScopeDomain` to admit `'edge'` so a Bevel can name WHICH edges it chamfers,
+      // and that is a different question from the one this function answers. Here a scope
+      // selects elements to KEEP out of a built buffer; a mesh cannot keep a subset of its
+      // edges and still be a mesh, since an edge is not a thing the index buffer holds — it
+      // is implied by the faces that survive.
+      //
+      // So the three generators that reach this function declare `'face'` and can mean nothing
+      // else, and an `'edge'` arriving here means some operator's declaration and its builder
+      // disagree. Named rather than silently cloned, for the reason the non-indexed arm above
+      // is named: a plain clone would draw the unscoped mesh and look like a scope that
+      // selected everything.
+      console.error(
+        `geometryRegistry: a scope at domain 'edge' reached elementSubset, which slices faces out of a built buffer. An edge scope names which edges an operator ACTS ON (#827) and cannot name which geometry survives — the operator's declared domain and its builder disagree.`,
+      );
+      return null;
     default: {
       const unreachable: never = domain;
       console.error(
@@ -1017,28 +1034,50 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
   if (splitRims.length !== layout.sourceFaces) return null;
 
   // ── 1. One position per OUTPUT TOPOLOGICAL POINT ──────────────────────────────────────
-  // Output point `cornerStart[f] + k` is source face `f`'s corner `k`, pulled back along BOTH
-  // rim edges that meet there. For a right-angled corner that is exactly a chamfer of `amount`
-  // measured perpendicular from each edge; for other angles it is the angle bisector, which is
-  // the miterless reading and is why a miter rule is named as out of scope rather than missing.
-  const points = new Float32Array(layout.points * 3);
+  //
+  // 🔴 IT READS THE LAYOUT'S RULE NOW INSTEAD OF RE-DERIVING ONE (#827). This loop used to walk
+  // `(face, corner)` and pull each corner back along ITS OWN two rim edges, which is right only
+  // while every corner gets its own output point. A bevel that chamfers some edges collapses a
+  // run of corners onto one point, and the two edges that point is pulled between are the run's
+  // bounding chamfered edges rather than any one corner's — so the rule moved into the layout,
+  // where the run is known, and this loop evaluates it.
+  //
+  // A source point is named in the source's WELDED numbering and this buffer is SPLIT, so the
+  // two rims are paired positionally to bridge them. Any split index for a welded point serves:
+  // they are the same position, which is what welding means.
+  const splitOf = new Int32Array(layout.sourcePoints).fill(-1);
   for (let f = 0; f < layout.sourceFaces; f++) {
-    const rim = splitRims[f];
-    const n = rim.length;
-    for (let k = 0; k < n; k++) {
-      const here = rim[k];
-      const back = rim[(k - 1 + n) % n];
-      const on = rim[(k + 1) % n];
-      const hx = position.getX(here);
-      const hy = position.getY(here);
-      const hz = position.getZ(here);
-      let dx = 0;
-      let dy = 0;
-      let dz = 0;
-      for (const neighbour of [back, on]) {
-        const ex = position.getX(neighbour) - hx;
-        const ey = position.getY(neighbour) - hy;
-        const ez = position.getZ(neighbour) - hz;
+    const welded = layout.sourceRims[f];
+    const split = splitRims[f];
+    if (welded.length !== split.length) return null;
+    for (let k = 0; k < welded.length; k++) splitOf[welded[k]] = split[k];
+  }
+
+  const points = new Float32Array(layout.points * 3);
+  for (let i = 0; i < layout.placement.length; i++) {
+    const rule = layout.placement[i];
+    const here = splitOf[rule.point];
+    // A source point no rim named cannot be positioned, and a zero would put it at the origin —
+    // a visible spike rather than a missing mesh. Refused whole, the way this builder already
+    // refuses a source whose rims it cannot recover.
+    if (here < 0) return null;
+    const hx = position.getX(here);
+    const hy = position.getY(here);
+    const hz = position.getZ(here);
+    let dx = 0;
+    let dy = 0;
+    let dz = 0;
+    if (rule.kind === 'meet') {
+      // Pulled back toward BOTH bounding chamfered edges. For a right-angled corner that is
+      // exactly a chamfer of `amount` measured perpendicular from each edge; for other angles it
+      // is the angle bisector, which is the miterless reading — and it is why a MITER rule (what
+      // to do when the two offsets do not meet cleanly) is still named as out of scope.
+      for (const toward of rule.toward) {
+        const there = splitOf[toward];
+        if (there < 0) return null;
+        const ex = position.getX(there) - hx;
+        const ey = position.getY(there) - hy;
+        const ez = position.getZ(there) - hz;
         const len = Math.hypot(ex, ey, ez);
         // A zero-length rim edge is a degenerate source face, not an authoring state. Skipped
         // rather than divided by: the alternative is a NaN position, which propagates silently
@@ -1048,11 +1087,13 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
         dy += ey / len;
         dz += ez / len;
       }
-      const p = (layout.cornerStart[f] + k) * 3;
-      points[p] = hx + d.amount * dx;
-      points[p + 1] = hy + d.amount * dy;
-      points[p + 2] = hz + d.amount * dz;
     }
+    // `vertex` leaves the deltas at zero: a point with no chamfered edge does not move, which is
+    // the whole of that arm and is why it needs no branch of its own here.
+    const p = i * 3;
+    points[p] = hx + d.amount * dx;
+    points[p + 1] = hy + d.amount * dy;
+    points[p + 2] = hz + d.amount * dz;
   }
 
   // ── 2. One split vertex per OUTPUT CORNER, fanned into triangles ──────────────────────

@@ -58,9 +58,14 @@ import type { MeshDataValue } from '../nodes/types';
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 /**
- * sphere(8,6) — 80 faces, so `0-39` is an unambiguous PROPER subset with plenty on both
- * sides of the boundary. A box would do, but twelve faces is the population that lets a
- * hard-coded number pass ([[H374]]).
+ * sphere(8,6) — 48 faces and 88 edges, so `0-39` is an unambiguous PROPER subset at either
+ * class with plenty on both sides of the boundary. A box would do, but twelve faces is the
+ * population that lets a hard-coded number pass ([[H374]]).
+ *
+ * ⚠️ THE FACE FIGURE HERE READ `80` UNTIL #827, AND 80 IS THE TRIANGLE COUNT. #770 made a face
+ * an n-gon — this sphere is 16 pole triangles and 32 quads, which fans to 80 triangles — so the
+ * sentence was measuring the wrong population to justify the same number. Harmless for `0-39`
+ * either way, which is exactly why it survived.
  */
 function meshSource(color: string): MeshDataValue {
   const descriptor = sphereDescriptor(1, 8, 6);
@@ -91,7 +96,21 @@ const SUBSET = '0-39';
  * Keyed by type and CHECKED against the derived population below, so an operator arriving
  * without a fixture is a red rather than a silent omission.
  */
-const FIXTURES: Record<string, { params: Record<string, unknown>; material?: boolean }> = {
+const FIXTURES: Record<
+  string,
+  {
+    params: Record<string, unknown>;
+    material?: boolean;
+    /**
+     * A subset for operators the default one cannot serve, with the reason at the entry.
+     *
+     * 🔴 IT EXISTS BECAUSE A SUBSET IS ONLY MEANINGFUL AT A CLASS, and until #827 every scoped
+     * operator named faces so one literal served all of them. An edge scope indexes a different
+     * population, and — for a bevel — not every subset of it is even buildable.
+     */
+    subset?: string;
+  }
+> = {
   ArrayModifier: { params: { count: 3, offset: [2, 0, 0], muted: false } },
   // #668. `keep: true` is the default polarity, and either would do here: the row asks
   // whether the OUTPUT moves between a total selection and a subset, and a mask moves under
@@ -106,6 +125,22 @@ const FIXTURES: Record<string, { params: Record<string, unknown>; material?: boo
   MaterialOverrideOp: {
     params: { muted: false, color: '#ff0000', overridden: { color: true } },
   },
+  // #827 — the first fixture whose scope names EDGES, and the first that cannot use the shared
+  // subset. Two reasons, and both are properties of the operator rather than of this file:
+  //
+  //   1. `0-39` at edge class leaves points with exactly ONE chamfered edge, which the layout
+  //      refuses by name (the terminal case is deferred). Measured: `0-39` refuses at point 21.
+  //   2. A bevel's subset has to be a CLOSED LOOP of edges to be buildable at all, and `0-2` is
+  //      one — edges are numbered by first encounter over the face order, so this sphere's first
+  //      face is a pole triangle and its three edges are a loop. It lays out to 45 points and 51
+  //      faces, which is the measured rule exactly: 39 untouched points at one boundary vertex
+  //      each, 3 points at two, and no new polygon since none reaches three.
+  //
+  // A fixture whose bevel REFUSED would still move between the two legs — the scope reaches the
+  // descriptor key either way — so it would pass this row for a reason that has nothing to do
+  // with the behaviour being checked. That is the [[H328]] shape, and picking a buildable loop
+  // is what avoids it.
+  BevelModifier: { params: { amount: 0.05, muted: false }, subset: '0-2' },
 };
 
 /** The operators whose declaration PROMISES the selection changes what they emit. */
@@ -132,17 +167,24 @@ function honours(type: string): { moved: boolean; kind: string } {
   const inputs: Record<string, unknown> = { target: src };
   if (fixture.material) inputs.material = [WIRED_MATERIAL];
 
+  // 🔴 THE OPERATOR'S OWN DECLARED CLASS, NOT A LITERAL `'face'` (#827). This read `'face'`,
+  // which was right while every scoped operator named faces and silently wrong the moment one
+  // did not: a bevel's selection would have been resolved against the source's FACE count and
+  // handed to an operator that indexes edges. A box has 6 and 12 of them, a sphere 48 and 88 —
+  // both integers, both plausible, and the resulting mesh would simply be the wrong one.
+  const domain = def.chain!.scope.kind === 'unscoped' ? 'face' : def.chain!.scope.domain;
+
   const run = (scope: string): unknown => {
     const params = { ...fixture.params, scope };
     return def.evaluate(
       params as never,
       inputs as never,
       ctx as never,
-      resolveComponentSelection(src, params, 'face'),
+      resolveComponentSelection(src, params, domain),
     );
   };
 
-  return { moved: hashValue(run(TOTAL)) !== hashValue(run(SUBSET)), kind };
+  return { moved: hashValue(run(TOTAL)) !== hashValue(run(fixture.subset ?? SUBSET)), kind };
 }
 
 beforeEach(() => {
@@ -168,27 +210,26 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // use; it now composes onto the selected faces and leaves the rest carrying the source's
     // material, so it belongs in the derived population below instead.
     //
-    // Three of the four are here for the OTHER reason, and it is a different claim: a
-    // scene object, a scene object and an image have no component domain at all, so there is
-    // nothing a selection could name. The union carries which reason applies, which is why
-    // this row does not have to.
+    // 🔴 `BevelModifier` WAS THE FOURTH AT #818 AND LEFT AT #827, WHICH IS THE SECOND TIME THIS
+    // LIST HAS LOST A `declined` MEMBER TO BUILT BEHAVIOUR. It sat here holding a component
+    // domain it declined to use — the slot `MaterialOverrideOp` vacated at #682 — and it now
+    // resolves an EDGE selection and lays out a different topology for it, so it belongs in the
+    // derived population below with a fixture of its own.
     //
-    // 🔴 `BevelModifier` (#818) IS THE FOURTH, AND IT IS HERE FOR THE FIRST REASON — the one
-    // `MaterialOverrideOp` vacated at #682. It has a component domain and declines to use it,
-    // which is `'declined'`, and this row deliberately does NOT distinguish the two reasons:
-    // the union already carries `why`, and `operatorChainDeclaration.gate.test.ts` asserts
-    // that partition exactly. What matters HERE is only that an unscoped operator is excused
-    // from the cross-check below by its own declaration rather than by being forgotten — and
-    // a `declined` member is the case where that distinction earns its keep, since it is the
-    // one that could quietly become a lying label the day someone gives it a scope param
-    // without giving it behaviour.
+    // 🔑 AND ITS DEPARTURE IS THE THING THE #818 COMMENT SAID TO WATCH FOR, ARRIVING THE GOOD
+    // WAY: *"it could quietly become a lying label the day someone gives it a scope param
+    // without giving it behaviour."* The param and the behaviour landed together, so the
+    // cross-check below now speaks for it instead of this row excusing it — which is the only
+    // safe way to leave this list.
+    //
+    // The three that remain are here for the OTHER reason, and it is a different claim: a scene
+    // object, a scene object and an image have no component domain at all, so there is nothing a
+    // selection could name. This row deliberately does not distinguish the two reasons — the
+    // union carries `why`, and `operatorChainDeclaration.gate.test.ts` asserts that partition
+    // exactly. What matters HERE is only that an unscoped operator is excused from the
+    // cross-check by its own declaration rather than by being forgotten.
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
-    expect(exempt.sort()).toEqual([
-      'BevelModifier',
-      'ColorCorrect',
-      'MaterialOverride',
-      'Transform',
-    ]);
+    expect(exempt.sort()).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
   });
 
   it('🔴 THE CROSS-CHECK — every operator declaring a scope emits something DIFFERENT for a subset', () => {

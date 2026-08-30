@@ -15,22 +15,30 @@
 // in the real app* step was impossible, so a minting kind had no e2e at all and every check
 // on it was a unit test calling the builder directly.
 //
-// ── WHY IT DECLARES NO SCOPE ───────────────────────────────────────────────────────────
+// ── THE SCOPE IT NOW DECLARES, AND WHY THE REFUSAL THAT STOOD HERE IS GONE ─────────────
 //
-// The other three modifiers each carry a `scope` param and declare a lane for it. This one
-// does not, and the absence is a decision with a name: `{ kind: 'unscoped', why: 'declined' }`.
+// #818 shipped this node with `{ kind: 'unscoped', why: 'declined' }`, and the deferral was
+// real rather than nominal: *"`bevelLayoutOf` refuses any edge without exactly two incident
+// faces, and a scoped bevel produces precisely those boundary edges. So scoping this operator
+// is blocked on a miter rule, not on wiring."* #827 built the miter rule, so the reason is
+// spent and the declaration is a `'source'` scope at domain `'edge'`.
 //
-// 🔴 `'declined'` AND NOT `'no-component-domain'`, AND THE DIFFERENCE IS THE WHOLE POINT OF
-// THAT FIELD. The spine here carries a mesh; it HAS faces, edges and points to resolve a
-// selection against. So "no selection reaches this operator" is not a fact about the value —
-// it is a deferral about this operator, of exactly the kind the reference does support
-// (Blender's Bevel takes a vertex group and an edge selection). Spelling it
-// `'no-component-domain'` would claim there was nothing to select, which is false, and would
-// make the deferral invisible to the reader who comes to add it.
+// 🔴 `'edge'` AND NOT `'face'`, WHICH IS WHY THIS OPERATOR IS THE ONE THAT WIDENED
+// `ScopeDomain`. The other four scoped operators all name faces, and five operators choosing
+// `face` was five decisions that happened to agree — this is the first that does not. A bevel
+// chamfers EDGES: there is no face selection that means "chamfer these four edges", because a
+// face names four of them at once and its neighbours name them again.
 //
-// The deferral is real rather than nominal: `bevelLayoutOf` refuses any edge without exactly
-// two incident faces, and a scoped bevel produces precisely those boundary edges. So scoping
-// this operator is blocked on a miter rule, not on wiring.
+// 🔴 AND IT IS `'source'` RATHER THAN `'target'`. A target scope names components that RECEIVE
+// a write, which is what `SetMaterialOp` does. This one names the edges the operator READS and
+// generates chamfers FROM, and the elements it writes did not exist beforehand — the same
+// relation Array and Mirror have to their own selections.
+//
+// ⚠️ THE MITER RULE IS PARTIAL, BY DECISION AND WITH THE HOLE NAMED. `bevelLayoutOf` refuses a
+// point with exactly ONE chamfered edge — the terminal case, whose boundary count is `n - 1`
+// rather than `k` and which is the only case that changes a face's arity. So a closed loop of
+// edges works and a lone edge is refused BY NAME. Refusal is reachable from an author here,
+// unlike the manifoldness gate, which is why the message says what to do instead.
 //
 // ── THE TWO DECISIONS, TAKEN FROM THE REFERENCE ────────────────────────────────────────
 //
@@ -71,6 +79,8 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { bevelGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
+import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
+import type { ScopeDomain } from './attributes';
 
 export const BevelModifierParams = z.object({
   /**
@@ -94,8 +104,31 @@ export const BevelModifierParams = z.object({
    * Nothing in this file reads it.
    */
   muted: z.boolean().default(false),
+  /**
+   * THE COMPONENT SCOPE — which EDGES this operator chamfers (#827).
+   *
+   * The first scope in the repo that is not a face selection, and blank means every edge, which
+   * is what a bevel meant when it had no choice. Nothing in this file reads it: the param
+   * CARRIES the authored text, the evaluator resolves it through the one resolver, and
+   * `evaluate` is handed the answer — a node that read the field itself would be a second
+   * producer of the descriptor's scope beside the resolver.
+   *
+   * 🔴 `.refine()` IS LOAD-BEARING for the reason its four siblings state: every refusal in the
+   * query language is a THROW, `evaluate` runs on the render walk with no `try` above it, and
+   * an unparseable query must have no constructor rather than a handler.
+   */
+  [SCOPE_PARAM]: scopeParam(),
 });
 export type BevelModifierParams = z.infer<typeof BevelModifierParams>;
+
+/**
+ * The atom class this operator's scope names — declared here, read twice (#714).
+ *
+ * 🔑 THE FIRST `const` IN THIS REPO THAT IS NOT `'face'`, which is the thing #714 built the
+ * per-operator declaration FOR: a shared constant would have handed this operator faces and
+ * nothing would have failed, because a face index and an edge index are both integers.
+ */
+const SCOPE_DOMAIN: ScopeDomain = 'edge';
 
 export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> = {
   type: 'BevelModifier',
@@ -107,9 +140,9 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   chain: {
     input: 'target',
-    // No selection reaches this operator, and it COULD take one — see the header on why that
-    // is `'declined'` and not `'no-component-domain'`.
-    scope: { kind: 'unscoped', why: 'declined' },
+    // The selection names which EDGES are chamfered — read, not written to. See the header on
+    // why the `'declined'` that stood here is spent rather than moved.
+    scope: { kind: 'source', domain: SCOPE_DOMAIN },
     bypass: { kind: 'passthrough', param: 'muted' },
     section: 'modifier',
   },
@@ -117,11 +150,13 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
   home: {
     amount: 'modifier',
     muted: 'modifier',
+    [SCOPE_PARAM]: 'modifier',
   },
-  // Three arguments, not four: the chain above declares no scope, so the evaluator resolves
-  // none and hands none. The siblings take a fourth and refuse an absent one; taking one here
-  // would be a parameter that is always `undefined` — the shape a lying label has.
-  evaluate(params, inputs) {
+  // Four arguments now, like its scoped siblings: the chain declares a scope, so the evaluator
+  // resolves one and hands it here. Refused at runtime as well as required in the signature,
+  // because the test tier is type-blind and an omission there fails silently.
+  evaluate(params, inputs, _ctx, scope) {
+    const selection = requireResolvedScope(scope, 'BevelModifier');
     const src = inputs.target as ObjectData | undefined;
     // Unwired (transient authoring state) — nothing to modify; stay transparent.
     if (!src) return src as unknown as ObjectData;
@@ -131,7 +166,12 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
     // Not beveled yet. The reference's `is_disabled` answer, and the exact complement of
     // `bevelGeometryRef`'s refusal — see the header on why these two predicates must match.
     if (!(params.amount > 0)) return src;
-    const geometry = bevelGeometryRef(source.geometry, params.amount);
+    const geometry = bevelGeometryRef(
+      source.geometry,
+      params.amount,
+      selection?.canonicalQuery,
+      SCOPE_DOMAIN,
+    );
     return {
       kind: 'ModifiedData',
       geometry,

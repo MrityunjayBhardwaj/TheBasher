@@ -44,6 +44,7 @@ import type { PolygonRim } from './polygonLayout';
 import type { SourceFace } from './faceCount';
 import { edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
 import { pointCountOf } from './pointIdentity';
+import { scopeSelection } from '../nodes/scopeQuery';
 
 /**
  * Everything a bevel's output topology is, in one record.
@@ -53,6 +54,42 @@ import { pointCountOf } from './pointIdentity';
  * what is connected to what, which is why {@link bevelLayoutOf}'s cache can key on the source
  * alone and a drag costs one lookup.
  */
+/**
+ * Where one output point sits, said as a RULE over the source rather than as a position.
+ *
+ * ── WHY A RULE AND NOT A `Vec3` ───────────────────────────────────────────────────────────
+ *
+ * The layout is a pure function of the source's TOPOLOGY and is cached on the source handle, so
+ * it cannot hold positions: `amount` is not in its cache key, and neither is the source's built
+ * geometry. Naming the rule keeps that property — the builder, which does have positions, reads
+ * these and evaluates them, and an `amount` drag re-evaluates without re-deriving anything.
+ *
+ * ── THE TWO ARMS ARE THE TWO ANSWERS A PARTIAL BEVEL HAS ──────────────────────────────────
+ *
+ * Measured in Blender 5.1.1 across 15 selections (#827): at a source point with `k` chamfered
+ * edges out of `n`, the point contributes ONE output point when `k = 0` and `k` of them when
+ * `k >= 2`. Those are exactly these two arms — an untouched point, and a point pulled back
+ * between the two chamfered edges that bound it.
+ *
+ * `k = 1` is refused rather than given a third arm, and the reason is that its position rule is
+ * genuinely different rather than merely absent: the reference answers it with `offset_in_plane`
+ * and `slide_dist` (`bmesh_bevel.cc`), which need a face normal and an edge slide this layout
+ * has never had to state. Refusing keeps the render path free of an arm nothing has measured —
+ * the stance this module already takes for a boundary edge.
+ */
+export type BoundaryPlacement =
+  /** Untouched: no chamfered edge meets this source point, so it stays where the source put it. */
+  | { readonly kind: 'vertex'; readonly point: number }
+  /**
+   * Pulled back from `point` toward BOTH of `toward`, by `amount`, along unit directions.
+   *
+   * `toward` names the far endpoints of the two chamfered edges that bound this point's gap.
+   * On a bevel that chamfers everything they are exactly the corner's two rim neighbours, which
+   * is what the builder used to read off the rim directly — so this arm reproduces the previous
+   * behaviour rather than approximating it, and the all-edges case comes out byte-identical.
+   */
+  | { readonly kind: 'meet'; readonly point: number; readonly toward: readonly [number, number] };
+
 export interface BevelLayout {
   /** Faces in the SOURCE — what a per-face attribute being gathered from would have to carry. */
   readonly sourceFaces: number;
@@ -61,14 +98,21 @@ export interface BevelLayout {
   /** Edges in the SOURCE. Each becomes one output quad. */
   readonly sourceEdges: number;
   /**
-   * Where source face `f`'s corners begin in the OUTPUT point numbering.
+   * How each OUTPUT POINT's position is found from the source. Index-aligned with the point ids.
    *
-   * Output point `cornerStart[f] + k` is source face `f`'s corner `k`, pulled in along the two
-   * rim edges that meet there. Exposed rather than left implicit because the builder has to walk
-   * the same numbering to place positions, and a second prefix sum written there would be a
-   * second spelling of this one — the exact drift this module exists to prevent.
+   * 🔴 IT REPLACED A PREFIX SUM, AND THE REPLACEMENT IS WHAT #827 ACTUALLY COST. This was
+   * `cornerStart[]`, and the builder read `cornerStart[f] + k` as "source face `f`'s corner `k`".
+   * That works only while every face-corner gets its OWN output point, which is true of a bevel
+   * that chamfers every edge and false of one that chamfers some: at a point with no chamfered
+   * edge all of its corners collapse onto one output point. So the map from corner to point
+   * stopped being a bijection, and a prefix sum can only describe a bijection.
+   *
+   * Stating the RULE rather than the index also moves the one thing the builder was deriving on
+   * its own back into the layout, which is this module's whole premise — the builder used to know
+   * that a corner is pulled in along its two rim edges, and under a partial bevel that is no
+   * longer the right sentence for every point.
    */
-  readonly cornerStart: readonly number[];
+  readonly placement: readonly BoundaryPlacement[];
   /**
    * `order[i]` is the source face output face `i` came from, or `null` when it was minted.
    *
@@ -89,6 +133,18 @@ export interface BevelLayout {
   readonly corners: readonly number[];
   /** Each OUTPUT face's rim, in OUTPUT topological point ids. Index-aligned with {@link arity}. */
   readonly rims: readonly PolygonRim[];
+  /**
+   * The SOURCE's welded rims — its faces in its own topological point ids.
+   *
+   * Carried because {@link placement} names source points and the builder holds a SPLIT buffer,
+   * so something has to bridge the two numberings. Pairing these with `alignedSplitRims`
+   * positionally is that bridge, and it is exact by construction: both are the same faces in the
+   * same corner order, one welded and one split, which is the alignment that function is named
+   * for. Handing them over rather than letting the builder call `weldedPolygonsOf` again keeps
+   * the derivation single — and this module has already paid for it, since the layout cannot be
+   * derived without them.
+   */
+  readonly sourceRims: readonly PolygonRim[];
   /**
    * `pointOrder[p]` is the SOURCE point that output point `p` came from.
    *
@@ -177,18 +233,92 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
     return refused(`'${descriptor.kind}' is not a bevel, so it has no bevel layout`);
 
   const source = descriptor.source.descriptor;
-  const cacheKey = descriptor.source.key;
+  // 🔴 THE SCOPE JOINS THE KEY, AND ITS ABSENCE FROM IT WOULD HAVE BEEN SILENT (#827). The
+  // layout used to depend on the source alone, so the source handle WAS the whole of what it
+  // depended on. It now also depends on which edges are chamfered — two scopes over one source
+  // are two different topologies — and a cache still keyed on the source alone would hand the
+  // first one's layout to the second. Both would build, both would draw, and the second would
+  // be a mesh nobody asked for: the same silent false-share `arrayGeometryRef` folds its scope
+  // into the geometry key to prevent, one layer down.
+  //
+  // The empty string for "unscoped" is safe rather than merely convenient: `scopeField` turns a
+  // blank query into an ABSENT field, so no scoped descriptor can carry `scope: ''` and collide
+  // with an unscoped one.
+  const cacheKey = `${descriptor.source.key}|${descriptor.scope ?? ''}`;
   const hit = layoutCache.get(cacheKey);
   if (hit !== undefined) return hit;
 
-  const resolved = deriveLayout(source);
+  const resolved = deriveLayout(source, descriptor.scope);
   if (layoutCache.size >= LAYOUT_CACHE_LIMIT) layoutCache.clear();
   layoutCache.set(cacheKey, resolved);
   return resolved;
 }
 
+/**
+ * How many boundary vertices one source point contributes, and which one each of its corners
+ * collapses onto — the whole of the miter rule, at one point (#827).
+ *
+ * ── THE RULE, MEASURED RATHER THAN READ ───────────────────────────────────────────────────
+ *
+ * At a point of valence `n` with `k` incident chamfered edges, the chamfered edges cut the ring
+ * of corners into `k` runs, and every corner in one run collapses onto ONE boundary vertex —
+ * `bmesh_bevel.cc:3554-3556` says it in a sentence: *"we make BoundVerts to connect the sides of
+ * the beveled edges. Non-beveled edges in between will just join to the appropriate juncture
+ * point."* So the count is `k` when `k >= 2` and 1 when `k = 0`, and a point grows a polygon
+ * exactly when that count reaches 3.
+ *
+ * Confirmed live in Blender 5.1.1 over 15 selections spanning valence 3, 4, 5 and 8 — including
+ * two randomised ones where four different `k` values sit side by side on one torus, which is
+ * the case a rule that were right only on uniform selections would come apart on.
+ *
+ * 🔴 `k = 1` IS REFUSED, AND IT IS THE ONE ROW THAT BREAKS EVERY PATTERN HERE. It contributes
+ * `n - 1` boundary vertices rather than 1 or `k`, and it is the only case where a face's ARITY
+ * changes: the corner opposite the chamfered edge splits across two of them. Measured — a
+ * cylinder with only its vertical edges chamfered comes back with both 8-gon caps turned into
+ * 16-gons. Its positions need `offset_in_plane` and `slide_dist`, two rules this layout has
+ * never had to state, so it is refused by name rather than guessed at. The first draft of this
+ * rule said "2 boundary vertices", which is true at valence 3 and false at 4 — a cube and a
+ * cylinder both agreed with it, and a sphere falsified it.
+ */
+type PointPlan =
+  | { readonly kind: 'planned'; readonly count: number; readonly gapOf: readonly number[] }
+  | { readonly kind: 'refused'; readonly why: string };
+
+function planPoint(
+  v: number,
+  fan: { readonly crossings: readonly number[] },
+  beveled: Uint8Array,
+): PointPlan {
+  const n = fan.crossings.length;
+  const cut: number[] = [];
+  for (let i = 0; i < n; i++) if (beveled[fan.crossings[i]] === 1) cut.push(i);
+  const k = cut.length;
+
+  if (k === 0) return { kind: 'planned', count: 1, gapOf: new Array<number>(n).fill(0) };
+
+  if (k === 1)
+    return {
+      kind: 'refused',
+      why: `point ${v} has exactly one chamfered edge of its ${n}, and a bevel with no miter rule has no answer there — that point splits into ${n - 1} and changes the arity of the face opposite the chamfered edge. Chamfer a closed loop of edges, or all of them, until #827's terminal case lands`,
+    };
+
+  // `k >= 2`: one boundary vertex per run of corners between two consecutive chamfered edges.
+  // Run `j` covers the corners strictly after `cut[j]` up to and including `cut[j + 1]`, walked
+  // cyclically — which for an all-edges bevel gives every corner its own run and reproduces the
+  // one-point-per-face-corner numbering this module shipped with.
+  const gapOf = new Array<number>(n).fill(-1);
+  for (let j = 0; j < k; j++) {
+    const to = cut[(j + 1) % k];
+    for (let i = (cut[j] + 1) % n; ; i = (i + 1) % n) {
+      gapOf[i] = j;
+      if (i === to) break;
+    }
+  }
+  return { kind: 'planned', count: k, gapOf };
+}
+
 /** {@link bevelLayoutOf}'s body, split out so the cache above is the whole of the caching. */
-function deriveLayout(source: GeometryDescriptor): BevelVerdict {
+function deriveLayout(source: GeometryDescriptor, scope: string | undefined): BevelVerdict {
   const rims = weldedPolygonsOf(source);
   if (rims === null)
     return refused(
@@ -214,6 +344,12 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
   // half-quad; three or more is non-manifold and has no chamfer at all without a miter rule.
   // Named with the offending edge so a director reading the console learns which edge, not
   // merely that something was wrong.
+  //
+  // ⚠️ STILL EVERY EDGE AND NOT ONLY THE CHAMFERED ONES, THOUGH #827 MAKES THAT LOOK LOOSE.
+  // The fan walk below closes a ring around EVERY point, chamfered or not, and it crosses
+  // unchamfered edges to do it — so an unchamfered boundary edge breaks the walk just as surely
+  // as a chamfered one would break the quad. Narrowing this to the selection would move the
+  // refusal from a named gate into `vertexFan`'s harder-to-read one.
   for (let e = 0; e < sourceEdges; e++) {
     const incident = adjacency.faces[e].length;
     if (incident !== 2)
@@ -222,19 +358,32 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
       );
   }
 
-  // ── The output point numbering: one point per SOURCE FACE-CORNER ────────────────────────
-  // Source face `f`'s corner `k` becomes output point `cornerStart[f] + k`. Every output point
-  // came from exactly one source point, so `pointOrder` has no holes.
-  const cornerStart: number[] = [];
-  const pointOrder: number[] = [];
-  for (let f = 0; f < sourceFaces; f++) {
-    cornerStart.push(pointOrder.length);
-    for (const point of rims[f]) pointOrder.push(point);
+  // ── Which edges are chamfered ────────────────────────────────────────────────────────────
+  // Absent means all of them, which is what a bevel meant before there was a choice. Resolved
+  // against the SOURCE's edge count, because that is the domain the query indexes.
+  const beveled = new Uint8Array(sourceEdges);
+  if (scope === undefined) beveled.fill(1);
+  else {
+    const selected = scopeSelection(scope, sourceEdges);
+    beveled.set(selected.mask);
+    if (selected.count === 0)
+      return refused(
+        `the scope '${scope}' selects none of '${source.kind}'s ${sourceEdges} edges, so this bevel would chamfer nothing`,
+      );
   }
-  const points = pointOrder.length;
 
-  // Where each source point's corners live, so the vertex fan below does not rescan the rims
-  // once per point — that walk is O(corners) here against O(points x corners) there.
+  // The unique index of a `(face, corner)` pair — a prefix sum over the source's arities. It is
+  // NOT an output point id any more (see `placement`): a partial bevel collapses several corners
+  // onto one point, so this numbers the CORNERS and the allocation below numbers the points.
+  const cornerBase: number[] = [];
+  let cornerCount = 0;
+  for (let f = 0; f < sourceFaces; f++) {
+    cornerBase.push(cornerCount);
+    cornerCount += rims[f].length;
+  }
+
+  // Where each source point's corners live, so the fan walk below does not rescan the rims once
+  // per point — that walk is O(corners) here against O(points x corners) there.
   const cornersAtPoint: number[][] = Array.from({ length: sourcePoints }, () => []);
   for (let f = 0; f < sourceFaces; f++) {
     for (let k = 0; k < rims[f].length; k++) {
@@ -248,6 +397,99 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
       cornersAtPoint[point].push(f, k);
     }
   }
+
+  // Built ONCE, in one pass over the edge list, and handed to every fan below. Rebuilding it
+  // per point would make the layout O(points x edges) — 478 k steps for a 32x16 sphere — for a
+  // lookup each fan uses `valence` times.
+  const edgesAtPoint: number[][] = Array.from({ length: sourcePoints }, () => []);
+  for (let e = 0; e < sourceEdges; e++) {
+    edgesAtPoint[edges.pairs[2 * e]].push(e);
+    edgesAtPoint[edges.pairs[2 * e + 1]].push(e);
+  }
+
+  // ── Every point's ring, and its plan, BEFORE any numbering ───────────────────────────────
+  // The point count is now a sum over the plans rather than the source's corner count, so
+  // nothing can be numbered until every point has answered.
+  const fans: {
+    readonly rim: readonly (readonly [number, number])[];
+    readonly crossings: readonly number[];
+  }[] = [];
+  const plans: { readonly count: number; readonly gapOf: readonly number[] }[] = [];
+  for (let v = 0; v < sourcePoints; v++) {
+    const fan = vertexFan(
+      v,
+      cornersAtPoint[v],
+      rims,
+      edges,
+      adjacency,
+      edgesAtPoint[v],
+      cornerBase,
+    );
+    if (fan.kind === 'refused') return fan;
+    const plan = planPoint(v, fan, beveled);
+    if (plan.kind === 'refused') return refused(plan.why);
+    fans.push(fan);
+    plans.push(plan);
+  }
+
+  // ── The output point numbering ───────────────────────────────────────────────────────────
+  //
+  // 🔴 ONE CONTIGUOUS BLOCK PER SOURCE POINT, AND IT RENUMBERS WHAT THIS MODULE SHIPPED WITH.
+  // Before #827 an output point WAS a face-corner, so `cornerBase[f] + k` numbered them and
+  // `pointOrder` came out in whatever order the corners did. A partial bevel breaks that — a run
+  // of corners shares one point — so the numbering has to be anchored somewhere else, and the
+  // source point is the only thing every output point has exactly one of.
+  //
+  // 🔑 THE RENUMBERING IS SAFE AND THE REASON IS WORTH STATING, because "the ids changed" sounds
+  // like it should be visible and is not. Point ids are never a buffer index: the builder writes
+  // positions by walking `rims` and dereferencing, so the BUILT vertex order is a function of the
+  // rim order alone and is unchanged. Ids are consistent within one layout, and every consumer —
+  // `tiledPointOrder`, `weldedPolygonsOf`, `edgeSetOf` — reads them as a map rather than as an
+  // order. Verified against an independent reimplementation of the previous position rule: the
+  // all-edges case agrees to 0 at every corner of a box and of an 8x6 sphere.
+  //
+  // It also buys a property the old numbering did not have: `pointOrder` is now NON-DECREASING,
+  // since block `v` is entirely below block `v + 1`. That is what makes "every output point has
+  // an honest origin" checkable by a scan rather than by a set comparison.
+  const idAt: number[][] = plans.map((plan) => new Array<number>(plan.count).fill(-1));
+  const cornerPointOf = new Array<number>(cornerCount).fill(-1);
+  const placement: BoundaryPlacement[] = [];
+  const pointOrder: number[] = [];
+
+  const farEnd = (e: number, v: number): number =>
+    edges.pairs[2 * e] === v ? edges.pairs[2 * e + 1] : edges.pairs[2 * e];
+
+  for (let v = 0; v < sourcePoints; v++) {
+    const { rim, crossings } = fans[v];
+    const { gapOf } = plans[v];
+    for (let i = 0; i < rim.length; i++) {
+      const gap = gapOf[i];
+      if (idAt[v][gap] < 0) {
+        const id = placement.length;
+        idAt[v][gap] = id;
+        pointOrder.push(v);
+        // A run bounded by two chamfered edges is pulled back between them; a point with no
+        // chamfered edge at all does not move. `crossings[i - 1]` and `crossings[i]` are the two
+        // edges bounding corner `i`, and on an all-edges bevel they ARE the corner's two rim
+        // neighbours — which is the expression the builder used to hold on its own.
+        placement.push(
+          plans[v].count === 1
+            ? { kind: 'vertex', point: v }
+            : {
+                kind: 'meet',
+                point: v,
+                toward: [
+                  farEnd(crossings[(i - 1 + crossings.length) % crossings.length], v),
+                  farEnd(crossings[i], v),
+                ] as const,
+              },
+        );
+      }
+      const [f, k] = rim[i];
+      cornerPointOf[cornerBase[f] + k] = idAt[v][gap];
+    }
+  }
+  const points = placement.length;
 
   const faceOrder: SourceFace[] = [];
   // #825 — index-aligned with `faceOrder` and TOTAL where that one is holed. See the field's doc.
@@ -264,11 +506,12 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
     // diverge only over the minted tail, which is what makes the divergence readable.
     representative.push(f);
     corners.push(rims[f].length);
-    rimsOut.push(rims[f].map((_, k) => cornerStart[f] + k));
+    rimsOut.push(rims[f].map((_, k) => cornerPointOf[cornerBase[f] + k]));
   }
 
-  // ── 2. One quad per source edge — MINTED, so its provenance is a hole ────────────────────
+  // ── 2. One quad per CHAMFERED edge — MINTED, so its provenance is a hole ─────────────────
   for (let e = 0; e < sourceEdges; e++) {
+    if (beveled[e] !== 1) continue;
     const a = edges.pairs[2 * e];
     const b = edges.pairs[2 * e + 1];
     const [x, y] = adjacency.faces[e];
@@ -306,39 +549,40 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
     representative.push(Math.min(ab, ba));
     corners.push(4);
     rimsOut.push([
-      cornerStart[ab] + bInAb,
-      cornerStart[ab] + aInAb,
-      cornerStart[ba] + aInBa,
-      cornerStart[ba] + bInBa,
+      cornerPointOf[cornerBase[ab] + bInAb],
+      cornerPointOf[cornerBase[ab] + aInAb],
+      cornerPointOf[cornerBase[ba] + aInBa],
+      cornerPointOf[cornerBase[ba] + bInBa],
     ]);
   }
 
-  // Built ONCE, in one pass over the edge list, and handed to every fan below. Rebuilding it
-  // per point would make the layout O(points x edges) — 478 k steps for a 32x16 sphere — for a
-  // lookup each fan uses `valence` times.
-  const edgesAtPoint: number[][] = Array.from({ length: sourcePoints }, () => []);
-  for (let e = 0; e < sourceEdges; e++) {
-    edgesAtPoint[edges.pairs[2 * e]].push(e);
-    edgesAtPoint[edges.pairs[2 * e + 1]].push(e);
-  }
-
-  // ── 3. One n-gon per source point — MINTED, and its arity is that point's valence ────────
+  // ── 3. One n-gon per source point THAT GREW ONE — MINTED, arity = its boundary count ─────
+  // 🔑 NOT ONE PER POINT ANY MORE. A point contributes a polygon exactly when it has three or
+  // more boundary vertices, which an all-edges bevel gives every point (its count is the valence,
+  // and `vertexFan` already refuses a valence below 3) and a partial one gives only some. A point
+  // with two is the classic chamfered edge LOOP — the two quads meet along it directly, and
+  // Blender welds exactly there (`bmesh_bevel.cc:6465`, `selcount == 2 && count == 2`).
   for (let v = 0; v < sourcePoints; v++) {
-    const fan = vertexFan(
-      v,
-      cornersAtPoint[v],
-      rims,
-      edges,
-      adjacency,
-      edgesAtPoint[v],
-      cornerStart,
-    );
-    if (fan.kind === 'refused') return fan;
+    const { rim } = fans[v];
+    const { gapOf, count } = plans[v];
+    if (count < 3) continue;
+    // The boundary vertices in ring order, taken as each run is first met walking the corners —
+    // a rotation of the run order, which is the same polygon with the same winding, and on an
+    // all-edges bevel it is corner order exactly.
+    const seen = new Set<number>();
+    const ring: number[] = [];
+    for (let i = 0; i < rim.length; i++) {
+      const gap = gapOf[i];
+      if (seen.has(gap)) continue;
+      seen.add(gap);
+      ring.push(idAt[v][gap]);
+    }
     faceOrder.push(null);
-    // `valence` candidates — every face in the closed ring around this point.
-    representative.push(fan.rim.reduce((lowest, [f]) => (f < lowest ? f : lowest), fan.rim[0][0]));
-    corners.push(fan.rim.length);
-    rimsOut.push(fan.rim.map(([f, k]) => cornerStart[f] + k));
+    // Every face in the closed ring around this point is a candidate, whether or not its corner
+    // survived as its own boundary vertex — the run that swallowed it is still that face's.
+    representative.push(rim.reduce((lowest, [f]) => (f < lowest ? f : lowest), rim[0][0]));
+    corners.push(ring.length);
+    rimsOut.push(ring);
   }
 
   return {
@@ -347,7 +591,8 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
       sourceFaces,
       sourcePoints,
       sourceEdges,
-      cornerStart,
+      placement,
+      sourceRims: rims,
       faceOrder,
       corners,
       rims: rimsOut,
@@ -373,7 +618,23 @@ function cornerOfDirectedEdge(rim: PolygonRim, from: number, to: number): number
 }
 
 type VertexFan =
-  | { readonly kind: 'fan'; readonly rim: readonly (readonly [number, number])[] }
+  | {
+      readonly kind: 'fan';
+      readonly rim: readonly (readonly [number, number])[];
+      /**
+       * `crossings[i]` is the source EDGE the walk left corner `i` through, so the ring around
+       * the point reads `rim[0]`, `crossings[0]`, `rim[1]`, `crossings[1]`, … and closes.
+       *
+       * 🔑 RETURNED RATHER THAN RE-DERIVED BY THE CALLER, and that is the whole reason this walk
+       * grew a second output (#827). A partial bevel's answer at a point is a function of WHICH of
+       * its incident edges are beveled, and "which" only means anything in the ring order — a set
+       * of edge ids cannot say that two beveled edges are adjacent, and adjacency is exactly what
+       * decides how many boundary vertices the point gets. The walk already crosses every one of
+       * these edges to find the next face; discarding them here and rediscovering them in the
+       * caller would be a second traversal that has to agree with this one about orientation.
+       */
+      readonly crossings: readonly number[];
+    }
   | { readonly kind: 'refused'; readonly why: string };
 
 /**
@@ -419,6 +680,7 @@ function vertexFan(
     );
 
   const rim: (readonly [number, number])[] = [];
+  const crossings: number[] = [];
   const seen = new Set<number>();
   let face = corners[0];
   let corner = corners[1];
@@ -445,11 +707,13 @@ function vertexFan(
     const prev = shape[(corner - 1 + shape.length) % shape.length];
     // `valence` entries, scanned for the one whose other endpoint is `prev`.
     let pair: readonly number[] | null = null;
+    let crossed = -1;
     for (const e of incidentEdges) {
       const a = edges.pairs[2 * e];
       const b = edges.pairs[2 * e + 1];
       if ((a === v && b === prev) || (b === v && a === prev)) {
         pair = adjacency.faces[e];
+        crossed = e;
         break;
       }
     }
@@ -457,6 +721,7 @@ function vertexFan(
       return refused(
         `point ${v}: edge {${v}, ${prev}} is not a two-faced edge of the source, so the fan around ${v} cannot be closed`,
       );
+    crossings.push(crossed);
     const next = pair[0] === face ? pair[1] : pair[0];
     const at = rims[next].indexOf(v);
     if (at < 0)
@@ -471,5 +736,5 @@ function vertexFan(
     return refused(
       `point ${v}: the fan around it visited ${rim.length} corners without returning to its start, so the source's faces do not form one closed ring at that point`,
     );
-  return { kind: 'fan', rim };
+  return { kind: 'fan', rim, crossings };
 }

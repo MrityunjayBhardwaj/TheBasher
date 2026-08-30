@@ -449,7 +449,15 @@ export function subsetGeometryRef(
  * moves nothing about the TOPOLOGY, which is why `bevelLayoutOf` keys its layout on the source
  * alone and an amount drag costs one map lookup rather than a re-derivation.
  */
-export function bevelGeometryRef(source: GeometryRef, amount: number): GeometryRef {
+export function bevelGeometryRef(
+  source: GeometryRef,
+  amount: number,
+  // #827 — WHICH edges are chamfered. Absent (or blank) means every edge, which is what a bevel
+  // meant before there was a choice, and `scopeField` turns both spellings into the same absence
+  // so an unscoped key stays byte-identical to the one this function has always minted.
+  scope?: string | null,
+  domain: ScopeDomain = 'edge',
+): GeometryRef {
   // 🔴 A NON-POSITIVE AMOUNT HAS NO CONSTRUCTOR, and it is refused here for the reason
   // `subsetGeometryRef` refuses a blank scope: the state is not an authoring step on the way to
   // something, it is an operator that should not be in the chain. Measured rather than argued —
@@ -463,10 +471,11 @@ export function bevelGeometryRef(source: GeometryRef, amount: number): GeometryR
       `bevelGeometryRef: a bevel needs a positive amount and got ${amount}. Zero collapses every chamfered corner back onto its source corner, and a negative one turns the shell inside out — neither is a bevel.`,
     );
   }
-  const descriptor = { kind: 'bevel' as const, source, amount };
+  const scoped = scopeField(scope, domain);
+  const descriptor = { kind: 'bevel' as const, source, amount, ...scoped };
   return withAttributeComponent(
     {
-      key: `bevel|${keyWithoutAttributeComponent(source)}|${amount}`,
+      key: `bevel|${keyWithoutAttributeComponent(source)}|${amount}${scopeSuffix(scoped)}`,
       descriptor,
     },
     mintTiledModifierAttributes(descriptor),

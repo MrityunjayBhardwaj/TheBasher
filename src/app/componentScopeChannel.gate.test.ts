@@ -313,7 +313,7 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
     ).toThrow(/ArrayModifier\.evaluate was called with no resolved selection/);
   });
 
-  it('all FIVE scoped operators refuse it, and no unscoped one does', () => {
+  it('all SIX scoped operators refuse it, and no unscoped one does', () => {
     // Derived from the declarations, never a list: the population is whoever declares a
     // scope, so an operator that starts declaring one is covered the day it does.
     //
@@ -346,6 +346,11 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
     expect({ refused: refused.sort(), accepted }).toEqual({
       refused: [
         'ArrayModifier',
+        // #827 — the sixth, and the first whose scope names EDGES rather than faces. It reaches
+        // this list by the same road as the other five: `requireResolvedScope` throws when the
+        // evaluator hands it nothing, which is what makes the omission visible to a type-blind
+        // test tier.
+        'BevelModifier',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',
@@ -507,6 +512,7 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
       'src/nodes/componentSelection.ts', // THE resolver
       'src/app/faceCount.ts', // the scoped count
       'src/app/geometryRegistry.ts', // the scoped build
+      'src/app/bevelLayout.ts', // #827 — the scoped LAYOUT, which is a topology and not a count
     ];
     const probe = /\bscopeSelection\b|\bscopeSelectedCount\b/;
     const files = sourceFiles();
@@ -629,7 +635,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('exactly FIVE registered node types declare a `scope` param — three `target`, two `source`', () => {
+  it('exactly SIX registered node types declare a `scope` param — three `target`, three `source`', () => {
     // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
     // `declaring: []` and existed to red at the first declaration, because an unparseable
     // query is a named THROW and `evaluate` runs on the render road with no try/catch above
@@ -681,6 +687,11 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
       // The order is `listNodeTypes()`'s — registration order, not alphabetical.
       declaring: [
         'ArrayModifier',
+        // #827 — the sixth. It is also the first entry here whose `SCOPE_DOMAIN` is not
+        // `'face'`, which is the reason the per-operator declaration exists: a shared constant
+        // would have handed this one faces, and a face index and an edge index are both
+        // integers, so nothing would have failed.
+        'BevelModifier',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',

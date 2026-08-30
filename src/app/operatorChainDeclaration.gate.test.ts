@@ -107,7 +107,16 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
 
   it('SCOPE is declared per operator, and the escape hatch is EMPTY again', () => {
     // Generators: the selection names what they GENERATE FROM.
-    expect(where((c) => c.scope.kind === 'source')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    //
+    // 🔑 `BevelModifier` JOINS AT #827, AND IT IS THE FIRST MEMBER OF THIS SET WHOSE DOMAIN IS
+    // NOT `'face'`. This row reads `scope.kind` and says nothing about the class, so it would
+    // have stayed green had the bevel declared faces by mistake — the class is pinned next door
+    // by the `SCOPE_DOMAIN` census, and the two rows are only jointly a check.
+    expect(where((c) => c.scope.kind === 'source')).toEqual([
+      'ArrayModifier',
+      'BevelModifier',
+      'MirrorModifier',
+    ]);
     // Writers: the selection names what RECEIVES the write.
     expect(where((c) => c.scope.kind === 'target')).toEqual([
       // #668 — survival IS the write. The selection names the faces the mask acts on, and
@@ -141,22 +150,29 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // An empty set is only evidence when something else would have been non-empty had the
     // claim been false.
     //
-    // 🔴 #818 PUTS A MEMBER HERE ON PURPOSE, AND THIS IS THE SAYING-SO-OUT-LOUD THE COMMENT
-    // ABOVE ASKED FOR. `BevelModifier`'s spine carries a mesh, so it HAS faces, edges and
-    // points to resolve a selection against — `'no-component-domain'` would be a false claim
-    // about the value, not a modest one about the operator. And the reference does scope its
-    // bevel (a vertex group and an edge selection), so "could be scoped" is not aspirational.
+    // 🔴 #818 PUT `BevelModifier` HERE ON PURPOSE AND #827 TOOK IT BACK OUT — THIS IS THE
+    // SAYING-SO-OUT-LOUD BOTH WAYS, WHICH IS THE WHOLE VALUE OF A DECLINED SET.
     //
-    // 🔑 WHAT MAKES THIS DEFERRAL DIFFERENT FROM THE ONE STEP 17 CAUGHT: `MaterialOverrideOp`
-    // was moved here because its declaration was found LYING — it claimed a scope and threw
-    // the answer away. This one has never claimed a scope, and its blocker is measurable
-    // rather than clerical: `bevelLayoutOf` refuses any edge without exactly two incident
-    // faces, and a scoped bevel produces exactly those boundary edges. Scoping it needs a
-    // miter rule, not wiring. The honouring check next door cannot speak for an operator that
-    // declares nothing, so the thing standing behind this entry is that refusal, by name.
-    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
-      'BevelModifier',
-    ]);
+    // #818's entry carried a MEASURABLE blocker rather than a clerical one: *"`bevelLayoutOf`
+    // refuses any edge without exactly two incident faces, and a scoped bevel produces exactly
+    // those boundary edges. Scoping it needs a miter rule, not wiring."* #827 built the miter
+    // rule — a point's boundary count is `k` when `k >= 2` chamfered edges meet there and 1
+    // when none do, measured live across 15 selections — so the blocker is SPENT rather than
+    // relocated, and the operator moved up into the `source` set above with its behaviour built.
+    //
+    // 🔑 THE ROUND TRIP IS WHAT MAKES THIS EMPTY SET EVIDENCE, AND IT HAS NOW HAPPENED TWICE
+    // FOR TWO DIFFERENT REASONS. `MaterialOverrideOp` arrived because its declaration was found
+    // LYING — it claimed a scope and threw the answer away — and left when #682 built the
+    // behaviour. `BevelModifier` arrived because it truthfully declared a deferral, and left
+    // when the deferral's stated reason was measured and removed. One entry was a correction,
+    // the other a schedule; an empty set that has held both is a stronger claim than one that
+    // has only ever been empty.
+    //
+    // ⚠️ AND THE EMPTY SET IS STILL NOT EVIDENCE ON ITS OWN — an operator can leave this list
+    // by declaring a scope it does not honour, which is exactly how `MaterialOverrideOp` got
+    // in. `operatorScopeHonouring.gate.test.ts` is the row that would catch that, and it now
+    // carries a `BevelModifier` fixture for the same reason.
+    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {
