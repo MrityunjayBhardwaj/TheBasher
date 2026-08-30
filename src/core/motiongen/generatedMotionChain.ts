@@ -29,6 +29,17 @@ export interface GeneratedMotionResult extends BvhImportChainResult {
   /** Echoed so a caller can record which checkpoint produced the clip. */
   readonly model: string;
   readonly jobId: string;
+  /**
+   * The BVH text the generator returned, unchanged.
+   *
+   * Returned rather than dropped because the ONLY copy of a generated clip's
+   * bytes used to be this call's local variable: the ops carry parsed keyframes,
+   * and nothing can turn those back into the file that produced them. A caller
+   * that wants to offer "save this" (#819) has to be handed the bytes here or
+   * they are gone. It stays out of the Ops on purpose — a provenance field on the
+   * graph is exactly what phase A1 refuses.
+   */
+  readonly bvh: string;
 }
 
 /**
@@ -57,5 +68,5 @@ export async function buildGeneratedMotionOps(
     },
     state,
   );
-  return { ...chain, model: generated.model, jobId: generated.jobId };
+  return { ...chain, model: generated.model, jobId: generated.jobId, bvh: generated.bvh };
 }
