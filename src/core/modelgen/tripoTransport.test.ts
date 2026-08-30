@@ -305,3 +305,140 @@ describe('the whole generation is bounded', () => {
     );
   });
 });
+
+describe('a network failure names its stage and says whether the URL was proxied (#829)', () => {
+  // Observed live as `asset failed: image-to-3D — rigged generation failed:
+  // Failed to fetch`. That string is every network call in the chain collapsed
+  // into one, because a browser `TypeError` carries no status, no body and no
+  // URL. Six fetches, six different remedies, one sentence.
+  //
+  // The discriminator being thrown away is WHETHER THE CALL WAS PROXIED. Five
+  // of the six go through the same-origin `/__tripo` path; `download` is
+  // deliberately direct to the asset host. "The dev server's proxy did not
+  // answer" and "a cross-origin download was blocked" are different problems,
+  // and only the URL's shape says which happened.
+  const PROXIED = { baseUrl: '/__tripo/v2' };
+  const IMAGE = {
+    source: 'image',
+    image: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' },
+  } as const;
+
+  /** What a browser throws when a request never becomes a response. */
+  const offline = () => Promise.reject(new TypeError('Failed to fetch'));
+
+  /** Succeeds through create+poll, then dies on the direct download. */
+  function dieOnDownload() {
+    return vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/task') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
+      }
+      if (u.includes('/task/t1')) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: { status: 'success', progress: 100, output: { pbr_model: 'https://cdn/x.glb' } },
+          }),
+          { status: 200 },
+        );
+      }
+      return offline();
+    });
+  }
+
+  it('names the proxied stage that failed, and says the path is dev-server-only', async () => {
+    const err = await client(offline, PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    const message = (err as Error).message;
+    expect(message).toContain('Tripo POST /task');
+    expect(message).toContain('/__tripo/v2/task');
+    expect(message).toContain('production');
+    // The raw browser string survives as the cause, so nothing is hidden.
+    expect(message).toContain('Failed to fetch');
+  });
+
+  it('names the DIRECT host on a download, and points at the missing CORS header', async () => {
+    const err = await client(dieOnDownload(), PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e);
+
+    const message = (err as Error).message;
+    expect(message).toContain('Downloading the generated model');
+    expect(message).toContain('cdn');
+    expect(message).toContain('DIRECTLY');
+    expect(message).toContain('access-control-allow-origin');
+  });
+
+  it('names the image upload, which is the stage only an image request reaches', async () => {
+    const err = await client(offline, PROXIED)
+      .generate(IMAGE)
+      .catch((e: unknown) => e);
+
+    expect((err as Error).message).toContain('Uploading the reference image');
+  });
+
+  it('🔑 FALSIFICATION: the proxied and the direct failure do not read the same', async () => {
+    // This is the whole defect. Before the fix BOTH of these were the string
+    // "Failed to fetch" — identical, and therefore useless for deciding which
+    // of the two completely different faults had occurred. If a future change
+    // collapses them again, this goes red.
+    const proxied = (await client(offline, PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e)) as Error;
+    const direct = (await client(dieOnDownload(), PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e)) as Error;
+
+    expect(proxied.message).not.toEqual(direct.message);
+    // And neither is the bare browser string that started this.
+    expect(proxied.message).not.toEqual('Failed to fetch');
+    expect(direct.message).not.toEqual('Failed to fetch');
+  });
+
+  it('does NOT reclassify a service that answered — an HTTP error stays an API error', async () => {
+    // The pair. A wrapper that swallowed every failure into "unreachable" would
+    // satisfy the tests above and destroy the distinction they exist to make:
+    // "the host never answered" and "the host said no" have opposite remedies.
+    const refuse = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ code: 2, message: 'Invalid API key' }), { status: 401 }),
+    );
+    const err = await client(refuse, PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(TripoApiError);
+    expect((err as Error).message).not.toContain('never got a reply');
+  });
+
+  it('re-throws an abort untouched, so a timeout is not dressed up as an unreachable host', async () => {
+    const aborted = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith('/task') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
+      }
+      if (u.includes('/task/t1')) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: { status: 'success', progress: 100, output: { pbr_model: 'https://cdn/x.glb' } },
+          }),
+          { status: 200 },
+        );
+      }
+      const abort = new Error('The operation was aborted.');
+      abort.name = 'AbortError';
+      throw abort;
+    });
+
+    const err = (await client(aborted, PROXIED)
+      .generate(TEXT)
+      .catch((e: unknown) => e)) as Error;
+
+    expect(err.name).toBe('AbortError');
+    expect(err.message).not.toContain('never got a reply');
+  });
+});

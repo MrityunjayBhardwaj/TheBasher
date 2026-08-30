@@ -142,6 +142,81 @@ export class TripoApiError extends Error {
 }
 
 /**
+ * A fetch that never became a response.
+ *
+ * 🔑 A NETWORK-LEVEL FAILURE CARRIES NO STATUS, NO BODY AND NO URL. The browser
+ * hands back `TypeError: Failed to fetch` and nothing else, so every call in a
+ * generation — the probe, the image upload, the task create, the status poll,
+ * the rig, and the two model downloads — reports the SAME three words. Six
+ * distinct faults with six distinct fixes, and a banner that cannot tell them
+ * apart (#829).
+ *
+ * 🔑 THE DISCRIMINATOR IS WHETHER THE URL WAS PROXIED. Five of the six go
+ * through the same-origin `/__tripo` path; `download` is deliberately direct to
+ * the asset host (`tripoProxy.ts`). So "the dev server's proxy did not answer"
+ * and "a cross-origin download was blocked" are different problems, and which
+ * one happened is decided entirely by the shape of the URL — which is known
+ * here and nowhere downstream.
+ *
+ * Deliberately NOT a `TripoApiError`: that class means "the service answered
+ * and said no", which is the opposite of what happened. Keeping them distinct
+ * is what lets `classifyTripoFailure` route this to `unreachable` rather than
+ * to `service-error`.
+ */
+export class TripoTransportError extends Error {
+  /** What was being attempted, in the words a director would use. */
+  readonly stage: string;
+  /** The URL that never answered. */
+  readonly url: string;
+  /** Whether the call went straight to an external host rather than the proxy. */
+  readonly direct: boolean;
+
+  constructor(stage: string, url: string, cause: unknown) {
+    super(`${stage} ${describeUnreachable(url)} (${messageOf(cause)})`);
+    this.name = 'TripoTransportError';
+    this.stage = stage;
+    this.url = url;
+    this.direct = isDirectUrl(url);
+    this.cause = cause;
+  }
+}
+
+/** A relative URL is served by our own origin — i.e. the dev server's proxy. */
+function isDirectUrl(url: string): boolean {
+  return !url.startsWith('/');
+}
+
+/**
+ * Where the call was aimed, and what a silent failure there implies.
+ *
+ * The two branches say different things because they have different remedies. A
+ * proxied path that does not answer is our dev server (or a production build,
+ * which has no such route at all). A direct host that does not answer, having
+ * been reachable from a terminal, is a missing CORS header — the browser
+ * discards the reply before any code sees it.
+ */
+function describeUnreachable(url: string): string {
+  if (!isDirectUrl(url)) {
+    return (
+      `could not reach the Tripo proxy at ${url} — the request never got a reply. ` +
+      'That path is served by the Vite dev and preview servers only, so a production ' +
+      'build has no such route'
+    );
+  }
+  let host = url;
+  try {
+    host = new URL(url).host;
+  } catch {
+    /* A URL we cannot parse is reported verbatim rather than guessed at. */
+  }
+  return (
+    `could not reach ${host} — the request never got a reply. This host is called ` +
+    'DIRECTLY rather than through the proxy, so a reply missing ' +
+    '`access-control-allow-origin` is discarded by the browser before any code sees it'
+  );
+}
+
+/**
  * Why a probe could not confirm the service.
  *
  * These are separated on the axis that matters to whoever reads the report:
@@ -391,7 +466,7 @@ export class TripoModelGenerationCapability
       );
     }
 
-    const glb = await this.download(url, deadline);
+    const glb = await this.download('Downloading the generated model', url, deadline);
     return {
       taskId,
       glb,
@@ -471,7 +546,7 @@ export class TripoModelGenerationCapability
           `${this.dialect.version === 'v2' ? 'model, pbr_model or base_model' : 'model_url or model_urls'}).`,
       );
     }
-    const glb = await this.download(url, deadline);
+    const glb = await this.download('Downloading the rigged model', url, deadline);
 
     // READ THE SKELETON THAT ARRIVED. Asking for `mixamo` and being handed the
     // service's own convention is a broken contract that is otherwise invisible:
@@ -569,11 +644,15 @@ export class TripoModelGenerationCapability
     bytes.set(image.bytes);
     form.append('file', new Blob([bytes], { type: image.mimeType }), `upload.${ext}`);
 
-    const response = await this.fetchImpl(`${this.baseUrl}${this.dialect.uploadPath}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${this.apiKey}` },
-      body: form,
-    });
+    const response = await this.fetchStage(
+      'Uploading the reference image',
+      `${this.baseUrl}${this.dialect.uploadPath}`,
+      {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+        body: form,
+      },
+    );
     const payload = (await response.json().catch(() => null)) as {
       code?: number;
       message?: string;
@@ -589,13 +668,36 @@ export class TripoModelGenerationCapability
     return { type: ext, file_token: token };
   }
 
-  private async download(url: string, deadline: number): Promise<ArrayBuffer> {
+  /**
+   * Fetch, and name the stage if the request never becomes a response.
+   *
+   * Every network call in this class goes through here, so a transport failure
+   * can never again reach a person as three unattributed words (#829). The
+   * classification itself is left to `classifyTripoFailure`, which already knows
+   * how to separate "unreachable" from "the service said no" — this only adds
+   * the two facts that function cannot see: WHICH call it was, and whether the
+   * URL was proxied or direct.
+   *
+   * 🔑 AN ABORT IS RE-THROWN UNTOUCHED. A caller that aborted on its own
+   * deadline knows why the request stopped, and dressing a timeout up as an
+   * unreachable host would be a worse message than the one it replaces.
+   */
+  private async fetchStage(stage: string, url: string, init: RequestInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(url, init);
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') throw err;
+      throw new TripoTransportError(stage, url, err);
+    }
+  }
+
+  private async download(stage: string, url: string, deadline: number): Promise<ArrayBuffer> {
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new TripoApiError('Timed out before the model could be downloaded.');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), remaining);
     try {
-      const response = await this.fetchImpl(url, { signal: controller.signal });
+      const response = await this.fetchStage(stage, url, { signal: controller.signal });
       if (!response.ok) {
         throw new TripoApiError(`Downloading the generated model failed: ${response.statusText}`, {
           status: response.status,
@@ -616,7 +718,11 @@ export class TripoModelGenerationCapability
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     };
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, init);
+    const response = await this.fetchStage(
+      `Tripo ${method} ${path}`,
+      `${this.baseUrl}${path}`,
+      init,
+    );
     const payload = (await response.json().catch(() => null)) as {
       code?: number;
       message?: string;
