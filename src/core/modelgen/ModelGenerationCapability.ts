@@ -108,13 +108,27 @@ export interface MultiviewModelRequest extends ModelGenerationOptions {
 
 export type ModelGenerationRequest = TextModelRequest | ImageModelRequest | MultiviewModelRequest;
 
-export interface ModelGenerationResult {
+/**
+ * A task that ran to completion, without its output collected.
+ *
+ * 🔑 SEPARATE FROM `ModelGenerationResult` BECAUSE ONE CALLER GENUINELY DOES NOT
+ * WANT THE MESH. Rigging happens service-side against a task id — `checkRiggable`
+ * and `rig` both take `sourceTaskId` — so the rigged road needs the task to have
+ * finished and nothing else. When the only way to run a task was to fetch its
+ * output too, that road downloaded a 7.4 MB mesh and discarded every byte, and
+ * the discarded download was what made the whole feature unreachable from a
+ * browser (#832, #833). The narrow result is what makes "just the task" sayable.
+ */
+export interface ModelTaskResult {
   /** Service-assigned task id. Used by cancel(taskId) and for progress. */
   readonly taskId: string;
-  /** GLB bytes — byte-for-byte the kind of payload a dropped .glb carries. */
-  readonly glb: ArrayBuffer;
   /** The model version that produced it, echoed back for the caller's record. */
   readonly modelVersion: string;
+}
+
+export interface ModelGenerationResult extends ModelTaskResult {
+  /** GLB bytes — byte-for-byte the kind of payload a dropped .glb carries. */
+  readonly glb: ArrayBuffer;
 }
 
 /** Coarse progress, mirroring the plugin's progress bar. `progress` is 0..100.
@@ -149,6 +163,23 @@ export interface ModelGenerationCapability {
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
   ): Promise<ModelGenerationResult>;
+
+  /**
+   * Run the same task and return WITHOUT collecting its output.
+   *
+   * Same refusals, same validation, same progress, same billing — the only
+   * difference is that the mesh is not fetched. For a caller that needs a task
+   * id to hand to another service call, downloading the output is pure cost,
+   * and it is cost with a failure mode attached: it was the step that broke
+   * rigged generation in a browser entirely (#833).
+   *
+   * `generate` is defined in terms of this, rather than beside it, so the two
+   * cannot disagree about what running a task means.
+   */
+  generateTaskOnly(
+    request: ModelGenerationRequest,
+    onProgress?: (p: ModelGenerationProgress) => void,
+  ): Promise<ModelTaskResult>;
 
   /** Best-effort cancel. May no-op when the task already finished. */
   cancel(taskId: string): Promise<void>;

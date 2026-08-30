@@ -178,6 +178,27 @@ describe('the request contract refuses rather than clamps', () => {
       new StubModelGenerationCapability().generate({ source: 'text', prompt: '' }),
     ).rejects.toThrow(ModelRequestInvalidError);
   });
+
+  it.each([
+    ['an empty prompt', { source: 'text', prompt: '' }],
+    ['a runaway face limit', { source: 'text', prompt: 'x', faceLimit: MAX_FACE_LIMIT + 1 }],
+    [
+      'an empty source image',
+      { source: 'image', image: { bytes: new Uint8Array(0), mimeType: 'image/png' } },
+    ],
+  ])(
+    'the narrow road refuses %s exactly as the wide one does, so it is not a way around the gate',
+    async (_label, bad) => {
+      // `generateTaskOnly` skips `synthesiseGlb`, which is where the stub's wide
+      // road happens to re-validate (#833). That is only safe if the validation
+      // it skips is a DUPLICATE rather than a unique check — which is what this
+      // asserts, by feeding the same bad requests to both and requiring the same
+      // refusal from each.
+      const cap = new StubModelGenerationCapability();
+      await expect(cap.generate(bad as never)).rejects.toThrow(ModelRequestInvalidError);
+      await expect(cap.generateTaskOnly(bad as never)).rejects.toThrow(ModelRequestInvalidError);
+    },
+  );
 });
 
 describe('the service licence gate, now that the Tripo verdict is recorded', () => {

@@ -26,6 +26,7 @@ import {
   describeRequest,
   type ModelGenerationCapability,
   type ModelGenerationProgress,
+  type ModelTaskResult,
   type ModelGenerationRequest,
   type ModelGenerationResult,
 } from './ModelGenerationCapability';
@@ -201,6 +202,32 @@ export class StubModelGenerationCapability implements ModelGenerationCapability 
     const glb = synthesiseGlb(request);
     onProgress?.({ taskId, status: 'success', progress: 100 });
     return { taskId, glb, modelVersion: request.modelVersion ?? DEFAULT_MODEL_VERSION };
+  }
+
+  /**
+   * The same task without its output, mirroring the service's contract.
+   *
+   * 🔑 IT DOES NOT SYNTHESISE THE MESH, AND THAT IS THE POINT. Delegating to
+   * `generate` and narrowing the result would make the stub produce bytes no
+   * caller asked for — the exact shape of the defect this method exists to
+   * remove (#833) — and, worse, it would make the app-level gate unable to see
+   * the difference: a spy on `generate` would fire either way, so a regression
+   * to the wide call would stay green.
+   *
+   * The refusals stay identical because `assertValidModelRequest` is what both
+   * roads validate with. `synthesiseGlb` re-validates as its own first act, so
+   * skipping it skips a duplicate check, not a unique one — pinned by a test
+   * that feeds the same bad requests to both.
+   */
+  async generateTaskOnly(
+    request: ModelGenerationRequest,
+    onProgress?: (p: ModelGenerationProgress) => void,
+  ): Promise<ModelTaskResult> {
+    assertValidModelRequest(request);
+    const taskId = `stub_${fnv1a32(canonicalise(request)).toString(16)}`;
+    onProgress?.({ taskId, status: 'running', progress: 0 });
+    onProgress?.({ taskId, status: 'success', progress: 100 });
+    return { taskId, modelVersion: request.modelVersion ?? DEFAULT_MODEL_VERSION };
   }
 
   async cancel(): Promise<void> {
