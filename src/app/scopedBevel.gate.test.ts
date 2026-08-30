@@ -44,7 +44,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { bevelLayoutOf } from './bevelLayout';
-import { edgeFaceAdjacencyOf, edgeSetOf } from './edgeIdentity';
+import { edgeSetOf } from './edgeIdentity';
 import { bevelGeometryRef, boxGeometryRef, sphereGeometryRef } from './modifierGeometry';
 import type { GeometryRef } from '../nodes/types';
 
@@ -62,9 +62,11 @@ function oracle(
   chosen: (edge: number) => boolean,
 ): { points: number; faces: number; chamfered: number } | null {
   const d = source.descriptor;
+  // The edge SET alone — valence is how many edges name a point, which this already says. An
+  // adjacency lookup stood here and guarded nothing the set does not, and leaving it would have
+  // implied the oracle depends on face incidence when it does not.
   const edges = edgeSetOf(d);
-  const adjacency = edgeFaceAdjacencyOf(d);
-  if (edges === null || adjacency === null) throw new Error('oracle: source has no edge set');
+  if (edges === null) throw new Error('oracle: source has no edge set');
 
   const valence = new Map<number, number>();
   const chamfered = new Map<number, number>();

@@ -669,9 +669,9 @@ function vertexFan(
   adjacency: { readonly faces: readonly (readonly number[])[] },
   // The edges incident to `v`, resolved once by the caller — see the note at its construction.
   incidentEdges: readonly number[],
-  // Passed in purely so the visit key below can be the OUTPUT POINT id, which is already unique
-  // per `(face, corner)` — see the note at its use.
-  cornerStart: readonly number[],
+  // The prefix sum over the source's arities, so the visit key below can be a CORNER INDEX —
+  // see the note at its use.
+  cornerBase: readonly number[],
 ): VertexFan {
   const incident = corners.length / 2;
   if (incident < 3)
@@ -685,7 +685,7 @@ function vertexFan(
   let face = corners[0];
   let corner = corners[1];
   for (let step = 0; step < incident; step++) {
-    // 🔴 KEYED ON THE OUTPUT POINT ID, WHICH IS UNIQUE PER `(face, corner)` BY CONSTRUCTION —
+    // 🔴 KEYED ON THE CORNER INDEX, WHICH IS UNIQUE PER `(face, corner)` BY CONSTRUCTION —
     // and the first draft of this line packed the pair by hand as `face * (arity + 1) + corner`,
     // which COLLIDES because the stride varies per face. Measured on a uv sphere at 8x6: face 32
     // corner 0 and face 40 corner 0 both hash to 160, so a correct fan around point 34 refused
@@ -694,8 +694,16 @@ function vertexFan(
     //
     // Keying on the pair rather than on the face alone still matters: one face can meet `v` at
     // two corners on a pinched rim, and keying on the face would call that a repeat when it is
-    // not. `cornerStart[face] + corner` is that pair, in a numbering that already exists.
-    const key = cornerStart[face] + corner;
+    // not. `cornerBase[face] + corner` is that pair, in a numbering that already exists.
+    //
+    // ⚠️ THIS SAID "THE OUTPUT POINT ID" UNTIL #827, AND THAT SENTENCE WENT FALSE WITH THE
+    // RENUMBERING. A corner index and an output point id were the same number while every corner
+    // got its own point; a partial bevel collapses a run of them onto one, so they are now
+    // different quantities that agree on the all-edges case. The KEY still has to be the corner
+    // index — the point id would collide for exactly the corners this walk must tell apart, and
+    // it is not even allocated yet at this stage. Renamed rather than re-worded, because the
+    // parameter's old name was the claim.
+    const key = cornerBase[face] + corner;
     if (seen.has(key))
       return refused(
         `point ${v}: the fan around it revisited face ${face} corner ${corner} after ${step} of ${incident} incident corners, so the source pinches at that point and the vertex n-gon would drop the rest`,
