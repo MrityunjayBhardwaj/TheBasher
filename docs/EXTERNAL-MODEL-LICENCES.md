@@ -151,6 +151,27 @@ weights' licence, not the data's, is the thing to rely on.
 - <https://github.com/nv-tlabs/kimodo#models>
 - <https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/>
 
+#### What this repo actually ships under that grant
+
+`public/assets/motion/{walk,run,jump,crouch,turn,wave}.bvh` — the Asset Library's motion
+shelf (#815) — are **outputs of a SOMA-skeleton checkpoint**, so they sit under the grant
+above, and §3.1's `NOTICE` obligation is met by the `NOTICE` file at the repo root, which
+names these checkpoints.
+
+**Why the skeleton is the thing recorded here, and not the filename.** Finding 1 below is
+that the licence varies per checkpoint inside one release, and the one BLOCKED Kimodo
+checkpoint is precisely the SMPL-X skeleton variant — whose licence forbids _"generating
+works for sale or distribution"_, which is exactly what shipping a clip in a public repo
+would be. So "which checkpoint produced this clip" is a licence question, and the skeleton
+answers it: all six clips carry the 78-joint SOMA hierarchy
+(`Root, Hips, Spine1, Spine2, Chest, Neck1, Neck2, Head, …`), joint-name-identical to the
+already-proven `kimodo-walk.bvh` and to the vocabulary `scripts/gen-soma-motion-fixture.mjs`
+emits. SMPL-X uses a different hierarchy and would be visible immediately.
+
+🔴 **Adding a clip to that folder is therefore a licence decision, not a content decision.**
+Check the skeleton of anything new before it lands, and do not add Mixamo assets at all —
+Adobe restricts redistribution and this repository is public.
+
 ### Kimodo-SMPLX-RP-v1 · 🔴 BLOCKED
 
 **NVIDIA Internal Scientific Research and Development Model License**, §3.1:
