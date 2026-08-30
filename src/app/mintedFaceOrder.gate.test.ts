@@ -183,8 +183,15 @@ describe('HALF B — the hole is exercised where it can be reached', () => {
   });
 
   it('6 — 🔴 weldedPolygonsOf refuses a holed order — a minted face has no source rim to copy', async () => {
-    vi.resetModules();
+    // 🔴 THE `resetModules` GOES AFTER THE `importActual`, AND #814 IS WHY. `faceCount.ts` now
+    // imports `bevelLayout.ts`, which imports `edgeIdentity.ts` — so loading the real module
+    // transitively instantiates the very module this row is about, bound to the REAL
+    // `tiledFaceOrder`. With the reset first, the later `import('./edgeIdentity')` hit that
+    // cached instance and the mock never applied: this row went green-to-red reporting 18 real
+    // rims where it expects a refusal. Resetting AFTER clears the registry that `importActual`
+    // populated, while `real` is already a captured object and survives it.
     const real = await vi.importActual<typeof import('./faceCount')>('./faceCount');
+    vi.resetModules();
     vi.doMock('./faceCount', () => ({
       ...real,
       tiledFaceOrder: (descriptor: GeometryDescriptor) => {

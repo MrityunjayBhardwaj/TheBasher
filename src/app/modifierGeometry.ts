@@ -422,6 +422,44 @@ export function subsetGeometryRef(
   );
 }
 
+/**
+ * The ONE place a bevel becomes a `GeometryRef` (#814) — the first MINTING operator's builder.
+ *
+ * ── WHY IT HAS NO ATTRIBUTE COMPONENT, AND WHY THAT IS NOT [[H512]]'S COLLAPSE ──────────
+ *
+ * `mintTiledModifierAttributes` answers for `array`, `mirror` and `subset` and refuses everything
+ * else, so a bevel's key carries no `|a:` component — which is a positive claim meaning *this
+ * geometry has no attributes*. For the three mapping kinds that collapse is a bug: two sources
+ * with different per-face assignments share one build that should have carried different groups,
+ * and the result draws.
+ *
+ * 🔑 FOR A BEVEL IT IS CORRECT, AND THE DIFFERENCE IS WHAT THE HOLE IN THE FACE ORDER MEANS.
+ * A bevel genuinely does not express its source's per-face assignment — two thirds of its faces
+ * came from no source face, `mappedFacesOf` refuses the holed order, and no gather happens. So a
+ * bevel of a two-material box and a bevel of a one-material box of the same size ARE the same
+ * geometry, with the same absent groups, and sharing one cached build is right rather than lucky.
+ * Keying on an assignment the output does not express is the over-distinction #649 removed.
+ *
+ * ⚠️ WHAT WOULD BE WRONG IS DOING IT QUIETLY, and that is handled where it is observable rather
+ * than here: `geometryRegistry.build()` warns by name when a source's face attributes carry
+ * something a bevel drops. Once per distinct geometry, because builds are memoised — a warning
+ * minted here would fire once per evaluate, which is a message nobody reads.
+ *
+ * `amount` folds into the key because it moves positions, and two amounts are two geometries. It
+ * moves nothing about the TOPOLOGY, which is why `bevelLayoutOf` keys its layout on the source
+ * alone and an amount drag costs one map lookup rather than a re-derivation.
+ */
+export function bevelGeometryRef(source: GeometryRef, amount: number): GeometryRef {
+  const descriptor = { kind: 'bevel' as const, source, amount };
+  return withAttributeComponent(
+    {
+      key: `bevel|${keyWithoutAttributeComponent(source)}|${amount}`,
+      descriptor,
+    },
+    mintTiledModifierAttributes(descriptor),
+  );
+}
+
 // ── #537 — REBUILDING A HANDLE THE ANIMATION OVERLAY HAS WRITTEN THROUGH ───────────────
 //
 // The four builders above are called by the EVALUATOR, once per evaluation, from the node's
@@ -574,6 +612,10 @@ export function rebuildGeometryRef(
         (values.scope ?? d.scope) as string,
         (values.keep ?? d.keep) as boolean,
       );
+    // #814 — `amount` is the only writable field, and it is the only one the overlay can have
+    // written. The source is a handle, not a param.
+    case 'bevel':
+      return bevelGeometryRef(d.source, (values.amount ?? d.amount) as number);
     case 'gltf':
     case 'baked':
       return ref;

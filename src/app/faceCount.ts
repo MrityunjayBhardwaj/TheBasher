@@ -44,6 +44,11 @@ import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
 // property this module holds is not a number of imports, it is that nothing it depends on can
 // depend back on it. The leaf gate carries the same reasoning beside its widened literal.
 import { polygonArityOf, polygonCornersOf, reversedCornerAt } from './polygonLayout';
+// 🔴 THE OTHER HALF OF AN IMPORT CYCLE — `faceCount -> bevelLayout -> edgeIdentity -> faceCount`.
+// It closes at `faceCountOf('bevel')` and cannot be moved away; `bevelLayout.ts`'s header states
+// why and states the one rule that keeps it safe (nothing in the ring reads an import at module
+// level). Every use below is inside a function body, which is where a cycle is already resolved.
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -133,6 +138,14 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       // The complement is derived rather than counted a second way: `scopeSelectedCount` is
       // the ONE door from a query to a count, and inverting its answer keeps it that way.
       return descriptor.keep ? selected : sourceFaces - selected;
+    }
+    // #814 — `F + E + V`, and none of the three terms is the source's face count alone. This is
+    // the first arm here whose answer is LARGER than any tiling of its source, because it is the
+    // first operator that mints: an edge becomes a quad and a point becomes an n-gon, and neither
+    // came from a source face.
+    case 'bevel': {
+      const verdict = bevelLayoutOf(descriptor);
+      return verdict.kind === 'laid-out' ? verdict.layout.faceOrder.length : null;
     }
     case 'gltf':
     case 'baked':
@@ -387,6 +400,16 @@ function subsetFaceOrder(
 
 export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder | null {
   if (descriptor.kind === 'subset') return subsetFaceOrder(descriptor);
+  // #814 — THE FIRST ORDER THAT ACTUALLY CONTAINS A HOLE. Every arm below maps each output face
+  // to a source face by construction, so #812's widening was the identity for all of them; this
+  // one lays down the source's faces and then `E + V` entries of `null`. It is not cached here
+  // because `bevelLayoutOf` already caches the whole layout on the source handle.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    if (verdict.kind !== 'laid-out') return null;
+    const { sourceFaces, faceOrder } = verdict.layout;
+    return { sourceFaces, order: faceOrder };
+  }
   const tiling = faceTilingOf(descriptor);
   if (tiling === null) return null;
 
@@ -467,6 +490,23 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
   const generated = polygonArityOf(descriptor);
   if (generated !== null) return generated;
 
+  // #814 — A MINTED FACE'S ARITY IS A PROPERTY OF THE OPERATOR, NOT OF ANY SOURCE FACE, which
+  // is why this arm is here rather than riding the gather below. A bevel's edge quad has four
+  // corners because it is a quad, and its vertex n-gon has as many as that point had incident
+  // faces; neither number exists anywhere in the source's arity array. The gather road cannot
+  // express that at all — it would ask `mappedFacesOf` for a source face and be told there is
+  // none, and answer `null` for the whole descriptor.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    // 🔴 `corners - 2`, BECAUSE THIS FUNCTION ANSWERS IN TRIANGLES AND THE LAYOUT SPEAKS IN
+    // CORNERS. A quad fans to 2, not 4. Handing the corner counts straight through built a
+    // well-formed index buffer of the wrong length — 96 triangles claimed against 44 built for
+    // a bevelled cube — and every count-shaped check upstream of the buffer passed, because
+    // both quantities are plausible per-face integers. The subtraction lives here, at the one
+    // boundary between the two vocabularies.
+    return verdict.kind === 'laid-out' ? verdict.layout.corners.map((n) => n - 2) : null;
+  }
+
   // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
   // for exactly these three kinds, but that is its invariant and not something the type system
   // carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
@@ -527,6 +567,14 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
 export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[] | null {
   const generated = polygonCornersOf(descriptor);
   if (generated !== null) return generated;
+
+  // #814 — the layout's own answer, for the reason {@link faceArityOf}'s bevel arm gives: a
+  // minted face's corner count is the operator's, and the gather below would be told there is
+  // no source face to read it from. This one needs no conversion — the layout speaks corners.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    return verdict.kind === 'laid-out' ? verdict.layout.corners : null;
+  }
 
   // Narrowed explicitly for the reason {@link faceArityOf} states one function up.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')

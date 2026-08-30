@@ -569,6 +569,43 @@ export type GeometryDescriptor =
       readonly domain: ScopeDomain;
       /** `true` keeps the selected faces and drops the rest; `false` drops the selection. */
       readonly keep: boolean;
+    }
+  // `bevel` (#814) — THE FIRST OPERATOR IN THIS PROJECT THAT MINTS ELEMENTS.
+  //
+  // Every derived kind above MAPS: each output face came from exactly one source face, which
+  // is why `TiledFaceOrder.order` could be `readonly number[]` for as long as it was. A bevel
+  // replaces each source edge with a quad and each source point with an n-gon, and those faces
+  // came from no source face at all. #812 widened the order to admit that hole; this is the
+  // thing that puts one there.
+  //
+  // 🔴 SEGMENTS = 1, ALL EDGES, NO MITER, NO CLAMP — and none of those is a field, because a
+  // parameter whose only valid value is 1 is not a parameter. The output topology is a pure
+  // function of the SOURCE'S TOPOLOGY alone: there is no selection here, so unlike the
+  // generators above there is no `scope`/`domain` pair, and unlike `subset` there is no
+  // polarity. `amount` moves positions and moves nothing about what is connected to what.
+  //
+  // The layout is closed form and lives in `bevelLayout.ts`: `F + E + V` faces, one output
+  // point per source face-corner, `2E + corners` edges. It was predicted from that formula and
+  // then observed in a running Blender 5.1.1 at two shapes before a line of it was written —
+  // see #814 for the table, and note that the arity multiset is what makes the check bite,
+  // since a count-only comparison passes on a wrong rule.
+  | {
+      readonly kind: 'bevel';
+      readonly source: GeometryRef;
+      /**
+       * How far the chamfer cuts back from each original edge, in the source's local units.
+       *
+       * ⚠️ IT IS A POSITION PARAMETER AND NOTHING ELSE. The face, point and edge counts this
+       * descriptor derives do not read it, which is what makes them a pure function of the
+       * source's topology — and it is also the one thing that can make them disagree with the
+       * built geometry. `pointCountOf` derives one point per source corner STRUCTURALLY, while
+       * `pointCountMismatch` asks the built buffer how many distinct POSITIONS it holds, and at
+       * an amount large enough for two chamfered corners to land on each other those are
+       * different questions with different answers. That is the instrument confusion #754
+       * already named one domain over, it warns rather than refuses, and clamping is
+       * out of scope by decision rather than by oversight.
+       */
+      readonly amount: number;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

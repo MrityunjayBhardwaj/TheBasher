@@ -50,6 +50,7 @@ import {
   subsetGeometryRef,
   rebuildGeometryRef,
   sphereGeometryRef,
+  bevelGeometryRef,
 } from './modifierGeometry';
 import { declaredParamKeys } from './inspectorSectionBody';
 import { __resetRegistryForTests } from '../core/dag/registry';
@@ -113,6 +114,20 @@ const HANDLE_KINDS: Record<
     // `keep` is the only non-`scope` field, and the probe must MOVE the key: the two
     // polarities over one query are two different geometries.
     probe: false,
+  },
+  bevel: {
+    // 🔴 `null` BECAUSE #814 SHIPS THE SUBSTRATE AND NOT A DIRECTOR-FACING NODE, which is a
+    // stated limit rather than an oversight — the same shape #812 shipped in, and the reason the
+    // reach check below skips this row. The day a `BevelModifier` exists it names `amount` here
+    // and this row starts asking whether that param can reach the handle.
+    //
+    // The fixture still earns its place with `producer: null`: the union-membership check at the
+    // bottom of this file enumerates the descriptor kinds from `types.ts` and compares against
+    // THIS table, so a kind added to the union and forgotten here is a red rather than a gap.
+    producer: null,
+    ref: bevelGeometryRef(boxGeometryRef([1, 1, 1], null), 0.1),
+    // Must MOVE the key: two amounts are two geometries, even though they are one topology.
+    probe: 0.25,
   },
   gltf: {
     producer: null,

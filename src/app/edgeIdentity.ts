@@ -31,6 +31,9 @@ import type { CountVerdict, GeometryDescriptor } from '../nodes/types';
 import { type PolygonRim, polygonLayoutOf, reverseRim } from './polygonLayout';
 import { tiledFaceOrder, mappedFacesOf } from './faceCount';
 import { pointCountOf } from './pointIdentity';
+// #814 — closes the ring `faceCount -> bevelLayout -> edgeIdentity -> faceCount`. Call-time only;
+// `bevelLayout.ts`'s header carries the measurement and the rule.
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * A geometry's edges, as pairs of TOPOLOGICAL point ids.
@@ -272,6 +275,14 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
         rims.push(reversesCopies && copy > 0 ? reverseRim(rim) : rim);
       }
       return rims;
+    }
+    // #814 — READ OFF THE LAYOUT RATHER THAN COMPOSED FROM THE SOURCE'S RIMS, because a bevel's
+    // rims are not a gather: two thirds of its faces have no source rim to copy. The layout
+    // already states them in output point ids, which is what makes `edgeSetOf`, `edgeCountOf`
+    // and a bevel of a bevel all compose over this arm with nothing further to say.
+    case 'bevel': {
+      const verdict = bevelLayoutOf(descriptor);
+      return verdict.kind === 'laid-out' ? verdict.layout.rims : null;
     }
     default: {
       const unreachable: never = descriptor;

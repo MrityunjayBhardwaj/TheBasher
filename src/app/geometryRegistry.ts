@@ -32,7 +32,13 @@
 // REF: PLAN.md Wave 1 Tasks 2-3; CONTEXT §C; RESEARCH §C/§Q2; vyapti V1 (exempt),
 //      authoritative-baked-store vyapti.
 
-import { BoxGeometry, Matrix4, SphereGeometry, type BufferGeometry } from 'three';
+import {
+  BoxGeometry,
+  BufferGeometry,
+  Float32BufferAttribute,
+  Matrix4,
+  SphereGeometry,
+} from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { MATERIAL_INDEX } from '../nodes/attributes';
@@ -55,6 +61,8 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // imports, which is what keeps the registry's declared import set honest: every module
 // here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
 import { scopeSelection } from '../nodes/scopeQuery';
+import { bevelLayoutOf } from './bevelLayout';
+import { alignedSplitRims } from './builtRims';
 import type { ScopeDomain } from '../nodes/attributes';
 
 const cache = new Map<string, BufferGeometry>();
@@ -318,6 +326,11 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
     // inherits by the SAME rule rather than a second one. It emits fewer faces than its
     // source; it does not become available any earlier or later than it.
     case 'subset':
+      return composedOverSource(availabilityOf(descriptor.source.descriptor));
+    // #814 — a bevel is a recipe rooted at its source by the same rule again. It emits MORE
+    // faces than its source rather than fewer, and that changes nothing here: availability is
+    // about whether the buffers can be reached, never about how many elements come out.
+    case 'bevel':
       return composedOverSource(availabilityOf(descriptor.source.descriptor));
     default: {
       const unreachable: never = descriptor;
@@ -598,6 +611,21 @@ function build(ref: GeometryRef): BufferGeometry | null {
   );
   if (pointDisagreement !== null) console.warn(pointDisagreement);
 
+  // #814 — A MINTING OPERATOR DROPS ITS SOURCE'S FACE ATTRIBUTES, AND THE DROP IS SAID OUT LOUD.
+  //
+  // It is not a disagreement and not a defect: a bevel's face order is two thirds holes, so
+  // `mappedFacesOf` refuses it and no gather happens, which is the decided answer — a refusal
+  // with a reason beats a neighbour's value invented for a face that came from nowhere. What
+  // would be wrong is silence. A director who assigned two materials and added a bevel would
+  // watch them disappear with nothing said, which is [[H512]]'s shape even where the sharing is
+  // correct.
+  //
+  // ⚠️ HERE RATHER THAN AT THE REF BUILDER because builds are memoised on `ref.key`: this fires
+  // once per distinct geometry, where a warning minted beside the key would fire once per
+  // evaluate and be a message nobody reads.
+  const dropped = mintedFaceAttributeDrop(ref.descriptor);
+  if (dropped !== null) console.warn(dropped);
+
   if (ref.attributeKey === undefined) return built;
   const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
   if (index === undefined) return built;
@@ -694,6 +722,8 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
       return buildMirror(d);
     case 'subset':
       return buildSubset(d);
+    case 'bevel':
+      return buildBevel(d);
     // Declared nulls, not unknowns: the buffers are somewhere else on purpose (gltf in the
     // loaded asset clone, baked in OPFS behind an async read that `prime` completes).
     case 'gltf':
@@ -937,6 +967,156 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
  * geometry (box/sphere — the v1 sources) and falls back to swapping attribute
  * triplets for the non-indexed case. Returns `geom` for chaining.
  */
+/**
+ * Why a bevel's source carries face-domain data the bevel will not, or `null` when it does not.
+ *
+ * 🔴 A UNIFORM `material_index` IS NOT A LOSS, AND CHECKING FOR IT WOULD HAVE MADE THIS USELESS.
+ * Every primitive mints a uniform one, so "the source has a face attribute" is true of every
+ * bevel that will ever be built and a warning on it is noise that trains the reader to skip the
+ * channel. What is actually lost is a NON-uniform assignment — a mesh that drew in two materials
+ * and now draws in one — or any other face-domain attribute at all, since nothing else has a
+ * uniform reading that renders identically.
+ */
+function mintedFaceAttributeDrop(d: GeometryDescriptor): string | null {
+  if (d.kind !== 'bevel') return null;
+  const sourceKey = d.source.attributeKey;
+  if (sourceKey === undefined) return null;
+  const carried = read(sourceKey);
+  if (carried === null) return null;
+
+  const lost: string[] = [];
+  for (const [name, attribute] of Object.entries(carried)) {
+    if (attribute.domain !== 'face') continue;
+    if (name !== MATERIAL_INDEX) {
+      lost.push(name);
+      continue;
+    }
+    const { data } = attribute;
+    for (let i = 1; i < data.length; i++) {
+      if (data[i] !== data[0]) {
+        lost.push(`${name} (${data.length} faces, not uniform)`);
+        break;
+      }
+    }
+  }
+  if (lost.length === 0) return null;
+  return `geometryRegistry: a 'bevel' mints faces that came from no source face, so it carries no per-face attributes and its source's ${lost.join(', ')} does not survive it. The mesh draws with its first material only. This is the operator declining to invent a value for a minted face rather than a failure to gather one — see #786 for what a minted face should be worth.`;
+}
+
+/**
+ * #814 — THE FIRST BUILDER IN THIS REGISTRY THAT DOES NOT MERGE COPIES OF ITS SOURCE.
+ *
+ * `buildArray`, `buildMirror` and `buildSubset` all emit transformed or filtered copies of a
+ * geometry three.js built; every position they write already existed. This one writes positions
+ * that never existed, at a topology `bevelLayoutOf` derived from the descriptor alone.
+ *
+ * ── THE TOPOLOGY AND THE POSITIONS COME FROM DIFFERENT PLACES, ON PURPOSE ────────────────
+ *
+ * The LAYOUT — how many faces, which points each one joins, which source face each came from —
+ * is descriptor-side and is the same object every count function reads, so the builder cannot
+ * disagree with `faceCountOf` without disagreeing with itself. The POSITIONS need real
+ * coordinates, which only the built source has. `alignedSplitRims` is what joins them: it hands
+ * back the source's rims in its own split numbering, ROTATED so corner `k` of face `f` is the
+ * same corner in both spaces. Without that rotation the two would agree on counts and disagree
+ * on which corner is which — a mesh that builds, draws, and is wrong.
+ *
+ * ── ONE SPLIT VERTEX PER OUTPUT CORNER ──────────────────────────────────────────────────
+ *
+ * So every face gets its own vertices and `computeVertexNormals` yields FLAT shading, which is
+ * what a chamfer is — a shared-vertex build would average the chamfer strip into the faces
+ * around it and produce a rounded blob. It is also what `BoxGeometry` does (24 split positions
+ * for 8 points), so the position weld reads the same topological count either way.
+ *
+ * ⚠️ NO `uv` ATTRIBUTE, AND ITS ABSENCE IS THE HONEST ANSWER RATHER THAN AN OMISSION. In
+ * three.js `uv` is per split vertex — CORNER data — and the corner domain is exactly where a
+ * bevel mints. Copying the source corner's uv onto a chamfer strip would be inventing a
+ * plausible value for an element that has no source, which is the one thing [[V305]] says not to
+ * do. P6's discriminating observation is *"bevel an edge and the new faces carry interpolated
+ * UVs rather than zeros"*; leaving it absent is what keeps that observation able to discriminate.
+ */
+function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGeometry | null {
+  const verdict = bevelLayoutOf(d);
+  if (verdict.kind !== 'laid-out') {
+    // BY NAME rather than a bare null, because the two nulls in this file mean different things
+    // and a director asking why their bevel vanished deserves the sentence `bevelLayoutOf` wrote.
+    console.error(`geometryRegistry: cannot build a 'bevel' — ${verdict.why}`);
+    return null;
+  }
+  const layout = verdict.layout;
+
+  const source = get(d.source, 'internal');
+  if (source === null) return null;
+  const splitRims = alignedSplitRims(d.source, source);
+  const position = source.getAttribute('position');
+  if (splitRims === null || position === undefined) return null;
+  if (splitRims.length !== layout.sourceFaces) return null;
+
+  // ── 1. One position per OUTPUT TOPOLOGICAL POINT ──────────────────────────────────────
+  // Output point `cornerStart[f] + k` is source face `f`'s corner `k`, pulled back along BOTH
+  // rim edges that meet there. For a right-angled corner that is exactly a chamfer of `amount`
+  // measured perpendicular from each edge; for other angles it is the angle bisector, which is
+  // the miterless reading and is why a miter rule is named as out of scope rather than missing.
+  const points = new Float32Array(layout.points * 3);
+  for (let f = 0; f < layout.sourceFaces; f++) {
+    const rim = splitRims[f];
+    const n = rim.length;
+    for (let k = 0; k < n; k++) {
+      const here = rim[k];
+      const back = rim[(k - 1 + n) % n];
+      const on = rim[(k + 1) % n];
+      const hx = position.getX(here);
+      const hy = position.getY(here);
+      const hz = position.getZ(here);
+      let dx = 0;
+      let dy = 0;
+      let dz = 0;
+      for (const neighbour of [back, on]) {
+        const ex = position.getX(neighbour) - hx;
+        const ey = position.getY(neighbour) - hy;
+        const ez = position.getZ(neighbour) - hz;
+        const len = Math.hypot(ex, ey, ez);
+        // A zero-length rim edge is a degenerate source face, not an authoring state. Skipped
+        // rather than divided by: the alternative is a NaN position, which propagates silently
+        // through the merge and empties the whole draw.
+        if (len === 0) continue;
+        dx += ex / len;
+        dy += ey / len;
+        dz += ez / len;
+      }
+      const p = (layout.cornerStart[f] + k) * 3;
+      points[p] = hx + d.amount * dx;
+      points[p + 1] = hy + d.amount * dy;
+      points[p + 2] = hz + d.amount * dz;
+    }
+  }
+
+  // ── 2. One split vertex per OUTPUT CORNER, fanned into triangles ──────────────────────
+  const corners = layout.corners.reduce((sum, n) => sum + n, 0);
+  const positions = new Float32Array(corners * 3);
+  const index: number[] = [];
+  let cursor = 0;
+  for (let face = 0; face < layout.rims.length; face++) {
+    const rim = layout.rims[face];
+    const base = cursor;
+    for (const point of rim) {
+      positions[cursor * 3] = points[point * 3];
+      positions[cursor * 3 + 1] = points[point * 3 + 1];
+      positions[cursor * 3 + 2] = points[point * 3 + 2];
+      cursor++;
+    }
+    // The same fan every other polygon in this codebase materialises to — `(0, i, i+1)` around
+    // corner 0 — so `materialisedTriangles` and `faceElementStarts` describe this buffer without
+    // a second convention to keep in step.
+    for (let i = 1; i + 1 < rim.length; i++) index.push(base, base + i, base + i + 1);
+  }
+
+  const built = new BufferGeometry();
+  built.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  built.setIndex(index);
+  built.computeVertexNormals();
+  return built;
+}
+
 function reverseWinding(geom: BufferGeometry): BufferGeometry {
   const index = geom.getIndex();
   if (index) {

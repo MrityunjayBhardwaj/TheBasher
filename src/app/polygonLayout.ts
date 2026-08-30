@@ -352,6 +352,16 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
         kind: 'outside-the-descriptor',
         why: "a 'baked' descriptor carries a vertex count and its authoritative bytes are in OPFS, so its polygons are not derivable here",
       };
+    // #814 — refused for the same reason the derived kinds above are, and it is worth being
+    // precise about which reason. This function states rims in a BUILT geometry's SPLIT vertex
+    // numbering; a bevel's split numbering is the builder's own and is not derivable here. Its
+    // WELDED rims are a different question with an answer — `weldedPolygonsOf` has the arm — and
+    // that is the same projection-composes-where-the-structure-cannot split #770 already found.
+    case 'bevel':
+      return {
+        kind: 'outside-the-descriptor',
+        why: "a 'bevel' mints faces, so its rims exist only in the split numbering the builder lays out; its WELDED rims are stated by 'weldedPolygonsOf'",
+      };
     default: {
       const unreachable: never = descriptor;
       throw new Error(`polygonLayoutOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
