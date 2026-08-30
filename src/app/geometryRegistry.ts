@@ -610,21 +610,21 @@ function build(ref: GeometryRef): BufferGeometry | null {
     sourceWeldFor(ref.descriptor),
   );
   if (pointDisagreement !== null) console.warn(pointDisagreement);
-
-  // #814 — A MINTING OPERATOR DROPS ITS SOURCE'S FACE ATTRIBUTES, AND THE DROP IS SAID OUT LOUD.
+  // 🔴 THE BEVEL FACE-ATTRIBUTE DROP WARNING WAS REMOVED AT #825, AND ITS REASON WENT WITH IT.
   //
-  // It is not a disagreement and not a defect: a bevel's face order is two thirds holes, so
-  // `mappedFacesOf` refuses it and no gather happens, which is the decided answer — a refusal
-  // with a reason beats a neighbour's value invented for a face that came from nowhere. What
-  // would be wrong is silence. A director who assigned two materials and added a bevel would
-  // watch them disappear with nothing said, which is [[H512]]'s shape even where the sharing is
-  // correct.
+  // It said a bevel *"carries no per-face attributes... The mesh draws with its first material
+  // only"* — true while #814's drop stood, and FALSE the moment the representative map landed.
+  // A bevelled two-material box now draws in both. Leaving it would have made it a lying label
+  // of the exact kind this file keeps finding: a warning that fires correctly-looking text about
+  // a condition that is no longer the case, which is worse than no warning because it gets
+  // believed.
   //
-  // ⚠️ HERE RATHER THAN AT THE REF BUILDER because builds are memoised on `ref.key`: this fires
-  // once per distinct geometry, where a warning minted beside the key would fire once per
-  // evaluate and be a message nobody reads.
-  const dropped = mintedFaceAttributeDrop(ref.descriptor);
-  if (dropped !== null) console.warn(dropped);
+  // 🔑 AND IT WAS A SECOND SPELLING BESIDES. It re-derived "what does a bevel fail to carry?"
+  // from the source's attribute set, with no reference to what the carriage actually laid out —
+  // so the two answers were free to drift, and they did, in one commit. What genuinely refuses
+  // now is the CORNER domain, and `mintTiledModifierAttributes` already warns for every refusal
+  // by name, asking the question rather than restating an answer. One warning, at the place that
+  // knows.
 
   if (ref.attributeKey === undefined) return built;
   const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
@@ -967,41 +967,6 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
  * geometry (box/sphere — the v1 sources) and falls back to swapping attribute
  * triplets for the non-indexed case. Returns `geom` for chaining.
  */
-/**
- * Why a bevel's source carries face-domain data the bevel will not, or `null` when it does not.
- *
- * 🔴 A UNIFORM `material_index` IS NOT A LOSS, AND CHECKING FOR IT WOULD HAVE MADE THIS USELESS.
- * Every primitive mints a uniform one, so "the source has a face attribute" is true of every
- * bevel that will ever be built and a warning on it is noise that trains the reader to skip the
- * channel. What is actually lost is a NON-uniform assignment — a mesh that drew in two materials
- * and now draws in one — or any other face-domain attribute at all, since nothing else has a
- * uniform reading that renders identically.
- */
-function mintedFaceAttributeDrop(d: GeometryDescriptor): string | null {
-  if (d.kind !== 'bevel') return null;
-  const sourceKey = d.source.attributeKey;
-  if (sourceKey === undefined) return null;
-  const carried = read(sourceKey);
-  if (carried === null) return null;
-
-  const lost: string[] = [];
-  for (const [name, attribute] of Object.entries(carried)) {
-    if (attribute.domain !== 'face') continue;
-    if (name !== MATERIAL_INDEX) {
-      lost.push(name);
-      continue;
-    }
-    const { data } = attribute;
-    for (let i = 1; i < data.length; i++) {
-      if (data[i] !== data[0]) {
-        lost.push(`${name} (${data.length} faces, not uniform)`);
-        break;
-      }
-    }
-  }
-  if (lost.length === 0) return null;
-  return `geometryRegistry: a 'bevel' mints faces that came from no source face, so it carries no per-face attributes and its source's ${lost.join(', ')} does not survive it. The mesh draws with its first material only. This is the operator declining to invent a value for a minted face rather than a failure to gather one — see #786 for what a minted face should be worth.`;
-}
 
 /**
  * #814 — THE FIRST BUILDER IN THIS REGISTRY THAT DOES NOT MERGE COPIES OF ITS SOURCE.

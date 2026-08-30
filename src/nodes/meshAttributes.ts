@@ -38,6 +38,7 @@ import {
   tiledFaceOrder,
   type TiledCornerOrder,
   type TiledFaceOrder,
+  type SourceFace,
   mappedFacesOf,
 } from '../app/faceCount';
 import { tiledPointOrder, type TiledPointOrder } from '../app/pointIdentity';
@@ -297,7 +298,11 @@ export function mintTargetedAttributes(
  * already varies with anything the gather could read. Widening the gather does not widen what
  * identifies its input.
  */
-const tiledKeyCache = new WeakMap<readonly number[], Map<string, string>>();
+// #825 — the key is a corner order for a mapping kind and a FACE order for a minting one, so it
+// widens to the union of the two element types. Both are identity-stable arrays owned by a cache
+// upstream; what this map requires of a key is only that the same descriptor hands back the same
+// object, which is asserted rather than assumed by `mintedKeyIdentity.gate.test.ts`.
+const tiledKeyCache = new WeakMap<readonly SourceFace[], Map<string, string>>();
 
 /**
  * How one domain's attributes are laid out across a generator's copies: the gather order, the
@@ -531,7 +536,12 @@ export function carriageForDomain(
   data: AttributeData,
   operator: GeometryDescriptor['kind'],
   faces: TiledFaceOrder,
-  corners: TiledCornerOrder,
+  // 🔴 NULLABLE SINCE #825, AND THE NULL IS LOAD-BEARING. A minting kind has no corner ORDER —
+  // `tiledCornerOrder` derives one from the face order and a minted face has no source corner to
+  // gather through. This used to be fatal one level up: `mintTiledModifierAttributes` returned
+  // `null` the moment the corner order was missing, so a bevel's per-FACE materials died of a
+  // missing CORNER order. An aggregate refusing on behalf of a domain it was not asked about.
+  corners: TiledCornerOrder | null,
   points: TiledPointOrder,
 ): ClassCarriage {
   const { domain } = data;
@@ -570,21 +580,54 @@ export function carriageForDomain(
       // element's value should BE is the interpolation question, and it is not this
       // function's to answer.
       const mapped = mappedFacesOf(faces.order);
-      if (mapped === null)
+      // 🔑 #825 — THE SECOND MAP, AND IT IS CONSULTED ONLY AFTER THE FIRST COMES BACK HOLED.
+      // `mappedFacesOf` still answers the provenance question and still refuses to invent one;
+      // what changed is that a holed order is no longer the END of the road. `representative`
+      // says which source face a minted face INHERITS from, which is a different claim in a
+      // different field, so provenance stays exactly as askable as #812 made it.
+      //
+      // Grounded: `bmesh_bevel.cc:1248-1254` creates each minted face with a `facerep` and calls
+      // `BM_elem_attrs_copy(bm, facerep, f)` — face data is COPIED from one representative, not
+      // blended. (Per-LOOP data is interpolated instead, at `:1279`, and that is the corner arm
+      // below and slice 2 of #825.) So this arm follows the reference's rule for this domain
+      // rather than generalising the other one onto it.
+      const inherit = mapped ?? faces.representative;
+      if (inherit === undefined)
         return {
           kind: 'refused',
           why:
             `'${operator}' mints faces that came from no source face, and a '${data.type}' at ` +
             `the '${domain}' domain can only be gathered THROUGH a source — a minted face has ` +
-            `no value to gather and no rule yet for inventing one`,
-          until: '#786',
+            `no value to gather and no rule for inventing one`,
+          until: '#825',
         };
       return {
         kind: 'laid-out',
-        layout: { order: mapped, sourceElements: faces.sourceFaces, noun: verdict.noun },
+        layout: { order: inherit, sourceElements: faces.sourceFaces, noun: verdict.noun },
       };
     }
     case 'corner-order':
+      // #825 slice 2. A minting kind reaches here with no corner order at all, and unlike the
+      // face domain there is no second map that would rescue it: the reference does not COPY a
+      // minted corner's value from anywhere, it INTERPOLATES it — `BM_loop_interp_from_face`
+      // (`bmesh_interp.cc:693`) projects the source face into 2D along its normal, takes
+      // generalised barycentric weights at the destination corner's POSITION, and blends.
+      //
+      // 🔴 THAT IS A DIFFERENT MECHANISM CLASS, NOT A MISSING ORDER. Every layout on this road is
+      // an index gather — `order[i]` names a source element — and there are no positions and no
+      // weights anywhere in this module. So this refuses rather than reaching for the face map: a
+      // minted corner given its representative face's corner value would be a plausible, wrong,
+      // un-interpolated UV, which is exactly the quiet kind of wrong this substrate exists to
+      // prevent. The bevel emitting NO uv is what keeps that observation able to discriminate.
+      if (corners === null)
+        return {
+          kind: 'refused',
+          why:
+            `'${operator}' mints faces, and a '${data.type}' at the '${domain}' domain cannot be ` +
+            `gathered through an order at all — a minted corner's value is INTERPOLATED from a ` +
+            `representative face at its own position, and this road carries no positions`,
+          until: '#825',
+        };
       return {
         kind: 'laid-out',
         layout: {
@@ -703,7 +746,20 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // order and the corner order, and all three answer for a subset — `tiledCornerOrder`
   // derives from the face order and its `reversesCopies` is correctly `false` here, since
   // `faceSubset` applies no winding reversal the way `buildMirror` does.
-  if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
+  // #825 — `bevel` JOINS, AND IT IS THE FIRST MEMBER HERE THAT MINTS. The three above all map,
+  // so every one of their orders is total and every domain in the table below could be gathered.
+  // A bevel can be gathered at the FACE domain (through the representative map) and cannot at the
+  // corner domain (that needs interpolation, not an order) — so for the first time this function
+  // admits a kind whose domains do not all answer alike, and the per-domain arms in
+  // `carriageForDomain` are what say which. That is why the corner order below stopped being
+  // fatal: refusing the whole set on its absence would drop a bevel's per-face materials because
+  // of a domain nobody asked about.
+  if (
+    descriptor.kind !== 'array' &&
+    descriptor.kind !== 'mirror' &&
+    descriptor.kind !== 'subset' &&
+    descriptor.kind !== 'bevel'
+  )
     return null;
 
   const sourceKey = descriptor.source.attributeKey;
@@ -723,20 +779,42 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // Asked for unconditionally rather than only when a corner attribute is present: it is a
   // memoised expansion of the face order just taken, so the branch would buy nothing and
   // would put the two orders on different roads through this function.
+  //
+  // 🔴 ITS ABSENCE IS NO LONGER FATAL (#825), AND THAT LINE IS WHY A BEVEL SILENTLY CARRIED
+  // NOTHING. `tiledCornerOrder` derives from the face order and a minted face has no source
+  // corner, so it returns `null` for every minting kind — and this used to return `null` for the
+  // WHOLE SET on that basis, which meant a bevel's per-FACE materials died of a missing CORNER
+  // order. The measurement that caught it: the representative map was built, total and correct at
+  // both a cube and a mixed-arity sphere, and the built geometry still came back with
+  // `attributeKey: undefined` and `groups: []`. An aggregate refusing on behalf of a domain
+  // nobody asked about — the same shape as `signedVolume` passing with 8 of 26 faces inside out.
+  //
+  // It travels nullable instead, and `carriageForDomain`'s CORNER arm refuses it by name.
   const corners = tiledCornerOrder(descriptor);
-  if (corners === null) return null;
   // #717 — the third order, taken unconditionally for the same reason the corner order is: it
   // is a memoised function of two numbers, so a branch on "does this source carry a point
   // attribute?" would buy nothing and would put the three orders on different roads through
   // this function.
   const points = tiledPointOrder(descriptor);
   if (points === null) return null;
+  // 🔴 NOT FATAL SINCE #825 — see the kind check above. `null` here means "this kind mints", and
+  // it travels to `carriageForDomain` so the CORNER arm can refuse by name while the face arm
+  // lays out through the representative map. The previous `if (corners === null) return null` was
+  // written when every member of this function's population mapped, so a missing corner order
+  // genuinely did mean a broken descriptor; with a minting kind admitted it means one domain is
+  // unanswerable, and answering for the others is the whole point of a per-domain table.
 
   // The memo is consulted BEFORE the layouts are resolved, not after. Everything below this
   // line is a pure function of the two things the key already names — the corner order and the
   // source key — so a hit that had to walk the attribute set first would be paying the cost it
   // exists to avoid. #689 measured that road at 75 µs to 1.69 ms per operator per evaluate.
-  const perSource = tiledKeyCache.get(corners.order);
+  // #825 — the corner order is the key where there IS one, and the FACE order where there is not.
+  // Both are identity-stable across calls for the same descriptor: the derived kinds memoise their
+  // corner order, and a bevel's face order array lives in the layout `bevelLayoutOf` caches on the
+  // source handle — measured, including that two different amounts hand back the same array, which
+  // is what makes it a sound key for a memo that must not confuse two geometries.
+  const memoKey = corners?.order ?? tiled.order;
+  const perSource = tiledKeyCache.get(memoKey);
   const remembered = perSource?.get(sourceKey);
   if (remembered !== undefined) return remembered;
 
@@ -911,7 +989,7 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // whose assignment does not fit gets the warning EVERY time rather than once. A guard that
   // goes quiet after its first firing is a guard that stops reporting a condition which is
   // still true.
-  if (perSource === undefined) tiledKeyCache.set(corners.order, new Map([[sourceKey, minted.key]]));
+  if (perSource === undefined) tiledKeyCache.set(memoKey, new Map([[sourceKey, minted.key]]));
   else perSource.set(sourceKey, minted.key);
   return minted.key;
 }

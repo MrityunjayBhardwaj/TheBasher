@@ -100,6 +100,34 @@ export interface BevelLayout {
   readonly pointOrder: readonly number[];
   /** Output topological points — one per source face-corner, so `= sum(source arities)`. */
   readonly points: number;
+  /**
+   * `representative[i]` is the source face output face `i` INHERITS its attributes from (#825).
+   *
+   * 🔑 THE SECOND MAP, AND ITS WHOLE POINT IS THAT IT IS A DIFFERENT ANSWER FROM {@link faceOrder}.
+   * That one says where a face CAME FROM and is honestly holed — a minted face came from no
+   * source face, and #812 widened the type so it could say so. This one says which face a minted
+   * face BORROWS from, and it is total. #814 predicted exactly this shape: *"the day they should
+   * survive, the answer is a second map, not a looser first one."* Collapsing the two would make
+   * provenance unaskable, which is the thing #812 was built to make askable.
+   *
+   * ── THE TIE-BREAK IS LOWEST CANDIDATE FACE INDEX, AND IT IS A DECISION ─────────────────
+   *
+   * A mapped face is its own representative. An edge quad has TWO candidates (the edge's incident
+   * faces, which this layout already requires to be exactly two) and a corner n-gon has as many as
+   * the point's valence, so a choice is forced and it decides which material a chamfer wears on a
+   * two-material box. Lowest index, always.
+   *
+   * ⚠️ DELIBERATELY SIMPLER THAN THE REFERENCE, AND THE REASON IS STRUCTURAL RATHER THAN LAZY.
+   * Blender's `choose_rep_face` (`bmesh_bevel.cc`) ranks candidates on a six-term vector: math-layer
+   * connected component, then selected-beats-unselected, then LOWER MATERIAL INDEX, then the face
+   * centre's z, x and y. Its first three terms read ATTRIBUTES and its last three read POSITIONS —
+   * and this layout is a closed form over the source's topology alone, which is exactly why
+   * `bevelLayoutOf` can cache it on the source handle and an amount drag costs one map lookup.
+   * Ranking on a material index here would make the layout depend on the attribute set and destroy
+   * that. So the candidates are the part that is topology, and they are what a richer rule would
+   * need: the day one is wanted, it ranks the candidates where the attributes are in hand.
+   */
+  readonly representative: readonly number[];
 }
 
 /**
@@ -222,6 +250,8 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
   }
 
   const faceOrder: SourceFace[] = [];
+  // #825 — index-aligned with `faceOrder` and TOTAL where that one is holed. See the field's doc.
+  const representative: number[] = [];
   const corners: number[] = [];
   const rimsOut: PolygonRim[] = [];
 
@@ -230,6 +260,9 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
   // `sourceFaces` entries are the input" stays one statement across every derived kind.
   for (let f = 0; f < sourceFaces; f++) {
     faceOrder.push(f);
+    // A face that came from somewhere inherits from there. The two maps agree on this stretch and
+    // diverge only over the minted tail, which is what makes the divergence readable.
+    representative.push(f);
     corners.push(rims[f].length);
     rimsOut.push(rims[f].map((_, k) => cornerStart[f] + k));
   }
@@ -266,6 +299,11 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
     const bInBa = atB;
     const aInBa = (atB + 1) % rims[ba].length;
     faceOrder.push(null);
+    // Two candidates, and `ab` / `ba` are already the two incident faces named by winding. Lowest
+    // index rather than `ab`: the winding-derived choice would make the answer depend on which way
+    // the source happens to traverse the edge, which is a property of the mesh's authoring and not
+    // of the operator.
+    representative.push(Math.min(ab, ba));
     corners.push(4);
     rimsOut.push([
       cornerStart[ab] + bInAb,
@@ -297,6 +335,8 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
     );
     if (fan.kind === 'refused') return fan;
     faceOrder.push(null);
+    // `valence` candidates — every face in the closed ring around this point.
+    representative.push(fan.rim.reduce((lowest, [f]) => (f < lowest ? f : lowest), fan.rim[0][0]));
     corners.push(fan.rim.length);
     rimsOut.push(fan.rim.map(([f, k]) => cornerStart[f] + k));
   }
@@ -313,6 +353,7 @@ function deriveLayout(source: GeometryDescriptor): BevelVerdict {
       rims: rimsOut,
       pointOrder,
       points,
+      representative,
     },
   };
 }

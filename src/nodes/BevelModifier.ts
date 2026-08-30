@@ -63,8 +63,8 @@
 // REF: src/app/modifierGeometry.ts (`bevelGeometryRef` — the one place a bevel becomes a
 //      handle, and the refusal this node's arm mirrors); src/app/bevelLayout.ts (the closed-
 //      form layout and what it refuses); src/nodes/types.ts (the `bevel` descriptor); issues
-//      #818, #814, #817 (no upper bound on `amount`), #786 (what a minted face's attributes
-//      should take), #783.
+//      #818, #814, #817 (no upper bound on `amount`), #825 (what a minted element's attributes
+//      are worth — its FACE half is built, its corner half is not), #783.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';

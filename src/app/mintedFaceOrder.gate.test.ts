@@ -178,8 +178,24 @@ describe('HALF B — the hole is exercised where it can be reached', () => {
     if (verdict.kind !== 'refused') throw new Error('unreachable — asserted above');
     // Refused, not DROPPED: a drop is about a class and is true for every descriptor; this is
     // about this operator and this datum, which is the distinction `ClassCarriage` draws.
-    expect(verdict.until).toBe('#786');
+    expect(verdict.until).toBe('#825');
     expect(verdict.why).toMatch(/mint/i);
+
+    // 🔑 #825 — AND THIS IS WHY THE ROW SURVIVED THAT ISSUE INSTEAD OF BEING DELETED BY IT.
+    // A holed order no longer refuses on its own; it refuses when there is no SECOND map beside
+    // it. The fixture above is holed and carries none, which is exactly the state a widened
+    // `mappedFacesOf` would have produced — so this row now pins the difference between the two
+    // designs rather than merely the old one. Same order, same hole, one added field:
+    const withRepresentative: TiledFaceOrder = {
+      ...holed,
+      representative: holed.order.map((f) => f ?? 0),
+    };
+    const rescued = carriageForDomain(data, 'array', withRepresentative, corners, points);
+    expect(rescued.kind).toBe('laid-out');
+    if (rescued.kind !== 'laid-out') throw new Error('unreachable — asserted above');
+    // Through the representative, NOT through the holed order — asserted on identity, because a
+    // layout that had gathered through `order` would also report `laid-out`.
+    expect(rescued.layout.order).toBe(withRepresentative.representative);
   });
 
   it('6 — 🔴 weldedPolygonsOf refuses a holed order — a minted face has no source rim to copy', async () => {

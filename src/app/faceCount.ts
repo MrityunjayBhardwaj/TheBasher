@@ -290,6 +290,18 @@ export interface TiledFaceOrder {
    * face `i` was minted and came from no source face at all.
    */
   readonly order: readonly SourceFace[];
+  /**
+   * `representative[i]` is the source face output face `i` INHERITS from — total where
+   * {@link order} is holed, and present only for kinds that mint (#825).
+   *
+   * ⚠️ ABSENT, NOT EQUAL TO `order`, FOR EVERY MAPPING KIND. An `array` / `mirror` / `subset`
+   * order has no holes, so a representative would be the same array under a second name — and a
+   * second name for one answer is the drift this module keeps arguing against. Absence here means
+   * "ask `order`, it is total"; presence means "`order` has holes and this is what to gather
+   * through instead". A consumer that reads this without first finding `order` holed is asking
+   * the inheritance question where the provenance one was answerable, which is a different bug.
+   */
+  readonly representative?: readonly number[];
 }
 
 /**
@@ -407,8 +419,8 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
   if (descriptor.kind === 'bevel') {
     const verdict = bevelLayoutOf(descriptor);
     if (verdict.kind !== 'laid-out') return null;
-    const { sourceFaces, faceOrder } = verdict.layout;
-    return { sourceFaces, order: faceOrder };
+    const { sourceFaces, faceOrder, representative } = verdict.layout;
+    return { sourceFaces, order: faceOrder, representative };
   }
   const tiling = faceTilingOf(descriptor);
   if (tiling === null) return null;

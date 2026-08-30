@@ -65,8 +65,11 @@ import { builtPolygonRims, composedWeldOf } from './builtRims';
 import { carriageForDomain } from '../nodes/meshAttributes';
 import { MATERIAL_INDEX, type AttributeData } from '../nodes/attributes';
 import { mintAttributes } from '../nodes/attributeKey';
+import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
+import { registerAllNodes } from '../nodes/registerAll';
+import { __resetRegistryForTests } from '../core/dag';
 import { insert } from './attributeStore';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryRef, ObjectData } from '../nodes/types';
 
 const SIZE: [number, number, number] = [1, 1, 1];
 
@@ -156,6 +159,10 @@ function sameLoop(a: readonly number[], b: readonly number[]): boolean {
 }
 
 beforeEach(() => {
+  // #825 row 12e evaluates real nodes, so the registry has to be seeded — the rest of this file
+  // calls the builders directly and never needed it.
+  __resetRegistryForTests();
+  registerAllNodes();
   clear();
 });
 
@@ -458,47 +465,259 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     // Corner: no order at all for a minting kind, so nothing can be gathered through one.
     expect(tiledCornerOrder(ref.descriptor)).toBeNull();
 
-    // Face: the carriage declines, and names #786 as what would settle it — the refusal carries
-    // its way out rather than being a dead end.
+    // 🔴 THIS ROW ASSERTED A REFUSAL UNTIL #825, AND THE REVERSAL IS THE POINT OF THAT ISSUE.
     //
-    // ⚠️ THE CORNER ORDER HERE IS A SYNTHETIC FIXTURE, AND THAT IS THE HONEST SHAPE OF THIS ROW.
-    // `carriageForDomain` REQUIRES one and a bevel has none, so in production the refusal happens
-    // one step earlier — `mintTiledModifierAttributes` narrows the kind away before any order is
-    // asked for, which is what the `attributeKey` assertions below actually observe. Supplying a
-    // stand-in is the only way to reach the carriage and show WHICH of its inputs refuses: the
-    // face order's hole, not the corner order's absence. Passing `null` instead compiled under
-    // vitest and was caught only by the changed-file sweep, since `npm run typecheck` does not
-    // see test files.
+    // #814 decided that a minted face's attributes DROP — deliberately stricter than the
+    // reference, which copies a neighbour's value — and its own body named the way back:
+    // *"the day they should survive, the answer is a second map, not a looser first one."*
+    // #825 built that second map. `faceOrder` still says a minted face came from NOWHERE and
+    // `mappedFacesOf` still refuses to invent a provenance; `representative` answers the
+    // different question of what it INHERITS from, and this arm consults it only after the
+    // first comes back holed.
+    //
+    // Grounded rather than preferred: `bmesh_bevel.cc:1248-1254` creates each minted face with a
+    // `facerep` and calls `BM_elem_attrs_copy(bm, facerep, f)` — face data is COPIED from one
+    // representative face. The CORNER domain is the one that still refuses, and for a reason no
+    // second map fixes: `:1279` interpolates loop data spatially instead.
+    //
+    // ⚠️ THE CORNER ORDER STAND-IN IS GONE. It existed because `carriageForDomain` required an
+    // order a bevel does not have; #825 made that parameter nullable, so this row now hands it
+    // the `null` production hands it, and the two domains are asked the same way the real road
+    // asks them.
     const data: AttributeData = {
       domain: 'face',
       type: 'int',
       count: 6,
       data: new Int32Array([0, 0, 0, 1, 1, 1]),
     };
-    const standInCorners = { sourceCorners: 24, order: [] as readonly number[] };
-    const verdict = carriageForDomain(
-      data,
+    const points = tiledPointOrder(ref.descriptor)!;
+    const face = carriageForDomain(data, 'bevel', faces, null, points);
+
+    // FACE: lays out now, and THROUGH THE REPRESENTATIVE rather than through the order. Asserted
+    // on the identity of the array it names, not merely on `kind`: a layout that had somehow
+    // gathered through the holed order would also report `laid-out`.
+    expect(face.kind).toBe('laid-out');
+    if (face.kind !== 'laid-out') throw new Error('unreachable — asserted above');
+    expect(face.layout.order).toBe(faces.representative);
+    expect(face.layout.order).not.toBe(faces.order);
+    // Total where the provenance is holed — the two maps disagree, which is why there are two.
+    expect(face.layout.order).toHaveLength(faces.order.length);
+    expect(face.layout.order.every((f) => typeof f === 'number')).toBe(true);
+    expect(faces.order.filter((f) => f === null)).toHaveLength(20);
+
+    // CORNER: still refuses, and names #825's second slice. This is the domain a second map
+    // cannot rescue — the reference interpolates it at a position, and this road has none.
+    const corner = carriageForDomain(
+      { domain: 'corner', type: 'float2', count: 24, data: new Float32Array(48) },
       'bevel',
       faces,
-      standInCorners,
-      tiledPointOrder(ref.descriptor)!,
+      null,
+      points,
     );
-    expect(verdict.kind).toBe('refused');
-    if (verdict.kind !== 'refused') throw new Error('unreachable — asserted above');
-    expect(verdict.until).toBe('#786');
-    expect(verdict.why).toMatch(/mint/i);
+    expect(corner.kind).toBe('refused');
+    if (corner.kind !== 'refused') throw new Error('unreachable — asserted above');
+    expect(corner.until).toBe('#825');
+    expect(corner.why).toMatch(/interpolat/i);
 
-    // So the handle carries no attribute component. For the mapping kinds that collapse is
-    // [[H512]]'s bug; here the output genuinely expresses no per-face assignment, so two sources
-    // differing only in one produce the same geometry and SHOULD share a build.
+    // ⚠️ THIS SOURCE CARRIES NO ATTRIBUTES AT ALL — `boxGeometryRef(SIZE, null)` — so its bevel
+    // has no component for the reason it never had one: there is nothing to carry. That is a
+    // DIFFERENT absence from the drop this row used to assert, and stating it here keeps the two
+    // from being read as the same fact. The source that does carry one is row 12b.
     expect(ref.attributeKey).toBeUndefined();
     expect(ref.key).not.toMatch(/\|a:/);
   });
 
-  it('13 — 🔴 the drop is LOUD for a real loss and SILENT for a uniform one', () => {
-    // The noise test, and it is the half that makes the channel worth reading. Every primitive
-    // mints a uniform `material_index`, so warning whenever a source "has a face attribute" would
-    // fire on every bevel that will ever be built.
+  it('12b — 🔑 a bevel of an ATTRIBUTED source now carries the set, on the representative map', () => {
+    // The other half of row 12, and the one a director feels. Row 12 shows the carriage laying
+    // out; this shows the handle and the BUILT geometry carrying the result, which is the claim
+    // #825 actually makes. Before it, a bevelled two-material box drew in one material.
+    const minted = mintAttributes({
+      [MATERIAL_INDEX]: {
+        domain: 'face',
+        type: 'int',
+        count: 6,
+        data: new Int32Array([0, 0, 0, 1, 1, 1]),
+      } as AttributeData,
+    })!;
+    insert(minted.key, minted.set, 'evaluate');
+    const src = boxGeometryRef(SIZE, minted.key);
+    const ref = bevelGeometryRef(src, 0.1);
+
+    expect(ref.attributeKey).toBeDefined();
+    expect(ref.key).toMatch(/\|a:/);
+
+    // 🔴 AND THE ASSIGNMENT IS READ BACK OFF THE BUILT INDEX BUFFER, not off the key. A key that
+    // merely differs proves the two builds are distinguished; it does not prove the right
+    // triangles wear the right material, which is the failure #649 and [[H512]] are both about.
+    const built = getForRead(ref)!;
+    const groups = built.groups;
+    expect(groups.length).toBeGreaterThan(1);
+    const total = groups.reduce((n, g) => n + g.count, 0);
+    // 26 output faces fan to 44 triangles = 132 index entries, and every one is claimed exactly
+    // once — so no triangle is left materialless and none is double-counted.
+    expect(total).toBe(132);
+    expect(built.getIndex()!.count).toBe(132);
+    // BOTH slots survive. A representative map that had collapsed to one face would show up here
+    // as a single group, which is precisely the pre-#825 picture.
+    expect(new Set(groups.map((g) => g.materialIndex))).toEqual(new Set([0, 1]));
+  });
+
+  it('12c — 🔴 THE TIE-BREAK IS PINNED, because every other row is BLIND to it', () => {
+    // 🔴 THIS ROW EXISTS BECAUSE A FALSIFICATION FOUND THE GATE BLIND. Flipping the tie-break
+    // from lowest candidate face to HIGHEST changes which material every chamfer wears — measured
+    // on this fixture, `[0,0,0,0,1,1,1,1,2,2,3,3,…]` becomes `[2,4,3,5,2,5,3,4,…]` and the built
+    // groups go from mostly slot 0 to mostly slot 1 — and rows 12, 12b and 13 ALL STILL PASSED.
+    // They assert that both slots survive and that every triangle is claimed exactly once, and
+    // both of those are true under either rule. So they check that a representative map EXISTS
+    // and never which one, which is the same blindness the count checks have about face order.
+    const v = bevelLayoutOf(bevelGeometryRef(boxGeometryRef(SIZE, null), 0.1).descriptor);
+    expect(v.kind).toBe('laid-out');
+    if (v.kind !== 'laid-out') throw new Error('unreachable — asserted above');
+    const { representative, faceOrder, sourceFaces } = v.layout;
+
+    // The map itself, exactly. A cube: 6 faces map to themselves, then 12 edge quads take the
+    // lower of their two incident faces, then 8 corner n-gons the lowest around each point.
+    expect([...representative]).toEqual([
+      0, 1, 2, 3, 4, 5, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 3, 3, 0, 0, 0, 0, 1, 1, 1, 1,
+    ]);
+
+    // The properties the literal is supposed to have, stated beside it so a future re-measure
+    // can tell a legitimate move from a broken one: total, in range, and agreeing with the
+    // provenance map exactly on the stretch where provenance exists.
+    expect(representative).toHaveLength(faceOrder.length);
+    expect(representative.every((f) => Number.isInteger(f) && f >= 0 && f < sourceFaces)).toBe(
+      true,
+    );
+    for (let i = 0; i < faceOrder.length; i++) {
+      if (faceOrder[i] !== null) expect(representative[i]).toBe(faceOrder[i]);
+    }
+    // …and diverging over the minted tail, which is the only reason there are two maps.
+    expect(faceOrder.filter((f) => f === null)).toHaveLength(20);
+  });
+
+  it('12d — the map is total and in range on a MIXED-ARITY source, not just a cube', () => {
+    // The row that bites, for the reason #814's Blender table gives: a cube has uniform valence
+    // and uniform arity, so a rule that happened to index the wrong thing can still land in
+    // range on every entry. A uv sphere has valence-4 rings and two valence-8 poles.
+    const sphere = sphereGeometryRef(1, 8, 6, null);
+    const v = bevelLayoutOf(bevelGeometryRef(sphere, 0.02).descriptor);
+    expect(v.kind).toBe('laid-out');
+    if (v.kind !== 'laid-out') throw new Error('unreachable — asserted above');
+    const { representative, faceOrder, sourceFaces } = v.layout;
+    expect(representative).toHaveLength(faceOrder.length);
+    expect(representative).toHaveLength(178);
+    expect(representative.every((f) => Number.isInteger(f) && f >= 0 && f < sourceFaces)).toBe(
+      true,
+    );
+    // Non-vacuity: the minted tail really is most of this shape, so "all in range" is a claim
+    // about 130 invented entries and not about 48 copied ones.
+    expect(faceOrder.filter((f) => f === null)).toHaveLength(130);
+
+    // 🔴 THE CORNER RULE CANNOT BE FALSIFIED BY SUBSTITUTION, AND SAYING SO IS THE POINT.
+    // Replacing "lowest face around the point" with "the face the fan happens to START at" leaves
+    // the output byte-identical — at a cube AND at this sphere. That is not a weak fixture: the
+    // fan begins at `cornersAtPoint[v][0]`, an array filled by a loop over faces in increasing
+    // order, so the fan's first face IS the lowest one by construction. The two rules agree
+    // because of a property of an unrelated loop, not because either was checked.
+    //
+    // So a substitution test would report "no difference" and prove nothing. What this row does
+    // instead is compute the expected map from an INDEPENDENT source — the substrate's welded
+    // rims — and compare. That catches the case the substitution cannot: the day someone reorders
+    // that fill, the fan-start rule would quietly name a different face and this stays correct.
+    const { sourceFaces: F, sourceEdges: E } = v.layout;
+
+    // THE INDEPENDENT ORACLE. Derived from `weldedPolygonsOf` and `edgeFaceAdjacencyOf` — the
+    // substrate's own answers about the SOURCE — with no reference to `bevelLayoutOf`'s internals,
+    // its fan walk, or the order anything is scanned in. If the layout's rule and this one ever
+    // disagree, one of them changed and the diff says which entry.
+    const rims = weldedPolygonsOf(sphere.descriptor)!;
+    const adjacency = edgeFaceAdjacencyOf(sphere.descriptor)!;
+    const facesAtPoint = new Map<number, number[]>();
+    rims.forEach((rim, f) => {
+      for (const point of rim) {
+        const at = facesAtPoint.get(point) ?? [];
+        at.push(f);
+        facesAtPoint.set(point, at);
+      }
+    });
+    const expected = [
+      ...rims.map((_, f) => f),
+      ...adjacency.faces.map((incident) => Math.min(...incident)),
+      ...[...Array(v.layout.sourcePoints).keys()].map((p) => Math.min(...facesAtPoint.get(p)!)),
+    ];
+    expect([...representative]).toEqual(expected);
+
+    // Non-vacuity: the oracle is not the trivially-satisfiable identity. Most of it disagrees
+    // with the face index it sits at, so an implementation returning `i` would fail it.
+    expect(expected.filter((f, i) => f !== i).length).toBeGreaterThan(120);
+    expect(F).toBe(48);
+    expect(E).toBe(88);
+  });
+
+  it('12e — 🔑 THROUGH THE NODES: a scoped material override, then a bevel, keeps both slots', () => {
+    // The composition row, and it exists because the app observation for #825 did NOT show this
+    // and the reason was instructive. Adding a Bevel from the panel splices it onto the MODIFIER
+    // stack, which sits BELOW the material stack on the data lane — so a scoped
+    // `MaterialOverrideOp` applies to the BEVELLED geometry's first three faces, not to the
+    // source's. The rendered `[18@slot1, 114@slot0]` was correct for the graph the app built and
+    // said nothing about inheritance. This row builds the order that does.
+    //
+    // 🔴 SO THE DIRECTOR-FACING CASE FOR "BEVEL A MULTI-MATERIAL MESH" IS AN IMPORTED ONE, not a
+    // scoped override — the stack ordering puts the override above every modifier by design.
+    // Worth knowing before anyone goes looking for it in the panel.
+    const box: ObjectData = {
+      kind: 'MeshData',
+      geometry: boxGeometryRef(SIZE, null),
+      material: null,
+      attributeKey: null,
+    } as ObjectData;
+    const overridden = evaluateNodeAlone(
+      'MaterialOverrideOp',
+      { color: '#ff0000', overridden: { color: true }, scope: '0-2', muted: false },
+      { target: box },
+    ) as { geometry: GeometryRef; materialSlots?: unknown[] };
+
+    // The source really does carry two slots over six faces — the control, so a bevel that
+    // carried nothing could not be mistaken for a source that had nothing.
+    expect(overridden.materialSlots).toHaveLength(2);
+    expect(getForRead(overridden.geometry)!.groups.map((g) => g.materialIndex)).toEqual([1, 0]);
+
+    const bevelled = evaluateNodeAlone(
+      'BevelModifier',
+      { amount: 0.1, muted: false },
+      { target: overridden },
+    ) as { geometry: GeometryRef; materialSlots?: unknown[]; attributeKey?: string };
+
+    // The table rides through the node, and the handle carries the gathered set.
+    expect(bevelled.materialSlots).toHaveLength(2);
+    expect(bevelled.attributeKey).toBe(bevelled.geometry.attributeKey);
+
+    // 🔑 FIVE GROUPS, NOT TWO. Two would be the source's own assignment stopping at face 5 with
+    // the 20 minted faces defaulting to slot 0; five is the assignment following the
+    // representative map into the chamfers and alternating back. The literal is the shape of the
+    // claim — a count alone would not separate those two pictures.
+    const groups = getForRead(bevelled.geometry)!.groups;
+    expect(groups.map((g) => [g.start, g.count, g.materialIndex])).toEqual([
+      [0, 18, 1],
+      [18, 18, 0],
+      [36, 60, 1],
+      [96, 12, 0],
+      [108, 24, 1],
+    ]);
+    expect(groups.reduce((n, g) => n + g.count, 0)).toBe(132);
+  });
+
+  it('13 — 🔑 a NON-UNIFORM assignment SURVIVES now, and nothing warns about losing it', () => {
+    // 🔴 THIS ROW ASSERTED THE OPPOSITE UNTIL #825. It was the noise test for a warning that said
+    // a bevel's per-face materials *"do not survive it. The mesh draws with its first material
+    // only"* — and it was right while #814's drop stood. #825 made the varied case survive, so
+    // the warning became a lying label and was removed rather than re-worded: it re-derived what
+    // a bevel carries from the SOURCE's attribute set, never asking what the carriage laid out,
+    // which is why the two could drift apart in a single commit.
+    //
+    // What the row measures now is the claim that replaced it, and it keeps the same shape — the
+    // uniform case and the varied case, side by side, because a check that only looked at one
+    // could not tell "carries everything" from "carries nothing".
     const carrying = (values: number[]) => {
       const minted = mintAttributes({
         [MATERIAL_INDEX]: {
@@ -511,22 +730,35 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
       insert(minted.key, minted.set, 'evaluate');
       return boxGeometryRef(SIZE, minted.key);
     };
+    const slotsOf = (values: number[]) => {
+      clear();
+      const built = getForRead(bevelGeometryRef(carrying(values), 0.1))!;
+      return {
+        slots: new Set(built.groups.map((g) => g.materialIndex)),
+        claimed: built.groups.reduce((n, g) => n + g.count, 0),
+        indices: built.getIndex()!.count,
+      };
+    };
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      clear();
-      getForRead(bevelGeometryRef(carrying([0, 0, 0, 0, 0, 0]), 0.1));
-      const uniform = warn.mock.calls.flat().join('\n');
-      expect(uniform).not.toMatch(/does not survive/);
+      // A uniform assignment: one slot, unchanged by #825 and never the interesting case.
+      expect(slotsOf([0, 0, 0, 0, 0, 0]).slots).toEqual(new Set([0]));
 
-      warn.mockClear();
-      clear();
-      getForRead(bevelGeometryRef(carrying([0, 0, 0, 1, 1, 1]), 0.1));
-      const varied = warn.mock.calls.flat().join('\n');
-      expect(varied).toMatch(/does not survive/);
-      expect(varied).toMatch(/not uniform/);
-      // Names its way out, exactly as the carriage refusal does.
-      expect(varied).toMatch(/#786/);
+      // 🔑 THE VARIED ONE, WHICH IS THE WHOLE ISSUE. Both slots reach the built geometry, every
+      // triangle is claimed exactly once, and the total is the 44 triangles a bevelled cube fans
+      // to. A representative map that collapsed would show one slot; one that over-claimed or
+      // under-claimed would move `claimed` off `indices`.
+      const varied = slotsOf([0, 0, 0, 1, 1, 1]);
+      expect(varied.slots).toEqual(new Set([0, 1]));
+      expect(varied.claimed).toBe(varied.indices);
+      expect(varied.indices).toBe(132);
+
+      // And NOTHING says they were lost. Asserted on the removed wording specifically, so this
+      // reds if the warning is ever reintroduced without its premise coming back with it.
+      const said = warn.mock.calls.flat().join('\n');
+      expect(said).not.toMatch(/does not survive/);
+      expect(said).not.toMatch(/first material only/);
     } finally {
       warn.mockRestore();
     }
