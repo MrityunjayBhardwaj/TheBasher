@@ -10,9 +10,13 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  TRIPO_ASSET_PROXY_PATH,
   TRIPO_PROXY_PREFIX,
   TRIPO_PROXY_ROUTES,
+  isTripoAssetUrl,
   rewriteTripoProxyPath,
+  tripoAssetTargetOf,
+  tripoBrowserAssetUrl,
   tripoBrowserBaseUrl,
   tripoProxyRoute,
 } from './tripoProxy';
@@ -128,5 +132,65 @@ describe('browserTripoOptions hands back the version WITH its base URL', () => {
     for (const version of TRIPO_API_VERSIONS) {
       expect(browserTripoOptions(version).baseUrl).not.toMatch(/^https?:/);
     }
+  });
+});
+
+describe('the asset road: a generated model is fetched same-origin too (#832)', () => {
+  // The reason this exists is a MEASUREMENT that contradicted this file's own
+  // opening comment. On a real signed URL, from the app's origin:
+  //   HTTP 200, content-length 7465804, server: AmazonS3, vary: Origin
+  //   and no `access-control-allow-origin` of any kind.
+  // The bytes arrive and the browser is forbidden to read them.
+  const SIGNED =
+    'https://tripo-data.rg1.data.tripo3d.com/tcli_abc/20260830/x/tripo_pbr_model_x.glb' +
+    '?Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9x_&Signature=AbC~dEf-gH__&Key-Pair-Id=K1676C64NMVM2J';
+
+  it('round-trips a signed URL through the proxy path without losing the signature', () => {
+    // 🔑 THE FAILURE THIS PINS IS SILENT. A signed URL carries `&` and `=` inside
+    // its Policy and Signature. Splicing it into a query string instead of
+    // encoding it whole truncates the signature at its first `&`, and the
+    // download then 403s with a perfectly plausible "expired link" story that
+    // sends the reader to the wrong problem entirely.
+    const proxied = tripoBrowserAssetUrl(SIGNED);
+    expect(proxied.startsWith(`${TRIPO_ASSET_PROXY_PATH}?url=`)).toBe(true);
+    expect(tripoAssetTargetOf(proxied.slice(TRIPO_ASSET_PROXY_PATH.length))).toBe(SIGNED);
+  });
+
+  it('FALSIFICATION: a spliced (unencoded) URL loses everything after the first &', () => {
+    // The pair for the test above — it is only meaningful if the naive way
+    // actually breaks. It does.
+    const spliced = `${TRIPO_ASSET_PROXY_PATH}?url=${SIGNED}`;
+    expect(tripoAssetTargetOf(spliced.slice(TRIPO_ASSET_PROXY_PATH.length))).not.toBe(SIGNED);
+  });
+
+  describe('the allowlist is a security boundary, not a tidiness rule', () => {
+    // Without it the dev server is an open forwarder any page can aim at cloud
+    // metadata or at a service on the developer's own network.
+    it.each([
+      ['http, not https', 'http://tripo-data.rg1.data.tripo3d.com/x.glb'],
+      ['a lookalike suffix', 'https://nottripo3d.com/x.glb'],
+      ['the domain as a prefix of another', 'https://tripo3d.com.evil.test/x.glb'],
+      ['cloud metadata', 'http://169.254.169.254/latest/meta-data/'],
+      ['loopback', 'http://127.0.0.1:8600/generate'],
+      ['not a URL at all', 'not-a-url'],
+    ])('refuses %s', (_label, url) => {
+      expect(isTripoAssetUrl(url)).toBe(false);
+      expect(tripoAssetTargetOf(`?url=${encodeURIComponent(url)}`)).toBeNull();
+    });
+
+    it('accepts the asset host the service actually hands back', () => {
+      expect(isTripoAssetUrl(SIGNED)).toBe(true);
+    });
+
+    it('accepts a DIFFERENT region on the same domain, which is why this is a suffix match', () => {
+      // `rg1` is a region. Pinning the literal host would break the day a task
+      // lands in another one, and it would break as a CORS error again.
+      expect(isTripoAssetUrl('https://tripo-data.rg9.data.tripo3d.com/x.glb')).toBe(true);
+    });
+
+    it('refuses a missing parameter rather than fetching something empty', () => {
+      expect(tripoAssetTargetOf('')).toBeNull();
+      expect(tripoAssetTargetOf('?other=1')).toBeNull();
+    });
   });
 });

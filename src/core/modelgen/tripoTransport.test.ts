@@ -442,3 +442,77 @@ describe('a network failure names its stage and says whether the URL was proxied
     expect(err.message).not.toContain('never got a reply');
   });
 });
+
+describe('a page fetches the generated model same-origin; a node harness does not (#832)', () => {
+  const ASSET =
+    'https://tripo-data.rg1.data.tripo3d.com/x/tripo_pbr_model_x.glb?Policy=P&Signature=S';
+
+  /** Succeeds through create+poll and hands back a real asset-host URL. */
+  function scripted(seen: string[]) {
+    return vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.endsWith('/task') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
+      }
+      if (u.includes('/task/t1')) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: { status: 'success', progress: 100, output: { pbr_model: ASSET } },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(synthesiseGlb(TEXT), { status: 200 });
+    });
+  }
+
+  it('rewrites the download onto the same-origin forwarder when the API is proxied', async () => {
+    const seen: string[] = [];
+    await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generate(TEXT);
+
+    const download = seen[seen.length - 1];
+    expect(download.startsWith('/__tripo-asset?url=')).toBe(true);
+    // The signature must survive, or the download 403s as a plausible "expired
+    // link" and sends the reader to the wrong problem.
+    expect(decodeURIComponent(download.split('?url=')[1])).toBe(ASSET);
+  });
+
+  it('leaves the download DIRECT for a node harness, which has no same-origin policy', async () => {
+    // The pair. A rewrite applied unconditionally would point the node harness
+    // and the live probe at a dev-server route that does not exist for them.
+    const seen: string[] = [];
+    await client(scripted(seen)).generate(TEXT); // absolute dialect baseUrl
+
+    expect(seen[seen.length - 1]).toBe(ASSET);
+  });
+
+  it('leaves a NON-asset host alone even from a page, so a refusal is not disguised', async () => {
+    // A URL outside the allowlist would be refused by the forwarder anyway.
+    // Rewriting it would replace the honest failure with a 400 from our own
+    // middleware, which reads like our bug rather than the service's.
+    const seen: string[] = [];
+    const foreign = 'https://cdn.example.test/x.glb';
+    const f = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      seen.push(u);
+      if (u.endsWith('/task') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
+      }
+      if (u.includes('/task/t1')) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: { status: 'success', progress: 100, output: { pbr_model: foreign } },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(synthesiseGlb(TEXT), { status: 200 });
+    });
+    await client(f, { baseUrl: '/__tripo/v2' }).generate(TEXT);
+
+    expect(seen[seen.length - 1]).toBe(foreign);
+  });
+});

@@ -138,3 +138,99 @@ export function rewriteTripoProxyPath(pathname: string): string {
   if (!route) return pathname;
   return route.upstreamPrefix + pathname.slice(route.path.length);
 }
+
+// ── The ASSET road (#832) ───────────────────────────────────────────────────
+//
+// 🔴 THE COMMENT AT THE TOP OF THIS FILE WAS WRONG, AND THIS IS THE CORRECTION.
+// It recorded the asset host answering a browser with `access-control-allow-
+// origin: *`, and that claim is why the download was the one call left direct.
+// Re-measured against a REAL signed URL from a real generation:
+//
+//   GET https://tripo-data.rg1.data.tripo3d.com/…glb?Policy=…&Signature=…
+//       (Origin: http://localhost:5180)
+//     → HTTP 200, content-length: 7465804, server: AmazonS3, vary: Origin
+//       and NO access-control-allow-origin of any kind
+//
+// `vary: Origin` is the tell: S3 read the Origin header and chose to send no
+// grant. So the bytes arrive and the browser is forbidden to read them —
+// `TypeError: Failed to fetch`, no status, nothing our code can inspect. Chrome
+// states it plainly: "has been blocked by CORS policy: No
+// 'Access-Control-Allow-Origin' header is present on the requested resource."
+//
+// Nothing caught this because the only end-to-end run of the road was a NODE
+// harness, and node has no same-origin policy. The browser download had never
+// once completed.
+//
+// The two reasons the old comment gave for staying direct do not survive it:
+// the megabytes now buy a feature that otherwise does not work at all, and the
+// production dependency is not invented here — `tripoBrowserBaseUrl` already
+// says a static build has no `/__tripo` route either (#804).
+
+/**
+ * The same-origin path a generated model is fetched through.
+ *
+ * Distinct from `TRIPO_PROXY_PREFIX` because it is a different KIND of route:
+ * that one maps a fixed path prefix onto a fixed upstream, while a model lives
+ * at a signed URL that is different every time and cannot be known in advance.
+ * So the target travels as a parameter, and the guard below is what keeps that
+ * from being an open forwarder.
+ */
+export const TRIPO_ASSET_PROXY_PATH = '/__tripo-asset';
+
+/**
+ * Hosts the asset forwarder will fetch from.
+ *
+ * 🔴 THIS IS A SECURITY BOUNDARY, NOT A TIDINESS RULE. A middleware that fetches
+ * whatever URL it is handed will happily reach a cloud metadata endpoint or a
+ * service on the developer's own network on behalf of any page that can reach
+ * the dev server. The allowlist is the whole defence, so it is stated as a
+ * suffix match on the registrable domain and https is required.
+ */
+export const TRIPO_ASSET_HOST_SUFFIX = '.tripo3d.com';
+
+/** Whether a URL is one this forwarder is willing to fetch. */
+export function isTripoAssetUrl(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'https:') return false;
+  // `endsWith` on a leading-dot suffix, so `nottripo3d.com` and
+  // `tripo3d.com.evil.test` are both rejected — a bare `includes` would take
+  // either.
+  return parsed.hostname.endsWith(TRIPO_ASSET_HOST_SUFFIX);
+}
+
+/**
+ * The URL a PAGE should fetch for a generated model.
+ *
+ * The signed URL carries `&` and `=` inside its Policy and Signature, so it is
+ * encoded whole into one parameter rather than merged into the query string —
+ * splicing it would truncate the signature at its first `&` and the download
+ * would 403 with a perfectly plausible "expired link" story.
+ */
+export function tripoBrowserAssetUrl(url: string): string {
+  return `${TRIPO_ASSET_PROXY_PATH}?url=${encodeURIComponent(url)}`;
+}
+
+/**
+ * The upstream URL the dev server should fetch for one proxied asset request.
+ *
+ * Returns null rather than throwing for anything it will not serve, so the
+ * middleware answers with a status instead of crashing the dev server on a
+ * malformed request.
+ */
+export function tripoAssetTargetOf(requestUrl: string): string | null {
+  let target: string | null;
+  try {
+    // The base only matters for parsing a path-relative request line; the value
+    // we want is absolute.
+    target = new URL(requestUrl, 'http://localhost').searchParams.get('url');
+  } catch {
+    return null;
+  }
+  if (!target || !isTripoAssetUrl(target)) return null;
+  return target;
+}

@@ -50,6 +50,7 @@
 // REF: ref/architecture/ai-track.md phase A4; issues #732, #761, #762, #797.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
+import { isTripoAssetUrl, tripoBrowserAssetUrl } from './tripoProxy';
 import { parseGltfContainer } from '../import/glb';
 import {
   DEFAULT_RIG_SPEC,
@@ -691,7 +692,29 @@ export class TripoModelGenerationCapability
     }
   }
 
-  private async download(stage: string, url: string, deadline: number): Promise<ArrayBuffer> {
+  /**
+   * Where the model download should actually be fetched from.
+   *
+   * 🔑 THE DISCRIMINATOR IS THE ONE WE ALREADY HAVE. A relative `baseUrl` means
+   * the caller handed us a same-origin path, which happens only for a call
+   * originating in a page — and a page is exactly the runtime that cannot read
+   * the asset host's reply. So "am I in a browser" is not a second fact to
+   * configure and drift; it is the fact `baseUrl` already carries.
+   *
+   * A node harness keeps the dialect's own absolute base, gets no rewrite, and
+   * downloads directly as it always has — correctly, because node has no
+   * same-origin policy and no proxy in front of it.
+   *
+   * A URL outside the asset allowlist is left alone rather than rewritten into a
+   * request the forwarder would refuse: the honest failure is the original one.
+   */
+  private assetUrlFor(url: string): string {
+    const proxied = this.baseUrl.startsWith('/');
+    return proxied && isTripoAssetUrl(url) ? tripoBrowserAssetUrl(url) : url;
+  }
+
+  private async download(stage: string, rawUrl: string, deadline: number): Promise<ArrayBuffer> {
+    const url = this.assetUrlFor(rawUrl);
     const remaining = deadline - Date.now();
     if (remaining <= 0) throw new TripoApiError('Timed out before the model could be downloaded.');
     const controller = new AbortController();
