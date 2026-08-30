@@ -242,7 +242,14 @@ describe('the HTTP capability', () => {
     expect(result.bvh).toContain('HIERARCHY');
     expect(result.unitScale).toBe(1);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('http://localhost:9999/generate'); // trailing slash normalised
+    // Trailing slash normalised, AND the JSON envelope is ASKED for rather than
+    // assumed (#775): a real generator may default to returning the clip as a raw
+    // body — the local Kimodo server does — and the failure when it does is
+    // `response.json()` throwing, which reads as a transport fault rather than as
+    // a protocol mismatch.
+    expect(url).toBe('http://localhost:9999/generate?format=json');
+    // The two `format`s answer different questions and must not be conflated: the
+    // query one names the HTTP ENVELOPE, the body one names the CLIP payload.
     expect(JSON.parse(init?.body as string)).toMatchObject({
       prompt: 'a slow walk',
       format: 'bvh',

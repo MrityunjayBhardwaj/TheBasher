@@ -9,10 +9,24 @@ import { HttpMotionGenerationCapability } from './HttpMotionGenerationCapability
 import { StubMotionGenerationCapability } from './StubMotionGenerationCapability';
 import type { MotionGenerationCapability } from './MotionGenerationCapability';
 
-/** Where a self-hosted motion generator is expected to answer. A placeholder in
- *  the honest sense: NO such service exists yet, and the `/generate` contract is
- *  one this track defined rather than one anybody implements. Kept distinct from
- *  ComfyUI's 8188 so the two are never confused for one another. */
+/** Where a self-hosted motion generator answers. Kept distinct from ComfyUI's
+ *  8188 so the two are never confused for one another.
+ *
+ *  🟢 A service now implements this contract (#775) — the local Kimodo server in
+ *  the `auto-animate` working area, which loads the SOMA checkpoint and returns
+ *  BVH. It is a LOCAL DEV server, run by hand; nothing ships it, and an absent
+ *  server remains the ordinary case that falls back to the stub.
+ *
+ *      cd <auto-animate>/kimodo
+ *      HF_HOME=$PWD/hf-cache TEXT_ENCODERS_DIR=$PWD/text_encoders \
+ *      TEXT_ENCODER_MODE=local TEXT_ENCODER_DEVICE=mps KIMODO_DEVICE=mps \
+ *      ./.venv/bin/python serve.py --port 8600 --model nvidia/Kimodo-SOMA-RP-v1.1
+ *
+ *  🔴 `--model` must be the ORG-QUALIFIED id, matching DEFAULT_MOTIONGEN_MODEL
+ *  below. The server echoes back whatever it was started with, and this client
+ *  refuses a result whose model differs from the one it licence-checked — so a
+ *  server started with the bare `Kimodo-SOMA-RP-v1.1` names the same checkpoint
+ *  and is still refused, correctly, as a substitution. */
 export const DEFAULT_MOTIONGEN_URL = 'http://127.0.0.1:8600';
 
 /**
