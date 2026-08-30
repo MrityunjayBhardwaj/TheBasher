@@ -136,7 +136,7 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
 }
 
 /**
- * Put a just-imported motion clip onto a character (#807).
+ * Put a just-landed motion clip onto a character (#807).
  *
  * This sits at the extension dispatcher rather than in the drop handler on
  * purpose: the drop zone, the Import… picker and the Library all funnel through
@@ -145,10 +145,17 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
  * import itself failed and already reported — there is nothing to bind, and
  * saying anything more would be a second message about one problem.
  *
+ * EXPORTED for the generation road (#820), which is the same argument one step
+ * wider: a clip that animates a character when it is dropped but not when it is
+ * generated is the same unpredictable difference, on the pair a director is far
+ * more likely to notice. The generated road calls THIS function rather than
+ * `bindMotionToCharacter` directly, so "bind after motion lands" — and the
+ * null-handling that goes with it — is decided in exactly one place.
+ *
  * `bindMotionToCharacter` surfaces its own outcome, so there is nothing to
  * report here; the result is ignored deliberately rather than by omission.
  */
-function bindImportedMotion(imported: MotionImportResult | null): void {
+export function bindImportedMotion(imported: MotionImportResult | null): void {
   if (!imported) return;
   bindMotionToCharacter(imported);
 }
