@@ -516,3 +516,74 @@ describe('a page fetches the generated model same-origin; a node harness does no
     expect(seen[seen.length - 1]).toBe(foreign);
   });
 });
+
+describe('a task can be run WITHOUT collecting its output (#833)', () => {
+  const ASSET = 'https://tripo-data.rg1.data.tripo3d.com/x/tripo_pbr_model_x.glb';
+
+  function scripted(seen: string[]) {
+    return vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      seen.push(`${init?.method ?? 'GET'} ${u}`);
+      if (u.endsWith('/task') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
+      }
+      if (u.includes('/task/t1')) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: { status: 'success', progress: 100, output: { pbr_model: ASSET } },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(synthesiseGlb(TEXT), { status: 200 });
+    });
+  }
+
+  it('🔑 issues NO download request — the whole point', async () => {
+    // The defect: the rigged road bound only `taskId` from the wide result, so a
+    // measured 7,465,804-byte mesh was fetched and dropped. Asserting on the
+    // CALLS rather than on the return value is what makes that visible — a
+    // narrowed return type would look identical from the caller's side while
+    // still paying for the transfer.
+    const seen: string[] = [];
+    const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+
+    expect(result).toEqual({ taskId: 't1', modelVersion: 'unspecified' });
+    expect(seen).toEqual(['POST /__tripo/v2/task', 'GET /__tripo/v2/task/t1']);
+    expect(seen.some((c) => c.includes('tripo-asset') || c.includes(ASSET))).toBe(false);
+  });
+
+  it('FALSIFICATION: `generate` on the same script DOES download', async () => {
+    // The pair. Without it the test above passes for a client that cannot reach
+    // the asset host at all, which is a different bug wearing the same green.
+    const seen: string[] = [];
+    const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generate(TEXT);
+
+    expect(result.glb.byteLength).toBeGreaterThan(0);
+    expect(seen.length).toBe(3);
+    expect(seen[2]).toContain('/__tripo-asset?url=');
+  });
+
+  it('refuses the same requests `generate` refuses, at the same point', async () => {
+    // Same validation, same ordering: a narrow road that skipped the gate would
+    // be a way to reach the service around a refusal.
+    const seen: string[] = [];
+    await expect(
+      client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly({
+        source: 'text',
+        prompt: '   ',
+      } as never),
+    ).rejects.toThrow();
+    expect(seen).toEqual([]);
+  });
+
+  it('reports progress, so a caller sees the task run', async () => {
+    const seen: string[] = [];
+    const progress: number[] = [];
+    await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT, (p) =>
+      progress.push(p.progress),
+    );
+    expect(progress.length).toBeGreaterThan(0);
+  });
+});

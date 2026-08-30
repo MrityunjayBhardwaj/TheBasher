@@ -102,7 +102,13 @@ export async function generateRiggedCharacter(
     const { modelGenVersion } = useSettingsStore.getState();
 
     report({ phase: 'generating', percent: 0 });
-    const { taskId } = await generation.generate(
+    // 🔑 THE MESH IS NOT FETCHED HERE, AND MUST NOT BE. Rigging runs service-side
+    // against the task id — `checkRiggable` and `rig` both take `sourceTaskId` —
+    // so this road never had a use for the bytes. Taking the wide result and
+    // binding only `taskId` downloaded a mesh (measured: 7,465,804 bytes) and
+    // discarded it, and that discarded download is the step that made rigged
+    // generation unreachable from a browser at all (#832, #833).
+    const { taskId } = await generation.generateTaskOnly(
       { ...request, modelVersion: request.modelVersion ?? modelGenVersion },
       (p) => report({ phase: 'generating', percent: p.progress }),
     );

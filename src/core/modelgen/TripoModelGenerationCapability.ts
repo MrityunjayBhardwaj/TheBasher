@@ -71,6 +71,7 @@ import {
   type ModelGenerationProgress,
   type ModelGenerationRequest,
   type ModelGenerationResult,
+  type ModelTaskResult,
   type SourceImage,
 } from './ModelGenerationCapability';
 import {
@@ -436,10 +437,25 @@ export class TripoModelGenerationCapability
     return { balance: data.balance ?? 0, frozen: data.frozen ?? 0 };
   }
 
-  async generate(
+  /**
+   * Run a generation task to completion. The ONE definition of what that means,
+   * so `generate` and `generateTaskOnly` cannot drift on refusals, validation,
+   * polling or progress — the only thing they differ on is whether the output is
+   * then fetched.
+   *
+   * Returns the raw `output` rather than a model URL: reading the URL is a step
+   * only the caller that wants the bytes needs, and a task that succeeded while
+   * carrying no URL is not a failure for the caller that does not.
+   */
+  private async runTask(
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<ModelGenerationResult> {
+  ): Promise<{
+    taskId: string;
+    modelVersion: string;
+    output: TripoTaskOutput;
+    deadline: number;
+  }> {
     // Licence BEFORE shape, and both before anything leaves the process — the
     // same ordering and the same reason as the motion capability.
     assertModelAllowed(TRIPO_SERVICE_ID);
@@ -456,6 +472,22 @@ export class TripoModelGenerationCapability
     }
 
     const output = await this.pollUntilDone(taskId, deadline, onProgress);
+    return { taskId, modelVersion: request.modelVersion ?? 'unspecified', output, deadline };
+  }
+
+  async generateTaskOnly(
+    request: ModelGenerationRequest,
+    onProgress?: (p: ModelGenerationProgress) => void,
+  ): Promise<ModelTaskResult> {
+    const { taskId, modelVersion } = await this.runTask(request, onProgress);
+    return { taskId, modelVersion };
+  }
+
+  async generate(
+    request: ModelGenerationRequest,
+    onProgress?: (p: ModelGenerationProgress) => void,
+  ): Promise<ModelGenerationResult> {
+    const { taskId, modelVersion, output, deadline } = await this.runTask(request, onProgress);
     // WHICH field holds the URL is version-specific — v3 renamed it — so the
     // dialect answers rather than this method guessing across both vocabularies.
     const url = this.dialect.modelUrlOf(output);
@@ -468,11 +500,7 @@ export class TripoModelGenerationCapability
     }
 
     const glb = await this.download('Downloading the generated model', url, deadline);
-    return {
-      taskId,
-      glb,
-      modelVersion: request.modelVersion ?? 'unspecified',
-    };
+    return { taskId, glb, modelVersion };
   }
 
   /**
