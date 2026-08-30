@@ -16,6 +16,7 @@ import {
   buildGltfImportOps,
   buildNodeNameMap,
   detectUnsupportedGltfFeatures,
+  gltfSkeletonDagId,
   importGroupNodeIds,
 } from './gltfImportChain';
 import type { Op } from '../dag/types';
@@ -771,5 +772,64 @@ describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
         meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 } }] }],
       }),
     ).toEqual([]);
+  });
+});
+
+describe('GltfSkeleton minting at import (#807)', () => {
+  it('emits one GltfSkeleton per skin, connected to the asset', async () => {
+    // Before this, NOTHING in production ever created this node: the type was
+    // registered and accepted by the retarget mutator, and every instance that
+    // had ever existed was hand-built by a test. A character in the scene
+    // therefore had no rig for motion to be retargeted onto.
+    const result = await buildGltfImportOps(
+      { buffer: skinnedBarBuffer(), assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const skelOps = result.ops.filter(
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfSkeleton',
+    );
+    expect(skelOps).toHaveLength(1);
+    expect(result.skeletonIds).toEqual([gltfSkeletonDagId('assets/skinned-bar.glb', 0)]);
+
+    // The node alone is inert — it projects its asset's captured skin, so the
+    // edge is what makes it a rig rather than an empty skeleton.
+    const assetId = result.gltfAssetId;
+    const wired = result.ops.some(
+      (o: Op) =>
+        o.type === 'connect' &&
+        o.from.node === assetId &&
+        o.to.node === result.skeletonIds[0] &&
+        o.to.socket === 'asset',
+    );
+    expect(wired).toBe(true);
+  });
+
+  it('emits none for an unskinned asset', async () => {
+    // A cube has nothing to project. A rig node here would evaluate to zero
+    // bones and read, in the outliner, exactly like a character's rig.
+    const glb = makeGlb({
+      asset: { version: '2.0' },
+      scenes: [{ nodes: [0] }],
+      nodes: [{ name: 'Cube' }],
+    } as GltfJson);
+    const result = await buildGltfImportOps(
+      { buffer: glb, assetRef: 'assets/cube.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    expect(result.skeletonIds).toEqual([]);
+    expect(
+      result.ops.filter((o: Op) => o.type === 'addNode' && o.nodeType === 'GltfSkeleton'),
+    ).toHaveLength(0);
+  });
+
+  it('importGroupNodeIds claims the rig, so deleting a character leaves no orphan', async () => {
+    const result = await buildGltfImportOps(
+      { buffer: skinnedBarBuffer(), assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const nodes: Record<string, unknown> = {};
+    for (const op of result.ops) if (op.type === 'addNode') nodes[op.nodeId] = op;
+    const state = { nodes, outputs: {} } as unknown as DagState;
+    expect(importGroupNodeIds('assets/skinned-bar.glb', state)).toContain(result.skeletonIds[0]);
   });
 });

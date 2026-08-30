@@ -147,6 +147,12 @@ const CONSUMERS: Record<string, Decision> = {
   // playhead. A skeleton's bind pose is import-time static, so any frame yields
   // the same projection; it reads the bone NAMES, which do not move.
   'src/agent/mutators/builders/bakeClipOntoRig.ts': authored('fixed-ctx-by-design'),
+  // #807 — the third member of the same family, and it evaluates for the same
+  // reason the other two do: it reads a `GltfSkeleton`'s bone NAMES to decide
+  // which bone-name map bridges a dropped clip onto a character. Names are
+  // import-time static and the ctx is the same fixed bind pose (frame 0), so the
+  // playhead cannot change the answer. It never reads a value that moves.
+  'src/app/asset/bindMotionToCharacter.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -203,7 +209,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // those exist only in the evaluated projection — the node has no `params.bones`
     // by design (D-02). Reading names is what forced the evaluate; a params-only
     // read would have had nothing to map the clip's bone INDEXES onto.
-    expect(evaluatorConsumers()).toHaveLength(38);
+    expect(evaluatorConsumers()).toHaveLength(39);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

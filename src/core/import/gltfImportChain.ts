@@ -46,6 +46,9 @@ export interface GltfImportChainResult {
   readonly gltfAssetId: string;
   readonly clipSelectId: string | null;
   readonly transformClipIds: string[];
+  /** One `GltfSkeleton` id per captured skin, in skins[] order. Empty for an
+   *  unskinned asset — there is nothing to project (#807). */
+  readonly skeletonIds: string[];
   readonly nodeNameMap: Record<string, string>;
   /**
    * NO-SILENT-DROP (V38, V53 fork-3) — glTF features present in the file that
@@ -191,6 +194,19 @@ export function gltfChannelDagId(assetRef: string, childName: string, component:
 }
 
 /**
+ * The content-addressed DAG id of the `GltfSkeleton` projecting one of an
+ * asset's skins (#807). Deterministic like every other import id, so a re-import
+ * of the same file yields the same rig node and the retarget road can address a
+ * character's skeleton without searching for it.
+ *
+ * REF: src/nodes/GltfSkeleton.ts (the projection); issue #100 (which defined the
+ *      node), issue #807 (which gave it a producer).
+ */
+export function gltfSkeletonDagId(assetRef: string, skinIndex: number): string {
+  return hashId('gltfSkel', assetRef, String(skinIndex));
+}
+
+/**
  * Every DAG node `buildGltfImportOps` emits for one `assetRef` — the "import
  * footprint" of a single imported glTF. Used by the My-Imports break-refs
  * delete (#127) to GC the WHOLE subtree, not just the `GltfAsset` node, so a
@@ -226,6 +242,12 @@ export function importGroupNodeIds(assetRef: string, state: DagState): string[] 
   // Clips are emitted at contiguous indices 0..N-1.
   for (let i = 0; state.nodes[hashId('clip', assetRef, String(i))]; i++) {
     ids.add(hashId('clip', assetRef, String(i)));
+  }
+  // Skins likewise (#807). Without this line a deleted character leaves its rig
+  // node behind — inputless, projecting an asset that no longer exists, and
+  // indistinguishable in the outliner from a rig that still means something.
+  for (let i = 0; state.nodes[gltfSkeletonDagId(assetRef, i)]; i++) {
+    ids.add(gltfSkeletonDagId(assetRef, i));
   }
   // assetRef-carrying nodes (GltfAsset + GltfChild satellites) — find by params,
   // the authoritative source (independent of the hashId derivation + nameMap).
@@ -695,6 +717,39 @@ export async function buildGltfImportOps(
     nodeType: 'GltfAsset',
     params: { assetRef: args.assetRef, nodeNameMap, childHierarchy, skins, keyByGltfNodeIndex },
   });
+  // #807 — one `GltfSkeleton` per captured skin, in the SAME atomic array (K6).
+  //
+  // Until now nothing in the app ever created this node. It was defined by #100,
+  // registered, param-goldened and accepted by the retarget mutator, and every
+  // instance that had ever existed was hand-built by a test — so a character
+  // standing in the scene had no rig for motion to be retargeted onto, and #100's
+  // promise that "a dropped glTF rig participates in the DAG" held only in the
+  // test suite. Minting it here rather than lazily at the moment someone drops a
+  // clip means the rig is present and addressable — by the retarget road and by
+  // the agent — from the instant the character arrives, whether or not motion
+  // ever comes. An unskinned asset has no skins and therefore emits none: the
+  // node is a projection of captured skin data and has nothing to project.
+  //
+  // ⚠️ IT DOES NOT APPEAR IN THE OUTLINER, and that was checked rather than
+  // assumed. `SceneTree` walks the Scene's child bands and a rig node is a side
+  // node hanging off the asset, so it is reachable by id and invisible in the
+  // tree — even though `SceneTreeIcon` already has a branch waiting for it.
+  const skeletonIds: string[] = [];
+  for (let i = 0; i < skins.length; i++) {
+    const skeletonId = gltfSkeletonDagId(args.assetRef, i);
+    skeletonIds.push(skeletonId);
+    ops.push({
+      type: 'addNode',
+      nodeId: skeletonId,
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: i },
+    });
+    ops.push({
+      type: 'connect',
+      from: { node: gltfAssetId, socket: 'out' },
+      to: { node: skeletonId, socket: 'asset' },
+    });
+  }
   // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
   // INTEGER-INDEX order (NOT Object.keys — that order is incidental today
   // and a future map-build change would silently reorder the Op stream,
@@ -763,6 +818,7 @@ export async function buildGltfImportOps(
       gltfAssetId,
       clipSelectId: null,
       transformClipIds: [],
+      skeletonIds,
       nodeNameMap,
       unsupportedFeatures: detectUnsupportedGltfFeatures(json),
     };
@@ -817,6 +873,7 @@ export async function buildGltfImportOps(
     gltfAssetId,
     clipSelectId,
     transformClipIds,
+    skeletonIds,
     nodeNameMap,
     unsupportedFeatures: detectUnsupportedGltfFeatures(json),
   };
