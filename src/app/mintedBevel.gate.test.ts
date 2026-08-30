@@ -392,6 +392,54 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     expect(faceCountOf(bevelGeometryRef(sub, 0.1).descriptor)).toBeNull();
   });
 
+  it('10b — a non-positive amount has no constructor, and an overshooting one is a STATED limit', () => {
+    // The refusal, and its two measurements.
+    expect(() => bevelGeometryRef(boxGeometryRef(SIZE, null), 0)).toThrow(/positive amount/);
+    expect(() => bevelGeometryRef(boxGeometryRef(SIZE, null), -0.1)).toThrow(/inside out/);
+
+    // 🔴 AND THE LIMIT THAT IS NOT CLOSED, RECORDED AS AN OBSERVATION RATHER THAN A CAVEAT.
+    // Clamping is out of scope for #814 by decision, so an amount large enough for two chamfered
+    // corners to cross is buildable. What that costs is measured here, at a unit cube:
+    //
+    //   0.4  welds to 24 — still a valid chamfer, corners have not met
+    //   0.5  welds to  6 — every face's corners collapse to its centre, and the point-parity
+    //                      check WARNS, because 24 declared against 6 built is a disagreement
+    //   0.9  welds to 24 — the corners have overshot PAST each other, so the count is right
+    //                      again and nothing warns. A self-intersecting shell, silently.
+    //
+    // The middle row is the one the existing instrument catches; the last is the one it cannot.
+    // Filed as #817 rather than left in a comment, and these rows are what that issue quotes —
+    // so the day a clamp lands, the thing it has to fix is already written down as a number.
+    const welds = (amount: number) => {
+      clear();
+      const geometry = getForRead(bevelGeometryRef(boxGeometryRef(SIZE, null), amount))!;
+      return weldByPosition(geometry).points;
+    };
+    expect(welds(0.4)).toBe(24);
+    expect(welds(0.5)).toBe(6);
+    expect(welds(0.9)).toBe(24);
+  });
+
+  it('10c — the derived kinds compose OVER a bevel, not just under it', () => {
+    // A minting kind has to be a legal SOURCE as well as a legal output, or the operator is a
+    // dead end in a chain. Each of these gathers through the bevel's face order, which is the
+    // one with holes in it — and each is fine, because a hole refuses only what reads it as a
+    // gather FROM a source face, and these read the bevel as their source's whole face set.
+    const bevel = bevelGeometryRef(boxGeometryRef(SIZE, null), 0.1);
+    const rows: [GeometryRef, number, number][] = [
+      [arrayGeometryRef(bevel, 3, [3, 0, 0], null), 78, 72],
+      [mirrorGeometryRef(bevel, 'x', 3, null), 52, 48],
+      [subsetGeometryRef(bevel, '0-5', true), 6, 24],
+    ];
+    for (const [ref, faces, points] of rows) {
+      expect(faceCountOf(ref.descriptor)).toBe(faces);
+      expect(pointCountOf(ref.descriptor)).toEqual({ kind: 'counted', count: points });
+      expect(faceArityOf(ref.descriptor)).toHaveLength(faces);
+      expect(weldedPolygonsOf(ref.descriptor)).toHaveLength(faces);
+      expect(getForRead(ref)).not.toBeNull();
+    }
+  });
+
   it('11 — a source whose own buffers are outside the descriptor propagates, not invents', () => {
     const gltf: GeometryRef = {
       key: 'gltf|a|b',

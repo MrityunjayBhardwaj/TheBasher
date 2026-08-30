@@ -450,6 +450,19 @@ export function subsetGeometryRef(
  * alone and an amount drag costs one map lookup rather than a re-derivation.
  */
 export function bevelGeometryRef(source: GeometryRef, amount: number): GeometryRef {
+  // 🔴 A NON-POSITIVE AMOUNT HAS NO CONSTRUCTOR, and it is refused here for the reason
+  // `subsetGeometryRef` refuses a blank scope: the state is not an authoring step on the way to
+  // something, it is an operator that should not be in the chain. Measured rather than argued —
+  // at `0` the build declares 24 topological points and welds to 8, because every chamfered
+  // corner lands back on the corner it came from; at `-0.1` it welds to 24 and draws an
+  // inside-out shell with NOTHING said, since the point count is right and only the direction is
+  // wrong. The first is caught by the point-parity warning; the second is exactly the silent
+  // plausible answer this substrate exists to make impossible.
+  if (!(amount > 0)) {
+    throw new Error(
+      `bevelGeometryRef: a bevel needs a positive amount and got ${amount}. Zero collapses every chamfered corner back onto its source corner, and a negative one turns the shell inside out — neither is a bevel.`,
+    );
+  }
   const descriptor = { kind: 'bevel' as const, source, amount };
   return withAttributeComponent(
     {

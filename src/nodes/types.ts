@@ -603,7 +603,9 @@ export type GeometryDescriptor =
        * an amount large enough for two chamfered corners to land on each other those are
        * different questions with different answers. That is the instrument confusion #754
        * already named one domain over, it warns rather than refuses, and clamping is
-       * out of scope by decision rather than by oversight.
+       * out of scope by decision rather than by oversight — and its cost is measured on #817
+       * rather than described: past the crossing point the count comes back RIGHT and nothing
+       * warns at all, which is the quieter half.
        */
       readonly amount: number;
     };
