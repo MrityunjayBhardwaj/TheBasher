@@ -167,6 +167,87 @@ describe('retarget onto a glTF rig via a non-identity name bridge (Wave D / D-01
   });
 });
 
+describe('the target keeps its own proportions (#828)', () => {
+  // The defect this pins was measured in a browser first: binding ANY clip folded
+  // the character into a blob at the origin. Not a scale — every bone was placed
+  // at its parent's origin, because every baked position channel carried [0,0,0].
+  //
+  // The chain: a retarget emits ROTATION tracks only (by design — the target keeps
+  // its proportions), `clipToKeyframes` therefore falls back to the bind pose for
+  // position on every bone, and the bind pose was read AFTER `threeRetargetClip`
+  // had already flattened the bone objects it poses. So "this bone has no position
+  // track" resolved to "this bone is at the origin".
+  //
+  // Every gate on this road reads ROTATION, and rotations were correct throughout,
+  // which is why 4,920 assertions stayed green while the character was destroyed.
+  const armSource: BoneSpec[] = [
+    { name: 'src_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 'src_spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    { name: 'src_head', parent: 1, position: [0, 0.3, 0], rotation: [0, 0, 0] },
+  ];
+  // Deliberately DIFFERENT proportions from the source: this is the whole point of
+  // a retarget, and the values that must survive it.
+  const armTarget: BoneSpec[] = [
+    { name: 'tgt_hips', parent: -1, position: [0, 0.9, 0], rotation: [0, 0, 0] },
+    { name: 'tgt_spine', parent: 0, position: [0, 0.25, 0], rotation: [0, 0, 0] },
+    { name: 'tgt_head', parent: 1, position: [0, 0.17, 0], rotation: [0, 0, 0] },
+  ];
+  const NAME_MAP = { src_hips: 'tgt_hips', src_spine: 'tgt_spine', src_head: 'tgt_head' };
+
+  /** A rotation-only clip — what a BVH is for every joint below the root. */
+  const rotationOnly: AnimationKeyframe[] = [
+    { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 0.4, 0] },
+    { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.5, 0] },
+    { bone: 2, time: 0, position: [0, 0.3, 0], rotation: [0, 0, 0] },
+    { bone: 2, time: 1, position: [0, 0.3, 0], rotation: [0, 0.2, 0] },
+  ];
+
+  it('keeps every bone at its own bind translation, never at the origin', () => {
+    const result = retargetClip({
+      sourceBones: armSource,
+      sourceClip: { name: 'wave', duration: 1, keyframes: rotationOnly },
+      targetBones: armTarget,
+      nameMap: NAME_MAP,
+    });
+
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    for (const kf of result.clipParams.keyframes) {
+      const bind = armTarget[kf.bone];
+      expect(
+        bind,
+        `keyframe references bone ${kf.bone}, which the target does not have`,
+      ).toBeDefined();
+      // The assertion the defect fails: the target's OWN translation, not zero and
+      // not the source's.
+      expect(kf.position.map((n) => Number(n.toFixed(6)))).toEqual(bind.position);
+    }
+  });
+
+  it('FALSIFICATION: a zeroed translation is not silently accepted', () => {
+    // The check above is only worth anything if [0,0,0] would fail it. Two of the
+    // three target bones sit off their parent's origin, so a collapse is visible
+    // to this comparison by construction.
+    expect(armTarget.filter((b) => b.position.some((n) => n !== 0)).length).toBeGreaterThan(1);
+  });
+
+  it('still transfers the ROTATION, so this is not a clip that does nothing', () => {
+    // The pair. A fix that stopped emitting keyframes at all would satisfy the
+    // proportions check and destroy the feature.
+    const result = retargetClip({
+      sourceBones: armSource,
+      sourceClip: { name: 'wave', duration: 1, keyframes: rotationOnly },
+      targetBones: armTarget,
+      nameMap: NAME_MAP,
+    });
+    const moved = result.clipParams.keyframes.some((kf) =>
+      kf.rotation.some((n) => Math.abs(n) > 1e-6),
+    );
+    expect(moved).toBe(true);
+  });
+});
+
 describe('BONE_NAME_MAP_PRESETS catalog', () => {
   it('ships at least mixamoToGltf / mixamoToReze / mixamoToRigify', () => {
     const ids = BONE_NAME_MAP_PRESETS.map((p) => p.id).sort();

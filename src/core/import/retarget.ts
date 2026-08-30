@@ -220,11 +220,26 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   for (const [sourceName, targetName] of Object.entries(nameMap)) {
     targetToSource[targetName] = sourceName;
   }
+  // 🔴 READ THE TARGET'S BIND POSE BEFORE THE RETARGET RUNS.
+  //
+  // `threeRetargetClip` poses the target skeleton frame by frame and leaves the
+  // bone objects wherever the last frame put them — measured: every local
+  // translation flattened to [0,0,0]. `clipToKeyframes` falls back to
+  // `bind.position` for a bone the clip does not translate, which is EVERY bone
+  // here (a retarget emits quaternion tracks only, by design, because the target
+  // keeps its own proportions). So reading the spec afterwards fed it a bind pose
+  // of all zeros, it wrote position [0,0,0] into every keyframe, and the bake
+  // copied that into an absolute local-position channel — placing every bone at
+  // its parent's origin and folding the character into a blob (#828).
+  //
+  // The names read back identically either side of the call; only the positions
+  // are destroyed by it. So this is an ORDERING fix, not a data-source change.
+  const targetSpecs = bonesToSpec(targetBoneObjs);
+
   const retargeted: ThreeAnimationClip = threeRetargetClip(targetWrap, sourceWrap, sourceClip, {
     names: targetToSource,
   });
 
-  const targetSpecs = bonesToSpec(targetBoneObjs);
   const keyframes = clipToKeyframes(retargeted, targetSpecs);
 
   return {
