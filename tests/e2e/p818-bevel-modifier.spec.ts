@@ -284,6 +284,32 @@ test('#818 — a ZERO amount is transparent on the render walk, and does not thr
   expect(pageErrors).toEqual([]);
 });
 
+test('#818 — the INSPECTOR routes `amount`, and typing in it reshapes the cube', async ({
+  page,
+}) => {
+  // The last exit clause of #818, and the only one that goes through no `dispatchAtomic` of
+  // this spec's own: a director selects the row and types. `home: { amount: 'modifier' }` is
+  // what routes the control there, and `paramHomeGolden` pins the routing — but a golden is a
+  // string, and a string cannot say the input rendered. This row can.
+  const modifierId = await addBevel(page);
+  await expect.poll(() => vertsUnder(page, CUBE)).toBe(BEVELLED_VERTS);
+
+  // Params live under the SELECTED row — the same gesture Array and Mirror need.
+  await page.locator(`[data-testid="modifier-row-${modifierId}"]`).click();
+  const amount = page.getByTestId(`inspector-input-${modifierId}-amount`);
+  await expect(amount).toBeVisible();
+  await expect(amount).toHaveValue('0.1');
+
+  await amount.fill('0.3');
+  await amount.press('Enter');
+
+  // Typed through the real control, the chamfer moves — and the topology does not.
+  await expect
+    .poll(async () => (await firstPositions(page, CUBE)).map((v) => Number(v.toFixed(4))))
+    .toEqual([0.5, 0.2, -0.2, 0.5, 0.2, 0.2]);
+  expect(await vertsUnder(page, CUBE)).toBe(BEVELLED_VERTS);
+});
+
 test('#818 — muting the row bypasses it, and the cube comes back', async ({ page }) => {
   // The category's bypass, applied above `evaluate` (ns-2 step 5). Asserted here because a
   // minting operator is the first one for which "bypassed" and "amount 0" are two different
