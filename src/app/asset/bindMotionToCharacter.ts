@@ -82,7 +82,7 @@ interface Candidate {
 }
 
 /** A readable name for a character, from the OPFS path its asset was imported under. */
-function labelForAssetRef(assetRef: string): string {
+export function labelForAssetRef(assetRef: string): string {
   const base = assetRef.split('/').filter(Boolean).pop() ?? assetRef;
   return base.replace(/\.[^.]+$/, '') || base;
 }
@@ -135,7 +135,7 @@ export function motionTargetCandidates(state: DagState): Candidate[] {
  * reaches the `GltfAsset` from the Group, from a `GltfChild` bone, and from the
  * rig node itself, without turning into an unbounded graph search.
  */
-function selectedAssetRefs(state: DagState, selectedNodeId: string | null): Set<string> {
+export function selectedAssetRefs(state: DagState, selectedNodeId: string | null): Set<string> {
   const refs = new Set<string>();
   if (!selectedNodeId) return refs;
   const visit = (nodeId: string, depth: number): void => {

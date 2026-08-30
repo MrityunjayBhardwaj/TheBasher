@@ -47,6 +47,46 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
     seedUrl: '/assets/skinned-bar.glb',
     swatch: '#b07aff',
   },
+  // ── Motion shelf (#815) ────────────────────────────────────────────────
+  // A director should be able to PICK a motion, not go find a .bvh. These
+  // ride the road a hand-dragged file already takes: a library drop of an
+  // importable extension routes through `routeImportByExtension` (the single
+  // importer call site in src/app), which reaches bvhImportChain and then
+  // binds the clip to a character (#807). Nothing here is a second path.
+  //
+  // Named for the ACTION, never the file — the director is picking a walk,
+  // and that a walk is a 78-joint BVH is not their problem.
+  //
+  // PROVENANCE: Kimodo SOMA-skeleton outputs, which fall under the
+  // open-model checkpoints entry (ALLOWED_WITH_CONDITIONS — distribution
+  // granted, NOTICE shipped) and NOT under the SMPL-X variant, whose separate
+  // licence forbids generating works for distribution. The licence varies per
+  // checkpoint within one release and the SKELETON is the discriminator, so
+  // the shared 78-joint SOMA hierarchy is what keeps these shippable.
+  //
+  // (Deliberately no verbatim checkpoint id here: `license-audit` substring-
+  // scans src/ for BLOCKED ids, and naming that one — even to say these are
+  // not it — reds the gate. Over-reporting is the gate's safe direction; the
+  // full reasoning lives in the doc.)
+  // REF: src/core/licensing/external-models.json, NOTICE,
+  //      docs/EXTERNAL-MODEL-LICENCES.md, issue #815.
+  ...(
+    [
+      ['walk', 'Walk'],
+      ['run', 'Run'],
+      ['jump', 'Jump'],
+      ['crouch', 'Crouch'],
+      ['turn', 'Turn'],
+      ['wave', 'Wave'],
+    ] as const
+  ).map(([file, name]) => ({
+    path: `assets/motion/${file}.bvh`,
+    name,
+    seedUrl: `/assets/motion/${file}.bvh`,
+    // One colour for the whole shelf: motion is a different KIND of asset from
+    // a mesh, and a per-clip colour would imply a distinction that isn't there.
+    swatch: '#f0c05a',
+  })),
 ];
 
 /** Mime type sent over dataTransfer during library → viewport drag. */

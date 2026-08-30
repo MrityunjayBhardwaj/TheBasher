@@ -43,6 +43,94 @@ interface ChannelNodeLike {
 }
 
 /**
+ * Does this node carry baked TRS motion for the asset described by `nodeNameMap`?
+ *
+ * THE ONE definition of "this asset's baked motion", because more than one caller
+ * now depends on the answer and they must not drift: the samplers the renderer
+ * reads (below) and the ids the clear action deletes
+ * (`bakedChannelNodeIdsForAsset`) are the SAME set by construction. A clear that
+ * used its own predicate could leave behind a channel the renderer still plays —
+ * the character would keep moving after "clear baked motion" reported success,
+ * which is the silent-mismatch shape this area has already produced once (H516).
+ */
+function isBakedTransformChannelOf(
+  node: ChannelNodeLike,
+  nodeNameMap: Readonly<Record<string, string>>,
+): boolean {
+  if (node.type !== 'KeyframeChannelVec3') return false;
+  const p = node.params as { childName?: unknown; target?: unknown; paramPath?: unknown };
+  if (typeof p.childName !== 'string' || typeof p.target !== 'string') return false;
+  if (p.paramPath !== 'position' && p.paramPath !== 'rotation' && p.paramPath !== 'scale') {
+    return false;
+  }
+  // BLOCK-2 membership: in THIS asset iff childName maps to a dagId here AND
+  // the channel's stored target dagId agrees (D1 wrote them hashId-consistent).
+  return nodeNameMap[p.childName] === p.target;
+}
+
+/**
+ * The node ids of every baked transform channel belonging to ONE glTF asset.
+ *
+ * The delete-side counterpart of `bakedChannelSamplersForAsset`: same predicate,
+ * ids instead of samplers. Deleting exactly this set is what makes "clear baked
+ * motion" mean "the renderer now sees no baked motion for this character" rather
+ * than "some channels were removed".
+ *
+ * Ids are returned SORTED (V22): the op set a director undoes must not depend on
+ * object-key order.
+ *
+ * @param nodes        the DAG node table, keyed by node id (read-only).
+ * @param nodeNameMap  the asset's childName → dagId map (GltfAsset.params.nodeNameMap).
+ */
+export function bakedChannelNodeIdsForAsset(
+  nodes: Readonly<Record<string, ChannelNodeLike>>,
+  nodeNameMap: Readonly<Record<string, string>>,
+): string[] {
+  const out: string[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (isBakedTransformChannelOf(node, nodeNameMap)) out.push(id);
+  }
+  return out.sort();
+}
+
+/** Minimal asset-node shape the assetRef → nodeNameMap lookup reads. */
+interface AssetNodeLike {
+  readonly type: string;
+  readonly params?: unknown;
+}
+
+/**
+ * The baked-channel node ids for an asset addressed by `assetRef`, or `null`
+ * when no `GltfAsset` in the scene carries that ref (or carries no usable
+ * `nodeNameMap`).
+ *
+ * `null` is NOT the empty array, and the difference matters: an asset whose map
+ * is missing has an UNKNOWN baked set, and reporting it as "nothing baked" would
+ * let a clear announce success having deleted nothing. Callers must distinguish
+ * "already clear" from "cannot tell".
+ *
+ * The single entry point for both consumers — the clear dispatch and the button
+ * that offers it — so the action and the affordance cannot disagree about whether
+ * a character has motion to clear.
+ */
+export function bakedChannelIdsForAssetRef(
+  nodes: Readonly<Record<string, AssetNodeLike>>,
+  assetRef: string,
+): string[] | null {
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'GltfAsset') continue;
+    const p = node.params as { assetRef?: unknown; nodeNameMap?: unknown };
+    if (p.assetRef !== assetRef) continue;
+    if (!p.nodeNameMap || typeof p.nodeNameMap !== 'object') return null;
+    return bakedChannelNodeIdsForAsset(
+      nodes as Readonly<Record<string, ChannelNodeLike>>,
+      p.nodeNameMap as Record<string, string>,
+    );
+  }
+  return null;
+}
+
+/**
  * Enumerate the baked KeyframeChannelVec3 nodes belonging to ONE glTF asset,
  * keyed by childName → per-component sampler closures.
  *
@@ -56,15 +144,8 @@ export function bakedChannelSamplersForAsset(
 ): Record<string, BakedChannelSamplers> {
   const out: Record<string, BakedChannelSamplers> = {};
   for (const node of Object.values(nodes)) {
-    if (node.type !== 'KeyframeChannelVec3') continue;
-    const p = node.params as { childName?: unknown; target?: unknown; paramPath?: unknown };
-    if (typeof p.childName !== 'string' || typeof p.target !== 'string') continue;
-    if (p.paramPath !== 'position' && p.paramPath !== 'rotation' && p.paramPath !== 'scale') {
-      continue;
-    }
-    // BLOCK-2 membership: in THIS asset iff childName maps to a dagId here AND
-    // the channel's stored target dagId agrees (D1 wrote them hashId-consistent).
-    if (nodeNameMap[p.childName] !== p.target) continue;
+    if (!isBakedTransformChannelOf(node, nodeNameMap)) continue;
+    const p = node.params as { childName: string; paramPath: 'position' | 'rotation' | 'scale' };
     // Function-of-time (V24): build the sampler closure once here (per DAG
     // change), invoked per-frame by the caller. buildVec3Sampler is the SAME
     // sort+interp the node's evaluate uses — one source of the sampling math.
