@@ -38,7 +38,14 @@ function renameBonesInPlace(glb: ArrayBuffer, from: string, to: string): ArrayBu
 }
 
 const KEY = 'tsk_test_key';
-const opts = { apiKey: KEY, baseUrl: 'http://tripo.test', pollIntervalMs: 0 };
+// v2 wire, stated rather than inherited from the client's default — which is
+// now v3. See tripoV3.test.ts for the v3 half of the same contract.
+const opts = {
+  apiKey: KEY,
+  apiVersion: 'v2' as const,
+  baseUrl: 'http://tripo.test',
+  pollIntervalMs: 0,
+};
 
 /** A fetch that answers the create → poll → download sequence. */
 function transport(

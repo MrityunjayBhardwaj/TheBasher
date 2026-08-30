@@ -45,7 +45,23 @@ import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
 import { pickMotionGeneration, type MotionGenerationCapability } from '../core/motiongen';
-import { pickModelGeneration, type ModelGenerationCapability } from '../core/modelgen';
+import {
+  browserTripoOptions,
+  pickModelGeneration,
+  type ModelGenerationCapability,
+} from '../core/modelgen';
+import { pickRigging } from '../core/rigging';
+import type { RiggingCapability } from '../core/rigging';
+import { useAssetErrorStore } from './stores/assetErrorStore';
+
+/** The banner row a degraded text-to-3D reports under. Named for what a person
+ *  asked for, because the banner renders "<ref> — <reason>". */
+export const MODEL_GENERATION_ERROR_REF = 'Text-to-3D';
+
+/** The banner row a degraded rig reports under. Separate from the generation
+ *  row: a real mesh with an invented skeleton is a different fact from an
+ *  invented mesh, and a director needs to know which half degraded. */
+export const RIGGING_ERROR_REF = 'Rigging';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -96,6 +112,11 @@ let cachedMotionGen: MotionGenerationCapability | null = null;
 let motionGenPromise: Promise<MotionGenerationCapability> | null = null;
 let cachedModelGen: ModelGenerationCapability | null = null;
 let modelGenPromise: Promise<ModelGenerationCapability> | null = null;
+// Separate from the model slots on purpose: the same service answers both, but
+// they are different capability TYPES and one cache holding both would let a
+// caller reach the wrong interface.
+let cachedRigging: RiggingCapability | null = null;
+let riggingPromise: Promise<RiggingCapability> | null = null;
 
 const LAST_PROJECT_KEY = 'basher.lastProjectId';
 
@@ -187,6 +208,8 @@ export function resetMotionCapability(): void {
   motionGenPromise = null;
   cachedModelGen = null;
   modelGenPromise = null;
+  cachedRigging = null;
+  riggingPromise = null;
 }
 
 /** Test-only: inject a motion capability so tests hit a deterministic stub
@@ -211,7 +234,26 @@ export function getModelCapability(): Promise<ModelGenerationCapability> {
   if (cachedModelGen) return Promise.resolve(cachedModelGen);
   if (!modelGenPromise) {
     const { tripoApiKey } = useSettingsStore.getState();
-    modelGenPromise = pickModelGeneration(tripoApiKey).then((cap) => {
+    // 🔑 THE PAGE CALLS THE PROXY, NOT TRIPO. Tripo answers no CORS preflight,
+    // so a direct call from here is blocked before it is sent (#804) — and it
+    // was blocked in silence, because the failed probe fell through to the stub.
+    // `browserTripoOptions` is the only place a page-origin base URL is formed,
+    // and it hands back the version with it so the two cannot disagree.
+    modelGenPromise = pickModelGeneration(tripoApiKey, browserTripoOptions(), (fallback) => {
+      // A configured key that could not be used is a SURPRISE, and until now it
+      // was a silent one: the stub returns a real GLB that imports and renders,
+      // so a synthesised mesh arrived looking exactly like a generation. The
+      // banner is the surface every other degraded asset path already reports
+      // to, so this joins it rather than inventing a second place to look.
+      useAssetErrorStore.getState().report(
+        MODEL_GENERATION_ERROR_REF,
+        // The actionable sentence leads; what happened instead follows. The
+        // banner prefixes its own "asset failed:", so a message that opened
+        // with the consequence read as two clauses before saying anything a
+        // person could act on.
+        `${fallback.message} Generated with the offline stub instead.`,
+      );
+    }).then((cap) => {
       cachedModelGen = cap;
       return cap;
     });
@@ -224,6 +266,55 @@ export function getModelCapability(): Promise<ModelGenerationCapability> {
 export function resetModelCapability(): void {
   cachedModelGen = null;
   modelGenPromise = null;
+  // Clear the degraded-generation row too. It reports the verdict of a probe
+  // that is about to be re-run, so leaving it up would show the OLD key's
+  // failure beside a newly corrected one — and the banner is dismissible, which
+  // would make the stale message look like it had been re-confirmed.
+  useAssetErrorStore.getState().clear(MODEL_GENERATION_ERROR_REF);
+}
+
+/**
+ * The rigging capability, probed once per session.
+ *
+ * Same shape as `getModelCapability` and the same service behind it — Tripo does
+ * generation and rigging under one key — but a SEPARATE cache, because the two
+ * are separate capability types and a caller holding one must not be able to
+ * reach the other by accident.
+ *
+ * 🔑 Until now `pickRigging` had no caller in the app at all. The rig road was
+ * complete and tested and reachable only from a throwaway node harness, which is
+ * why the silent fall-through it carried had never been seen.
+ */
+export function getRiggingCapability(): Promise<RiggingCapability> {
+  if (cachedRigging) return Promise.resolve(cachedRigging);
+  if (!riggingPromise) {
+    const { tripoApiKey } = useSettingsStore.getState();
+    riggingPromise = pickRigging(tripoApiKey, browserTripoOptions(), (fallback) => {
+      // Reported under its own row rather than the generation one. A director who
+      // asked for a rigged character and got a stub rig needs to know WHICH half
+      // degraded — the mesh may well be real while only the skeleton is invented.
+      useAssetErrorStore
+        .getState()
+        .report(RIGGING_ERROR_REF, `${fallback.message} Rigged with the offline stub instead.`);
+    }).then((cap) => {
+      cachedRigging = cap;
+      return cap;
+    });
+  }
+  return riggingPromise;
+}
+
+/** Forget the cached rigging capability so the next call re-probes a changed key. */
+export function resetRiggingCapability(): void {
+  cachedRigging = null;
+  riggingPromise = null;
+  useAssetErrorStore.getState().clear(RIGGING_ERROR_REF);
+}
+
+/** Test-only: inject a rigging capability, as the model side does. */
+export function __setRiggingCapabilityForTests(cap: RiggingCapability | null): void {
+  cachedRigging = cap;
+  riggingPromise = cap ? Promise.resolve(cap) : null;
 }
 
 /** Test-only: inject a model capability so tests hit a deterministic stub

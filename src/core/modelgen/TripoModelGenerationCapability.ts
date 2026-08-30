@@ -23,9 +23,16 @@
 // a hosted API ships no weights, so a version is a menu choice inside one
 // agreement rather than a separately-licensed artefact.
 //
-// Grounded, not guessed. Every endpoint, header, field name and status string
-// below is read from Tripo's official MIT-licensed Python SDK, mirrored at
-// `ref/sources/tripo-python-sdk/`:
+// 🔑 TWO API GENERATIONS, ONE CLIENT. Tripo's v2 and v3 differ in paths, a few
+// field names, and which key the output URL arrives under — and agree on
+// everything that carries risk: Bearer auth, the `{code, data}` envelope,
+// poll-until-terminal-status, download-by-URL, and licence-before-request. So
+// the version is a VALUE this class holds (`tripoDialect.ts`), not a second
+// class. The shared half is written and tested once.
+//
+// 🔴 THE TWO VERSIONS ARE NOT EQUALLY GROUNDED, and the dialect table says so
+// per entry. v2 is source-verified against Tripo's official MIT-licensed Python
+// SDK, mirrored at `ref/sources/tripo-python-sdk/`:
 //   - BASE_URL                          tripo3d/client.py:25
 //   - POST /task   → data.task_id       tripo3d/client.py:200-216
 //   - GET  /task/{id} → data.{status,progress,output}
@@ -37,8 +44,10 @@
 //   - TaskStatus values                 tripo3d/models.py:39-48
 //   - output.{model,base_model,pbr_model}
 //                                       tripo3d/models.py:65-72
+// v3 is VENDOR-DOCUMENTED ONLY — there is no v3 source to read, and nothing in
+// it has been observed against the running service. See `tripoDialect.ts`.
 //
-// REF: ref/architecture/ai-track.md phase A4; issues #732, #761, #762.
+// REF: ref/architecture/ai-track.md phase A4; issues #732, #761, #762, #797.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
 import { parseGltfContainer } from '../import/glb';
@@ -63,6 +72,15 @@ import {
   type ModelGenerationResult,
   type SourceImage,
 } from './ModelGenerationCapability';
+import {
+  DEFAULT_TRIPO_API_VERSION,
+  tripoDialect,
+  type TripoApiVersion,
+  type TripoDialect,
+  type TripoTaskOutput,
+  type TripoUploads,
+  type UploadedFile,
+} from './tripoDialect';
 
 /**
  * The id the SERVICE's licence verdict is recorded under. Deliberately not a
@@ -73,28 +91,31 @@ import {
  */
 export const TRIPO_SERVICE_ID = 'tripo-api';
 
-/** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:25. */
-export const TRIPO_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
-
-/** REF: ref/sources/tripo-python-sdk/tripo3d/models.py:39-48. */
+/**
+ * Statuses from which a task never recovers.
+ *
+ * A UNION across both versions, on purpose. v2 names all five
+ * (models.py:39-48); v3 documents only `failed` and `cancelled`, folding
+ * moderation and queue expiry into `failed` with an `error_code`. Treating v2's
+ * extra three as terminal under v3 costs nothing — they cannot arrive — while
+ * dropping them would strand a v2 poll loop on a status it can never leave.
+ */
 const TERMINAL_FAILURE_STATUSES = new Set(['failed', 'cancelled', 'banned', 'expired', 'unknown']);
 
-/** The task output fields this client reads. `riggable` and `rig_type` are what a
- *  pre-rig check answers with. REF: tripo3d/models.py:64-90 (TaskOutput). */
-interface TripoTaskOutput {
-  model?: string;
-  base_model?: string;
-  pbr_model?: string;
-  riggable?: boolean;
-  rig_type?: string;
-}
-
 export interface TripoOptions {
-  /** `tsk_`-prefixed key. The Blender plugin validates that prefix before use;
-   *  so do we, because a key pasted from the wrong field otherwise fails as an
-   *  opaque 401 several seconds later.
-   *  REF: ref/sources/tripo-3d-for-blender/operators.py:105. */
+  /**
+   * The account key. Its shape is checked only where the shape is DOCUMENTED —
+   * v2 states `tsk_`, v3 states nothing — so see `assertTripoKeyShape`.
+   */
   readonly apiKey: string;
+  /**
+   * Which API generation to speak. Defaults to v3, the version Tripo documents
+   * today. v2 is retained and source-verified; see `tripoDialect.ts` for why
+   * both exist and how differently grounded they are.
+   */
+  readonly apiVersion?: TripoApiVersion;
+  /** Overrides the dialect's own base URL. Injected by tests; a host swap is a
+   *  constructor swap and never an edit to a caller. */
   readonly baseUrl?: string;
   /** Whole-generation budget, across create + poll + download. */
   readonly timeoutMs?: number;
@@ -120,6 +141,107 @@ export class TripoApiError extends Error {
   }
 }
 
+/**
+ * Why a probe could not confirm the service.
+ *
+ * These are separated on the axis that matters to whoever reads the report:
+ * WHOSE PROBLEM IS IT AND WHAT WOULD FIX IT. A rejected key is the reader's to
+ * fix; an unreachable host is the deployment's; a service error is Tripo's and
+ * fixes itself. Collapsing them loses exactly the thing a person needs.
+ */
+export type TripoUnavailableCause =
+  /** The key is not the shape this API generation documents. */
+  | 'key-shape'
+  /** The host answered and refused the credential (401/403). */
+  | 'key-rejected'
+  /** No answer came back at all — a browser blocked by CORS with no proxy in
+   *  front of it, a host that is down, DNS, or no network. 🔑 In a page this is
+   *  overwhelmingly "there is no proxy on this origin", which is #804's open
+   *  production half. */
+  | 'unreachable'
+  /** The host answered with something else. Tripo's problem, not the caller's. */
+  | 'service-error';
+
+export interface TripoUnavailable {
+  readonly ok: false;
+  readonly cause: TripoUnavailableCause;
+  /** The underlying message, kept verbatim so a report can quote it. */
+  readonly detail: string;
+}
+
+export type TripoProbeResult =
+  | { readonly ok: true; readonly balance: number; readonly frozen: number }
+  | TripoUnavailable;
+
+function messageOf(err: unknown): string {
+  if (err instanceof Error) return err.message || err.name;
+  if (typeof err === 'string') return err;
+  return 'Unknown error';
+}
+
+/**
+ * Name a transport failure.
+ *
+ * 🔑 THE DISCRIMINATOR IS WHETHER AN ANSWER CAME BACK AT ALL. `request` only
+ * constructs a `TripoApiError` after `fetch` resolved and the response was read,
+ * so a `TripoApiError` proves the host answered. Anything else reaching here —
+ * a `TypeError: Failed to fetch`, an abort — means the request never completed,
+ * which in a browser is what a blocked preflight looks like.
+ */
+function classifyTripoFailure(err: unknown): Omit<TripoUnavailable, 'ok'> {
+  const detail = messageOf(err);
+  if (err instanceof TripoApiError) {
+    if (err.status === 401 || err.status === 403) return { cause: 'key-rejected', detail };
+    return { cause: 'service-error', detail };
+  }
+  return { cause: 'unreachable', detail };
+}
+
+/**
+ * A sentence a person can act on.
+ *
+ * Lives in core beside the cause rather than in the panel, so the wording cannot
+ * differ between the surface that shows it and the test that pins it — and so a
+ * second surface later says the same thing.
+ */
+export function describeTripoUnavailable(result: TripoUnavailable): string {
+  switch (result.cause) {
+    case 'key-shape':
+      return `The Tripo API key looks wrong: ${result.detail}`;
+    case 'key-rejected':
+      return 'Tripo refused the API key. Check it at platform.tripo3d.ai/api-keys.';
+    case 'unreachable':
+      return (
+        'Could not reach Tripo from the browser, so nothing was generated by the ' +
+        'service. Tripo sends no CORS headers, so the page needs a proxy in front ' +
+        `of it — the dev server provides one, a static production build does not (${result.detail}).`
+      );
+    case 'service-error':
+      return `Tripo answered with an error: ${result.detail}`;
+  }
+}
+
+/**
+ * Why a caller is holding a stub rather than the service it asked for.
+ *
+ * One shape for every picker over this transport. Generation and rigging are the
+ * same service behind the same key, so a second declaration would be a second
+ * thing to keep in step for no gain — and the report a person reads should not
+ * depend on which entry point happened to probe.
+ */
+export interface TripoFallback {
+  readonly cause: TripoUnavailableCause;
+  /** The underlying failure, verbatim. */
+  readonly detail: string;
+  /** A sentence a person can act on. */
+  readonly message: string;
+}
+
+/** Turn a failed probe into the report a picker hands its caller. */
+export function tripoFallbackOf(probe: TripoUnavailable): TripoFallback {
+  return { cause: probe.cause, detail: probe.detail, message: describeTripoUnavailable(probe) };
+}
+
 /** Thrown when a task reaches a terminal non-success status. Distinct from a
  *  transport error, because the two ask the caller for different things: retry
  *  versus change the request. */
@@ -134,11 +256,35 @@ export class TripoTaskFailedError extends Error {
   }
 }
 
-export function assertTripoKeyShape(apiKey: string): void {
-  if (!apiKey.startsWith('tsk_')) {
+/**
+ * Check a key's shape — but only against a prefix the vendor DOCUMENTS.
+ *
+ * 🔑 THIS CHECK IS VERSION-SCOPED, and that is the point. v2's `tsk_` rule has
+ * two independent citations (the SDK at `client.py:50-51` and the Blender plugin
+ * at `operators.py:105`), so refusing a non-`tsk_` key there is a real early
+ * error that saves an opaque 401 several seconds later.
+ *
+ * v3 documents no prefix at all. A rule invented from the one key we happened to
+ * observe would refuse every valid key of a form we have not seen, while
+ * reporting a confident reason for it — a check that can reject an input over a
+ * fact it never reliably knows. So under v3 the only shape requirement is
+ * non-emptiness, and the service's own 401 is the authority on validity.
+ *
+ * An empty key is refused under BOTH, because that one is not a guess: it means
+ * nothing was configured.
+ */
+export function assertTripoKeyShape(
+  apiKey: string,
+  version: TripoApiVersion = DEFAULT_TRIPO_API_VERSION,
+): void {
+  const prefix = tripoDialect(version).keyPrefix;
+  if (apiKey.trim() === '') {
+    throw new TripoApiError('No Tripo API key is configured.');
+  }
+  if (prefix !== undefined && !apiKey.startsWith(prefix)) {
     throw new TripoApiError(
-      'Tripo API key must begin with "tsk_". Copy it from platform.tripo3d.ai/api-keys — ' +
-        'a key from another field fails later as an opaque 401.',
+      `Tripo API key must begin with "${prefix}" for the ${version} API. Copy it from ` +
+        'platform.tripo3d.ai/api-keys — a key from another field fails later as an opaque 401.',
     );
   }
 }
@@ -150,6 +296,7 @@ export class TripoModelGenerationCapability
   readonly kind = 'http' as const;
 
   private readonly apiKey: string;
+  private readonly dialect: TripoDialect;
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly pollIntervalMs: number;
@@ -160,7 +307,8 @@ export class TripoModelGenerationCapability
 
   constructor(options: TripoOptions) {
     this.apiKey = options.apiKey;
-    this.baseUrl = (options.baseUrl ?? TRIPO_BASE_URL).replace(/\/+$/, '');
+    this.dialect = tripoDialect(options.apiVersion ?? DEFAULT_TRIPO_API_VERSION);
+    this.baseUrl = (options.baseUrl ?? this.dialect.baseUrl).replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -168,23 +316,47 @@ export class TripoModelGenerationCapability
       options.sleepImpl ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  async isAvailable(): Promise<boolean> {
-    // A balance call is the cheapest thing that proves BOTH that the host is up
-    // and that the key is accepted — which is what "available" has to mean for a
-    // paid service. A reachable host with a rejected key is not availability.
+  /**
+   * Why the service is or is not usable — the same question `isAvailable` asks,
+   * answered without throwing the reason away.
+   *
+   * 🔑 A PROBE THAT COLLAPSES ITS CAUSES INTO A BOOLEAN SILENTLY DOWNGRADES ITS
+   * CALLER. `isAvailable` returned false for a key of the wrong shape, a key the
+   * service refused, a host that never answered, and a browser that was never
+   * allowed to ask — and `pickModelGeneration` then returned a stub whose own
+   * `isAvailable()` is unconditionally true. Four distinct situations, one
+   * silent outcome, and a synthesised mesh that looks like a result.
+   *
+   * A balance call remains the cheapest thing that proves BOTH that the host is
+   * up and that the key is accepted, which is what "available" has to mean for a
+   * paid service. What changes is that the failure keeps its name.
+   */
+  async probe(): Promise<TripoProbeResult> {
     try {
-      assertTripoKeyShape(this.apiKey);
-      await this.getBalance();
-      return true;
-    } catch {
-      return false;
+      assertTripoKeyShape(this.apiKey, this.dialect.version);
+    } catch (err) {
+      return { ok: false, cause: 'key-shape', detail: messageOf(err) };
     }
+    try {
+      const { balance, frozen } = await this.getBalance();
+      return { ok: true, balance, frozen };
+    } catch (err) {
+      return { ok: false, ...classifyTripoFailure(err) };
+    }
+  }
+
+  /** The interface's question, answered by the probe so the rule lives once. */
+  async isAvailable(): Promise<boolean> {
+    return (await this.probe()).ok;
   }
 
   /** Remaining credits, as the Blender plugin shows after key confirmation.
    *  REF: ref/sources/tripo-3d-for-blender/utils.py:112 (`Update_User_balance`). */
   async getBalance(): Promise<{ balance: number; frozen: number }> {
-    const data = await this.request<{ balance?: number; frozen?: number }>('GET', '/user/balance');
+    const data = await this.request<{ balance?: number; frozen?: number }>(
+      'GET',
+      this.dialect.balancePath,
+    );
     return { balance: data.balance ?? 0, frozen: data.frozen ?? 0 };
   }
 
@@ -196,24 +368,26 @@ export class TripoModelGenerationCapability
     // same ordering and the same reason as the motion capability.
     assertModelAllowed(TRIPO_SERVICE_ID);
     assertValidModelRequest(request);
-    assertTripoKeyShape(this.apiKey);
+    assertTripoKeyShape(this.apiKey, this.dialect.version);
 
     const deadline = Date.now() + this.timeoutMs;
-    const taskData = await this.buildTaskData(request);
-    const created = await this.request<{ task_id?: string }>('POST', '/task', taskData);
+    const uploads = await this.uploadSources(request);
+    const call = this.dialect.modelCall(request, uploads);
+    const created = await this.request<{ task_id?: string }>('POST', call.path, call.body);
     const taskId = created.task_id;
     if (!taskId) {
       throw new TripoApiError('Tripo accepted the task but returned no task_id.');
     }
 
     const output = await this.pollUntilDone(taskId, deadline, onProgress);
-    // pbr_model first: it is the textured, PBR-material variant the plugin
-    // prefers, and A4's road carries materials through the same glTF chain.
-    const url = output.pbr_model ?? output.model ?? output.base_model;
+    // WHICH field holds the URL is version-specific — v3 renamed it — so the
+    // dialect answers rather than this method guessing across both vocabularies.
+    const url = this.dialect.modelUrlOf(output);
     if (!url) {
       throw new TripoApiError(
         `Tripo task ${taskId} succeeded but its output carried no model URL ` +
-          '(expected one of pbr_model, model, base_model).',
+          `(${this.dialect.version} expects ` +
+          `${this.dialect.version === 'v2' ? 'pbr_model, model or base_model' : 'model_url or model_urls'}).`,
       );
     }
 
@@ -247,13 +421,11 @@ export class TripoModelGenerationCapability
   /** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:1126 (`check_riggable`). */
   async checkRiggable(subject: RigSubject): Promise<RiggableCheck> {
     assertModelAllowed(TRIPO_SERVICE_ID);
-    assertTripoKeyShape(this.apiKey);
+    assertTripoKeyShape(this.apiKey, this.dialect.version);
 
     const deadline = Date.now() + this.timeoutMs;
-    const created = await this.request<{ task_id?: string }>('POST', '/task', {
-      type: 'animate_prerigcheck',
-      original_model_task_id: subject.sourceTaskId,
-    });
+    const call = this.dialect.rigCheckCall(subject.sourceTaskId);
+    const created = await this.request<{ task_id?: string }>('POST', call.path, call.body);
     const taskId = created.task_id;
     if (!taskId)
       throw new TripoApiError('Tripo accepted the pre-rig check but returned no task_id.');
@@ -273,29 +445,30 @@ export class TripoModelGenerationCapability
   async rig(request: RigRequest, onProgress?: (p: RigProgress) => void): Promise<RigResult> {
     assertModelAllowed(TRIPO_SERVICE_ID);
     assertValidRigRequest(request);
-    assertTripoKeyShape(this.apiKey);
+    assertTripoKeyShape(this.apiKey, this.dialect.version);
 
     const spec = request.spec ?? DEFAULT_RIG_SPEC;
     const deadline = Date.now() + this.timeoutMs;
-    const created = await this.request<{ task_id?: string }>('POST', '/task', {
-      type: 'animate_rig',
-      original_model_task_id: request.sourceTaskId,
-      // `out_format` is pinned to glb rather than exposed: the whole contract is
-      // that a rigged mesh takes the SAME import road a dropped .glb takes, and
-      // fbx would fork it. REF: client.py:1160.
-      out_format: 'glb',
-      rig_type: request.rigType ?? 'biped',
+    // `out_format` is pinned to glb inside every dialect rather than exposed:
+    // the whole contract is that a rigged mesh takes the SAME import road a
+    // dropped .glb takes, and fbx would fork it. REF: client.py:1160.
+    const call = this.dialect.rigCall({
+      sourceTaskId: request.sourceTaskId,
+      rigType: request.rigType ?? 'biped',
       spec,
+      ...(request.modelVersion !== undefined ? { modelVersion: request.modelVersion } : {}),
     });
+    const created = await this.request<{ task_id?: string }>('POST', call.path, call.body);
     const taskId = created.task_id;
     if (!taskId) throw new TripoApiError('Tripo accepted the rig but returned no task_id.');
 
     const output = await this.pollUntilDone(taskId, deadline, (p) => onProgress?.(p));
-    const url = output.model ?? output.pbr_model ?? output.base_model;
+    const url = this.dialect.modelUrlOf(output);
     if (!url) {
       throw new TripoApiError(
         `Tripo rig ${taskId} succeeded but its output carried no model URL ` +
-          '(expected one of model, pbr_model, base_model).',
+          `(${this.dialect.version} expects ` +
+          `${this.dialect.version === 'v2' ? 'model, pbr_model or base_model' : 'model_url or model_urls'}).`,
       );
     }
     const glb = await this.download(url, deadline);
@@ -342,7 +515,7 @@ export class TripoModelGenerationCapability
         status?: string;
         progress?: number;
         output?: TripoTaskOutput;
-      }>('GET', `/task/${encodeURIComponent(taskId)}`);
+      }>('GET', this.dialect.taskPath(taskId));
 
       const status = task.status ?? 'unknown';
       onProgress?.({ taskId, status, progress: task.progress ?? 0 });
@@ -355,69 +528,39 @@ export class TripoModelGenerationCapability
     }
   }
 
-  /** Map Basher's vocabulary onto the service's. THIS is the only place that
-   *  knows Tripo's field names — the interface above stays Basher-shaped. */
-  private async buildTaskData(request: ModelGenerationRequest): Promise<Record<string, unknown>> {
-    const shared: Record<string, unknown> = {};
-    const put = (key: string, value: unknown): void => {
-      if (value !== undefined) shared[key] = value;
-    };
-    put('model_version', request.modelVersion);
-    put('face_limit', request.faceLimit);
-    put('quad', request.quad);
-    put('texture', request.texture);
-    put('pbr', request.pbr);
-    put('texture_quality', request.textureQuality);
-    put('geometry_quality', request.geometryQuality);
-    put('texture_alignment', request.textureAlignment);
-    put('auto_size', request.autoSize);
-    put('style', request.style);
-    put('orientation', request.orientation);
-    put('model_seed', request.modelSeed);
-    put('texture_seed', request.textureSeed);
-
-    if (request.source === 'text') {
-      const data: Record<string, unknown> = {
-        ...shared,
-        type: 'text_to_model',
-        prompt: request.prompt,
-      };
-      if (request.negativePrompt !== undefined) data.negative_prompt = request.negativePrompt;
-      if (request.pose) {
-        // REF: ref/sources/tripo-3d-for-blender/__init__.py — the five ratio props.
-        const p = request.pose;
-        const spec: Record<string, unknown> = {};
-        if (p.headBodyHeightRatio !== undefined)
-          spec.head_body_height_ratio = p.headBodyHeightRatio;
-        if (p.headBodyWidthRatio !== undefined) spec.head_body_width_ratio = p.headBodyWidthRatio;
-        if (p.legsBodyHeightRatio !== undefined)
-          spec.legs_body_height_ratio = p.legsBodyHeightRatio;
-        if (p.armsBodyLengthRatio !== undefined)
-          spec.arms_body_length_ratio = p.armsBodyLengthRatio;
-        if (p.spanOfLegs !== undefined) spec.span_of_legs = p.spanOfLegs;
-        if (Object.keys(spec).length > 0) data.pose_spec = spec;
-      }
-      return data;
-    }
-
-    if (request.source === 'image') {
-      const file = await this.uploadImage(request.image);
-      return { ...shared, type: 'image_to_model', file };
-    }
+  /**
+   * Put whatever files the request carries in front of the service, and return
+   * them in the shape a task body references.
+   *
+   * Split out of body-building on purpose: uploading is a real side effect with
+   * its own failure mode, while assembling a task body is pure. The dialect gets
+   * a pure function of (request, already-uploaded files), which is what makes
+   * every wire shape testable without a network.
+   */
+  private async uploadSources(request: ModelGenerationRequest): Promise<TripoUploads> {
+    if (request.source === 'text') return {};
+    if (request.source === 'image') return { single: await this.uploadImage(request.image) };
 
     const { front, left, back, right } = request.views;
-    // The service takes the four views positionally, front first, with a null
-    // hole for a view that was not supplied.
-    const files = await Promise.all(
+    const views = await Promise.all(
       [front, left, back, right].map(async (img) => (img ? await this.uploadImage(img) : null)),
     );
-    return { ...shared, type: 'multiview_to_model', files };
+    return { views };
   }
 
-  /** POST /upload with multipart `file`, returning the token the task body wants.
-   *  REF: aiohttp_client_impl.py:98-127 (`data.image_token`), client.py:486-500
-   *  (the `{type, file_token}` shape a task carries). */
-  private async uploadImage(image: SourceImage): Promise<Record<string, unknown>> {
+  /**
+   * Upload one image with multipart `file` and return the token a task body
+   * references it by.
+   *
+   * BOTH the path and the token's field name are version-specific — v2 posts to
+   * `/upload` and answers `data.image_token`, v3 posts to `/files` and answers
+   * `data.file_token` — so both come from the dialect. The `{type, file_token}`
+   * shape the task body then carries is the same in both.
+   *
+   * REF: aiohttp_client_impl.py:98-127 and client.py:486-500 (v2);
+   *      v3 docs, `POST /files` → FileData.file_token.
+   */
+  private async uploadImage(image: SourceImage): Promise<UploadedFile> {
     const form = new FormData();
     const ext = mimeToExt(image.mimeType);
     // Copy into a fresh Uint8Array so a view over a larger (or shared) buffer is
@@ -426,7 +569,7 @@ export class TripoModelGenerationCapability
     bytes.set(image.bytes);
     form.append('file', new Blob([bytes], { type: image.mimeType }), `upload.${ext}`);
 
-    const response = await this.fetchImpl(`${this.baseUrl}/upload`, {
+    const response = await this.fetchImpl(`${this.baseUrl}${this.dialect.uploadPath}`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.apiKey}` },
       body: form,
@@ -434,15 +577,16 @@ export class TripoModelGenerationCapability
     const payload = (await response.json().catch(() => null)) as {
       code?: number;
       message?: string;
-      data?: { image_token?: string };
+      data?: Record<string, string | undefined>;
     } | null;
-    if (!response.ok || !payload?.data?.image_token) {
+    const token = payload?.data?.[this.dialect.uploadTokenField];
+    if (!response.ok || !token) {
       throw new TripoApiError(
         `Tripo image upload failed: ${payload?.message ?? response.statusText}`,
         { code: payload?.code, status: response.status },
       );
     }
-    return { type: ext, file_token: payload.data.image_token };
+    return { type: ext, file_token: token };
   }
 
   private async download(url: string, deadline: number): Promise<ArrayBuffer> {

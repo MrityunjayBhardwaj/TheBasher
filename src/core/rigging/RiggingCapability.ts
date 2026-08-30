@@ -96,6 +96,16 @@ export interface RigRequest extends RigSubject {
   readonly rigType?: RigType;
   /** Defaults to `mixamo` HERE, which is not the service's default — see below. */
   readonly spec?: RigSpec;
+  /**
+   * The AUTO-RIGGING model version — a different menu from the generation
+   * model's, and one the service does not usefully default.
+   *
+   * Left unset, the transport supplies a version it knows is valid. That is not
+   * belt-and-braces: a live rig call omitting it was refused with
+   * `invalid model 'v2.5-20250123'` — a version the request never mentioned, so
+   * the service's own default is outside its own allowed set.
+   */
+  readonly modelVersion?: string;
 }
 
 export interface RigResult {
@@ -159,6 +169,9 @@ export const RigRequestSchema = z
     sourceTaskId: z.string().trim().min(1, 'must not be empty'),
     rigType: z.enum(RIG_TYPES as [RigType, ...RigType[]]).optional(),
     spec: z.enum(RIG_SPECS as [RigSpec, ...RigSpec[]]).optional(),
+    // Not an enum: the valid set is the service's to state and it has changed
+    // once already. A closed list here would refuse a version the service added.
+    modelVersion: z.string().trim().min(1).optional(),
   })
   .strict();
 

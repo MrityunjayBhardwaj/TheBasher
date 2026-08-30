@@ -13,8 +13,21 @@
 import { useEffect, useState } from 'react';
 import { useSettingsStore } from './stores/settingsStore';
 import { probeComfyUI, type ComfyProbeResult } from '../core/comfy';
-import { resetComfyCapability, resetMotionCapability, resetModelCapability } from './boot';
+import {
+  resetComfyCapability,
+  resetMotionCapability,
+  resetModelCapability,
+  resetRiggingCapability,
+} from './boot';
 import { conditionsFor, modelRecordFor } from '../core/licensing/allowedModels';
+import { DEFAULT_TRIPO_API_VERSION, tripoDialect } from '../core/modelgen';
+
+/**
+ * The key prefix the CONFIGURED API version documents, or `undefined` where it
+ * documents none. Derived rather than typed out, so this hint cannot drift away
+ * from the check it is mirroring.
+ */
+const TRIPO_KEY_PREFIX = tripoDialect(DEFAULT_TRIPO_API_VERSION).keyPrefix;
 
 type TestState = { status: 'idle' | 'testing' } | ({ status: 'done' } & ComfyProbeResult);
 
@@ -96,6 +109,7 @@ export function SettingsModal() {
     resetComfyCapability(); // next getComfyCapability() re-probes the new server
     resetMotionCapability(); // same session-cache hazard on the motion side
     resetModelCapability(); // and again for the mesh-generation capability
+    resetRiggingCapability(); // and the rig side, which shares the same key
     close();
   };
 
@@ -293,21 +307,30 @@ export function SettingsModal() {
                 value={tripoKey}
                 spellCheck={false}
                 onChange={(e) => setTripoKey(e.target.value)}
-                placeholder="tsk_…"
+                placeholder={TRIPO_KEY_PREFIX ? `${TRIPO_KEY_PREFIX}…` : 'your Tripo API key'}
                 className="rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               />
               {/* Shape is checked WHILE TYPING for the same reason the checkpoint's
                 verdict is: a key from the wrong field otherwise fails as an
                 opaque 401 seconds later, which sends the reader to the wrong
-                problem. */}
+                problem.
+
+                🔑 BUT ONLY WHERE THE VENDOR DOCUMENTS A SHAPE. This hint mirrors
+                `assertTripoKeyShape`, and it must mirror its SCOPE too: the v2
+                API documents a `tsk_` prefix, the v3 API documents none. Telling
+                someone their valid key looks wrong is worse than saying nothing,
+                because it is a confident claim that sends them to re-copy a key
+                that was already right. */}
               <span data-testid="settings-tripo-key-shape" className="text-[11px]">
                 {tripoKey.trim() === '' ? (
                   <span className="text-fg/50">○ Not set — the offline stub will generate</span>
-                ) : tripoKey.startsWith('tsk_') ? (
+                ) : TRIPO_KEY_PREFIX === undefined ? (
+                  <span className="text-accent">● Key set — the service will verify it</span>
+                ) : tripoKey.startsWith(TRIPO_KEY_PREFIX) ? (
                   <span className="text-accent">● Key shape looks right</span>
                 ) : (
                   <span className="text-fg/70">
-                    ● A Tripo key begins with &ldquo;tsk_&rdquo; — copy it from
+                    ● A Tripo key begins with &ldquo;{TRIPO_KEY_PREFIX}&rdquo; — copy it from
                     platform.tripo3d.ai/api-keys
                   </span>
                 )}

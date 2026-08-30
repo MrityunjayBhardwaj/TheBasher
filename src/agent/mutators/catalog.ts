@@ -79,7 +79,15 @@ export interface MutatorSummary {
  * the text it summarizes (the V101 projection rule, applied to prose).
  */
 export function firstSentence(text: string): string {
-  const m = text.match(/^[\s\S]*?[.](?=\s+[A-Z0-9])/);
+  // 🔑 THE LOOKAHEAD MUST ACCEPT HOW THESE DESCRIPTIONS ACTUALLY CONTINUE. It
+  // used to require `[A-Z0-9]`, so a sentence followed by a backtick-quoted
+  // identifier — the house style here, e.g. "…Handle Type). `easing` = …" — was
+  // not recognised as a boundary and the "summary" ran on to the NEXT capital
+  // letter. Measured: three entries produced 552, 478 and 413-character
+  // summaries, together ~1.2 KB of the picker payload, which is what pushed the
+  // catalog over its 8 KB ceiling. A summary that is a paragraph defeats the
+  // picker/detail split it exists to implement.
+  const m = text.match(/^[\s\S]*?[.](?=\s+[A-Z0-9`'"([])/);
   return (m ? m[0] : text).trim();
 }
 

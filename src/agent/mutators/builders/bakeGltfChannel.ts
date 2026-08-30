@@ -57,7 +57,9 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
+import { gltfChildDagId } from '../../../core/import/gltfImportChain';
+import { bakeChannelOpsForBone } from './bakeChannelOps';
+import type { Vec3 } from '../../../nodes/types';
 import { activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
 
 const BakeGltfChannelSpec = z.object({
@@ -67,9 +69,6 @@ const BakeGltfChannelSpec = z.object({
   childName: z.string().min(1),
 });
 export type BakeGltfChannelSpec = z.infer<typeof BakeGltfChannelSpec>;
-
-/** The three TRS components baked, in stable order. */
-const COMPONENTS = ['position', 'rotation', 'scale'] as const;
 
 export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
   name: 'mutator.timeline.bakeGltfChannel',
@@ -126,7 +125,6 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const { assetRef, childName } = spec;
-    const target = gltfChildDagId(assetRef, childName);
 
     // R5: filter the active clip's keyframes to THIS bone by NAME, sort by time.
     const forChild = activeClipKeyframesForAsset(state.nodes, assetRef)
@@ -134,40 +132,20 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
       .slice()
       .sort((a, b) => a.time - b.time);
 
-    const ops: Op[] = [];
-    for (const component of COMPONENTS) {
-      const channelId = gltfChannelDagId(assetRef, childName, component);
-      // V22 idempotency: re-baking the same bone is a no-op for an existing
-      // channel (same content-addressed id). Guard on the LIVE state so a
-      // re-bake adds nothing and the ids stay stable.
-      if (state.nodes[channelId]) continue;
-
-      // Seed the channel's keyframes from the clip's per-component values. The
-      // clip stores degrees for rotation (gltfImportChain radVec3ToDeg), and
-      // KeyframeChannelVec3 is degrees too — no conversion (H40 no-jump: the
-      // baked sample equals the clip track value at every key).
-      const keyframes = forChild.map((k) => ({
-        time: k.time,
-        value: k[component] as [number, number, number],
-        // cubic mirrors the KeyframeChannelVec3 default (spatial channels).
-        easing: 'cubic' as const,
-      }));
-
-      ops.push({
-        type: 'addNode',
-        nodeId: channelId,
-        nodeType: 'KeyframeChannelVec3',
-        params: {
-          name: `${childName} — ${component}`,
-          // BLOCK-2: BOTH keys, both mandatory.
-          target, // = GltfChild dagId (paramAnimationState / D2 idempotency)
-          childName, // = clip-track key (resolver enumeration, no inverse scan)
-          assetRef, // scopes the channel to its asset
-          paramPath: component,
-          keyframes,
-        },
-      });
-    }
+    // The SHARED emitter (bakeChannelOps.ts) — consumer 1 of 2. The source
+    // differs between consumers; everything downstream of it must not, because
+    // the resolver enumerator recognises a channel by its id, its dual key and
+    // its edge-lessness. See that module header.
+    const ops: Op[] = bakeChannelOpsForBone({
+      assetRef,
+      childName,
+      byComponent: {
+        position: forChild.map((k) => ({ time: k.time, value: k.position as Vec3 })),
+        rotation: forChild.map((k) => ({ time: k.time, value: k.rotation as Vec3 })),
+        scale: forChild.map((k) => ({ time: k.time, value: k.scale as Vec3 })),
+      },
+      state,
+    });
 
     // R4: NO connect ops. The baked channels are edge-less satellites that
     // reach the bone via the resolver enumeration, never an AnimationLayer edge.
