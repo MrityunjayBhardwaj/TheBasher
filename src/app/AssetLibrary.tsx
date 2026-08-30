@@ -24,6 +24,15 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ASSET_CATALOG, DRAG_MIME, type CatalogEntry } from './asset/catalog';
+
+/** The row's format badge, read off the path (#816). Lowercase, no dot; empty
+ *  when the path has no extension, so the badge shows nothing rather than a
+ *  slice of the filename. */
+export function formatBadge(path: string): string {
+  const base = path.split('/').pop() ?? path;
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+}
 import {
   deleteImportedAsset,
   listFilesDeep,
@@ -244,7 +253,14 @@ export function AssetLibrary(): ReactNode {
                 style={{ background: a.swatch }}
               />
               <span className="grow truncate">{a.name}</span>
-              <span className="text-[9px] text-fg-mute">{a.available ? 'glb' : '—'}</span>
+              {/* #816 — DERIVED, not asserted. This was the literal 'glb', which was
+                  already wrong for the .gltf primitives and became actively misleading
+                  when motion arrived: the badge is the only thing on the row saying what
+                  KIND of asset this is, and mesh and motion do completely different
+                  things on drop. */}
+              <span className="text-[9px] text-fg-mute">
+                {a.available ? formatBadge(a.path) : '—'}
+              </span>
             </button>
           </li>
         ))}
