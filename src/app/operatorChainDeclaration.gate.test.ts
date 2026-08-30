@@ -85,9 +85,10 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all eight operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all nine operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArrayModifier', // data lane — geometry
+      'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
       'ColorCorrect', // effect lane
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
@@ -139,7 +140,23 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // time, because the honouring check ran beside it on the way out AND on the way back.
     // An empty set is only evidence when something else would have been non-empty had the
     // claim been false.
-    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
+    //
+    // 🔴 #818 PUTS A MEMBER HERE ON PURPOSE, AND THIS IS THE SAYING-SO-OUT-LOUD THE COMMENT
+    // ABOVE ASKED FOR. `BevelModifier`'s spine carries a mesh, so it HAS faces, edges and
+    // points to resolve a selection against — `'no-component-domain'` would be a false claim
+    // about the value, not a modest one about the operator. And the reference does scope its
+    // bevel (a vertex group and an edge selection), so "could be scoped" is not aspirational.
+    //
+    // 🔑 WHAT MAKES THIS DEFERRAL DIFFERENT FROM THE ONE STEP 17 CAUGHT: `MaterialOverrideOp`
+    // was moved here because its declaration was found LYING — it claimed a scope and threw
+    // the answer away. This one has never claimed a scope, and its blocker is measurable
+    // rather than clerical: `bevelLayoutOf` refuses any edge without exactly two incident
+    // faces, and a scoped bevel produces exactly those boundary edges. Scoping it needs a
+    // miter rule, not wiring. The honouring check next door cannot speak for an operator that
+    // declares nothing, so the thing standing behind this entry is that refusal, by name.
+    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
+      'BevelModifier',
+    ]);
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {
@@ -162,6 +179,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
   it('SECTION is declared, and the two nodes in no stack are the two with nothing to bypass', () => {
     expect(where((c) => c.section === 'modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);

@@ -66,6 +66,7 @@ const ALL_TYPES = [
   // will retire, exactly as BoxData sorts before BoxMesh.
   'BakedData',
   'BeautyPass',
+  'BevelModifier',
   'BoneNameMap',
   'BoxData',
   // #387 (Stage C · C4) — the camera's data half. Every split kind adds its data type

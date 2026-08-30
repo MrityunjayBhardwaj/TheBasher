@@ -168,12 +168,27 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // use; it now composes onto the selected faces and leaves the rest carrying the source's
     // material, so it belongs in the derived population below instead.
     //
-    // The three that remain are here for the OTHER reason, and it is a different claim: a
+    // Three of the four are here for the OTHER reason, and it is a different claim: a
     // scene object, a scene object and an image have no component domain at all, so there is
     // nothing a selection could name. The union carries which reason applies, which is why
     // this row does not have to.
+    //
+    // 🔴 `BevelModifier` (#818) IS THE FOURTH, AND IT IS HERE FOR THE FIRST REASON — the one
+    // `MaterialOverrideOp` vacated at #682. It has a component domain and declines to use it,
+    // which is `'declined'`, and this row deliberately does NOT distinguish the two reasons:
+    // the union already carries `why`, and `operatorChainDeclaration.gate.test.ts` asserts
+    // that partition exactly. What matters HERE is only that an unscoped operator is excused
+    // from the cross-check below by its own declaration rather than by being forgotten — and
+    // a `declined` member is the case where that distinction earns its keep, since it is the
+    // one that could quietly become a lying label the day someone gives it a scope param
+    // without giving it behaviour.
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
-    expect(exempt.sort()).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
+    expect(exempt.sort()).toEqual([
+      'BevelModifier',
+      'ColorCorrect',
+      'MaterialOverride',
+      'Transform',
+    ]);
   });
 
   it('🔴 THE CROSS-CHECK — every operator declaring a scope emits something DIFFERENT for a subset', () => {

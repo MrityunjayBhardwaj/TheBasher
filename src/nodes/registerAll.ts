@@ -58,6 +58,7 @@ import { MaterialOverrideOpNode } from './MaterialOverrideOp';
 import { SetMaterialOpNode } from './SetMaterialOp';
 import { MirrorModifierNode } from './MirrorModifier';
 import { MaskModifierNode } from './MaskModifier';
+import { BevelModifierNode } from './BevelModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
@@ -179,6 +180,12 @@ const ALL: NodeDefinition[] = [
   // The two above preserve their whole input and generate from the subset; this one emits
   // the subset itself (Houdini's Blast, presented as Blender's Mask).
   MaskModifierNode as unknown as NodeDefinition,
+  // #818 / #814 — the FOURTH modifier, and the first that emits MORE elements than it
+  // receives. The three above all MAP: every output face came from exactly one source face.
+  // A bevel replaces each source edge with a quad and each source point with an n-gon, and
+  // those faces came from no source face at all. It is also the only modifier here that
+  // declares no scope, which is a deferral rather than a fact — see its header.
+  BevelModifierNode as unknown as NodeDefinition,
   // #394 S3c — the MATERIAL half of the same lane. Both are `ObjectData → ObjectData`
   // operators standing between the data and the Object that wears it (Houdini's Material
   // SOP / Blender GN `Set Material`): SetMaterialOp replaces wholesale from a Material
