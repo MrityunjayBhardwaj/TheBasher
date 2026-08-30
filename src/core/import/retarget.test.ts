@@ -508,3 +508,92 @@ describe("the map's TARGET values resolve by the same rule as its source keys", 
     expect(result.unmappedSourceBones).toEqual([]);
   });
 });
+
+describe('a corrective root survives, and the root travels (#838, #839)', () => {
+  // Both were reported as one symptom — "the motion is not mapping to the
+  // character cleanly" — and they are two defects with two causes.
+  const R = Math.PI / 2;
+
+  /** A target shaped like a real Tripo rig: Z-up under a corrective root. */
+  const target: BoneSpec[] = [
+    { name: 'Root', parent: -1, position: [0, 0, 0], rotation: [-R, 0, R] },
+    { name: 'tgt_hips', parent: 0, position: [0, 0, 0.5], rotation: [0, 0, 0] },
+    { name: 'tgt_spine', parent: 1, position: [0, 0.05, 0], rotation: [0, 0, 0] },
+  ];
+  /** A Y-up source, twice the size — as a SOMA clip is against a Tripo rig. */
+  //
+  // 🔑 THE SOURCE CARRIES A BONE NAMED `Root` TOO, AND THAT IS THE POINT. A SOMA
+  // BVH's first joint is literally `ROOT Root`, and so is the Tripo rig's
+  // corrective bone — two bones that share a name and nothing else. Nothing maps
+  // between them, but `SkeletonUtils.retargetClip` falls back to a bone's OWN
+  // name when the map is silent (SkeletonUtils.js:253), so the collision emits a
+  // track for the target's `Root` driven by the source's. Without this bone in
+  // the fixture no track is emitted at all and the gate passes vacuously.
+  const source: BoneSpec[] = [
+    { name: 'Root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'src_hips', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 'src_spine', parent: 1, position: [0, 0.1, 0], rotation: [0, 0, 0] },
+  ];
+  const NAME_MAP = { src_hips: 'tgt_hips', src_spine: 'tgt_spine' };
+
+  /** A clip that WALKS: the root translates 4 units along Z while the spine bends. */
+  const walk: AnimationKeyframe[] = [
+    { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { bone: 0, time: 1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 1, position: [0, 1, 4], rotation: [0, 0, 0] },
+    { bone: 2, time: 0, position: [0, 0.1, 0], rotation: [0, 0, 0] },
+    { bone: 2, time: 1, position: [0, 0.1, 0], rotation: [0, 0.5, 0] },
+  ];
+
+  const run = () =>
+    retargetClip({
+      sourceBones: source,
+      sourceClip: { name: 'walk', duration: 1, keyframes: walk },
+      targetBones: target,
+      nameMap: NAME_MAP,
+    });
+
+  it('#838 the corrective root keeps its bind rotation instead of being flattened', () => {
+    // `Root` stands a Z-up skeleton upright inside a Y-up glTF. Driving it to
+    // identity lies the whole character down, and nothing else in the suite can
+    // see it because every other fixture rig has an identity root.
+    const rootKeys = run().clipParams.keyframes.filter((k) => k.bone === 0);
+    expect(rootKeys.length).toBeGreaterThan(0);
+    for (const k of rootKeys) {
+      const deg = k.rotation.map((n) => {
+        const d = (n * 180) / Math.PI;
+        return Math.abs(d) < 1e-6 ? 0 : +d.toFixed(2);
+      });
+      expect(deg).toEqual([-90, 0, 90]);
+    }
+  });
+
+  it('#839 the root TRAVELS, scaled by the two rigs’ height ratio', () => {
+    const hips = run().clipParams.keyframes.filter((k) => k.bone === 1);
+    const travel = [0, 1, 2].map(
+      (i) =>
+        Math.max(...hips.map((k) => k.position[i])) - Math.min(...hips.map((k) => k.position[i])),
+    );
+    const moved = Math.max(...travel);
+    // Source travels 4 along its own Z; the target's hips sit at 0.5 against the
+    // source's 1.0, so the ratio is 0.5 and the target must travel 2.
+    expect(moved).toBeGreaterThan(1.9);
+    expect(moved).toBeLessThan(2.1);
+  });
+
+  it('FALSIFICATION: a NON-root bone does not take the source translation', () => {
+    // The pair that keeps #839 from becoming #828 again. A limb's translation IS
+    // its bone length; taking the source's would stretch the character to the
+    // source's proportions, which is the thing a retarget exists to prevent.
+    const spine = run().clipParams.keyframes.filter((k) => k.bone === 2);
+    for (const k of spine) {
+      expect(k.position.map((n) => (Math.abs(n) < 1e-9 ? 0 : +n.toFixed(4)))).toEqual([0, 0.05, 0]);
+    }
+  });
+
+  it('still transfers ROTATION, so none of this bought a clip that does nothing', () => {
+    const spine = run().clipParams.keyframes.filter((k) => k.bone === 2);
+    expect(spine.some((k) => k.rotation.some((n) => Math.abs(n) > 1e-6))).toBe(true);
+  });
+});

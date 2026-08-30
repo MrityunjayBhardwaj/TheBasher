@@ -236,8 +236,33 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // are destroyed by it. So this is an ORDERING fix, not a data-source change.
   const targetSpecs = bonesToSpec(targetBoneObjs);
 
+  // 🔴 ROOT MOTION IS OPT-IN, AND WE WERE NOT OPTING IN (#839).
+  //
+  // `SkeletonUtils.retargetClip` emits a POSITION track for exactly one bone:
+  // the one whose source name equals `options.hip` (SkeletonUtils.js:263). Every
+  // other bone gets a quaternion track only — which is right, because a limb's
+  // translation IS its bone length and taking the source's would stretch the
+  // character to the source's proportions.
+  //
+  // The root is the one bone where translation is the PAYLOAD rather than a
+  // proportion: it is the locomotion. Passing no `hip` meant no position track at
+  // all, so a walk that travels 6.5 units in the source produced a character that
+  // cycled its legs and never left the spot.
+  //
+  // `scale` matters just as much. `retarget` writes the SOURCE bone's world
+  // position onto the target and then multiplies by `options.scale`
+  // (SkeletonUtils.js:139-141). Unscaled, a source hip standing at 1.0 lands a
+  // target whose hips belong at 0.51 exactly twice as high — which is #791 seen
+  // from the other end. The ratio is read off the two bind poses rather than
+  // configured, so it cannot drift from the rigs it describes.
+  const hip = shallowestMapped(args.sourceBones, nameMap);
+  // `args.targetBones`, not `targetSpecs`: the ratio is a property of the two
+  // BIND poses, and this one is in hand before the retarget touches anything.
+  const hipScale = hipHeightRatio(hip, args.sourceBones, nameMap, args.targetBones);
+
   const retargeted: ThreeAnimationClip = threeRetargetClip(targetWrap, sourceWrap, sourceClip, {
     names: targetToSource,
+    ...(hip !== null ? { hip, scale: hipScale } : {}),
   });
 
   const keyframes = clipToKeyframes(retargeted, targetSpecs);
@@ -288,4 +313,60 @@ function findUnboundTarget(
     claimed.add(mappedTo);
   }
   return target.filter((t) => !claimed.has(t.name)).map((t) => t.name);
+}
+
+/**
+ * The source bone that drives the target's root: the shallowest source bone the
+ * name map places on a bone the target actually has.
+ *
+ * Derived rather than spelled. A hardcoded `Hips` is right for SOMA and Mixamo
+ * and wrong for anything else, and it would be wrong SILENTLY — the clip would
+ * still retarget, still bind, and still refuse to travel, which is precisely the
+ * failure this exists to end.
+ */
+function shallowestMapped(
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+): string | null {
+  const depthOf = (i: number): number => {
+    let d = 0;
+    for (let cur = sourceBones[i]?.parent ?? -1; cur >= 0; cur = sourceBones[cur]?.parent ?? -1)
+      d++;
+    return d;
+  };
+  let best: string | null = null;
+  let bestDepth = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < sourceBones.length; i++) {
+    const name = sourceBones[i].name;
+    if (nameMap[name] === undefined) continue;
+    const d = depthOf(i);
+    if (d < bestDepth) {
+      bestDepth = d;
+      best = name;
+    }
+  }
+  return best;
+}
+
+/**
+ * How much smaller the target's root sits than the source's.
+ *
+ * Their bind translations are their heights above their parents, so the ratio is
+ * the factor that turns source-space locomotion into target-space locomotion. A
+ * source root at its parent's origin carries no height to scale by, and 1 is the
+ * honest answer there rather than a division by zero.
+ */
+function hipHeightRatio(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetSpecs: readonly BoneSpec[],
+): number {
+  if (hip === null) return 1;
+  const src = sourceBones.find((b) => b.name === hip);
+  const tgt = targetSpecs.find((b) => b.name === nameMap[hip]);
+  if (!src || !tgt) return 1;
+  const len = (p: readonly number[]) => Math.hypot(p[0], p[1], p[2]);
+  const srcLen = len(src.position);
+  return srcLen > 1e-9 ? len(tgt.position) / srcLen : 1;
 }
