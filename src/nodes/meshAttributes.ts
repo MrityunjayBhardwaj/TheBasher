@@ -38,6 +38,7 @@ import {
   tiledFaceOrder,
   type TiledCornerOrder,
   type TiledFaceOrder,
+  mappedFacesOf,
 } from '../app/faceCount';
 import { tiledPointOrder, type TiledPointOrder } from '../app/pointIdentity';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
@@ -561,11 +562,28 @@ export function carriageForDomain(
     };
 
   switch (verdict.by) {
-    case 'face-order':
+    case 'face-order': {
+      // 🔴 #812 — A HOLE NEVER REACHES A GATHER. `TiledFaceOrder.order` can say a face was
+      // MINTED; `TiledLayout.order` cannot, and that asymmetry is the design rather than an
+      // oversight. The gather walks this order and pulls a source value per element, so an
+      // entry meaning "there is no source" has no honest reading there — what a minted
+      // element's value should BE is the interpolation question, and it is not this
+      // function's to answer.
+      const mapped = mappedFacesOf(faces.order);
+      if (mapped === null)
+        return {
+          kind: 'refused',
+          why:
+            `'${operator}' mints faces that came from no source face, and a '${data.type}' at ` +
+            `the '${domain}' domain can only be gathered THROUGH a source — a minted face has ` +
+            `no value to gather and no rule yet for inventing one`,
+          until: '#786',
+        };
       return {
         kind: 'laid-out',
-        layout: { order: faces.order, sourceElements: faces.sourceFaces, noun: verdict.noun },
+        layout: { order: mapped, sourceElements: faces.sourceFaces, noun: verdict.noun },
       };
+    }
     case 'corner-order':
       return {
         kind: 'laid-out',
