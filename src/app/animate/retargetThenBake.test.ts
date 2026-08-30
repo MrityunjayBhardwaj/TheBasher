@@ -176,6 +176,10 @@ describe('dispatchRetargetThenBake', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toContain('already carries baked motion');
+    // #813 — the refusal must NAME the way out. Before the character-level clear
+    // existed this said "remove the existing baked channels first", an instruction
+    // with no affordance behind it at that granularity.
+    expect(result.reason).toContain('Clear baked motion');
 
     // And it mutated NOTHING — not a half-applied retarget, not a changed curve.
     const after = useDagStore.getState().state.nodes[channelId].params;
