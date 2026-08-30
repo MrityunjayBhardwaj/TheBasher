@@ -60,7 +60,15 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await this.fetchImpl(`${this.serverUrl}/generate`, {
+      // `?format=json` ASKS for the envelope this client parses, rather than
+      // assuming it. A generator may reasonably default to returning the clip as
+      // a raw body — the local Kimodo server does — and the failure when it does
+      // is `response.json()` throwing a parse error, which reads as a transport
+      // fault rather than as "we never said which envelope we wanted".
+      //
+      // Note this is a DIFFERENT question from `format` in the body below: that
+      // one names the CLIP payload (bvh), this one names the HTTP envelope.
+      const response = await this.fetchImpl(`${this.serverUrl}/generate?format=json`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

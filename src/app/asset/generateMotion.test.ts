@@ -15,11 +15,26 @@ import type { DagState } from '../../core/dag/state';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
 import { useSettingsStore } from '../stores/settingsStore';
-import { DEFAULT_MOTIONGEN_MODEL, StubMotionGenerationCapability } from '../../core/motiongen';
+import {
+  DEFAULT_MOTIONGEN_MODEL,
+  StubMotionGenerationCapability,
+  type MotionGenerationCapability,
+} from '../../core/motiongen';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { registerAllMutators, __resetMutatorRegistryForTests } from '../../agent/mutators';
+import { gltfSkeletonDagId } from '../../core/import/gltfImportChain';
+import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
+import { retargetedClipId } from './bindMotionToCharacter';
+import type { GltfSkinMetadata } from '../../nodes/types';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
 
-const capability = new StubMotionGenerationCapability();
+const stub = new StubMotionGenerationCapability();
+// Mutable so one case can hand back a SOMA clip instead — the stub's three-joint
+// rig shares no naming with any character, so it can never exercise the bind.
+let capability: MotionGenerationCapability = stub;
 vi.mock('../boot', () => ({
   getMotionCapability: async () => capability,
 }));
@@ -40,8 +55,12 @@ function seedTime(): void {
 
 beforeEach(() => {
   registerAllNodes();
+  __resetMutatorRegistryForTests();
+  registerAllMutators();
+  capability = stub;
   useAssetErrorStore.getState().clearAll();
   useImportRefreshStore.setState({ tick: 0 });
+  useGeneratedMotionStore.getState().clear();
   useSettingsStore.setState({ motionGenModel: DEFAULT_MOTIONGEN_MODEL });
   seedTime();
 });
@@ -118,6 +137,151 @@ function nodesOf(state: DagState): unknown[] {
     .slice()
     .sort((a, b) => a.type.localeCompare(b.type) || a.id.localeCompare(b.id));
 }
+
+// #820 — the step the generate road used to stop short of.
+//
+// MEASURED IN A BROWSER FIRST, which is the only reason this test exists: a
+// director typed a sentence, a real 78-joint Kimodo clip arrived with no error,
+// and the character stood still — while the SAME bytes dropped as a file
+// animated it (46 baked channels). The two roads differed in one call.
+//
+// The subject has to be a SOMA clip rather than the stub's three-joint rig:
+// `chooseBoneNameMap` needs a naming the character's rig can be reached from,
+// and Hips/Spine/Head reaches nothing. This is the fixture the somaToMixamo
+// preset itself is pinned against, so the bridge under test is the shipped one.
+const SOMA_BVH = (): string =>
+  readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-generated.bvh'), 'utf8');
+
+const CHAR_ASSET = 'user-imports/dwarf/dwarf.glb';
+const CHAR_SKEL = gltfSkeletonDagId(CHAR_ASSET, 0);
+
+function somaCapability(): MotionGenerationCapability {
+  return {
+    id: 'soma-fixture',
+    kind: 'stub',
+    isAvailable: async () => true,
+    generate: async () => ({
+      jobId: 'j_soma',
+      bvh: SOMA_BVH(),
+      model: DEFAULT_MOTIONGEN_MODEL,
+      unitScale: 0.01,
+    }),
+    cancel: async () => {},
+  };
+}
+
+/** A character in the scene, shaped exactly as an imported glTF leaves one. */
+function seedCharacter(): void {
+  const boneNames = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
+  const skin: GltfSkinMetadata = {
+    jointKeys: boneNames,
+    bindTRS: boneNames.map(() => ({
+      position: [0, 0, 0] as [number, number, number],
+      rotation: [0, 0, 0] as [number, number, number],
+      scale: [1, 1, 1] as [number, number, number],
+    })),
+    parentJointIndex: boneNames.map((_, i) => (i === 0 ? -1 : 0)),
+    inverseBindMatrices: [],
+  };
+  const dag = useDagStore.getState();
+  let next: DagState = dag.state;
+  for (const op of [
+    {
+      type: 'addNode' as const,
+      nodeId: 'n_char_asset',
+      nodeType: 'GltfAsset',
+      params: { assetRef: CHAR_ASSET, nodeNameMap: {}, childHierarchy: {}, skins: [skin] },
+    },
+    {
+      type: 'addNode' as const,
+      nodeId: CHAR_SKEL,
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: 0 },
+    },
+    {
+      type: 'connect' as const,
+      from: { node: 'n_char_asset', socket: 'out' },
+      to: { node: CHAR_SKEL, socket: 'asset' },
+    },
+  ]) {
+    next = applyOp(next, op).next;
+  }
+  useDagStore.getState().hydrate(next);
+}
+
+describe('a generated clip reaches the character, exactly as a dropped one does', () => {
+  it('bakes channels onto the character in the scene', async () => {
+    capability = somaCapability();
+    seedCharacter();
+
+    const before = Object.values(useDagStore.getState().state.nodes).filter(
+      (n) => n.type === 'KeyframeChannelVec3',
+    ).length;
+    expect(before).toBe(0);
+
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const nodes = useDagStore.getState().state.nodes;
+    // The postcondition a director would state: the character now carries baked
+    // motion. Asserted over the graph the renderer reads, not over the ids the
+    // bind computed — a bind that reported success having emitted nothing is
+    // the failure this is aimed at.
+    const channels = Object.values(nodes).filter((n) => n.type === 'KeyframeChannelVec3');
+    expect(channels.length).toBeGreaterThan(0);
+    // And the retargeted clip is derived from the PAIR, so a second generation
+    // onto the same character cannot silently overwrite the first.
+    expect(nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeDefined();
+    expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
+  });
+
+  it('still succeeds when there is no character to bind to', async () => {
+    // The refusal is a TOAST, not a fault: the clip did land, and a director
+    // with an empty scene has not done anything wrong. A generation that
+    // reported failure here would throw away a clip that exists.
+    capability = somaCapability();
+
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(true);
+
+    const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
+    expect(types).toContain('AnimationClip');
+    expect(types).not.toContain('KeyframeChannelVec3');
+    expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
+  });
+});
+
+describe('the bytes survive the call, so the clip can be kept (#819)', () => {
+  it('records the BVH the generator returned, verbatim', async () => {
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(true);
+
+    const pending = useGeneratedMotionStore.getState().pending;
+    expect(pending).not.toBeNull();
+    // Verbatim, because this is the ONLY copy: the ops carry parsed keyframes
+    // and nothing can turn those back into the file that produced them.
+    expect(pending!.bvh).toBe(
+      (
+        await capability.generate({
+          prompt: 'a figure walks forward',
+          model: DEFAULT_MOTIONGEN_MODEL,
+        })
+      ).bvh,
+    );
+    expect(pending!.name).toBe('a figure walks forward');
+    expect(pending!.clipId).toBe(result.ok ? result.clipId : '');
+  });
+
+  it('records nothing when the generation fails', async () => {
+    useSettingsStore.setState({ motionGenModel: aBlockedRecord().id });
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(false);
+    // An offer to save a clip that is not in the scene is a button that lies
+    // about what it would keep.
+    expect(useGeneratedMotionStore.getState().pending).toBeNull();
+  });
+});
 
 describe('UI == agent — the two routes produce the same graph', () => {
   it('a director and the agent end up with structurally identical graphs', async () => {

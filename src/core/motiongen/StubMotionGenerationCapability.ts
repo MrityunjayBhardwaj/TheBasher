@@ -57,13 +57,29 @@ export const STUB_MOTION_FPS = 30;
  */
 export const STUB_UNIT_SCALE = BVH_UNIT_SCALE_METRES;
 
+/**
+ * What the synthesised motion is a function of — and, more importantly, what it
+ * is NOT.
+ *
+ * 🔴 `constraints` is deliberately ABSENT. It used to be here, and while it was,
+ * moving one waypoint changed the digest and therefore every frame of the output
+ * — which is exactly the observation phase A2 uses to show that a curve is an
+ * INPUT to the generator rather than a path the result was fitted to. The stub
+ * satisfied it with a hash, so A2 could have been closed green on a claim nobody
+ * had tested (#775).
+ *
+ * A stub that cannot walk a path must not appear to walk one. Leaving the field
+ * out makes the stub's output INVARIANT under constraints, so "the waypoint
+ * moved and the motion changed" is unconstructible here and can only be produced
+ * by a generator that actually honours the constraint. The cost is that an
+ * offline director dragging a waypoint sees no change, which is the truth.
+ */
 function requestKey(request: MotionGenerationRequest): string {
   return JSON.stringify({
     prompt: request.prompt,
     model: request.model,
     seconds: request.seconds ?? 2,
     seed: request.seed ?? 0,
-    constraints: request.constraints ?? null,
   });
 }
 

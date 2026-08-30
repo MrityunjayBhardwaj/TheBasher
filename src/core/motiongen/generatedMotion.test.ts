@@ -70,6 +70,27 @@ describe('the stub is deterministic, and actually generates', () => {
     expect(a.bvh).not.toBe(b.bvh);
   });
 
+  it('does NOT vary with constraints, so it cannot fake A2 (#775)', async () => {
+    // The one property this stub must NOT have. A2's discriminating observation
+    // is "move a waypoint and the generated motion changes", chosen to show the
+    // curve is an input to the generator rather than a path the output was
+    // fitted to. While `constraints` was part of the digest, the stub satisfied
+    // that observation with a hash — so A2 could have been closed green against
+    // a generator that cannot walk a path at all.
+    //
+    // Invariance is the gate: the claim is now unconstructible offline, and only
+    // a generator that actually honours the constraint can produce it.
+    const cap = new StubMotionGenerationCapability();
+    const base = { prompt: 'a figure walks a path', model: ALLOWED_MODEL } as const;
+    const a = await cap.generate({ ...base, constraints: { waypoints: [{ x: 0, z: 0 }] } });
+    const b = await cap.generate({ ...base, constraints: { waypoints: [{ x: 9, z: -4 }] } });
+    expect(a.bvh).toBe(b.bvh);
+    // The control: the digest is still live, so this is invariance under ONE
+    // field rather than a stub that stopped responding to anything.
+    const c = await cap.generate({ ...base, prompt: 'a figure sprints a path' });
+    expect(c.bvh).not.toBe(a.bvh);
+  });
+
   it('emits BVH the real parser accepts, not a placeholder token', async () => {
     // A stub returning a sentinel would let every test below pass while proving
     // nothing about whether generated motion can travel the import road.
@@ -242,7 +263,14 @@ describe('the HTTP capability', () => {
     expect(result.bvh).toContain('HIERARCHY');
     expect(result.unitScale).toBe(1);
     const [url, init] = fetchImpl.mock.calls[0];
-    expect(url).toBe('http://localhost:9999/generate'); // trailing slash normalised
+    // Trailing slash normalised, AND the JSON envelope is ASKED for rather than
+    // assumed (#775): a real generator may default to returning the clip as a raw
+    // body — the local Kimodo server does — and the failure when it does is
+    // `response.json()` throwing, which reads as a transport fault rather than as
+    // a protocol mismatch.
+    expect(url).toBe('http://localhost:9999/generate?format=json');
+    // The two `format`s answer different questions and must not be conflated: the
+    // query one names the HTTP ENVELOPE, the body one names the CLIP payload.
     expect(JSON.parse(init?.body as string)).toMatchObject({
       prompt: 'a slow walk',
       format: 'bvh',

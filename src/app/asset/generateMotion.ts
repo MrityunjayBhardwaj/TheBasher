@@ -18,15 +18,18 @@
 //   - silent-failure: a licence refusal, a malformed request or an unreachable
 //     service surfaces in the banner, never console-only.
 //
-// REF: src/app/asset/importBvhFbx.ts (the sibling); src/agent/tools/motionGenerate.ts
+// REF: src/app/asset/importBvhFbx.ts (the sibling, and the shared bind);
+//      src/agent/tools/motionGenerate.ts
 //      (the agent half); ref/architecture/ai-track.md phase A1.
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGeneratedMotionOps } from '../../core/motiongen';
 import { getMotionCapability } from '../boot';
+import { bindImportedMotion } from './importBvhFbx';
 import { useSettingsStore } from '../stores/settingsStore';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
 
 export interface GenerateMotionOptions {
   readonly seconds?: number;
@@ -68,7 +71,7 @@ export async function generateMotionIntoScene(
     const { motionGenModel } = useSettingsStore.getState();
     const dag = useDagStore.getState();
 
-    const { ops, clipId, skeletonId } = await buildGeneratedMotionOps(
+    const { ops, clipId, skeletonId, bvh, model } = await buildGeneratedMotionOps(
       capability,
       {
         request: {
@@ -87,6 +90,21 @@ export async function generateMotionIntoScene(
     // bump re-enumerates the list before the work lands, so a failure leaves it
     // stale.
     useImportRefreshStore.getState().bump();
+    // The clip is in the graph, and nothing on screen has moved. A dropped file
+    // takes ONE more step — the bind #807 put at `routeImportByExtension` — and
+    // a generated clip that stopped short of it was measured doing exactly
+    // that: a director typed a sentence, a real clip arrived, and the character
+    // stood still while the same bytes dropped as a file animated it (#820).
+    // The same continuation, not a second one: the bind decisions ("which
+    // character", "which bridge") stay in the one place that already makes
+    // them, and this road adds no step a file import does not also take.
+    bindImportedMotion({ skeletonId, clipId });
+    // Hold the bytes so the clip can be SAVED (#819). This call is the only
+    // place they exist: the ops carry parsed keyframes and nothing can turn
+    // those back into a file. Recorded AFTER the dispatch so a failed
+    // generation never leaves an offer to save something that is not in the
+    // scene.
+    useGeneratedMotionStore.getState().record({ clipId, name: options.name ?? prompt, bvh, model });
     return { ok: true, clipId, skeletonId };
   } catch (err) {
     const reason = formatAssetError(err);
