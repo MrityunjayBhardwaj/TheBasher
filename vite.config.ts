@@ -2,6 +2,7 @@ import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 import { blenderMockPlugin } from './tools/vite/vite-plugin-blender-mock';
+import { tripoAssetProxyPlugin } from './tools/vite/vite-plugin-tripo-asset';
 import { TRIPO_PROXY_ROUTES, rewriteTripoProxyPath } from './src/core/modelgen/tripoProxy';
 
 /**
@@ -32,7 +33,7 @@ const tripoProxy: Record<string, ProxyOptions> = Object.fromEntries(
 );
 
 export default defineConfig({
-  plugins: [react(), blenderMockPlugin()],
+  plugins: [react(), blenderMockPlugin(), tripoAssetProxyPlugin()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

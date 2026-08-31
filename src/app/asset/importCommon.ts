@@ -101,11 +101,23 @@ export async function resolveFreeImportName(desired: string): Promise<string> {
  * re-throwing (so callers need no second catch-and-report), mirroring
  * `ingestGltfFolder`.
  *
+ * `failurePrefix` exists because this function acquired a SECOND caller that is
+ * not an import: saving a generated clip writes the same bytes to the same place
+ * (#819), and a director who pressed "Save to library" must not be told that an
+ * *import* failed. What varies is the one word naming the action — never the
+ * whole sentence, because two callers each supplying their own phrasing is how a
+ * shared function grows two voices and then three.
+ *
  * V22: the path is derived purely from folderName + numeric suffix.
  * V18: no localStorage index — OPFS is enumerated live.
  */
-export async function ingestSingleFile(file: IngestFile, folderName: string): Promise<string> {
+export async function ingestSingleFile(
+  file: IngestFile,
+  folderName: string,
+  opts: { readonly failurePrefix?: string } = {},
+): Promise<string> {
   const desired = sanitizeFolderName(folderName);
+  const failurePrefix = opts.failurePrefix ?? 'import failed:';
   try {
     const resolvedName = await resolveFreeImportName(desired);
     const storage = await getStorage();
@@ -118,8 +130,8 @@ export async function ingestSingleFile(file: IngestFile, folderName: string): Pr
     return opfsPath;
   } catch (err) {
     const message = formatAssetError(err);
-    if (!message.startsWith('import failed:')) {
-      useAssetErrorStore.getState().report(desired, `import failed: ${message}`);
+    if (!message.startsWith(failurePrefix)) {
+      useAssetErrorStore.getState().report(desired, `${failurePrefix} ${message}`);
     }
     throw err;
   }

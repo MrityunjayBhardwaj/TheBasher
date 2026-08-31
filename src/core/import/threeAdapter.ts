@@ -189,6 +189,33 @@ export function specToThreeSkeleton(specs: readonly BoneSpec[]): {
       bones[parentIdx].add(bones[i]);
     }
   }
+  // 🔴 WORLD MATRICES BEFORE `new Skeleton`. THE BIND POSE IS READ FROM THEM.
+  //
+  // `Skeleton`'s constructor calls `calculateInverses()`, which reads each bone's
+  // `matrixWorld`. A freshly constructed Object3D has an IDENTITY `matrixWorld`
+  // until something updates it — setting `position`/`quaternion` does not — so a
+  // Skeleton built here came out with every `boneInverse` equal to the identity.
+  //
+  // That is not a dormant inaccuracy. `SkeletonUtils.retarget` calls
+  // `skeleton.pose()` on EVERY FRAME, and `pose()` drives each bone from its
+  // inverse — so identity inverses actively FLATTEN the whole skeleton to the
+  // origin with identity rotations, once per frame.
+  //
+  // Measured, three bones with a Z-up corrective root:
+  //   boneInverses[0..2] identity? true, true, true
+  //   after pose(): Root rot [0,0,0] (bind [-90,0,90]), Hips pos [0,0,0]
+  //                 (bind [0,0,0.51])
+  //
+  // One defect, three symptoms: the character folding into a blob at the origin
+  // (#828), a rig's corrective root rotation replaced by identity so the whole
+  // character lies down (#838), and a walk that never travels (#839).
+  //
+  // Every bone with no parent is updated, not just `bones[0]`: a spec may
+  // describe a forest, and updating one root would leave the others' inverses
+  // identity — the same defect, surviving in the bones nobody looked at.
+  for (const b of bones) {
+    if (!b.parent) b.updateMatrixWorld(true);
+  }
   return { skeleton: new Skeleton(bones), bones };
 }
 

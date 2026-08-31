@@ -21,7 +21,30 @@
 // REF: THESIS §42.1; project_p31_plan.md.
 
 import { retargetClip as threeRetargetClip } from 'three/examples/jsm/utils/SkeletonUtils.js';
-import { AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
+import {
+  AnimationClip as ThreeAnimationClip,
+  SkinnedMesh,
+  Quaternion,
+  Matrix4,
+  type Bone,
+} from 'three';
+
+/** An XYZ Euler triple in radians, the unit `AnimationKeyframe.rotation` uses. */
+type Vec3Tuple = [number, number, number];
+
+/**
+ * `localOffsets` exists in the SHIPPED JavaScript but not in `@types/three`.
+ *
+ * `SkeletonUtils.js:123-127` reads `options.localOffsets[bone.name]` and
+ * multiplies it into the composed world matrix; `SkeletonUtils.d.ts`'s
+ * `RetargetOptions` does not declare it (nor `preserveBonePositions`, which the
+ * JS also reads). The typings lag the implementation, so the option is declared
+ * here rather than silently cast away — if a future `@types/three` adds it, this
+ * alias becomes redundant and the compiler will not complain either way.
+ */
+type RetargetClipOptionsWithOffsets = Parameters<typeof threeRetargetClip>[3] & {
+  localOffsets?: Record<string, Matrix4>;
+};
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import {
   bonesToSpec,
@@ -184,6 +207,128 @@ export function resolveNameMapToTarget(
   return out;
 }
 
+/**
+ * The earliest keyframe rotation for each source bone — the clip's CALIBRATION
+ * POSE.
+ *
+ * A SOMA BVH's rest pose (its OFFSETs alone) is degenerate: accumulating them
+ * puts head, hands and feet all at hip height, spread along ±X. Measured on a
+ * real Kimodo clip — head `X 60.5 / Y 99.5`, left hand `X 114.7 / Y 105.2`,
+ * against hips at `Y 100`. The upright figure lives entirely in the ROTATION
+ * CHANNELS: running forward kinematics on frame 0 puts the head 59.4 above the
+ * hips and the hips 87.1 above the foot, hands hanging below the shoulders — an
+ * A-pose. That first frame, not the OFFSETs, is the source's reference pose.
+ *
+ * This matches the format as documented: the clip is NVIDIA SOMA-X's canonical
+ * rig exported in a MotionBuilder world frame with A-pose calibration, and SOMA
+ * parameterises rotations RELATIVE to a joint's canonical pose. Reading the
+ * OFFSETs as if they were that pose is what this function exists to avoid.
+ */
+function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<number, Vec3Tuple> {
+  let earliest = Infinity;
+  for (const k of keyframes) earliest = Math.min(earliest, k.time);
+  const out = new Map<number, Vec3Tuple>();
+  for (const k of keyframes) {
+    if (k.time === earliest && !out.has(k.bone)) {
+      out.set(k.bone, [k.rotation[0], k.rotation[1], k.rotation[2]]);
+    }
+  }
+  return out;
+}
+
+/**
+ * Per-target-bone corrections that carry the SOURCE rig's bone-axis convention
+ * onto the TARGET's, keyed by target bone name.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS NEEDED AT ALL
+ * ─────────────────────────────────────────────────────────────────────────
+ * `SkeletonUtils.retarget` sets the target bone's world rotation to the source
+ * bone's world rotation VERBATIM:
+ *
+ *     globalMatrix.makeRotationFromQuaternion(
+ *       quat.setFromRotationMatrix( relativeMatrix ) );   // SkeletonUtils.js:114
+ *
+ * where `relativeMatrix` is the SOURCE bone's `matrixWorld`. There is no bind
+ * compensation anywhere in that function. Copying a world rotation across is
+ * only meaningful when both rigs agree on where a bone POINTS at rest — and
+ * SOMA (chains along ±X, identity local rotations) and Mixamo (a real T-pose
+ * bind) do not agree at all. So the source's world rotation carries the ~90°
+ * that stands its skeleton up off the floor, and that rotation lands on a
+ * target whose bind is already correct: the character is laid down by exactly
+ * the amount the source's rest pose is wrong.
+ *
+ * `options.localOffsets` is the library's own hook for the difference. It is
+ * applied as `targetWorldRot = sourceWorldRot * localOffset[targetBoneName]`,
+ * and `retargetClip` forwards the same options object on every frame, so one
+ * table computed here holds for the whole clip. Solving that equation at the
+ * reference pose gives:
+ *
+ *     localOffset = inverse(sourceRefWorldRot) * targetBindWorldRot
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * AN ALTERNATIVE THAT WAS MEASURED FALSE — DO NOT RETRY IT
+ * ─────────────────────────────────────────────────────────────────────────
+ * Re-binding the SOURCE skeleton to its calibration pose and recomputing
+ * `boneInverses` changes NOTHING — byte-identical output, verified with the
+ * patch logging its own execution so the null could not be mistaken for a
+ * stale build. `retarget` never reads the source's bind; it reads only
+ * `boneTo.matrixWorld`. The correction has to be applied to the RESULT, which
+ * is what `localOffsets` does.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE RESIDUAL, STATED HONESTLY
+ * ─────────────────────────────────────────────────────────────────────────
+ * The source reference is an A-pose and the target's bind is a T-pose, so the
+ * shoulders and arms keep an offset of roughly the A-pose angle. Standing the
+ * body up is the dominant correction and is what this delivers; matching the
+ * arms exactly needs both rigs sampled in the SAME reference pose (#845).
+ *
+ * A bone with no mapping gets no entry, so it keeps whatever the retarget would
+ * have given it — notably the root, which is never in the name map.
+ */
+export function restPoseLocalOffsets(
+  sourceBoneObjs: readonly Bone[],
+  targetBoneObjs: readonly Bone[],
+  targetToSource: Readonly<Record<string, string>>,
+  calibration: ReadonlyMap<number, Vec3Tuple>,
+): Record<string, Matrix4> {
+  // Pose the source at its calibration rotations, read each bone's world
+  // orientation, then put the bones back exactly as they were. The caller's
+  // skeleton is shared with the retarget that follows, so this must leave no
+  // trace (V20 single-writer: we borrow the objects, we do not own them).
+  const saved = sourceBoneObjs.map((b) => b.quaternion.clone());
+  const roots = sourceBoneObjs.filter((b) => !b.parent || !(b.parent as Bone).isBone);
+  for (let i = 0; i < sourceBoneObjs.length; i++) {
+    const rot = calibration.get(i);
+    if (rot) sourceBoneObjs[i].rotation.set(rot[0], rot[1], rot[2], 'XYZ');
+  }
+  for (const r of roots) r.updateMatrixWorld(true);
+  const sourceRef = new Map<string, Quaternion>();
+  for (const b of sourceBoneObjs) {
+    sourceRef.set(b.name, new Quaternion().setFromRotationMatrix(b.matrixWorld));
+  }
+  for (let i = 0; i < sourceBoneObjs.length; i++) sourceBoneObjs[i].quaternion.copy(saved[i]);
+  for (const r of roots) r.updateMatrixWorld(true);
+
+  // The target's bind world rotations. `specToThreeSkeleton` has already
+  // composed these (K42), but a bone whose subtree nothing has touched can
+  // still be stale, so compose from every root before reading.
+  for (const b of targetBoneObjs) {
+    if (!b.parent || !(b.parent as Bone).isBone) b.updateMatrixWorld(true);
+  }
+
+  const offsets: Record<string, Matrix4> = {};
+  for (const tb of targetBoneObjs) {
+    const sourceName = targetToSource[tb.name];
+    const sq = sourceName === undefined ? undefined : sourceRef.get(sourceName);
+    if (!sq) continue;
+    const tq = new Quaternion().setFromRotationMatrix(tb.matrixWorld);
+    offsets[tb.name] = new Matrix4().makeRotationFromQuaternion(sq.clone().invert().multiply(tq));
+  }
+  return offsets;
+}
+
 export function retargetClip(args: RetargetArgs): RetargetResult {
   const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(args.sourceBones);
   const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(args.targetBones);
@@ -220,11 +365,69 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   for (const [sourceName, targetName] of Object.entries(nameMap)) {
     targetToSource[targetName] = sourceName;
   }
-  const retargeted: ThreeAnimationClip = threeRetargetClip(targetWrap, sourceWrap, sourceClip, {
-    names: targetToSource,
-  });
-
+  // 🔴 READ THE TARGET'S BIND POSE BEFORE THE RETARGET RUNS.
+  //
+  // `threeRetargetClip` poses the target skeleton frame by frame and leaves the
+  // bone objects wherever the last frame put them — measured: every local
+  // translation flattened to [0,0,0]. `clipToKeyframes` falls back to
+  // `bind.position` for a bone the clip does not translate, which is EVERY bone
+  // here (a retarget emits quaternion tracks only, by design, because the target
+  // keeps its own proportions). So reading the spec afterwards fed it a bind pose
+  // of all zeros, it wrote position [0,0,0] into every keyframe, and the bake
+  // copied that into an absolute local-position channel — placing every bone at
+  // its parent's origin and folding the character into a blob (#828).
+  //
+  // The names read back identically either side of the call; only the positions
+  // are destroyed by it. So this is an ORDERING fix, not a data-source change.
   const targetSpecs = bonesToSpec(targetBoneObjs);
+
+  // 🔴 ROOT MOTION IS OPT-IN, AND WE WERE NOT OPTING IN (#839).
+  //
+  // `SkeletonUtils.retargetClip` emits a POSITION track for exactly one bone:
+  // the one whose source name equals `options.hip` (SkeletonUtils.js:263). Every
+  // other bone gets a quaternion track only — which is right, because a limb's
+  // translation IS its bone length and taking the source's would stretch the
+  // character to the source's proportions.
+  //
+  // The root is the one bone where translation is the PAYLOAD rather than a
+  // proportion: it is the locomotion. Passing no `hip` meant no position track at
+  // all, so a walk that travels 6.5 units in the source produced a character that
+  // cycled its legs and never left the spot.
+  //
+  // `scale` matters just as much. `retarget` writes the SOURCE bone's world
+  // position onto the target and then multiplies by `options.scale`
+  // (SkeletonUtils.js:139-141). Unscaled, a source hip standing at 1.0 lands a
+  // target whose hips belong at 0.51 exactly twice as high — which is #791 seen
+  // from the other end. The ratio is read off the two bind poses rather than
+  // configured, so it cannot drift from the rigs it describes.
+  const hip = shallowestMapped(args.sourceBones, nameMap);
+  // `args.targetBones`, not `targetSpecs`: the ratio is a property of the two
+  // BIND poses, and this one is in hand before the retarget touches anything.
+  const hipScale = hipHeightRatio(hip, args.sourceBones, nameMap, args.targetBones);
+
+  // Reconcile the two rigs' rest poses. Without this every bone but the root
+  // receives an orientation unrelated to its bind and the character performs the
+  // motion lying down (#844). See `restPoseLocalOffsets`.
+  const localOffsets = restPoseLocalOffsets(
+    sourceBoneObjs,
+    targetBoneObjs,
+    targetToSource,
+    calibrationRotations(args.sourceClip.keyframes),
+  );
+
+  const retargetOptions: RetargetClipOptionsWithOffsets = {
+    names: targetToSource,
+    localOffsets,
+    ...(hip !== null ? { hip, scale: hipScale } : {}),
+  };
+
+  const retargeted: ThreeAnimationClip = threeRetargetClip(
+    targetWrap,
+    sourceWrap,
+    sourceClip,
+    retargetOptions,
+  );
+
   const keyframes = clipToKeyframes(retargeted, targetSpecs);
 
   return {
@@ -273,4 +476,60 @@ function findUnboundTarget(
     claimed.add(mappedTo);
   }
   return target.filter((t) => !claimed.has(t.name)).map((t) => t.name);
+}
+
+/**
+ * The source bone that drives the target's root: the shallowest source bone the
+ * name map places on a bone the target actually has.
+ *
+ * Derived rather than spelled. A hardcoded `Hips` is right for SOMA and Mixamo
+ * and wrong for anything else, and it would be wrong SILENTLY — the clip would
+ * still retarget, still bind, and still refuse to travel, which is precisely the
+ * failure this exists to end.
+ */
+function shallowestMapped(
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+): string | null {
+  const depthOf = (i: number): number => {
+    let d = 0;
+    for (let cur = sourceBones[i]?.parent ?? -1; cur >= 0; cur = sourceBones[cur]?.parent ?? -1)
+      d++;
+    return d;
+  };
+  let best: string | null = null;
+  let bestDepth = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < sourceBones.length; i++) {
+    const name = sourceBones[i].name;
+    if (nameMap[name] === undefined) continue;
+    const d = depthOf(i);
+    if (d < bestDepth) {
+      bestDepth = d;
+      best = name;
+    }
+  }
+  return best;
+}
+
+/**
+ * How much smaller the target's root sits than the source's.
+ *
+ * Their bind translations are their heights above their parents, so the ratio is
+ * the factor that turns source-space locomotion into target-space locomotion. A
+ * source root at its parent's origin carries no height to scale by, and 1 is the
+ * honest answer there rather than a division by zero.
+ */
+function hipHeightRatio(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetSpecs: readonly BoneSpec[],
+): number {
+  if (hip === null) return 1;
+  const src = sourceBones.find((b) => b.name === hip);
+  const tgt = targetSpecs.find((b) => b.name === nameMap[hip]);
+  if (!src || !tgt) return 1;
+  const len = (p: readonly number[]) => Math.hypot(p[0], p[1], p[2]);
+  const srcLen = len(src.position);
+  return srcLen > 1e-9 ? len(tgt.position) / srcLen : 1;
 }
