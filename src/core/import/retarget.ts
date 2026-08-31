@@ -27,6 +27,7 @@ import {
   Quaternion,
   Matrix4,
   Vector3,
+  Euler,
   type Bone,
 } from 'three';
 
@@ -300,10 +301,39 @@ export function resolveNameMapToTarget(
  * no entry at all and keeps whatever the retarget would have given it, notably
  * the root, which is never in a name map.
  */
+/**
+ * The source rig's WORLD rotations at a reference pose, by bone name.
+ *
+ * Composed from the given LOCAL rotations without touching the live bones — the
+ * same skeleton objects are read again for their rest directions, and a posed
+ * skeleton would silently change that answer. A bone the reference does not
+ * name keeps its own rest rotation.
+ */
+export function referenceWorldRotations(
+  sourceBoneObjs: readonly Bone[],
+  localRotations: Readonly<Record<string, readonly [number, number, number]>>,
+): Map<string, Quaternion> {
+  const out = new Map<string, Quaternion>();
+  const visit = (bone: Bone, parentWorld: Quaternion): void => {
+    const posed = localRotations[bone.name];
+    const local = posed
+      ? new Quaternion().setFromEuler(new Euler(posed[0], posed[1], posed[2], 'XYZ'))
+      : bone.quaternion.clone();
+    const world = parentWorld.clone().multiply(local);
+    out.set(bone.name, world);
+    for (const child of bone.children) if ((child as Bone).isBone) visit(child as Bone, world);
+  };
+  for (const bone of sourceBoneObjs) {
+    if (!bone.parent || !(bone.parent as Bone).isBone) visit(bone, new Quaternion());
+  }
+  return out;
+}
+
 export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
+  sourceReference?: ReadonlyMap<string, Quaternion>,
 ): Record<string, Matrix4> {
   // Compose from every parentless bone before reading. `specToThreeSkeleton` has
   // already done this (K42), but a subtree nothing has touched can still be
@@ -322,6 +352,15 @@ export function restDirectionLocalOffsets(
    * change the answer — two rigs rarely subdivide a limb the same way, and the
    * direction along a limb is the same whether one bone spans it or three.
    */
+  /** A bone's world rotation, read off the matrix the caller already composed. */
+  const worldRotationOf = (bone: Bone): Quaternion => {
+    const position = new Vector3();
+    const rotation = new Quaternion();
+    const scale = new Vector3();
+    bone.matrixWorld.decompose(position, rotation, scale);
+    return rotation;
+  };
+
   const localDirection = (bone: Bone, child: Bone): Vector3 | null => {
     const here = new Vector3();
     const there = new Vector3();
@@ -354,7 +393,64 @@ export function restDirectionLocalOffsets(
     const sourceName = targetToSource[targetBone.name];
     if (sourceName === undefined) continue;
 
-    const inherited = (): void => {
+    /**
+     * A bone that cannot be aligned by direction takes its correction from the
+     * joint it hangs off, at the source's REFERENCE POSE.
+     *
+     * The nearest already-corrected ancestor is aligned by direction, so two of
+     * its three degrees of freedom are right. Carrying that down and then
+     * asking the joint BETWEEN them to sit at the target's own bind bend fixes
+     * all three for the leaf — and it is the joint, not the world, that the
+     * reference is taken relative to. That distinction is the whole fix: an
+     * A-pose and a T-pose disagree at the SHOULDER, so a wrist, an ankle and a
+     * neck never pick the disagreement up, while a world-relative reference
+     * hands every one of them the full arm swing. Measured on the live pair,
+     * world-relative moved the hands 96° and 114° and the toes 111° and 93°;
+     * joint-relative moves them 15°, 24°, 8° and 21° while still turning the
+     * head the 42° it was wrong by.
+     *
+     * WHAT THIS ASSUMES, STATED. That the source holds its leaf joints at their
+     * own neutral in the reference frame — a straight wrist, a level head, a
+     * flat foot. That is what a calibration A-pose IS, and SOMA's clips carry
+     * exactly such a frame. A clip whose first frame turns the head would bake
+     * that turn in; nothing here can tell the two apart, so it is written down
+     * rather than detected.
+     */
+    const fromReferenceJoint = (): boolean => {
+      if (!sourceReference) return false;
+      let ancestor = targetBone.parent as Bone | null;
+      while (ancestor && (targetToSource[ancestor.name] === undefined || !offsets[ancestor.name])) {
+        ancestor = ancestor.parent as Bone | null;
+      }
+      if (!ancestor) return false;
+      const ancestorSource = sourceByName.get(targetToSource[ancestor.name]);
+      const boneSource = sourceByName.get(sourceName);
+      if (!ancestorSource || !boneSource) return false;
+      const referenceHere = sourceReference.get(boneSource.name);
+      const referenceThere = sourceReference.get(ancestorSource.name);
+      if (!referenceHere || !referenceThere) return false;
+
+      // The target's own bind bend across this joint — what the joint should
+      // read whenever the source holds its neutral.
+      const bindBend = worldRotationOf(ancestor).invert().multiply(worldRotationOf(targetBone));
+      offsets[targetBone.name] = new Matrix4().makeRotationFromQuaternion(
+        referenceHere
+          .clone()
+          .invert()
+          .multiply(referenceThere)
+          .multiply(new Quaternion().setFromRotationMatrix(offsets[ancestor.name]))
+          .multiply(bindBend),
+      );
+      return true;
+    };
+
+    /**
+     * The correction for a bone that has no direction to align by: from the
+     * joint above where a reference pose is available, and otherwise the
+     * neighbour's, which is all there is to go on.
+     */
+    const withoutADirection = (): void => {
+      if (fromReferenceJoint()) return;
       const parent = targetBone.parent as Bone | null;
       const fromParent = parent ? offsets[parent.name] : undefined;
       if (fromParent) offsets[targetBone.name] = fromParent.clone();
@@ -366,14 +462,14 @@ export function restDirectionLocalOffsets(
       : undefined;
     const sourceBone = sourceByName.get(sourceName);
     if (!targetChild || !sourceChild || !sourceBone) {
-      inherited();
+      withoutADirection();
       continue;
     }
 
     const targetDir = localDirection(targetBone, targetChild);
     const sourceDir = localDirection(sourceBone, sourceChild);
     if (!targetDir || !sourceDir) {
-      inherited();
+      withoutADirection();
       continue;
     }
 
@@ -467,7 +563,32 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // character performs the motion lying down (#844). See
   // `restDirectionLocalOffsets` — it needs no reference pose, which is what keeps
   // the arms right as well as the spine (#845).
-  const localOffsets = restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource);
+  //
+  // The clip's FIRST frame is the source's reference pose, and it is what gives
+  // a leaf bone its third degree of freedom (#853). A bone with a mapped child
+  // is aligned by direction and never consults it; a bone without one — head,
+  // hands, toe bases — has no direction to align and would otherwise inherit a
+  // correction computed for a bone pointing somewhere else.
+  const referenceTime = args.sourceClip.keyframes.reduce(
+    (earliest, k) => Math.min(earliest, k.time),
+    Number.POSITIVE_INFINITY,
+  );
+  const referencePose: Record<string, readonly [number, number, number]> = {};
+  for (const keyframe of args.sourceClip.keyframes) {
+    if (keyframe.time !== referenceTime) continue;
+    const bone = args.sourceBones[keyframe.bone];
+    if (bone) referencePose[bone.name] = keyframe.rotation;
+  }
+  const sourceReference = Number.isFinite(referenceTime)
+    ? referenceWorldRotations(sourceBoneObjs, referencePose)
+    : undefined;
+
+  const localOffsets = restDirectionLocalOffsets(
+    sourceBoneObjs,
+    targetBoneObjs,
+    targetToSource,
+    sourceReference,
+  );
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,

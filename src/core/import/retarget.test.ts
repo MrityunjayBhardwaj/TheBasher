@@ -5,6 +5,7 @@ import { PropertyBinding } from 'three';
 import {
   retargetClip,
   restDirectionLocalOffsets,
+  referenceWorldRotations,
   canonicalBoneKey,
   resolveNameMapToSource,
   resolveNameMapToTarget,
@@ -802,6 +803,153 @@ describe('bone-axis reconciliation between rigs that point different ways (#844,
     // An unmapped bone keeps whatever the retarget gives it — notably the root,
     // which is never in a name map.
     expect(offsets['t_spine']).toBeUndefined();
+  });
+});
+
+describe('a leaf bone gets its third degree of freedom from the joint above it (#853)', () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS BLOCK IS FOR
+  // ─────────────────────────────────────────────────────────────────────────
+  // Direction alignment pins two of a bone's three rotational degrees of
+  // freedom, and a bone with no mapped child has no direction to align at all —
+  // it used to inherit its parent's correction, which was computed for a bone
+  // pointing somewhere else. On the live pair that left the head bent 42° at
+  // the neck for the whole clip while the body was correct, because the leaves
+  // of a Mixamo rig are exactly the head, both hands and both toe bases.
+  //
+  // 🔑 THE DISTINCTION THE FIXTURE EXISTS TO PIN. The reference is taken
+  // relative to the JOINT, never to the world. A source's A-pose and a target's
+  // T-pose disagree at the SHOULDER; a wrist, an ankle and a neck agree in
+  // both. A world-relative reference hands every leaf the whole arm swing —
+  // measured on the live pair it moved the hands 96° and 114° and the toes 111°
+  // and 93°, where the joint-relative one moves them 15°, 24°, 8° and 21°. The
+  // shoulder row below is what separates the two, and it is the row that reds
+  // if anyone ever "simplifies" this to a world-relative sample.
+  const SRC: BoneSpec[] = [
+    { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_spine', parent: 0, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_shoulder', parent: 1, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_arm', parent: 2, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_hand', parent: 3, position: [1, 0, 0], rotation: [0, 0, 0] },
+  ];
+  // The wrist carries a NON-IDENTITY bind bend, so "the target's own bind bend"
+  // and "no bend at all" are different answers. With an identity there the
+  // assertion below would pass for a correction that simply straightened the
+  // joint, which is not what is claimed.
+  const TRG: BoneSpec[] = [
+    { name: 't_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_spine', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_shoulder', parent: 1, position: [0, 1, 0], rotation: [0, 0, -Math.PI / 2] },
+    { name: 't_arm', parent: 2, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_hand', parent: 3, position: [0, 1, 0], rotation: [0, 0.4, 0] },
+  ];
+  const MAP = {
+    t_hips: 's_hips',
+    t_spine: 's_spine',
+    t_shoulder: 's_shoulder',
+    t_arm: 's_arm',
+    t_hand: 's_hand',
+  };
+  /** The source's reference pose: standing, arm down (the A-pose), wrist bent. */
+  const REFERENCE: Record<string, readonly [number, number, number]> = {
+    s_hips: [0, 0, Math.PI / 2],
+    s_shoulder: [0, 0, -Math.PI],
+    s_hand: [1.1, 0, 0.8],
+  };
+
+  const q = (m: Matrix4): Quaternion => new Quaternion().setFromRotationMatrix(m);
+  const worldOf = (b: ThreeBone): Quaternion => {
+    const p = new Vector3();
+    const r = new Quaternion();
+    const s = new Vector3();
+    b.matrixWorld.decompose(p, r, s);
+    return r;
+  };
+  const build = () => ({ src: specToThreeSkeleton(SRC), trg: specToThreeSkeleton(TRG) });
+  const offsetsWith = (reference?: Record<string, readonly [number, number, number]>) => {
+    const { src, trg } = build();
+    const ref = reference ? referenceWorldRotations(src.bones, reference) : undefined;
+    return {
+      offsets: restDirectionLocalOffsets(src.bones, trg.bones, MAP, ref),
+      src,
+      trg,
+      ref,
+    };
+  };
+  /** How far the wrist is bent, once the source is held at the reference pose. */
+  const renderedWristBend = (
+    offsets: Record<string, Matrix4>,
+    ref: ReadonlyMap<string, Quaternion>,
+  ): Quaternion =>
+    ref
+      .get('s_arm')!
+      .clone()
+      .multiply(q(offsets['t_arm']))
+      .invert()
+      .multiply(ref.get('s_hand')!.clone().multiply(q(offsets['t_hand'])));
+
+  it("the wrist reads the TARGET's own bind bend when the source holds its reference", () => {
+    const { offsets, trg, ref } = offsetsWith(REFERENCE);
+    const bindBend = worldOf(trg.bones[3]).invert().multiply(worldOf(trg.bones[4]));
+    expect(renderedWristBend(offsets, ref!).angleTo(bindBend)).toBeLessThan(1e-6);
+  });
+
+  it('FALSIFICATION: inheriting the parent leaves the joint bent by the SOURCE amount', () => {
+    // Not a tautology — it pins that the fixture actually exercises a bend. If
+    // this ever collapses to zero the row above proves nothing.
+    const { offsets, trg, ref } = offsetsWith(REFERENCE);
+    const inherited = { ...offsets, t_hand: offsets['t_arm'] };
+    const bindBend = worldOf(trg.bones[3]).invert().multiply(worldOf(trg.bones[4]));
+    expect(renderedWristBend(inherited, ref!).angleTo(bindBend)).toBeGreaterThan(0.4);
+  });
+
+  it('🔴 the A-pose/T-pose disagreement at the SHOULDER never reaches the wrist', () => {
+    // The row that separates a joint-relative reference from a world-relative
+    // one. Swing the source's shoulder — the bone where an A-pose and a T-pose
+    // actually differ — and the leaf's correction must not move at all. A
+    // world-relative sample would move it by the whole swing.
+    const withArmDown = offsetsWith(REFERENCE).offsets;
+    const withArmOut = offsetsWith({ ...REFERENCE, s_shoulder: [0, 0, -Math.PI / 3] }).offsets;
+    expect(
+      q(withArmDown['t_hand']).angleTo(q(withArmOut['t_hand'])),
+      'the wrist correction moved with the shoulder',
+    ).toBeLessThan(1e-6);
+  });
+
+  it('a bone that HAS a mapped child stays pose-free (#845 must survive)', () => {
+    // The reference is consulted only where there is no direction to align by.
+    // If it ever leaks into the direction-aligned bones, #845 comes back.
+    const without = offsetsWith().offsets;
+    const with_ = offsetsWith(REFERENCE).offsets;
+    for (const name of ['t_hips', 't_spine', 't_shoulder', 't_arm']) {
+      // 1e-6, not 0: the offsets round-trip through world matrices and the
+      // residue sits at float epsilon (~3e-8 measured), below which a correct
+      // implementation fails. Same floor as the #845 pose-invariance row.
+      expect(q(without[name]).angleTo(q(with_[name])), `${name} consulted the pose`).toBeLessThan(
+        1e-6,
+      );
+    }
+    // And the leaf DID move, so the comparison above is not vacuous.
+    expect(q(without['t_hand']).angleTo(q(with_['t_hand']))).toBeGreaterThan(0.4);
+  });
+
+  it('composing the reference leaves the source skeleton exactly as it found it', () => {
+    // The same bones are read again for their rest directions immediately after
+    // (V20). A posed skeleton would silently change that answer.
+    const { src } = build();
+    const before = src.bones.map((b) => b.quaternion.clone());
+    referenceWorldRotations(src.bones, REFERENCE);
+    src.bones.forEach((b, i) => expect(b.quaternion.angleTo(before[i])).toBeLessThan(1e-9));
+  });
+
+  it('a bone the reference does not name keeps its own rest rotation', () => {
+    const { src } = build();
+    const composed = referenceWorldRotations(src.bones, REFERENCE);
+    // `s_spine` is absent from REFERENCE, so it contributes its rest local —
+    // identity here — and inherits only what the hips did.
+    expect(composed.get('s_spine')!.angleTo(composed.get('s_hips')!)).toBeLessThan(1e-9);
+    // `s_shoulder` IS named, so it must differ from its parent.
+    expect(composed.get('s_shoulder')!.angleTo(composed.get('s_spine')!)).toBeGreaterThan(1);
   });
 });
 

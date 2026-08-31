@@ -118,6 +118,14 @@ const MIN_ARM_HANG_DEG = 50;
  *  against its OWN legs. The retarget scale is the only thing that sets this,
  *  and it read 13% low while every other assertion here stayed green (#846). */
 const MAX_STRIDE_DRIFT = 0.03;
+/** How far a LEAF joint — the neck-head, a wrist, an ankle-toe — may sit from
+ *  the target's own bind bend, in degrees, at its closest sample.
+ *  Direction alignment pins two of three rotational degrees of freedom, and a
+ *  bone with no mapped child has none of them pinned: it used to inherit its
+ *  parent's correction, computed for a bone pointing somewhere else (#853).
+ *  Measured before: the live head never came closer than 39° and the stand-in's
+ *  left toe sat at a flat 180°. After: 1.4° and 0.0°. The bar sits between. */
+const MAX_LEAF_JOINT_DEG = 12;
 
 interface SkinHandle {
   boneCount: number;
@@ -216,6 +224,31 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   expect(character.bound, 'the imported character must have a bound skin').toBe(true);
   expect(character.boneCount).toBeGreaterThan(20);
   expect(character.rigNodes, 'the import must mint a rig node (#807)').toBeGreaterThan(0);
+
+  // The BIND, captured before any motion exists — the only definition of
+  // "unbent" this rig has, and the reference the leaf-joint row below compares
+  // against. It has to be read here: once a clip is bound there is no frame in
+  // which the rig is at its bind.
+  const bindPose = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow & {
+      __basher_three?: { getState: () => { scene?: unknown } };
+    };
+    const scene = w.__basher_three?.getState().scene as
+      | { traverse: (f: (o: never) => void) => void }
+      | undefined;
+    if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
+    const out: Record<string, number[]> = {};
+    scene.traverse((o: never) => {
+      const b = o as unknown as {
+        name: string;
+        isBone?: boolean;
+        matrixWorld: { elements: number[] };
+      };
+      if (b.isBone) out[b.name] = [...b.matrixWorld.elements];
+    });
+    return out;
+  });
+  expect(Object.keys(bindPose).length, 'the bind pose must have bones in it').toBeGreaterThan(20);
 
   // ---- 2. the generated motion, through the app's own bind road -----------
   const bind = await page.evaluate(async (url) => {
@@ -382,6 +415,123 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
       `toward the target's T-pose bind instead of following the clip (#845). ` +
       `Samples: ${arms.map((v) => v.toFixed(0)).join(', ')}`,
   ).toBeGreaterThan(MIN_ARM_HANG_DEG);
+
+  // ---- 6. LEAF JOINTS — is the head on straight? ------------------------
+  //
+  // 🔴 THE #853 GUARD. Everything above passed while the character walked
+  // correctly and held its head bent 42° at the neck for the whole clip. The
+  // leaves of a Mixamo rig are the head, both hands and both toe bases: they
+  // have no mapped child, so the direction alignment that pins two of three
+  // rotational degrees of freedom for every other bone pins NONE of theirs, and
+  // they took their parent's correction instead — computed for a bone pointing
+  // somewhere else.
+  //
+  // WHY THE MINIMUM, AND NOT THE MAXIMUM. A leaf joint legitimately bends
+  // during a walk: a head bobs, a toe flexes at toe-off. What the defect adds is
+  // a CONSTANT — the same 42° at every sample. So the measure has to be the
+  // sample where the joint comes CLOSEST to the target's own bind bend: real
+  // motion passes through neutral and a constant offset never does. The first
+  // sample is excluded because it is the reference the correction is derived
+  // from, where the answer is zero by construction and would prove nothing.
+  const leafJoints = await page.evaluate(
+    async ([sampleTimes, bind]: [readonly number[], Record<string, number[]>]) => {
+      const w = window as unknown as BasherWindow & {
+        __basher_three?: { getState: () => { scene?: unknown } };
+      };
+      const scene = w.__basher_three?.getState().scene as
+        | { traverse: (f: (o: never) => void) => void }
+        | undefined;
+      if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
+      type Q = [number, number, number, number];
+      const quat = (e: number[]): Q => {
+        const c = (i: number): [number, number, number] => {
+          const v: [number, number, number] = [e[i * 4], e[i * 4 + 1], e[i * 4 + 2]];
+          const n = Math.hypot(v[0], v[1], v[2]);
+          return [v[0] / n, v[1] / n, v[2] / n];
+        };
+        const [m00, m10, m20] = c(0);
+        const [m01, m11, m21] = c(1);
+        const [m02, m12, m22] = c(2);
+        const tr = m00 + m11 + m22;
+        if (tr > 0) {
+          const k = Math.sqrt(tr + 1) * 2;
+          return [(m21 - m12) / k, (m02 - m20) / k, (m10 - m01) / k, k / 4];
+        }
+        if (m00 > m11 && m00 > m22) {
+          const k = Math.sqrt(1 + m00 - m11 - m22) * 2;
+          return [k / 4, (m01 + m10) / k, (m02 + m20) / k, (m21 - m12) / k];
+        }
+        if (m11 > m22) {
+          const k = Math.sqrt(1 + m11 - m00 - m22) * 2;
+          return [(m01 + m10) / k, k / 4, (m12 + m21) / k, (m02 - m20) / k];
+        }
+        const k = Math.sqrt(1 + m22 - m00 - m11) * 2;
+        return [(m02 + m20) / k, (m12 + m21) / k, k / 4, (m10 - m01) / k];
+      };
+      const mul = (a: Q, b: Q): Q => [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+      ];
+      const inv = (a: Q): Q => [-a[0], -a[1], -a[2], a[3]];
+      const deg = (a: Q): number => (2 * Math.acos(Math.min(1, Math.abs(a[3]))) * 180) / Math.PI;
+      const bend = (parent: number[], child: number[]): Q => mul(inv(quat(parent)), quat(child));
+
+      // Every leaf of the mapped rig, each named with the joint above it.
+      const JOINTS: Array<[string, string]> = [
+        ['Head', 'Neck'],
+        ['LeftHand', 'LeftForeArm'],
+        ['RightHand', 'RightForeArm'],
+        ['LeftToeBase', 'LeftFoot'],
+        ['RightToeBase', 'RightFoot'],
+      ];
+      const names = Object.keys(bind);
+      const find = (leaf: string): string | undefined =>
+        names.find((n) => n.replace(/[^A-Za-z]/g, '').endsWith(leaf));
+
+      const closest: Record<string, number> = {};
+      const perSample: Record<string, number[]> = {};
+      for (let i = 0; i < sampleTimes.length; i++) {
+        w.__basher_time!.getState().setTime(sampleTimes[i]);
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+        const at: Record<string, number[]> = {};
+        scene.traverse((o: never) => {
+          const b = o as unknown as {
+            name: string;
+            isBone?: boolean;
+            matrixWorld: { elements: number[] };
+          };
+          if (b.isBone) at[b.name] = [...b.matrixWorld.elements];
+        });
+        if (i === 0) continue; // the reference sample — zero by construction
+        for (const [leaf, parent] of JOINTS) {
+          const L = find(leaf);
+          const P = find(parent);
+          if (!L || !P || !bind[L] || !bind[P] || !at[L] || !at[P]) continue;
+          const off = deg(mul(bend(at[P], at[L]), inv(bend(bind[P], bind[L]))));
+          perSample[leaf] = [...(perSample[leaf] ?? []), off];
+          closest[leaf] = Math.min(closest[leaf] ?? Infinity, off);
+        }
+      }
+      return { closest, perSample };
+    },
+    [pair.times, bindPose] as [readonly number[], Record<string, number[]>],
+  );
+
+  expect(
+    Object.keys(leafJoints.closest).length,
+    'no leaf joint was measured at all — the probe would report a vacuous pass',
+  ).toBe(5);
+  for (const [leaf, off] of Object.entries(leafJoints.closest)) {
+    expect(
+      off,
+      `${leaf} never came closer than ${off.toFixed(1)}° to its own bind bend — a leaf bone ` +
+        `has no mapped child, so nothing pins its orientation and it inherited a correction ` +
+        `computed for another bone (#853). Samples: ` +
+        `${(leafJoints.perSample[leaf] ?? []).map((v) => v.toFixed(0)).join(', ')}`,
+    ).toBeLessThan(MAX_LEAF_JOINT_DEG);
+  }
 
   const sampleWindow = pair.times[pair.times.length - 1];
   const sourceBones = parseBvh(
