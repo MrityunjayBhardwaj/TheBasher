@@ -4,10 +4,13 @@ import { describe, expect, it } from 'vitest';
 import { PropertyBinding } from 'three';
 import {
   retargetClip,
+  restPoseLocalOffsets,
   canonicalBoneKey,
   resolveNameMapToSource,
   resolveNameMapToTarget,
 } from './retarget';
+import { specToThreeSkeleton } from './threeAdapter';
+import { Quaternion, Matrix4 } from 'three';
 import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
@@ -595,5 +598,87 @@ describe('a corrective root survives, and the root travels (#838, #839)', () => 
   it('still transfers ROTATION, so none of this bought a clip that does nothing', () => {
     const spine = run().clipParams.keyframes.filter((k) => k.bone === 2);
     expect(spine.some((k) => k.rotation.some((n) => Math.abs(n) > 1e-6))).toBe(true);
+  });
+});
+
+describe('rest-pose reconciliation between rigs with different bone axes (#844)', () => {
+  // A source shaped like a real SOMA BVH: the REST lays the chain along +X
+  // (degenerate), and the CALIBRATION rotation at frame 0 stands it up along
+  // +Y. A target shaped like Mixamo: its bind already runs up +Y.
+  //
+  // The axes are the whole point of the fixture. A source whose rest already
+  // pointed the same way as the target could not tell a correct reconciliation
+  // from no reconciliation at all — the defect would be unreachable, and the
+  // suite would be measuring the fixture rather than the code.
+  const SRC: BoneSpec[] = [
+    { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_spine', parent: 0, position: [1, 0, 0], rotation: [0, 0, 0] },
+  ];
+  const TRG: BoneSpec[] = [
+    { name: 't_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_spine', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const TARGET_TO_SOURCE = { t_hips: 's_hips', t_spine: 's_spine' };
+  // +90° about Z takes the source's +X chain onto +Y — its "A-pose".
+  const CALIBRATION = new Map<number, [number, number, number]>([[0, [0, 0, Math.PI / 2]]]);
+
+  const build = () => {
+    const src = specToThreeSkeleton(SRC);
+    const trg = specToThreeSkeleton(TRG);
+    return { src, trg };
+  };
+
+  it('an offset carries the source reference orientation onto the target bind', () => {
+    const { src, trg } = build();
+    const offsets = restPoseLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE, CALIBRATION);
+
+    // Re-pose the source to the calibration and read the world rotation the
+    // retarget would hand us for the mapped bone.
+    src.bones[0].rotation.set(0, 0, Math.PI / 2, 'XYZ');
+    src.bones[0].updateMatrixWorld(true);
+    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[0].matrixWorld);
+
+    // THE CONTRACT: sourceWorld * offset === the target's bind world rotation.
+    // That equality is what makes a copied world rotation mean the same thing
+    // on the target as it did on the source.
+    const composed = sourceWorld
+      .clone()
+      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_hips']));
+    trg.bones[0].updateMatrixWorld(true);
+    const targetBind = new Quaternion().setFromRotationMatrix(trg.bones[0].matrixWorld);
+    expect(composed.angleTo(targetBind)).toBeLessThan(1e-6);
+  });
+
+  it('the falsifying arm: without the offset the two differ by the calibration angle', () => {
+    // Not a tautology — it pins that the fixture actually EXERCISES an axis
+    // mismatch. If this arm ever goes to zero the fixture has gone degenerate
+    // and the test above proves nothing.
+    const { src, trg } = build();
+    src.bones[0].rotation.set(0, 0, Math.PI / 2, 'XYZ');
+    src.bones[0].updateMatrixWorld(true);
+    trg.bones[0].updateMatrixWorld(true);
+    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[0].matrixWorld);
+    const targetBind = new Quaternion().setFromRotationMatrix(trg.bones[0].matrixWorld);
+    expect(sourceWorld.angleTo(targetBind)).toBeCloseTo(Math.PI / 2, 5);
+  });
+
+  it('leaves the source skeleton exactly as it found it', () => {
+    // The caller shares these bone objects with the retarget that runs next, so
+    // borrowing them to read a reference pose must leave no trace (V20).
+    const { src, trg } = build();
+    const before = src.bones.map((b) => b.quaternion.clone());
+    restPoseLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE, CALIBRATION);
+    src.bones.forEach((b, i) => {
+      expect(b.quaternion.angleTo(before[i])).toBeLessThan(1e-9);
+    });
+  });
+
+  it('emits no entry for a target bone the map does not cover', () => {
+    const { src, trg } = build();
+    const offsets = restPoseLocalOffsets(src.bones, trg.bones, { t_hips: 's_hips' }, CALIBRATION);
+    expect(offsets['t_hips']).toBeInstanceOf(Matrix4);
+    // An unmapped bone keeps whatever the retarget gives it — notably the root,
+    // which is never in a name map.
+    expect(offsets['t_spine']).toBeUndefined();
   });
 });

@@ -27,11 +27,13 @@
 // `MIN_VISIBLE_DEG` is far above the ~0.4° the defect produced and far below the
 // ~34° a real walk produces, so it cannot be satisfied by accident.
 //
-// ⚠️ POSTURE IS NOT ASSERTED HERE, DELIBERATELY. The character currently
-// performs the walk lying down: every bone but `Root` receives an orientation
-// unrelated to its bind pose (#844, open). That is a separate defect with its
-// own measurements, and asserting it here would commit a red test. When #844
-// lands, the head-above-hips check belongs in this file.
+// POSTURE IS ASSERTED TOO (#844). The character used to perform the walk lying
+// down — every bone but `Root` received an orientation unrelated to its bind,
+// because SkeletonUtils copies the source's world rotation verbatim and the two
+// rigs disagree about where a bone points at rest. Head-above-hips is the
+// cheapest measurement that tells "walking" from "swimming on the floor": it
+// read ~0.000 under the defect and ~0.31 once the rest poses are reconciled.
+// A rotation check alone cannot see this — the bones were moving the whole time.
 //
 // ─────────────────────────────────────────────────────────────────────────
 // FIXTURES
@@ -66,6 +68,10 @@ const MIN_VISIBLE_DEG = 15;
 /** How many bones must clear it — a walk drives the whole lower body, so a
  *  single moving bone means something is posing one limb and nothing else. */
 const MIN_MOVING_BONES = 5;
+/** Head-above-hips, in world units, below which the character is not upright.
+ *  Measured ~0.000 with the rest poses unreconciled and ~0.31 with them
+ *  reconciled, so the bar sits clear of both. */
+const MIN_UPRIGHT = 0.15;
 
 interface SkinHandle {
   boneCount: number;
@@ -209,6 +215,40 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   // #839 — the root travels. A walk that cycles its legs on the spot is the
   // other half of "the motion did not apply".
   expect(played.travel, 'the character must travel (#839)').toBeGreaterThan(0.1);
+
+  // ---- 4. POSTURE — is it walking, or lying down doing the same motion? ---
+  const posture = await page.evaluate(async () => {
+    const w = window as unknown as BasherWindow & {
+      __basher_three?: { getState: () => { scene?: unknown } };
+    };
+    const scene = w.__basher_three?.getState().scene as
+      | { traverse: (f: (o: never) => void) => void }
+      | undefined;
+    if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
+    const bones = new Map<string, { matrixWorld: { elements: number[] } }>();
+    scene.traverse((o: never) => {
+      const obj = o as unknown as {
+        name: string;
+        isBone?: boolean;
+        matrixWorld: { elements: number[] };
+      };
+      if (obj.isBone) bones.set(obj.name, obj);
+    });
+    const y = (n: string) => bones.get(n)?.matrixWorld.elements[13] ?? NaN;
+    const rows: number[] = [];
+    for (const t of [0, 0.5, 1.0, 1.5, 2.0]) {
+      w.__basher_time!.getState().setTime(t);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      rows.push(y('mixamorigHead') - y('mixamorigHips'));
+    }
+    return rows;
+  });
+  const worstPosture = Math.min(...posture);
+  expect(
+    worstPosture,
+    `the head dropped to ${worstPosture.toFixed(3)} above the hips — the character is ` +
+      `performing the motion lying down (#844). Samples: ${posture.map((v) => v.toFixed(3)).join(', ')}`,
+  ).toBeGreaterThan(MIN_UPRIGHT);
 
   expect(errors, `page errors during playback: ${errors.join(' | ')}`).toEqual([]);
 });
