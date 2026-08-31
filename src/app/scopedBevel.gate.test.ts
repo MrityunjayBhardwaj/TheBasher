@@ -13,8 +13,8 @@
 // boundary vertices:
 //
 //     m = 1      when k = 0        the point does not move, and all its corners collapse onto it
+//     m = n - 1  when k = 1        the TERMINAL case (#830) — one per UNCHAMFERED incident edge
 //     m = k      when k >= 2       one per run of corners between two consecutive chamfered edges
-//     REFUSED    when k = 1        the terminal case, deferred — see the refusal rows below
 //
 // and a point grows a POLYGON exactly when `m >= 3`, with `m` corners.
 //
@@ -23,6 +23,12 @@
 // source's own sentence is `bmesh_bevel.cc:3554-3556`: *"we make BoundVerts to connect the sides
 // of the beveled edges. Non-beveled edges in between will just join to the appropriate juncture
 // point."*
+//
+// 🔑 THE TERMINAL ARM ALSO CHANGES A FACE'S ARITY, WHICH IS THE HALF A COUNT CANNOT SEE. At a
+// `k = 1` point the boundary vertices belong to the UNCHAMFERED edges, so a face bounded by two
+// of them takes BOTH and gains a corner; only the two faces touching the chamfered edge keep
+// their count. A rule with `n - 1` right and that map wrong produces identical point and face
+// counts, so the rows below assert arity multisets and not only totals.
 //
 // 🔴 THE FIRST VERSION OF THIS RULE SAID `m = 2` AT `k = 1`, AND A CUBE AND A CYLINDER BOTH
 // AGREED WITH IT. They agree because their valence is 3, where `n - 1` and `2` are the same
@@ -44,6 +50,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { bevelLayoutOf } from './bevelLayout';
+import { alignedSplitRims } from './builtRims';
+import { getForRead } from './geometryRegistry';
 import { edgeSetOf } from './edgeIdentity';
 import { bevelGeometryRef, boxGeometryRef, sphereGeometryRef } from './modifierGeometry';
 import type { GeometryRef } from '../nodes/types';
@@ -60,7 +68,7 @@ const sphere = (w: number, h: number) => sphereGeometryRef(1, w, h, null);
 function oracle(
   source: GeometryRef,
   chosen: (edge: number) => boolean,
-): { points: number; faces: number; chamfered: number } | null {
+): { points: number; faces: number; chamfered: number } {
   const d = source.descriptor;
   // The edge SET alone — valence is how many edges name a point, which this already says. An
   // adjacency lookup stood here and guarded nothing the set does not, and leaving it would have
@@ -84,8 +92,11 @@ function oracle(
   let polygons = 0;
   for (const v of valence.keys()) {
     const k = chamfered.get(v) ?? 0;
-    if (k === 1) return null;
-    const m = k === 0 ? 1 : k;
+    const n = valence.get(v) ?? 0;
+    // #830 — the terminal arm. `n - 1`, which is neither 1 nor `k`, and is the row that falsified
+    // the first version of this rule: at valence 3 it equals 2, so a box and a cylinder both
+    // agreed with a constant and a sphere did not.
+    const m = k === 0 ? 1 : k === 1 ? n - 1 : k;
     points += m;
     if (m >= 3) polygons++;
   }
@@ -111,13 +122,21 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
     { label: 'sphere 8x6 — pole triangle loop', source: () => sphere(8, 6), query: '0-2' },
     { label: 'sphere 8x6 — all edges', source: () => sphere(8, 6), query: '0-87' },
     { label: 'sphere 16x8 — pole triangle loop', source: () => sphere(16, 8), query: '0-2' },
+    // #830 — the two shapes the terminal case is what unlocks. Both were refused before it.
+    { label: 'box — a LONE edge, terminal at both ends', source: box, query: '0-0' },
+    { label: 'box — an OPEN CHAIN of two edges', source: box, query: '0-1' },
+    {
+      label: 'sphere 8x6 — a lone edge into a valence-8 pole',
+      source: () => sphere(8, 6),
+      query: '0-0',
+    },
+    { label: 'sphere 8x6 — an open chain at a pole', source: () => sphere(8, 6), query: '0-1' },
   ];
 
   it.each(CASES)('$label — points and faces match the independent oracle', ({ source, query }) => {
     const src = source();
     const [from, to] = query.split('-').map(Number);
     const expected = oracle(src, range(from, to).test);
-    expect(expected, 'this row is meant to be answerable').not.toBeNull();
 
     const verdict = bevelLayoutOf(bevelGeometryRef(src, 0.05, query).descriptor);
     expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toBe('laid-out');
@@ -127,8 +146,8 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
       points: verdict.layout.points,
       faces: verdict.layout.faceOrder.length,
     }).toEqual({
-      points: expected!.points,
-      faces: verdict.layout.sourceFaces + expected!.chamfered + expected!.faces,
+      points: expected.points,
+      faces: verdict.layout.sourceFaces + expected.chamfered + expected.faces,
     });
   });
 
@@ -153,17 +172,57 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
     expect(verdict.layout.representative.length).toBe(10);
   });
 
-  it('🔴 THE TERMINAL CASE IS REFUSED BY NAME, AND THE REFUSAL SAYS WHAT TO DO', () => {
-    // Reachable by an author in one keystroke, unlike the manifoldness gate — so the message has
-    // to be actionable, and the point has to be named.
+  it('🔑 #830 THE TERMINAL CASE — a LONE chamfered edge, against the numbers Blender returned', () => {
+    // Blender 5.1.1, default cube, Bevel at `segments = 1`, `limit_method = 'WEIGHT'`, ONE edge
+    // weighted 1.0: **10 points, 7 faces, arity {4:5, 5:2}**. Literals rather than the oracle,
+    // because the oracle encodes the rule and this row is what says the rule was right.
+    //
+    // 🔴 THE ARITY IS THE HALF A COUNT CANNOT SEE, and it is the whole content of this case. Both
+    // endpoints of the chamfered edge sit at `k = 1`, and at each of them the face OPPOSITE the
+    // chamfered edge — the one bounded by two unchamfered edges — takes two boundary vertices and
+    // becomes a pentagon. A rule that got the corner map wrong while getting `n - 1` right would
+    // produce 10 points and 7 faces exactly as here, and `{4:7}` instead of `{4:5, 5:2}`.
     const verdict = bevelLayoutOf(bevelGeometryRef(box(), 0.1, '0').descriptor);
-    expect(verdict.kind).toBe('refused');
-    if (verdict.kind !== 'refused') return;
-    expect(verdict.why).toMatch(/exactly one chamfered edge/);
-    expect(verdict.why).toMatch(/closed loop/);
-    // And the oracle agrees it is unanswerable, which is what makes the refusal a DECISION
-    // rather than a failure to derive.
-    expect(oracle(box(), (e) => e === 0)).toBeNull();
+    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toBe('laid-out');
+    if (verdict.kind !== 'laid-out') return;
+
+    expect(verdict.layout.points).toBe(10);
+    expect(verdict.layout.faceOrder.length).toBe(7);
+    const arity: Record<number, number> = {};
+    for (const c of verdict.layout.corners) arity[c] = (arity[c] ?? 0) + 1;
+    expect(arity).toEqual({ 4: 5, 5: 2 });
+    // No vertex polygon: `n - 1 = 2` at valence 3, and a point grows one only at three or more.
+    expect(verdict.layout.faceOrder.filter((f) => f === null).length).toBe(1);
+  });
+
+  it('🔑 #830 AT A VALENCE-8 POLE — where `n - 1` and 2 are different numbers', () => {
+    // The fixture that separates the rule from the constant it was first written as. A lone edge
+    // into a uv sphere's pole puts `k = 1` on a valence-8 point: 7 boundary vertices, and since
+    // 7 >= 3 the point GROWS a polygon, which the valence-3 case never does.
+    const src = sphere(8, 6);
+    const verdict = bevelLayoutOf(bevelGeometryRef(src, 0.05, '0-0').descriptor);
+    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toBe('laid-out');
+    if (verdict.kind !== 'laid-out') return;
+
+    const edges = edgeSetOf(src.descriptor);
+    expect(edges).not.toBeNull();
+    if (edges === null) return;
+    // Valences of edge 0's two endpoints, derived from the edge set rather than assumed.
+    const valence = new Map<number, number>();
+    for (let e = 0; e < edges.count; e++)
+      for (const v of [edges.pairs[2 * e], edges.pairs[2 * e + 1]])
+        valence.set(v, (valence.get(v) ?? 0) + 1);
+    const ends = [edges.pairs[0], edges.pairs[1]];
+    const grew = ends.filter((v) => (valence.get(v) ?? 0) - 1 >= 3).length;
+    // Exactly the endpoints whose `n - 1` reaches 3 mint a polygon, and at least one must, or the
+    // row is not testing what it claims to.
+    expect(grew).toBeGreaterThan(0);
+    expect(verdict.layout.faceOrder.filter((f) => f === null).length).toBe(1 + grew);
+    for (const v of ends) {
+      const n = valence.get(v) ?? 0;
+      if (n - 1 < 3) continue;
+      expect(verdict.layout.corners).toContain(n - 1);
+    }
   });
 
   it('🔴 A SCOPE SELECTING NOTHING IS REFUSED, not silently treated as "everything"', () => {
@@ -287,5 +346,138 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
     }
     // Eight of them, so the loop above is not passing by never running.
     expect(meets).toBe(8);
+  });
+
+  it('🔑 #830 THE SLIDE ARM REACHES THE GEOMETRY — on-edge, and split by face adjacency', () => {
+    // Every row above stops at the layout. This one BUILDS, because the terminal case added an
+    // arm to `geometryRegistry` that nothing else here evaluates — and a placement rule with no
+    // reader is exactly what #841 turned out to be.
+    //
+    // Two separate claims, both measured in Blender 5.1.1: every boundary vertex of a terminal
+    // point lies ON an incident unchamfered edge (perpendicular distance 0), and the distance
+    // splits by FACE ADJACENCY rather than by angle — the two edges sharing a face with the
+    // chamfered edge slide by `amount / sin θ`, every other edge by a flat `amount`.
+    const amount = 0.05;
+    const src = sphere(8, 6);
+    const ref = bevelGeometryRef(src, amount, '0-0');
+    const verdict = bevelLayoutOf(ref.descriptor);
+    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toBe('laid-out');
+    if (verdict.kind !== 'laid-out') return;
+    const layout = verdict.layout;
+
+    const built = getForRead(ref);
+    const sourceGeom = getForRead(src);
+    expect(built, 'the bevel builds').not.toBeNull();
+    expect(sourceGeom, 'the source builds').not.toBeNull();
+    if (built === null || sourceGeom === null) return;
+
+    // The welded-to-split bridge the builder uses, so a source point's position is read the same
+    // way here as there rather than by assuming the two buffers share an indexing.
+    const splitRims = alignedSplitRims(src, sourceGeom);
+    expect(splitRims).not.toBeNull();
+    if (splitRims === null) return;
+    const srcPos = sourceGeom.getAttribute('position');
+    const home = new Map<number, readonly [number, number, number]>();
+    for (let f = 0; f < layout.sourceFaces; f++) {
+      const welded = layout.sourceRims[f];
+      for (let k = 0; k < welded.length; k++) {
+        const at = splitRims[f][k];
+        if (!home.has(welded[k]))
+          home.set(welded[k], [srcPos.getX(at), srcPos.getY(at), srcPos.getZ(at)]);
+      }
+    }
+
+    // 🔴 THE BUILT BUFFER IS SPLIT AND IS NOT INDEXED BY TOPOLOGICAL POINT ID. The builder
+    // computes one position per output point and then emits split vertices by walking `rims`, so
+    // reading `position` at a placement index reads an unrelated vertex — which is exactly the
+    // wrong answer this file's header warns a plausible index buffer produces. Paired through the
+    // output's own rims instead.
+    const outSplit = alignedSplitRims(ref, built);
+    expect(outSplit).not.toBeNull();
+    if (outSplit === null) return;
+    const outAttr = built.getAttribute('position');
+    const out = new Map<number, readonly [number, number, number]>();
+    for (let f = 0; f < layout.rims.length; f++)
+      for (let k = 0; k < layout.rims[f].length; k++) {
+        const at = outSplit[f][k];
+        if (!out.has(layout.rims[f][k]))
+          out.set(layout.rims[f][k], [outAttr.getX(at), outAttr.getY(at), outAttr.getZ(at)]);
+      }
+
+    let flat = 0;
+    let widened = 0;
+    let maxFlank = 0;
+    for (let i = 0; i < layout.placement.length; i++) {
+      const r = layout.placement[i];
+      if (r.kind !== 'slide') continue;
+      const a = home.get(r.point);
+      const b = home.get(r.toward);
+      expect(a, `source point ${r.point} has a position`).toBeDefined();
+      expect(b, `source point ${r.toward} has a position`).toBeDefined();
+      if (a === undefined || b === undefined) continue;
+
+      const e = [b[0] - a[0], b[1] - a[1], b[2] - a[2]] as const;
+      const el = Math.hypot(e[0], e[1], e[2]);
+      const u = [e[0] / el, e[1] / el, e[2] / el] as const;
+      const q = out.get(i);
+      expect(q, `output point ${i} appears in some rim`).toBeDefined();
+      if (q === undefined) continue;
+      const d = [q[0] - a[0], q[1] - a[1], q[2] - a[2]] as const;
+      const along = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+      const perp = Math.hypot(d[0] - u[0] * along, d[1] - u[1] * along, d[2] - u[2] * along);
+
+      // (1) ON the edge, and on the near side of it.
+      expect(perp).toBeLessThan(1e-6);
+      expect(along).toBeGreaterThan(0);
+      // (2) the split. `sin θ <= 1`, so a flanking vertex slides by AT LEAST `amount` and by
+      // strictly more wherever the two edges are not perpendicular.
+      if (r.against === null) {
+        flat++;
+        expect(Math.abs(along - amount)).toBeLessThan(1e-6);
+      } else {
+        widened++;
+        expect(along).toBeGreaterThanOrEqual(amount - 1e-6);
+        maxFlank = Math.max(maxFlank, along);
+      }
+    }
+    // Both kinds were actually seen, so neither branch passed by never running. A terminal point
+    // has exactly two flanking edges, and this scope makes two points terminal.
+    expect(widened).toBe(4);
+    expect(flat).toBeGreaterThan(0);
+    // 🔴 AND THE WIDENING IS REAL. Without this the row passes on a builder that dropped the
+    // `1 / sin θ` scale entirely, since `>= amount` is satisfied by exactly `amount`. None of
+    // these edges meets the chamfered one at a right angle, so at least one must exceed it.
+    expect(maxFlank).toBeGreaterThan(amount + 1e-6);
+
+    // 🔴 AND THE MINTED POLYGON IS WOUND THE RIGHT WAY ROUND. The terminal arm orders its ring by
+    // walking the UNCHAMFERED EDGES away from the chamfered one, where every other arm orders it
+    // by walking CORNERS — two different traversals that have to agree about direction. Nothing
+    // else here would notice if they did not: a backwards-wound n-gon has the right corner count,
+    // the right point count and the right arity, and renders as an invisible hole because it is
+    // backface-culled. The source is a unit sphere about the origin, so "outward" is checkable —
+    // the face normal must point away from the centre.
+    const terminal: number[] = [];
+    for (let f = 0; f < layout.faceOrder.length; f++)
+      if (layout.faceOrder[f] === null && layout.corners[f] !== 4) terminal.push(f);
+    expect(terminal.length, 'a terminal point grew a polygon').toBeGreaterThan(0);
+    for (const f of terminal) {
+      const ring = layout.rims[f].map((id) => out.get(id));
+      expect(ring.every((q) => q !== undefined)).toBe(true);
+      // Newell's normal — correct for a non-planar rim, which a minted n-gon generally is.
+      const nrm = [0, 0, 0];
+      const cen = [0, 0, 0];
+      for (let k = 0; k < ring.length; k++) {
+        const c = ring[k];
+        const d = ring[(k + 1) % ring.length];
+        if (c === undefined || d === undefined) continue;
+        nrm[0] += (c[1] - d[1]) * (c[2] + d[2]);
+        nrm[1] += (c[2] - d[2]) * (c[0] + d[0]);
+        nrm[2] += (c[0] - d[0]) * (c[1] + d[1]);
+        cen[0] += c[0] / ring.length;
+        cen[1] += c[1] / ring.length;
+        cen[2] += c[2] / ring.length;
+      }
+      expect(nrm[0] * cen[0] + nrm[1] * cen[1] + nrm[2] * cen[2]).toBeGreaterThan(0);
+    }
   });
 });

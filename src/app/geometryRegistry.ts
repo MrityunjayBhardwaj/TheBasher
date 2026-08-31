@@ -1088,6 +1088,46 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
         dz += ez / len;
       }
     }
+    if (rule.kind === 'slide') {
+      // THE TERMINAL CASE (#830). One direction, and a distance that is `amount` or
+      // `amount / sin θ` — so the scale goes into the unit vector and the `d.amount` multiply
+      // below stays the single place the amount is applied.
+      const there = splitOf[rule.toward];
+      if (there < 0) return null;
+      const ex = position.getX(there) - hx;
+      const ey = position.getY(there) - hy;
+      const ez = position.getZ(there) - hz;
+      const len = Math.hypot(ex, ey, ez);
+      if (len === 0) return null;
+      let scale = 1;
+      if (rule.against !== null) {
+        const other = splitOf[rule.against];
+        if (other < 0) return null;
+        const ax = position.getX(other) - hx;
+        const ay = position.getY(other) - hy;
+        const az = position.getZ(other) - hz;
+        const alen = Math.hypot(ax, ay, az);
+        if (alen === 0) return null;
+        const cos = (ex * ax + ey * ay + ez * az) / (len * alen);
+        const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+        // 🔴 REFUSED BY NAME RATHER THAN DIVIDED BY, and the threshold is the reference's own
+        // `BEVEL_EPSILON_ANG` of 2°. `sin` is small at BOTH ends, so this catches a chamfered
+        // edge that is near-parallel to its neighbour and one that doubles back along it — the
+        // two cases where the reference stops meeting offset lines and reaches for a face normal
+        // this layout does not carry. A `1 / sin` there would not fail, it would place the vertex
+        // a very long way away, which is the silent plausible answer.
+        if (!(sin > Math.sin((2 * Math.PI) / 180))) {
+          console.error(
+            `geometryRegistry: cannot build a 'bevel' — at source point ${rule.point} the chamfered edge and the edge toward point ${rule.toward} meet at ${((Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI).toFixed(2)}°, which is within 2° of straight. The reference places that boundary vertex from a face normal, which this layout does not carry`,
+          );
+          return null;
+        }
+        scale = 1 / sin;
+      }
+      dx = (ex / len) * scale;
+      dy = (ey / len) * scale;
+      dz = (ez / len) * scale;
+    }
     // `vertex` leaves the deltas at zero: a point with no chamfered edge does not move, which is
     // the whole of that arm and is why it needs no branch of its own here.
     const p = i * 3;
