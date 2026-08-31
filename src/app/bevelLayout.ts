@@ -281,7 +281,27 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
  * cylinder both agreed with it, and a sphere falsified it.
  */
 type PointPlan =
-  | { readonly kind: 'planned'; readonly count: number; readonly gapOf: readonly number[] }
+  | {
+      readonly kind: 'planned';
+      readonly count: number;
+      readonly gapOf: readonly number[];
+      /**
+       * For each gap, the two CROSSING INDICES of the chamfered edges that bound it (#841).
+       *
+       * 🔴 RETURNED FROM WHERE THE RUN IS DEFINED, AND THAT IS THE WHOLE POINT. The caller used
+       * to re-derive these as `crossings[i - 1]` and `crossings[i]` at whichever corner its scan
+       * met the gap at first — which names the run's bounds only when the run is ONE corner long.
+       * Runs wrap cyclically, so the first corner met is generally not the run's start, and the
+       * expression then picked up an edge that is not chamfered at all. A box with a chamfered
+       * edge LOOP had 4 of its 8 boundary vertices pulled toward an unbeveled edge, which moved
+       * them in the wrong DIRECTION rather than merely the wrong distance.
+       *
+       * Nothing caught it because no gate reads `placement`: the point COUNT was right, and a
+       * count is invariant under a wrong direction. The all-edges case was unaffected, since
+       * there every run is one corner long — the case the old expression was written against.
+       */
+      readonly gapBounds: readonly (readonly [number, number])[];
+    }
   | { readonly kind: 'refused'; readonly why: string };
 
 function planPoint(
@@ -294,7 +314,8 @@ function planPoint(
   for (let i = 0; i < n; i++) if (beveled[fan.crossings[i]] === 1) cut.push(i);
   const k = cut.length;
 
-  if (k === 0) return { kind: 'planned', count: 1, gapOf: new Array<number>(n).fill(0) };
+  if (k === 0)
+    return { kind: 'planned', count: 1, gapOf: new Array<number>(n).fill(0), gapBounds: [] };
 
   if (k === 1)
     return {
@@ -307,14 +328,18 @@ function planPoint(
   // cyclically — which for an all-edges bevel gives every corner its own run and reproduces the
   // one-point-per-face-corner numbering this module shipped with.
   const gapOf = new Array<number>(n).fill(-1);
+  const gapBounds: (readonly [number, number])[] = [];
   for (let j = 0; j < k; j++) {
     const to = cut[(j + 1) % k];
+    // The run's bounds are `cut[j]` and `cut[j + 1]` BY DEFINITION of the run — recorded here
+    // rather than recovered later from a corner index, which is what #841 was.
+    gapBounds.push([cut[j], to] as const);
     for (let i = (cut[j] + 1) % n; ; i = (i + 1) % n) {
       gapOf[i] = j;
       if (i === to) break;
     }
   }
-  return { kind: 'planned', count: k, gapOf };
+  return { kind: 'planned', count: k, gapOf, gapBounds };
 }
 
 /** {@link bevelLayoutOf}'s body, split out so the cache above is the whole of the caching. */
@@ -479,8 +504,8 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
                 kind: 'meet',
                 point: v,
                 toward: [
-                  farEnd(crossings[(i - 1 + crossings.length) % crossings.length], v),
-                  farEnd(crossings[i], v),
+                  farEnd(crossings[plans[v].gapBounds[gap][0]], v),
+                  farEnd(crossings[plans[v].gapBounds[gap][1]], v),
                 ] as const,
               },
         );

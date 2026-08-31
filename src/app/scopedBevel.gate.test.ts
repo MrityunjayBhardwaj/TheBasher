@@ -237,4 +237,55 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
     // which is the half a "they differ" assertion cannot see.
     expect(loopAgain.layout.points).toBe(12);
   });
+
+  it('🔴 #841 — EVERY `meet` IS PULLED TOWARD TWO CHAMFERED EDGES, not toward whatever preceded it', () => {
+    // The half every row above is blind to. `placement` had NO reader here, and a wrong `toward`
+    // leaves the point COUNT untouched — so the layout was internally consistent and externally
+    // wrong. On a box with a chamfered edge loop, 4 of the 8 boundary vertices were pulled toward
+    // an UNBEVELED edge, which moves them in the wrong DIRECTION and not merely by the wrong
+    // distance (`geometryRegistry` sums the two unit vectors and scales by `amount`).
+    //
+    // A run of ONE corner cannot separate the right expression from the wrong one — both name the
+    // same pair — so the fixture is asserted to contain a longer run before the check runs at all.
+    const chamfered = new Set([0, 1, 2, 3]);
+    const src = box();
+    const verdict = bevelLayoutOf(bevelGeometryRef(src, 0.1, '0-3').descriptor);
+    expect(verdict.kind).toBe('laid-out');
+    if (verdict.kind !== 'laid-out') return;
+    const layout = verdict.layout;
+
+    // The fixture actually exercises a run longer than one corner: some output point is named by
+    // two different source face-corners. Without this the row could pass vacuously.
+    const corners: Record<number, number> = {};
+    for (let f = 0; f < layout.sourceFaces; f++)
+      for (const point of layout.rims[f]) corners[point] = (corners[point] ?? 0) + 1;
+    expect(Object.values(corners).some((c) => c >= 2)).toBe(true);
+
+    // Independently of the layout: which source points does each chamfered edge join?
+    const edges = edgeSetOf(src.descriptor);
+    expect(edges).not.toBeNull();
+    if (edges === null) return;
+    const chamferedFarEnds = new Map<number, Set<number>>();
+    for (const e of chamfered) {
+      const a = edges.pairs[2 * e];
+      const b = edges.pairs[2 * e + 1];
+      if (!chamferedFarEnds.has(a)) chamferedFarEnds.set(a, new Set());
+      if (!chamferedFarEnds.has(b)) chamferedFarEnds.set(b, new Set());
+      chamferedFarEnds.get(a)!.add(b);
+      chamferedFarEnds.get(b)!.add(a);
+    }
+
+    let meets = 0;
+    for (const rule of layout.placement) {
+      if (rule.kind !== 'meet') continue;
+      meets++;
+      for (const toward of rule.toward)
+        expect({ point: rule.point, toward }).toEqual({
+          point: rule.point,
+          toward: chamferedFarEnds.get(rule.point)?.has(toward) ? toward : 'NOT A CHAMFERED EDGE',
+        });
+    }
+    // Eight of them, so the loop above is not passing by never running.
+    expect(meets).toBe(8);
+  });
 });
