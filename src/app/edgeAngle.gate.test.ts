@@ -28,6 +28,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   arrayGeometryRef,
+  bevelGeometryRef,
   boxGeometryRef,
   mirrorGeometryRef,
   sphereGeometryRef,
@@ -37,7 +38,7 @@ import { getForRead } from './geometryRegistry';
 import { builtFaceNormals, edgeAnglesOf } from './edgeAngle';
 import { edgeCountOf, edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
 import { cornerCountOf } from './faceCount';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
 const box = boxGeometryRef([1, 1, 1], null);
 const sphere = sphereGeometryRef(1, 8, 6, null);
@@ -269,5 +270,113 @@ describe('#800 — what this population CANNOT reach, stated rather than left im
     // they sum to row 1's independently measured 1696 — two derivations of one denominator.
     expect([boundary, manifold], 'boundary / manifold edges in the population').toEqual([54, 1642]);
     expect(boundary + manifold, 'agrees with row 1 total').toBe(1696);
+  });
+});
+
+// ── #848 — WHAT AN ANGLE-DERIVED SELECTION MAY BE CACHED ON ──────────────────────────────
+//
+// Limit Method = Angle (#847) picks which edges are chamfered by reading BUILT positions, and
+// that choice sets the bevel's output counts. So unlike `meet` and `slide` — which name a rule
+// and let the builder evaluate it — it cannot be deferred: the counts depend on it. It resolves
+// upstream and reaches the layout as a resolved set, which is what the reference does too
+// (`MOD_bevel.cc:193-203` tags edges; `:238` then calls a bevel whose 24 parameters carry no
+// angle).
+//
+// That leaves the cache key. The instinct is that a position-derived selection cannot be keyed
+// on its PARAMETER, because positions might move under a fixed key. Measured, that is FALSE
+// here, and these two rows are the measurement: together they say
+// `same key ⇒ same positions ⇒ same angle-derived selection`, which is what lets
+// `${source.key}|${scope}|${angleLimit}` name exactly one selection.
+//
+// 🔴 THE SECOND HALF DECAYS SILENTLY, AND `edgeIdentity.ts:411` ALREADY NAMES THE DIRECTION:
+// *"non-manifold ... nothing in this project builds today but a `gltf` import could."* The day
+// the edge walk answers for a descriptor whose buffer lives outside it, half 2 evaporates and
+// the caching decision is wrong with nothing to say so.
+//
+// ⚠️ WHAT CATCHES WHAT — three detectors, and only the third is new.
+//   - A NEW KIND ARRIVING is already caught in PRODUCTION: `weldedPolygonsOf` closes its switch
+//     with `const unreachable: never = descriptor` (`edgeIdentity.ts:287-288`), which the CI
+//     typecheck does see. Rebuilding that here would add rows and no information.
+//   - A `never` closes "did you decide?", never "decided correctly?" — so it cannot catch a new
+//     kind ROUTED TO THE ACCEPTING BRANCH while its positions live outside the descriptor.
+//   - Row 13's map is keyed by `GeometryDescriptor['kind']`, so a new kind is a missing property
+//     and a TYPE error. 🔴 `npm run typecheck` cannot see this file (`tsconfig.app.json` excludes
+//     tests) and vitest does not typecheck, so that error surfaces only in the changed-file tsc
+//     sweep. It is a real detector, but a manual one — stated plainly rather than relied on.
+
+describe('#848 — the premise the angle-limit cache key rests on', () => {
+  it('12 — a position-only change moves the key, on every kind that has one', () => {
+    // Each pair differs ONLY in a parameter that moves positions and leaves topology alone.
+    // `subset` is absent deliberately: it has no position parameter — its scope changes which
+    // faces survive, which is topology. Row 13 covers that it is keyed at all.
+    const pairs: readonly (readonly [string, GeometryRef, GeometryRef])[] = [
+      ['box size', box, boxGeometryRef([1, 1, 2], null)],
+      ['sphere radius', sphere, sphereGeometryRef(2, 8, 6, null)],
+      ['array offset', arrayGeometryRef(box, 3, [1, 0, 0]), arrayGeometryRef(box, 3, [2, 0, 0])],
+      ['mirror offset', mirrorGeometryRef(box, 'x', 0), mirrorGeometryRef(box, 'x', 1)],
+      ['bevel amount', bevelGeometryRef(box, 0.1), bevelGeometryRef(box, 0.2)],
+    ];
+    // A denominator, so a row that examined nothing cannot read like one that passed.
+    expect(pairs.length, 'position-only pairs examined').toBe(5);
+
+    for (const [name, a, b] of pairs) {
+      // 🔑 OBSERVE THAT THE GEOMETRY ACTUALLY MOVED FIRST. Without this the row would pass on
+      // two keys that merely spell differently, and would go on passing if a "position
+      // parameter" silently stopped moving anything — the case that makes the premise vacuous
+      // rather than false, and the one a key-only comparison cannot see.
+      const pa = getForRead(a)!.getAttribute('position').array;
+      const pb = getForRead(b)!.getAttribute('position').array;
+      const moved = pa.length !== pb.length || Array.from(pa).some((v, i) => v !== pb[i]);
+      expect(moved, `${name} — the variant must actually move geometry`).toBe(true);
+
+      expect(
+        a.key === b.key,
+        `${name}: two geometries with different positions share the key '${a.key}'. An angle-limit cache keyed on the angle PARAMETER (#847) would serve one of them the other's selection — the key has to become the resolved edge set.`,
+      ).toBe(false);
+    }
+  });
+
+  it('13 — every kind the angle path ACCEPTS is one whose key determines its positions', () => {
+    // `keyed` = positions are a function of parameters the mint site folds into the key
+    // (`modifierGeometry.ts`). `outside` = the buffer lives beyond the descriptor, so no key
+    // over the descriptor can determine it.
+    //
+    // Typed as a Record over the kind union on purpose: adding a kind without classifying it
+    // here is a missing-property type error. See the header for which detector sees that.
+    const keying: Record<GeometryDescriptor['kind'], 'keyed' | 'outside'> = {
+      box: 'keyed',
+      sphere: 'keyed',
+      array: 'keyed',
+      mirror: 'keyed',
+      subset: 'keyed',
+      bevel: 'keyed',
+      gltf: 'outside',
+      baked: 'outside',
+    };
+    const sample: Record<GeometryDescriptor['kind'], GeometryRef> = {
+      box,
+      sphere,
+      array: arrayGeometryRef(box, 2, [2, 0, 0]),
+      mirror: mirrorGeometryRef(box, 'x', 1),
+      subset: subsetGeometryRef(box, '0-2', true),
+      bevel: bevelGeometryRef(box, 0.1),
+      gltf: gltfRef,
+      baked: bakedRef,
+    };
+
+    const kinds = Object.keys(keying) as GeometryDescriptor['kind'][];
+    expect(kinds.length, 'every descriptor kind is classified').toBe(8);
+
+    for (const kind of kinds) {
+      const accepted = edgeFaceAdjacencyOf(sample[kind].descriptor) !== null;
+      if (keying[kind] === 'keyed') {
+        expect(accepted, `${kind} — a keyed kind the angle path should answer for`).toBe(true);
+      } else {
+        expect(
+          accepted,
+          `${kind} is now ACCEPTED by the edge walk, and its buffer lives outside the descriptor — so its positions can move under a fixed key. The angle-limit cache key (#847) may no longer be the angle parameter; it has to become the resolved edge set.`,
+        ).toBe(false);
+      }
+    }
   });
 });
