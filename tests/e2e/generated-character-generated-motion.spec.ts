@@ -53,15 +53,50 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './_fixtures';
+import type { Page } from '@playwright/test';
 import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from '../../src/core/import/bvh';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
-const GLB_FILE = path.join(ROOT, 'public/assets/tripo-rigged.glb');
-const BVH_FILE = path.join(ROOT, 'public/assets/kimodo-walk.bvh');
 
-const GLB_URL = '/assets/tripo-rigged.glb';
-const BVH_URL = '/assets/kimodo-walk.bvh';
-const ASSET_REF = 'assets/tripo-rigged.glb';
+/**
+ * The character/clip pairs this runs against.
+ *
+ * TRACKED FIRST, AND IT IS THE POINT OF #850. This spec used to run only
+ * against real vendor output — a ~58 MB Tripo GLB whose licence is not cleared
+ * and which is therefore untracked — so on a runner the files were absent, the
+ * spec SKIPPED, and every gate written for this seam was local-only. A gate
+ * that cannot run is not a gate. The generated stand-in pair carries the same
+ * structure in 10 KB: `mixamorig:` colon names, a non-identity corrective root,
+ * a T-pose bind, unequal legs, and a hip offset that is NOT the leg chain.
+ *
+ * The vendor pair still runs when it happens to be present, because a stand-in
+ * is a claim about what matters and the real asset is the thing itself. It is
+ * additive: absent, nothing is lost that CI ever had.
+ */
+const PAIRS = [
+  {
+    name: 'a generated stand-in rig on a generated SOMA walk',
+    glb: 'public/fixtures/rig/standin-character.glb',
+    bvh: 'public/fixtures/anim/soma-walk.bvh',
+    ref: 'fixtures/rig/standin-character.glb',
+    // The clip is 31 frames at 30 fps — sampling past its end would measure the
+    // held last pose as if it were motion.
+    times: [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0],
+    // SOMA's thigh is `LeftLeg` and its shin `LeftShin`; a bone's offset is the
+    // length of the bone ABOVE it, so thigh is measured at the knee.
+    sourceLegBones: ['LeftShin', 'LeftFoot', 'RightShin', 'RightFoot'],
+    tracked: true,
+  },
+  {
+    name: 'a Tripo-rigged character on a Kimodo clip',
+    glb: 'public/assets/tripo-rigged.glb',
+    bvh: 'public/assets/kimodo-walk.bvh',
+    ref: 'assets/tripo-rigged.glb',
+    times: [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0],
+    sourceLegBones: ['LeftShin', 'LeftFoot', 'RightShin', 'RightFoot'],
+    tracked: false,
+  },
+] as const;
 
 /** A rotation a person can see. The radians-in-a-degrees-band defect (#843)
  *  produced well under 1°; a real walk swings the legs by 30°+. */
@@ -98,12 +133,28 @@ interface BasherWindow {
   __basher_gltf_skin?: () => SkinHandle | null;
 }
 
-test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
+for (const pair of PAIRS) {
+  runPair(pair);
+}
+
+function runPair(pair: (typeof PAIRS)[number]): void {
+  test(`${pair.name} walks`, async ({ page }) => {
+    await walks(page, pair);
+  });
+}
+
+async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
+  const GLB_FILE = path.join(ROOT, pair.glb);
+  const BVH_FILE = path.join(ROOT, pair.bvh);
+  const GLB_URL = `/${pair.glb.replace(/^public\//, '')}`;
+  const BVH_URL = `/${pair.bvh.replace(/^public\//, '')}`;
+  const ASSET_REF = pair.ref;
+
   if (!fs.existsSync(GLB_FILE) || !fs.existsSync(BVH_FILE)) {
-    test.skip(
-      true,
-      'needs public/assets/tripo-rigged.glb + kimodo-walk.bvh (untracked vendor output)',
-    );
+    // A TRACKED pair going missing is a repo defect, not an environment one, so
+    // it fails rather than skipping. Only the vendor pair may be absent.
+    expect(pair.tracked, `${pair.glb} and ${pair.bvh} are tracked and must exist`).toBe(false);
+    test.skip(true, `needs ${pair.glb} + ${pair.bvh} (untracked vendor output)`);
     return;
   }
   test.setTimeout(300_000);
@@ -178,9 +229,9 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   expect(bind.bakedChannels, 'the bake must mint baked channels (#803)').toBeGreaterThan(0);
 
   // ---- 3. PLAYBACK — the assertion the whole spec exists for --------------
-  const played = await page.evaluate(async () => {
+  const played = await page.evaluate(async (sampleTimes: readonly number[]) => {
     const w = window as unknown as BasherWindow;
-    const times = [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+    const times = sampleTimes;
     const skin0 = w.__basher_gltf_skin!()!;
     const n = skin0.boneCount;
     const names = Array.from({ length: n }, (_, i) => skin0.boneName(i));
@@ -204,7 +255,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
       ...verts.map((v) => Math.hypot(v[0] - verts[0][0], v[1] - verts[0][1], v[2] - verts[0][2])),
     );
     return { spreads, travel };
-  });
+  }, pair.times);
 
   const moving = played.spreads.filter((s) => s.deg > MIN_VISIBLE_DEG);
   const top = played.spreads.slice(0, 5).map((s) => `${s.bone} ${s.deg.toFixed(1)}°`);
@@ -222,7 +273,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   expect(played.travel, 'the character must travel (#839)').toBeGreaterThan(0.1);
 
   // ---- 4. POSTURE — is it walking, or lying down doing the same motion? ---
-  const posture = await page.evaluate(async () => {
+  const posture = await page.evaluate(async (sampleTimes: readonly number[]) => {
     const w = window as unknown as BasherWindow & {
       __basher_three?: { getState: () => { scene?: unknown } };
     };
@@ -241,13 +292,13 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
     });
     const y = (n: string) => bones.get(n)?.matrixWorld.elements[13] ?? NaN;
     const rows: number[] = [];
-    for (const t of [0, 0.5, 1.0, 1.5, 2.0]) {
+    for (const t of sampleTimes) {
       w.__basher_time!.getState().setTime(t);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       rows.push(y('mixamorigHead') - y('mixamorigHips'));
     }
     return rows;
-  });
+  }, pair.times);
   const worstPosture = Math.min(...posture);
   expect(
     worstPosture,
@@ -273,6 +324,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   // renderer actually posed — where the code derives its leg structurally and
   // never sees these names. A scale computed from a different basis (feet
   // included, one leg instead of two) moves the rendered side and not this one.
+  const sampleWindow = pair.times[pair.times.length - 1];
   const sourceBones = parseBvh(
     fs.readFileSync(BVH_FILE, 'utf8'),
     'stride-reference',
@@ -285,11 +337,10 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   };
   // A bone's offset is the length of the bone ABOVE it, so the thigh is measured
   // at the knee and the shin at the ankle. SOMA's `LeftLeg` is the thigh.
-  const sourceLegs =
-    boneLen('LeftShin') + boneLen('LeftFoot') + boneLen('RightShin') + boneLen('RightFoot');
+  const sourceLegs = pair.sourceLegBones.reduce((sum, n) => sum + boneLen(n), 0);
   const hipsBone = sourceBones.skeletonParams.bones.findIndex((b) => b.name === 'Hips');
   const sourceKeys = sourceBones.clipParams.keyframes.filter(
-    (k) => k.bone === hipsBone && k.time <= 2.0,
+    (k) => k.bone === hipsBone && k.time <= sampleWindow,
   );
   const sourceStride = Math.max(
     ...sourceKeys.map((k) =>
@@ -301,7 +352,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
     ),
   );
 
-  const rendered = await page.evaluate(async () => {
+  const rendered = await page.evaluate(async (sampleTimes: readonly number[]) => {
     const w = window as unknown as BasherWindow & {
       __basher_three?: { getState: () => { scene?: unknown } };
     };
@@ -333,7 +384,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
 
     let legs = NaN;
     const hips: [number, number, number][] = [];
-    for (const t of [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]) {
+    for (const t of sampleTimes) {
       w.__basher_time!.getState().setTime(t);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       const m = worldPositions();
@@ -354,7 +405,7 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
       ...hips.map((p) => Math.hypot(p[0] - hips[0][0], p[1] - hips[0][1], p[2] - hips[0][2])),
     );
     return { legs, stride };
-  });
+  }, pair.times);
 
   const sourceRatio = sourceStride / sourceLegs;
   const renderedRatio = rendered.stride / rendered.legs;
@@ -369,4 +420,4 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
   ).toBeLessThan(MAX_STRIDE_DRIFT);
 
   expect(errors, `page errors during playback: ${errors.join(' | ')}`).toEqual([]);
-});
+}
