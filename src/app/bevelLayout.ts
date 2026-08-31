@@ -71,11 +71,30 @@ import { scopeSelection } from '../nodes/scopeQuery';
  * `k >= 2`. Those are exactly these two arms — an untouched point, and a point pulled back
  * between the two chamfered edges that bound it.
  *
- * `k = 1` is refused rather than given a third arm, and the reason is that its position rule is
- * genuinely different rather than merely absent: the reference answers it with `offset_in_plane`
- * and `slide_dist` (`bmesh_bevel.cc`), which need a face normal and an edge slide this layout
- * has never had to state. Refusing keeps the render path free of an arm nothing has measured —
- * the stance this module already takes for a boundary edge.
+ * ── THE THIRD ARM IS THE TERMINAL CASE, AND IT IS ONE RULE RATHER THAN TWO (#830) ─────────
+ *
+ * At `k = 1` the point contributes `n - 1` boundary vertices, one per UNCHAMFERED incident edge,
+ * and each sits ON that edge. Measured in Blender 5.1.1 across valence 3, 4, 5, 6, 8 and 12 on two
+ * independent fixture families, and derived independently from the reference, which builds
+ * `1 + 1 + (n - 3)` of them in `build_boundary_terminal_edge`'s `edgecount > 2` branch.
+ *
+ * The distance splits by FACE ADJACENCY, not by angle: the two edges sharing a face with the
+ * chamfered edge slide by `amount / sin θ` (the reference meets two offset lines, and the
+ * unchamfered edge's own offset being zero puts the meet on that edge); the other `n - 3` slide
+ * by a flat `amount`. Confirmed by a prediction the fixtures had not exercised — the reference
+ * multiplies the flat distance by √2 when `profile < 0.25`, and the measured threshold sits
+ * between 0.24 and 0.26 with the flanking distances unmoved, which is what `d` feeding only the
+ * non-flanking loop predicts.
+ *
+ * 🔴 THE ISSUE THAT FILED THIS DESCRIBED THE WRONG BRANCH. `offset_in_plane` — and with it the
+ * face normal — lives in `build_boundary_terminal_edge`'s `edgecount == 2` case, which `vertexFan`
+ * makes unreachable by refusing a point with fewer than three incident corners. Reading it as the
+ * general rule is what made this look like it needed two placement arms and a normal.
+ *
+ * ⚠️ WHAT IS STILL REFUSED, AND BY THE BUILDER RATHER THAN HERE. `offset_meet` has branches that
+ * DO need a face normal when the two edges are near-parallel or near-anti-parallel, and the
+ * reference carries its own `TODO` for a reflex angle between them. Those need positions to
+ * detect, so the refusal lives where the positions are.
  */
 export type BoundaryPlacement =
   /** Untouched: no chamfered edge meets this source point, so it stays where the source put it. */
@@ -88,7 +107,26 @@ export type BoundaryPlacement =
    * is what the builder used to read off the rim directly — so this arm reproduces the previous
    * behaviour rather than approximating it, and the all-edges case comes out byte-identical.
    */
-  | { readonly kind: 'meet'; readonly point: number; readonly toward: readonly [number, number] };
+  | { readonly kind: 'meet'; readonly point: number; readonly toward: readonly [number, number] }
+  /**
+   * THE TERMINAL CASE (#830): slid from `point` along ONE unchamfered edge, toward `toward`.
+   *
+   * The distance is `amount` when `against` is `null`, and `amount / sin θ` when it is not, where
+   * θ is the angle at `point` between this edge and `against` — the chamfered edge. Both are
+   * measured; see the header. `against` is set on exactly the two edges that share a face with the
+   * chamfered edge, and null on the other `n - 3`.
+   *
+   * 🔑 STILL A RULE AND NOT A `Vec3`, WHICH IS WHY θ IS NOT PRECOMPUTED HERE. The layout is a
+   * pure function of topology cached on the source handle; an angle needs positions. Naming the
+   * two edges lets the builder — which has them — evaluate θ, and keeps an `amount` drag free of
+   * a re-derivation, exactly as `meet` does.
+   */
+  | {
+      readonly kind: 'slide';
+      readonly point: number;
+      readonly toward: number;
+      readonly against: number | null;
+    };
 
 export interface BevelLayout {
   /** Faces in the SOURCE — what a per-face attribute being gathered from would have to carry. */
@@ -280,41 +318,148 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
  * rule said "2 boundary vertices", which is true at valence 3 and false at 4 — a cube and a
  * cylinder both agreed with it, and a sphere falsified it.
  */
-type PointPlan =
-  | { readonly kind: 'planned'; readonly count: number; readonly gapOf: readonly number[] }
-  | { readonly kind: 'refused'; readonly why: string };
+/**
+ * How ONE boundary vertex is placed, in the point's own fan vocabulary.
+ *
+ * Crossing INDICES rather than edge ids, because everything the arms need — which edges bound a
+ * run, which edge a vertex slides along, which edge it is measured against — is a position in the
+ * ring, and the ring is what `vertexFan` returns. The caller turns an index into a far endpoint
+ * once, in one place.
+ */
+type GapPlacement =
+  /** The point does not move: no chamfered edge meets it. */
+  | { readonly kind: 'vertex' }
+  /**
+   * Pulled back between the two chamfered edges bounding this run (#841 records why these are
+   * carried rather than re-derived).
+   */
+  | { readonly kind: 'meet'; readonly bounds: readonly [number, number] }
+  /**
+   * THE TERMINAL CASE (#830). Slid along ONE unchamfered edge, away from the point.
+   *
+   * `against` is the chamfered edge when this vertex sits on one of the two edges that share a
+   * face with it — the reference meets the two offset lines there, and because the unchamfered
+   * edge's own offset is zero the meet lands ON that edge, at `amount / sin θ`. It is `null` on
+   * every other incident edge, which slides by a flat `amount`. Both are measured; see the
+   * header.
+   */
+  | { readonly kind: 'slide'; readonly along: number; readonly against: number | null };
 
-function planPoint(
-  v: number,
-  fan: { readonly crossings: readonly number[] },
-  beveled: Uint8Array,
-): PointPlan {
+/**
+ * 🔑 THERE IS NO `refused` ARM, AND ITS ABSENCE IS THE STATEMENT #830 CAME TO MAKE. Every `k`
+ * from 0 to `n` now has an answer, so "this point could not be planned" is no longer a state the
+ * type can hold — the terminal case was the last value of `k` that could produce one. The
+ * refusals that remain are about the SOURCE (a boundary edge, a non-manifold edge, a pinched fan)
+ * and are raised before any point is planned.
+ */
+type PointPlan = {
+  readonly count: number;
+  /**
+   * The boundary vertices each CORNER uses, in that face's own rim order. One or TWO.
+   *
+   * 🔴 A LIST, AND #830 IS WHY. This was `gapOf: number[]` — one gap per corner — which says
+   * that a corner becomes exactly one output point. That held while every point had either
+   * one boundary vertex (`k = 0`) or one per run (`k >= 2`). The terminal case breaks it: at
+   * `k = 1` the boundary vertices belong to the point's UNCHAMFERED EDGES, and a corner
+   * bounded by two of them uses BOTH. So the map from corner to point stopped being a
+   * function, and its face gains an arity.
+   *
+   * That is the same break #827 made one step earlier, and the module's own history is the
+   * clearest statement of it: corner -> point was a BIJECTION until #827 made it MANY-TO-ONE,
+   * and is ONE-TO-MANY from here. `corners[f] = rims[f].length` was the last line still
+   * written as if it were a function.
+   */
+  readonly cornerGaps: readonly (readonly number[])[];
+  /** The gap ids in the vertex polygon's ring order, when the point grows one. */
+  readonly ring: readonly number[];
+  /** How each gap is positioned, index-aligned with the gap ids used above. */
+  readonly gaps: readonly GapPlacement[];
+};
+
+function planPoint(fan: { readonly crossings: readonly number[] }, beveled: Uint8Array): PointPlan {
   const n = fan.crossings.length;
   const cut: number[] = [];
   for (let i = 0; i < n; i++) if (beveled[fan.crossings[i]] === 1) cut.push(i);
   const k = cut.length;
 
-  if (k === 0) return { kind: 'planned', count: 1, gapOf: new Array<number>(n).fill(0) };
-
-  if (k === 1)
+  if (k === 0)
     return {
-      kind: 'refused',
-      why: `point ${v} has exactly one chamfered edge of its ${n}, and a bevel with no miter rule has no answer there — that point splits into ${n - 1} and changes the arity of the face opposite the chamfered edge. Chamfer a closed loop of edges, or all of them, until #827's terminal case lands`,
+      count: 1,
+      cornerGaps: Array.from({ length: n }, () => [0]),
+      ring: [0],
+      gaps: [{ kind: 'vertex' }],
     };
+
+  if (k === 1) {
+    // ── THE TERMINAL CASE (#830) ──────────────────────────────────────────────────────────
+    //
+    // One boundary vertex per UNCHAMFERED incident edge, so `n - 1` of them — not 1 and not `k`.
+    // The reference builds exactly these: `build_boundary_terminal_edge`'s `edgecount > 2` branch
+    // makes two bound verts from the edges flanking the chamfered one and then one per remaining
+    // edge, which is `1 + 1 + (n - 3)`.
+    //
+    // 🔴 THE `edgecount == 2` BRANCH IS A DIFFERENT RULE AND IS NOT THIS ONE. It uses
+    // `offset_in_plane` and needs a face normal; it is also unreachable here, because `vertexFan`
+    // refuses a point with fewer than three incident corners. #830 was filed describing that
+    // branch, which is real code but not the code a valence-3-or-more point runs.
+    const c = cut[0];
+    const gapOfEdge = new Array<number>(n).fill(-1);
+    const gaps: GapPlacement[] = [];
+    const ring: number[] = [];
+    // Numbered walking away from the chamfered edge, so the ring comes out in fan order. Edge `i`
+    // sits between corner `i` and corner `i + 1`, so increasing edge index runs the same way
+    // round the point as increasing corner index — the order the `k >= 2` arm's ring also follows.
+    for (let step = 1; step < n; step++) {
+      const e = (c + step) % n;
+      const flanking = e === (c + 1) % n || e === (c - 1 + n) % n;
+      gapOfEdge[e] = gaps.length;
+      ring.push(gaps.length);
+      gaps.push({ kind: 'slide', along: e, against: flanking ? c : null });
+    }
+    // Corner `i` is bounded by `crossings[i - 1]` (entered through) and `crossings[i]` (left
+    // through), and `crossings[i]` is the edge toward the face's PREVIOUS rim vertex. So in that
+    // face's rim order the corner reads `[on crossings[i], on crossings[i - 1]]` — and one of the
+    // two is missing exactly when it is the chamfered edge, which is what leaves the two flanking
+    // faces at their original arity while every other face at this point gains one.
+    const cornerGaps: number[][] = [];
+    for (let i = 0; i < n; i++) {
+      const here = gapOfEdge[i];
+      const back = gapOfEdge[(i - 1 + n) % n];
+      const slots: number[] = [];
+      if (here >= 0) slots.push(here);
+      if (back >= 0) slots.push(back);
+      cornerGaps.push(slots);
+    }
+    return { count: n - 1, cornerGaps, ring, gaps };
+  }
 
   // `k >= 2`: one boundary vertex per run of corners between two consecutive chamfered edges.
   // Run `j` covers the corners strictly after `cut[j]` up to and including `cut[j + 1]`, walked
   // cyclically — which for an all-edges bevel gives every corner its own run and reproduces the
   // one-point-per-face-corner numbering this module shipped with.
   const gapOf = new Array<number>(n).fill(-1);
+  const gaps: GapPlacement[] = [];
   for (let j = 0; j < k; j++) {
     const to = cut[(j + 1) % k];
+    // The run's bounds are `cut[j]` and `cut[j + 1]` BY DEFINITION of the run — recorded here
+    // rather than recovered later from a corner index, which is what #841 was.
+    gaps.push({ kind: 'meet', bounds: [cut[j], to] as const });
     for (let i = (cut[j] + 1) % n; ; i = (i + 1) % n) {
       gapOf[i] = j;
       if (i === to) break;
     }
   }
-  return { kind: 'planned', count: k, gapOf };
+  // A rotation of the run order, taken as each run is first met walking the corners — the same
+  // polygon with the same winding, and on an all-edges bevel it is corner order exactly. Derived
+  // here rather than at the polygon, so both arms hand back a ring in one vocabulary.
+  const seen = new Set<number>();
+  const ring: number[] = [];
+  for (let i = 0; i < n; i++) {
+    if (seen.has(gapOf[i])) continue;
+    seen.add(gapOf[i]);
+    ring.push(gapOf[i]);
+  }
+  return { count: k, cornerGaps: gapOf.map((g) => [g]), ring, gaps };
 }
 
 /** {@link bevelLayoutOf}'s body, split out so the cache above is the whole of the caching. */
@@ -414,7 +559,12 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
     readonly rim: readonly (readonly [number, number])[];
     readonly crossings: readonly number[];
   }[] = [];
-  const plans: { readonly count: number; readonly gapOf: readonly number[] }[] = [];
+  const plans: {
+    readonly count: number;
+    readonly cornerGaps: readonly (readonly number[])[];
+    readonly ring: readonly number[];
+    readonly gaps: readonly GapPlacement[];
+  }[] = [];
   for (let v = 0; v < sourcePoints; v++) {
     const fan = vertexFan(
       v,
@@ -426,10 +576,8 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
       cornerBase,
     );
     if (fan.kind === 'refused') return fan;
-    const plan = planPoint(v, fan, beveled);
-    if (plan.kind === 'refused') return refused(plan.why);
     fans.push(fan);
-    plans.push(plan);
+    plans.push(planPoint(fan, beveled));
   }
 
   // ── The output point numbering ───────────────────────────────────────────────────────────
@@ -452,7 +600,10 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
   // since block `v` is entirely below block `v + 1`. That is what makes "every output point has
   // an honest origin" checkable by a scan rather than by a set comparison.
   const idAt: number[][] = plans.map((plan) => new Array<number>(plan.count).fill(-1));
-  const cornerPointOf = new Array<number>(cornerCount).fill(-1);
+  // 🔴 A LIST PER CORNER, NOT A POINT — see `PointPlan.cornerGaps`. The terminal case gives a
+  // corner two output points, so this stopped being a function and `corners[f]` stopped being
+  // `rims[f].length`.
+  const cornerPointsOf: number[][] = Array.from({ length: cornerCount }, () => []);
   const placement: BoundaryPlacement[] = [];
   const pointOrder: number[] = [];
 
@@ -461,32 +612,39 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
 
   for (let v = 0; v < sourcePoints; v++) {
     const { rim, crossings } = fans[v];
-    const { gapOf } = plans[v];
+    const plan = plans[v];
     for (let i = 0; i < rim.length; i++) {
-      const gap = gapOf[i];
-      if (idAt[v][gap] < 0) {
-        const id = placement.length;
-        idAt[v][gap] = id;
-        pointOrder.push(v);
-        // A run bounded by two chamfered edges is pulled back between them; a point with no
-        // chamfered edge at all does not move. `crossings[i - 1]` and `crossings[i]` are the two
-        // edges bounding corner `i`, and on an all-edges bevel they ARE the corner's two rim
-        // neighbours — which is the expression the builder used to hold on its own.
-        placement.push(
-          plans[v].count === 1
-            ? { kind: 'vertex', point: v }
-            : {
-                kind: 'meet',
-                point: v,
-                toward: [
-                  farEnd(crossings[(i - 1 + crossings.length) % crossings.length], v),
-                  farEnd(crossings[i], v),
-                ] as const,
-              },
-        );
-      }
       const [f, k] = rim[i];
-      cornerPointOf[cornerBase[f] + k] = idAt[v][gap];
+      const slots: number[] = [];
+      for (const gap of plan.cornerGaps[i]) {
+        if (idAt[v][gap] < 0) {
+          idAt[v][gap] = placement.length;
+          pointOrder.push(v);
+          // The rule, translated out of the fan's vocabulary into the source's exactly once.
+          const rule = plan.gaps[gap];
+          placement.push(
+            rule.kind === 'vertex'
+              ? { kind: 'vertex', point: v }
+              : rule.kind === 'meet'
+                ? {
+                    kind: 'meet',
+                    point: v,
+                    toward: [
+                      farEnd(crossings[rule.bounds[0]], v),
+                      farEnd(crossings[rule.bounds[1]], v),
+                    ] as const,
+                  }
+                : {
+                    kind: 'slide',
+                    point: v,
+                    toward: farEnd(crossings[rule.along], v),
+                    against: rule.against === null ? null : farEnd(crossings[rule.against], v),
+                  },
+          );
+        }
+        slots.push(idAt[v][gap]);
+      }
+      cornerPointsOf[cornerBase[f] + k] = slots;
     }
   }
   const points = placement.length;
@@ -505,8 +663,14 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
     // A face that came from somewhere inherits from there. The two maps agree on this stretch and
     // diverge only over the minted tail, which is what makes the divergence readable.
     representative.push(f);
-    corners.push(rims[f].length);
-    rimsOut.push(rims[f].map((_, k) => cornerPointOf[cornerBase[f] + k]));
+    // 🔴 NOT `rims[f].length` ANY MORE (#830). A corner at a terminal point contributes TWO
+    // output points, so a source face's arity is the SUM over its corners rather than its own
+    // corner count. The two agree on every face that touches no terminal point, which is every
+    // face that existed before this arm.
+    const rimOut: number[] = [];
+    for (let k = 0; k < rims[f].length; k++) rimOut.push(...cornerPointsOf[cornerBase[f] + k]);
+    corners.push(rimOut.length);
+    rimsOut.push(rimOut);
   }
 
   // ── 2. One quad per CHAMFERED edge — MINTED, so its provenance is a hole ─────────────────
@@ -548,12 +712,26 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
     // of the operator.
     representative.push(Math.min(ab, ba));
     corners.push(4);
-    rimsOut.push([
-      cornerPointOf[cornerBase[ab] + bInAb],
-      cornerPointOf[cornerBase[ab] + aInAb],
-      cornerPointOf[cornerBase[ba] + aInBa],
-      cornerPointOf[cornerBase[ba] + bInBa],
-    ]);
+    // 🔴 A QUAD CORNER MUST BE EXACTLY ONE POINT, AND THAT IS A CLAIM, NOT A SHAPE. The faces
+    // either side of a chamfered edge are that edge's FLANKING faces at both its endpoints, and a
+    // flanking face is the one case the terminal arm leaves at a single boundary vertex — so this
+    // holds for every arm. Checked rather than indexed blindly: taking `[0]` of a two-element slot
+    // would silently drop a vertex and draw a quad through the wrong corner.
+    const sole: number[] = [];
+    for (const [face, corner] of [
+      [ab, bInAb],
+      [ab, aInAb],
+      [ba, aInBa],
+      [ba, bInBa],
+    ] as const) {
+      const slot = cornerPointsOf[cornerBase[face] + corner];
+      if (slot.length !== 1)
+        return refused(
+          `edge ${e}'s quad reads face ${face} corner ${corner}, which resolves to ${slot.length} boundary vertices rather than 1 — a face beside a chamfered edge should be flanking at both its endpoints`,
+        );
+      sole.push(slot[0]);
+    }
+    rimsOut.push(sole);
   }
 
   // ── 3. One n-gon per source point THAT GREW ONE — MINTED, arity = its boundary count ─────
@@ -564,19 +742,13 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
   // Blender welds exactly there (`bmesh_bevel.cc:6465`, `selcount == 2 && count == 2`).
   for (let v = 0; v < sourcePoints; v++) {
     const { rim } = fans[v];
-    const { gapOf, count } = plans[v];
-    if (count < 3) continue;
-    // The boundary vertices in ring order, taken as each run is first met walking the corners —
-    // a rotation of the run order, which is the same polygon with the same winding, and on an
-    // all-edges bevel it is corner order exactly.
-    const seen = new Set<number>();
-    const ring: number[] = [];
-    for (let i = 0; i < rim.length; i++) {
-      const gap = gapOf[i];
-      if (seen.has(gap)) continue;
-      seen.add(gap);
-      ring.push(idAt[v][gap]);
-    }
+    const plan = plans[v];
+    if (plan.count < 3) continue;
+    // The ring order is the plan's, because the two arms order it differently and only the plan
+    // knows which it is: `k >= 2` takes the runs as the corner walk first meets them, the terminal
+    // case walks the unchamfered edges away from the chamfered one. Both run the same way round
+    // the point, which is what makes them one field.
+    const ring = plan.ring.map((g) => idAt[v][g]);
     faceOrder.push(null);
     // Every face in the closed ring around this point is a candidate, whether or not its corner
     // survived as its own boundary vertex — the run that swallowed it is still that face's.

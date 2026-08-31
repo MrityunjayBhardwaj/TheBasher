@@ -5,9 +5,9 @@
 // #818 gave the bevel its producing node and this spec's siblings observe the all-edges case.
 // #827 gave it a SELECTION, and two of its claims are invisible to a unit test:
 //
-// 1. **A refusal reachable by an author must not kill the render.** The miter rule is partial
-//    on purpose — a point with exactly one chamfered edge is refused by name — and unlike the
-//    manifoldness gate that state is one keystroke away: typing a single edge index reaches it.
+// 1. **An answer reachable by an author must not kill the render.** Typing a single edge index
+//    reaches the terminal case in one keystroke — it used to be refused by name and since #830
+//    it BUILDS, through an arm that divides by `sin θ` on every rebuild.
 //    `evaluate` runs on the render walk with NO `try` above it and this project has no
 //    node-error surface, so "the builder returns null" and "the app survives" are two different
 //    claims and only this file can make the second.
@@ -131,6 +131,16 @@ const ALL_EDGES_VERTS = 8 * 3 + 18 * 4;
  * sum so a reader can check it against the measurement on #827 rather than take it on trust.
  */
 const LOOP_VERTS = 10 * 4;
+/**
+ * #830 — the TERMINAL case: one chamfered edge on a cube.
+ *
+ * Blender 5.1.1 returns 10 points and 7 faces with arity `{4:5, 5:2}`, and the renderer holds one
+ * position per output face-corner. Written as the arity sum rather than as `30`, because the two
+ * PENTAGONS are the whole content of the case — this is the only row where a source face does not
+ * keep its corner count, and a flat `7 * 4` would be the number a rule that got `n - 1` right and
+ * the corner map wrong produces.
+ */
+const TERMINAL_VERTS = 5 * 4 + 2 * 5;
 
 /** Vertex count of the meshes under the scene child named `nodeId`. `-1` when it has not
  *  mounted, which must never read as a clean zero. */
@@ -259,10 +269,16 @@ test('#827 — a scoped bevel chamfers ONLY the selected loop: 24 -> 40', async 
   await expect.poll(() => vertsUnder(page, CUBE)).toBe(ALL_EDGES_VERTS);
 });
 
-test('#827 — a LONE edge is refused, and the refusal does not take the app down', async ({
-  page,
-}) => {
-  // The deferred terminal case, reached the way an author reaches it: by typing one index.
+test('#830 — a LONE edge now CHAMFERS, where it used to be refused: 24 -> 30', async ({ page }) => {
+  // ⚠️ THIS ROW USED TO ASSERT A REFUSAL, AND THE INVERSION IS THE POINT OF #830. It pinned
+  // `0` — the object mounts and carries no mesh — for the terminal case, reached the way an
+  // author reaches it: by typing one edge index. The terminal case now has an answer, so the
+  // same keystroke has to produce a MESH, and the number is the one Blender returned.
+  //
+  // A cube with one edge weighted: 10 points, 7 faces, arity {4:5, 5:2}. The renderer holds one
+  // position per output face-corner, so `5 x 4 + 2 x 5 = 30`. The two pentagons are the faces
+  // opposite the chamfered edge at each of its ends — the arity change that makes this case the
+  // one row where a source face does not keep its corner count.
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(String(e)));
 
@@ -270,21 +286,18 @@ test('#827 — a LONE edge is refused, and the refusal does not take the app dow
   await expect.poll(() => vertsUnder(page, CUBE)).toBe(ALL_EDGES_VERTS);
 
   await setParam(page, modifierId, 'scope', '0');
-  // 🔴 ZERO, NOT `-1`, AND THE DIFFERENCE WAS MEASURED RATHER THAN PREDICTED. This row first
-  // asserted `-1` — "the object does not mount at all" — on the reasoning that a refused build
-  // returns null. What actually happens is that the object DOES mount and carries no mesh: the
-  // refusal is local to the geometry, so the scene graph keeps its node and the draw is empty.
-  // Worth pinning as the real number, because the two states look identical in the viewport and
-  // are not the same thing — `-1` would mean the render walk dropped the object entirely.
-  await expect.poll(() => vertsUnder(page, CUBE)).toBe(0);
+  await expect.poll(() => vertsUnder(page, CUBE)).toBe(TERMINAL_VERTS);
 
-  // 🔴 THE CLAIM THIS FILE EXISTS FOR: the render walk survived it. No `try` sits above
-  // `evaluate`, so a throw here would be a white screen an author reached by typing.
+  // 🔴 STILL THE CLAIM THIS FILE EXISTS FOR. No `try` sits above `evaluate`, so a throw on the
+  // render walk would be a white screen an author reached by typing — and an ANSWER can throw
+  // where a refusal could not, since the new arm divides by `sin θ` and runs on every rebuild.
   expect(errors).toEqual([]);
   await expect(page.getByTestId('layout')).toBeVisible();
 
-  // And it recovers — the refusal is a state, not a corruption.
+  // And the three answers are distinguishable from one another through the same control.
   await setParam(page, modifierId, 'scope', '0-3');
   await expect.poll(() => vertsUnder(page, CUBE)).toBe(LOOP_VERTS);
+  await setParam(page, modifierId, 'scope', '');
+  await expect.poll(() => vertsUnder(page, CUBE)).toBe(ALL_EDGES_VERTS);
   expect(errors).toEqual([]);
 });
