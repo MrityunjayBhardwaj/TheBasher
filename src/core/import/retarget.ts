@@ -26,11 +26,10 @@ import {
   SkinnedMesh,
   Quaternion,
   Matrix4,
+  Vector3,
+  Euler,
   type Bone,
 } from 'three';
-
-/** An XYZ Euler triple in radians, the unit `AnimationKeyframe.rotation` uses. */
-type Vec3Tuple = [number, number, number];
 
 /**
  * `localOffsets` exists in the SHIPPED JavaScript but not in `@types/three`.
@@ -208,35 +207,6 @@ export function resolveNameMapToTarget(
 }
 
 /**
- * The earliest keyframe rotation for each source bone — the clip's CALIBRATION
- * POSE.
- *
- * A SOMA BVH's rest pose (its OFFSETs alone) is degenerate: accumulating them
- * puts head, hands and feet all at hip height, spread along ±X. Measured on a
- * real Kimodo clip — head `X 60.5 / Y 99.5`, left hand `X 114.7 / Y 105.2`,
- * against hips at `Y 100`. The upright figure lives entirely in the ROTATION
- * CHANNELS: running forward kinematics on frame 0 puts the head 59.4 above the
- * hips and the hips 87.1 above the foot, hands hanging below the shoulders — an
- * A-pose. That first frame, not the OFFSETs, is the source's reference pose.
- *
- * This matches the format as documented: the clip is NVIDIA SOMA-X's canonical
- * rig exported in a MotionBuilder world frame with A-pose calibration, and SOMA
- * parameterises rotations RELATIVE to a joint's canonical pose. Reading the
- * OFFSETs as if they were that pose is what this function exists to avoid.
- */
-function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<number, Vec3Tuple> {
-  let earliest = Infinity;
-  for (const k of keyframes) earliest = Math.min(earliest, k.time);
-  const out = new Map<number, Vec3Tuple>();
-  for (const k of keyframes) {
-    if (k.time === earliest && !out.has(k.bone)) {
-      out.set(k.bone, [k.rotation[0], k.rotation[1], k.rotation[2]]);
-    }
-  }
-  return out;
-}
-
-/**
  * Per-target-bone corrections that carry the SOURCE rig's bone-axis convention
  * onto the TARGET's, keyed by target bone name.
  *
@@ -258,13 +228,63 @@ function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<numb
  * target whose bind is already correct: the character is laid down by exactly
  * the amount the source's rest pose is wrong.
  *
- * `options.localOffsets` is the library's own hook for the difference. It is
- * applied as `targetWorldRot = sourceWorldRot * localOffset[targetBoneName]`,
- * and `retargetClip` forwards the same options object on every frame, so one
- * table computed here holds for the whole clip. Solving that equation at the
- * reference pose gives:
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT THE CORRECTION IS, AND WHY IT NEEDS NO POSE
+ * ─────────────────────────────────────────────────────────────────────────
+ * The thing we actually want is simple to say: **the target's bone should point
+ * where the source's bone points.** Write that down and the correction falls
+ * out with no reference pose in it anywhere.
  *
- *     localOffset = inverse(sourceRefWorldRot) * targetBindWorldRot
+ * A bone's world rotation takes its own REST DIRECTION — the way it points in
+ * its own local frame, which is just the direction to its child — onto the
+ * direction it points now:
+ *
+ *     R_S(t) · restDir_S = dir(t)          the source, at any time t
+ *     R_T(t) · restDir_T = dir(t)          what we want of the target
+ *
+ * Substituting gives `R_T = R_S · Q` where `Q · restDir_T = restDir_S`, so Q is
+ * the minimal rotation carrying the target's rest direction onto the source's.
+ * `options.localOffsets` is applied as exactly `R_T = R_S · offset`
+ * (`SkeletonUtils.js:123-127`), so Q goes straight in.
+ *
+ * Both rest directions are properties of a rig ALONE — no pose is sampled, none
+ * is assumed, and the source's may be as degenerate as SOMA's actually is. That
+ * is what makes this hold for an A-pose source against a T-pose target, or for
+ * two rigs that are neither.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT THIS REPLACED, AND WHY THE ARMS WERE WRONG BEFORE
+ * ─────────────────────────────────────────────────────────────────────────
+ * The first version of this solved the same equation at a sampled REFERENCE
+ * POSE: `offset = inverse(sourceRefWorldRot) · targetBindWorldRot`, with the
+ * source sampled at its clip's frame 0 and the target at its bind. That stands
+ * the character up, and it is exact at the pose it was sampled in — but the two
+ * poses sampled were DIFFERENT. The source's frame 0 is an A-pose, arms hanging;
+ * the target's bind is a T-pose, arms straight out. So the target held its own
+ * T-pose whenever the source held its A-pose, and every arm bone carried the
+ * angle between them for the whole clip (#845). Measured on the live pair, the
+ * upper arm sat 20-42° below horizontal where the source's was near 75°.
+ *
+ * Aligning directions instead removes the question rather than answering it:
+ * there is no reference pose to pick, so there is no way to pick two different
+ * ones. Blender reaches the same place from the other side — Child Of's *Set
+ * Inverse* captures the offset empirically and names no canonical pose either.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TWIST, STATED HONESTLY
+ * ─────────────────────────────────────────────────────────────────────────
+ * A direction constrains two degrees of freedom and a rotation has three, so
+ * the roll ABOUT the bone's own axis is not determined by the equation above.
+ * `setFromUnitVectors` resolves it by taking the minimal rotation, which adds no
+ * roll of its own — so whatever twist the source carries is passed through
+ * unchanged, and the only thing left unconstrained is a CONSTANT difference
+ * between the two rigs' idea of which way is "up" around a limb.
+ *
+ * That constant cannot be recovered from directions alone; it needs a second
+ * axis both rigs agree on, and no such axis is available here. Choosing one
+ * arbitrarily would be a guess with the authority of a computation. Twist shows
+ * in the SKIN — a rolled forearm — and never in where a limb goes, so this is
+ * the smaller of the two errors and it is the one that stays put.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * AN ALTERNATIVE THAT WAS MEASURED FALSE — DO NOT RETRY IT
@@ -273,58 +293,189 @@ function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<numb
  * `boneInverses` changes NOTHING — byte-identical output, verified with the
  * patch logging its own execution so the null could not be mistaken for a
  * stale build. `retarget` never reads the source's bind; it reads only
- * `boneTo.matrixWorld`. The correction has to be applied to the RESULT, which
- * is what `localOffsets` does.
+ * `boneTo.matrixWorld`.
  *
- * ─────────────────────────────────────────────────────────────────────────
- * THE RESIDUAL, STATED HONESTLY
- * ─────────────────────────────────────────────────────────────────────────
- * The source reference is an A-pose and the target's bind is a T-pose, so the
- * shoulders and arms keep an offset of roughly the A-pose angle. Standing the
- * body up is the dominant correction and is what this delivers; matching the
- * arms exactly needs both rigs sampled in the SAME reference pose (#845).
- *
- * A bone with no mapping gets no entry, so it keeps whatever the retarget would
- * have given it — notably the root, which is never in the name map.
+ * A bone with no mapped child has no direction to align and inherits its
+ * parent's correction — hands, feet, head and toe tips, which is also where a
+ * constraint stack would leave them. A bone with no mapped ancestor either gets
+ * no entry at all and keeps whatever the retarget would have given it, notably
+ * the root, which is never in a name map.
  */
-export function restPoseLocalOffsets(
+/**
+ * The source rig's WORLD rotations at a reference pose, by bone name.
+ *
+ * Composed from the given LOCAL rotations without touching the live bones — the
+ * same skeleton objects are read again for their rest directions, and a posed
+ * skeleton would silently change that answer. A bone the reference does not
+ * name keeps its own rest rotation.
+ */
+export function referenceWorldRotations(
+  sourceBoneObjs: readonly Bone[],
+  localRotations: Readonly<Record<string, readonly [number, number, number]>>,
+): Map<string, Quaternion> {
+  const out = new Map<string, Quaternion>();
+  const visit = (bone: Bone, parentWorld: Quaternion): void => {
+    const posed = localRotations[bone.name];
+    const local = posed
+      ? new Quaternion().setFromEuler(new Euler(posed[0], posed[1], posed[2], 'XYZ'))
+      : bone.quaternion.clone();
+    const world = parentWorld.clone().multiply(local);
+    out.set(bone.name, world);
+    for (const child of bone.children) if ((child as Bone).isBone) visit(child as Bone, world);
+  };
+  for (const bone of sourceBoneObjs) {
+    if (!bone.parent || !(bone.parent as Bone).isBone) visit(bone, new Quaternion());
+  }
+  return out;
+}
+
+export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
-  calibration: ReadonlyMap<number, Vec3Tuple>,
+  sourceReference?: ReadonlyMap<string, Quaternion>,
 ): Record<string, Matrix4> {
-  // Pose the source at its calibration rotations, read each bone's world
-  // orientation, then put the bones back exactly as they were. The caller's
-  // skeleton is shared with the retarget that follows, so this must leave no
-  // trace (V20 single-writer: we borrow the objects, we do not own them).
-  const saved = sourceBoneObjs.map((b) => b.quaternion.clone());
-  const roots = sourceBoneObjs.filter((b) => !b.parent || !(b.parent as Bone).isBone);
-  for (let i = 0; i < sourceBoneObjs.length; i++) {
-    const rot = calibration.get(i);
-    if (rot) sourceBoneObjs[i].rotation.set(rot[0], rot[1], rot[2], 'XYZ');
+  // Compose from every parentless bone before reading. `specToThreeSkeleton` has
+  // already done this (K42), but a subtree nothing has touched can still be
+  // stale, and a stale matrix here is a silently wrong direction.
+  for (const bones of [sourceBoneObjs, targetBoneObjs]) {
+    for (const b of bones) if (!b.parent || !(b.parent as Bone).isBone) b.updateMatrixWorld(true);
   }
-  for (const r of roots) r.updateMatrixWorld(true);
-  const sourceRef = new Map<string, Quaternion>();
-  for (const b of sourceBoneObjs) {
-    sourceRef.set(b.name, new Quaternion().setFromRotationMatrix(b.matrixWorld));
-  }
-  for (let i = 0; i < sourceBoneObjs.length; i++) sourceBoneObjs[i].quaternion.copy(saved[i]);
-  for (const r of roots) r.updateMatrixWorld(true);
 
-  // The target's bind world rotations. `specToThreeSkeleton` has already
-  // composed these (K42), but a bone whose subtree nothing has touched can
-  // still be stale, so compose from every root before reading.
-  for (const b of targetBoneObjs) {
-    if (!b.parent || !(b.parent as Bone).isBone) b.updateMatrixWorld(true);
-  }
+  const sourceByName = new Map(sourceBoneObjs.map((b) => [b.name, b]));
+
+  /**
+   * The direction from `bone` to `child`, in BONE's own local frame.
+   *
+   * Taken from world positions and rotated back, rather than read off the
+   * child's local translation, so an unmapped joint BETWEEN the two does not
+   * change the answer — two rigs rarely subdivide a limb the same way, and the
+   * direction along a limb is the same whether one bone spans it or three.
+   */
+  /** A bone's world rotation, read off the matrix the caller already composed. */
+  const worldRotationOf = (bone: Bone): Quaternion => {
+    const position = new Vector3();
+    const rotation = new Quaternion();
+    const scale = new Vector3();
+    bone.matrixWorld.decompose(position, rotation, scale);
+    return rotation;
+  };
+
+  const localDirection = (bone: Bone, child: Bone): Vector3 | null => {
+    const here = new Vector3();
+    const there = new Vector3();
+    const rotation = new Quaternion();
+    const scale = new Vector3();
+    bone.matrixWorld.decompose(here, rotation, scale);
+    there.setFromMatrixPosition(child.matrixWorld);
+    const delta = there.sub(here);
+    if (delta.lengthSq() < 1e-18) return null;
+    return delta.applyQuaternion(rotation.invert()).normalize();
+  };
+
+  /** The nearest MAPPED bone below `bone` in the target, or null at a chain end. */
+  const mappedChild = (bone: Bone): Bone | null => {
+    const stack = [...bone.children];
+    while (stack.length > 0) {
+      const next = stack.shift() as Bone;
+      if (!next.isBone) continue;
+      if (targetToSource[next.name] !== undefined) return next;
+      stack.push(...(next.children as Bone[]));
+    }
+    return null;
+  };
 
   const offsets: Record<string, Matrix4> = {};
-  for (const tb of targetBoneObjs) {
-    const sourceName = targetToSource[tb.name];
-    const sq = sourceName === undefined ? undefined : sourceRef.get(sourceName);
-    if (!sq) continue;
-    const tq = new Quaternion().setFromRotationMatrix(tb.matrixWorld);
-    offsets[tb.name] = new Matrix4().makeRotationFromQuaternion(sq.clone().invert().multiply(tq));
+  // Parents before children, so a chain end can inherit a correction that is
+  // already computed. `specToThreeSkeleton` preserves the spec's order, and a
+  // spec lists a parent before its children.
+  for (const targetBone of targetBoneObjs) {
+    const sourceName = targetToSource[targetBone.name];
+    if (sourceName === undefined) continue;
+
+    /**
+     * A bone that cannot be aligned by direction takes its correction from the
+     * joint it hangs off, at the source's REFERENCE POSE.
+     *
+     * The nearest already-corrected ancestor is aligned by direction, so two of
+     * its three degrees of freedom are right. Carrying that down and then
+     * asking the joint BETWEEN them to sit at the target's own bind bend fixes
+     * all three for the leaf — and it is the joint, not the world, that the
+     * reference is taken relative to. That distinction is the whole fix: an
+     * A-pose and a T-pose disagree at the SHOULDER, so a wrist, an ankle and a
+     * neck never pick the disagreement up, while a world-relative reference
+     * hands every one of them the full arm swing. Measured on the live pair,
+     * world-relative moved the hands 96° and 114° and the toes 111° and 93°;
+     * joint-relative moves them 15°, 24°, 8° and 21° while still turning the
+     * head the 42° it was wrong by.
+     *
+     * WHAT THIS ASSUMES, STATED. That the source holds its leaf joints at their
+     * own neutral in the reference frame — a straight wrist, a level head, a
+     * flat foot. That is what a calibration A-pose IS, and SOMA's clips carry
+     * exactly such a frame. A clip whose first frame turns the head would bake
+     * that turn in; nothing here can tell the two apart, so it is written down
+     * rather than detected.
+     */
+    const fromReferenceJoint = (): boolean => {
+      if (!sourceReference) return false;
+      let ancestor = targetBone.parent as Bone | null;
+      while (ancestor && (targetToSource[ancestor.name] === undefined || !offsets[ancestor.name])) {
+        ancestor = ancestor.parent as Bone | null;
+      }
+      if (!ancestor) return false;
+      const ancestorSource = sourceByName.get(targetToSource[ancestor.name]);
+      const boneSource = sourceByName.get(sourceName);
+      if (!ancestorSource || !boneSource) return false;
+      const referenceHere = sourceReference.get(boneSource.name);
+      const referenceThere = sourceReference.get(ancestorSource.name);
+      if (!referenceHere || !referenceThere) return false;
+
+      // The target's own bind bend across this joint — what the joint should
+      // read whenever the source holds its neutral.
+      const bindBend = worldRotationOf(ancestor).invert().multiply(worldRotationOf(targetBone));
+      offsets[targetBone.name] = new Matrix4().makeRotationFromQuaternion(
+        referenceHere
+          .clone()
+          .invert()
+          .multiply(referenceThere)
+          .multiply(new Quaternion().setFromRotationMatrix(offsets[ancestor.name]))
+          .multiply(bindBend),
+      );
+      return true;
+    };
+
+    /**
+     * The correction for a bone that has no direction to align by: from the
+     * joint above where a reference pose is available, and otherwise the
+     * neighbour's, which is all there is to go on.
+     */
+    const withoutADirection = (): void => {
+      if (fromReferenceJoint()) return;
+      const parent = targetBone.parent as Bone | null;
+      const fromParent = parent ? offsets[parent.name] : undefined;
+      if (fromParent) offsets[targetBone.name] = fromParent.clone();
+    };
+
+    const targetChild = mappedChild(targetBone);
+    const sourceChild = targetChild
+      ? sourceByName.get(targetToSource[targetChild.name])
+      : undefined;
+    const sourceBone = sourceByName.get(sourceName);
+    if (!targetChild || !sourceChild || !sourceBone) {
+      withoutADirection();
+      continue;
+    }
+
+    const targetDir = localDirection(targetBone, targetChild);
+    const sourceDir = localDirection(sourceBone, sourceChild);
+    if (!targetDir || !sourceDir) {
+      withoutADirection();
+      continue;
+    }
+
+    offsets[targetBone.name] = new Matrix4().makeRotationFromQuaternion(
+      new Quaternion().setFromUnitVectors(targetDir, sourceDir),
+    );
   }
   return offsets;
 }
@@ -399,26 +550,50 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // (SkeletonUtils.js:139-141). Unscaled, a source hip standing at 1.0 lands a
   // target whose hips belong at 0.51 exactly twice as high — which is #791 seen
   // from the other end. The ratio is read off the two bind poses rather than
-  // configured, so it cannot drift from the rigs it describes.
+  // configured, so it cannot drift from the rigs it describes — off their LEG
+  // CHAINS specifically, because a hip bone's own offset is hip height only on a
+  // rig whose root sits on the floor, and SOMA's is a nominal constant (#846).
   const hip = shallowestMapped(args.sourceBones, nameMap);
   // `args.targetBones`, not `targetSpecs`: the ratio is a property of the two
   // BIND poses, and this one is in hand before the retarget touches anything.
-  const hipScale = hipHeightRatio(hip, args.sourceBones, nameMap, args.targetBones);
+  const scale = retargetScale(hip, args.sourceBones, nameMap, args.targetBones);
 
-  // Reconcile the two rigs' rest poses. Without this every bone but the root
-  // receives an orientation unrelated to its bind and the character performs the
-  // motion lying down (#844). See `restPoseLocalOffsets`.
-  const localOffsets = restPoseLocalOffsets(
+  // Reconcile the two rigs' bone-axis conventions. Without this every bone but
+  // the root receives an orientation unrelated to its own rest direction and the
+  // character performs the motion lying down (#844). See
+  // `restDirectionLocalOffsets` — it needs no reference pose, which is what keeps
+  // the arms right as well as the spine (#845).
+  //
+  // The clip's FIRST frame is the source's reference pose, and it is what gives
+  // a leaf bone its third degree of freedom (#853). A bone with a mapped child
+  // is aligned by direction and never consults it; a bone without one — head,
+  // hands, toe bases — has no direction to align and would otherwise inherit a
+  // correction computed for a bone pointing somewhere else.
+  const referenceTime = args.sourceClip.keyframes.reduce(
+    (earliest, k) => Math.min(earliest, k.time),
+    Number.POSITIVE_INFINITY,
+  );
+  const referencePose: Record<string, readonly [number, number, number]> = {};
+  for (const keyframe of args.sourceClip.keyframes) {
+    if (keyframe.time !== referenceTime) continue;
+    const bone = args.sourceBones[keyframe.bone];
+    if (bone) referencePose[bone.name] = keyframe.rotation;
+  }
+  const sourceReference = Number.isFinite(referenceTime)
+    ? referenceWorldRotations(sourceBoneObjs, referencePose)
+    : undefined;
+
+  const localOffsets = restDirectionLocalOffsets(
     sourceBoneObjs,
     targetBoneObjs,
     targetToSource,
-    calibrationRotations(args.sourceClip.keyframes),
+    sourceReference,
   );
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
     localOffsets,
-    ...(hip !== null ? { hip, scale: hipScale } : {}),
+    ...(hip !== null ? { hip, scale } : {}),
   };
 
   const retargeted: ThreeAnimationClip = threeRetargetClip(
@@ -512,14 +687,214 @@ function shallowestMapped(
 }
 
 /**
- * How much smaller the target's root sits than the source's.
+ * The factor that carries a SOURCE-space length into TARGET space — what
+ * `options.scale` multiplies the root's translation by
+ * (`SkeletonUtils.js:139-141`).
  *
- * Their bind translations are their heights above their parents, so the ratio is
- * the factor that turns source-space locomotion into target-space locomotion. A
- * source root at its parent's origin carries no height to scale by, and 1 is the
- * honest answer there rather than a division by zero.
+ * The quantity the retarget actually needs is HIP HEIGHT: `retarget` writes the
+ * source hip's world position onto the target, and at rest that position is the
+ * hips' height above the floor. Hip height is not readable pose-free, so this
+ * derives it from the LEG CHAIN — thigh plus shin — which is the pose-free
+ * stand-in for it: both are bone lengths, so neither moves when a rig is posed
+ * and neither depends on where a rig's root happens to sit.
+ *
+ * That last independence is the whole point. The previous basis, the hip bone's
+ * own parent-relative offset, is only equal to hip height when the root sits on
+ * the floor directly below the hips. Measured on the pair this pipeline actually
+ * carries:
+ *
+ *     target (Tripo)   Root→Hips 0.5102   true hip height 0.4984   agrees
+ *     source (SOMA)    Root→Hips 1.0000   true hip height 0.8708   15% apart
+ *
+ * SOMA's `Root→Hips` is a nominal calibration constant — literally `100.0` in
+ * BVH units — and not a measurement of the skeleton at all. The resulting scale
+ * was 0.5102 where the leg chain gives 0.5793: about 13% small, so the character
+ * travelled 13% less than its own legs were stepping. That is the foot-slide
+ * signature, and it is quiet enough to read as "nearly right" ([[V323]] — a proxy
+ * quantity is only valid where the identity it stands for holds, and it will hold
+ * on the rig you tested).
+ *
+ * Where the leg is unreadable — a rig with no two-segment limb below the hips,
+ * or one the name map does not cover that far — this falls back to the hip
+ * offset. Falling back to 1 instead would be worse than the bug it replaces: an
+ * unscaled source hip standing at 1.0 lands a target whose hips belong at 0.51
+ * exactly twice as high, which is #791 seen from the other end.
  */
-function hipHeightRatio(
+export function retargetScale(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number {
+  return (
+    legChainRatio(hip, sourceBones, nameMap, targetBones) ??
+    hipOffsetRatio(hip, sourceBones, nameMap, targetBones)
+  );
+}
+
+const boneLength = (p: readonly number[]): number => Math.hypot(p[0], p[1], p[2]);
+
+/** child indices by parent index; parentless bones sit under -1. */
+function childrenByParent(bones: readonly BoneSpec[]): Map<number, number[]> {
+  const out = new Map<number, number[]>();
+  for (let i = 0; i < bones.length; i++) {
+    const siblings = out.get(bones[i].parent);
+    if (siblings) siblings.push(i);
+    else out.set(bones[i].parent, [i]);
+  }
+  return out;
+}
+
+/**
+ * The accumulated rest length of the path from `ancestor` down to `descendant`,
+ * or null when `descendant` is not below `ancestor`.
+ *
+ * Summing the offsets ALONG the path rather than reading one bone's offset is
+ * what makes the measurement survive a rig that subdivides the same anatomy into
+ * more joints than its partner — a thigh split by a twist bone still measures as
+ * one thigh.
+ */
+function chainLength(
+  bones: readonly BoneSpec[],
+  ancestor: number,
+  descendant: number,
+): number | null {
+  let total = 0;
+  let cur = descendant;
+  // Bounded by the bone count so a malformed parent cycle cannot hang the import.
+  for (let step = 0; step < bones.length; step++) {
+    const bone = bones[cur];
+    if (bone === undefined) return null;
+    total += boneLength(bone.position);
+    if (bone.parent === ancestor) return total;
+    cur = bone.parent;
+    if (cur < 0) return null;
+  }
+  return null;
+}
+
+/**
+ * The first MAPPED bone on every downward path out of `from`.
+ *
+ * Descending past an unmapped joint is deliberate: two rigs rarely subdivide a
+ * limb identically, and an intermediate joint the map does not name must not
+ * hide the mapped bone beneath it.
+ */
+function nearestMappedBelow(
+  bones: readonly BoneSpec[],
+  children: ReadonlyMap<number, readonly number[]>,
+  from: number,
+  isMapped: (name: string) => boolean,
+): number[] {
+  const found: number[] = [];
+  const stack: number[] = [...(children.get(from) ?? [])];
+  while (stack.length > 0) {
+    const i = stack.pop() as number;
+    if (isMapped(bones[i].name)) found.push(i);
+    else stack.push(...(children.get(i) ?? []));
+  }
+  return found;
+}
+
+/**
+ * Thigh + shin summed over the legs, as a target/source ratio — or null when
+ * either rig will not yield a leg.
+ *
+ * THE LEG IS DERIVED, NOT SPELLED. A hardcoded `LeftUpLeg` would be right for
+ * Mixamo and wrong for the five other presets in `boneNameMaps.ts`, which spell
+ * the same bone `thigh.L`, `LeftUpperLeg`, `DEF-thigh.L` and `LeftLeg` (SOMA,
+ * where `LeftLeg` is the THIGH). The rule instead: among the mapped limbs
+ * hanging off the hips, the legs are the ones with the longest two-segment
+ * chains. Below the pelvis a humanoid has exactly three — a spine and two legs —
+ * and the spine's first two joints are short by construction. Measured on the
+ * real pair: spine 0.147 against legs 0.855 on the source, spine 0.146 against
+ * legs 0.495 on the target.
+ *
+ * BOTH LEGS ARE SUMMED, AND THAT IS NOT TIDINESS. Taking the single longest was
+ * tried first and is a coin flip: this pair's source legs differ by 0.1%
+ * (0.8563 against 0.8553) while its TARGET legs differ by 2.6% (0.5084 against
+ * 0.4954), so a rounding-scale difference on one rig chose between two answers
+ * 2.5% apart on the other. Summing both is insensitive to which leg is longer
+ * and to how asymmetric a generated rig turns out to be.
+ *
+ * IT STOPS AT THE ANKLE ON PURPOSE. Feet are the one part of a humanoid whose
+ * proportions are not shared: this pair's toe segments are 0.142 against 0.036, a
+ * factor of four, and including them drags the ratio to 0.53 against the 0.59
+ * that thigh and shin agree on. Two long bones both rigs scale together is the
+ * whole basis; a third that they do not is noise. The hip→thigh offset is
+ * excluded for the same reason — it is pelvis half-width, not leg, and it differs
+ * by more than a factor of two here (0.134 against 0.057).
+ *
+ * The residual, stated honestly: leg chain runs knee-to-ankle where hip height
+ * runs to the FLOOR, so it reads slightly long — 0.586 here against a directly
+ * measured 0.572. That is 2% where the hip offset it replaces was 11% under, and
+ * unlike hip height it needs no reference pose on a source whose rest is
+ * degenerate.
+ */
+function legChainRatio(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number | null {
+  if (hip === null) return null;
+  const sourceHip = sourceBones.findIndex((b) => b.name === hip);
+  if (sourceHip < 0) return null;
+
+  const sourceChildren = childrenByParent(sourceBones);
+  const isMapped = (name: string): boolean => nameMap[name] !== undefined;
+
+  // The SAME bones on the target, reached through the map rather than by running
+  // the rule twice — two independent derivations could pick two limbs that do not
+  // correspond, and the ratio would then compare an arm to a leg.
+  const onTarget = (sourceIndex: number): number => {
+    const targetName = nameMap[sourceBones[sourceIndex].name];
+    return targetName === undefined ? -1 : targetBones.findIndex((b) => b.name === targetName);
+  };
+
+  const limbs: { source: number; target: number }[] = [];
+  for (const thigh of nearestMappedBelow(sourceBones, sourceChildren, sourceHip, isMapped)) {
+    // Exactly one mapped bone below, twice: a branch is a pelvis or a foot, not
+    // a knee, and guessing which fork is the leg is the ambiguity this avoids.
+    const knees = nearestMappedBelow(sourceBones, sourceChildren, thigh, isMapped);
+    if (knees.length !== 1) continue;
+    const ankles = nearestMappedBelow(sourceBones, sourceChildren, knees[0], isMapped);
+    if (ankles.length !== 1) continue;
+    const upper = chainLength(sourceBones, thigh, knees[0]);
+    const lower = chainLength(sourceBones, knees[0], ankles[0]);
+    if (upper === null || lower === null) continue;
+
+    const [tThigh, tKnee, tAnkle] = [thigh, knees[0], ankles[0]].map(onTarget);
+    if (tThigh < 0 || tKnee < 0 || tAnkle < 0) continue;
+    const tUpper = chainLength(targetBones, tThigh, tKnee);
+    const tLower = chainLength(targetBones, tKnee, tAnkle);
+    if (tUpper === null || tLower === null) continue;
+
+    limbs.push({ source: upper + lower, target: tUpper + tLower });
+  }
+
+  // Longest first, then the two legs. A rig that offers only one keeps it — half
+  // a measurement of the right quantity still beats a whole one of the wrong one.
+  const legs = limbs.sort((a, b) => b.source - a.source).slice(0, 2);
+  if (legs.length === 0) return null;
+  const source = legs.reduce((sum, l) => sum + l.source, 0);
+  const target = legs.reduce((sum, l) => sum + l.target, 0);
+  return source > 1e-9 ? target / source : null;
+}
+
+/**
+ * The ratio of the two rigs' HIP OFFSETS — the fallback basis, named for what it
+ * measures rather than for what it is standing in for.
+ *
+ * A hip bone's parent-relative offset is its height above its parent, which is
+ * hip height only when that parent sits on the floor. It does on rigs authored
+ * that way and it does not on SOMA ([[V323]]); it is kept because a rig too
+ * simple to yield a leg chain still needs SOME basis, and the hips are the one
+ * bone every name map names. A source root at its parent's origin carries no
+ * height to scale by, and 1 is the honest answer there rather than a division by
+ * zero.
+ */
+function hipOffsetRatio(
   hip: string | null,
   sourceBones: readonly BoneSpec[],
   nameMap: Readonly<Record<string, string>>,
@@ -529,7 +904,6 @@ function hipHeightRatio(
   const src = sourceBones.find((b) => b.name === hip);
   const tgt = targetSpecs.find((b) => b.name === nameMap[hip]);
   if (!src || !tgt) return 1;
-  const len = (p: readonly number[]) => Math.hypot(p[0], p[1], p[2]);
-  const srcLen = len(src.position);
-  return srcLen > 1e-9 ? len(tgt.position) / srcLen : 1;
+  const srcLen = boneLength(src.position);
+  return srcLen > 1e-9 ? boneLength(tgt.position) / srcLen : 1;
 }
