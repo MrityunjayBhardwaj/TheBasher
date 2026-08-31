@@ -15,6 +15,7 @@ import type { DagState } from '../../core/dag/state';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import {
   DEFAULT_MOTIONGEN_MODEL,
@@ -59,6 +60,7 @@ beforeEach(() => {
   capability = stub;
   useAssetErrorStore.getState().clearAll();
   useImportRefreshStore.setState({ tick: 0 });
+  useGeneratedMotionStore.getState().clear();
   useSettingsStore.setState({ motionGenModel: DEFAULT_MOTIONGEN_MODEL });
   seedTime();
 });
@@ -247,6 +249,37 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
     expect(types).toContain('AnimationClip');
     expect(types).not.toContain('KeyframeChannelVec3');
     expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
+  });
+});
+
+describe('the bytes survive the call, so the clip can be kept (#819)', () => {
+  it('records the BVH the generator returned, verbatim', async () => {
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(true);
+
+    const pending = useGeneratedMotionStore.getState().pending;
+    expect(pending).not.toBeNull();
+    // Verbatim, because this is the ONLY copy: the ops carry parsed keyframes
+    // and nothing can turn those back into the file that produced them.
+    expect(pending!.bvh).toBe(
+      (
+        await capability.generate({
+          prompt: 'a figure walks forward',
+          model: DEFAULT_MOTIONGEN_MODEL,
+        })
+      ).bvh,
+    );
+    expect(pending!.name).toBe('a figure walks forward');
+    expect(pending!.clipId).toBe(result.ok ? result.clipId : '');
+  });
+
+  it('records nothing when the generation fails', async () => {
+    useSettingsStore.setState({ motionGenModel: aBlockedRecord().id });
+    const result = await generateMotionIntoScene('a figure walks forward');
+    expect(result.ok).toBe(false);
+    // An offer to save a clip that is not in the scene is a button that lies
+    // about what it would keep.
+    expect(useGeneratedMotionStore.getState().pending).toBeNull();
   });
 });
 

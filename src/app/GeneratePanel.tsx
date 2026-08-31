@@ -42,6 +42,11 @@
 //      ref/architecture/ai-track.md phases A1 and A4.
 
 import { useRef, useState, type ReactNode } from 'react';
+import { saveGeneratedMotionToLibrary, savedMotionName } from './asset/saveGeneratedMotion';
+import {
+  useGeneratedMotionStore,
+  type PendingGeneratedMotion,
+} from './stores/generatedMotionStore';
 import { generateMotionIntoScene } from './asset/generateMotion';
 import { generateModelIntoScene } from './asset/generateModel';
 import { generateRiggedCharacter } from './asset/generateRiggedCharacter';
@@ -156,6 +161,39 @@ export async function runGeneration(
   return result.ok ? { ok: true } : { ok: false, reason: result.reason };
 }
 
+/**
+ * What the panel should show about the last generated clip (#819).
+ *
+ * A generated clip is in the scene and nowhere else — no bytes, no library row,
+ * gone on reload. So there are three states and they are genuinely different:
+ * nothing generated yet, one clip on offer, and one clip kept. Extracted as a
+ * function because this project has no React Testing Library (W2 gate #15), so
+ * the panel's decisions are testable only when they are not JSX.
+ *
+ * 🔑 THE OFFER IS NOT GATED ON THE SELECTED KIND. What is on offer is the last
+ * MOTION that was generated, which does not stop existing because the director
+ * clicked "Model" to look at something else — hiding it there would make keeping
+ * a clip depend on a control that has nothing to do with it.
+ */
+export type MotionSaveOffer =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'offer'; readonly name: string }
+  | { readonly kind: 'saved'; readonly name: string };
+
+export function motionSaveOffer(
+  pending: PendingGeneratedMotion | null,
+  savedPath: string | null,
+): MotionSaveOffer {
+  if (pending) return { kind: 'offer', name: savedMotionName(pending.name) };
+  if (savedPath) {
+    // The folder is the name a director will look for in My Imports; the file
+    // inside it repeats the name and says nothing extra.
+    const parts = savedPath.split('/').filter(Boolean);
+    return { kind: 'saved', name: parts[parts.length - 2] ?? savedPath };
+  }
+  return { kind: 'none' };
+}
+
 const KIND_HINT: Record<GenerationKind, string> = {
   motion: 'a figure walks forward, then turns left',
   model: 'a worn leather armchair',
@@ -168,7 +206,11 @@ export function GeneratePanel(): ReactNode {
   const [busy, setBusy] = useState(false);
   const [image, setImage] = useState<{ file: SourceImage; name: string } | null>(null);
   const [progress, setProgress] = useState<GenerationProgressView | null>(null);
+  const [saving, setSaving] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const pendingMotion = useGeneratedMotionStore((s) => s.pending);
+  const savedPath = useGeneratedMotionStore((s) => s.savedPath);
+  const offer = motionSaveOffer(pendingMotion, savedPath);
 
   const imageOffered = acceptsImage(kind);
   // An image attached under Model, then switched to Motion, must not silently
@@ -296,6 +338,40 @@ export function GeneratePanel(): ReactNode {
         <span aria-hidden>✦</span>
         <span>{busy ? 'Generating…' : 'Generate'}</span>
       </button>
+
+      {offer.kind !== 'none' && (
+        // The clip is in the scene either way. This row is only about whether a
+        // copy is KEPT — so it says what would be saved before the gesture, not
+        // after, and it never implies the motion itself is at risk.
+        <div
+          data-testid="generate-save-row"
+          className="flex items-center justify-between gap-1.5 rounded border border-border bg-bg/40 px-2 py-1"
+        >
+          <span
+            data-testid="generate-save-name"
+            className="truncate text-[11px] text-fg/70"
+            title={offer.name}
+          >
+            {offer.kind === 'saved' ? `Saved · ${offer.name}` : offer.name}
+          </span>
+          {offer.kind === 'offer' && (
+            <button
+              type="button"
+              disabled={saving}
+              data-testid="generate-save-to-library"
+              onClick={() => {
+                setSaving(true);
+                // Never rejects — the banner carries any failure — so `finally`
+                // is the whole recovery.
+                void saveGeneratedMotionToLibrary().finally(() => setSaving(false));
+              }}
+              className="shrink-0 rounded border border-border px-2 py-0.5 text-[11px] text-fg-dim transition-colors hover:border-accent hover:text-accent disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save to library'}
+            </button>
+          )}
+        </div>
+      )}
 
       {busy && (
         // Only while busy, and only once the service has actually said

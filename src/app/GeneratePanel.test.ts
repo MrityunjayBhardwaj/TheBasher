@@ -54,7 +54,9 @@ import {
   runGeneration,
   type GenerationKind,
   type GenerationProgressView,
+  motionSaveOffer,
 } from './GeneratePanel';
+import { savedMotionName } from './asset/saveGeneratedMotion';
 
 /** The app-layer surfaces, named here rather than derived from the module under
  *  test — an expectation derived from its producer cannot fail. */
@@ -206,5 +208,38 @@ describe('runGeneration', () => {
 
   it('reports success without inventing a payload the panel does not use', async () => {
     await expect(runGeneration('motion', 'a figure waves')).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('the offer to save a generated clip (#819)', () => {
+  it('offers nothing before anything has been generated', () => {
+    expect(motionSaveOffer(null, null)).toEqual({ kind: 'none' });
+  });
+
+  it('offers the name the save would actually use, not the raw prompt', () => {
+    const long = 'a figure walks forward and then turns left and waves at the camera slowly';
+    const offer = motionSaveOffer({ clipId: 'c', name: long, bvh: 'x', model: 'm' }, null);
+    // Showing the prompt and saving something else would make the row a
+    // description of a file that does not exist.
+    expect(offer).toEqual({ kind: 'offer', name: savedMotionName(long) });
+  });
+
+  it('names the FOLDER a director will look for once it is saved', () => {
+    expect(motionSaveOffer(null, 'user-imports/walk/walk.bvh')).toEqual({
+      kind: 'saved',
+      name: 'walk',
+    });
+  });
+
+  it('offers the new clip rather than the old confirmation when both could apply', () => {
+    // A generation clears `savedPath`, but the pair is checked here too: the
+    // pending clip is the live thing, and a stale "saved" beside it would
+    // attach the message to the wrong motion.
+    expect(
+      motionSaveOffer(
+        { clipId: 'c', name: 'run', bvh: 'x', model: 'm' },
+        'user-imports/walk/walk.bvh',
+      ),
+    ).toEqual({ kind: 'offer', name: 'run' });
   });
 });
