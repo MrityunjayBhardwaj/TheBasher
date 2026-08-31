@@ -85,9 +85,10 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all eight operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all nine operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArrayModifier', // data lane — geometry
+      'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
       'ColorCorrect', // effect lane
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
@@ -106,7 +107,16 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
 
   it('SCOPE is declared per operator, and the escape hatch is EMPTY again', () => {
     // Generators: the selection names what they GENERATE FROM.
-    expect(where((c) => c.scope.kind === 'source')).toEqual(['ArrayModifier', 'MirrorModifier']);
+    //
+    // 🔑 `BevelModifier` JOINS AT #827, AND IT IS THE FIRST MEMBER OF THIS SET WHOSE DOMAIN IS
+    // NOT `'face'`. This row reads `scope.kind` and says nothing about the class, so it would
+    // have stayed green had the bevel declared faces by mistake — the class is pinned next door
+    // by the `SCOPE_DOMAIN` census, and the two rows are only jointly a check.
+    expect(where((c) => c.scope.kind === 'source')).toEqual([
+      'ArrayModifier',
+      'BevelModifier',
+      'MirrorModifier',
+    ]);
     // Writers: the selection names what RECEIVES the write.
     expect(where((c) => c.scope.kind === 'target')).toEqual([
       // #668 — survival IS the write. The selection names the faces the mask acts on, and
@@ -139,6 +149,29 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // time, because the honouring check ran beside it on the way out AND on the way back.
     // An empty set is only evidence when something else would have been non-empty had the
     // claim been false.
+    //
+    // 🔴 #818 PUT `BevelModifier` HERE ON PURPOSE AND #827 TOOK IT BACK OUT — THIS IS THE
+    // SAYING-SO-OUT-LOUD BOTH WAYS, WHICH IS THE WHOLE VALUE OF A DECLINED SET.
+    //
+    // #818's entry carried a MEASURABLE blocker rather than a clerical one: *"`bevelLayoutOf`
+    // refuses any edge without exactly two incident faces, and a scoped bevel produces exactly
+    // those boundary edges. Scoping it needs a miter rule, not wiring."* #827 built the miter
+    // rule — a point's boundary count is `k` when `k >= 2` chamfered edges meet there and 1
+    // when none do, measured live across 15 selections — so the blocker is SPENT rather than
+    // relocated, and the operator moved up into the `source` set above with its behaviour built.
+    //
+    // 🔑 THE ROUND TRIP IS WHAT MAKES THIS EMPTY SET EVIDENCE, AND IT HAS NOW HAPPENED TWICE
+    // FOR TWO DIFFERENT REASONS. `MaterialOverrideOp` arrived because its declaration was found
+    // LYING — it claimed a scope and threw the answer away — and left when #682 built the
+    // behaviour. `BevelModifier` arrived because it truthfully declared a deferral, and left
+    // when the deferral's stated reason was measured and removed. One entry was a correction,
+    // the other a schedule; an empty set that has held both is a stronger claim than one that
+    // has only ever been empty.
+    //
+    // ⚠️ AND THE EMPTY SET IS STILL NOT EVIDENCE ON ITS OWN — an operator can leave this list
+    // by declaring a scope it does not honour, which is exactly how `MaterialOverrideOp` got
+    // in. `operatorScopeHonouring.gate.test.ts` is the row that would catch that, and it now
+    // carries a `BevelModifier` fixture for the same reason.
     expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
   });
 
@@ -162,6 +195,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
   it('SECTION is declared, and the two nodes in no stack are the two with nothing to bypass', () => {
     expect(where((c) => c.section === 'modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);

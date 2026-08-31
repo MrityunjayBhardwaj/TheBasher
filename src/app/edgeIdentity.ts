@@ -29,8 +29,11 @@
 
 import type { CountVerdict, GeometryDescriptor } from '../nodes/types';
 import { type PolygonRim, polygonLayoutOf, reverseRim } from './polygonLayout';
-import { tiledFaceOrder } from './faceCount';
+import { tiledFaceOrder, mappedFacesOf } from './faceCount';
 import { pointCountOf } from './pointIdentity';
+// #814 — closes the ring `faceCount -> bevelLayout -> edgeIdentity -> faceCount`. Call-time only;
+// `bevelLayout.ts`'s header carries the measurement and the rule.
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * A geometry's edges, as pairs of TOPOLOGICAL point ids.
@@ -254,17 +257,32 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
       // this same reason, and the two agree because they name one fact rather than two.
       const reversesCopies = descriptor.kind === 'mirror';
 
+      // 🔴 #812 — A MINTED FACE HAS NO SOURCE RIM, AND THIS FUNCTION ONLY KNOWS HOW TO COPY ONE.
+      // Refused as a whole, on the same reasoning the fractional-block refusal above states: a
+      // rim invented for a minted face would still be a plausible list of real point ids, and a
+      // named absence is recoverable where a wrong edge set is not.
+      const mappedFaces = mappedFacesOf(order);
+      if (mappedFaces === null) return null;
+
       const rims: PolygonRim[] = [];
-      for (let face = 0; face < order.length; face++) {
+      for (let face = 0; face < mappedFaces.length; face++) {
         const copy =
           face < sourceFaces || blockSize <= 0
             ? 0
             : 1 + Math.floor((face - sourceFaces) / blockSize);
         const offset = copy * sourcePoints.count;
-        const rim = sourceRims[order[face]].map((p) => p + offset);
+        const rim = sourceRims[mappedFaces[face]].map((p) => p + offset);
         rims.push(reversesCopies && copy > 0 ? reverseRim(rim) : rim);
       }
       return rims;
+    }
+    // #814 — READ OFF THE LAYOUT RATHER THAN COMPOSED FROM THE SOURCE'S RIMS, because a bevel's
+    // rims are not a gather: two thirds of its faces have no source rim to copy. The layout
+    // already states them in output point ids, which is what makes `edgeSetOf`, `edgeCountOf`
+    // and a bevel of a bevel all compose over this arm with nothing further to say.
+    case 'bevel': {
+      const verdict = bevelLayoutOf(descriptor);
+      return verdict.kind === 'laid-out' ? verdict.layout.rims : null;
     }
     default: {
       const unreachable: never = descriptor;

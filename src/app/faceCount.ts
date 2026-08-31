@@ -44,6 +44,11 @@ import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
 // property this module holds is not a number of imports, it is that nothing it depends on can
 // depend back on it. The leaf gate carries the same reasoning beside its widened literal.
 import { polygonArityOf, polygonCornersOf, reversedCornerAt } from './polygonLayout';
+// 🔴 THE OTHER HALF OF AN IMPORT CYCLE — `faceCount -> bevelLayout -> edgeIdentity -> faceCount`.
+// It closes at `faceCountOf('bevel')` and cannot be moved away; `bevelLayout.ts`'s header states
+// why and states the one rule that keeps it safe (nothing in the ring reads an import at module
+// level). Every use below is inside a function body, which is where a cycle is already resolved.
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -133,6 +138,14 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       // The complement is derived rather than counted a second way: `scopeSelectedCount` is
       // the ONE door from a query to a count, and inverting its answer keeps it that way.
       return descriptor.keep ? selected : sourceFaces - selected;
+    }
+    // #814 — `F + E + V`, and none of the three terms is the source's face count alone. This is
+    // the first arm here whose answer is LARGER than any tiling of its source, because it is the
+    // first operator that mints: an edge becomes a quad and a point becomes an n-gon, and neither
+    // came from a source face.
+    case 'bevel': {
+      const verdict = bevelLayoutOf(descriptor);
+      return verdict.kind === 'laid-out' ? verdict.layout.faceOrder.length : null;
     }
     case 'gltf':
     case 'baked':
@@ -251,11 +264,82 @@ function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
  * computing it separately would walk the chain twice and would be a second statement of "how
  * many faces does this source have". One walk, one answer.
  */
+/**
+ * Which source face an output face came from, or `null` when it came from NONE — the face was
+ * MINTED by the operator rather than mapped from its input (#812).
+ *
+ * ⚠️ `null` RATHER THAN A NUMERIC SENTINEL, AND THE COMPILER IS THE REASON. Blender spells the
+ * same absence `ORIGINDEX_NONE = -1` (`customdata.cc:1079-1081`) because C has no option type.
+ * Ours has one, and the difference is not cosmetic: a `-1` is a VALID-LOOKING INDEX. Every site
+ * that reads an entry here indexes straight into a source array with it, so a numeric sentinel
+ * would land on a real element and hand back a plausible wrong answer with nothing thrown.
+ * Widening this type to `null` turned five of those sites into compile errors instead.
+ *
+ * What IS worth taking from that reference is the shape around the sentinel: the layer carrying
+ * it is given no interpolation function at all (`customdata.cc:1549-1555`), so a provenance
+ * mapping can never be averaged into a plausible false one. The equivalent here is that a hole
+ * never reaches a gather — {@link mappedFacesOf} refuses at the boundary instead.
+ */
+export type SourceFace = number | null;
+
 export interface TiledFaceOrder {
   /** Faces in the SOURCE — what a per-face attribute being gathered from must carry. */
   readonly sourceFaces: number;
-  /** `order[i]` is the source face that face `i` of the merged geometry came from. */
-  readonly order: readonly number[];
+  /**
+   * `order[i]` is the source face that face `i` of the merged geometry came from, or `null` if
+   * face `i` was minted and came from no source face at all.
+   */
+  readonly order: readonly SourceFace[];
+  /**
+   * `representative[i]` is the source face output face `i` INHERITS from — total where
+   * {@link order} is holed, and present only for kinds that mint (#825).
+   *
+   * ⚠️ ABSENT, NOT EQUAL TO `order`, FOR EVERY MAPPING KIND. An `array` / `mirror` / `subset`
+   * order has no holes, so a representative would be the same array under a second name — and a
+   * second name for one answer is the drift this module keeps arguing against. Absence here means
+   * "ask `order`, it is total"; presence means "`order` has holes and this is what to gather
+   * through instead". A consumer that reads this without first finding `order` holed is asking
+   * the inheritance question where the provenance one was answerable, which is a different bug.
+   */
+  readonly representative?: readonly number[];
+}
+
+/**
+ * The order with every entry named, or `null` if ANY face was minted (#812).
+ *
+ * ── WHY EVERY CONSUMER GOES THROUGH ONE FUNCTION ──────────────────────────────────────
+ *
+ * Four sites derive an output property by indexing a source array with an order entry: an
+ * arity, a corner count, a corner order, and a rim. None of them can answer for a minted face,
+ * because what they are asking is *"what did this come FROM"* and the answer is *nothing*. Four
+ * separate hole checks would be four chances to spell the refusal differently, and the failure
+ * they are guarding against is not loud — a wrong arity builds a mesh that draws.
+ *
+ * ── WHY BOTH-OR-NEITHER, RATHER THAN PER-FACE ─────────────────────────────────────────
+ *
+ * The same rule `mintTiledModifierAttributes` states for a misfit set: answering for the faces
+ * that happen to map and dropping the rest is *"indistinguishable from the bug"*. A partial
+ * arity array is a length that no longer matches the face count, which every size check
+ * downstream compares against and fails on for the wrong reason.
+ *
+ * ⚠️ NO EXISTING KIND CAN MAKE THIS RETURN `null`. `array`, `mirror` and `subset` map every
+ * output face to a source face by construction, so in production today this narrowing is
+ * always the identity. That is exactly why the gate drives a SYNTHETIC holed order through
+ * every one of the four consumers: an arm with no reader can be wrong and green at the same
+ * time, and this one has no reader until a minting kind exists.
+ */
+export function mappedFacesOf(order: readonly SourceFace[]): readonly number[] | null {
+  // 🔴 NARROWED IN PLACE, NEVER COPIED, AND A GATE ALREADY HELD THIS. The first version built a
+  // new array and `classCarriage.gate.test.ts` row 4 red instantly — it asserts with `toBe` that
+  // a laid-out class resolves to the order its verdict NAMES, identity and all. Two reasons that
+  // is the right assertion: `arityCache`, `cornerOrderCache` and `tiledKeyCache` are all keyed on
+  // the order OBJECT, so a fresh array per call silently misses every memo; and this sits on the
+  // per-evaluate road #689 measured at 75 µs to 1.69 ms per operator, where an allocation per
+  // attribute per build is exactly the cost those memos exist to avoid.
+  //
+  // The predicate narrows `readonly SourceFace[]` to `readonly number[]` without a cast, so the
+  // "every entry is a number" claim is checked by the compiler rather than asserted by a comment.
+  return order.every((face): face is number => face !== null) ? order : null;
 }
 
 /**
@@ -328,6 +412,16 @@ function subsetFaceOrder(
 
 export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder | null {
   if (descriptor.kind === 'subset') return subsetFaceOrder(descriptor);
+  // #814 — THE FIRST ORDER THAT ACTUALLY CONTAINS A HOLE. Every arm below maps each output face
+  // to a source face by construction, so #812's widening was the identity for all of them; this
+  // one lays down the source's faces and then `E + V` entries of `null`. It is not cached here
+  // because `bevelLayoutOf` already caches the whole layout on the source handle.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    if (verdict.kind !== 'laid-out') return null;
+    const { sourceFaces, faceOrder, representative } = verdict.layout;
+    return { sourceFaces, order: faceOrder, representative };
+  }
   const tiling = faceTilingOf(descriptor);
   if (tiling === null) return null;
 
@@ -399,11 +493,31 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
  * asserts `faceCountOf(d) === faceArityOf(d).length` and `sum x 3 === built index.count` for
  * every sync-buildable descriptor, rather than either being trusted.
  */
-const arityCache = new WeakMap<readonly number[], WeakMap<readonly number[], readonly number[]>>();
+const arityCache = new WeakMap<
+  readonly SourceFace[],
+  WeakMap<readonly number[], readonly number[]>
+>();
 
 export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] | null {
   const generated = polygonArityOf(descriptor);
   if (generated !== null) return generated;
+
+  // #814 — A MINTED FACE'S ARITY IS A PROPERTY OF THE OPERATOR, NOT OF ANY SOURCE FACE, which
+  // is why this arm is here rather than riding the gather below. A bevel's edge quad has four
+  // corners because it is a quad, and its vertex n-gon has as many as that point had incident
+  // faces; neither number exists anywhere in the source's arity array. The gather road cannot
+  // express that at all — it would ask `mappedFacesOf` for a source face and be told there is
+  // none, and answer `null` for the whole descriptor.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    // 🔴 `corners - 2`, BECAUSE THIS FUNCTION ANSWERS IN TRIANGLES AND THE LAYOUT SPEAKS IN
+    // CORNERS. A quad fans to 2, not 4. Handing the corner counts straight through built a
+    // well-formed index buffer of the wrong length — 96 triangles claimed against 44 built for
+    // a bevelled cube — and every count-shaped check upstream of the buffer passed, because
+    // both quantities are plausible per-face integers. The subtraction lives here, at the one
+    // boundary between the two vocabularies.
+    return verdict.kind === 'laid-out' ? verdict.layout.corners.map((n) => n - 2) : null;
+  }
 
   // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
   // for exactly these three kinds, but that is its invariant and not something the type system
@@ -427,7 +541,13 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
   const hit = perOrder?.get(sourceArity);
   if (hit !== undefined) return hit;
 
-  const arity = tiled.order.map((face) => sourceArity[face]);
+  // #812 — a minted face's arity is a property of the OPERATOR, not of any source face, so
+  // there is nothing here to derive it from. Refused as a whole rather than per face; see
+  // {@link mappedFacesOf}.
+  const mapped = mappedFacesOf(tiled.order);
+  if (mapped === null) return null;
+
+  const arity = mapped.map((face) => sourceArity[face]);
   if (perOrder === undefined) arityCache.set(tiled.order, new WeakMap([[sourceArity, arity]]));
   else perOrder.set(sourceArity, arity);
   return arity;
@@ -460,6 +580,14 @@ export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[]
   const generated = polygonCornersOf(descriptor);
   if (generated !== null) return generated;
 
+  // #814 — the layout's own answer, for the reason {@link faceArityOf}'s bevel arm gives: a
+  // minted face's corner count is the operator's, and the gather below would be told there is
+  // no source face to read it from. This one needs no conversion — the layout speaks corners.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    return verdict.kind === 'laid-out' ? verdict.layout.corners : null;
+  }
+
   // Narrowed explicitly for the reason {@link faceArityOf} states one function up.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
     return null;
@@ -467,7 +595,11 @@ export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[]
   if (sourceCorners === null) return null;
   const tiled = tiledFaceOrder(descriptor);
   if (tiled === null) return null;
-  return tiled.order.map((face) => sourceCorners[face]);
+  // #812 — same refusal as `faceArityOf` one function up, for the same reason: how many
+  // corners a MINTED face has is the operator's answer, not a source face's.
+  const mapped = mappedFacesOf(tiled.order);
+  if (mapped === null) return null;
+  return mapped.map((face) => sourceCorners[face]);
 }
 
 /**
@@ -586,7 +718,7 @@ export interface TiledCornerOrder {
  * mirrored-corner row reds on.
  */
 const cornerOrderCache = new WeakMap<
-  readonly number[],
+  readonly SourceFace[],
   WeakMap<readonly number[], Map<boolean, TiledCornerOrder>>
 >();
 
@@ -615,7 +747,11 @@ export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrd
   const hit = perArity?.get(reversesCopies);
   if (hit !== undefined) return hit;
 
-  const { sourceFaces, order } = faces;
+  const { sourceFaces } = faces;
+  // #812 — refused before the layout is walked rather than inside it, so the cache never holds
+  // a partial answer keyed on a holed order.
+  const order = mappedFacesOf(faces.order);
+  if (order === null) return null;
   // Faces at or after this index are copies that `reverseWinding` flipped. `Infinity` rather
   // than a boolean beside the loop so the comparison below is the same shape in both arms.
   const reversedFrom = reversesCopies ? sourceFaces : Infinity;

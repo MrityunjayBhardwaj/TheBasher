@@ -57,10 +57,30 @@ describe('#638 the count is a leaf', () => {
     // arity that says so is grounded in three's own tessellation — which lives in
     // `polygonLayout.ts`. That module imports ONE TYPE and nothing else (asserted below), so
     // it cannot depend back on this one, which is the property rather than the number.
+    //
+    // 🔴 WIDENED AGAIN at #814 — AND THIS TIME THE PROPERTY ITSELF WAS TRADED, NOT PRESERVED.
+    // Every widening above could say "the new import cannot depend back on this one". This one
+    // cannot: `bevelLayout.ts` imports `edgeIdentity.ts`, which imports THIS module. The ring is
+    // real and it is deliberate.
+    //
+    // It cannot be moved away, which is why it was accepted rather than designed around. A
+    // bevel's face count is `F + E + V`; the `E` term is the source's EDGE count; edges live in
+    // `edgeIdentity`, which needs the face order to compose a derived kind's welded rims. The
+    // ring closes at `faceCountOf('bevel')`, and shuffling code between the three modules
+    // relocates it without breaking it.
+    //
+    // ⚠️ SO THIS ROW NO LONGER CARRIES THE ACYCLICITY CLAIM, and pretending otherwise is how a
+    // gate becomes decoration. What it still carries is the ORIGINAL and separate value: the
+    // EXACT import set, so a module that quietly gains a heavy dependency is a red. The
+    // acyclicity question moved to `importCycles.gate.test.ts`, which enumerates every runtime
+    // cycle in the product — the two that predate this work included — and holds the one rule
+    // that makes them safe: nothing in a ring may read across it at module level, because that
+    // is the read which silently evaluates to `undefined`.
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',
       './polygonLayout',
+      './bevelLayout',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
@@ -97,6 +117,13 @@ describe('#638 the count is a leaf', () => {
     // else, so it is a leaf by the same measure as the four before it. The registry needs
     // it because the descriptor's point arithmetic can only be checked against a geometry,
     // and this is the one place a built geometry and its descriptor are both in hand.
+    //
+    // 🔴 WIDENED AGAIN at #814, by TWO, and neither is a leaf — which is the honest way to say
+    // it. `bevelLayout` is the descriptor-side topology a bevel builds to, and `builtRims` is the
+    // split-space rim walk the builder needs to place positions at the source's real corners.
+    // The second creates a `builtRims` <-> `geometryRegistry` ring of its own, because
+    // `builtRims` already reached back here for `getForRead`. Both rings are enumerated in
+    // `importCycles.gate.test.ts` rather than left to be discovered.
     expect(importsOf('src/app/geometryRegistry.ts')).toEqual([
       'three',
       'three/examples/jsm/utils/BufferGeometryUtils.js',
@@ -107,6 +134,8 @@ describe('#638 the count is a leaf', () => {
       './pointIdentity',
       './materialGroups',
       '../nodes/scopeQuery',
+      './bevelLayout',
+      './builtRims',
     ]);
   });
 
@@ -119,6 +148,9 @@ describe('#638 the count is a leaf', () => {
       '../nodes/types',
       '../nodes/scopeQuery',
       './polygonLayout',
+      // #814 — the one that is NOT a leaf. See the first row in this file for why it was taken
+      // anyway and what replaced the property it broke.
+      './bevelLayout',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
@@ -126,7 +158,13 @@ describe('#638 the count is a leaf', () => {
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
     // #716 — the leaf added at P2. Two type imports, no value imports at all, which is what
     // made widening the registry's set above safe rather than merely convenient.
-    expect(importsOf('src/app/pointIdentity.ts')).toEqual(['three', '../nodes/types']);
+    // #814 — `pointIdentity` stopped being a leaf too: its `bevel` arms read the same layout.
+    // It is in the same ring, held by the same rule, in the same place.
+    expect(importsOf('src/app/pointIdentity.ts')).toEqual([
+      'three',
+      '../nodes/types',
+      './bevelLayout',
+    ]);
     expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
 });

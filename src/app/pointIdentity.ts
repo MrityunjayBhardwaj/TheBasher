@@ -40,6 +40,8 @@
 
 import type { BufferGeometry } from 'three';
 import type { CountVerdict, GeometryDescriptor, GeometryRef } from '../nodes/types';
+// #814 — part of the `faceCount -> bevelLayout -> edgeIdentity` ring; see `bevelLayout.ts`.
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * A weld: which topological point each split-buffer position belongs to.
@@ -296,6 +298,16 @@ function counted(count: number): CountVerdict {
  * are all referenced.
  */
 export function tiledPointOrder(descriptor: GeometryDescriptor): TiledPointOrder | null {
+  // #814 — AND IT HAS NO HOLES, WHICH IS THE ASYMMETRY WORTH READING TWICE. A bevel's FACE order
+  // is full of them, because a minted face came from no source face. Every minted POINT is one
+  // source point pulled along one face, so the point domain keeps an honest origin for every
+  // element and `TiledPointOrder.order` stays `readonly number[]`.
+  if (descriptor.kind === 'bevel') {
+    const verdict = bevelLayoutOf(descriptor);
+    if (verdict.kind !== 'laid-out') return null;
+    const { sourcePoints, pointOrder } = verdict.layout;
+    return { sourcePoints, order: pointOrder };
+  }
   const tiling = pointTilingOf(descriptor);
   if (tiling === null) return null;
   // `tiling.source`, not `descriptor.source` — the tiling already narrowed which kinds have
@@ -388,6 +400,20 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
           why: `'${descriptor.kind}' has no point tiling, so its source's ${source.count} points cannot be composed`,
         };
       return counted(source.count * tiling.copies);
+    }
+    // #814 — ONE OUTPUT POINT PER SOURCE FACE-CORNER, so the count is the source's CORNER total
+    // and not any multiple of its point total. A source point of valence `n` becomes `n` output
+    // points, one pulled along each incident face, which is exactly what a chamfer is.
+    //
+    // ⚠️ STRUCTURAL, and `pointCountMismatch` checks it against a POSITION weld — two different
+    // questions, as #754 records one domain over. They agree at any amount small enough that no
+    // two chamfered corners land on each other, and an amount past that warns. Clamping is out
+    // of scope by decision; see the `amount` field's own note.
+    case 'bevel': {
+      const verdict = bevelLayoutOf(descriptor);
+      return verdict.kind === 'laid-out'
+        ? counted(verdict.layout.points)
+        : { kind: 'outside-the-descriptor', why: verdict.why };
     }
     default: {
       const unreachable: never = descriptor;
