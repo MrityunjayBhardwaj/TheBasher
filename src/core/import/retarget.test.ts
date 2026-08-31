@@ -8,6 +8,7 @@ import {
   canonicalBoneKey,
   resolveNameMapToSource,
   resolveNameMapToTarget,
+  retargetScale,
 } from './retarget';
 import { specToThreeSkeleton } from './threeAdapter';
 import { Quaternion, Matrix4 } from 'three';
@@ -680,5 +681,222 @@ describe('rest-pose reconciliation between rigs with different bone axes (#844)'
     // An unmapped bone keeps whatever the retarget gives it — notably the root,
     // which is never in a name map.
     expect(offsets['t_spine']).toBeUndefined();
+  });
+});
+
+describe('the retarget scale comes from the leg chain, not the hip offset (#846)', () => {
+  // THE FIXTURE HAS TO SEPARATE FOUR ANSWERS, not two. Every basis that was
+  // considered must produce a DIFFERENT number here, or a green assertion cannot
+  // say which one the code used — the failure V322 records one level down.
+  //
+  //   hip offset      0.5 / 1.0                    = 0.5
+  //   longest leg     0.4 / 1.0                    = 0.4
+  //   shorter leg     0.6 / 0.8                    = 0.75
+  //   both legs       (0.6 + 0.4) / (0.8 + 1.0)    = 0.5555…   ← what ships
+  //
+  // The source is shaped like a SOMA rig: a NOMINAL hip offset of 1.0 that is not
+  // a measurement of anything, legs laid along +X. The target is shaped like
+  // Mixamo: a hip offset that really is its hip height, legs along +Y. The two
+  // rigs are also deliberately ASYMMETRIC — left and right differ — because a
+  // symmetric fixture cannot tell "sum both legs" from "pick one".
+
+  /** legs given as [upper, lower] segment lengths per side. */
+  const rig = (
+    prefix: string,
+    axis: 0 | 1,
+    hipOffset: number,
+    left: readonly [number, number],
+    right: readonly [number, number],
+  ): BoneSpec[] => {
+    const along = (n: number): [number, number, number] => (axis === 0 ? [n, 0, 0] : [0, n, 0]);
+    const hip: [number, number, number] = axis === 0 ? [0, hipOffset, 0] : [0, hipOffset, 0];
+    const bones: BoneSpec[] = [
+      { name: `${prefix}_root`, parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: `${prefix}_hips`, parent: 0, position: hip, rotation: [0, 0, 0] },
+      // A spine, so the leg has something to be picked OVER. Its two joints are
+      // short, which is what makes "the longest limb below the pelvis" a leg.
+      { name: `${prefix}_spine`, parent: 1, position: along(0.05), rotation: [0, 0, 0] },
+      { name: `${prefix}_chest`, parent: 2, position: along(0.05), rotation: [0, 0, 0] },
+      { name: `${prefix}_neck`, parent: 3, position: along(0.05), rotation: [0, 0, 0] },
+    ];
+    for (const [side, seg] of [
+      ['L', left],
+      ['R', right],
+    ] as const) {
+      const base = bones.length;
+      bones.push(
+        {
+          name: `${prefix}_thigh${side}`,
+          parent: 1,
+          position: [0, 0, side === 'L' ? 0.1 : -0.1],
+          rotation: [0, 0, 0],
+        },
+        {
+          name: `${prefix}_knee${side}`,
+          parent: base,
+          position: along(seg[0]),
+          rotation: [0, 0, 0],
+        },
+        {
+          name: `${prefix}_ankle${side}`,
+          parent: base + 1,
+          position: along(seg[1]),
+          rotation: [0, 0, 0],
+        },
+        // A foot, so the chain has somewhere to stop. Feet are the one part two
+        // humanoids do NOT scale together, so they must not enter the measure.
+        {
+          name: `${prefix}_toe${side}`,
+          parent: base + 2,
+          position: along(0.4),
+          rotation: [0, 0, 0],
+        },
+      );
+    }
+    return bones;
+  };
+
+  const NAMES = [
+    'hips',
+    'spine',
+    'chest',
+    'neck',
+    'thighL',
+    'kneeL',
+    'ankleL',
+    'toeL',
+    'thighR',
+    'kneeR',
+    'ankleR',
+    'toeR',
+  ];
+  const MAP = Object.fromEntries(NAMES.map((n) => [`s_${n}`, `t_${n}`]));
+
+  const source = (left: [number, number], right: [number, number]) => rig('s', 0, 1.0, left, right);
+  const target = (left: [number, number], right: [number, number]) => rig('t', 1, 0.5, left, right);
+
+  const SRC_LEGS: [[number, number], [number, number]] = [
+    [0.4, 0.4],
+    [0.5, 0.5],
+  ];
+  const TRG_LEGS: [[number, number], [number, number]] = [
+    [0.3, 0.3],
+    [0.2, 0.2],
+  ];
+
+  it('sums thigh and shin over BOTH legs', () => {
+    const scale = retargetScale('s_hips', source(...SRC_LEGS), MAP, target(...TRG_LEGS));
+    expect(scale).toBeCloseTo((0.6 + 0.4) / (0.8 + 1.0), 10);
+  });
+
+  it('FALSIFICATION: it is none of the three other bases the fixture offers', () => {
+    // Not decoration. Without this the assertion above is a number that happens to
+    // be right; with it, every basis that was actually considered is excluded by
+    // measurement rather than by reading the code.
+    const scale = retargetScale('s_hips', source(...SRC_LEGS), MAP, target(...TRG_LEGS));
+    expect(scale).not.toBeCloseTo(0.5, 3); // the hip offset — the shipped bug
+    expect(scale).not.toBeCloseTo(0.4, 3); // the longest leg alone
+    expect(scale).not.toBeCloseTo(0.75, 3); // the shorter leg alone
+  });
+
+  it('does not turn on WHICH of the source legs is longer', () => {
+    // THE COIN FLIP THIS REPLACED, reproduced at the proportions that produced it.
+    // Taking the single longest leg selects on the SOURCE while the answer varies
+    // with the TARGET, so a 0.5% difference between two source legs chose between
+    // two target legs 50% apart. On the real rig the source legs differ by 0.1%
+    // and the targets by 2.6% — near-identical inputs, materially different
+    // answers, decided by rounding.
+    //
+    // Swapping both rigs together would NOT catch this: the selection flips and
+    // so does the thing selected, and the wrong rule survives. Only the source
+    // moves here.
+    const targets = target([0.3, 0.3], [0.2, 0.2]);
+    const rightLonger = retargetScale('s_hips', source([0.45, 0.45], [0.455, 0.455]), MAP, targets);
+    const leftLonger = retargetScale('s_hips', source([0.455, 0.455], [0.45, 0.45]), MAP, targets);
+    expect(leftLonger).toBeCloseTo(rightLonger, 10);
+    // …and it is the sum, not either leg: 1.0 / 1.81, against 0.44 and 0.66.
+    expect(rightLonger).toBeCloseTo(1.0 / 1.81, 10);
+  });
+
+  it('the foot is excluded, so a rig with an outsized foot measures the same', () => {
+    // The real pair's toe segments are 0.142 against 0.036 — a factor of four
+    // where thigh and shin agree within 2%. A measure that included them would
+    // move here; this one must not.
+    const stretched = target(...TRG_LEGS).map((b) =>
+      b.name.startsWith('t_toe') ? { ...b, position: [0, 4, 0] as [number, number, number] } : b,
+    );
+    expect(retargetScale('s_hips', source(...SRC_LEGS), MAP, stretched)).toBeCloseTo(
+      (0.6 + 0.4) / (0.8 + 1.0),
+      10,
+    );
+  });
+
+  it('the spine is not mistaken for a leg', () => {
+    // Removing it must not move the number. If it did, the spine was in the
+    // measure — silently, and in the direction that flatters the old basis,
+    // because two rigs' spines are proportioned far more alike than their legs.
+    const noSpine = (bones: BoneSpec[]) =>
+      bones.filter((b) => !/_(spine|chest|neck)$/.test(b.name));
+    const reindex = (bones: BoneSpec[]): BoneSpec[] => {
+      const kept = noSpine(bones);
+      const at = new Map(kept.map((b, i) => [b.name, i]));
+      const nameOf = new Map(bones.map((b, i) => [i, b.name]));
+      return kept.map((b) => ({
+        ...b,
+        parent: b.parent < 0 ? -1 : (at.get(nameOf.get(b.parent) as string) ?? -1),
+      }));
+    };
+    expect(
+      retargetScale('s_hips', reindex(source(...SRC_LEGS)), MAP, reindex(target(...TRG_LEGS))),
+    ).toBeCloseTo((0.6 + 0.4) / (0.8 + 1.0), 10);
+  });
+
+  it('falls back to the hip offset — never to 1 — when no leg is readable', () => {
+    // A rig too simple to carry a two-segment limb still needs SOME basis. 1 is
+    // not it: an unscaled source hip at 1.0 lands a target whose hips belong at
+    // 0.5 exactly twice as high, which is the bug #839 fixed seen from the far
+    // side. This is also the arm the 3-bone fixtures elsewhere in this file
+    // exercise, so their expectations are characterising the fallback on purpose.
+    const flatSource: BoneSpec[] = [
+      { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { name: 's_spine', parent: 0, position: [0, 0.1, 0], rotation: [0, 0, 0] },
+    ];
+    const flatTarget: BoneSpec[] = [
+      { name: 't_hips', parent: -1, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+      { name: 't_spine', parent: 0, position: [0, 0.05, 0], rotation: [0, 0, 0] },
+    ];
+    expect(
+      retargetScale('s_hips', flatSource, { s_hips: 't_hips', s_spine: 't_spine' }, flatTarget),
+    ).toBeCloseTo(0.5, 10);
+  });
+
+  it('the root TRAVELS by the leg-chain ratio — measured at the consumer', () => {
+    // The product-side arm: what a director would actually see is the root moving
+    // a different distance than the legs are stepping. Asserting the scalar alone
+    // would not catch a scale that is computed correctly and then not passed on.
+    const src = source(...SRC_LEGS);
+    const trg = target(...TRG_LEGS);
+    const hips = src.findIndex((b) => b.name === 's_hips');
+    const keyframes: AnimationKeyframe[] = [
+      { bone: hips, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { bone: hips, time: 1, position: [0, 1, 4], rotation: [0, 0, 0] },
+    ];
+    const out = retargetClip({
+      sourceBones: src,
+      sourceClip: { name: 'walk', duration: 1, keyframes },
+      targetBones: trg,
+      nameMap: MAP,
+    });
+    const tHips = trg.findIndex((b) => b.name === 't_hips');
+    const keys = out.clipParams.keyframes.filter((k) => k.bone === tHips);
+    const travel = Math.max(
+      ...[0, 1, 2].map(
+        (i) =>
+          Math.max(...keys.map((k) => k.position[i])) - Math.min(...keys.map((k) => k.position[i])),
+      ),
+    );
+    // 4 source units at 0.5555… — and NOT the 2.0 the hip offset would have given.
+    expect(travel).toBeCloseTo(4 * ((0.6 + 0.4) / (0.8 + 1.0)), 4);
+    expect(travel).not.toBeCloseTo(2.0, 2);
   });
 });

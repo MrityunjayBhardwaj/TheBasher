@@ -53,6 +53,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test, expect } from './_fixtures';
+import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from '../../src/core/import/bvh';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const GLB_FILE = path.join(ROOT, 'public/assets/tripo-rigged.glb');
@@ -72,6 +73,10 @@ const MIN_MOVING_BONES = 5;
  *  Measured ~0.000 with the rest poses unreconciled and ~0.31 with them
  *  reconciled, so the bar sits clear of both. */
 const MIN_UPRIGHT = 0.15;
+/** How far the character's stride may drift from the clip's, each measured
+ *  against its OWN legs. The retarget scale is the only thing that sets this,
+ *  and it read 13% low while every other assertion here stayed green (#846). */
+const MAX_STRIDE_DRIFT = 0.03;
 
 interface SkinHandle {
   boneCount: number;
@@ -249,6 +254,119 @@ test('a Tripo-rigged character walks on a Kimodo clip', async ({ page }) => {
     `the head dropped to ${worstPosture.toFixed(3)} above the hips — the character is ` +
       `performing the motion lying down (#844). Samples: ${posture.map((v) => v.toFixed(3)).join(', ')}`,
   ).toBeGreaterThan(MIN_UPRIGHT);
+
+  // ---- 5. STRIDE — does it travel as far as its own legs are stepping? ----
+  //
+  // 🔴 THE #846 GUARD, AND IT IS THE ONLY ONE THAT COULD HAVE SEEN IT. Every
+  // assertion above was green while the retarget scaled the root's travel 13%
+  // too small: the bones swung, the character stood up, and it travelled — just
+  // less than its legs were carrying it. That is foot slide, and "it travels at
+  // all" cannot distinguish it from a correct walk.
+  //
+  // The measure is DIMENSIONLESS: stride divided by leg length. A correct scale
+  // preserves it exactly across the retarget, because scaling a rig and its
+  // locomotion by the same factor leaves the proportion alone. Measured on this
+  // pair: 1.6684 on the source, 1.6684 rendered — and 1.4515 under the defect.
+  //
+  // It is not the implementation restated. Both leg lengths here are read from
+  // NAMED bones — the source's from the BVH, the target's from the bones the
+  // renderer actually posed — where the code derives its leg structurally and
+  // never sees these names. A scale computed from a different basis (feet
+  // included, one leg instead of two) moves the rendered side and not this one.
+  const sourceBones = parseBvh(
+    fs.readFileSync(BVH_FILE, 'utf8'),
+    'stride-reference',
+    BVH_UNIT_SCALE_CENTIMETRES,
+  );
+  const boneLen = (name: string): number => {
+    const b = sourceBones.skeletonParams.bones.find((x) => x.name === name);
+    if (!b) throw new Error(`the source clip has no bone ${name} — the probe would divide by zero`);
+    return Math.hypot(b.position[0], b.position[1], b.position[2]);
+  };
+  // A bone's offset is the length of the bone ABOVE it, so the thigh is measured
+  // at the knee and the shin at the ankle. SOMA's `LeftLeg` is the thigh.
+  const sourceLegs =
+    boneLen('LeftShin') + boneLen('LeftFoot') + boneLen('RightShin') + boneLen('RightFoot');
+  const hipsBone = sourceBones.skeletonParams.bones.findIndex((b) => b.name === 'Hips');
+  const sourceKeys = sourceBones.clipParams.keyframes.filter(
+    (k) => k.bone === hipsBone && k.time <= 2.0,
+  );
+  const sourceStride = Math.max(
+    ...sourceKeys.map((k) =>
+      Math.hypot(
+        k.position[0] - sourceKeys[0].position[0],
+        k.position[1] - sourceKeys[0].position[1],
+        k.position[2] - sourceKeys[0].position[2],
+      ),
+    ),
+  );
+
+  const rendered = await page.evaluate(async () => {
+    const w = window as unknown as BasherWindow & {
+      __basher_three?: { getState: () => { scene?: unknown } };
+    };
+    const scene = w.__basher_three?.getState().scene as
+      | { traverse: (f: (o: never) => void) => void }
+      | undefined;
+    if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
+    const worldPositions = (): Map<string, [number, number, number]> => {
+      const out = new Map<string, [number, number, number]>();
+      scene.traverse((o: never) => {
+        const b = o as unknown as {
+          name: string;
+          isBone?: boolean;
+          matrixWorld: { elements: number[] };
+        };
+        if (b.isBone) {
+          const e = b.matrixWorld.elements;
+          out.set(b.name, [e[12], e[13], e[14]]);
+        }
+      });
+      return out;
+    };
+    const gap = (m: Map<string, [number, number, number]>, a: string, b: string): number => {
+      const p = m.get(a);
+      const q = m.get(b);
+      if (!p || !q) throw new Error(`no rendered bone ${!p ? a : b}`);
+      return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);
+    };
+
+    let legs = NaN;
+    const hips: [number, number, number][] = [];
+    for (const t of [0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]) {
+      w.__basher_time!.getState().setTime(t);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const m = worldPositions();
+      if (Number.isNaN(legs)) {
+        // Thigh and shin on both sides, posed — the same two long bones the
+        // scale is derived from, read here off the rendered skeleton.
+        legs =
+          gap(m, 'mixamorigLeftUpLeg', 'mixamorigLeftLeg') +
+          gap(m, 'mixamorigLeftLeg', 'mixamorigLeftFoot') +
+          gap(m, 'mixamorigRightUpLeg', 'mixamorigRightLeg') +
+          gap(m, 'mixamorigRightLeg', 'mixamorigRightFoot');
+      }
+      const p = m.get('mixamorigHips');
+      if (!p) throw new Error('no rendered hips');
+      hips.push(p);
+    }
+    const stride = Math.max(
+      ...hips.map((p) => Math.hypot(p[0] - hips[0][0], p[1] - hips[0][1], p[2] - hips[0][2])),
+    );
+    return { legs, stride };
+  });
+
+  const sourceRatio = sourceStride / sourceLegs;
+  const renderedRatio = rendered.stride / rendered.legs;
+  const drift = Math.abs(renderedRatio - sourceRatio) / sourceRatio;
+  expect(
+    drift,
+    `the character strides ${renderedRatio.toFixed(4)} of its own leg length where the clip ` +
+      `strides ${sourceRatio.toFixed(4)} of the source's — ${(drift * 100).toFixed(1)}% apart. ` +
+      `The retarget scale is wrong and the feet are sliding (#846). ` +
+      `rendered stride ${rendered.stride.toFixed(4)} over legs ${rendered.legs.toFixed(4)}; ` +
+      `source stride ${sourceStride.toFixed(4)} over legs ${sourceLegs.toFixed(4)}.`,
+  ).toBeLessThan(MAX_STRIDE_DRIFT);
 
   expect(errors, `page errors during playback: ${errors.join(' | ')}`).toEqual([]);
 });

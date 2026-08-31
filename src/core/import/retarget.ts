@@ -399,11 +399,13 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // (SkeletonUtils.js:139-141). Unscaled, a source hip standing at 1.0 lands a
   // target whose hips belong at 0.51 exactly twice as high — which is #791 seen
   // from the other end. The ratio is read off the two bind poses rather than
-  // configured, so it cannot drift from the rigs it describes.
+  // configured, so it cannot drift from the rigs it describes — off their LEG
+  // CHAINS specifically, because a hip bone's own offset is hip height only on a
+  // rig whose root sits on the floor, and SOMA's is a nominal constant (#846).
   const hip = shallowestMapped(args.sourceBones, nameMap);
   // `args.targetBones`, not `targetSpecs`: the ratio is a property of the two
   // BIND poses, and this one is in hand before the retarget touches anything.
-  const hipScale = hipHeightRatio(hip, args.sourceBones, nameMap, args.targetBones);
+  const scale = retargetScale(hip, args.sourceBones, nameMap, args.targetBones);
 
   // Reconcile the two rigs' rest poses. Without this every bone but the root
   // receives an orientation unrelated to its bind and the character performs the
@@ -418,7 +420,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
     localOffsets,
-    ...(hip !== null ? { hip, scale: hipScale } : {}),
+    ...(hip !== null ? { hip, scale } : {}),
   };
 
   const retargeted: ThreeAnimationClip = threeRetargetClip(
@@ -512,14 +514,214 @@ function shallowestMapped(
 }
 
 /**
- * How much smaller the target's root sits than the source's.
+ * The factor that carries a SOURCE-space length into TARGET space — what
+ * `options.scale` multiplies the root's translation by
+ * (`SkeletonUtils.js:139-141`).
  *
- * Their bind translations are their heights above their parents, so the ratio is
- * the factor that turns source-space locomotion into target-space locomotion. A
- * source root at its parent's origin carries no height to scale by, and 1 is the
- * honest answer there rather than a division by zero.
+ * The quantity the retarget actually needs is HIP HEIGHT: `retarget` writes the
+ * source hip's world position onto the target, and at rest that position is the
+ * hips' height above the floor. Hip height is not readable pose-free, so this
+ * derives it from the LEG CHAIN — thigh plus shin — which is the pose-free
+ * stand-in for it: both are bone lengths, so neither moves when a rig is posed
+ * and neither depends on where a rig's root happens to sit.
+ *
+ * That last independence is the whole point. The previous basis, the hip bone's
+ * own parent-relative offset, is only equal to hip height when the root sits on
+ * the floor directly below the hips. Measured on the pair this pipeline actually
+ * carries:
+ *
+ *     target (Tripo)   Root→Hips 0.5102   true hip height 0.4984   agrees
+ *     source (SOMA)    Root→Hips 1.0000   true hip height 0.8708   15% apart
+ *
+ * SOMA's `Root→Hips` is a nominal calibration constant — literally `100.0` in
+ * BVH units — and not a measurement of the skeleton at all. The resulting scale
+ * was 0.5102 where the leg chain gives 0.5793: about 13% small, so the character
+ * travelled 13% less than its own legs were stepping. That is the foot-slide
+ * signature, and it is quiet enough to read as "nearly right" ([[V323]] — a proxy
+ * quantity is only valid where the identity it stands for holds, and it will hold
+ * on the rig you tested).
+ *
+ * Where the leg is unreadable — a rig with no two-segment limb below the hips,
+ * or one the name map does not cover that far — this falls back to the hip
+ * offset. Falling back to 1 instead would be worse than the bug it replaces: an
+ * unscaled source hip standing at 1.0 lands a target whose hips belong at 0.51
+ * exactly twice as high, which is #791 seen from the other end.
  */
-function hipHeightRatio(
+export function retargetScale(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number {
+  return (
+    legChainRatio(hip, sourceBones, nameMap, targetBones) ??
+    hipOffsetRatio(hip, sourceBones, nameMap, targetBones)
+  );
+}
+
+const boneLength = (p: readonly number[]): number => Math.hypot(p[0], p[1], p[2]);
+
+/** child indices by parent index; parentless bones sit under -1. */
+function childrenByParent(bones: readonly BoneSpec[]): Map<number, number[]> {
+  const out = new Map<number, number[]>();
+  for (let i = 0; i < bones.length; i++) {
+    const siblings = out.get(bones[i].parent);
+    if (siblings) siblings.push(i);
+    else out.set(bones[i].parent, [i]);
+  }
+  return out;
+}
+
+/**
+ * The accumulated rest length of the path from `ancestor` down to `descendant`,
+ * or null when `descendant` is not below `ancestor`.
+ *
+ * Summing the offsets ALONG the path rather than reading one bone's offset is
+ * what makes the measurement survive a rig that subdivides the same anatomy into
+ * more joints than its partner — a thigh split by a twist bone still measures as
+ * one thigh.
+ */
+function chainLength(
+  bones: readonly BoneSpec[],
+  ancestor: number,
+  descendant: number,
+): number | null {
+  let total = 0;
+  let cur = descendant;
+  // Bounded by the bone count so a malformed parent cycle cannot hang the import.
+  for (let step = 0; step < bones.length; step++) {
+    const bone = bones[cur];
+    if (bone === undefined) return null;
+    total += boneLength(bone.position);
+    if (bone.parent === ancestor) return total;
+    cur = bone.parent;
+    if (cur < 0) return null;
+  }
+  return null;
+}
+
+/**
+ * The first MAPPED bone on every downward path out of `from`.
+ *
+ * Descending past an unmapped joint is deliberate: two rigs rarely subdivide a
+ * limb identically, and an intermediate joint the map does not name must not
+ * hide the mapped bone beneath it.
+ */
+function nearestMappedBelow(
+  bones: readonly BoneSpec[],
+  children: ReadonlyMap<number, readonly number[]>,
+  from: number,
+  isMapped: (name: string) => boolean,
+): number[] {
+  const found: number[] = [];
+  const stack: number[] = [...(children.get(from) ?? [])];
+  while (stack.length > 0) {
+    const i = stack.pop() as number;
+    if (isMapped(bones[i].name)) found.push(i);
+    else stack.push(...(children.get(i) ?? []));
+  }
+  return found;
+}
+
+/**
+ * Thigh + shin summed over the legs, as a target/source ratio — or null when
+ * either rig will not yield a leg.
+ *
+ * THE LEG IS DERIVED, NOT SPELLED. A hardcoded `LeftUpLeg` would be right for
+ * Mixamo and wrong for the five other presets in `boneNameMaps.ts`, which spell
+ * the same bone `thigh.L`, `LeftUpperLeg`, `DEF-thigh.L` and `LeftLeg` (SOMA,
+ * where `LeftLeg` is the THIGH). The rule instead: among the mapped limbs
+ * hanging off the hips, the legs are the ones with the longest two-segment
+ * chains. Below the pelvis a humanoid has exactly three — a spine and two legs —
+ * and the spine's first two joints are short by construction. Measured on the
+ * real pair: spine 0.147 against legs 0.855 on the source, spine 0.146 against
+ * legs 0.495 on the target.
+ *
+ * BOTH LEGS ARE SUMMED, AND THAT IS NOT TIDINESS. Taking the single longest was
+ * tried first and is a coin flip: this pair's source legs differ by 0.1%
+ * (0.8563 against 0.8553) while its TARGET legs differ by 2.6% (0.5084 against
+ * 0.4954), so a rounding-scale difference on one rig chose between two answers
+ * 2.5% apart on the other. Summing both is insensitive to which leg is longer
+ * and to how asymmetric a generated rig turns out to be.
+ *
+ * IT STOPS AT THE ANKLE ON PURPOSE. Feet are the one part of a humanoid whose
+ * proportions are not shared: this pair's toe segments are 0.142 against 0.036, a
+ * factor of four, and including them drags the ratio to 0.53 against the 0.59
+ * that thigh and shin agree on. Two long bones both rigs scale together is the
+ * whole basis; a third that they do not is noise. The hip→thigh offset is
+ * excluded for the same reason — it is pelvis half-width, not leg, and it differs
+ * by more than a factor of two here (0.134 against 0.057).
+ *
+ * The residual, stated honestly: leg chain runs knee-to-ankle where hip height
+ * runs to the FLOOR, so it reads slightly long — 0.586 here against a directly
+ * measured 0.572. That is 2% where the hip offset it replaces was 11% under, and
+ * unlike hip height it needs no reference pose on a source whose rest is
+ * degenerate.
+ */
+function legChainRatio(
+  hip: string | null,
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number | null {
+  if (hip === null) return null;
+  const sourceHip = sourceBones.findIndex((b) => b.name === hip);
+  if (sourceHip < 0) return null;
+
+  const sourceChildren = childrenByParent(sourceBones);
+  const isMapped = (name: string): boolean => nameMap[name] !== undefined;
+
+  // The SAME bones on the target, reached through the map rather than by running
+  // the rule twice — two independent derivations could pick two limbs that do not
+  // correspond, and the ratio would then compare an arm to a leg.
+  const onTarget = (sourceIndex: number): number => {
+    const targetName = nameMap[sourceBones[sourceIndex].name];
+    return targetName === undefined ? -1 : targetBones.findIndex((b) => b.name === targetName);
+  };
+
+  const limbs: { source: number; target: number }[] = [];
+  for (const thigh of nearestMappedBelow(sourceBones, sourceChildren, sourceHip, isMapped)) {
+    // Exactly one mapped bone below, twice: a branch is a pelvis or a foot, not
+    // a knee, and guessing which fork is the leg is the ambiguity this avoids.
+    const knees = nearestMappedBelow(sourceBones, sourceChildren, thigh, isMapped);
+    if (knees.length !== 1) continue;
+    const ankles = nearestMappedBelow(sourceBones, sourceChildren, knees[0], isMapped);
+    if (ankles.length !== 1) continue;
+    const upper = chainLength(sourceBones, thigh, knees[0]);
+    const lower = chainLength(sourceBones, knees[0], ankles[0]);
+    if (upper === null || lower === null) continue;
+
+    const [tThigh, tKnee, tAnkle] = [thigh, knees[0], ankles[0]].map(onTarget);
+    if (tThigh < 0 || tKnee < 0 || tAnkle < 0) continue;
+    const tUpper = chainLength(targetBones, tThigh, tKnee);
+    const tLower = chainLength(targetBones, tKnee, tAnkle);
+    if (tUpper === null || tLower === null) continue;
+
+    limbs.push({ source: upper + lower, target: tUpper + tLower });
+  }
+
+  // Longest first, then the two legs. A rig that offers only one keeps it — half
+  // a measurement of the right quantity still beats a whole one of the wrong one.
+  const legs = limbs.sort((a, b) => b.source - a.source).slice(0, 2);
+  if (legs.length === 0) return null;
+  const source = legs.reduce((sum, l) => sum + l.source, 0);
+  const target = legs.reduce((sum, l) => sum + l.target, 0);
+  return source > 1e-9 ? target / source : null;
+}
+
+/**
+ * The ratio of the two rigs' HIP OFFSETS — the fallback basis, named for what it
+ * measures rather than for what it is standing in for.
+ *
+ * A hip bone's parent-relative offset is its height above its parent, which is
+ * hip height only when that parent sits on the floor. It does on rigs authored
+ * that way and it does not on SOMA ([[V323]]); it is kept because a rig too
+ * simple to yield a leg chain still needs SOME basis, and the hips are the one
+ * bone every name map names. A source root at its parent's origin carries no
+ * height to scale by, and 1 is the honest answer there rather than a division by
+ * zero.
+ */
+function hipOffsetRatio(
   hip: string | null,
   sourceBones: readonly BoneSpec[],
   nameMap: Readonly<Record<string, string>>,
@@ -529,7 +731,6 @@ function hipHeightRatio(
   const src = sourceBones.find((b) => b.name === hip);
   const tgt = targetSpecs.find((b) => b.name === nameMap[hip]);
   if (!src || !tgt) return 1;
-  const len = (p: readonly number[]) => Math.hypot(p[0], p[1], p[2]);
-  const srcLen = len(src.position);
-  return srcLen > 1e-9 ? len(tgt.position) / srcLen : 1;
+  const srcLen = boneLength(src.position);
+  return srcLen > 1e-9 ? boneLength(tgt.position) / srcLen : 1;
 }
