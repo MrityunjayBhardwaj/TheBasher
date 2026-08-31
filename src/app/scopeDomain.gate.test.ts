@@ -16,12 +16,17 @@
 //
 // ── WHY THE ROWS CAST TO A DOMAIN THAT DOES NOT EXIST YET ─────────────────────────────
 //
-// `ScopeDomain` is `'face'` alone, so the collision cannot be constructed from valid values —
-// and a row that cannot construct the failure is not a detector, it is a description. The cast
-// is not a workaround for the type: it is how a second domain will ACTUALLY arrive, since
+// A collision needs TWO domains, and it must be constructible from a domain no operator
+// declares — a row that cannot construct the failure is not a detector, it is a description.
+// The cast is not a workaround for the type: it is how a second domain ACTUALLY arrives, since
 // vitest strips types without checking them, and it lets the collision be built and measured
-// one edit before the widening rather than one edit after. When `SCOPE_DOMAINS` grows, these
-// casts become ordinary values and the rows keep their meaning unchanged.
+// one edit before a widening rather than one edit after.
+//
+// ⚠️ THE CAST IS STILL A CAST AFTER #827, AND THAT IS THE POINT. This file used to say
+// `ScopeDomain` was `'face'` alone; #827 widened it to `['face', 'edge']` and these rows stayed
+// green — correctly, because they name `'point'`, which is still undeclared. The detector is
+// about two domains sharing one key, not about which two, so it keeps its meaning through every
+// widening and only loses it if `SCOPE_DOMAINS` ever admits every member of `KnownDomain`.
 //
 // REF: src/nodes/attributes.ts (`SCOPE_DOMAINS` / `ScopeDomain`); src/core/dag/types.ts
 //      (`ScopeKind`, where an operator declares it); src/app/modifierGeometry.ts

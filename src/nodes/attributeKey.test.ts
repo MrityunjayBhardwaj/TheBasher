@@ -256,6 +256,11 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
     expect([...new Set(kinds)].sort()).toEqual([
       'array',
       'baked',
+      // #814 — a bevel carries a `source` and an `amount` and nothing else. It is the first
+      // MINTING kind, so it is also the first whose output cannot express its source's per-face
+      // assignment at all; that is why it mints no attribute component rather than a new kind of
+      // one, and why the templates above did not move.
+      'bevel',
       'box',
       'gltf',
       'mirror',

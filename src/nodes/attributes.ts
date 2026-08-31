@@ -74,11 +74,29 @@ export const KNOWN_DOMAINS = ['point', 'edge', 'face', 'corner'] as const;
 export type KnownDomain = (typeof KNOWN_DOMAINS)[number];
 
 /**
- * THE ATOM CLASSES A SCOPE MAY BE RESOLVED AT TODAY (#714).
+ * THE ATOM CLASSES A SCOPE MAY BE RESOLVED AT TODAY (#714, widened at #827).
  *
- * `face` ONLY, and the reason is arithmetic rather than taste: a face count is derivable
- * from a descriptor and the other three are not. `point` needs a new count derivation and
- * has 24 seam-split points on a box; `edge` has no buffer at all.
+ * 🔴 THE ARITHMETIC REASON WENT FALSE AND IS RE-DERIVED, NOT PATCHED — the discipline
+ * `CLASS_CARRIAGE.point` names after its own justification went false twice, and this is the
+ * third entry in this arc to need it. What stood here read: *"`face` ONLY, and the reason is
+ * arithmetic rather than taste: a face count is derivable from a descriptor and the other three
+ * are not. `point` needs a new count derivation and has 24 seam-split points on a box; `edge`
+ * has no buffer at all."* Every clause of that is now untrue. `point` got its derivation at
+ * #716 and became total at #754, `edge` got its buffer, order and identity at #718, and
+ * `corner` got its answer at #776. Measured across eight descriptors including a bevel and a
+ * bevel under an array: all four domains answer `counted`, and Euler holds on every closed one.
+ *
+ * So the gate is no longer arithmetic. It is that **a domain here needs an operator that can
+ * declare it and mean something by it** — the same rule a descriptor kind is held to, one level
+ * up. A member added without a declarer is a type nothing can name, which is the authoring-side
+ * spelling of a table awaiting its first consumer.
+ *
+ * `'edge'` is admitted because #827 gives it one: a Bevel that bevels a SUBSET of its source's
+ * edges resolves that subset at this class. `'point'` and `'corner'` stay out, and NOT because
+ * they cannot be counted — they can. Neither has a declarer: no operator here has a per-point or
+ * per-corner semantic anybody has stated, and `MaterialOverrideOp` / `SetMaterialOp` cannot have
+ * one at `edge` either, since a fragment shader has no edge input. Admitting them on the
+ * strength of a count would repeat exactly the mistake this paragraph is replacing.
  *
  * ── WHY THIS IS A TYPE AND NOT THE MODULE CONSTANT IT REPLACED ────────────────────────
  *
@@ -119,7 +137,7 @@ export type KnownDomain = (typeof KNOWN_DOMAINS)[number];
  * every site answers for every member. A scope's domain is dispatch — it is chosen by an
  * operator's declaration, never read off a file — so the closed half is the right one here.
  */
-export const SCOPE_DOMAINS = ['face'] as const satisfies readonly KnownDomain[];
+export const SCOPE_DOMAINS = ['face', 'edge'] as const satisfies readonly KnownDomain[];
 
 export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
 

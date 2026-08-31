@@ -146,12 +146,15 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this phase's own thesis — the most expensive kind.
     expect(unreadableSchemas()).toEqual([]);
-    expect(listNodeTypes()).toHaveLength(81);
+    expect(listNodeTypes()).toHaveLength(82);
   });
 
-  it('`muted` is declared EIGHT times in source, and that is three different populations', () => {
+  it('`muted` is declared NINE times in source, and that is three different populations', () => {
     expect(zodDeclarations('muted')).toEqual([
       ['src/nodes/ArrayModifier.ts', 1],
+      // #818 — the fourth geometry modifier. It joins this census by declaring the field,
+      // not by being added to a list, which is the whole property this row measures.
+      ['src/nodes/BevelModifier.ts', 1],
       ['src/nodes/ColorCorrect.ts', 1],
       ['src/nodes/MaskModifier.ts', 1],
       ['src/nodes/MaterialOverrideOp.ts', 1],
@@ -165,9 +168,10 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       ['src/nodes/channelModifiers.ts', 1],
     ]);
 
-    // Seven of the eight are on registered node types; the eighth is that shared base.
+    // Eight of the nine are on registered node types; the ninth is that shared base.
     expect(registeredDeclaring('muted')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'ColorCorrect',
       'MaskModifier',
       'MaterialOverrideOp',
@@ -176,13 +180,14 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'Strip',
     ]);
 
-    // Five are inside the operator category, and that number is DERIVED — the category is
+    // Six are inside the operator category, and that number is DERIVED — the category is
     // "declares a chain spine", not a list someone maintains. `Strip` drops out on its own.
     const operatorsDeclaringMuted = chainInputDeclarers().filter((t) =>
       registeredDeclaring('muted').includes(t),
     );
     expect(operatorsDeclaringMuted).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'ColorCorrect',
       'MaskModifier',
       'MaterialOverrideOp',
@@ -211,9 +216,12 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     ]);
     expect(registeredDeclaring('mute')).toHaveLength(11);
 
-    // 20 declarations of one concept across 81 node types, in two vocabularies, and no
-    // node declares both.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(20);
+    // 21 declarations of one concept across 82 node types, in two vocabularies, and no
+    // node declares both. The pair moves together at #818 — `BevelModifier` picked `muted`,
+    // and it picked it because `chain.bypass` NAMES the param and registration refuses a
+    // declaration whose named param the schema does not declare, which is exactly the relation
+    // this row measures the absence of for everything that predates it.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(21);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -263,6 +271,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
   it('THE DEFECT IN ONE LINE: being an operator and being bypassable are remembered separately', () => {
     expect(chainInputDeclarers()).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'ColorCorrect',
       'MaskModifier',
       'MaterialOverride',
@@ -304,6 +313,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // retirements rather than a census that lost its subject.
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);
@@ -318,7 +328,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
         'src/agent/mutators/builders/addModifier.ts',
         /const ModifierType = z\.enum\(\[([\s\S]*?)\]\)/,
       ),
-    ).toBe("'ArrayModifier', 'MirrorModifier', 'MaskModifier'");
+    ).toBe("'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier'");
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines
     // `MaterialLaneType`, and the per-field ownership switch closes on a `never` over it. A

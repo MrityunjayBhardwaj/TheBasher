@@ -43,7 +43,7 @@ import { canModifyGeometry } from '../../../app/modifierGeometry';
 // rather than silent — but it is NOT unconstructible, and that difference is recorded in
 // the blindness census rather than glossed: this surface is still one a new operator is
 // invisible to.
-const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier', 'MaskModifier']);
+const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier']);
 type ModifierType = z.infer<typeof ModifierType>;
 
 const AddModifierSpec = z.object({
@@ -55,6 +55,15 @@ const AddModifierSpec = z.object({
   offset: z.tuple([z.number(), z.number(), z.number()]).optional(),
   /** Mirror param (optional — the node schema defaults axis='x'). */
   axis: z.enum(['x', 'y', 'z']).optional(),
+  /**
+   * Bevel param (optional — the node schema defaults amount=0.1).
+   *
+   * `.min(0)` rather than `.positive()`, mirroring the node's own schema for the reason its
+   * header states: zero is the reference's `is_disabled` state, which the operator answers by
+   * passing its source through. A negative one has no reading at all and is refused here so
+   * it never reaches a builder that would throw on the render walk.
+   */
+  amount: z.number().min(0).optional(),
   /** Caller-supplied modifier id; auto-derived from target + type when omitted. */
   modifierId: z.string().optional(),
 });
@@ -79,6 +88,8 @@ function specParams(spec: AddModifierSpec): Record<string, unknown> {
     if (spec.offset !== undefined) p.offset = spec.offset;
   } else if (spec.modifierType === 'MirrorModifier') {
     if (spec.axis !== undefined) p.axis = spec.axis;
+  } else if (spec.modifierType === 'BevelModifier') {
+    if (spec.amount !== undefined) p.amount = spec.amount;
   }
   return p;
 }
@@ -91,9 +102,13 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     'mesh geometry. modifierType "ArrayModifier" replicates the mesh `count` ' +
     'times along `offset` (local space) and merges; "MirrorModifier" reflects the ' +
     'mesh across the local-origin plane on `axis` (x|y|z) and merges → a symmetric ' +
-    'whole. target may be the mesh or any modifier already in its stack (the base ' +
+    'whole; "MaskModifier" keeps the faces its `scope` names and drops the rest (or ' +
+    'the reverse, via `keep`); "BevelModifier" chamfers every edge by `amount` in ' +
+    'local units, which MINTS faces — a quad per source edge and an n-gon per source ' +
+    "point — and drops the source's per-face materials, so an amount of 0 leaves the " +
+    'mesh untouched. target may be the mesh or any modifier already in its stack (the base ' +
     'is resolved automatically). Returns a deterministic modifierId; tune it later ' +
-    'with dag.exec setParam (count / offset / axis / muted) or stack it with ' +
+    'with dag.exec setParam (count / offset / axis / amount / keep / muted) or stack it with ' +
     'another addModifier call.',
   spec: AddModifierSpec,
   specExample: {
