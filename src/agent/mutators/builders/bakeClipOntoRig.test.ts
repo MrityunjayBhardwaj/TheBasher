@@ -76,8 +76,17 @@ function buildScene(opts: { keyframes?: unknown[]; skeletonType?: string } = {})
       duration: 2,
       keyframes: opts.keyframes ?? [
         // Bone 0 moves; bone 1 is deliberately untouched.
+        //
+        // 🔑 THE ROTATION IS RADIANS, AND SAYING SO IS THE POINT. This fixture
+        // used to read `rotation: [0, 90, 0]` — 90 written by someone thinking
+        // in degrees, into `AnimationKeyframe.rotation`, which is radians. The
+        // assertion downstream then checked the channel came out `90`, so it
+        // passed whether the bake converted or copied through, and it was the
+        // copy-through that was live (#843). A fixture whose value is valid in
+        // BOTH units cannot tell the two apart, so it confirmed the defect.
+        // `Math.PI / 2` is unambiguous: radians in, 90 degrees out.
         { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
-        { bone: 0, time: 2, position: [0, 1, 0], rotation: [0, 90, 0] },
+        { bone: 0, time: 2, position: [0, 1, 0], rotation: [0, Math.PI / 2, 0] },
       ],
     },
   }).next;
@@ -181,7 +190,50 @@ describe("the renderer's own enumerator finds the channels", () => {
     const t0 = rotation!(0);
     const t2 = rotation!(2);
     expect(t0).not.toEqual(t2);
+    // π/2 radians in the clip → 90 DEGREES in the channel, because the
+    // GltfChild rotation band is degrees (#843). Pass-through would read
+    // 1.5708 here, which is the value that rendered as a character standing
+    // still while its root position travelled.
     expect(t2[1]).toBeCloseTo(90, 5);
+  });
+
+  it("emits the rotation band in DEGREES, not the clip's radians", () => {
+    // The gate the old fixture could not express. A quarter turn is the
+    // cheapest value where radians and degrees are 57x apart and neither is
+    // zero, so a pass-through regression cannot hide in rounding.
+    const state = buildScene({
+      keyframes: [
+        { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { bone: 0, time: 1, position: [0, 0, 0], rotation: [Math.PI, Math.PI / 2, -Math.PI / 2] },
+      ],
+    });
+    const after = applyAll(state, build(state));
+    const nodeNameMap = (after.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
+      .nodeNameMap;
+    const rotation = bakedChannelSamplersForAsset(after.nodes, nodeNameMap)[BONES[0]]?.rotation;
+    expect(rotation).toBeTypeOf('function');
+    const v = rotation!(1);
+    expect(v[0]).toBeCloseTo(180, 4);
+    expect(v[1]).toBeCloseTo(90, 4);
+    expect(v[2]).toBeCloseTo(-90, 4);
+  });
+
+  it('the falsifying arm: the same values read as radians would be 57x smaller', () => {
+    // Not a tautology — it pins the DIRECTION of the conversion. If the bake
+    // ever reverted to copying through, this arm is what tells you the band
+    // went back to radians rather than merely changing by some amount.
+    const state = buildScene({
+      keyframes: [
+        { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { bone: 0, time: 1, position: [0, 0, 0], rotation: [0, Math.PI / 2, 0] },
+      ],
+    });
+    const after = applyAll(state, build(state));
+    const nodeNameMap = (after.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
+      .nodeNameMap;
+    const v = bakedChannelSamplersForAsset(after.nodes, nodeNameMap)[BONES[0]]!.rotation!(1);
+    expect(v[1]).not.toBeCloseTo(Math.PI / 2, 3);
+    expect(v[1] / (Math.PI / 2)).toBeCloseTo(180 / Math.PI, 3);
   });
 
   it('the falsifying arm: with no bake applied, the enumerator finds nothing', () => {

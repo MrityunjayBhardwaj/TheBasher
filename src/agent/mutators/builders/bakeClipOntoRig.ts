@@ -66,6 +66,9 @@ import type { Op } from '../../../core/dag/types';
 import type { SkeletonValue, Vec3 } from '../../../nodes/types';
 import { evaluate } from '../../../core/dag/evaluator';
 import { bakeChannelOpsForBone, type BakedKey } from './bakeChannelOps';
+// The radians→degrees boundary this mutator sits on. Same import direction
+// `src/core/import/gltfImportChain.ts` already takes for the same reason.
+import { radVec3ToDeg } from '../../../viewport/rotation';
 
 const BakeClipOntoRigSpec = z.object({
   /** The `AnimationClip` node to materialise. Its `skeleton` edge names the rig. */
@@ -214,7 +217,30 @@ export const bakeClipOntoRigMutator: MutatorDefinition<BakeClipOntoRigSpec> = {
 
       const sorted = keys.slice().sort((a, b) => a.time - b.time);
       const position: BakedKey[] = sorted.map((k) => ({ time: k.time, value: k.position }));
-      const rotation: BakedKey[] = sorted.map((k) => ({ time: k.time, value: k.rotation }));
+      // 🔴 UNITS CHANGE HERE, AND THIS IS THE ONLY PLACE THAT KNOWS IT.
+      //
+      // An `AnimationKeyframe.rotation` is RADIANS — `quaternionToEulerVec3`
+      // returns a raw `Euler` and nothing converts it on the way in. The
+      // `GltfChild` rotation band this bake writes into is DEGREES: the import
+      // seeds a child's base rotation with `radVec3ToDeg(...)` (gltfImportChain
+      // `defaultTRS`) and the renderer converts back out with
+      // `degVec3ToRad(trs.rotation)` (SceneFromDAG's TRS useFrame).
+      //
+      // Copying the value through unconverted therefore did not fail — it
+      // scaled every bone rotation by π/180. A 40° leg swing rendered as 0.7°
+      // and a rig's -90° corrective root rendered as -1.57°, so a character
+      // with a correct clip stood still while its root POSITION channel — which
+      // needs no conversion — travelled at full strength. That is a character
+      // sliding across the floor without animating, and it reads as "motion
+      // application is broken" rather than as a unit bug (#843).
+      //
+      // The sibling `bakeGltfChannel` needs no conversion because it reads a
+      // `TransformClip`, which is already degrees. The two clip families differ
+      // in units, and this is the one that has to say so.
+      const rotation: BakedKey[] = sorted.map((k) => ({
+        time: k.time,
+        value: radVec3ToDeg(k.rotation),
+      }));
 
       ops.push(
         // Scale is deliberately absent — see the header.
