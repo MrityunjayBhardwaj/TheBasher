@@ -4,14 +4,14 @@ import { describe, expect, it } from 'vitest';
 import { PropertyBinding } from 'three';
 import {
   retargetClip,
-  restPoseLocalOffsets,
+  restDirectionLocalOffsets,
   canonicalBoneKey,
   resolveNameMapToSource,
   resolveNameMapToTarget,
   retargetScale,
 } from './retarget';
 import { specToThreeSkeleton } from './threeAdapter';
-import { Quaternion, Matrix4 } from 'three';
+import { Quaternion, Matrix4, Vector3, type Bone as ThreeBone } from 'three';
 import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
@@ -602,73 +602,195 @@ describe('a corrective root survives, and the root travels (#838, #839)', () => 
   });
 });
 
-describe('rest-pose reconciliation between rigs with different bone axes (#844)', () => {
-  // A source shaped like a real SOMA BVH: the REST lays the chain along +X
-  // (degenerate), and the CALIBRATION rotation at frame 0 stands it up along
-  // +Y. A target shaped like Mixamo: its bind already runs up +Y.
+describe('bone-axis reconciliation between rigs that point different ways (#844, #845)', () => {
+  // A source shaped like a real SOMA BVH: its REST lays every chain along +X,
+  // including the arms, so the figure is a starfish and not a person. A target
+  // shaped like Mixamo: a real T-pose bind, spine up +Y and arms out along ±X.
   //
   // The axes are the whole point of the fixture. A source whose rest already
   // pointed the same way as the target could not tell a correct reconciliation
   // from no reconciliation at all — the defect would be unreachable, and the
   // suite would be measuring the fixture rather than the code.
+  //
+  // The ARM is what separates #845 from #844. Both rigs' spines can be brought
+  // into agreement by any mechanism that samples one pose on each side; the arms
+  // can only agree if neither side sampled a pose at all.
   const SRC: BoneSpec[] = [
     { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
     { name: 's_spine', parent: 0, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_shoulder', parent: 1, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_arm', parent: 2, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_hand', parent: 3, position: [1, 0, 0], rotation: [0, 0, 0] },
   ];
+  //
+  // 🔑 EVERY TARGET BONE'S LOCAL +Y RUNS DOWN ITS OWN BONE, and the T-pose comes
+  // from the SHOULDER'S BIND ROTATION rather than from an offset pointing
+  // sideways. That is how the real rig is built — every joint in the measured
+  // Tripo export has a local translation of the form `[0, n, 0]`, and the arm
+  // gets out to the side because the shoulder's bind quaternion turns it there.
+  //
+  // The first draft of this fixture ran the arm out along local +X, which made
+  // the arm's rest direction identical to the source's and its correction the
+  // identity — so the arm rows asserted nothing, and the falsification arm
+  // measured an angle of exactly zero. A fixture can agree with the code by
+  // accident on the one bone the test is named after.
   const TRG: BoneSpec[] = [
     { name: 't_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
     { name: 't_spine', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    // The bind rotation that makes this a T-pose: the shoulder turns its own
+    // frame so everything below it runs out along world +X.
+    { name: 't_shoulder', parent: 1, position: [0, 1, 0], rotation: [0, 0, -Math.PI / 2] },
+    { name: 't_arm', parent: 2, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_hand', parent: 3, position: [0, 1, 0], rotation: [0, 0, 0] },
   ];
-  const TARGET_TO_SOURCE = { t_hips: 's_hips', t_spine: 's_spine' };
-  // +90° about Z takes the source's +X chain onto +Y — its "A-pose".
-  const CALIBRATION = new Map<number, [number, number, number]>([[0, [0, 0, Math.PI / 2]]]);
-
-  const build = () => {
-    const src = specToThreeSkeleton(SRC);
-    const trg = specToThreeSkeleton(TRG);
-    return { src, trg };
+  const TARGET_TO_SOURCE = {
+    t_hips: 's_hips',
+    t_spine: 's_spine',
+    t_shoulder: 's_shoulder',
+    t_arm: 's_arm',
+    t_hand: 's_hand',
   };
 
-  it('an offset carries the source reference orientation onto the target bind', () => {
+  const build = () => ({ src: specToThreeSkeleton(SRC), trg: specToThreeSkeleton(TRG) });
+
+  /** Where a bone points in world, given a world rotation to apply to it. */
+  const pointsAt = (bones: readonly ThreeBone[], index: number, world: Quaternion): Vector3 => {
+    const here = new Vector3().setFromMatrixPosition(bones[index].matrixWorld);
+    const child = new Vector3().setFromMatrixPosition(bones[index + 1].matrixWorld);
+    const rest = new Vector3()
+      .subVectors(child, here)
+      .applyQuaternion(new Quaternion().setFromRotationMatrix(bones[index].matrixWorld).invert())
+      .normalize();
+    return rest.applyQuaternion(world);
+  };
+
+  it('the target bone ends up pointing where the SOURCE bone points', () => {
+    // The contract, stated as the equation the offset solves: composing the
+    // source's world rotation with the offset must aim the target's own rest
+    // direction along the source's. That is what makes a copied world rotation
+    // mean the same thing on a rig that is built differently.
     const { src, trg } = build();
-    const offsets = restPoseLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE, CALIBRATION);
+    const offsets = restDirectionLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE);
 
-    // Re-pose the source to the calibration and read the world rotation the
-    // retarget would hand us for the mapped bone.
+    // Put the source somewhere arbitrary — the correction must hold at ANY pose,
+    // not at the one it was derived from, because it was derived from none.
     src.bones[0].rotation.set(0, 0, Math.PI / 2, 'XYZ');
+    src.bones[2].rotation.set(0, 0.4, -1.1, 'XYZ');
     src.bones[0].updateMatrixWorld(true);
-    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[0].matrixWorld);
 
-    // THE CONTRACT: sourceWorld * offset === the target's bind world rotation.
-    // That equality is what makes a copied world rotation mean the same thing
-    // on the target as it did on the source.
-    const composed = sourceWorld
-      .clone()
-      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_hips']));
-    trg.bones[0].updateMatrixWorld(true);
-    const targetBind = new Quaternion().setFromRotationMatrix(trg.bones[0].matrixWorld);
-    expect(composed.angleTo(targetBind)).toBeLessThan(1e-6);
+    for (const [targetIndex, name] of [
+      [0, 't_hips'],
+      [1, 't_spine'],
+      [2, 't_shoulder'],
+      [3, 't_arm'],
+    ] as const) {
+      const sourceWorld = new Quaternion().setFromRotationMatrix(
+        src.bones[targetIndex].matrixWorld,
+      );
+      const sourceDir = pointsAt(src.bones, targetIndex, sourceWorld);
+      const targetDir = pointsAt(
+        trg.bones,
+        targetIndex,
+        sourceWorld.clone().multiply(new Quaternion().setFromRotationMatrix(offsets[name])),
+      );
+      expect(
+        targetDir.angleTo(sourceDir),
+        `${name} must point where its source points`,
+      ).toBeLessThan(1e-6);
+    }
   });
 
-  it('the falsifying arm: without the offset the two differ by the calibration angle', () => {
+  it('FALSIFICATION: without the offset the arm points somewhere else entirely', () => {
     // Not a tautology — it pins that the fixture actually EXERCISES an axis
-    // mismatch. If this arm ever goes to zero the fixture has gone degenerate
+    // mismatch. If this angle ever goes to zero the fixture has gone degenerate
     // and the test above proves nothing.
     const { src, trg } = build();
     src.bones[0].rotation.set(0, 0, Math.PI / 2, 'XYZ');
     src.bones[0].updateMatrixWorld(true);
-    trg.bones[0].updateMatrixWorld(true);
-    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[0].matrixWorld);
-    const targetBind = new Quaternion().setFromRotationMatrix(trg.bones[0].matrixWorld);
-    expect(sourceWorld.angleTo(targetBind)).toBeCloseTo(Math.PI / 2, 5);
+    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[3].matrixWorld);
+    const uncorrected = pointsAt(trg.bones, 3, sourceWorld);
+    const sourceDir = pointsAt(src.bones, 3, sourceWorld);
+    expect(uncorrected.angleTo(sourceDir)).toBeGreaterThan(1);
+    // And the correction is not the identity on this bone either — the arm is
+    // the bone #845 is about, so it is the one that must not be trivially right.
+    const offsets = restDirectionLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE);
+    expect(
+      new Quaternion().setFromRotationMatrix(offsets['t_arm']).angleTo(new Quaternion()),
+    ).toBeGreaterThan(1);
+  });
+
+  it('🔴 #845: the offsets do not depend on ANY pose the source is sampled in', () => {
+    // The property the whole rewrite is for, and the one thing the mechanism it
+    // replaced could not have. That one sampled the source's clip at frame 0 and
+    // the target at its bind — two DIFFERENT poses, an A-pose against a T-pose —
+    // so every arm bone carried the angle between them for the whole clip.
+    //
+    // Directions are a property of a rig alone. Pose the source anywhere at all
+    // and the answer must not move; if it does, some pose is being read.
+    const a = build();
+    const first = restDirectionLocalOffsets(a.src.bones, a.trg.bones, TARGET_TO_SOURCE);
+
+    const b = build();
+    b.src.bones[0].rotation.set(0.3, -0.9, 1.4, 'XYZ');
+    b.src.bones[2].rotation.set(-1.2, 0.5, 0.2, 'XYZ');
+    b.src.bones[3].rotation.set(0.7, 0.7, -0.7, 'XYZ');
+    b.src.bones[0].updateMatrixWorld(true);
+    b.trg.bones[0].rotation.set(0.1, 0.2, 0.3, 'XYZ');
+    b.trg.bones[0].updateMatrixWorld(true);
+    const second = restDirectionLocalOffsets(b.src.bones, b.trg.bones, TARGET_TO_SOURCE);
+
+    expect(Object.keys(second).sort()).toEqual(Object.keys(first).sort());
+    for (const name of Object.keys(first)) {
+      const q = (m: Matrix4) => new Quaternion().setFromRotationMatrix(m);
+      // 1e-6, not 0: the directions round-trip through world matrices, and the
+      // residue sits at float epsilon (~3e-8 measured). A tolerance below the
+      // arithmetic's own noise floor would fail on correct code.
+      expect(q(first[name]).angleTo(q(second[name])), `${name} moved with the pose`).toBeLessThan(
+        1e-6,
+      );
+    }
+  });
+
+  it('an A-pose source carries the arm DOWN on a T-pose target', () => {
+    // The product statement of #845 in one assertion. The target's bind holds its
+    // arm straight out; the source holds its arm down. After correction the
+    // target's arm must be down too — measured as the elbow ending up below the
+    // shoulder, which is the thing the eye actually notices.
+    const { src, trg } = build();
+    const offsets = restDirectionLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE);
+    // Stand the source up (+90° about Z takes its +X chains onto +Y) and then
+    // drop the arm: the shoulder's half turn leaves the arm's world rotation at
+    // -90° about Z, which aims its +X rest direction at -Y.
+    src.bones[0].rotation.set(0, 0, Math.PI / 2, 'XYZ');
+    src.bones[2].rotation.set(0, 0, -Math.PI, 'XYZ');
+    src.bones[0].updateMatrixWorld(true);
+    const sourceWorld = new Quaternion().setFromRotationMatrix(src.bones[3].matrixWorld);
+    const armDir = pointsAt(
+      trg.bones,
+      3,
+      sourceWorld.clone().multiply(new Quaternion().setFromRotationMatrix(offsets['t_arm'])),
+    );
+    expect(armDir.y, 'the corrected arm must point downward').toBeLessThan(-0.99);
+  });
+
+  it('a chain end inherits its parent, having no direction of its own', () => {
+    const { src, trg } = build();
+    const offsets = restDirectionLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE);
+    const q = (m: Matrix4) => new Quaternion().setFromRotationMatrix(m);
+    // `t_hand` has no mapped child, so there is nothing to align it by. Taking
+    // its parent's correction is what a constraint stack would leave it with,
+    // and leaving it uncorrected would single out the one bone whose error is
+    // most visible.
+    expect(offsets['t_hand']).toBeInstanceOf(Matrix4);
+    expect(q(offsets['t_hand']).angleTo(q(offsets['t_arm']))).toBeLessThan(1e-9);
   });
 
   it('leaves the source skeleton exactly as it found it', () => {
     // The caller shares these bone objects with the retarget that runs next, so
-    // borrowing them to read a reference pose must leave no trace (V20).
+    // reading them must leave no trace (V20).
     const { src, trg } = build();
     const before = src.bones.map((b) => b.quaternion.clone());
-    restPoseLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE, CALIBRATION);
+    restDirectionLocalOffsets(src.bones, trg.bones, TARGET_TO_SOURCE);
     src.bones.forEach((b, i) => {
       expect(b.quaternion.angleTo(before[i])).toBeLessThan(1e-9);
     });
@@ -676,8 +798,7 @@ describe('rest-pose reconciliation between rigs with different bone axes (#844)'
 
   it('emits no entry for a target bone the map does not cover', () => {
     const { src, trg } = build();
-    const offsets = restPoseLocalOffsets(src.bones, trg.bones, { t_hips: 's_hips' }, CALIBRATION);
-    expect(offsets['t_hips']).toBeInstanceOf(Matrix4);
+    const offsets = restDirectionLocalOffsets(src.bones, trg.bones, { t_hips: 's_hips' });
     // An unmapped bone keeps whatever the retarget gives it — notably the root,
     // which is never in a name map.
     expect(offsets['t_spine']).toBeUndefined();

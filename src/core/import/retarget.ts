@@ -26,11 +26,9 @@ import {
   SkinnedMesh,
   Quaternion,
   Matrix4,
+  Vector3,
   type Bone,
 } from 'three';
-
-/** An XYZ Euler triple in radians, the unit `AnimationKeyframe.rotation` uses. */
-type Vec3Tuple = [number, number, number];
 
 /**
  * `localOffsets` exists in the SHIPPED JavaScript but not in `@types/three`.
@@ -208,35 +206,6 @@ export function resolveNameMapToTarget(
 }
 
 /**
- * The earliest keyframe rotation for each source bone — the clip's CALIBRATION
- * POSE.
- *
- * A SOMA BVH's rest pose (its OFFSETs alone) is degenerate: accumulating them
- * puts head, hands and feet all at hip height, spread along ±X. Measured on a
- * real Kimodo clip — head `X 60.5 / Y 99.5`, left hand `X 114.7 / Y 105.2`,
- * against hips at `Y 100`. The upright figure lives entirely in the ROTATION
- * CHANNELS: running forward kinematics on frame 0 puts the head 59.4 above the
- * hips and the hips 87.1 above the foot, hands hanging below the shoulders — an
- * A-pose. That first frame, not the OFFSETs, is the source's reference pose.
- *
- * This matches the format as documented: the clip is NVIDIA SOMA-X's canonical
- * rig exported in a MotionBuilder world frame with A-pose calibration, and SOMA
- * parameterises rotations RELATIVE to a joint's canonical pose. Reading the
- * OFFSETs as if they were that pose is what this function exists to avoid.
- */
-function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<number, Vec3Tuple> {
-  let earliest = Infinity;
-  for (const k of keyframes) earliest = Math.min(earliest, k.time);
-  const out = new Map<number, Vec3Tuple>();
-  for (const k of keyframes) {
-    if (k.time === earliest && !out.has(k.bone)) {
-      out.set(k.bone, [k.rotation[0], k.rotation[1], k.rotation[2]]);
-    }
-  }
-  return out;
-}
-
-/**
  * Per-target-bone corrections that carry the SOURCE rig's bone-axis convention
  * onto the TARGET's, keyed by target bone name.
  *
@@ -258,13 +227,63 @@ function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<numb
  * target whose bind is already correct: the character is laid down by exactly
  * the amount the source's rest pose is wrong.
  *
- * `options.localOffsets` is the library's own hook for the difference. It is
- * applied as `targetWorldRot = sourceWorldRot * localOffset[targetBoneName]`,
- * and `retargetClip` forwards the same options object on every frame, so one
- * table computed here holds for the whole clip. Solving that equation at the
- * reference pose gives:
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT THE CORRECTION IS, AND WHY IT NEEDS NO POSE
+ * ─────────────────────────────────────────────────────────────────────────
+ * The thing we actually want is simple to say: **the target's bone should point
+ * where the source's bone points.** Write that down and the correction falls
+ * out with no reference pose in it anywhere.
  *
- *     localOffset = inverse(sourceRefWorldRot) * targetBindWorldRot
+ * A bone's world rotation takes its own REST DIRECTION — the way it points in
+ * its own local frame, which is just the direction to its child — onto the
+ * direction it points now:
+ *
+ *     R_S(t) · restDir_S = dir(t)          the source, at any time t
+ *     R_T(t) · restDir_T = dir(t)          what we want of the target
+ *
+ * Substituting gives `R_T = R_S · Q` where `Q · restDir_T = restDir_S`, so Q is
+ * the minimal rotation carrying the target's rest direction onto the source's.
+ * `options.localOffsets` is applied as exactly `R_T = R_S · offset`
+ * (`SkeletonUtils.js:123-127`), so Q goes straight in.
+ *
+ * Both rest directions are properties of a rig ALONE — no pose is sampled, none
+ * is assumed, and the source's may be as degenerate as SOMA's actually is. That
+ * is what makes this hold for an A-pose source against a T-pose target, or for
+ * two rigs that are neither.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT THIS REPLACED, AND WHY THE ARMS WERE WRONG BEFORE
+ * ─────────────────────────────────────────────────────────────────────────
+ * The first version of this solved the same equation at a sampled REFERENCE
+ * POSE: `offset = inverse(sourceRefWorldRot) · targetBindWorldRot`, with the
+ * source sampled at its clip's frame 0 and the target at its bind. That stands
+ * the character up, and it is exact at the pose it was sampled in — but the two
+ * poses sampled were DIFFERENT. The source's frame 0 is an A-pose, arms hanging;
+ * the target's bind is a T-pose, arms straight out. So the target held its own
+ * T-pose whenever the source held its A-pose, and every arm bone carried the
+ * angle between them for the whole clip (#845). Measured on the live pair, the
+ * upper arm sat 20-42° below horizontal where the source's was near 75°.
+ *
+ * Aligning directions instead removes the question rather than answering it:
+ * there is no reference pose to pick, so there is no way to pick two different
+ * ones. Blender reaches the same place from the other side — Child Of's *Set
+ * Inverse* captures the offset empirically and names no canonical pose either.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TWIST, STATED HONESTLY
+ * ─────────────────────────────────────────────────────────────────────────
+ * A direction constrains two degrees of freedom and a rotation has three, so
+ * the roll ABOUT the bone's own axis is not determined by the equation above.
+ * `setFromUnitVectors` resolves it by taking the minimal rotation, which adds no
+ * roll of its own — so whatever twist the source carries is passed through
+ * unchanged, and the only thing left unconstrained is a CONSTANT difference
+ * between the two rigs' idea of which way is "up" around a limb.
+ *
+ * That constant cannot be recovered from directions alone; it needs a second
+ * axis both rigs agree on, and no such axis is available here. Choosing one
+ * arbitrarily would be a guess with the authority of a computation. Twist shows
+ * in the SKIN — a rolled forearm — and never in where a limb goes, so this is
+ * the smaller of the two errors and it is the one that stays put.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * AN ALTERNATIVE THAT WAS MEASURED FALSE — DO NOT RETRY IT
@@ -273,58 +292,94 @@ function calibrationRotations(keyframes: readonly AnimationKeyframe[]): Map<numb
  * `boneInverses` changes NOTHING — byte-identical output, verified with the
  * patch logging its own execution so the null could not be mistaken for a
  * stale build. `retarget` never reads the source's bind; it reads only
- * `boneTo.matrixWorld`. The correction has to be applied to the RESULT, which
- * is what `localOffsets` does.
+ * `boneTo.matrixWorld`.
  *
- * ─────────────────────────────────────────────────────────────────────────
- * THE RESIDUAL, STATED HONESTLY
- * ─────────────────────────────────────────────────────────────────────────
- * The source reference is an A-pose and the target's bind is a T-pose, so the
- * shoulders and arms keep an offset of roughly the A-pose angle. Standing the
- * body up is the dominant correction and is what this delivers; matching the
- * arms exactly needs both rigs sampled in the SAME reference pose (#845).
- *
- * A bone with no mapping gets no entry, so it keeps whatever the retarget would
- * have given it — notably the root, which is never in the name map.
+ * A bone with no mapped child has no direction to align and inherits its
+ * parent's correction — hands, feet, head and toe tips, which is also where a
+ * constraint stack would leave them. A bone with no mapped ancestor either gets
+ * no entry at all and keeps whatever the retarget would have given it, notably
+ * the root, which is never in a name map.
  */
-export function restPoseLocalOffsets(
+export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
-  calibration: ReadonlyMap<number, Vec3Tuple>,
 ): Record<string, Matrix4> {
-  // Pose the source at its calibration rotations, read each bone's world
-  // orientation, then put the bones back exactly as they were. The caller's
-  // skeleton is shared with the retarget that follows, so this must leave no
-  // trace (V20 single-writer: we borrow the objects, we do not own them).
-  const saved = sourceBoneObjs.map((b) => b.quaternion.clone());
-  const roots = sourceBoneObjs.filter((b) => !b.parent || !(b.parent as Bone).isBone);
-  for (let i = 0; i < sourceBoneObjs.length; i++) {
-    const rot = calibration.get(i);
-    if (rot) sourceBoneObjs[i].rotation.set(rot[0], rot[1], rot[2], 'XYZ');
+  // Compose from every parentless bone before reading. `specToThreeSkeleton` has
+  // already done this (K42), but a subtree nothing has touched can still be
+  // stale, and a stale matrix here is a silently wrong direction.
+  for (const bones of [sourceBoneObjs, targetBoneObjs]) {
+    for (const b of bones) if (!b.parent || !(b.parent as Bone).isBone) b.updateMatrixWorld(true);
   }
-  for (const r of roots) r.updateMatrixWorld(true);
-  const sourceRef = new Map<string, Quaternion>();
-  for (const b of sourceBoneObjs) {
-    sourceRef.set(b.name, new Quaternion().setFromRotationMatrix(b.matrixWorld));
-  }
-  for (let i = 0; i < sourceBoneObjs.length; i++) sourceBoneObjs[i].quaternion.copy(saved[i]);
-  for (const r of roots) r.updateMatrixWorld(true);
 
-  // The target's bind world rotations. `specToThreeSkeleton` has already
-  // composed these (K42), but a bone whose subtree nothing has touched can
-  // still be stale, so compose from every root before reading.
-  for (const b of targetBoneObjs) {
-    if (!b.parent || !(b.parent as Bone).isBone) b.updateMatrixWorld(true);
-  }
+  const sourceByName = new Map(sourceBoneObjs.map((b) => [b.name, b]));
+
+  /**
+   * The direction from `bone` to `child`, in BONE's own local frame.
+   *
+   * Taken from world positions and rotated back, rather than read off the
+   * child's local translation, so an unmapped joint BETWEEN the two does not
+   * change the answer — two rigs rarely subdivide a limb the same way, and the
+   * direction along a limb is the same whether one bone spans it or three.
+   */
+  const localDirection = (bone: Bone, child: Bone): Vector3 | null => {
+    const here = new Vector3();
+    const there = new Vector3();
+    const rotation = new Quaternion();
+    const scale = new Vector3();
+    bone.matrixWorld.decompose(here, rotation, scale);
+    there.setFromMatrixPosition(child.matrixWorld);
+    const delta = there.sub(here);
+    if (delta.lengthSq() < 1e-18) return null;
+    return delta.applyQuaternion(rotation.invert()).normalize();
+  };
+
+  /** The nearest MAPPED bone below `bone` in the target, or null at a chain end. */
+  const mappedChild = (bone: Bone): Bone | null => {
+    const stack = [...bone.children];
+    while (stack.length > 0) {
+      const next = stack.shift() as Bone;
+      if (!next.isBone) continue;
+      if (targetToSource[next.name] !== undefined) return next;
+      stack.push(...(next.children as Bone[]));
+    }
+    return null;
+  };
 
   const offsets: Record<string, Matrix4> = {};
-  for (const tb of targetBoneObjs) {
-    const sourceName = targetToSource[tb.name];
-    const sq = sourceName === undefined ? undefined : sourceRef.get(sourceName);
-    if (!sq) continue;
-    const tq = new Quaternion().setFromRotationMatrix(tb.matrixWorld);
-    offsets[tb.name] = new Matrix4().makeRotationFromQuaternion(sq.clone().invert().multiply(tq));
+  // Parents before children, so a chain end can inherit a correction that is
+  // already computed. `specToThreeSkeleton` preserves the spec's order, and a
+  // spec lists a parent before its children.
+  for (const targetBone of targetBoneObjs) {
+    const sourceName = targetToSource[targetBone.name];
+    if (sourceName === undefined) continue;
+
+    const inherited = (): void => {
+      const parent = targetBone.parent as Bone | null;
+      const fromParent = parent ? offsets[parent.name] : undefined;
+      if (fromParent) offsets[targetBone.name] = fromParent.clone();
+    };
+
+    const targetChild = mappedChild(targetBone);
+    const sourceChild = targetChild
+      ? sourceByName.get(targetToSource[targetChild.name])
+      : undefined;
+    const sourceBone = sourceByName.get(sourceName);
+    if (!targetChild || !sourceChild || !sourceBone) {
+      inherited();
+      continue;
+    }
+
+    const targetDir = localDirection(targetBone, targetChild);
+    const sourceDir = localDirection(sourceBone, sourceChild);
+    if (!targetDir || !sourceDir) {
+      inherited();
+      continue;
+    }
+
+    offsets[targetBone.name] = new Matrix4().makeRotationFromQuaternion(
+      new Quaternion().setFromUnitVectors(targetDir, sourceDir),
+    );
   }
   return offsets;
 }
@@ -407,15 +462,12 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // BIND poses, and this one is in hand before the retarget touches anything.
   const scale = retargetScale(hip, args.sourceBones, nameMap, args.targetBones);
 
-  // Reconcile the two rigs' rest poses. Without this every bone but the root
-  // receives an orientation unrelated to its bind and the character performs the
-  // motion lying down (#844). See `restPoseLocalOffsets`.
-  const localOffsets = restPoseLocalOffsets(
-    sourceBoneObjs,
-    targetBoneObjs,
-    targetToSource,
-    calibrationRotations(args.sourceClip.keyframes),
-  );
+  // Reconcile the two rigs' bone-axis conventions. Without this every bone but
+  // the root receives an orientation unrelated to its own rest direction and the
+  // character performs the motion lying down (#844). See
+  // `restDirectionLocalOffsets` — it needs no reference pose, which is what keeps
+  // the arms right as well as the spine (#845).
+  const localOffsets = restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,

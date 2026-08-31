@@ -108,6 +108,12 @@ const MIN_MOVING_BONES = 5;
  *  Measured ~0.000 with the rest poses unreconciled and ~0.31 with them
  *  reconciled, so the bar sits clear of both. */
 const MIN_UPRIGHT = 0.15;
+/** How far below horizontal the upper arm must hang, in degrees.
+ *  A walking figure carries its arms down the sides. Sampling the source at its
+ *  A-pose and the target at its T-pose bind left them halfway out (#845):
+ *  measured 21-42° on the live pair, and 67-76° once the two rigs are aligned by
+ *  rest DIRECTION instead of by two different poses. The bar sits between. */
+const MIN_ARM_HANG_DEG = 50;
 /** How far the character's stride may drift from the clip's, each measured
  *  against its OWN legs. The retarget scale is the only thing that sets this,
  *  and it read 13% low while every other assertion here stayed green (#846). */
@@ -324,6 +330,59 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   // renderer actually posed — where the code derives its leg structurally and
   // never sees these names. A scale computed from a different basis (feet
   // included, one leg instead of two) moves the rendered side and not this one.
+  // ---- 5. ARM CARRIAGE — is it walking, or holding a T-pose while it walks? --
+  //
+  // 🔴 THE #845 GUARD. Standing the character up (#844) and swinging its bones
+  // (#843) both passed while the arms stayed stuck halfway out to the sides,
+  // because the reconciliation sampled a DIFFERENT reference pose on each rig —
+  // the source's A-pose against the target's T-pose bind — and every arm bone
+  // carried the angle between them for the whole clip. Nothing else here can see
+  // it: the arms rotate, the head is above the hips, and the stride is right.
+  const arms = await page.evaluate(async (sampleTimes: readonly number[]) => {
+    const w = window as unknown as BasherWindow & {
+      __basher_three?: { getState: () => { scene?: unknown } };
+    };
+    const scene = w.__basher_three?.getState().scene as
+      | { traverse: (f: (o: never) => void) => void }
+      | undefined;
+    if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
+    const hang: number[] = [];
+    for (const t of sampleTimes) {
+      w.__basher_time!.getState().setTime(t);
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      const at = new Map<string, [number, number, number]>();
+      scene.traverse((o: never) => {
+        const b = o as unknown as {
+          name: string;
+          isBone?: boolean;
+          matrixWorld: { elements: number[] };
+        };
+        if (b.isBone) {
+          const e = b.matrixWorld.elements;
+          at.set(b.name, [e[12], e[13], e[14]]);
+        }
+      });
+      // Both arms, so a fix that only lands on one side cannot pass.
+      for (const side of ['Left', 'Right']) {
+        const shoulder = at.get(`mixamorig${side}Arm`);
+        const elbow = at.get(`mixamorig${side}ForeArm`);
+        if (!shoulder || !elbow) throw new Error(`no rendered ${side} arm`);
+        const d = [elbow[0] - shoulder[0], elbow[1] - shoulder[1], elbow[2] - shoulder[2]];
+        const length = Math.hypot(d[0], d[1], d[2]);
+        hang.push((Math.asin(-d[1] / length) * 180) / Math.PI);
+      }
+    }
+    return hang;
+  }, pair.times);
+
+  const flattest = Math.min(...arms);
+  expect(
+    flattest,
+    `an upper arm sat only ${flattest.toFixed(1)}° below horizontal — the arms are held out ` +
+      `toward the target's T-pose bind instead of following the clip (#845). ` +
+      `Samples: ${arms.map((v) => v.toFixed(0)).join(', ')}`,
+  ).toBeGreaterThan(MIN_ARM_HANG_DEG);
+
   const sampleWindow = pair.times[pair.times.length - 1];
   const sourceBones = parseBvh(
     fs.readFileSync(BVH_FILE, 'utf8'),
