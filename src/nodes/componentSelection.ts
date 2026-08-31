@@ -129,6 +129,7 @@ import { edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
+import { edgeIndicesByAngle } from '../app/edgeAngleSelection';
 
 /**
  * A resolved component selection at one domain. NEVER a name, NEVER a buffer, and never a
@@ -180,6 +181,17 @@ export interface ComponentSelection {
  * socket would be a project-format migration for something that is authored text.
  */
 export const SCOPE_PARAM = 'scope';
+
+/**
+ * The limit-method params (#847) — NAMES ONLY, for the reason `SCOPE_PARAM` is a constant.
+ *
+ * The resolver below reads these out of an operator's params, so the spelling is a contract
+ * between it and any operator that declares one, and a contract spelled twice drifts. The
+ * SCHEMAS deliberately stay in the declaring node: there is exactly one declarer today, and
+ * #680 centralised the scope schema only once five files had copied it.
+ */
+export const LIMIT_METHOD_PARAM = 'limitMethod';
+export const ANGLE_LIMIT_PARAM = 'angleLimit';
 
 /**
  * The scope param's schema — the whole zod chain, so a declarer writes
@@ -523,12 +535,64 @@ export function resolveComponentSelection(
   }
   const length = count.count;
 
+  // ── #847 — THE ANGLE ARM. A SECOND PRODUCER OF ONE SELECTION, SO IT IS EXCLUSIVE ──────
+  //
+  // An angle limit and an authored query both produce the selection this function returns,
+  // and there must be exactly one producer. The reference makes its limit method an
+  // exclusive enum for the same reason, so the conflict is REFUSED rather than resolved by
+  // a precedence rule nobody can see: silently ignoring an author is the failure this
+  // module already goes out of its way to avoid everywhere else.
+  const angleLimit = authoredAngleLimit(params);
+  if (angleLimit !== null) {
+    if (domain !== 'edge')
+      return refuse(
+        `an angle limit selects EDGES by the deviation between their two faces, so it cannot produce a '${domain}' selection`,
+      );
+    if (authored !== null)
+      return refuse(
+        `both an angle limit and the scope '${authored}' were authored, and a selection has one producer — clear the scope, or set '${LIMIT_METHOD_PARAM}' back to '${SCOPE_PARAM}'`,
+      );
+    const verdict = edgeIndicesByAngle(source.geometry, angleLimit);
+    if (verdict.kind === 'refused') return refuse(verdict.why);
+    // 🔴 AN EMPTY RESULT MUST NOT BECOME AN EMPTY QUERY. A blank scope is the authoring
+    // state "none written", which `scopeField` turns into an ABSENT field and every
+    // generator reads as EVERYTHING — so routing "no edge qualified" through the query
+    // path would bevel the whole mesh, which is the exact inverse of what was asked. The
+    // state has a name instead.
+    if (verdict.edges.length === 0)
+      return refuse(
+        `no edge deviates by more than ${angleLimit}°, so an angle limit selects nothing here — lower the limit, or the mesh has no edge sharp enough`,
+      );
+    // Through the same canonicaliser as a typed query, so one spelling of a set exists:
+    // the canonical form collapses runs into ranges, which is what keeps a rim loop's key
+    // short rather than one index per edge.
+    return selectionFromQuery(verdict.edges.join(' '), domain, length);
+  }
+
   // No scope authored at all — the operator applies to everything. This is the ONLY road
   // to "everything" that does not go through a query, which is what keeps a LOST scope
   // distinguishable from an absent one.
   if (authored === null) return totalSelection(domain, length);
 
   return selectionFromQuery(authored, domain, length);
+}
+
+/**
+ * The angle limit an author asked for, or `null` when this operator is not angle-limited.
+ *
+ * Reads the METHOD first and the value second: a stale `angleLimit` left in params by a
+ * method switch must not select anything, and asking the method makes that impossible
+ * rather than merely unlikely.
+ */
+function authoredAngleLimit(params: Readonly<Record<string, unknown>>): number | null {
+  if (params[LIMIT_METHOD_PARAM] !== 'angle') return null;
+  const raw = params[ANGLE_LIMIT_PARAM];
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) {
+    return refuse(
+      `'${LIMIT_METHOD_PARAM}' is 'angle' but '${ANGLE_LIMIT_PARAM}' is ${typeof raw}, so no threshold can be applied`,
+    );
+  }
+  return raw;
 }
 
 /**

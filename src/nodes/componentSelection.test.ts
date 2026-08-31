@@ -576,7 +576,13 @@ describe('#607 the query has exactly one reader', () => {
       .map((m) => m[1])
       .sort();
     expect(exported).toEqual([
+      // #847 — the limit-method param NAMES, and nothing else. The resolver reads these out
+      // of an operator's params, so the spelling is a contract and a contract spelled twice
+      // drifts. It exports the NAMES, never a threshold and never the parser: an operator
+      // still cannot reach a term, and the schemas stay with the one node that declares them.
+      'ANGLE_LIMIT_PARAM',
       'ComponentSelection',
+      'LIMIT_METHOD_PARAM',
       'SCOPE_PARAM',
       '__resetSelectionMemoForTests',
       'componentCountOf',
