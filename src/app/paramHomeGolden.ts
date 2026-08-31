@@ -107,7 +107,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
-  BevelModifier: '[modifier] amount=modifier muted=modifier scope=modifier',
+  BevelModifier:
+    '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
   BoxData: '[mesh,material] size=mesh material=material',
   CameraData:
@@ -243,4 +244,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // UNCHANGED — the derived half of the claim that nothing existing was re-homed to make room.
 // It routes two cells and not three because this is the one modifier that declares no scope,
 // which is a deferral rather than a fact; its header says why.
-export const GOLDEN_TOTALS = { types: 82, routed: 133, unrouted: 217 } as const;
+// 133 → 135 routed at #847: `BevelModifier` appends `limitMethod` and `angleLimit`, both to
+// the modifier section, as the two halves of one authoring control — a method and the value it
+// reads. `types` and `unrouted` are UNCHANGED, which is the derived half of the claim that the
+// append re-homed nothing: an angle limit is a SECOND producer of the selection this operator
+// already had, not a re-routing of the scope it produced before.
+export const GOLDEN_TOTALS = { types: 82, routed: 135, unrouted: 217 } as const;

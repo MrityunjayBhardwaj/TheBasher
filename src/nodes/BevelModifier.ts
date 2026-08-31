@@ -79,7 +79,13 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData } from './types';
 import { bevelGeometryRef } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
-import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
+import {
+  ANGLE_LIMIT_PARAM,
+  LIMIT_METHOD_PARAM,
+  requireResolvedScope,
+  SCOPE_PARAM,
+  scopeParam,
+} from './componentSelection';
 import type { ScopeDomain } from './attributes';
 
 export const BevelModifierParams = z.object({
@@ -118,6 +124,32 @@ export const BevelModifierParams = z.object({
    * an unparseable query must have no constructor rather than a handler.
    */
   [SCOPE_PARAM]: scopeParam(),
+  /**
+   * WHICH PRODUCER NAMES THE CHAMFERED EDGES (#847).
+   *
+   * `'scope'` is the default because it is what a bevel has always done: the authored query
+   * decides, and a blank one means every edge. So every graph saved before this param existed
+   * parses to exactly the behaviour it had.
+   *
+   * `'angle'` hands the job to the dihedral deviation instead. The two are EXCLUSIVE rather
+   * than combined, which is the reference's shape (`limit_method` is an enum there) and the
+   * only one that never silently ignores an author — the resolver refuses if both are set.
+   */
+  [LIMIT_METHOD_PARAM]: z.enum(['scope', 'angle']).default('scope'),
+  /**
+   * The deviation in DEGREES above which an edge is chamfered — this codebase's convention at
+   * an authoring boundary, where `edgeAnglesOf` answers in radians and the resolver converts.
+   *
+   * `30` is the reference's own default. The range is `[0, 180]` because that is the range of
+   * the quantity: `edgeAnglesOf` is `acos` of two unit normals, so it cannot exceed π, and a
+   * limit beyond it would be a slider that stops selecting anything before reaching its end.
+   *
+   * ⚠️ NOTHING IN THIS FILE READS EITHER PARAM, exactly as with the scope: they CARRY the
+   * authored state, the evaluator resolves it through the one resolver, and `evaluate` is
+   * handed the answer. A node that read them itself would be a second producer of the
+   * descriptor's selection beside the resolver.
+   */
+  [ANGLE_LIMIT_PARAM]: z.number().min(0).max(180).default(30),
 });
 export type BevelModifierParams = z.infer<typeof BevelModifierParams>;
 
@@ -151,6 +183,8 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
     amount: 'modifier',
     muted: 'modifier',
     [SCOPE_PARAM]: 'modifier',
+    [LIMIT_METHOD_PARAM]: 'modifier',
+    [ANGLE_LIMIT_PARAM]: 'modifier',
   },
   // Four arguments now, like its scoped siblings: the chain declares a scope, so the evaluator
   // resolves one and hands it here. Refused at runtime as well as required in the signature,

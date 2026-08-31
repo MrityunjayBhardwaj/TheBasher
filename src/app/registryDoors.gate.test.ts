@@ -144,6 +144,12 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // Clones before it writes, so the shared instance is untouched — a reader that happens to
   // own a copy afterwards, which is the rule working rather than an exception to it.
   'src/app/animate/dispatchApplyTransform.ts': 'read',
+  // #847 — a bevel's angle limit selects edges by DIHEDRAL DEVIATION, which is the one fact on
+  // the scope road that positions decide rather than the descriptor. It reads the source's built
+  // buffer to take face normals and writes to nothing. The door is held HERE, in a module whose
+  // whole job is that one read, so the shared scope resolver stays a pure function of its spine
+  // and params and does not join this census.
+  'src/app/edgeAngleSelection.ts': 'read',
 
   // PRODUCE — primes the cache after the async OPFS read, then reads back to check.
   'src/app/asset/bakedGeometryLoader.ts': 'produce',
