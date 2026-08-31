@@ -62,6 +62,7 @@ import {
   faceElementStarts,
   tiledCornerOrder,
   tiledFaceOrder,
+  mappedFacesOf,
 } from './faceCount';
 import { fanToTriangles, polygonCornersOf, reversedCornerAt } from './polygonLayout';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
@@ -281,8 +282,12 @@ describe('#776 — a corner is a polygon corner, at every sync-buildable descrip
     expect(offset.kind).toBe('counted');
     const shift = (offset as { count: number }).count;
 
+    // #812 — the order can now say a face was MINTED. A mirror never mints, so this narrowing
+    // is the identity here; it is spelled out rather than cast so the day a minting kind reaches
+    // this fixture the row stops compiling instead of indexing with a hole.
+    const mirroredOrder = mappedFacesOf(tiledFaceOrder(mirrored.descriptor)!.order)!;
     const unreversed = (f: number) => {
-      const rim = sourceRims[tiledFaceOrder(mirrored.descriptor)!.order[f]].map((p) => p + shift);
+      const rim = sourceRims[mirroredOrder[f]].map((p) => p + shift);
       const flat = fanToTriangles([rim]);
       const out: string[] = [];
       for (let t = 0; t * 3 < flat.length; t++)
@@ -319,8 +324,11 @@ describe('#776 — a corner is a polygon corner, at every sync-buildable descrip
       const mergedCorners = faceCornersOf(d)!;
       const reversedFrom = d.kind === 'mirror' ? faces.sourceFaces : Infinity;
       let at = 0;
-      for (let f = 0; f < faces.order.length; f++) {
-        const sourceFace = faces.order[f];
+      // #812 — same narrowing as the mirrored-corner row above, for the same reason.
+      const mapped = mappedFacesOf(faces.order)!;
+      expect(mapped, `${ref.key} order holed — no kind in this census mints`).not.toBeNull();
+      for (let f = 0; f < mapped.length; f++) {
+        const sourceFace = mapped[f];
         const rim = sourceCorners[sourceFace];
         expect(mergedCorners[f], `${ref.key} face ${f} rim`).toBe(rim);
         for (let k = 0; k < rim; k++) {

@@ -481,6 +481,10 @@ describe('#607 the query has exactly one reader', () => {
         // rebuild recipe the registry re-reads later, with no selection in reach. So it
         // needs the selection's IDENTITY, never the query — and like every other name here,
         // its `evaluate` never touches `params[SCOPE_PARAM]`.
+        // #827 — the sixth declarer, and the first whose `SCOPE_DOMAIN` is `'edge'`. It is
+        // here for the same reason as its five siblings: it names the shared identifier in its
+        // `paramSchema`, which is a DECLARATION and the opposite of the drift this row catches.
+        'src/nodes/BevelModifier.ts',
         'src/nodes/MaskModifier.ts',
         //
         // #682 — the FOURTH declarer, and the SECOND on the `'target'` lane. It is also the
@@ -529,6 +533,10 @@ describe('#607 the query has exactly one reader', () => {
     // that made a sibling gate vacuous from birth one step ago (#678).
     expect(declarers).toEqual([
       'src/nodes/ArrayModifier.ts',
+      // #827 — the sixth. Its scope names edges rather than faces, and this row is blind to
+      // that by design: it asks only whether a declaring node ever reaches past the NAME to the
+      // query behind it, which is a question the class does not change.
+      'src/nodes/BevelModifier.ts',
       'src/nodes/MaskModifier.ts',
       'src/nodes/MaterialOverrideOp.ts',
       'src/nodes/MirrorModifier.ts',

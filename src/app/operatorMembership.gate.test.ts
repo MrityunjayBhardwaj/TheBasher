@@ -101,6 +101,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     // "this stack has no members", which agrees with nothing and alarms nobody.
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
     ]);
@@ -118,12 +119,14 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
 
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
     ]);
     expect(addableOperators('modifier', { ArrayModifier: 'Array' }).map((o) => o.type)).toEqual([
       'ArrayModifier',
+      'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',

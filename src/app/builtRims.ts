@@ -39,6 +39,7 @@ import { weldedPolygonsOf } from './edgeIdentity';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
 import type { PointWeld } from './pointIdentity';
 import { getForRead } from './geometryRegistry';
+import { bevelLayoutOf } from './bevelLayout';
 
 /**
  * Cached per geometry. A built geometry is produced from exactly one descriptor, so its arity —
@@ -144,6 +145,24 @@ const KEY_STRIDE = 0x1000000;
  */
 export function composedWeldOf(ref: GeometryRef): PointWeld | null {
   const d = ref.descriptor;
+  // #814 — READ OFF THE LAYOUT, NOT WELDED BY POSITION, and the reason is the one this function's
+  // own header gives for the derived kinds: a position weld answers "how many distinct positions
+  // does this buffer hold", which is a different question. A bevel builds one split vertex per
+  // output corner, so `rims[face][k]` IS the topological point of split vertex `k` of face
+  // `face` — the map is the layout's rims, flattened in the order the builder writes them.
+  //
+  // Positionally it happens to agree at any amount small enough that no two chamfered corners
+  // coincide, which is exactly why it has to be stated rather than left to luck: at a larger
+  // amount the positional answer silently drops points that structurally exist.
+  if (d.kind === 'bevel') {
+    const verdict = bevelLayoutOf(d);
+    if (verdict.kind !== 'laid-out') return null;
+    const { rims, points } = verdict.layout;
+    const map = new Uint32Array(rims.reduce((sum, rim) => sum + rim.length, 0));
+    let cursor = 0;
+    for (const rim of rims) for (const point of rim) map[cursor++] = point;
+    return { map, points };
+  }
   if (d.kind !== 'array' && d.kind !== 'mirror' && d.kind !== 'subset') {
     const geometry = getForRead(ref);
     return geometry === undefined || geometry === null ? null : weldByPosition(geometry);
