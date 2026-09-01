@@ -14,22 +14,34 @@
 //   🔴 THE EMPTY SELECTION. A blank scope query is the authoring state "none written", which
 //      `scopeField` turns into an ABSENT field and every generator reads as EVERYTHING. So a
 //      limit that selects no edge must NOT travel as an empty query — it would bevel the
-//      whole mesh, the exact inverse of what was asked. Row 5 is that claim, and it is
-//      asserted at the resolver because that is where the query string is produced.
+//      whole mesh, the exact inverse of what was asked. Rows 5 and 6 are that claim, and they
+//      are asserted at the resolver because that is where the query string is produced.
+//
+//      ⚠️ ROW 5 ONCE ASSERTED A THROW, AND #862 IS WHY IT NO LONGER DOES. Naming the refusal
+//      was right; making it a throw was not, because this resolver runs inside `evaluate` on
+//      the render walk with no `try` above it — so an angle limit of 90 on a default cube
+//      unmounted the app, and half the slider's own range reached it by a scrub drag. The
+//      claim survived the fix and got stronger: an empty result now RESOLVES, to a spelling
+//      that is neither blank nor null and that names {} at every length. Row 6 pins the
+//      direction of the fallback, which is the whole reason the spelling is not `''`.
 //
 // REF: src/app/edgeAngleSelection.ts; src/app/edgeAngle.ts (the three zeros);
-//      ref/sources/blender-mesh/MOD_bevel.cc:193-203; issues #847, #800.
+//      src/app/bevelNodeReach.gate.test.ts (the node's matching passthrough arm);
+//      ref/sources/blender-mesh/MOD_bevel.cc:193-203; issues #847, #800, #862.
 
 import { describe, expect, it } from 'vitest';
 import {
   arrayGeometryRef,
+  bevelGeometryRef,
   boxGeometryRef,
   mirrorGeometryRef,
   subsetGeometryRef,
 } from './modifierGeometry';
+import { bevelLayoutOf } from './bevelLayout';
+import { scopeSelection } from '../nodes/scopeQuery';
 import { edgeIndicesByAngle } from './edgeAngleSelection';
 import { edgeFaceAdjacencyOf } from './edgeIdentity';
-import { resolveComponentSelection } from '../nodes/componentSelection';
+import { EMPTY_SELECTION_QUERY, resolveComponentSelection } from '../nodes/componentSelection';
 import type { ObjectData } from '../nodes/types';
 
 const box = boxGeometryRef([1, 1, 1], null);
@@ -104,19 +116,57 @@ describe('#847 — an angle limit selects edges', () => {
     }
   });
 
-  it('5 — 🔴 AN EMPTY RESULT REFUSES; IT MUST NOT TRAVEL AS A BLANK QUERY', () => {
-    // A blank query means "everything" downstream, so the honest answer to "no edge
-    // qualified" is a named refusal. Asserted through the resolver, which is where the
-    // query string is produced and therefore where the inversion would happen.
+  it('5 — 🔴 AN EMPTY RESULT RESOLVES TO THE EMPTY SET; IT MUST NOT TRAVEL AS A BLANK QUERY', () => {
+    // ⚠️ THIS ROW USED TO ASSERT A THROW, AND THE INVERSION IS #862. Its CLAIM has not
+    // changed — a blank query means "everything" downstream, so "no edge qualified" must
+    // never be spelled `''` — but the answer to it has. Refusing by name meant throwing, and
+    // this resolver runs inside `evaluate` on the render walk with no `try` above it, so a
+    // limit of 90 on a cube took the app down and a scrub drag reached it. An empty selection
+    // is an ordinary authoring state; the node passes its source through, which is pinned on
+    // the selection axis of `bevelNodeReach.gate.test.ts` beside the amount axis it mirrors.
+    //
+    // So the row now pins THREE things, and the second is the one the old throw was
+    // protecting: it resolves, it does not resolve to blank-or-null, and what it does
+    // resolve to genuinely names {} — at every length, since a canonical query travels into
+    // a descriptor re-read later against a freshly recomputed count.
     const spine = { kind: 'ModifiedData', geometry: box, material: undefined } as unknown as
       | ObjectData
       | undefined;
-    expect(() =>
-      resolveComponentSelection(spine, { limitMethod: 'angle', angleLimit: 120 }, 'edge'),
-    ).toThrow(/selects nothing/);
+    for (const deg of [90, 120, 180]) {
+      const got = resolveComponentSelection(
+        spine,
+        { limitMethod: 'angle', angleLimit: deg },
+        'edge',
+      );
+      expect(got?.count, `${deg}° on a box selects nothing`).toBe(0);
+      // 🔴 THE INVERSION GUARD. `''` and `null` both read as EVERYTHING downstream, so this
+      // is the assertion that would have caught the whole mesh being beveled.
+      expect(got?.canonicalQuery, `${deg}° must not travel as a blank query`).toBe(
+        EMPTY_SELECTION_QUERY,
+      );
+      expect(got?.canonicalQuery, `${deg}° must not travel as null`).not.toBeNull();
+    }
+    // And the spelling is empty INDEPENDENTLY OF LENGTH, which is a property of
+    // `scopeSelection` that no reader can see in the string `'^0'` itself. A complement
+    // spelling passes at 12 and selects all 24 at 24, so this is the row that rejects it.
+    for (const n of [0, 1, 8, 12, 24, 96, 960])
+      expect(scopeSelection(EMPTY_SELECTION_QUERY, n).count, `empty at length ${n}`).toBe(0);
   });
 
-  it('6 — an angle limit and an authored scope are exclusive, and the conflict is named', () => {
+  it('6 — 🔑 AND THE SPELLING FAILS SAFE: the builder REFUSES it rather than beveling everything', () => {
+    // The node's passthrough arm (row 7) means `EMPTY_SELECTION_QUERY` normally stops before
+    // the builder. This row asks what happens if that arm is ever removed — because the whole
+    // point of not using `''` is the DIRECTION of the fallback. A blank query would have
+    // chamfered every edge; this one is refused by name, so the worst case is "chamfers
+    // nothing", which is what was asked for.
+    const verdict = bevelLayoutOf(
+      bevelGeometryRef(box, 0.1, EMPTY_SELECTION_QUERY, 'edge').descriptor,
+    );
+    expect(verdict.kind, 'the builder refuses an empty selection').toBe('refused');
+    if (verdict.kind === 'refused') expect(verdict.why).toMatch(/selects none/);
+  });
+
+  it('7 — an angle limit and an authored scope are exclusive, and the conflict is named', () => {
     const spine = { kind: 'ModifiedData', geometry: box, material: undefined } as unknown as
       | ObjectData
       | undefined;

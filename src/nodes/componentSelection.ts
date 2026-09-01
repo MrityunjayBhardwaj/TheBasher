@@ -194,6 +194,28 @@ export const LIMIT_METHOD_PARAM = 'limitMethod';
 export const ANGLE_LIMIT_PARAM = 'angleLimit';
 
 /**
+ * THE QUERY THAT NAMES THE EMPTY SET, at every length (#862).
+ *
+ * A derived selection can legitimately select nothing — an angle limit above every angle a
+ * mesh has, which an author reaches by scrubbing. That state needs a spelling, and the two
+ * obvious candidates are both wrong:
+ *
+ *   - `''` is the authoring state "none written", which every generator reads as EVERYTHING.
+ *     Handing it back for "nothing qualified" is the inversion this module exists to prevent.
+ *   - `null` is the unscoped road, which means everything too.
+ *
+ * `'^0'` is a REMOVE term over a mask that starts empty, so it names `{}` — and it does so at
+ * every length, which matters because a canonical query travels into a descriptor that is
+ * re-read later against a freshly recomputed element count. A complement spelling like
+ * `'!0-11'` is empty at 12 elements and selects all 24 at 24, so it cannot be used here.
+ *
+ * ⚠️ THAT LENGTH-INDEPENDENCE IS AN OBSERVATION ABOUT `scopeSelection`, NOT A SPELLING
+ * ANYBODY CAN READ OFF THIS STRING, so it is pinned by a gate row over several lengths
+ * rather than left to a reader to re-derive. See `emptySelection.gate.test.ts`.
+ */
+export const EMPTY_SELECTION_QUERY = '^0';
+
+/**
  * The scope param's schema — the whole zod chain, so a declarer writes
  * `[SCOPE_PARAM]: scopeParam()` and cannot spell any part of it a sixth time (#680).
  *
@@ -554,15 +576,30 @@ export function resolveComponentSelection(
       );
     const verdict = edgeIndicesByAngle(source.geometry, angleLimit);
     if (verdict.kind === 'refused') return refuse(verdict.why);
-    // 🔴 AN EMPTY RESULT MUST NOT BECOME AN EMPTY QUERY. A blank scope is the authoring
-    // state "none written", which `scopeField` turns into an ABSENT field and every
-    // generator reads as EVERYTHING — so routing "no edge qualified" through the query
-    // path would bevel the whole mesh, which is the exact inverse of what was asked. The
-    // state has a name instead.
+    // 🔴 AN EMPTY RESULT MUST NOT BECOME AN EMPTY QUERY, AND IT MUST NOT THROW EITHER (#862).
+    //
+    // The first half is the original hazard and it still holds: a BLANK scope is the
+    // authoring state "none written", which `scopeField` turns into an ABSENT field that
+    // every generator reads as EVERYTHING. Routing "no edge qualified" through the query
+    // path as `''` would bevel the whole mesh — the exact inverse of what was asked.
+    //
+    // The second half was measured after this arm shipped. Refusing by name meant a THROW,
+    // and this resolver runs inside `evaluate`, which runs on the render walk with no `try`
+    // above it — so `angleLimit` at 90 on a default cube took the whole app down, and half
+    // the slider's own range reached it by a scrub drag. "No edge is sharp enough YET" is a
+    // state an author passes THROUGH on the way to the value they want, not an error.
+    //
+    // So it resolves to an ordinary EMPTY selection. `count` is `0`, which this type's own
+    // definition invites a caller to branch on, and `BevelModifier` does exactly that —
+    // passing its source through, the same answer it already gives a zero amount.
+    //
+    // 🔑 AND THE SPELLING FAILS SAFE, which is why it is a query rather than a blank. If the
+    // node's passthrough arm were ever removed, this query reaches `bevelLayoutOf`, which
+    // REFUSES it by name ("selects none of ... so this bevel would chamfer nothing"). The
+    // fallback is therefore "chamfer nothing", never "chamfer everything" — the failure
+    // direction the blank-query hazard above is entirely about.
     if (verdict.edges.length === 0)
-      return refuse(
-        `no edge deviates by more than ${angleLimit}°, so an angle limit selects nothing here — lower the limit, or the mesh has no edge sharp enough`,
-      );
+      return selectionFromQuery(EMPTY_SELECTION_QUERY, domain, length);
     // Through the same canonicaliser as a typed query, so one spelling of a set exists:
     // the canonical form collapses runs into ranges, which is what keeps a rim loop's key
     // short rather than one index per edge.
