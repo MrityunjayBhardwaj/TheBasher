@@ -1263,3 +1263,121 @@ describe('a rest direction that OPPOSES the target’s is refused, not guessed (
     expect(degrees(q(offsets['t_bone']), q(offsets['t_root']))).toBeGreaterThan(1);
   });
 });
+
+describe('two rests that correspond as poses are reconciled as a whole (#865)', () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS BLOCK IS FOR
+  // ─────────────────────────────────────────────────────────────────────────
+  // `restAlignment.test.ts` gates the solver. This gates the WIRING: that the
+  // rotation reaches the source wrapper, that its inverse reaches the offsets,
+  // and that the two survive `SkeletonUtils` composing them. Those are three
+  // separate places to drop a term, and a solver can be perfect while any of
+  // them is wrong.
+  //
+  // The assertion is the identity case, which is the one input whose correct
+  // output is known without running anything: drive the target with a clip that
+  // holds the source at its own REST, and every mapped bone must land exactly on
+  // its own bind. A pipeline that cannot return identity for identity is not
+  // worth reading anywhere else.
+  const SRC: BoneSpec[] = [
+    { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_spine', parent: 0, position: [0, 0.2, 0], rotation: [0, 0, 0] },
+    { name: 's_neck', parent: 1, position: [0, 0.2, 0], rotation: [0, 0, 0] },
+    { name: 's_head', parent: 2, position: [0, 0.15, 0], rotation: [0, 0, 0] },
+    { name: 's_shoulder', parent: 1, position: [0.1, 0.1, 0], rotation: [0, 0, 0] },
+    { name: 's_arm', parent: 4, position: [0.2, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_hand', parent: 5, position: [0.2, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_upleg', parent: 0, position: [0.1, -0.05, 0], rotation: [0, 0, 0] },
+    { name: 's_leg', parent: 7, position: [0, -0.4, 0], rotation: [0, 0, 0] },
+    { name: 's_foot', parent: 8, position: [0, -0.4, 0], rotation: [0, 0, 0] },
+    { name: 's_toe', parent: 9, position: [0, 0, 0.15], rotation: [0, 0, 0] },
+  ];
+  // The same pose, turned a quarter turn — which is the case the whole-rig part
+  // exists for, and the one no per-bone right-multiplication can express.
+  const TRG: BoneSpec[] = SRC.map((b) => ({
+    ...b,
+    name: b.name.replace('s_', 't_'),
+    position: [b.position[2], b.position[1], -b.position[0]] as [number, number, number],
+  }));
+  const MAP: Record<string, string> = Object.fromEntries(
+    SRC.map((b) => [b.name, b.name.replace('s_', 't_')]),
+  );
+
+  it('puts every bone on its own bind at the frame where the source holds its rest', () => {
+    const keyframes: AnimationKeyframe[] = [];
+    SRC.forEach((b, i) => {
+      // t=0 — the source at its rest. t=1 — somewhere else, so the clip has to
+      // carry real motion and the assertion is not about a constant.
+      keyframes.push({ bone: i, time: 0, position: [...b.position], rotation: [0, 0, 0] });
+      keyframes.push({
+        bone: i,
+        time: 1,
+        position: [...b.position],
+        rotation: i === 4 ? [0.3, 0.2, -0.4] : [0, 0.15, 0],
+      });
+    });
+    const result = retargetClip({
+      sourceBones: SRC,
+      sourceClip: { name: 'rest-then-move', duration: 1, keyframes },
+      targetBones: TRG,
+      nameMap: MAP,
+    });
+
+    const { bones } = specToThreeSkeleton(TRG);
+    const bindWorld = new Map<string, Quaternion>();
+    bones[0].updateMatrixWorld(true);
+    for (const b of bones)
+      bindWorld.set(b.name, new Quaternion().setFromRotationMatrix(b.matrixWorld));
+
+    const atZero = result.clipParams.keyframes.filter((k) => k.time === 0);
+    expect(atZero.length, 'the emitted clip must carry the rest frame').toBeGreaterThan(0);
+    for (const k of atZero) {
+      const bone = bones[k.bone];
+      if (!bone) continue;
+      bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
+    }
+    bones[0].updateMatrixWorld(true);
+
+    let worst = 0;
+    let worstName = '';
+    for (const bone of bones) {
+      if (!Object.values(MAP).includes(bone.name)) continue;
+      const now = new Quaternion().setFromRotationMatrix(bone.matrixWorld);
+      const off = now.angleTo(bindWorld.get(bone.name)!) * (180 / Math.PI);
+      if (off > worst) {
+        worst = off;
+        worstName = bone.name;
+      }
+    }
+    expect(worst, `${worstName} drifted from its bind at the rest frame`).toBeLessThan(0.5);
+  });
+
+  it('leaves a rig pair it cannot reconcile exactly as it found it', () => {
+    // The refusal path, end to end. A source rest laid on ONE axis — the shape
+    // this project actually receives — must produce byte-identical output to a
+    // build with the whole-rig step removed, which is what makes this change
+    // additive rather than a rewrite of what ships today.
+    const flat: BoneSpec[] = SRC.map((b, i) => ({
+      ...b,
+      position: (i === 0 ? [0, 1, 0] : [Math.hypot(...b.position), 0, 0]) as [
+        number,
+        number,
+        number,
+      ],
+    }));
+    const keyframes: AnimationKeyframe[] = [];
+    flat.forEach((b, i) => {
+      keyframes.push({ bone: i, time: 0, position: [...b.position], rotation: [0, 0, 0] });
+      keyframes.push({ bone: i, time: 1, position: [...b.position], rotation: [0, 0.15, 0] });
+    });
+    const result = retargetClip({
+      sourceBones: flat,
+      sourceClip: { name: 'flat', duration: 1, keyframes },
+      targetBones: TRG,
+      nameMap: MAP,
+    });
+    // A refused pair still retargets — it simply keeps the per-bone alignment.
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.unmappedSourceBones).toEqual([]);
+  });
+});

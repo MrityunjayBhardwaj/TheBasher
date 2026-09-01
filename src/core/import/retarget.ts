@@ -51,6 +51,7 @@ import {
   paramsToThreeClip,
   specToThreeSkeleton,
 } from './threeAdapter';
+import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
 
 export interface RetargetArgs {
   /** Source bone hierarchy (e.g. Mixamo). */
@@ -625,12 +626,38 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     ? referenceWorldRotations(sourceBoneObjs, referencePose)
     : undefined;
 
-  const localOffsets = restDirectionLocalOffsets(
-    sourceBoneObjs,
-    targetBoneObjs,
-    targetToSource,
-    sourceReference,
-  );
+  // ── RECONCILE THE TWO RESTS AS A WHOLE, WHEN THAT IS POSSIBLE AT ALL ──────
+  //
+  // Everything below composes as `T_b(t) = W_b(t) · Q_b` — the source bone's
+  // world rotation, right-multiplied by a bone-local offset
+  // (SkeletonUtils.js:127). That shape can express a difference of bone-axis
+  // CONVENTION and cannot express a difference of body ORIENTATION, because the
+  // latter is a conjugation. Copying world rotations between two rigs whose rests
+  // face different ways turns a forward arm raise into a lateral one, and no
+  // per-bone offset repairs it.
+  //
+  // So when the two rests do correspond as poses, the whole-rig part is lifted
+  // out and applied where it can be: the source WRAPPER carries `R` on the left,
+  // the offsets carry `R⁻¹` on the right, and the pipeline composes
+  // `R · W_b(t) · R⁻¹ · B_b`. The wrapper is the right place for it — the clip
+  // animates the bones, so a rotation put on the root BONE would be overwritten
+  // frame by frame, while the wrapper is untouched by the mixer.
+  //
+  // `solveRestAlignment` returns null for the rests this project receives today
+  // (they lay every bone on one axis, so there is no orientation to solve for),
+  // and the per-bone direction alignment is kept unchanged for them.
+  const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
+  if (restAlignment) {
+    sourceWrap.quaternion.copy(restAlignment.rotation);
+    sourceWrap.updateMatrixWorld(true);
+  }
+
+  const localOffsets = restAlignment
+    ? // Uniform across every mapped bone, chain ends included: a rest that
+      // supplies a body frame gives a leaf its third degree of freedom too, so
+      // nothing here needs the clip's first frame as a stand-in neutral.
+      alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
+    : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
