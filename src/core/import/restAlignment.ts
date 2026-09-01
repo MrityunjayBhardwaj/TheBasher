@@ -256,9 +256,19 @@ export function solveRestAlignment(
   const rotation = bestRigidRotation(from, to);
   const before = rmsDisagreement(from, to, new Quaternion());
   const after = rmsDisagreement(from, to, rotation);
-  if (before <= 1e-9) return null;
+  // What is actually required is that the two rests CORRESPOND once the rotation
+  // is applied — that is the residual bound, and it is the primary test.
   if (after > MAX_RESIDUAL_DEGREES) return null;
-  if (after > before * (1 - MIN_EXPLAINED_FRACTION)) return null;
+  // The fraction is a second, narrower guard: it rejects a solve that found a
+  // rotation which explained nothing, which is what a rank-1 source produces.
+  // It only applies when there was a real disagreement to explain. Two rests
+  // that already correspond need no rotation, and refusing them for failing to
+  // improve on nothing would reject the BEST case — the rotation is simply
+  // identity, and every bone still gains the third degree of freedom the aligned
+  // offsets carry.
+  if (before > MAX_RESIDUAL_DEGREES && after > before * (1 - MIN_EXPLAINED_FRACTION)) {
+    return null;
+  }
 
   return { rotation, disagreementBefore: before, disagreementAfter: after };
 }
