@@ -1169,3 +1169,97 @@ describe('the retarget scale comes from the leg chain, not the hip offset (#846)
     expect(travel).not.toBeCloseTo(2.0, 2);
   });
 });
+
+describe('a rest direction that OPPOSES the target’s is refused, not guessed (#864)', () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS BLOCK IS FOR
+  // ─────────────────────────────────────────────────────────────────────────
+  // The correction aligns each bone by the MINIMAL rotation between two rest
+  // directions. That rotation is well behaved while the two point differently,
+  // and undetermined when they point OPPOSITE ways: every axis perpendicular to
+  // the bone carries one onto the other, and those half-turns differ from each
+  // other by a roll about the bone — the third degree of freedom the retarget is
+  // already short of. So near the opposite the answer is not merely large, it is
+  // picked by an implementation detail of `setFromUnitVectors`.
+  //
+  // It cannot fire on the clips we receive today: their rests lay every bone on
+  // one axis, so every mapped pair sits at exactly 90°. The whole suite above is
+  // the evidence that the refusal does not over-fire — those rows assert that
+  // direction alignment HAPPENED, and they fail if it silently stopped.
+  //
+  // The case is reachable, though. A source rest exported as a proper T-pose puts
+  // its legs 175–179° from the target's bone axis.
+  //
+  // The opposed bone is the MIDDLE one, which is where it occurs in a real rig —
+  // a leg under a well-conditioned hip. The root pair stays at a healthy 90°, so
+  // there is a corrected ancestor for the refusal to fall back to. (A refused
+  // bone with no corrected ancestor gets no entry at all, exactly as an
+  // undirectable root already does.)
+  const OPPOSED_SRC = (tiltX: number, tiltZ: number): BoneSpec[] => [
+    { name: 's_root', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_bone', parent: 0, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_tip', parent: 1, position: [tiltX, -1, tiltZ], rotation: [0, 0, 0] },
+  ];
+  const OPPOSED_TRG: BoneSpec[] = [
+    { name: 't_root', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_bone', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_tip', parent: 1, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const MAP = { t_root: 's_root', t_bone: 's_bone', t_tip: 's_tip' };
+  const offsetsFor = (tiltX: number, tiltZ: number) =>
+    restDirectionLocalOffsets(
+      specToThreeSkeleton(OPPOSED_SRC(tiltX, tiltZ)).bones,
+      specToThreeSkeleton(OPPOSED_TRG).bones,
+      MAP,
+    );
+  const q = (m: Matrix4) => new Quaternion().setFromRotationMatrix(m);
+  const degrees = (a: Quaternion, b: Quaternion) => a.angleTo(b) * (180 / Math.PI);
+
+  it('two rests that differ by half a degree do not get corrections a half-turn apart', () => {
+    // The property that matters, stated without naming a mechanism: a hair of
+    // difference in the input may not become a large difference in the output.
+    // Both rests sit within 0.6° of exactly opposite and differ from each other
+    // only in WHICH WAY they lean.
+    //
+    // This is the row that reds when the refusal is removed — unguarded, the two
+    // corrections come out about 90° apart, because the minimal rotation's axis
+    // swings with the lean it was handed.
+    const leanOneWay = offsetsFor(0.01, 0);
+    const leanTheOther = offsetsFor(0, 0.01);
+    expect(
+      degrees(q(leanOneWay['t_bone']), q(leanTheOther['t_bone'])),
+      'a 0.57° change of rest must not swing the correction',
+    ).toBeLessThan(2);
+  });
+
+  it('the refused bone takes the documented fallback rather than an invented rotation', () => {
+    // Refusing has to leave something behind. It leaves what a bone with no
+    // mapped child already gets — the nearest corrected ancestor's — which is
+    // DEFINED rather than correct. Supplying the missing second axis so the
+    // rotation is determined instead of minimal is a different change.
+    const offsets = offsetsFor(0.01, 0);
+    expect(offsets['t_bone']).toBeInstanceOf(Matrix4);
+    expect(
+      degrees(q(offsets['t_bone']), q(offsets['t_root'])),
+      'a refused bone inherits, exactly as a chain end does',
+      // 1e-4 DEGREES. The comparison is in degrees, so this is ~2e-6 radians —
+      // still four orders below the smallest difference any real disagreement
+      // could produce, and above the noise of decomposing a matrix to a
+      // quaternion, which lands around 2e-6 degrees.
+    ).toBeLessThan(1e-4);
+  });
+
+  it('still aligns by direction when the two rests merely disagree', () => {
+    // The other side of the refusal, so the bound is pinned from both directions.
+    // A pair at 90° — every pair in every clip we currently receive — is aligned,
+    // not refused. Were the bound loose enough to catch this, the retarget would
+    // quietly stop correcting anything at all.
+    const offsets = offsetsFor(1, 0); // s_tip out along +X: a 90° pair, not opposed
+    const turn = 2 * Math.acos(Math.min(1, Math.abs(q(offsets['t_bone']).w))) * (180 / Math.PI);
+    expect(
+      turn,
+      'local +Y onto the source direction is a real turn, not an inherited one',
+    ).toBeGreaterThan(30);
+    expect(degrees(q(offsets['t_bone']), q(offsets['t_root']))).toBeGreaterThan(1);
+  });
+});

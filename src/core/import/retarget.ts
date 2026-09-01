@@ -329,6 +329,15 @@ export function referenceWorldRotations(
   return out;
 }
 
+/**
+ * How nearly opposite two rest directions may be before the minimal rotation
+ * between them stops being a usable correction. cos(168.5 deg), the angle at
+ * which a nudge to either direction is amplified about tenfold in the result.
+ * Derived from the measured amplification curve rather than chosen for roundness
+ * -- see the refusal site in `restDirectionLocalOffsets` for the table.
+ */
+export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
+
 export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
@@ -469,6 +478,39 @@ export function restDirectionLocalOffsets(
     const targetDir = localDirection(targetBone, targetChild);
     const sourceDir = localDirection(sourceBone, sourceChild);
     if (!targetDir || !sourceDir) {
+      withoutADirection();
+      continue;
+    }
+
+    // A pair that is nearly OPPOSITE has no usable minimal rotation. Every axis
+    // perpendicular to the bone carries one direction onto the other, and those
+    // half-turns differ from each other by a roll ABOUT the bone — the very
+    // degree of freedom this correction is already short of. So the answer is
+    // not merely large, it is undetermined, and it is picked by an
+    // implementation detail rather than by anything in either rig.
+    //
+    // Measured: nudge the source direction by 0.5 deg and read how far the
+    // correction moves. The amplification is about 2/sin(angle) --
+    //
+    //     90 deg -> 0.71 deg out (1.4x)      175 deg -> 11.42 deg out (22.8x)
+    //    150 deg -> 1.93 deg out (3.9x)      179 deg -> 57.35 deg out (114.7x)
+    //
+    // -- so the refusal is placed where the amplification reaches 10x, which is
+    // 168.5 deg, cos -0.98. Below that a degree of rest error stays a few
+    // degrees of correction error; above it, rest noise becomes a large
+    // arbitrary twist that presents as a retarget bug rather than a
+    // conditioning one.
+    //
+    // This cannot fire on any source we currently receive: their rests lay every
+    // bone on one axis, so every mapped pair sits at exactly 90 deg. It fires on
+    // a source whose rest genuinely opposes the target's bone axis -- which a
+    // proper T-pose rest does at the legs, at 175-179 deg.
+    //
+    // Falling back is the module's own existing answer to "this bone cannot be
+    // aligned by direction", used already for a bone with no mapped child. What
+    // it yields is DEFINED rather than correct; supplying the missing second
+    // axis so the rotation is determined instead of minimal is a separate change.
+    if (targetDir.dot(sourceDir) < ANTIPARALLEL_REFUSAL_COSINE) {
       withoutADirection();
       continue;
     }
