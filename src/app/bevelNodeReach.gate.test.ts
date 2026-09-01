@@ -40,6 +40,8 @@ import { getNodeType } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { boxGeometryRef, bevelGeometryRef } from './modifierGeometry';
+import { bevelLayoutOf } from './bevelLayout';
+import { EMPTY_SELECTION_QUERY, resolveComponentSelection } from '../nodes/componentSelection';
 import { BevelModifierParams } from '../nodes/BevelModifier';
 import type { ObjectData } from '../nodes/types';
 
@@ -177,5 +179,124 @@ describe('#818 — the node cannot reach the builder’s refusal', () => {
       { target: source() },
     ) as { materialSlots?: unknown; attributeKey?: unknown };
     expect(Object.keys(built)).toEqual(['kind', 'geometry', 'material']);
+  });
+});
+
+// ── #862 — THE SAME CLAIM ON THE SELECTION AXIS ───────────────────────────────────────
+//
+// Everything above runs over `amount`. This block runs the identical shape over WHICH EDGES
+// are chamfered, because the node has a second way to end up chamfering nothing and it used
+// to answer differently — three ways, in fact, for one question:
+//
+//     amount = 0            -> passthrough   (the reference's `is_disabled`)
+//     scope selects nothing -> an object carrying NO MESH
+//     angle selects nothing -> a THROW on the render walk, and the app unmounted
+//
+// The third is what forced this: `angleLimit` at 90 on a default cube selects nothing, and
+// half the slider's own range reaches it by a scrub drag. The arm added for it is keyed on
+// the resolved COUNT rather than on which producer named it, so all three now answer
+// `passthrough` — and these rows are what keep them answering it together.
+//
+// 🔑 THE ROWS GO THROUGH THE REAL EVALUATOR, so the selection is resolved by `scopeFor` from
+// params exactly as it is in the app. A row that called `evaluate` directly with a
+// hand-made selection would be asserting the arm against a fixture rather than against the
+// road the crash actually came down.
+
+/** Param sets spanning the ways a bevel can end up chamfering nothing — and not. */
+const SELECTIONS = [
+  { label: 'unscoped', params: {} },
+  { label: 'scope names a subset', params: { scope: '0-3' } },
+  { label: 'scope names one edge', params: { scope: '0' } },
+  { label: 'scope names NOTHING (out of range)', params: { scope: '50' } },
+  { label: 'angle 30 — every edge of a cube', params: { limitMethod: 'angle', angleLimit: 30 } },
+  { label: 'angle 89.9 — still every edge', params: { limitMethod: 'angle', angleLimit: 89.9 } },
+  {
+    label: 'angle 90 — NOTHING, and the epsilon is why',
+    params: { limitMethod: 'angle', angleLimit: 90 },
+  },
+  { label: 'angle 120 — NOTHING', params: { limitMethod: 'angle', angleLimit: 120 } },
+  { label: 'angle 180 — NOTHING', params: { limitMethod: 'angle', angleLimit: 180 } },
+] as const;
+
+/** What the node did, over the real evaluator, for one selection's params. */
+function selectionOutcome(params: Record<string, unknown>): 'passthrough' | 'built' | 'threw' {
+  const src = source();
+  try {
+    const out = evaluateNodeAlone(
+      'BevelModifier',
+      { amount: 0.1, muted: false, ...params },
+      { target: src },
+    );
+    return out === src ? 'passthrough' : 'built';
+  } catch {
+    return 'threw';
+  }
+}
+
+/** How many edges that params set resolves to — asked of the resolver, never of the label. */
+function resolvedCount(params: Record<string, unknown>): number | null {
+  const spine = { kind: 'MeshData', geometry: box(), material: null, attributeKey: null };
+  const got = resolveComponentSelection(spine as unknown as ObjectData, params, 'edge');
+  return got === null ? null : got.count;
+}
+
+describe('#862 — an empty selection is an authoring state, not a crash', () => {
+  it('THE INSTRUMENT CONTROL: the probe really produces both empty and non-empty selections', () => {
+    // Without this the rows below could all pass while every selection resolved the same way.
+    const counts = SELECTIONS.map((s) => resolvedCount(s.params));
+    const empty = counts.filter((c) => c === 0).length;
+    const nonEmpty = counts.filter((c) => c !== 0 && c !== null).length;
+    expect({ examined: counts.length, empty, nonEmpty }).toEqual({
+      examined: 9,
+      empty: 4,
+      nonEmpty: 5,
+    });
+  });
+
+  it('🔴 THE CLAIM: no selection an author can reach makes the node throw', () => {
+    // The row that would have caught #862 before it shipped. `angleLimit` is a number in
+    // [0, 180] with a scrub handle, so every value here is one drag away.
+    const reached = SELECTIONS.filter((s) => selectionOutcome(s.params) === 'threw').map(
+      (s) => s.label,
+    );
+    expect({ examined: SELECTIONS.length, reached }).toEqual({ examined: 9, reached: [] });
+  });
+
+  it('🔴 …and passthrough lands exactly on the empty ones, whichever road named them', () => {
+    // The half that cannot pass vacuously, and the half that pins the THREE-ANSWERS fix: the
+    // scope road and the angle road must give the same answer to the same question.
+    const rows = SELECTIONS.map((s) => ({
+      label: s.label,
+      count: resolvedCount(s.params),
+      outcome: selectionOutcome(s.params),
+    }));
+    expect(rows).toEqual([
+      { label: 'unscoped', count: 12, outcome: 'built' },
+      { label: 'scope names a subset', count: 4, outcome: 'built' },
+      { label: 'scope names one edge', count: 1, outcome: 'built' },
+      // 🔑 THE SCOPE ROAD'S EMPTY CASE. It used to mount an object carrying no mesh; it now
+      // gives the same answer the zero amount gives, which is the point of keying the arm on
+      // the count rather than on the producer.
+      { label: 'scope names NOTHING (out of range)', count: 0, outcome: 'passthrough' },
+      { label: 'angle 30 — every edge of a cube', count: 12, outcome: 'built' },
+      { label: 'angle 89.9 — still every edge', count: 12, outcome: 'built' },
+      // 🔴 THE CRASH, PINNED AS THE VALUE MOST LIKELY TO BE TYPED. A cube's angle reads back
+      // as 90.0000025° through a `Float32Array`, so the reference's epsilon is what makes 90
+      // select nothing rather than everything — and selecting nothing is what used to throw.
+      { label: 'angle 90 — NOTHING, and the epsilon is why', count: 0, outcome: 'passthrough' },
+      { label: 'angle 120 — NOTHING', count: 0, outcome: 'passthrough' },
+      { label: 'angle 180 — NOTHING', count: 0, outcome: 'passthrough' },
+    ]);
+  });
+
+  it('THE MUST-RED: the builder really does refuse an empty selection, by name', () => {
+    // Stated positively for the reason the amount axis states its own: without it, every
+    // `passthrough` above could be a coincidence rather than a guard, and the fallback
+    // direction — chamfer NOTHING, never chamfer EVERYTHING — would be unpinned.
+    const verdict = bevelLayoutOf(
+      bevelGeometryRef(box(), 0.1, EMPTY_SELECTION_QUERY, 'edge').descriptor,
+    );
+    expect(verdict.kind).toBe('refused');
+    if (verdict.kind === 'refused') expect(verdict.why).toMatch(/selects none/);
   });
 });

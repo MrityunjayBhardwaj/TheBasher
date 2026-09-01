@@ -582,6 +582,14 @@ describe('#607 the query has exactly one reader', () => {
       // still cannot reach a term, and the schemas stay with the one node that declares them.
       'ANGLE_LIMIT_PARAM',
       'ComponentSelection',
+      // #862 — the spelling of the EMPTY SET, and it is a value rather than a term. A derived
+      // selection can legitimately select nothing, and that state needs a name that is not
+      // `''` (which every generator reads as EVERYTHING) and not `null` (the unscoped road).
+      // Exported so the gate that pins its length-independence, and the row that pins the
+      // resolver's answer, both name the same string instead of two copies of `'^0'` that
+      // agree today. It is one closed query, not a door onto the language: a reader still
+      // cannot build a term or reach the parser through it.
+      'EMPTY_SELECTION_QUERY',
       'LIMIT_METHOD_PARAM',
       'SCOPE_PARAM',
       '__resetSelectionMemoForTests',

@@ -200,6 +200,24 @@ export const BevelModifierNode: NodeDefinition<BevelModifierParams, ObjectData> 
     // Not beveled yet. The reference's `is_disabled` answer, and the exact complement of
     // `bevelGeometryRef`'s refusal — see the header on why these two predicates must match.
     if (!(params.amount > 0)) return src;
+    // NOTHING SELECTED — the SAME answer as a zero amount, and for the same reason (#862).
+    //
+    // A bevel over an empty selection chamfers nothing, which is the state a zero amount also
+    // describes, so the node gives one answer to one question rather than two. Before this arm
+    // it gave THREE: a zero amount passed through, an empty SCOPE mounted an object carrying no
+    // mesh, and an empty ANGLE result threw on the render walk and took the app down.
+    //
+    // The throw is what forced the arm — `angleLimit` at 90 on a default cube selects nothing,
+    // and half the slider's own range reaches it by a scrub drag. But the arm is keyed on the
+    // resolved COUNT and not on which producer named it, because the author's question ("what
+    // does a bevel do when it chamfers nothing?") does not change with the road the answer
+    // arrived on, and an arm that only covered the angle would leave the same three-answer
+    // split one road narrower.
+    //
+    // Complements `bevelLayoutOf`'s own refusal exactly, which is the property
+    // `bevelNodeReach.gate.test.ts` pins for both axes: the node passes through precisely where
+    // the builder would refuse, so the builder's throw stays unreachable from the node.
+    if (selection !== null && selection.count === 0) return src;
     const geometry = bevelGeometryRef(
       source.geometry,
       params.amount,
