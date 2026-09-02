@@ -399,24 +399,25 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     expect(faceCountOf(bevelGeometryRef(sub, 0.1).descriptor)).toBeNull();
   });
 
-  it('10b — a non-positive amount has no constructor, and an overshooting one is a STATED limit', () => {
+  it('10b — a non-positive amount has no constructor, and an overshooting one is CLAMPED', () => {
     // The refusal, and its two measurements.
     expect(() => bevelGeometryRef(boxGeometryRef(SIZE, null), 0)).toThrow(/positive amount/);
     expect(() => bevelGeometryRef(boxGeometryRef(SIZE, null), -0.1)).toThrow(/inside out/);
 
-    // 🔴 AND THE LIMIT THAT IS NOT CLOSED, RECORDED AS AN OBSERVATION RATHER THAN A CAVEAT.
-    // Clamping is out of scope for #814 by decision, so an amount large enough for two chamfered
-    // corners to cross is buildable. What that costs is measured here, at a unit cube:
+    // ⚠️ THIS ROW USED TO RECORD AN OPEN LIMIT AND NOW RECORDS A CLOSED ONE — #817 LANDED.
+    // It read: 0.4 welds to 24, 0.5 to 6, and 0.9 back to 24, that last being the silent case —
+    // corners overshot PAST each other, the count came back right, and nothing warned. #817
+    // quoted these exact numbers so that the day a clamp landed there would be a figure to fix
+    // rather than a description. This is that fix.
     //
-    //   0.4  welds to 24 — still a valid chamfer, corners have not met
-    //   0.5  welds to  6 — every face's corners collapse to its centre, and the point-parity
-    //                      check WARNS, because 24 declared against 6 built is a disagreement
-    //   0.9  welds to 24 — the corners have overshot PAST each other, so the count is right
-    //                      again and nothing warns. A self-intersecting shell, silently.
+    // Now the amount is clamped to the largest the geometry can accommodate, so at a unit cube:
     //
-    // The middle row is the one the existing instrument catches; the last is the one it cannot.
-    // Filed as #817 rather than left in a comment, and these rows are what that issue quotes —
-    // so the day a clamp lands, the thing it has to fix is already written down as a number.
+    //   0.4  welds to 24 — below the limit, untouched, and byte-identical to before the clamp
+    //   0.5  welds to  6 — AT the limit; every face's corners meet at its centre
+    //   0.9  welds to  6 — clamped BACK to the limit, so it is the same geometry as 0.5
+    //
+    // 🔑 THE THIRD ROW IS THE WHOLE ISSUE, INVERTED. It was the silent overshoot; it is now
+    // indistinguishable from the limit, which is what a clamp means.
     const welds = (amount: number) => {
       clear();
       const geometry = getForRead(bevelGeometryRef(boxGeometryRef(SIZE, null), amount))!;
@@ -424,7 +425,7 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     };
     expect(welds(0.4)).toBe(24);
     expect(welds(0.5)).toBe(6);
-    expect(welds(0.9)).toBe(24);
+    expect(welds(0.9)).toBe(6);
   });
 
   it('10c — the derived kinds compose OVER a bevel, not just under it', () => {
