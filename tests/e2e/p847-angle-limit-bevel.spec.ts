@@ -5,12 +5,18 @@
 // The unit gates already pin which edges an angle limit selects, the reference's epsilon, and
 // the empty case. Three claims are invisible to all of them:
 //
-// 1. **A DIRECTOR CAN ACTUALLY REACH THIS.** Every scoped operator before it is driven in e2e
-//    through `setParam`, because `scope` is a string and a string param has no generic
-//    inspector row — that is #667's gap, true of all six of them. `limitMethod` and
-//    `angleLimit` are an enum and a number, so they get the generic rows for free, and this is
-//    the FIRST selection an author can name without touching the DAG. The rows below drive the
-//    real dropdown and the real numeric input.
+// 1. **A DIRECTOR CAN ACTUALLY REACH THIS.** `limitMethod` and `angleLimit` are an enum and a
+//    number, so they get the generic inspector rows for free, and this was the FIRST selection
+//    an author could name without touching the DAG. The rows below drive the real dropdown and
+//    the real numeric input.
+//
+//    ⚠️ THE SENTENCE THAT USED TO BE HERE IS RETIRED, BY #872. It read: *"every scoped operator
+//    before it is driven in e2e through `setParam`, because `scope` is a string and a string
+//    param has no generic inspector row — that is #667's gap, true of all six of them."* True
+//    when written; a param now DECLARES its control on its schema, `scopeParam()` declares one,
+//    and all six scoped operators render an editable query field. `p872-authorable-selection`
+//    drives it. What survives is the narrower claim above — this file is still the first place
+//    an angle-named selection is authored end to end.
 //
 //    ⚠️ AND THE CONTROLS ONLY EXIST WHILE THE MODIFIER ROW IS EXPANDED. Measured, after an
 //    enumeration over the collapsed panel came back with no matching testid at all and read
