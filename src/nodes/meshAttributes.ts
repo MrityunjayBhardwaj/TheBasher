@@ -618,15 +618,32 @@ export function carriageForDomain(
       // weights anywhere in this module. So this refuses rather than reaching for the face map: a
       // minted corner given its representative face's corner value would be a plausible, wrong,
       // un-interpolated UV, which is exactly the quiet kind of wrong this substrate exists to
-      // prevent. The bevel emitting NO uv is what keeps that observation able to discriminate.
+      // prevent.
+      //
+      // ⚠️ THE REFUSAL STANDS AND ITS LAST SENTENCE DID NOT (#825 slice 2). That sentence read
+      // *"the bevel emitting NO uv is what keeps that observation able to discriminate"*, and a
+      // bevel now emits one: `buildBevel` interpolates every output corner from its
+      // representative and writes a `uv` attribute. Both statements are true because they are
+      // about DIFFERENT ROADS, and the message has to say so or a reader meets a warning saying
+      // their UVs were dropped while looking at a mesh that has them.
+      //
+      // The corner layer's real direction of travel is GEOMETRY → STORE: `uvAttributes.ts` lifts
+      // `uv` off built geometry and mints it. So this store-side gather is not the road a bevel's
+      // UVs take, was never going to be, and closing it is a separate question from the one #825
+      // slice 2 answered. What still genuinely refuses here is a corner attribute that is NOT
+      // derivable from the built geometry — one an author or an importer put in the store
+      // directly — and that is what the wording now claims and nothing more.
       if (corners === null)
         return {
           kind: 'refused',
           why:
             `'${operator}' mints faces, and a '${data.type}' at the '${domain}' domain cannot be ` +
             `gathered through an order at all — a minted corner's value is INTERPOLATED from a ` +
-            `representative face at its own position, and this road carries no positions`,
-          until: '#825',
+            `representative face at its own position, and this store-side road carries no ` +
+            `positions. A '${operator}' DOES interpolate the uv layer it builds (#825), so a ` +
+            `layer derivable from the built geometry survives by being lifted off it; only a ` +
+            `corner attribute that is not is lost here`,
+          until: '#881',
         };
       return {
         kind: 'laid-out',
