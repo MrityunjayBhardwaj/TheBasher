@@ -460,6 +460,20 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
  * returns `null` on its first line. Measured cost of the walk it skips: 4.2 ms at 33 k points,
  * and an imported asset is routinely larger than that.
  */
+/**
+ * Is this geometry a bevel standing AT OR PAST its collision limit, where corners have met?
+ *
+ * The stamp is written by `buildBevel` — the only place that knows, because the limit is a
+ * POSITION fact and this module is otherwise structural. Both halves are required: the
+ * descriptor must be a bevel AND the build must carry the stamp, so a stamp arriving on any
+ * other kind, or a bevel below its limit, is not an exemption.
+ *
+ * REF: src/app/geometryRegistry.ts (`buildBevel`, `clampOverlapLimit`); issue #817.
+ */
+function isClampedBevel(descriptor: GeometryDescriptor, geometry: BufferGeometry): boolean {
+  return descriptor.kind === 'bevel' && typeof geometry.userData.bevelCollisionLimit === 'number';
+}
+
 export function pointCountMismatch(
   descriptor: GeometryDescriptor,
   geometry: BufferGeometry,
@@ -472,6 +486,22 @@ export function pointCountMismatch(
   if (tiling === null) {
     const { points } = weldByPosition(geometry);
     if (points === expected.count) return null;
+    // 🔑 A CLAMPED BEVEL IS ALLOWED TO WELD LOWER, AND ONLY LOWER (#817).
+    //
+    // This check reads a POSITION weld as a proxy for a TOPOLOGICAL count, which holds only while
+    // no two topological points are allowed to share a position. A bevel clamped at its collision
+    // limit breaks that premise BY CONSTRUCTION: the corners meet, which is the whole meaning of
+    // the clamp, and it is what the reference produces too — Blender 5.1.1 with clamp overlap on
+    // answers 24 vertices at 6 distinct positions for every over-limit amount on a unit cube.
+    // Reporting that as drift would be describing the reference's own answer as a defect.
+    //
+    // 🔴 THE INEQUALITY IS THE WHOLE GUARD, AND IT IS ONE-SIDED ON PURPOSE. Merging can only ever
+    // REDUCE the number of distinct positions, so a clamped build welding BELOW its derived count
+    // is expected and a clamped build welding ABOVE it is impossible — that would be more
+    // distinct positions than there are topological points, which no clamp can cause and which
+    // is exactly the drift this function exists to catch. So the exemption cannot swallow a real
+    // disagreement; it only forgives the direction the clamp can actually produce.
+    if (isClampedBevel(descriptor, geometry) && points < expected.count) return null;
     const split = geometry.getAttribute('position')?.count ?? 0;
     return `pointCount: descriptor '${descriptor.kind}' derives ${expected.count} topological points but the built geometry welds to ${points} (from ${split} split positions)`;
   }

@@ -61,7 +61,7 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // imports, which is what keeps the registry's declared import set honest: every module
 // here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
 import { scopeSelection } from '../nodes/scopeQuery';
-import { bevelLayoutOf } from './bevelLayout';
+import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
 import type { ScopeDomain } from '../nodes/attributes';
 
@@ -1053,7 +1053,14 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
     for (let k = 0; k < welded.length; k++) splitOf[welded[k]] = split[k];
   }
 
+  // 🔴 TWO PASSES SINCE #817, AND THE SPLIT IS WHAT THE CLAMP COSTS. The direction a point is
+  // pulled is a property of the SOURCE's shape alone; only the DISTANCE depends on `amount`. The
+  // collision limit is a ratio between the two, so every direction has to exist before any
+  // position can be written. Pass one fills `deltas`, `clampOverlapLimit` reads them, pass two
+  // applies whichever amount survives.
   const points = new Float32Array(layout.points * 3);
+  const deltas = new Float32Array(layout.points * 3);
+  const anchor = new Int32Array(layout.points).fill(-1);
   for (let i = 0; i < layout.placement.length; i++) {
     const rule = layout.placement[i];
     const here = splitOf[rule.point];
@@ -1131,9 +1138,22 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
     // `vertex` leaves the deltas at zero: a point with no chamfered edge does not move, which is
     // the whole of that arm and is why it needs no branch of its own here.
     const p = i * 3;
-    points[p] = hx + d.amount * dx;
-    points[p + 1] = hy + d.amount * dy;
-    points[p + 2] = hz + d.amount * dz;
+    deltas[p] = dx;
+    deltas[p + 1] = dy;
+    deltas[p + 2] = dz;
+    anchor[i] = here;
+  }
+
+  // ── 1b. CLAMP OVERLAP (#817) — the amount the geometry can actually accommodate ────────
+  const limit = clampOverlapLimit(layout, position, splitOf, deltas);
+  const amount = Math.min(d.amount, limit);
+  for (let i = 0; i < layout.points; i++) {
+    const p = i * 3;
+    const here = anchor[i];
+    if (here < 0) return null;
+    points[p] = position.getX(here) + amount * deltas[p];
+    points[p + 1] = position.getY(here) + amount * deltas[p + 1];
+    points[p + 2] = position.getZ(here) + amount * deltas[p + 2];
   }
 
   // ── 2. One split vertex per OUTPUT CORNER, fanned into triangles ──────────────────────
@@ -1160,7 +1180,150 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
   built.setAttribute('position', new Float32BufferAttribute(positions, 3));
   built.setIndex(index);
   built.computeVertexNormals();
+  // 🔑 A CLAMPED BEVEL SAYS SO ON THE GEOMETRY, BECAUSE ONLY THIS FUNCTION KNOWS (#817).
+  //
+  // At the collision limit chamfered corners MEET, so the buffer holds fewer distinct positions
+  // than the descriptor derives topological points — 24 against 6 on a unit cube, which is the
+  // reference's own output for every over-limit amount (Blender 5.1.1, clamp overlap on).
+  // `pointCountMismatch` compares exactly those two numbers, and its own note says it fires only
+  // when "the arithmetic and three.js's tessellation drift apart" — true until this clamp
+  // existed. Without the stamp it would report the reference's correct answer as a defect, on
+  // every clamped build rather than only at the one symmetric amount that used to reach it.
+  //
+  // ⚠️ THE CONDITION IS "AT OR PAST THE LIMIT", NOT "WAS REDUCED", AND THE DIFFERENCE WAS
+  // MEASURED. Stamping only when the clamp actually lowered the amount left the exactly-at-limit
+  // case warning: at `amount === limit` nothing is reduced, yet the corners have still met and
+  // the positions still coincide. That is the single most reachable value of all — it is where
+  // every larger amount lands after clamping.
+  //
+  // The LIMIT is recorded rather than a bare flag: a reader asking why a bevel stopped growing
+  // wants the number it stopped at, and a boolean cannot answer that.
+  if (Number.isFinite(limit) && d.amount >= limit) built.userData.bevelCollisionLimit = limit;
   return built;
+}
+
+/**
+ * THE LARGEST AMOUNT THIS BEVEL CAN TAKE BEFORE TWO CHAMFERED CORNERS PASS THROUGH EACH OTHER.
+ *
+ * ── WHY A CLAMP AND NOT A REFUSAL (#817), GROUNDED IN BOTH REFERENCES ─────────────────────
+ *
+ * Blender clamps by default — `do_clamp = !(bmd->flags & MOD_BEVEL_OVERLAP_OK)`
+ * (`MOD_bevel.cc:130`), so overlap is the opt-in. Houdini's PolyBevel says the same thing in
+ * words, under *Detect Collisions*: *"when two adjacent points in the offset front collide, stop
+ * the points there (don't move the points past each other, creating overlap)"*. Neither refuses.
+ *
+ * And refusing would be the #862 mistake a second time: `amount` carries a scrub handle, so a
+ * refusal is a cliff an author reaches by dragging rather than by typing something unreasonable.
+ *
+ * ── IT IS ONE GLOBAL FACTOR, NOT A LIMIT PER CORNER, AND THAT IS THE REFERENCE'S SHAPE ────
+ *
+ * `bevel_limit_offset` (`bmesh_bevel.cc:8186`) takes the MINIMUM collision offset over every
+ * beveled vertex and then scales EVERY offset spec by the single ratio `limited_offset /
+ * bp->offset` (`:8211-8230`). The whole bevel shrinks uniformly to the tightest constraint
+ * anywhere on the mesh. Clamping each corner against its own limit instead would produce a
+ * chamfer whose width VARIES across the mesh — a shape neither reference produces, and not what
+ * one `amount` number says.
+ *
+ * 🔴 AND IT CLAMPS TO THE COLLISION POINT ITSELF, WITH NO SLACK. Measured twice, because the
+ * first instinct here was to stop just short of it so that coincident positions never occur:
+ *
+ *   - THE SOURCE. There is no epsilon anywhere in `bevel_limit_offset`. The `BEVEL_EPSILON`
+ *     tests inside `geometry_collide_offset` (`:8093`, `:8095`) guard a division by a
+ *     near-zero denominator; they are not margin on the value returned.
+ *   - THE RUNNING REFERENCE. Blender 5.1.1, unit cube, clamp overlap ON: at every amount from
+ *     0.5 up the result is 24 vertices at 6 DISTINCT POSITIONS. So the reference's clamped
+ *     output lives in the coincident state permanently, rather than avoiding it.
+ *
+ * That is why `pointCountMismatch` had to learn about this case instead: 24 topological points
+ * welding to 6 positions is CORRECT here, and a warning that fires on it would be describing
+ * the reference's own answer as a defect.
+ *
+ * ── THE BOUND ────────────────────────────────────────────────────────────────────────────
+ *
+ * Every output point moves by `amount * delta`, where `delta` is a sum of unit vectors fixed by
+ * the source's shape. Along a source edge `AB` the two ends close at
+ * `amount * [(dA . u) + (dB . -u)]`, so they meet at
+ *
+ *     amount = |AB| / [(dA . u) + (dB . -u)]
+ *
+ * which is the direct analogue of the reference's `len / offsets_projected_on_B` (`:8091`) —
+ * an edge length over the offsets projected onto that edge. The minimum over every source edge
+ * is the limit.
+ *
+ * ⚠️ CONSERVATIVE WHERE A SOURCE POINT CARRIES SEVERAL OUTPUT POINTS, WHICH A PARTIAL BEVEL
+ * MAKES ORDINARY. Which of them actually approach each other along `AB` depends on the runs
+ * bounding that edge, so this takes the LARGEST projection at each end and pairs the worst with
+ * the worst. That can clamp a shade earlier than strictly necessary; it cannot clamp too late.
+ * The reference makes the same trade and says so in its own words at `:8040`: *"This is only
+ * right sometimes. The exact answer is very hard to calculate."*
+ *
+ * Returns `Infinity` when nothing constrains the bevel, so the caller's `Math.min` is a no-op
+ * and an unconstrained bevel is byte-identical to what it built before this existed.
+ *
+ * REF: ref/sources/blender-mesh/bmesh_bevel.cc:8012 (`geometry_collide_offset`), :8186
+ *      (`bevel_limit_offset`); MOD_bevel.cc:130; issues #817, #814, #862.
+ */
+function clampOverlapLimit(
+  layout: BevelLayout,
+  position: { getX(i: number): number; getY(i: number): number; getZ(i: number): number },
+  splitOf: Int32Array,
+  deltas: Float32Array,
+): number {
+  // Output points grouped by the SOURCE point they came from — a partial bevel gives one source
+  // point several, and each carries its own direction.
+  const atSource: number[][] = Array.from({ length: layout.sourcePoints }, () => []);
+  for (let i = 0; i < layout.points; i++) {
+    const from = layout.placement[i].point;
+    if (from >= 0 && from < atSource.length) atSource[from].push(i);
+  }
+
+  let limit = Infinity;
+  const seen = new Set<number>();
+  for (const rim of layout.sourceRims) {
+    for (let k = 0; k < rim.length; k++) {
+      const a = rim[k];
+      const b = rim[(k + 1) % rim.length];
+      if (a === b) continue;
+      // Each source edge is walked once per incident face; the bound does not depend on which,
+      // so the second visit is skipped rather than recomputed.
+      const key = a < b ? a * layout.sourcePoints + b : b * layout.sourcePoints + a;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const sa = splitOf[a];
+      const sb = splitOf[b];
+      if (sa < 0 || sb < 0) continue;
+      const ux = position.getX(sb) - position.getX(sa);
+      const uy = position.getY(sb) - position.getY(sa);
+      const uz = position.getZ(sb) - position.getZ(sa);
+      const length = Math.hypot(ux, uy, uz);
+      // A zero-length source edge is a degenerate face, which the placement loop already steps
+      // over rather than dividing by. Same treatment, for the same reason.
+      if (length === 0) continue;
+      const nx = ux / length;
+      const ny = uy / length;
+      const nz = uz / length;
+
+      // The largest advance either end makes ALONG this edge. A point pulled away from the edge
+      // projects negative and cannot collide across it, so those contribute nothing.
+      let toward = 0;
+      for (const i of atSource[a]) {
+        const p = i * 3;
+        toward = Math.max(toward, deltas[p] * nx + deltas[p + 1] * ny + deltas[p + 2] * nz);
+      }
+      let back = 0;
+      for (const j of atSource[b]) {
+        const p = j * 3;
+        back = Math.max(back, -(deltas[p] * nx + deltas[p + 1] * ny + deltas[p + 2] * nz));
+      }
+      const closing = toward + back;
+      // Nothing closes on this edge, so it constrains nothing. Guarded against a near-zero
+      // divisor the way the reference guards its own (`geometry_collide_offset`, :8093).
+      if (!(closing > 1e-6)) continue;
+      limit = Math.min(limit, length / closing);
+    }
+  }
+  return limit;
 }
 
 function reverseWinding(geom: BufferGeometry): BufferGeometry {
