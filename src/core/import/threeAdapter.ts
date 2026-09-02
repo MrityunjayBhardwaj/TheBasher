@@ -128,12 +128,25 @@ export function clipToKeyframes(clip: ClipShape, bones: readonly BoneSpec[]): An
   for (const [boneIdx, track] of perBone.entries()) {
     const bind = bones[boneIdx];
     const times = Array.from(track.times).sort((a, b) => a - b);
+    // #867: walk this bone's own frames in time order and keep each rotation on
+    // the branch nearest the one before it. The chain runs only across frames
+    // that actually carry a rotation — a frame falling back to the bind pose is
+    // left exactly as it was, so bones with position-only tracks are untouched.
+    let previousRotation: Vec3 | null = null;
     for (const t of times) {
+      const sampled = track.rotationAt.get(t);
+      let rotation: Vec3;
+      if (sampled === undefined) {
+        rotation = bind.rotation;
+      } else {
+        rotation = continuousEuler(sampled, previousRotation);
+        previousRotation = rotation;
+      }
       out.push({
         bone: boneIdx,
         time: t,
         position: track.positionAt.get(t) ?? bind.position,
-        rotation: track.rotationAt.get(t) ?? bind.rotation,
+        rotation,
       });
     }
   }
@@ -152,6 +165,46 @@ function parseTrackName(name: string): { bone: string; property: string } | null
 export function quaternionToEulerVec3(q: Quaternion): Vec3 {
   const e = new Euler().setFromQuaternion(q, 'XYZ');
   return [e.x, e.y, e.z] as const;
+}
+
+const TWO_PI = Math.PI * 2;
+
+/** Shift each component by whole turns to sit as close to `prev` as it can. */
+function snapTurns(cand: Vec3, prev: Vec3): Vec3 {
+  return [
+    cand[0] + TWO_PI * Math.round((prev[0] - cand[0]) / TWO_PI),
+    cand[1] + TWO_PI * Math.round((prev[1] - cand[1]) / TWO_PI),
+    cand[2] + TWO_PI * Math.round((prev[2] - cand[2]) / TWO_PI),
+  ] as const;
+}
+
+const spread = (a: Vec3, b: Vec3): number =>
+  Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
+
+/**
+ * The representation of the SAME rotation that sits nearest `prev` (#867).
+ *
+ * `Euler.setFromQuaternion` returns a CANONICAL triple — in XYZ order the middle
+ * angle is confined to [-pi/2, pi/2], so a smooth rotation sweeping through that
+ * boundary lands on the far side of it and the other two components jump by pi.
+ * Nothing about the rotation changed; only the way it is written down. But the
+ * playback sampler interpolates these components LINEARLY (`AnimationClip.ts`),
+ * so a pair of keyframes written on opposite branches makes the bone travel the
+ * long way round — measured at 361 degrees between two keys 1.4 degrees apart.
+ *
+ * Two families describe one rotation: the triple plus any whole turns per
+ * component, and the flip `(x+pi, pi-y, z+pi)` plus whole turns. Both are
+ * generated and the closer one wins. The flip identity is not assumed — it is
+ * proven over random rotations in `threeAdapterContinuity.test.ts`.
+ *
+ * This is a representation change ONLY. Every keyframe still holds the rotation
+ * it held before, which is the property the tests pin.
+ */
+export function continuousEuler(e: Vec3, prev: Vec3 | null): Vec3 {
+  if (!prev) return e;
+  const direct = snapTurns(e, prev);
+  const flipped = snapTurns([e[0] + Math.PI, Math.PI - e[1], e[2] + Math.PI] as const, prev);
+  return spread(flipped, prev) < spread(direct, prev) ? flipped : direct;
 }
 
 // ---------------------------------------------------------------------------

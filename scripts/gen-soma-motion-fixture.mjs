@@ -307,7 +307,64 @@ const WALK_REST_CM = {
 // on is not that property, and buying symmetry with it costs nothing.
 
 const parentOf = Object.fromEntries(SOMA77.map(([name, parent]) => [name, parent]));
-const restOf = (name) => WALK_REST_CM[name] ?? (name.startsWith('Right') ? [-4, 0, 0] : [4, 0, 0]);
+/**
+ * The same skeleton with an ANATOMICAL rest — spine up, arms out, legs down,
+ * toes forward — built from the degenerate table so the two cannot drift: every
+ * bone keeps its LENGTH exactly and only its DIRECTION changes.
+ *
+ * This is the shape the generator's exporter writes when asked for one (its
+ * `standard_tpose` flag swaps `bvh_neutral_joints` for `neutral_joints`), and it
+ * is the case the retarget's whole-rig reconciliation exists for. Measured on a
+ * real pair: a degenerate rest's bone directions have an eigen-spread of
+ * 0.947 / 0.053 / 0.000 — a third dimension of exactly zero — where an
+ * anatomical one reads 0.582 / 0.303 / 0.115.
+ *
+ * Lateral is Z and forward is X, which is what `walkDirection` already assumes:
+ * it aims the foot chain along +X and separates the two legs on ±Z.
+ */
+const TPOSE_DIRECTION = {
+  Spine1: [0, 1, 0],
+  Spine2: [0, 1, 0],
+  Chest: [0, 1, 0],
+  Neck1: [0, 1, 0],
+  Neck2: [0, 1, 0],
+  Head: [0, 1, 0],
+  LeftShoulder: [1, 0, 0],
+  LeftArm: [1, 0, 0],
+  LeftForeArm: [1, 0, 0],
+  LeftHand: [1, 0, 0],
+  RightShoulder: [-1, 0, 0],
+  RightArm: [-1, 0, 0],
+  RightForeArm: [-1, 0, 0],
+  RightHand: [-1, 0, 0],
+  // Hip to thigh: out to the side and a little down.
+  LeftLeg: [0, -0.29, 0.96],
+  RightLeg: [0, -0.29, -0.96],
+  LeftShin: [0, -1, 0],
+  LeftFoot: [0, -1, 0],
+  RightShin: [0, -1, 0],
+  RightFoot: [0, -1, 0],
+  // The foot itself runs forward and slightly down, which is what makes a planted
+  // sole meaningful — and forward here is +Z, the convention the tracked stand-in
+  // character is built in. Choosing +X instead left the two rests disagreeing at
+  // the feet and nowhere else, which is a PER-BONE disagreement that no whole-rig
+  // rotation can explain, and the reconciliation correctly refused the pair.
+  LeftToeBase: [0, -0.45, 0.89],
+  RightToeBase: [0, -0.45, 0.89],
+};
+
+const WALK_REST_TPOSE_CM = Object.fromEntries(
+  Object.entries(WALK_REST_CM).map(([name, offset]) => {
+    const direction = TPOSE_DIRECTION[name];
+    if (!direction) return [name, offset]; // Hips: the pelvis height, not a bone
+    const length = Math.hypot(...offset);
+    const scale = length / Math.hypot(...direction);
+    return [name, direction.map((c) => Number((c * scale).toFixed(4)))];
+  }),
+);
+
+const restOf = (name, table = WALK_REST_CM) =>
+  table[name] ?? (name.startsWith('Right') ? [-4, 0, 0] : [4, 0, 0]);
 /** The child that defines which way a joint POINTS — the first one declared. */
 const primaryChild = (name) => childrenOf(name)[0];
 
@@ -376,7 +433,7 @@ function walkDirection(name, f) {
  * with no child has no direction to aim and stays identity, inheriting its
  * parent, which is the same answer Blender's constraint stack lands on.
  */
-function solveFrame(f) {
+function solveFrame(f, table = WALK_REST_CM) {
   const world = new Map([[null, new THREE.Quaternion()]]);
   const local = new Map();
   for (const [name] of SOMA77) {
@@ -384,7 +441,7 @@ function solveFrame(f) {
     const child = primaryChild(name);
     let q = new THREE.Quaternion();
     if (child) {
-      const rest = new THREE.Vector3(...restOf(child)).normalize();
+      const rest = new THREE.Vector3(...restOf(child, table)).normalize();
       const want = walkDirection(name, f).clone().applyQuaternion(parentWorld.clone().invert());
       q = new THREE.Quaternion().setFromUnitVectors(rest, want.normalize());
     }
@@ -410,14 +467,14 @@ function toZyxDegrees(q) {
   return [deg(e.z), deg(e.y), deg(e.x)];
 }
 
-function buildWalkBvh() {
+function buildWalkBvh(table = WALK_REST_CM) {
   const lines = ['HIERARCHY', 'ROOT Root', '{', '  OFFSET 0 0 0', `  ${POSED_CHANNELS}`];
   const layout = [{ name: 'Root', channels: 6 }];
 
   const emit = (name, depth) => {
     const pad = '  '.repeat(depth);
     const posed = name === 'Hips';
-    const off = restOf(name);
+    const off = restOf(name, table);
     lines.push(`${pad}JOINT ${name}`);
     lines.push(`${pad}{`);
     lines.push(`${pad}  OFFSET ${off[0]} ${off[1]} ${off[2]}`);
@@ -435,7 +492,7 @@ function buildWalkBvh() {
   lines.push(`Frame Time: ${1 / FPS}`);
 
   for (let f = 0; f < WALK_FRAMES; f += 1) {
-    const local = solveFrame(f);
+    const local = solveFrame(f, table);
     const travel = Number(((WALK_TRAVEL_CM * f) / (WALK_FRAMES - 1)).toFixed(4));
     // A small vertical bob, so the hips carry more than one axis of motion and a
     // consumer that drops an axis is visible rather than merely smaller.
@@ -457,9 +514,19 @@ function buildWalkBvh() {
   return `${lines.join('\n')}\n`;
 }
 
-const walkTarget = resolve(outDir, 'soma-walk.bvh');
-const walkText = buildWalkBvh();
-writeFileSync(walkTarget, walkText, 'utf8');
-console.log(
-  `wrote ${walkTarget} (${Buffer.byteLength(walkText, 'utf8')} bytes, ${WALK_FRAMES} frames, ${WALK_TRAVEL_CM} cm of travel)`,
-);
+for (const [file, table] of [
+  ['soma-walk.bvh', WALK_REST_CM],
+  // The same motion over an anatomical rest. `walkDirection` asks for WORLD
+  // directions and `solveFrame` solves each local rotation against whichever
+  // rest it is given, so the two files play identically and differ only in the
+  // pose their skeleton is at rest in — which is the one property the retarget's
+  // whole-rig reconciliation turns on.
+  ['soma-walk-tpose.bvh', WALK_REST_TPOSE_CM],
+]) {
+  const walkTarget = resolve(outDir, file);
+  const walkText = buildWalkBvh(table);
+  writeFileSync(walkTarget, walkText, 'utf8');
+  console.log(
+    `wrote ${walkTarget} (${Buffer.byteLength(walkText, 'utf8')} bytes, ${WALK_FRAMES} frames, ${WALK_TRAVEL_CM} cm of travel)`,
+  );
+}
