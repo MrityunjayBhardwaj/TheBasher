@@ -129,6 +129,7 @@ import { edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
+import { widget } from './paramWidget';
 import { edgeIndicesByAngle } from '../app/edgeAngleSelection';
 
 /**
@@ -240,12 +241,20 @@ export const EMPTY_SELECTION_QUERY = '^0';
  * as absent.
  */
 export function scopeParam(): z.ZodDefault<z.ZodEffects<z.ZodString, string, string>> {
-  return z
-    .string()
-    .refine(isParsableScopeQuery, {
-      message: 'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
-    })
-    .default('');
+  // #872 — the widget is declared HERE, on the one helper all six scoped operators call,
+  // rather than on each node. The refusal message below is the same string the inspector
+  // now shows when a director types a construct v1 does not parse (#873): the schema is
+  // the single place that knows both what this field accepts and how it is authored.
+  return widget(
+    'query',
+    z
+      .string()
+      .refine(isParsableScopeQuery, {
+        message:
+          'not a component range — write indices and ranges like `0-5`, `0-10:2`, `!3`, `^7`',
+      })
+      .default(''),
+  );
 }
 
 /** Every refusal from this module is named and carries the query that produced it. */

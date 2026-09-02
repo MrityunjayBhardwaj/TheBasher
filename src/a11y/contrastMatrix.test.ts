@@ -1835,6 +1835,13 @@ const BORDER_FOCUS_STATE: Record<string, string> = {
   accent: 'accent', // :focus-visible ring + active-state border
   record: 'record', // Auto-Key armed-state border (UI-SPEC §5.8 D-UX-14)
   warn: 'warn', // NLA orphan/duplicate-ghost strip STATE outline (#283 Phase 5, UI-SPEC §4.2)
+  // #873 — the query field's REFUSED state (`aria-[invalid]:border-error`). It is a
+  // genuine affordance rather than decoration: it is the only always-visible mark that a
+  // typed component-selection query was not accepted, and it must read for someone who
+  // cannot rely on the message's colour. This gate is why it is `border-error` and not the
+  // `border-danger` it was first written as — that token does not exist, so the class
+  // resolved to nothing and the refusal would have been invisible.
+  error: 'error',
 };
 
 function stripBorderToken(bare: string): string {

@@ -68,6 +68,7 @@ import {
 } from './exposeParams';
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
+import { widgetOf, type ParamWidget } from '../nodes/paramWidget';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
@@ -685,6 +686,126 @@ function stringEnumOptions(nodeId: string, paramPath: string): readonly string[]
   if (!(inner instanceof z.ZodEnum)) return null;
   const opts = inner.options as readonly unknown[];
   return opts.every((o) => typeof o === 'string') ? (opts as readonly string[]) : null;
+}
+
+/**
+ * The control a param's SCHEMA declares, or null if it declares none (#872).
+ *
+ * Reads the same `paramSchema` `stringEnumOptions` does, and looks the widget up by
+ * IDENTITY on the field instance stored in `.shape` — which is the instance `scopeParam()`
+ * registered. No structural sniffing: a param gets a control because it asked for one, not
+ * because its value happened to look a certain way.
+ */
+function declaredWidget(nodeId: string, paramPath: string): ParamWidget | null {
+  if (paramPath.includes('.')) return null;
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  return field ? (widgetOf(field) ?? null) : null;
+}
+
+/** The declared schema for a top-level param, so a control can check a value BEFORE
+ *  dispatching it. Same lookup as {@link declaredWidget}, minus the widget read. */
+function fieldSchemaOf(nodeId: string, paramPath: string): z.ZodTypeAny | null {
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  return (schema.shape as Record<string, z.ZodTypeAny>)[paramPath] ?? null;
+}
+
+/**
+ * A free-text control over a small query language — the component-selection field (#872).
+ *
+ * ── WHY IT VALIDATES BEFORE DISPATCHING, RATHER THAN CATCHING (#873) ──────────────────
+ *
+ * `applySetParam` re-validates the whole params object and THROWS on failure
+ * (`src/core/dag/ops.ts`). A text control's valid range is "any text a person can type",
+ * which is far wider than the query grammar: measured over seven natural inputs, `0-9`,
+ * `!1-10`, `^0` and blank are accepted while `arm*`, `@v>0` and `garbage!!` throw. `arm*`
+ * is Houdini's documented wildcard and is named in this project's own deferred list, so it
+ * is among the first things a director will try — this is not an exotic path.
+ *
+ * Catching that throw would work and would still be wrong: the refusal would be a thing
+ * that HAPPENED rather than a state the field is in. So the field parses the draft against
+ * the param's own declared schema first and only dispatches what will be accepted. The
+ * refusal is then a value this component holds and renders, the store never sees an
+ * invalid op, and the message shown is the schema's own — one place stating both what the
+ * field accepts and why it refused.
+ *
+ * The draft is KEPT on refusal rather than reverted, so a director can fix a typo instead
+ * of retyping the query; and a subsequent valid value clears the message, which is the
+ * recovery an author-reachable refusal owes.
+ */
+function QueryField({
+  nodeId,
+  paramPath,
+  label,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  label: string;
+  value: string;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const [draft, setDraft] = useState(value);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  // The committed value is the source of truth: an undo, a driver, or a load moves it
+  // under us, and the draft must follow unless the director is mid-correction.
+  const [lastSeen, setLastSeen] = useState(value);
+  if (value !== lastSeen) {
+    setLastSeen(value);
+    if (refusal === null) setDraft(value);
+  }
+
+  const commit = (next: string) => {
+    const field = fieldSchemaOf(nodeId, paramPath);
+    const parsed = field?.safeParse(next);
+    if (parsed && !parsed.success) {
+      setRefusal(parsed.error.issues[0]?.message ?? 'not accepted');
+      return; // the draft stays, so the typo is correctable
+    }
+    setRefusal(null);
+    dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`);
+  };
+
+  return (
+    <div className="px-3 py-1.5 text-[11px]">
+      <label className="flex items-center justify-between gap-2">
+        <span className="font-mono text-fg/60">{label}</span>
+        <input
+          type="text"
+          value={draft}
+          spellCheck={false}
+          placeholder="all"
+          data-testid={`inspector-query-${nodeId}-${paramPath}`}
+          aria-invalid={refusal !== null || undefined}
+          className="w-40 rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent aria-[invalid]:border-error"
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commit(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit((e.target as HTMLInputElement).value);
+            if (e.key === 'Escape') {
+              setDraft(value);
+              setRefusal(null);
+            }
+          }}
+        />
+      </label>
+      {refusal !== null ? (
+        <p
+          role="alert"
+          data-testid={`inspector-refusal-${nodeId}-${paramPath}`}
+          className="mt-1 text-right font-mono text-[10px] text-error"
+        >
+          {refusal}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 /** A dropdown for a string-enum param. Mirrors BooleanField's dispatch shape (a
@@ -2268,6 +2389,25 @@ function ParamRow({
           options={options}
         />
       );
+    }
+    // #872 — a param whose SCHEMA declares its control. Checked after the enum arm (an
+    // enum declares itself structurally and needs no registration) and before the
+    // read-only span, which stays the answer only for a string that asked for nothing.
+    const declared = declaredWidget(nodeId, paramPath);
+    if (declared !== null) {
+      switch (declared) {
+        case 'query':
+          return (
+            <QueryField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />
+          );
+        default: {
+          // Exhaustive: a new ParamWidget member must be answered for HERE, at the site
+          // that has to draw it, rather than silently falling through to read-only —
+          // which is the failure this whole change exists to remove.
+          const never: never = declared;
+          throw new Error(`unhandled param widget: ${String(never)}`);
+        }
+      }
     }
     return (
       <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
