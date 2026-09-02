@@ -1169,3 +1169,215 @@ describe('the retarget scale comes from the leg chain, not the hip offset (#846)
     expect(travel).not.toBeCloseTo(2.0, 2);
   });
 });
+
+describe('a rest direction that OPPOSES the target’s is refused, not guessed (#864)', () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS BLOCK IS FOR
+  // ─────────────────────────────────────────────────────────────────────────
+  // The correction aligns each bone by the MINIMAL rotation between two rest
+  // directions. That rotation is well behaved while the two point differently,
+  // and undetermined when they point OPPOSITE ways: every axis perpendicular to
+  // the bone carries one onto the other, and those half-turns differ from each
+  // other by a roll about the bone — the third degree of freedom the retarget is
+  // already short of. So near the opposite the answer is not merely large, it is
+  // picked by an implementation detail of `setFromUnitVectors`.
+  //
+  // It cannot fire on the clips we receive today: their rests lay every bone on
+  // one axis, so every mapped pair sits at exactly 90°. The whole suite above is
+  // the evidence that the refusal does not over-fire — those rows assert that
+  // direction alignment HAPPENED, and they fail if it silently stopped.
+  //
+  // The case is reachable, though. A source rest exported as a proper T-pose puts
+  // its legs 175–179° from the target's bone axis.
+  //
+  // The opposed bone is the MIDDLE one, which is where it occurs in a real rig —
+  // a leg under a well-conditioned hip. The root pair stays at a healthy 90°, so
+  // there is a corrected ancestor for the refusal to fall back to. (A refused
+  // bone with no corrected ancestor gets no entry at all, exactly as an
+  // undirectable root already does.)
+  const OPPOSED_SRC = (tiltX: number, tiltZ: number): BoneSpec[] => [
+    { name: 's_root', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_bone', parent: 0, position: [1, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_tip', parent: 1, position: [tiltX, -1, tiltZ], rotation: [0, 0, 0] },
+  ];
+  const OPPOSED_TRG: BoneSpec[] = [
+    { name: 't_root', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_bone', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 't_tip', parent: 1, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const MAP = { t_root: 's_root', t_bone: 's_bone', t_tip: 's_tip' };
+  const offsetsFor = (tiltX: number, tiltZ: number) =>
+    restDirectionLocalOffsets(
+      specToThreeSkeleton(OPPOSED_SRC(tiltX, tiltZ)).bones,
+      specToThreeSkeleton(OPPOSED_TRG).bones,
+      MAP,
+    );
+  const q = (m: Matrix4) => new Quaternion().setFromRotationMatrix(m);
+  const degrees = (a: Quaternion, b: Quaternion) => a.angleTo(b) * (180 / Math.PI);
+
+  it('two rests that differ by half a degree do not get corrections a half-turn apart', () => {
+    // The property that matters, stated without naming a mechanism: a hair of
+    // difference in the input may not become a large difference in the output.
+    // Both rests sit within 0.6° of exactly opposite and differ from each other
+    // only in WHICH WAY they lean.
+    //
+    // This is the row that reds when the refusal is removed — unguarded, the two
+    // corrections come out about 90° apart, because the minimal rotation's axis
+    // swings with the lean it was handed.
+    const leanOneWay = offsetsFor(0.01, 0);
+    const leanTheOther = offsetsFor(0, 0.01);
+    expect(
+      degrees(q(leanOneWay['t_bone']), q(leanTheOther['t_bone'])),
+      'a 0.57° change of rest must not swing the correction',
+    ).toBeLessThan(2);
+  });
+
+  it('the refused bone takes the documented fallback rather than an invented rotation', () => {
+    // Refusing has to leave something behind. It leaves what a bone with no
+    // mapped child already gets — the nearest corrected ancestor's — which is
+    // DEFINED rather than correct. Supplying the missing second axis so the
+    // rotation is determined instead of minimal is a different change.
+    const offsets = offsetsFor(0.01, 0);
+    expect(offsets['t_bone']).toBeInstanceOf(Matrix4);
+    expect(
+      degrees(q(offsets['t_bone']), q(offsets['t_root'])),
+      'a refused bone inherits, exactly as a chain end does',
+      // 1e-4 DEGREES. The comparison is in degrees, so this is ~2e-6 radians —
+      // still four orders below the smallest difference any real disagreement
+      // could produce, and above the noise of decomposing a matrix to a
+      // quaternion, which lands around 2e-6 degrees.
+    ).toBeLessThan(1e-4);
+  });
+
+  it('still aligns by direction when the two rests merely disagree', () => {
+    // The other side of the refusal, so the bound is pinned from both directions.
+    // A pair at 90° — every pair in every clip we currently receive — is aligned,
+    // not refused. Were the bound loose enough to catch this, the retarget would
+    // quietly stop correcting anything at all.
+    const offsets = offsetsFor(1, 0); // s_tip out along +X: a 90° pair, not opposed
+    const turn = 2 * Math.acos(Math.min(1, Math.abs(q(offsets['t_bone']).w))) * (180 / Math.PI);
+    expect(
+      turn,
+      'local +Y onto the source direction is a real turn, not an inherited one',
+    ).toBeGreaterThan(30);
+    expect(degrees(q(offsets['t_bone']), q(offsets['t_root']))).toBeGreaterThan(1);
+  });
+});
+
+describe('two rests that correspond as poses are reconciled as a whole (#865)', () => {
+  // ─────────────────────────────────────────────────────────────────────────
+  // WHAT THIS BLOCK IS FOR
+  // ─────────────────────────────────────────────────────────────────────────
+  // `restAlignment.test.ts` gates the solver. This gates the WIRING: that the
+  // rotation reaches the source wrapper, that its inverse reaches the offsets,
+  // and that the two survive `SkeletonUtils` composing them. Those are three
+  // separate places to drop a term, and a solver can be perfect while any of
+  // them is wrong.
+  //
+  // The assertion is the identity case, which is the one input whose correct
+  // output is known without running anything: drive the target with a clip that
+  // holds the source at its own REST, and every mapped bone must land exactly on
+  // its own bind. A pipeline that cannot return identity for identity is not
+  // worth reading anywhere else.
+  const SRC: BoneSpec[] = [
+    { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 's_spine', parent: 0, position: [0, 0.2, 0], rotation: [0, 0, 0] },
+    { name: 's_neck', parent: 1, position: [0, 0.2, 0], rotation: [0, 0, 0] },
+    { name: 's_head', parent: 2, position: [0, 0.15, 0], rotation: [0, 0, 0] },
+    { name: 's_shoulder', parent: 1, position: [0.1, 0.1, 0], rotation: [0, 0, 0] },
+    { name: 's_arm', parent: 4, position: [0.2, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_hand', parent: 5, position: [0.2, 0, 0], rotation: [0, 0, 0] },
+    { name: 's_upleg', parent: 0, position: [0.1, -0.05, 0], rotation: [0, 0, 0] },
+    { name: 's_leg', parent: 7, position: [0, -0.4, 0], rotation: [0, 0, 0] },
+    { name: 's_foot', parent: 8, position: [0, -0.4, 0], rotation: [0, 0, 0] },
+    { name: 's_toe', parent: 9, position: [0, 0, 0.15], rotation: [0, 0, 0] },
+  ];
+  // The same pose, turned a quarter turn — which is the case the whole-rig part
+  // exists for, and the one no per-bone right-multiplication can express.
+  const TRG: BoneSpec[] = SRC.map((b) => ({
+    ...b,
+    name: b.name.replace('s_', 't_'),
+    position: [b.position[2], b.position[1], -b.position[0]] as [number, number, number],
+  }));
+  const MAP: Record<string, string> = Object.fromEntries(
+    SRC.map((b) => [b.name, b.name.replace('s_', 't_')]),
+  );
+
+  it('puts every bone on its own bind at the frame where the source holds its rest', () => {
+    const keyframes: AnimationKeyframe[] = [];
+    SRC.forEach((b, i) => {
+      // t=0 — the source at its rest. t=1 — somewhere else, so the clip has to
+      // carry real motion and the assertion is not about a constant.
+      keyframes.push({ bone: i, time: 0, position: [...b.position], rotation: [0, 0, 0] });
+      keyframes.push({
+        bone: i,
+        time: 1,
+        position: [...b.position],
+        rotation: i === 4 ? [0.3, 0.2, -0.4] : [0, 0.15, 0],
+      });
+    });
+    const result = retargetClip({
+      sourceBones: SRC,
+      sourceClip: { name: 'rest-then-move', duration: 1, keyframes },
+      targetBones: TRG,
+      nameMap: MAP,
+    });
+
+    const { bones } = specToThreeSkeleton(TRG);
+    const bindWorld = new Map<string, Quaternion>();
+    bones[0].updateMatrixWorld(true);
+    for (const b of bones)
+      bindWorld.set(b.name, new Quaternion().setFromRotationMatrix(b.matrixWorld));
+
+    const atZero = result.clipParams.keyframes.filter((k) => k.time === 0);
+    expect(atZero.length, 'the emitted clip must carry the rest frame').toBeGreaterThan(0);
+    for (const k of atZero) {
+      const bone = bones[k.bone];
+      if (!bone) continue;
+      bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
+    }
+    bones[0].updateMatrixWorld(true);
+
+    let worst = 0;
+    let worstName = '';
+    for (const bone of bones) {
+      if (!Object.values(MAP).includes(bone.name)) continue;
+      const now = new Quaternion().setFromRotationMatrix(bone.matrixWorld);
+      const off = now.angleTo(bindWorld.get(bone.name)!) * (180 / Math.PI);
+      if (off > worst) {
+        worst = off;
+        worstName = bone.name;
+      }
+    }
+    expect(worst, `${worstName} drifted from its bind at the rest frame`).toBeLessThan(0.5);
+  });
+
+  it('leaves a rig pair it cannot reconcile exactly as it found it', () => {
+    // The refusal path, end to end. A source rest laid on ONE axis — the shape
+    // this project actually receives — must produce byte-identical output to a
+    // build with the whole-rig step removed, which is what makes this change
+    // additive rather than a rewrite of what ships today.
+    const flat: BoneSpec[] = SRC.map((b, i) => ({
+      ...b,
+      position: (i === 0 ? [0, 1, 0] : [Math.hypot(...b.position), 0, 0]) as [
+        number,
+        number,
+        number,
+      ],
+    }));
+    const keyframes: AnimationKeyframe[] = [];
+    flat.forEach((b, i) => {
+      keyframes.push({ bone: i, time: 0, position: [...b.position], rotation: [0, 0, 0] });
+      keyframes.push({ bone: i, time: 1, position: [...b.position], rotation: [0, 0.15, 0] });
+    });
+    const result = retargetClip({
+      sourceBones: flat,
+      sourceClip: { name: 'flat', duration: 1, keyframes },
+      targetBones: TRG,
+      nameMap: MAP,
+    });
+    // A refused pair still retargets — it simply keeps the per-bone alignment.
+    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.unmappedSourceBones).toEqual([]);
+  });
+});
