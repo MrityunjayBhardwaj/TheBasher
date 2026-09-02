@@ -285,3 +285,88 @@ describe('the two rests, on the tracked stand-in pair', () => {
     }
   });
 });
+
+describe('the travel a retarget writes onto the root', () => {
+  it('stays in the ground plane, on a bind whose feet tempt the fit into a lean', async () => {
+    // WHY THE PAIR IS MODIFIED. The stand-in as tracked cannot see this defect:
+    // its bind and the clip's rest already agree about the feet, so the fit has
+    // nothing to trade and the grade measures 1.6e-7 whether the solve is
+    // constrained or not. A gate on the unmodified pair would be green either
+    // way, which is no gate at all.
+    //
+    // So the stand-in is given the live target's disagreement — its bind points
+    // the foot 6° ABOVE horizontal against a source holding it 21° below, a 27°
+    // difference that is symmetric left to right and therefore looks, to a
+    // whole-rig fit, like a pitch worth taking. Measured on this pair: with an
+    // unconstrained solve the retargeted root climbs at a grade of 2.1e-2 over
+    // its own travel; constrained to a heading it is 1.6e-7. The bar sits
+    // between two populations five orders of magnitude apart.
+    const gradeOf = async (toeTiltDegrees: number): Promise<number> => {
+      const base = await targetRig();
+      const target: BoneSpec[] = base.map((b) => {
+        if (!/ToeBase$/.test(b.name) || toeTiltDegrees === 0) return b;
+        const v = new Vector3(...b.position);
+        const length = v.length();
+        if (length < 1e-9) return b;
+        v.normalize();
+        const d = (toeTiltDegrees * Math.PI) / 180;
+        const tipped = new Vector3(
+          v.x * Math.cos(d),
+          v.y * Math.cos(d) - Math.sin(d),
+          v.z * Math.cos(d),
+        ).normalize();
+        return {
+          ...b,
+          position: [tipped.x * length, tipped.y * length, tipped.z * length] as [
+            number,
+            number,
+            number,
+          ],
+        };
+      });
+
+      const parsed = clip(TPOSE);
+      const out = retargetClip({
+        sourceBones: parsed.skeletonParams.bones,
+        sourceClip: {
+          name: parsed.clipParams.name,
+          duration: parsed.clipParams.duration,
+          keyframes: parsed.clipParams.keyframes,
+        },
+        targetBones: target,
+        nameMap: getBoneNameMapPreset('somaToMixamo')!.map,
+      });
+
+      // The root's path in WORLD, composed the way playback composes it: the
+      // emitted position track is local to its parent, and reading it there
+      // would report a Y that has nothing to do with which way is up.
+      const times = [...new Set(out.clipParams.keyframes.map((k) => k.time))].sort((x, y) => x - y);
+      const byTime = new Map<number, Map<number, (typeof out.clipParams.keyframes)[number]>>();
+      for (const k of out.clipParams.keyframes) {
+        if (!byTime.has(k.time)) byTime.set(k.time, new Map());
+        byTime.get(k.time)!.set(k.bone, k);
+      }
+      const { bones: pose } = specToThreeSkeleton(target);
+      const path = times.map((t) => {
+        const frame = byTime.get(t)!;
+        for (const [index, k] of frame) {
+          const bone = pose[index];
+          if (!bone) continue;
+          bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
+          if (k.position) bone.position.set(k.position[0], k.position[1], k.position[2]);
+        }
+        pose[0].updateMatrixWorld(true);
+        return new Vector3().setFromMatrixPosition(pose[1].matrixWorld);
+      });
+      const first = path[0];
+      const last = path[path.length - 1];
+      const travelled = Math.hypot(last.x - first.x, last.z - first.z);
+      expect(travelled).toBeGreaterThan(0.1);
+      return (last.y - first.y) / travelled;
+    };
+
+    expect(Math.abs(await gradeOf(-27))).toBeLessThan(1e-3);
+    // The unmodified pair too, so a regression cannot hide behind the tilt.
+    expect(Math.abs(await gradeOf(0))).toBeLessThan(1e-3);
+  });
+});
