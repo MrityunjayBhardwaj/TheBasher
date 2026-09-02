@@ -51,6 +51,7 @@ import {
   paramsToThreeClip,
   specToThreeSkeleton,
 } from './threeAdapter';
+import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
 
 export interface RetargetArgs {
   /** Source bone hierarchy (e.g. Mixamo). */
@@ -329,6 +330,15 @@ export function referenceWorldRotations(
   return out;
 }
 
+/**
+ * How nearly opposite two rest directions may be before the minimal rotation
+ * between them stops being a usable correction. cos(168.5 deg), the angle at
+ * which a nudge to either direction is amplified about tenfold in the result.
+ * Derived from the measured amplification curve rather than chosen for roundness
+ * -- see the refusal site in `restDirectionLocalOffsets` for the table.
+ */
+export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
+
 export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
@@ -473,6 +483,39 @@ export function restDirectionLocalOffsets(
       continue;
     }
 
+    // A pair that is nearly OPPOSITE has no usable minimal rotation. Every axis
+    // perpendicular to the bone carries one direction onto the other, and those
+    // half-turns differ from each other by a roll ABOUT the bone — the very
+    // degree of freedom this correction is already short of. So the answer is
+    // not merely large, it is undetermined, and it is picked by an
+    // implementation detail rather than by anything in either rig.
+    //
+    // Measured: nudge the source direction by 0.5 deg and read how far the
+    // correction moves. The amplification is about 2/sin(angle) --
+    //
+    //     90 deg -> 0.71 deg out (1.4x)      175 deg -> 11.42 deg out (22.8x)
+    //    150 deg -> 1.93 deg out (3.9x)      179 deg -> 57.35 deg out (114.7x)
+    //
+    // -- so the refusal is placed where the amplification reaches 10x, which is
+    // 168.5 deg, cos -0.98. Below that a degree of rest error stays a few
+    // degrees of correction error; above it, rest noise becomes a large
+    // arbitrary twist that presents as a retarget bug rather than a
+    // conditioning one.
+    //
+    // This cannot fire on any source we currently receive: their rests lay every
+    // bone on one axis, so every mapped pair sits at exactly 90 deg. It fires on
+    // a source whose rest genuinely opposes the target's bone axis -- which a
+    // proper T-pose rest does at the legs, at 175-179 deg.
+    //
+    // Falling back is the module's own existing answer to "this bone cannot be
+    // aligned by direction", used already for a bone with no mapped child. What
+    // it yields is DEFINED rather than correct; supplying the missing second
+    // axis so the rotation is determined instead of minimal is a separate change.
+    if (targetDir.dot(sourceDir) < ANTIPARALLEL_REFUSAL_COSINE) {
+      withoutADirection();
+      continue;
+    }
+
     offsets[targetBone.name] = new Matrix4().makeRotationFromQuaternion(
       new Quaternion().setFromUnitVectors(targetDir, sourceDir),
     );
@@ -583,12 +626,38 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     ? referenceWorldRotations(sourceBoneObjs, referencePose)
     : undefined;
 
-  const localOffsets = restDirectionLocalOffsets(
-    sourceBoneObjs,
-    targetBoneObjs,
-    targetToSource,
-    sourceReference,
-  );
+  // ── RECONCILE THE TWO RESTS AS A WHOLE, WHEN THAT IS POSSIBLE AT ALL ──────
+  //
+  // Everything below composes as `T_b(t) = W_b(t) · Q_b` — the source bone's
+  // world rotation, right-multiplied by a bone-local offset
+  // (SkeletonUtils.js:127). That shape can express a difference of bone-axis
+  // CONVENTION and cannot express a difference of body ORIENTATION, because the
+  // latter is a conjugation. Copying world rotations between two rigs whose rests
+  // face different ways turns a forward arm raise into a lateral one, and no
+  // per-bone offset repairs it.
+  //
+  // So when the two rests do correspond as poses, the whole-rig part is lifted
+  // out and applied where it can be: the source WRAPPER carries `R` on the left,
+  // the offsets carry `R⁻¹` on the right, and the pipeline composes
+  // `R · W_b(t) · R⁻¹ · B_b`. The wrapper is the right place for it — the clip
+  // animates the bones, so a rotation put on the root BONE would be overwritten
+  // frame by frame, while the wrapper is untouched by the mixer.
+  //
+  // `solveRestAlignment` returns null for the rests this project receives today
+  // (they lay every bone on one axis, so there is no orientation to solve for),
+  // and the per-bone direction alignment is kept unchanged for them.
+  const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
+  if (restAlignment) {
+    sourceWrap.quaternion.copy(restAlignment.rotation);
+    sourceWrap.updateMatrixWorld(true);
+  }
+
+  const localOffsets = restAlignment
+    ? // Uniform across every mapped bone, chain ends included: a rest that
+      // supplies a body frame gives a leaf its third degree of freedom too, so
+      // nothing here needs the clip's first frame as a stand-in neutral.
+      alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
+    : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
