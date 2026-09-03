@@ -71,6 +71,14 @@ export type MotionWaypoints = readonly { readonly x: number; readonly z: number 
  * loosely: null means "this node is not a path", which is the ordinary case for
  * any other selection, while a curve that cannot produce points is a curve that
  * failed and is reported as such by the caller.
+ *
+ * INHERITED LIMIT, worth knowing before trusting a number out of here: the world
+ * seam resolves a node's world transform by walking the SCENE's child list, so a
+ * curve that is not a scene child falls back to identity and reports its LOCAL
+ * points as world — silently, and looking entirely plausible. Every curve a
+ * director can draw or select is a scene child, so this is not reachable from
+ * the UI; it is reachable from a fixture that forgets to wire one up, which is
+ * how it was found.
  */
 export function waypointsFromCurve(
   state: DagState,

@@ -14,9 +14,17 @@
 //
 // Invariants honored:
 //   - V8: no `src/viewport/` imports. App-layer module.
-//   - K6: ONE dispatchAtomic per generation.
-//   - silent-failure: a licence refusal, a malformed request or an unreachable
-//     service surfaces in the banner, never console-only.
+//   - K6: each ACT lands atomically — one dispatch, one undo entry, per thing
+//     done. Stated this way because the old wording, "ONE dispatchAtomic per
+//     generation", was already not what the code did: the bind has always
+//     dispatched its own retarget-plus-bake, and #730 added a third for the
+//     placement. What K6 protects is that no single act lands in halves, not
+//     that a generation is a single act — a director who follows a curve and
+//     then wants the character somewhere else should be able to undo the
+//     placement without also undoing the clip.
+//   - silent-failure: a licence refusal, a malformed request, an unreachable
+//     service, or an offset that could not be placed surfaces in the banner,
+//     never console-only.
 //
 // REF: src/app/asset/importBvhFbx.ts (the sibling, and the shared bind);
 //      src/agent/tools/motionGenerate.ts
