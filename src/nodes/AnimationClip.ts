@@ -72,6 +72,61 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
   return map;
 }
 
+/**
+ * Fold a wall-clock time into the clip's own time domain — looping folds into
+ * [0, duration), else it clamps to the range. THE one folding rule: both
+ * `evaluate` and the exported per-bone samplers below go through it, so a clip
+ * sampled by the band and the same clip sampled by the node cannot disagree
+ * about where time `t` lands.
+ */
+function foldClipTime(seconds: number, duration: number, loop: boolean): number {
+  return loop
+    ? ((seconds % duration) + duration) % duration
+    : Math.max(0, Math.min(seconds, duration));
+}
+
+/** A bone's pose as a function of wall-clock time — the clip's own sampling. */
+export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: Vec3 };
+
+/**
+ * Build a per-bone-INDEX sampler over a clip's keyframes: the clip's own
+ * `sample(t)`, exposed as closures so a caller can invoke it at its own cadence.
+ *
+ * WHY THIS IS EXPORTED (#888). The baked band needs to reach a retargeted clip
+ * for a bone that has no channel node, and it must produce the value the CLIP
+ * would produce. Two roads were available and only this one is safe:
+ *
+ *   - rebuild the clip's keys as `KeyframeChannelVec3` params and sample those.
+ *     A clip keyframe carries no easing field at all while a channel carries
+ *     twelve easing modes plus bezier handles and an extrapolation rule, so
+ *     rebuilding forces a DEFAULT to be chosen for properties the source never
+ *     described. The last time that default was picked without thinking it was
+ *     the interpolation defect the first half of #877 fixed.
+ *   - delegate to the clip's own math, below. Nothing is defaulted because
+ *     nothing is invented: the clip interpolates linearly (`lerpVec3`) because
+ *     that is what the clip DOES, not because linear was chosen for it.
+ *
+ * Grouping happens once, per DAG change; the returned closures are invoked per
+ * frame. Bones with no keyframes are ABSENT from the map rather than mapped to
+ * a zero pose — the caller must be able to fall through to the bands below,
+ * and a bone the clip never touched has no opinion to contribute.
+ *
+ * Rotation is in the clip's own units (RADIANS). Callers writing into a
+ * degrees-valued band convert at that boundary; see bakeClipOntoRig.ts, which
+ * is where that unit change is documented.
+ */
+export function buildClipBoneSamplers(
+  params: Pick<AnimationClipParams, 'keyframes' | 'duration' | 'loop'>,
+): Map<number, ClipBoneSampler> {
+  const { duration, loop } = params;
+  const out = new Map<number, ClipBoneSampler>();
+  for (const [bone, track] of groupByBone(params.keyframes)) {
+    if (track.length === 0) continue;
+    out.set(bone, (seconds: number) => sampleBone(track, foldClipTime(seconds, duration, loop)));
+  }
+  return out;
+}
+
 /** Sample a single bone's track at clip-time `t`. Clamps at endpoints. */
 function sampleBone(track: AnimationKeyframe[], t: number): { position: Vec3; rotation: Vec3 } {
   if (track.length === 0) return { position: [0, 0, 0], rotation: [0, 0, 0] };
@@ -110,9 +165,6 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
     const skeleton = inputs.skeleton as SkeletonValue | undefined;
     const time = inputs.time as TimeValue | undefined;
     const tSeconds = time?.seconds ?? 0;
-    const folded = params.loop
-      ? ((tSeconds % params.duration) + params.duration) % params.duration
-      : Math.max(0, Math.min(tSeconds, params.duration));
 
     if (!skeleton) {
       return {
@@ -123,11 +175,13 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
       };
     }
 
-    const tracks = groupByBone(params.keyframes);
+    // The SAME per-bone samplers the baked band delegates to (#888), so a bone
+    // posed here and the same bone resolved through the band cannot disagree.
+    const samplers = buildClipBoneSamplers(params);
     const poses: BonePose[] = [];
     for (let i = 0; i < skeleton.bones.length; i++) {
-      const track = tracks.get(i);
-      if (!track || track.length === 0) {
+      const sampler = samplers.get(i);
+      if (!sampler) {
         poses.push({
           bone: i,
           position: skeleton.bones[i].position,
@@ -135,7 +189,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
         });
         continue;
       }
-      const { position, rotation } = sampleBone(track, folded);
+      const { position, rotation } = sampler(tSeconds);
       poses.push({ bone: i, position, rotation });
     }
     return {
