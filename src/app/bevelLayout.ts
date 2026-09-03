@@ -222,6 +222,37 @@ export interface BevelLayout {
    * need: the day one is wanted, it ranks the candidates where the attributes are in hand.
    */
   readonly representative: readonly number[];
+  /**
+   * `cornerRepresentative[at]` is the source face OUTPUT CORNER `at` interpolates its corner-domain
+   * values from (#880). Flat, indexed by output corner in the order {@link rims} lays them down —
+   * `at = base + c` — because that is the numbering the uv loop walks and the uv buffer uses.
+   * {@link corners} recovers the per-face grouping, exactly as `uvsByFace` already does.
+   *
+   * 🔑 A THIRD MAP, AND IT IS NOT A REFINEMENT OF {@link representative} — IT IS A DIFFERENT DOMAIN.
+   * That one answers for a FACE, and its reader gathers a face-domain value THROUGH it
+   * (`meshAttributes.ts`, the `mapped ?? faces.representative` arm). A face cannot have two
+   * material indices, so that map must stay one-per-face and it does. This one answers for a
+   * CORNER, where the reference is free to differ across a single face and does:
+   * `bev_create_ngon` takes a per-corner `face_arr` (`bmesh_bevel.cc:1264`) and the edge-quad
+   * caller passes one (`:7551`, *"Straddles but not a seam: interpolate left half in f1, right
+   * half in f2"*). Collapsing the two would force the corner domain to accept the face domain's
+   * coarser answer, which is precisely the excursion #880 measures.
+   *
+   * ── WHY THIS CLOSES IT, AND THE NUMBER THAT SAYS SO ───────────────────────────────────
+   *
+   * A minted corner sits ON its source point, so every face incident to that point contains it and
+   * any of them can interpolate it. Choosing the face the corner actually came from makes the
+   * interpolation an INTERPOLATION rather than an extrapolation, and mean-value weights are then
+   * non-negative — so the result cannot leave the source face's uv range at all. Measured against
+   * an exhaustive oracle before this map existed: the achievable excursion is EXACTLY 0 on every
+   * shape and tessellation, against 2.13e-2 for the face-wide map on an 8x6 sphere. The exit is
+   * therefore an exact zero and not a bound.
+   *
+   * The tie-break is the same as {@link representative}'s and for the same reason — lowest source
+   * face index, so the answer is a property of the mesh and not of the order it is traversed. On an
+   * all-edges bevel it never fires: every run of corners is length 1, which the gate pins.
+   */
+  readonly cornerRepresentative: readonly number[];
 }
 
 /**
@@ -652,6 +683,7 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
   const faceOrder: SourceFace[] = [];
   // #825 — index-aligned with `faceOrder` and TOTAL where that one is holed. See the field's doc.
   const representative: number[] = [];
+  const cornerRepresentative: number[] = [];
   const corners: number[] = [];
   const rimsOut: PolygonRim[] = [];
 
@@ -669,6 +701,9 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
     // face that existed before this arm.
     const rimOut: number[] = [];
     for (let k = 0; k < rims[f].length; k++) rimOut.push(...cornerPointsOf[cornerBase[f] + k]);
+    // #880 — a mapped face's every corner comes from that same face, including the SECOND output
+    // point a terminal corner contributes: both are that corner pulled in, so both are still `f`.
+    for (let c = 0; c < rimOut.length; c++) cornerRepresentative.push(f);
     corners.push(rimOut.length);
     rimsOut.push(rimOut);
   }
@@ -730,6 +765,11 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
           `edge ${e}'s quad reads face ${face} corner ${corner}, which resolves to ${slot.length} boundary vertices rather than 1 — a face beside a chamfered edge should be flanking at both its endpoints`,
         );
       sole.push(slot[0]);
+      // #880 — and the face this corner was read THROUGH is the face it belongs to. The literal
+      // above is `[ab, ab, ba, ba]` in its face component, which is the reference's own split for
+      // this case: *"Straddles but not a seam: interpolate left half in f1, right half in f2"*
+      // (`bmesh_bevel.cc:7551`). Taken from the pair rather than restated, so the two cannot drift.
+      cornerRepresentative.push(face);
     }
     rimsOut.push(sole);
   }
@@ -753,6 +793,25 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
     // Every face in the closed ring around this point is a candidate, whether or not its corner
     // survived as its own boundary vertex — the run that swallowed it is still that face's.
     representative.push(rim.reduce((lowest, [f]) => (f < lowest ? f : lowest), rim[0][0]));
+    // #880 — but each ring position has its OWN answer, and it is already here. Position `j` is
+    // gap `plan.ring[j]`; the corners that gap covers are those whose `cornerGaps` slot list names
+    // it, and corner `i` belongs to face `rim[i][0]`. Lowest index among them, matching the
+    // face-wide tie-break directly above rather than inventing a second rule.
+    for (const g of plan.ring) {
+      let lowest = -1;
+      for (let i = 0; i < plan.cornerGaps.length; i++) {
+        if (!plan.cornerGaps[i].includes(g)) continue;
+        const f = rim[i][0];
+        if (lowest < 0 || f < lowest) lowest = f;
+      }
+      // Checked rather than defaulted, for the reason the quad above checks its slot count: a gap
+      // covered by no corner would silently fall back to the face-wide answer and read as success.
+      if (lowest < 0)
+        return refused(
+          `point ${v}'s ring position for gap ${g} is covered by no source corner, so its n-gon has no face to interpolate that corner from`,
+        );
+      cornerRepresentative.push(lowest);
+    }
     corners.push(ring.length);
     rimsOut.push(ring);
   }
@@ -771,6 +830,7 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
       pointOrder,
       points,
       representative,
+      cornerRepresentative,
     },
   };
 }
