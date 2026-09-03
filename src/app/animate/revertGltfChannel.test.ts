@@ -105,7 +105,7 @@ function buildBakedState(): DagState {
 
 /** Renderer (C2) path: enumerate baked samplers → sample → resolve. */
 function rendererResolvePosition(nodes: Record<string, { type: string; params?: unknown }>) {
-  const samplers = bakedChannelSamplersForAsset(nodes, { [CHILD]: CHILD_ID });
+  const samplers = bakedChannelSamplersForAsset(nodes, { [CHILD]: CHILD_ID }, ASSET);
   const bakedChannel = sampleBakedChannel(samplers[CHILD], 0);
   const childNode = nodes[CHILD_ID]?.params as {
     position: [number, number, number];
