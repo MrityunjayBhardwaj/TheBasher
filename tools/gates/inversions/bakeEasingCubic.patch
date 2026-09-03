@@ -1,0 +1,13 @@
+diff --git a/src/agent/mutators/builders/bakeChannelOps.ts b/src/agent/mutators/builders/bakeChannelOps.ts
+index def7bc0..d936cc0 100644
+--- a/src/agent/mutators/builders/bakeChannelOps.ts
++++ b/src/agent/mutators/builders/bakeChannelOps.ts
+@@ -104,7 +104,7 @@ export function bakeChannelOpsForBone(args: {
+           //
+           // Same producer-vs-consumer distinction as #867: 'cubic' is right for
+           // a curve a director drew, and wrong for a frame-by-frame copy.
+-          easing: 'linear' as const,
++          easing: 'cubic' as const,
+         })),
+       },
+     });
