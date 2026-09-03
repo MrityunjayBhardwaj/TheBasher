@@ -206,25 +206,43 @@ function clipBandSamplersForAsset(
   nodeNameMap: Readonly<Record<string, string>>,
   assetRef: string,
 ): Record<string, BakedChannelSamplers> {
-  // Sorted ids throughout (V22): with more than one clip bound to a rig, WHICH
-  // one supplies a bone must not depend on object-key order. Today a second
-  // bind is refused by name (dispatchMutator, #807), so this is a tie-break
-  // that should not fire — deterministic anyway, because "should not fire" is
-  // not "cannot".
-  const ids = Object.keys(nodes).sort();
-
-  const assetId = ids.find((id) => {
+  // ONE pass to bucket the three node types this walk needs, then work over the
+  // buckets. The read-side caller hands in the WHOLE node table on every
+  // resolve, and a glTF import runs to several hundred nodes — sorting all of
+  // them, or scanning them once per skeleton, would put an O(n log n) and an
+  // O(n²) on a path that used to be a single O(n) sweep. Almost every project
+  // has no retargeted clip at all, and that case now exits after this pass
+  // having sorted nothing.
+  let assetId: string | undefined;
+  const skeletonIds: string[] = [];
+  const clipIds: string[] = [];
+  for (const id of Object.keys(nodes)) {
     const n = nodes[id];
-    return n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef;
-  });
-  if (assetId === undefined) return {};
+    if (n.type === 'AnimationClip') clipIds.push(id);
+    else if (n.type === 'GltfSkeleton') skeletonIds.push(id);
+    else if (
+      assetId === undefined &&
+      n.type === 'GltfAsset' &&
+      (n.params as { assetRef?: unknown }).assetRef === assetRef
+    ) {
+      assetId = id;
+    }
+  }
+  if (assetId === undefined || skeletonIds.length === 0 || clipIds.length === 0) return {};
   const skins = (nodes[assetId].params as { skins?: unknown }).skins;
   if (!Array.isArray(skins)) return {};
 
+  // Sorted (V22): with more than one clip bound to a rig, WHICH one supplies a
+  // bone must not depend on object-key order. Today a second bind is refused by
+  // name (dispatchMutator, #807), so this is a tie-break that should not fire —
+  // deterministic anyway, because "should not fire" is not "cannot". Sorting
+  // the two small buckets rather than the table keeps it cheap.
+  skeletonIds.sort();
+  clipIds.sort();
+
   const out: Record<string, BakedChannelSamplers> = {};
-  for (const skeletonId of ids) {
+  for (const skeletonId of skeletonIds) {
     const skel = nodes[skeletonId];
-    if (skel.type !== 'GltfSkeleton') continue;
     if (edgeTarget(skel, 'asset') !== assetId) continue;
 
     // bone INDEX → childName. `skin.jointKeys` IS the projection spine: the
@@ -238,9 +256,8 @@ function clipBandSamplersForAsset(
     const jointKeys = skin?.jointKeys;
     if (!Array.isArray(jointKeys)) continue;
 
-    for (const clipId of ids) {
+    for (const clipId of clipIds) {
       const clip = nodes[clipId];
-      if (clip.type !== 'AnimationClip') continue;
       if (edgeTarget(clip, 'skeleton') !== skeletonId) continue;
 
       const params = clip.params as Partial<AnimationClipParams> | undefined;
