@@ -3123,8 +3123,8 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
   // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
   const bakedChannels = useMemo(
-    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap),
-    [depNodeMap, value.nodeNameMap],
+    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap, value.assetRef),
+    [depNodeMap, value.nodeNameMap, value.assetRef],
   );
   // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed childDagId → the
   // function-of-time channel VALUES targeting that child's `materials.*` paths.
