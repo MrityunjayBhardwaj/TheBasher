@@ -11,6 +11,11 @@ function channelNode(params: Record<string, unknown>) {
   return { type: 'KeyframeChannelVec3', params };
 }
 
+// These fixtures contain no GltfAsset node, so the #888 clip band finds no root
+// and contributes nothing — which is what makes these rows about the CHANNEL
+// band alone. The clip band has its own file (bakedGltfChannels.clipBand.test.ts).
+const NO_ASSET = 'asset-with-no-node-in-these-fixtures';
+
 const NODE_NAME_MAP = {
   bone_1: 'n_gltfChild_aaa',
   bone_2: 'n_gltfChild_bbb',
@@ -38,7 +43,7 @@ describe('bakedChannelSamplersForAsset', () => {
         ],
       }),
     };
-    const out = bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP);
+    const out = bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP, NO_ASSET);
     expect(Object.keys(out)).toEqual(['bone_1']);
     expect(out.bone_1.position).toBeTypeOf('function');
     expect(out.bone_1.rotation).toBeTypeOf('function');
@@ -58,7 +63,7 @@ describe('bakedChannelSamplersForAsset', () => {
         keyframes: [{ time: 0, value: [1, 2, 3], easing: 'linear' }],
       }),
     };
-    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP)).toEqual({});
+    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP, NO_ASSET)).toEqual({});
   });
 
   it('ignores ordinary authored channels with no childName', () => {
@@ -71,7 +76,7 @@ describe('bakedChannelSamplersForAsset', () => {
       }),
       nonChannel: { type: 'Object', params: { childName: 'bone_1' } },
     };
-    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP)).toEqual({});
+    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP, NO_ASSET)).toEqual({});
   });
 
   it('ignores an unknown paramPath', () => {
@@ -83,7 +88,7 @@ describe('bakedChannelSamplersForAsset', () => {
         keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
       }),
     };
-    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP)).toEqual({});
+    expect(bakedChannelSamplersForAsset(nodes, NODE_NAME_MAP, NO_ASSET)).toEqual({});
   });
 });
 
