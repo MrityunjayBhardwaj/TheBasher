@@ -10,9 +10,18 @@
 // calls — and asserts it returns a sampler whose value CHANGES over time.
 //
 // The falsifying arm is cheap and is exercised below: with no channels applied,
-// the same enumerator returns nothing for the same asset. A test that only
-// showed "a sampler exists" would pass against a static one, which is precisely
-// the shape being fixed.
+// no channel NODE exists for the bone. A test that only showed "a sampler
+// exists" would pass against a static one, which is precisely the shape being
+// fixed.
+//
+// 🔴 THAT ARM USED TO ASK THE MERGED ENUMERATOR AND IT NO LONGER CAN (#888).
+// The enumerator now serves a bone from the `AnimationClip` bound to its rig
+// when no channel node covers it, so "the enumerator finds nothing" stopped
+// being a statement about the BAKE the moment the clip band landed — it would
+// have gone on passing while meaning something else. The arm asks
+// `bakedChannelNodeIdsForAsset` instead, which is the channel-only predicate.
+// Two rows below assert the clip band directly, so the new behaviour is
+// visible in the file it changed rather than only in the file that added it.
 
 import { describe, expect, it } from 'vitest';
 import { emptyDagState } from '../../../core/dag/state';
@@ -21,7 +30,10 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { registerAllNodes } from '../../../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
-import { bakedChannelSamplersForAsset } from '../../../app/bakedGltfChannels';
+import {
+  bakedChannelSamplersForAsset,
+  bakedChannelNodeIdsForAsset,
+} from '../../../app/bakedGltfChannels';
 import { bakeClipOntoRigMutator } from './bakeClipOntoRig';
 
 registerAllNodes();
@@ -181,7 +193,7 @@ describe("the renderer's own enumerator finds the channels", () => {
       .nodeNameMap;
 
     // The exact call the renderer's useFrame makes.
-    const samplers = bakedChannelSamplersForAsset(after.nodes, nodeNameMap);
+    const samplers = bakedChannelSamplersForAsset(after.nodes, nodeNameMap, ASSET);
     const rotation = samplers[BONES[0]]?.rotation;
     expect(rotation).toBeTypeOf('function');
 
@@ -210,7 +222,8 @@ describe("the renderer's own enumerator finds the channels", () => {
     const after = applyAll(state, build(state));
     const nodeNameMap = (after.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
       .nodeNameMap;
-    const rotation = bakedChannelSamplersForAsset(after.nodes, nodeNameMap)[BONES[0]]?.rotation;
+    const rotation = bakedChannelSamplersForAsset(after.nodes, nodeNameMap, ASSET)[BONES[0]]
+      ?.rotation;
     expect(rotation).toBeTypeOf('function');
     const v = rotation!(1);
     expect(v[0]).toBeCloseTo(180, 4);
@@ -231,16 +244,70 @@ describe("the renderer's own enumerator finds the channels", () => {
     const after = applyAll(state, build(state));
     const nodeNameMap = (after.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
       .nodeNameMap;
-    const v = bakedChannelSamplersForAsset(after.nodes, nodeNameMap)[BONES[0]]!.rotation!(1);
+    const v = bakedChannelSamplersForAsset(after.nodes, nodeNameMap, ASSET)[BONES[0]]!.rotation!(1);
     expect(v[1]).not.toBeCloseTo(Math.PI / 2, 3);
     expect(v[1] / (Math.PI / 2)).toBeCloseTo(180 / Math.PI, 3);
   });
 
-  it('the falsifying arm: with no bake applied, the enumerator finds nothing', () => {
+  it('the falsifying arm: with no bake applied, no CHANNEL NODE exists for the bone', () => {
     const state = buildScene();
     const nodeNameMap = (state.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
       .nodeNameMap;
-    expect(bakedChannelSamplersForAsset(state.nodes, nodeNameMap)[BONES[0]]).toBeUndefined();
+    // 🔴 THIS ROW ASSERTS THE CHANNEL BAND, NOT THE MERGED ENUMERATOR, AND THE
+    // DIFFERENCE IS #888. It exists to falsify the rows above — to prove the
+    // BAKE is what puts a channel there. Until #888 the merged enumerator was a
+    // faithful proxy for that, because a bone with no channel had no motion at
+    // all. Now the enumerator also serves a bone from the clip bound to its rig
+    // (asserted directly below), so asking it "did you find nothing?" would
+    // answer a question about the clip band and read as an answer about the
+    // bake. `bakedChannelNodeIdsForAsset` is the channel-only predicate — the
+    // same one the clear action deletes through — so it still means what this
+    // row has always claimed to mean.
+    expect(bakedChannelNodeIdsForAsset(state.nodes, nodeNameMap)).toEqual([]);
+  });
+
+  it('#888 — before any bake, the bone is already served BY THE CLIP through its rig edge', () => {
+    const state = buildScene({
+      keyframes: [
+        { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { bone: 0, time: 1, position: [0, 5, 0], rotation: [0, Math.PI / 2, 0] },
+      ],
+    });
+    const nodeNameMap = (state.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
+      .nodeNameMap;
+    // No channel node exists…
+    expect(bakedChannelNodeIdsForAsset(state.nodes, nodeNameMap)).toEqual([]);
+    // …and the band reaches the clip anyway, by walking
+    // AnimationClip.inputs.skeleton → GltfSkeleton.inputs.asset → this asset.
+    const band = bakedChannelSamplersForAsset(state.nodes, nodeNameMap, ASSET)[BONES[0]];
+    expect(band?.position).toBeTypeOf('function');
+    expect(band?.rotation).toBeTypeOf('function');
+    // Scale is absent on purpose: a clip cannot express it, and claiming it
+    // would suppress the asset's own scale track (the resolver reads presence).
+    expect(band?.scale).toBeUndefined();
+    // Degrees, like the band it joins — 90° here, not π/2.
+    expect(band!.rotation!(1)[1]).toBeCloseTo(90, 3);
+    expect(band!.position!(1)[1]).toBeCloseTo(5, 6);
+  });
+
+  it('#888 — a real channel still outranks the clip, per component', () => {
+    const state = buildScene({
+      keyframes: [
+        { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { bone: 0, time: 1, position: [0, 5, 0], rotation: [0, Math.PI / 2, 0] },
+      ],
+    });
+    const after = applyAll(state, build(state));
+    const nodeNameMap = (after.nodes.cb_asset.params as { nodeNameMap: Record<string, string> })
+      .nodeNameMap;
+    // With the bake applied, the channel band supplies the bone. The values
+    // agree with the clip band above because the bake copies the same clip
+    // through the same conversion — which is the property #889 relies on when
+    // it stops making the copy.
+    expect(bakedChannelNodeIdsForAsset(after.nodes, nodeNameMap).length).toBeGreaterThan(0);
+    const band = bakedChannelSamplersForAsset(after.nodes, nodeNameMap, ASSET)[BONES[0]];
+    expect(band!.rotation!(1)[1]).toBeCloseTo(90, 3);
+    expect(band!.position!(1)[1]).toBeCloseTo(5, 6);
   });
 });
 

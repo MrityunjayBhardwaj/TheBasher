@@ -26,8 +26,14 @@
 //      (the layering primitive); vyapti V20/V24; hetvabhasa H40/H48.
 
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
+import { buildClipBoneSamplers, type AnimationClipParams } from '../nodes/AnimationClip';
 import type { Vec3 } from '../nodes/types';
 import type { BakedChannel } from './resolveGltfChildTransform';
+// The radians→degrees boundary. THE SAME helper `bakeClipOntoRig` converts with
+// (builders/bakeClipOntoRig.ts, where the unit change is documented at length):
+// the clip band below must produce the value the eager bake produced for the
+// same bone, and two conversion sites are two chances to drift.
+import { radVec3ToDeg } from '../viewport/rotation';
 
 type ChannelSampler = (seconds: number) => Vec3;
 
@@ -130,17 +136,189 @@ export function bakedChannelIdsForAssetRef(
   return null;
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// THE CLIP BAND (#888) — how a bone with NO channel node still reaches motion
+// ───────────────────────────────────────────────────────────────────────────
+// The resolver already falls through to the clip when a bone has no baked
+// channel. For ONE of the two bake sources that is enough; for the other it is
+// not, and that difference is the whole reason the eager bake exists:
+//
+//   bakeGltfChannel   — the asset's OWN embedded clip. `clipTrack` is the
+//                       asset's `transformClip` socket, so the resolver falls
+//                       through to it. The bake is a duplicate of what would
+//                       have been read anyway.
+//   bakeClipOntoRig   — a FOREIGN retargeted clip. An `AnimationClip` is not on
+//                       that socket, so nothing falls through and materialising
+//                       every bone is today the only bridge to the rendered
+//                       skin. That is the copy that goes stale.
+//
+// It does not have to be. The retargeted clip is already edged to the rig —
+// nothing had ever looked at the edge:
+//
+//   AnimationClip  --inputs.skeleton-->  GltfSkeleton  --inputs.asset-->  GltfAsset
+//
+// Walking it gives a bone with no channel a sampler over the clip, so the bake
+// stops being load-bearing and #889 can stop making the copy at all.
+//
+// WHY THE EDGE AND NOT A NAME MATCH. The bone INDEX in a clip keyframe is only
+// meaningful against the skeleton the indices were authored for. Reading the
+// skeleton off the clip's own edge makes an index/rig mismatch unrepresentable
+// rather than merely unlikely — the same argument `bakeClipOntoRig` makes for
+// taking one parameter instead of two. In `Robot-Walk.basher` this is load
+// bearing rather than theoretical: the retargeted 23-bone clip hangs off the
+// `GltfSkeleton`, while the 78-bone SOURCE clip it came from hangs off a plain
+// `Skeleton`, so the edge walk excludes the source clip without a special case.
+
+/** Minimal node shape the edge walk reads: type, params, and incoming edges. */
+interface GraphNodeLike {
+  readonly type: string;
+  readonly params?: unknown;
+  readonly inputs?: Readonly<Record<string, unknown>>;
+}
+
 /**
- * Enumerate the baked KeyframeChannelVec3 nodes belonging to ONE glTF asset,
- * keyed by childName → per-component sampler closures.
+ * The node id on the far end of `node.inputs[socket]`, or null.
+ *
+ * A `single` socket resolves to one connection; an array is tolerated so a
+ * cardinality change upstream degrades to "no clip band" rather than a crash —
+ * the same tolerance `bakeClipOntoRig.skeletonIdOf` applies for the same reason.
+ */
+function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
+  const s = node?.inputs?.[socket];
+  if (!s) return null;
+  const one = (Array.isArray(s) ? s[0] : s) as { node?: unknown } | undefined;
+  return typeof one?.node === 'string' ? one.node : null;
+}
+
+/**
+ * Per-bone samplers over the `AnimationClip`s bound to this asset's rig, keyed
+ * by childName. These are the FALLBACK band: a bone that has a real channel
+ * node is served by that channel, never by this.
+ *
+ * Only `position` and `rotation` are produced. `AnimationClipParams.keyframes`
+ * carries no scale, so claiming a scale component would SUPPRESS the asset's
+ * own scale track underneath it (the resolver reads presence, not value) —
+ * omitting it leaves scale to the bands below, which is the honest answer and
+ * the same call `bakeClipOntoRig` makes.
+ */
+function clipBandSamplersForAsset(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  nodeNameMap: Readonly<Record<string, string>>,
+  assetRef: string,
+): Record<string, BakedChannelSamplers> {
+  // ONE pass to bucket the three node types this walk needs, then work over the
+  // buckets. The read-side caller hands in the WHOLE node table on every
+  // resolve, and a glTF import runs to several hundred nodes — sorting all of
+  // them, or scanning them once per skeleton, would put an O(n log n) and an
+  // O(n²) on a path that used to be a single O(n) sweep. Almost every project
+  // has no retargeted clip at all, and that case now exits after this pass
+  // having sorted nothing.
+  let assetId: string | undefined;
+  const skeletonIds: string[] = [];
+  const clipIds: string[] = [];
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (n.type === 'AnimationClip') clipIds.push(id);
+    else if (n.type === 'GltfSkeleton') skeletonIds.push(id);
+    else if (
+      assetId === undefined &&
+      n.type === 'GltfAsset' &&
+      (n.params as { assetRef?: unknown }).assetRef === assetRef
+    ) {
+      assetId = id;
+    }
+  }
+  if (assetId === undefined || skeletonIds.length === 0 || clipIds.length === 0) return {};
+  const skins = (nodes[assetId].params as { skins?: unknown }).skins;
+  if (!Array.isArray(skins)) return {};
+
+  // Sorted (V22): with more than one clip bound to a rig, WHICH one supplies a
+  // bone must not depend on object-key order. Today a second bind is refused by
+  // name (dispatchMutator, #807), so this is a tie-break that should not fire —
+  // deterministic anyway, because "should not fire" is not "cannot". Sorting
+  // the two small buckets rather than the table keeps it cheap.
+  skeletonIds.sort();
+  clipIds.sort();
+
+  const out: Record<string, BakedChannelSamplers> = {};
+  for (const skeletonId of skeletonIds) {
+    const skel = nodes[skeletonId];
+    if (edgeTarget(skel, 'asset') !== assetId) continue;
+
+    // bone INDEX → childName. `skin.jointKeys` IS the projection spine: the
+    // GltfSkeleton value's bones[i].name is jointKeys[i], and the same key is a
+    // nodeNameMap key. Reading it off the asset's captured params keeps this
+    // enumerator pure over the node table — no evaluate(), no second walk.
+    const skinIndex = (skel.params as { skinIndex?: unknown }).skinIndex;
+    const skin = skins[typeof skinIndex === 'number' ? skinIndex : 0] as
+      | { jointKeys?: unknown }
+      | undefined;
+    const jointKeys = skin?.jointKeys;
+    if (!Array.isArray(jointKeys)) continue;
+
+    for (const clipId of clipIds) {
+      const clip = nodes[clipId];
+      if (edgeTarget(clip, 'skeleton') !== skeletonId) continue;
+
+      const params = clip.params as Partial<AnimationClipParams> | undefined;
+      if (!Array.isArray(params?.keyframes) || params.keyframes.length === 0) continue;
+      // Delegate to the CLIP's own sampling (AnimationClip.buildClipBoneSamplers)
+      // rather than rebuilding its keys as channel params — nothing is
+      // defaulted because nothing is invented. See that function's header.
+      const boneSamplers = buildClipBoneSamplers({
+        keyframes: params.keyframes,
+        duration: typeof params.duration === 'number' ? params.duration : 1,
+        loop: params.loop !== false,
+      });
+
+      for (const [boneIndex, sample] of boneSamplers) {
+        const childName = jointKeys[boneIndex];
+        // A bone the skeleton cannot name, or one outside this asset, cannot be
+        // addressed — the same skip bakeClipOntoRig makes for the same reason.
+        if (typeof childName !== 'string' || childName.length === 0) continue;
+        if (!(childName in nodeNameMap)) continue;
+        // First clip by sorted id wins a bone; a later one does not overwrite.
+        const slot = (out[childName] ??= {});
+        slot.position ??= (seconds) => sample(seconds).position;
+        // 🔴 UNITS: an AnimationKeyframe rotation is RADIANS and this band is
+        // DEGREES. bakeClipOntoRig documents why at length — copying through
+        // unconverted scales every bone rotation by π/180, which renders as a
+        // character standing still while its root position travels.
+        slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Enumerate the motion bands belonging to ONE glTF asset, keyed by childName →
+ * per-component sampler closures.
+ *
+ * TWO SOURCES, ONE BAND, in precedence order:
+ *   1. baked `KeyframeChannelVec3` nodes — an authored/materialised track;
+ *   2. (#888) the `AnimationClip`s bound to this asset's rig, for any component
+ *      no channel node supplies.
+ *
+ * The merge happens HERE, not at the call sites. Both surfaces — the renderer
+ * (C2) and the read-side gizmo/NPanel (C3) — consume this one function
+ * precisely so a band cannot be threaded into one and not the other; a merge
+ * performed per-caller would be exactly the per-surface re-implementation that
+ * produces a displayed-≠-rendered split (H40).
  *
  * @param nodes        the DAG node table (read-only).
  * @param nodeNameMap  the asset's childName → dagId map (GltfAssetValue.nodeNameMap)
  *                     — also the asset-membership scope (BLOCK-2).
+ * @param assetRef     the asset's storage handle. REQUIRED, not optional: it is
+ *                     the root of the edge walk, and a caller that omitted it
+ *                     would silently get the channel band alone — which is a
+ *                     correct-looking result and the wrong one. Both callers
+ *                     have it in hand.
  */
 export function bakedChannelSamplersForAsset(
   nodes: Readonly<Record<string, ChannelNodeLike>>,
   nodeNameMap: Readonly<Record<string, string>>,
+  assetRef: string,
 ): Record<string, BakedChannelSamplers> {
   const out: Record<string, BakedChannelSamplers> = {};
   for (const node of Object.values(nodes)) {
@@ -152,6 +330,21 @@ export function bakedChannelSamplersForAsset(
     (out[p.childName] ??= {})[p.paramPath] = buildVec3Sampler(
       node.params as KeyframeChannelVec3Params,
     );
+  }
+  // The clip band fills only what no channel node supplied. `??=` is the
+  // precedence rule in one character: a real channel is an authored (or
+  // materialised) track and outranks the clip it came from, per-component —
+  // the same presence-not-value rule the resolver applies one layer up.
+  for (const [childName, fromClip] of Object.entries(
+    clipBandSamplersForAsset(
+      nodes as Readonly<Record<string, GraphNodeLike>>,
+      nodeNameMap,
+      assetRef,
+    ),
+  )) {
+    const slot = (out[childName] ??= {});
+    slot.position ??= fromClip.position;
+    slot.rotation ??= fromClip.rotation;
   }
   return out;
 }
