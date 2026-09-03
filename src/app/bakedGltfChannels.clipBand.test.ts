@@ -18,6 +18,7 @@ import type { DagState } from '../core/dag/state';
 import { registerAllNodes } from '../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../core/import/gltfImportChain';
 import { bakedChannelSamplersForAsset } from './bakedGltfChannels';
+import { buildClipBoneSamplers } from '../nodes/AnimationClip';
 import { gltfAssetDepNodes } from './gltfAssetDeps';
 
 registerAllNodes();
@@ -229,6 +230,29 @@ describe('#888 — precedence: a real channel outranks the clip, per component',
     const noClip = applyOp(s, { type: 'removeNode', nodeId: 'a_clip' } as never).next;
     const channelOnly = bakedChannelSamplersForAsset(noClip.nodes, NODE_NAME_MAP, ASSET);
     expect(withClipBand[BONES[0]]!.rotation!(1)).toEqual(channelOnly[BONES[0]]!.rotation!(1));
+  });
+});
+
+describe('#888 — the band reads params nothing re-validated, so it must survive them', () => {
+  it('a non-positive or NaN duration folds to 0 rather than producing NaN poses', () => {
+    // The schema forbids these, but the band reads `clip.params` straight off a
+    // saved file — the schema guards the NODE's inputs, not this path. `x % 0`
+    // is NaN in JS, and a NaN would propagate through every lerp into a bone
+    // pose of NaNs: a limb that silently vanishes rather than an error anyone
+    // can trace back here.
+    for (const duration of [0, -1, Number.NaN]) {
+      const sampler = buildClipBoneSamplers({
+        duration,
+        loop: true,
+        keyframes: [
+          { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+          { bone: 0, time: 1, position: [0, 9, 0], rotation: [0, 0, 0] },
+        ],
+      } as never).get(0)!;
+      const p = sampler(0.5).position;
+      expect(Number.isFinite(p[1])).toBe(true);
+      expect(p[1]).toBe(1); // the first key, which is what "no time domain" means
+    }
   });
 });
 

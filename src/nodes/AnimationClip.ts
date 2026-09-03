@@ -80,6 +80,12 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
  * about where time `t` lands.
  */
 function foldClipTime(seconds: number, duration: number, loop: boolean): number {
+  // A non-positive duration has no time domain to fold into, and `x % 0` is
+  // NaN — which would propagate silently through every lerp into a bone pose
+  // of NaNs and a bone that vanishes rather than an error anyone can trace.
+  // The schema forbids it, but these params are also read straight off saved
+  // files by the baked band (#888), where nothing has re-validated them.
+  if (!(duration > 0)) return 0;
   return loop
     ? ((seconds % duration) + duration) % duration
     : Math.max(0, Math.min(seconds, duration));
