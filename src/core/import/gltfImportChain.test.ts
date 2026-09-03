@@ -4,12 +4,20 @@
 // Pin the determinism + ordering + degenerate-path contracts plus the
 // B3 CHECKPOINT rad→deg conversion at the emit site.
 //
-// REF: PLAN.md Wave D; SECTION-INVENTORY.md B3.
+// B3 asserted the conversion at ONE key (`kf.find((k) => k.time === 1)`). A
+// quat→Euler conversion is memoryless, so what it can get wrong is the choice of
+// REPRESENTATIVE — and which representative was chosen is invisible at any single
+// key, because every representative denotes the same rotation there. It only shows
+// up between keys, once the consumer interpolates the components. That is how #876
+// escaped the test file of the very module that carried it (issue #883). B3 now
+// asserts every key, and the row after it samples the intervals.
+//
+// REF: PLAN.md Wave D; SECTION-INVENTORY.md B3; issues #876, #883.
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { Quaternion } from 'three';
+import { Euler, Quaternion } from 'three';
 import { quaternionToEulerVec3 } from './threeAdapter';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import {
@@ -22,6 +30,8 @@ import {
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import type { GltfJson } from './glb';
+import { TransformClipNode, TransformClipParams } from '../../nodes/TransformClip';
+import type { TransformClipValue } from '../../nodes/types';
 
 /** Loads the committed skinned-bar.glb fixture as an ArrayBuffer (P7.7 #91).
  *  vitest runs from the repo root, so resolve against process.cwd(). */
@@ -371,6 +381,15 @@ describe('buildGltfImportOps', () => {
     const kf = (
       tcOp.params as { keyframes: Array<{ time: number; rotation: [number, number, number] }> }
     ).keyframes;
+    // EVERY key, not just the last one. A conversion applied to some keys and
+    // not others reads identical to a correct one when only the endpoint is
+    // examined, and the endpoint is what a `find` picks.
+    expect(kf.map((k) => k.time)).toEqual([0, 1]);
+    const first = kf.find((k) => k.time === 0)!;
+    expect(first.rotation[0]).toBeCloseTo(0, 6);
+    expect(first.rotation[1]).toBeCloseTo(0, 6);
+    expect(first.rotation[2]).toBeCloseTo(0, 6);
+
     const last = kf.find((k) => k.time === 1)!;
     // 90deg about Z — sanity-cross-check via the same helper.
     const expected = radVec3ToDeg(
@@ -380,6 +399,124 @@ describe('buildGltfImportOps', () => {
     expect(last.rotation[2]).toBeCloseTo(90, 1);
     // Negative assertion: NOT radians (π/2 ≈ 1.5708).
     expect(Math.abs(last.rotation[2])).toBeGreaterThan(10);
+  });
+
+  it('B3 SEQUENCE — the emitted rotations interpolate to the source BETWEEN keys, not only at them', async () => {
+    // Three keys sweeping 350 degrees about Z: 0 -> 175 -> 350. Every key on its
+    // own is unambiguous, and the sweep is what makes the choice of representative
+    // observable. The canonical decomposition returns -10 for the last key, which
+    // denotes exactly the same rotation as 350 and is therefore indistinguishable
+    // from it by any per-key assertion — but the consumer lerps the components, so
+    // 175 -> -10 walks BACKWARDS through zero while 175 -> 350 walks forwards.
+    //
+    // The assertion is representative-agnostic on purpose: each emitted Euler is
+    // converted BACK to a quaternion and compared to the truth, so a correct
+    // producer is free to pick any representative it likes. What it may not do is
+    // pick a set the consumer cannot interpolate.
+    const ANGLES_DEG = [0, 175, 350];
+    const quatAt = (deg: number) => {
+      const half = (deg * Math.PI) / 360;
+      return new Quaternion(0, 0, Math.sin(half), Math.cos(half));
+    };
+    const times = f32Bytes([0, 1, 2]);
+    const rotValues = f32Bytes(
+      ANGLES_DEG.flatMap((deg) => {
+        const q = quatAt(deg);
+        return [q.x, q.y, q.z, q.w];
+      }),
+    );
+    const bin = concatBytes(times, rotValues);
+    const json: GltfJson = {
+      nodes: [{ name: 'Cube' }],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'SCALAR' },
+        { bufferView: 1, componentType: 5126, count: 3, type: 'VEC4' },
+      ],
+      bufferViews: [
+        { buffer: 0, byteOffset: 0, byteLength: times.length },
+        { buffer: 0, byteOffset: times.length, byteLength: rotValues.length },
+      ],
+      buffers: [{ byteLength: bin.length }],
+      animations: [
+        {
+          name: 'sweep',
+          channels: [{ sampler: 0, target: { node: 0, path: 'rotation' } }],
+          samplers: [{ input: 0, output: 1 }],
+        },
+      ],
+    };
+    const result = await buildGltfImportOps(
+      { buffer: makeGlb(json, bin), assetRef: 'asset/sweep.glb', sceneNodeId: 'n_scene' },
+      stateWithTimeSource(),
+    );
+    const tcOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip');
+    if (tcOp?.type !== 'addNode') throw new Error('expected TransformClip addNode');
+    const kf = (
+      tcOp.params as { keyframes: Array<{ time: number; rotation: [number, number, number] }> }
+    ).keyframes;
+    expect(kf.map((k) => k.time)).toEqual([0, 1, 2]);
+
+    /** Euler degrees (XYZ, the order the emitter and the consumer both use) back
+     *  to a quaternion, so the comparison is on the ROTATION and not on one of
+     *  its several spellings. */
+    const quatOfDeg = (d: readonly number[]) =>
+      new Quaternion().setFromEuler(
+        new Euler((d[0] * Math.PI) / 180, (d[1] * Math.PI) / 180, (d[2] * Math.PI) / 180, 'XYZ'),
+      );
+    /** Angle between two rotations, in degrees. */
+    const angleDeg = (a: Quaternion, b: Quaternion) => (a.angleTo(b) * 180) / Math.PI;
+
+    // At the keys: whatever representative was chosen must denote the source.
+    for (let i = 0; i < ANGLES_DEG.length; i++) {
+      expect(
+        angleDeg(quatOfDeg(kf[i].rotation), quatAt(ANGLES_DEG[i])),
+        `key ${i} denotes a different rotation from the source`,
+      ).toBeLessThan(1e-3);
+    }
+
+    // Between the keys: read the REAL consumer, not a re-implementation of its
+    // arithmetic. The emitted params are parsed through TransformClip's own zod
+    // schema — the path applyAddNode takes — and sampled through the same
+    // `sample()` the viewport calls, so this assertion follows the consumer if
+    // its interpolation ever changes instead of quietly rotting against a copy.
+    //
+    // 0.5 is kept in the list and must never be the only probe: a defect that is
+    // antisymmetric about the midpoint is invisible there, which is exactly how
+    // #877 hid. (This particular defect happens to be worst AT 0.5 — which is the
+    // point: which interior point exposes a defect is a property of the defect,
+    // so a single fraction is never the right instrument.)
+    const INTERIOR_U = [0.21, 0.5, 0.79] as const;
+    const clip = TransformClipNode.evaluate(
+      TransformClipParams.parse(tcOp.params),
+      {} as never,
+      {} as never,
+    ) as TransformClipValue;
+    const targetKey = (tcOp.params as { keyframes: Array<{ targetNodeId: string }> }).keyframes[0]
+      .targetNodeId;
+
+    let compared = 0;
+    let worstDeg = 0;
+    let worst = '';
+    for (let seg = 0; seg < kf.length - 1; seg++) {
+      for (const u of INTERIOR_U) {
+        const t = kf[seg].time + u * (kf[seg + 1].time - kf[seg].time);
+        const sampled = clip.sample(t)[targetKey];
+        expect(sampled, `clip produced no TRS for ${targetKey} at t=${t}`).toBeDefined();
+        const trueDeg = ANGLES_DEG[seg] + u * (ANGLES_DEG[seg + 1] - ANGLES_DEG[seg]);
+        const delta = angleDeg(quatOfDeg(sampled.rotation), quatAt(trueDeg));
+        compared++;
+        if (delta > worstDeg) {
+          worstDeg = delta;
+          worst = `seg${seg} u=${u} sampled z=${sampled.rotation[2].toFixed(3)} vs true ${trueDeg.toFixed(3)}`;
+        }
+      }
+    }
+    // The denominator, asserted: a zero from a loop that never ran looks exactly
+    // like a zero from a loop that ran and agreed.
+    expect(compared).toBe(6);
+    // A single-axis sweep interpolates exactly under component-wise lerp, so the
+    // only admissible slack is the float32 the GLB stores the quaternions in.
+    expect(worstDeg, `${compared} samples compared; worst: ${worst}`).toBeLessThan(0.05);
   });
 
   it('sanitises bracket-character node names into the keyframe targetNodeId', async () => {

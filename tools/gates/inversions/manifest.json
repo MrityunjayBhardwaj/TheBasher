@@ -1,0 +1,64 @@
+{
+  "pairs": [
+    {
+      "inversion": "null",
+      "defect": "nothing — the control. Every gate below must stay GREEN, which is what proves the runner produces no spurious reds of its own.",
+      "gates": [
+        { "file": "src/agent/mutators/builders/bakedClipParity.gate.test.ts", "expect": "green" },
+        { "file": "src/agent/mutators/builders/bakeGltfChannel.test.ts", "expect": "green" },
+        { "file": "src/agent/mutators/builders/bakeClipOntoRig.test.ts", "expect": "green" },
+        { "file": "src/app/animate/retargetThenBake.test.ts", "expect": "green" },
+        { "file": "src/core/import/gltfEulerContinuity.gate.test.ts", "expect": "green" },
+        { "file": "src/core/import/gltfImportChain.test.ts", "expect": "green" }
+      ]
+    },
+    {
+      "inversion": "bakeEasingCubic",
+      "defect": "the shared bake emitter stamps easing 'cubic' on keys copied from a clip whose sampler is a raw lerp, so the two carriers of one motion disagree between keyframes (#877).",
+      "gates": [
+        {
+          "file": "src/agent/mutators/builders/bakedClipParity.gate.test.ts",
+          "expect": "red",
+          "subject": "bake-versus-clip agreement, at and between keyframes. The dedicated gate for this defect."
+        },
+        {
+          "file": "src/agent/mutators/builders/bakeGltfChannel.test.ts",
+          "expect": "red",
+          "subject": "the bakeGltfChannel mutator's ops, including its H40 no-jump claim. Was GREEN here until #883 gave it interval sampling — the whole point of the sweep."
+        }
+      ]
+    },
+    {
+      "inversion": "gltfEulerCanonical",
+      "defect": "the glTF import road picks each key's Euler representative canonically, with no memory of the previous key, so a rotation crossing a branch cut walks the long way under the consumer's component-wise lerp (#876).",
+      "gates": [
+        {
+          "file": "src/core/import/gltfEulerContinuity.gate.test.ts",
+          "expect": "red",
+          "subject": "no-jump: a bound on travel between adjacent keys. The dedicated gate for this defect."
+        },
+        {
+          "file": "src/core/import/gltfImportChain.test.ts",
+          "expect": "red",
+          "subject": "the import chain's emitted ops, including the B3 conversion checkpoint. Was GREEN here until #883 added the B3 SEQUENCE row — the module's own test file could not see the defect the module carried."
+        }
+      ]
+    },
+    {
+      "inversion": "bakeClipRotationRadians",
+      "defect": "bakeClipOntoRig emits bone rotations in radians, scaling every value by pi/180.",
+      "gates": [
+        {
+          "file": "src/agent/mutators/builders/bakeClipOntoRig.test.ts",
+          "expect": "red",
+          "subject": "the values the retarget bake emits. This is what covers them."
+        },
+        {
+          "file": "src/app/animate/retargetThenBake.test.ts",
+          "expect": "green",
+          "subject": "the SECOND-BIND GUARD — wiring, not values. Its central assertion is a before/after self-comparison, which cancels any corruption present in both terms. Green here is CORRECT and expected: the pair exists to keep that documented blindness honest and visible, not to fix it. If this ever turns red, the file's subject has changed and its header note needs rewriting."
+        }
+      ]
+    }
+  ]
+}

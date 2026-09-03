@@ -8,8 +8,13 @@
 //   4. Bake twice → SAME ids, idempotent no-op (V22 determinism).
 //   5. The edge-less channel nodes SURVIVE applyOp (closure gate / dispatch
 //      does NOT reject or GC an inputless addNode) (FLAG-3).
-//   6. H40 no-jump: the baked channel's sample(bakeTime) equals the clip track
-//      value at bakeTime per component.
+//   6. H40 no-jump: the baked channel reproduces the clip track — at every key
+//      AND between them. Sampling only at keyframes proves nothing here: both
+//      carriers are bit-identical at every key whatever easing the bake stamps,
+//      so that form of the assertion read 0 with #877's defect and 0 without it
+//      (issue #883). The interval fractions straddle the extrema of
+//      |smoothstep(u) - u| and deliberately keep 0.5, which is the one interior
+//      point at which the two agree even when the bake is wrong.
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../../core/dag';
@@ -17,7 +22,9 @@ import { registerAllNodes } from '../../../nodes/registerAll';
 import { validatePlan } from '../validate';
 import { bakeGltfChannelMutator } from './bakeGltfChannel';
 import { gltfChildDagId, gltfChannelDagId } from '../../../core/import/gltfImportChain';
-import { buildVec3Sampler } from '../../../nodes/KeyframeChannelVec3';
+import { buildVec3Sampler, KeyframeChannelVec3Params } from '../../../nodes/KeyframeChannelVec3';
+import { TransformClipNode, TransformClipParams } from '../../../nodes/TransformClip';
+import type { TransformClipValue } from '../../../nodes/types';
 
 const ASSET_REF = 'asset-bake';
 const CHILD = 'bone_1';
@@ -239,7 +246,16 @@ describe('mutator.timeline.bakeGltfChannel (D1)', () => {
     }
   });
 
-  it('H40 no-jump: the baked channel sample(bakeTime) equals the clip value per component', () => {
+  /** Interior sample fractions for the interval assertions below. 0.5 is kept ON
+   *  PURPOSE and must never become the only probe: smoothstep(0.5) = 0.5, so the
+   *  linear and cubic readings coincide there exactly. |smoothstep(u) - u| peaks
+   *  at u = (3 +/- sqrt(3))/6 ~ 0.2113 / 0.7887, which is what 0.21 and 0.79
+   *  straddle. A later "simplification" of this list to the midpoint alone would
+   *  be a false green that looks like tidying — the row after this one records
+   *  that in an executable form. REF: issue #883. */
+  const INTERIOR_U = [0.21, 0.5, 0.79] as const;
+
+  it('H40 no-jump: the baked channel reproduces the clip AT every key', () => {
     const state = buildState();
     const r = validatePlan(
       bakeGltfChannelMutator,
@@ -249,25 +265,105 @@ describe('mutator.timeline.bakeGltfChannel (D1)', () => {
     );
     expect(r.ok).toBe(true);
     if (!r.ok) return;
+    let checked = 0;
     for (const op of r.ops) {
       if (op.type !== 'addNode') continue;
       const p = op.params as {
         paramPath: 'position' | 'rotation' | 'scale';
         keyframes: { time: number; value: [number, number, number]; easing: 'linear' | 'cubic' }[];
       };
-      const sampler = buildVec3Sampler({
-        name: '',
-        target: '',
-        paramPath: '',
-        keyframes: p.keyframes,
-      });
+      // Parsed through the node's OWN schema, which is the path applyAddNode
+      // takes — so anything the builder fails to state comes back as the
+      // schema's default rather than as an absence.
+      const sampler = buildVec3Sampler(KeyframeChannelVec3Params.parse(op.params));
       // At each clip key time, the baked sampler returns the clip's value for
       // that component (no easing-induced pop at the keys themselves).
       const clipForChild = CLIP_KEYFRAMES.filter((k) => k.targetNodeId === CHILD);
       for (const k of clipForChild) {
         expect(sampler(k.time)).toEqual(k[p.paramPath]);
+        checked++;
       }
     }
+    // The denominator, asserted: a green from a loop that never ran looks
+    // exactly like a green from a loop that ran and agreed.
+    expect(checked).toBe(6);
+  });
+
+  it('H40 no-jump: and BETWEEN the keys, where the two carriers can actually differ', () => {
+    // The assertion above is satisfied identically by a bake that eases and one
+    // that does not, because the carriers coincide at every key. What separates
+    // them is the interior of each interval, read against the REAL consumer —
+    // TransformClip's own sample(), not a re-implementation of its arithmetic.
+    const state = buildState();
+    const r = validatePlan(
+      bakeGltfChannelMutator,
+      { assetRef: ASSET_REF, childName: CHILD },
+      state,
+      'bake',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+
+    // `evaluate` is declared `O | Record<string, O>`, so the single-value arm has
+    // to be narrowed before `.sample` is reachable. TransformClip has no inputs
+    // and reads no ctx — time enters through sample(), not the graph.
+    const clip = TransformClipNode.evaluate(
+      TransformClipParams.parse({ name: 'walk', duration: 1.5, keyframes: CLIP_KEYFRAMES }),
+      {} as never,
+      {} as never,
+    ) as TransformClipValue;
+
+    const byPath = new Map<string, (seconds: number) => readonly number[]>();
+    for (const op of r.ops) {
+      if (op.type !== 'addNode') continue;
+      const p = op.params as {
+        paramPath: 'position' | 'rotation' | 'scale';
+        keyframes: { time: number; value: [number, number, number]; easing: 'linear' | 'cubic' }[];
+      };
+      byPath.set(p.paramPath, buildVec3Sampler(KeyframeChannelVec3Params.parse(op.params)));
+    }
+
+    const times = CLIP_KEYFRAMES.filter((k) => k.targetNodeId === CHILD).map((k) => k.time);
+    let compared = 0;
+    let maxDelta = 0;
+    let worst = '';
+    for (let seg = 0; seg < times.length - 1; seg++) {
+      for (const u of INTERIOR_U) {
+        const t = times[seg] + u * (times[seg + 1] - times[seg]);
+        const trs = clip.sample(t)[CHILD];
+        expect(trs, `clip produced no TRS for ${CHILD} at t=${t}`).toBeDefined();
+        for (const component of ['position', 'rotation', 'scale'] as const) {
+          const sampler = byPath.get(component);
+          expect(sampler, `bake emitted no '${component}' channel`).toBeDefined();
+          const got = sampler!(t);
+          for (let axis = 0; axis < 3; axis++) {
+            const delta = Math.abs(trs[component][axis] - got[axis]);
+            compared++;
+            if (delta > maxDelta) {
+              maxDelta = delta;
+              worst = `${component}[${axis}] u=${u} t=${t.toFixed(4)} clip=${trs[component][axis]} baked=${got[axis]}`;
+            }
+          }
+        }
+      }
+    }
+
+    // 1 segment x 3 fractions x 3 components x 3 axes. ONE interval, because
+    // this file's fixture is the 2-key clip the rest of its rows need. Multiple
+    // intervals of UNEQUAL length — where a bug that cancels on a uniform grid
+    // cannot hide — are bakedClipParity.gate.test.ts's job, on the same emitter.
+    expect(compared).toBe(27);
+    // Exact, not approximate: a linear bake of a linearly-sampled clip is the
+    // SAME arithmetic, so the only admissible slack is float representation.
+    expect(maxDelta, `${compared} samples compared; worst: ${worst}`).toBeLessThan(1e-12);
+  });
+
+  it('u=0.5 alone would agree even with an easing defect, so it cannot be the only probe', () => {
+    // Guards the GATE, not the code. If INTERIOR_U is ever trimmed to the
+    // midpoint this row reds and says why.
+    const smoothstep = (u: number) => u * u * (3 - 2 * u);
+    expect(smoothstep(0.5)).toBe(0.5);
+    expect(INTERIOR_U.some((u) => Math.abs(smoothstep(u) - u) > 0.09)).toBe(true);
   });
 
   it('rejects when no clip track exists for the bone (nothing to bake)', () => {
