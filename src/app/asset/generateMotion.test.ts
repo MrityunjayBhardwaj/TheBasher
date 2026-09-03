@@ -165,6 +165,11 @@ function somaCapability(): MotionGenerationCapability {
       bvh: SOMA_BVH(),
       model: DEFAULT_MOTIONGEN_MODEL,
       unitScale: 0.01,
+      // #826 — no world path was requested, so there is no offset to place.
+      // `null` is a statement here, not a placeholder: a fixture that omitted
+      // the field would be claiming silence about placement, which
+      // `assertValidMotionResult` refuses on purpose.
+      worldOffsetXZ: null,
     }),
     cancel: async () => {},
   };

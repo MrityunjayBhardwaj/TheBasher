@@ -53,6 +53,29 @@ export async function buildGeneratedMotionOps(
   state: DagState,
 ): Promise<GeneratedMotionResult> {
   const generated = await capability.generate(args.request);
+  // 🔴 A WORLD OFFSET WE CANNOT PLACE IS A REFUSAL, NOT A DEFAULT (#826).
+  //
+  // When a world path is requested, the generator canonicalises frame 0 to the
+  // origin and returns the offset needed to put the motion back where it was
+  // asked for. Nothing in this chain applies it yet: placement is A2's build
+  // (#730), and inventing a placement here — or dropping the offset — would put
+  // the character at the origin instead of on the curve the director drew,
+  // while every frame of the clip looks perfectly correct.
+  //
+  // So it refuses instead. This is unreachable today, because nothing sends
+  // waypoints yet; it becomes reachable the moment #730 does, which is exactly
+  // when the placement decision has to be taken deliberately rather than
+  // discovered. A decision that cannot be taken yet is better expressed as a
+  // failure that fires when it becomes takeable than as a silent zero.
+  if (generated.worldOffsetXZ !== null) {
+    const [x, z] = generated.worldOffsetXZ;
+    throw new Error(
+      `Motion was generated about the origin from a world path starting at ` +
+        `[${x}, ${z}] (metres), and this chain cannot place it yet. Applying the ` +
+        `offset is the remaining half of curve-as-control; until it lands, a ` +
+        `world path would import at the origin rather than where it was drawn.`,
+    );
+  }
   const chain = buildBvhImportOps(
     {
       text: generated.bvh,
