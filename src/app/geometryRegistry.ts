@@ -1245,6 +1245,9 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
   const repNormal = new Float64Array(3);
   const weights = new Float64Array(longestRim);
   const scratch2D = new Float64Array(longestRim * 2);
+  // Only ever the value of `rep` before the first corner selects a source; every read of `rep`
+  // happens after a load, because the first corner's `from` cannot equal the -1 sentinel.
+  const EMPTY_RIM: readonly number[] = [];
 
   let cursor = 0;
   for (let face = 0; face < layout.rims.length; face++) {
@@ -1264,16 +1267,46 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
       // samples a function ON it. Both need the same map and neither needs a looser `faceOrder`,
       // which is exactly what #814 predicted when it called for *"a second map, not a looser
       // first one"*.
-      const rep = splitRims[layout.representative[face]];
-      const n = rep.length;
-      for (let k = 0; k < n; k++) {
-        repCoords[k * 3] = position.getX(rep[k]);
-        repCoords[k * 3 + 1] = position.getY(rep[k]);
-        repCoords[k * 3 + 2] = position.getZ(rep[k]);
-      }
-      const oriented = newellNormal(repCoords, n, repNormal);
+      // ── #880 — THE SOURCE IS CHOSEN PER CORNER, NOT PER FACE ──────────────────────────
+      //
+      // A minted corner sits ON a source point, so every face incident to that point contains it
+      // and any of them CAN interpolate it. Only the one the corner actually came from makes the
+      // operation an interpolation: elsewhere the destination is outside the polygon, mean-value
+      // weights go negative, and the blend leaves the source's uv range. Measured on an 8x6
+      // sphere, up to 2.13e-2 outside for edge quads and 2.72e-2 for corner n-gons; given each
+      // corner its own face, exactly 0 on every shape and tessellation this repo builds.
+      //
+      // Grounded: `bev_create_ngon` interpolates each corner in `face_arr[i]`
+      // (`bmesh_bevel.cc:1264`), and the edge-quad caller passes a per-corner array —
+      // *"Straddles but not a seam: interpolate left half in f1, right half in f2"* (`:7551`).
+      //
+      // ⚠️ THE REFERENCE'S EDGE SNAP IS DELIBERATELY NOT PORTED. It reads as the second half of a
+      // pair, but every caller picks ONE of the two: the seam arm passes one face plus snap
+      // edges, the non-seam arm passes per-corner faces and a NULL snap array
+      // (`:6273-6300`). The snap exists to rescue a corner forced into the wrong face at a UV
+      // seam — a concept this substrate does not have. The oracle agrees it buys nothing here.
+      //
+      // Reloaded only when the source CHANGES, which is why this is not a per-corner cost. A
+      // mapped face and an edge quad's two halves are contiguous runs, so a quad costs one extra
+      // load; an n-gon is the worst case at one per corner.
+      let loaded = -1;
+      let rep: readonly number[] = EMPTY_RIM;
+      let n = 0;
+      let oriented = false;
       for (let c = 0; c < rim.length; c++) {
         const at = base + c;
+        const from = layout.cornerRepresentative[at];
+        if (from !== loaded) {
+          loaded = from;
+          rep = splitRims[from];
+          n = rep.length;
+          for (let k = 0; k < n; k++) {
+            repCoords[k * 3] = position.getX(rep[k]);
+            repCoords[k * 3 + 1] = position.getY(rep[k]);
+            repCoords[k * 3 + 2] = position.getZ(rep[k]);
+          }
+          oriented = newellNormal(repCoords, n, repNormal);
+        }
         const dx = positions[at * 3];
         const dy = positions[at * 3 + 1];
         const dz = positions[at * 3 + 2];
