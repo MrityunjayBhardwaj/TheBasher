@@ -1118,8 +1118,45 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
         dy += ey / len;
         dz += ez / len;
       }
-    }
-    if (rule.kind === 'slide') {
+    } else if (rule.kind === 'onEdge') {
+      // #891 — ON the single unchamfered edge between this run's two chamfered bounds, at the
+      // MEAN of the two `amount / sin θ` meets. The reference meets the offset line with each
+      // bound separately and takes the midpoint (`offset_on_edge_between`, `bmesh_bevel.cc:2149`,
+      // `mid_v3_v3v3(meetco, meet1, meet2)`); both meets lie along THIS edge, so their midpoint is
+      // this direction at the mean distance and no second axis is needed.
+      const there = splitOf[rule.toward];
+      if (there < 0) return null;
+      const ex = position.getX(there) - hx;
+      const ey = position.getY(there) - hy;
+      const ez = position.getZ(there) - hz;
+      const len = Math.hypot(ex, ey, ez);
+      if (len === 0) return null;
+      let total = 0;
+      for (const against of rule.against) {
+        const other = splitOf[against];
+        if (other < 0) return null;
+        const ax = position.getX(other) - hx;
+        const ay = position.getY(other) - hy;
+        const az = position.getZ(other) - hz;
+        const alen = Math.hypot(ax, ay, az);
+        if (alen === 0) return null;
+        const cos = (ex * ax + ey * ay + ez * az) / (len * alen);
+        const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
+        // The same 2° refusal the terminal case makes, and for the same reason: `1 / sin` near
+        // straight does not fail, it places the vertex a very long way away.
+        if (!(sin > Math.sin((2 * Math.PI) / 180))) {
+          console.error(
+            `geometryRegistry: cannot build a 'bevel' — at source point ${rule.point} the unchamfered edge toward point ${rule.toward} and a chamfered edge toward point ${against} meet at ${((Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI).toFixed(2)}°, which is within 2° of straight. The reference places that boundary vertex from a face normal, which this layout does not carry`,
+          );
+          return null;
+        }
+        total += 1 / sin;
+      }
+      const scale = total / rule.against.length;
+      dx = (ex / len) * scale;
+      dy = (ey / len) * scale;
+      dz = (ez / len) * scale;
+    } else if (rule.kind === 'slide') {
       // THE TERMINAL CASE (#830). One direction, and a distance that is `amount` or
       // `amount / sin θ` — so the scale goes into the unit vector and the `d.amount` multiply
       // below stays the single place the amount is applied.
@@ -1158,9 +1195,17 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
       dx = (ex / len) * scale;
       dy = (ey / len) * scale;
       dz = (ez / len) * scale;
+    } else if (rule.kind === 'vertex') {
+      // `vertex` leaves the deltas at zero: a point with no chamfered edge does not move.
+    } else {
+      // 🔴 THE ARMS ARE AN else-if CHAIN AND THIS IS WHY (#891). They were flat `if`s with no
+      // exhaustiveness check, so a placement kind nobody handled fell through with the deltas at
+      // zero — which is not a crash and not a refusal but the `vertex` answer, silently applied to
+      // a point that should have moved. Adding `onEdge` reached exactly that hole. A `never` makes
+      // the next arm a compile error instead.
+      const unreachable: never = rule;
+      throw new Error(`unhandled bevel placement: ${JSON.stringify(unreachable)}`);
     }
-    // `vertex` leaves the deltas at zero: a point with no chamfered edge does not move, which is
-    // the whole of that arm and is why it needs no branch of its own here.
     const p = i * 3;
     deltas[p] = dx;
     deltas[p + 1] = dy;
