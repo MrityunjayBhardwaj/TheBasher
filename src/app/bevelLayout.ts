@@ -126,6 +126,26 @@ export type BoundaryPlacement =
       readonly point: number;
       readonly toward: number;
       readonly against: number | null;
+    }
+  /**
+   * #891 — ON the single unchamfered edge lying between this run's two chamfered bounds.
+   *
+   * `toward` is that edge's far end; `against` names the far ends of the two chamfered edges.
+   * The distance is the MEAN of `amount / sin θ` over the two, where each θ is the angle at
+   * `point` between the unchamfered edge and that chamfered one — the reference meets the offset
+   * line with each bound separately and takes the midpoint (`offset_on_edge_between`,
+   * `bmesh_bevel.cc:2149`, `mid_v3_v3v3(meetco, meet1, meet2)`). Both meets are along the SAME
+   * edge, so their midpoint is that edge's direction at the mean distance.
+   *
+   * 🔑 IT IS A `meet` THAT KNOWS WHICH SIDE IT IS ON. A `meet` is symmetric in its two bounds and
+   * therefore cannot distinguish the two runs at a point with exactly two chamfered edges; this
+   * arm is chosen precisely when one unchamfered edge lies between them, which is the asymmetry.
+   */
+  | {
+      readonly kind: 'onEdge';
+      readonly point: number;
+      readonly toward: number;
+      readonly against: readonly [number, number];
     };
 
 export interface BevelLayout {
@@ -333,7 +353,29 @@ type GapPlacement =
    * Pulled back between the two chamfered edges bounding this run (#841 records why these are
    * carried rather than re-derived).
    */
-  | { readonly kind: 'meet'; readonly bounds: readonly [number, number] }
+  | {
+      readonly kind: 'meet';
+      readonly bounds: readonly [number, number];
+      /**
+       * The UNCHAMFERED crossings lying strictly between `bounds`, walking this run's own way
+       * round the point (#891). Fan-local crossing indices, like `bounds`.
+       *
+       * 🔑 THE INPUT THAT TELLS TWO RUNS APART, AND WITHOUT IT THEY ARE THE SAME ANSWER. The
+       * builder places a meet as `amount * (unit(toward[0]) + unit(toward[1]))`, which is
+       * SYMMETRIC in the pair — so at a point with exactly two chamfered edges, where both runs
+       * are bounded by that same pair in opposite orders, both vertices landed on one position
+       * and welded. Measured on a cube with a chamfered edge loop: 4 of 12 derived points
+       * collapsed, and the two faces beside each corner were pulled onto the chamfered face's
+       * corner.
+       *
+       * Grounded: `build_boundary` walks from each beveled edge to the next COUNTING the
+       * unbeveled edges between them (`bmesh_bevel.cc:3571-3607`) and branches on that count —
+       * none is the plain meet, exactly one is `offset_on_edge_between`, which puts the vertex ON
+       * that middle edge. Carried from here rather than re-derived at the numbering loop, for the
+       * reason `bounds` is: only this function knows the run.
+       */
+      readonly between: readonly number[];
+    }
   /**
    * THE TERMINAL CASE (#830). Slid along ONE unchamfered edge, away from the point.
    *
@@ -443,7 +485,12 @@ function planPoint(fan: { readonly crossings: readonly number[] }, beveled: Uint
     const to = cut[(j + 1) % k];
     // The run's bounds are `cut[j]` and `cut[j + 1]` BY DEFINITION of the run — recorded here
     // rather than recovered later from a corner index, which is what #841 was.
-    gaps.push({ kind: 'meet', bounds: [cut[j], to] as const });
+    // The unchamfered crossings strictly between this run's two chamfered bounds, in the run's
+    // own direction. On an all-edges bevel this is always empty, which is what keeps that case
+    // byte-identical.
+    const between: number[] = [];
+    for (let i = (cut[j] + 1) % n; i !== to; i = (i + 1) % n) between.push(i);
+    gaps.push({ kind: 'meet', bounds: [cut[j], to] as const, between });
     for (let i = (cut[j] + 1) % n; ; i = (i + 1) % n) {
       gapOf[i] = j;
       if (i === to) break;
@@ -626,14 +673,30 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
             rule.kind === 'vertex'
               ? { kind: 'vertex', point: v }
               : rule.kind === 'meet'
-                ? {
-                    kind: 'meet',
-                    point: v,
-                    toward: [
-                      farEnd(crossings[rule.bounds[0]], v),
-                      farEnd(crossings[rule.bounds[1]], v),
-                    ] as const,
-                  }
+                ? // 🔴 EXACTLY ONE UNCHAMFERED EDGE BETWEEN THE BOUNDS TAKES THE OTHER ARM (#891),
+                  // mirroring the reference's own branch on that count. Zero keeps the plain meet,
+                  // which is every run of an all-edges bevel. More than one also keeps it: the
+                  // reference has a third rule there (`offset_meet` with its `edges_between` flag)
+                  // and porting it needs a case that can be built, which no scope reaches today —
+                  // so this is the shipped behaviour left alone rather than a guess.
+                  rule.between.length === 1
+                  ? {
+                      kind: 'onEdge',
+                      point: v,
+                      toward: farEnd(crossings[rule.between[0]], v),
+                      against: [
+                        farEnd(crossings[rule.bounds[0]], v),
+                        farEnd(crossings[rule.bounds[1]], v),
+                      ] as const,
+                    }
+                  : {
+                      kind: 'meet',
+                      point: v,
+                      toward: [
+                        farEnd(crossings[rule.bounds[0]], v),
+                        farEnd(crossings[rule.bounds[1]], v),
+                      ] as const,
+                    }
                 : {
                     kind: 'slide',
                     point: v,
