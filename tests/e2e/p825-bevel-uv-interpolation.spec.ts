@@ -23,10 +23,16 @@
 //
 // A `BoxGeometry` face's uv is linear over `[-0.5, 0.5] -> [0, 1]`, and a unit cube chamfered
 // by `a` moves every corner inward by `a` in both in-face directions (the 24-point closed form
-// in `mintedBevel.gate.test.ts`). So a bevelled cube's uv set is drawn from `{0, a, 1-a, 1}` —
-// the inset on the six shrunk faces, and `0`/`1` where a chamfer corner projects onto its
-// representative's boundary. At `a = 0.25` that is `{0, 0.25, 0.75, 1}`, and NONE of those four
-// numbers is the plain source set `{0, 1}`, so the row cannot pass on a pass-through.
+// in `mintedBevel.gate.test.ts`). Every output corner is therefore a source corner inset by `a`
+// — and since #880 it is interpolated in the face it was inset WITHIN, so both components are
+// exactly `a` or `1 - a`. At `a = 0.25` the whole layer is drawn from `{0.25, 0.75}`, and
+// NEITHER number is in the plain source set `{0, 1}`, so the row cannot pass on a pass-through.
+//
+// 🔴 THIS PREDICTED `{0, a, 1-a, 1}` UNTIL #880. The `0`/`1` were real, and they were the
+// symptom: a whole edge quad interpolated in ONE of its two flanking faces projects the other
+// face's two corners onto the chosen face's boundary, where the segment hatch pins them exactly.
+// That is the reference's SEAM arm firing away from a seam. Given each corner its own face, no
+// corner lies on that face's boundary and the hatch does not fire for an edge quad at all.
 //
 // REF: src/app/geometryRegistry.ts (`buildBevel` — where the uv is written);
 //      src/app/polygonInterpolation.ts (the weights); src/app/bevelCornerInterpolation.gate.test.ts
@@ -190,9 +196,22 @@ test('#825 — a bevelled mesh carries INTERPOLATED uvs on the object three.js m
   //    screen, and it is what an unnormalised weight set would produce.
   expect(after.every((n) => Number.isFinite(n))).toBe(true);
 
-  // 3. 🔑 THE CLOSED FORM. Drawn from `{0, a, 1-a, 1}` and from nothing else — see the header.
-  //    A pass-through of the source's uvs gives `{0, 1}` and reds this; a zeroed buffer gives
-  //    `{0}` and reds it; a copy of one corner per face gives a set with no `a` in it.
+  // 3. 🔑 THE CLOSED FORM. Every output corner of a chamfered cube is a source corner pulled in
+  //    by `a` along both of its in-face directions, and — since #880 — interpolated in the face
+  //    it was pulled in WITHIN. A box face's uv is linear over `[-0.5, 0.5] -> [0, 1]`, so every
+  //    component is exactly `a` or `1 - a` and the whole layer draws from that two-element set.
+  //
+  //    🔴 THIS ASSERTED `{0, a, 1-a, 1}` UNTIL #880, AND THIS ROW IS WHAT CAUGHT THE CHANGE.
+  //    The `0` and `1` came from interpolating a whole edge quad in ONE of its two flanking
+  //    faces: the two corners belonging to the other face were projected onto the chosen face's
+  //    boundary, where the segment hatch pins them exactly. That is the reference's SEAM arm,
+  //    produced away from any seam. Its non-seam arm gives each corner its own face and a null
+  //    snap array (`bmesh_bevel.cc:7551`), so no corner lands on its own face's boundary.
+  //
+  //    Still discriminating, and against more than before: a pass-through of the source's uvs
+  //    gives `{0, 1}` and reds this; a zeroed buffer gives `{0}` and reds it; a copy of any one
+  //    corner per face gives a set with no `a` in it; and the pre-#880 face-wide map puts `0`
+  //    and `1` back and reds it too. The set also TRACKS `a`, so it cannot be a constant.
   const values = new Set(after.map((n) => Math.round(n * 1e6) / 1e6));
-  expect([...values].sort((x, y) => x - y)).toEqual([0, AMOUNT, 1 - AMOUNT, 1]);
+  expect([...values].sort((x, y) => x - y)).toEqual([AMOUNT, 1 - AMOUNT]);
 });
