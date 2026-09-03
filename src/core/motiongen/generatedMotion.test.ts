@@ -341,17 +341,20 @@ describe('the HTTP capability', () => {
   });
 });
 
-// #826 — a world offset this chain cannot place is a REFUSAL, not a default.
+// #826/#730 — a world offset a CALLER cannot place is a REFUSAL, not a default.
 //
 // When a world path is requested, the generator canonicalises frame 0 to the
 // origin and returns the offset needed to put the motion back where it was
-// asked for. Nothing here applies it yet — placement is A2's build (#730) — and
-// the clip looks entirely correct at the origin, so dropping the offset would
-// put the character in the wrong place with nothing to notice.
+// asked for. The clip looks entirely correct at the origin, so dropping the
+// offset would put the character in the wrong place with nothing to notice.
 //
-// Unreachable today, because nothing sends waypoints yet. It becomes reachable
-// the moment #730 does, which is when the placement decision has to be taken
-// deliberately rather than discovered in a render.
+// #730 took the placement decision — the offset goes to the bound character's
+// root group — so the refusal NARROWED rather than disappeared. It now fires for
+// a caller that cannot place, and the agent tool is exactly such a caller: it
+// runs on a forked state and returns ops for the Diff without ever binding, so
+// there is no character in its world to move. These rows hold that line: the
+// gate has to keep refusing by DEFAULT, or the road that cannot place silently
+// starts placing at the origin.
 describe('#826 — an unplaceable world offset stops the import', () => {
   /** A capability that reports a world path was rebased away, as the server does. */
   function offsetCapability(worldOffsetXZ: readonly [number, number] | null) {
@@ -390,7 +393,35 @@ describe('#826 — an unplaceable world offset stops the import', () => {
         { request: REQUEST, ids: IDS },
         stateWithTime(),
       ),
-    ).rejects.toThrow(/cannot place it yet/);
+    ).rejects.toThrow(/cannot place it/);
+  });
+
+  // The narrowing, in both directions. A gate that only ever refuses is not a
+  // gate that lets the right caller through, and one that only ever passes is not
+  // a gate at all — so the SAME offset is run past it twice, differing in nothing
+  // but the caller's declaration.
+  it('lets a caller that can place through, and hands it the offset to apply', async () => {
+    const { worldOffsetXZ, ops } = await buildGeneratedMotionOps(
+      offsetCapability([3, 1]),
+      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
+      stateWithTime(),
+    );
+    expect(worldOffsetXZ).toEqual([3, 1]);
+    // The ops are the ordinary import ops and nothing more: the placement is the
+    // CALLER's to dispatch, so nothing here may quietly encode a position.
+    expect(ops.some((o) => o.type === 'setParam')).toBe(false);
+  });
+
+  it('keeps null distinct from [0,0] on the way out, not just on the way in', async () => {
+    const { worldOffsetXZ } = await buildGeneratedMotionOps(
+      offsetCapability(null),
+      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
+      stateWithTime(),
+    );
+    // `[0,0]` would mean "a path was asked for and it starts at the origin".
+    // Collapsing the two is what makes a character that was never given a path
+    // indistinguishable from one that was.
+    expect(worldOffsetXZ).toBeNull();
   });
 
   it('proceeds normally when no world path was requested', async () => {
