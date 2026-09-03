@@ -124,6 +124,19 @@ describe('#638 the count is a leaf', () => {
     // The second creates a `builtRims` <-> `geometryRegistry` ring of its own, because
     // `builtRims` already reached back here for `getForRead`. Both rings are enumerated in
     // `importCycles.gate.test.ts` rather than left to be discovered.
+    //
+    // 🔴 WIDENED AGAIN at #825 slice 2, by one, and this one is back to being a LEAF — the bar
+    // the four step-4 additions met and the two at #814 openly did not. `polygonInterpolation`
+    // imports NOTHING: it is arithmetic over `Float64Array`s that names no geometry type, no
+    // descriptor and no registry. It is asserted to import nothing in the row below, so it
+    // cannot quietly grow a graph into the registry the way an unheld addition could.
+    //
+    // Why the registry needs it at all: a bevel's UVs cannot be written anywhere else. The
+    // corner layer travels geometry → store (`uvAttributes.ts` LIFTS it off built geometry), so
+    // a bevel that does not emit `uv` here has none anywhere downstream — censused across 603
+    // non-test files, where the only other `setAttribute('uv', …)` is `bakedGeometryStore`
+    // restoring OPFS bytes. The alternative — reaching positions from the attribute path — is
+    // what this gate's whole subject forbids.
     expect(importsOf('src/app/geometryRegistry.ts')).toEqual([
       'three',
       'three/examples/jsm/utils/BufferGeometryUtils.js',
@@ -136,6 +149,7 @@ describe('#638 the count is a leaf', () => {
       '../nodes/scopeQuery',
       './bevelLayout',
       './builtRims',
+      './polygonInterpolation',
     ]);
   });
 
@@ -143,6 +157,10 @@ describe('#638 the count is a leaf', () => {
     // The claim above, checked rather than asserted in prose. A leaf that stops being one
     // re-opens the graph through the registry, and nothing else would notice.
     expect(importsOf('src/app/materialGroups.ts')).toEqual([]);
+    // #825 slice 2 — the claim made in the widening note above, checked. An interpolation module
+    // that grew an import of `three`, of a descriptor type, or of the registry would re-open the
+    // graph through exactly the door this file guards, and nothing else would notice.
+    expect(importsOf('src/app/polygonInterpolation.ts')).toEqual([]);
     expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
