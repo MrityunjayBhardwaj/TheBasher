@@ -1,0 +1,13 @@
+diff --git a/src/core/import/gltfImportChain.ts b/src/core/import/gltfImportChain.ts
+index 5f143eb..7694685 100644
+--- a/src/core/import/gltfImportChain.ts
++++ b/src/core/import/gltfImportChain.ts
+@@ -655,7 +655,7 @@ function buildClipKeyframes(
+       const kf = perTimeMap.get(t)!;
+       let rotation = defaults.rotation;
+       if (kf.rotationRad) {
+-        const continuous = continuousEuler(kf.rotationRad, prevRad);
++        const continuous = kf.rotationRad;
+         prevRad = continuous;
+         rotation = radVec3ToDeg(continuous);
+       }
