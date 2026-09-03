@@ -28,7 +28,7 @@
 
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
-import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
+import { sanitizeBoneName, quaternionToEulerVec3, continuousEuler } from './threeAdapter';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import type { InlineMaterialSpec } from '../../nodes/types';
 import {
@@ -318,8 +318,36 @@ export function buildNodeNameMap(json: GltfJson, assetRef: string): NameMapResul
 
 interface PartialKeyframe {
   position?: Vec3;
+  /** DEGREES — the assembled//default value, matching `defaultTRS`. */
   rotation?: Vec3;
+  /**
+   * #876 — RADIANS, and deliberately separate from `rotation`.
+   *
+   * A glTF rotation sampler stores quaternions, and the Euler triple that
+   * represents one is not unique. Converting each key on its own picks a
+   * CANONICAL representative with no memory of the previous key, and the
+   * consumer (`TransformClip`) lerps those components — so two keys either
+   * side of a branch cut interpolate the long way round. This field holds
+   * the raw conversion so continuity can be resolved LATER, in time order,
+   * once the per-target assemblage is sorted. Absent for a target with no
+   * rotation channel, which then falls back to the node's static TRS.
+   */
+  rotationRad?: Vec3;
   scale?: Vec3;
+}
+
+/**
+ * A complete static TRS — what a glTF node declares and what `defaultTRS`
+ * yields. Deliberately NOT `Required<PartialKeyframe>`: since #876 that form
+ * also demands `rotationRad`, a staging field that exists only while animation
+ * keyframes are being assembled and is meaningless for a node's static
+ * transform. Conflating the two made the static side owe a field it can never
+ * have.
+ */
+interface StaticTRS {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
 }
 
 interface CompleteKeyframe {
@@ -330,7 +358,7 @@ interface CompleteKeyframe {
   scale: Vec3;
 }
 
-function defaultTRS(node: GltfJson['nodes'][number]): Required<PartialKeyframe> {
+function defaultTRS(node: GltfJson['nodes'][number]): StaticTRS {
   // P7.11 (#100, FLAG 1) — a glTF node may carry its local transform as a
   // single 4×4 column-major `matrix` INSTEAD of translation/rotation/scale
   // (glTF 2.0 §3.6; Blender exports joints this way). Decompose it into the
@@ -464,7 +492,7 @@ export interface SkinMetadata {
   jointKeys: string[];
   /** Per-joint bind TRS (degrees Euler), SAME order. Matrix-form handled by
    *  defaultTRS. */
-  bindTRS: Required<PartialKeyframe>[];
+  bindTRS: StaticTRS[];
   /** Per-joint nearest joint-ancestor's position WITHIN jointKeys, or -1 for
    *  a root / no-joint-parent. SAME order. (FLAG 2 — captured first-class so
    *  C1 reads it directly, no runtime re-derivation.) */
@@ -584,7 +612,12 @@ function buildClipKeyframes(
           values[i * 4 + 2],
           values[i * 4 + 3],
         );
-        kf.rotation = radVec3ToDeg(quaternionToEulerVec3(quat));
+        // #876 — DEFERRED ON PURPOSE. Converting here would be per-keyframe and
+        // memoryless; continuity is resolved below, where the times are sorted.
+        // Note this loop walks CHANNELS then samples, so `i` is only in time
+        // order within one channel and a target may be fed by more than one —
+        // which is exactly why the ordering has to be established first.
+        kf.rotationRad = quaternionToEulerVec3(quat);
       }
     }
   }
@@ -604,14 +637,33 @@ function buildClipKeyframes(
           position: [0, 0, 0],
           rotation: [0, 0, 0],
           scale: [1, 1, 1],
-        } as Required<PartialKeyframe>);
+        } as StaticTRS);
+    // #876 — resolve rotation continuity HERE, walking `times` ascending, which
+    // is the same order (and the same per-target grouping) the consumer samples
+    // in. `continuousEuler` picks the representative nearest the previous frame
+    // instead of the canonical one, so a rotation crossing a branch cut no longer
+    // reads as a near-full turn to a component-wise lerp. Radians in, because
+    // that is the space its whole-turn and flip identities are written in;
+    // degrees out, because that is what the keyframe carries.
+    //
+    // This is the #867 fix applied to the road that never funnelled through
+    // `clipToKeyframes`. It is done at the PRODUCER for the same reason: the
+    // consumer's linear Euler lerp is correct for hand-authored curves, so
+    // repairing it there would break authored curves to fix imported ones.
+    let prevRad: Vec3 | null = null;
     for (const t of times) {
       const kf = perTimeMap.get(t)!;
+      let rotation = defaults.rotation;
+      if (kf.rotationRad) {
+        const continuous = continuousEuler(kf.rotationRad, prevRad);
+        prevRad = continuous;
+        rotation = radVec3ToDeg(continuous);
+      }
       keyframes.push({
         targetNodeId: targetKey,
         time: t,
         position: kf.position ?? defaults.position,
-        rotation: kf.rotation ?? defaults.rotation,
+        rotation,
         scale: kf.scale ?? defaults.scale,
       });
     }
