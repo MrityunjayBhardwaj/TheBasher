@@ -39,6 +39,7 @@ import type { BufferGeometry } from 'three';
 import type { GeometryRef, Vec3 } from '../nodes/types';
 import { alignedSplitRims } from './builtRims';
 import { edgeFaceAdjacencyOf } from './edgeIdentity';
+import { newellNormal } from './polygonInterpolation';
 
 /**
  * Every face's unit normal, oriented by its rim's WINDING, or `null` per face for a rim with no
@@ -69,35 +70,36 @@ export function builtFaceNormals(
   const position = geometry.getAttribute('position');
   if (position === undefined) return null;
 
+  // 🔴 THE SUM ITSELF MOVED TO `polygonInterpolation` AT #825, AND THE POINT IS THAT THERE IS NOW
+  // ONE OF IT. That module needs the same normal to build the plane it projects a source face
+  // into, so the loop that used to sit here would have had a second spelling — and the drift
+  // would have been invisible, because both would return a plausible unit vector and only the
+  // interpolation would quietly disagree with the edge angle about which way a face points. Same
+  // reasoning as `reversedCornerAt`, extracted one domain over for the same reason (#785 is what
+  // its missing second spelling cost).
+  //
+  // What stays HERE is the part that is this module's own: the `null` for a rim with no area.
+  // Inventing a direction (say `[0,0,1]`) would make that face's edges report a definite angle
+  // against their neighbours; `null` propagates to an angle of zero, which is the answer Blender
+  // gives an edge it cannot orient.
+  let longest = 0;
+  for (const rim of rims) if (rim.length > longest) longest = rim.length;
+  const coords = new Float64Array(longest * 3);
+  const normal = new Float64Array(3);
+
   const normals: (Vec3 | null)[] = [];
   for (const rim of rims) {
-    let nx = 0;
-    let ny = 0;
-    let nz = 0;
     for (let i = 0; i < rim.length; i++) {
-      const a = rim[i];
-      const b = rim[(i + 1) % rim.length];
-      const ax = position.getX(a);
-      const ay = position.getY(a);
-      const az = position.getZ(a);
-      const bx = position.getX(b);
-      const by = position.getY(b);
-      const bz = position.getZ(b);
-      nx += (ay - by) * (az + bz);
-      ny += (az - bz) * (ax + bx);
-      nz += (ax - bx) * (ay + by);
+      coords[i * 3] = position.getX(rim[i]);
+      coords[i * 3 + 1] = position.getY(rim[i]);
+      coords[i * 3 + 2] = position.getZ(rim[i]);
     }
-    const length = Math.hypot(nx, ny, nz);
-    // A rim with no area has no normal, and inventing one (say [0,0,1]) would make its edges
-    // report a definite angle against their neighbours. `null` propagates to an angle of zero,
-    // which is the same answer Blender gives an edge it cannot orient.
-    normals.push(length < DEGENERATE ? null : [nx / length, ny / length, nz / length]);
+    normals.push(
+      newellNormal(coords, rim.length, normal) ? [normal[0], normal[1], normal[2]] : null,
+    );
   }
   return normals;
 }
-
-/** Below this a rim's Newell sum is noise rather than a direction. */
-const DEGENERATE = 1e-12;
 
 /**
  * Every edge's angle in radians, index-aligned with {@link edgeSetOf}'s pairs — `0` to `PI`.
