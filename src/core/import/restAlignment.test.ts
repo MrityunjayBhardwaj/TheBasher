@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import { Quaternion, Vector3 } from 'three';
 import {
-  bestRigidRotation,
+  bestRotationAboutAxis,
   solveRestAlignment,
   alignedLocalOffsets,
   MAX_RESIDUAL_DEGREES,
@@ -51,10 +51,11 @@ const MAP: Record<string, string> = Object.fromEntries(
 
 describe('the rotation solver', () => {
   it('gives back a rotation that was put in', () => {
-    // Twelve directions spread over the sphere, turned by a known rotation. The
-    // answer is known without running the solver, which is what makes this a
-    // check rather than a restatement.
-    const known = new Quaternion().setFromAxisAngle(new Vector3(0.3, 0.9, 0.31).normalize(), 1.1);
+    // Twelve directions spread over the sphere, turned by a known rotation about
+    // the axis the solver is then given. The answer is known without running the
+    // solver, which is what makes this a check rather than a restatement.
+    const axis = new Vector3(0.3, 0.9, 0.31).normalize();
+    const known = new Quaternion().setFromAxisAngle(axis, 1.1);
     const from: Vector3[] = [];
     const to: Vector3[] = [];
     for (let i = 0; i < 12; i++) {
@@ -65,15 +66,36 @@ describe('the rotation solver', () => {
       from.push(v);
       to.push(v.clone().applyQuaternion(known));
     }
-    expect(bestRigidRotation(from, to).angleTo(known) * DEG).toBeLessThan(1e-6);
+    expect(bestRotationAboutAxis(from, to, axis).angleTo(known) * DEG).toBeLessThan(1e-6);
   });
 
-  it('is not fooled by directions that all lie on one line', () => {
-    // Every input parallel: no rotation is determined about that line, and the
+  it('turns only about the axis it is given, however the pairs disagree', () => {
+    // The pairs here differ by a rotation the constraint CANNOT express. The
+    // solver must answer with its best turn about the given axis and leave the
+    // rest in the residual — never reach for the degrees of freedom it was
+    // denied. That reach is the defect this constraint exists to prevent (#874).
+    const known = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), 0.5);
+    const from: Vector3[] = [];
+    const to: Vector3[] = [];
+    for (let i = 0; i < 12; i++) {
+      const phi = (i * 2.399963) % (Math.PI * 2);
+      const z = 1 - (2 * (i + 0.5)) / 12;
+      const r = Math.sqrt(Math.max(0, 1 - z * z));
+      const v = new Vector3(r * Math.cos(phi), r * Math.sin(phi), z).normalize();
+      from.push(v);
+      to.push(v.clone().applyQuaternion(known));
+    }
+    const axis = new Vector3(0, 1, 0);
+    const q = bestRotationAboutAxis(from, to, axis);
+    expect(axis.clone().applyQuaternion(q).angleTo(axis) * DEG).toBeLessThan(1e-9);
+  });
+
+  it('is not fooled by directions that all lie on the axis', () => {
+    // Every input along the axis: no rotation about it changes anything, and the
     // solver must not pretend otherwise by returning something large.
-    const from = [1, 2, 3, 4].map(() => new Vector3(1, 0, 0));
-    const to = [1, 2, 3, 4].map(() => new Vector3(1, 0, 0));
-    const q = bestRigidRotation(from, to);
+    const from = [1, 2, 3, 4].map(() => new Vector3(0, 1, 0));
+    const to = [1, 2, 3, 4].map(() => new Vector3(0, 1, 0));
+    const q = bestRotationAboutAxis(from, to, new Vector3(0, 1, 0));
     for (const v of from) {
       expect(v.clone().applyQuaternion(q).angleTo(v) * DEG).toBeLessThan(1e-6);
     }
@@ -95,6 +117,43 @@ describe('accepting or refusing a rest alignment', () => {
     expect(alignment!.rotation.angleTo(yaw) * DEG).toBeLessThan(1e-4);
     expect(alignment!.disagreementBefore).toBeGreaterThan(45);
     expect(alignment!.disagreementAfter).toBeLessThan(1e-4);
+  });
+
+  it('answers with the heading only, on a pair whose anatomy tempts a lean', () => {
+    // The ground truth is known by construction: the target IS the source yawed
+    // a quarter turn, then given a RELAXED-T bind — arms hanging below
+    // horizontal and a toe turned up — which is the shape of the live rig pair
+    // (its bind hangs the upper arms 21° below horizontal and points the foot 6°
+    // above, against a source that holds both flat).
+    //
+    // Per-bone anatomy is not a whole-rig rotation and cannot be fitted by one,
+    // so the right answer is still exactly the quarter turn. An unconstrained
+    // best fit does not give it: run on these same pairs it answers a rotation
+    // tilted 6.0° off the vertical, trading the fit's RMS from 10.65° down to
+    // 9.04°. That tilt is what reached the root's travel and made the character
+    // climb (#874), so this assertion is the gate on it.
+    const relaxed: BoneSpec[] = YAWED.map((b) =>
+      b.name === 't_arm' || b.name === 't_hand'
+        ? { ...b, position: [b.position[0], -0.076, b.position[2]] as [number, number, number] }
+        : b.name === 't_toe'
+          ? { ...b, position: [b.position[0], 0.017, b.position[2]] as [number, number, number] }
+          : b,
+    );
+    const { src, trg } = build(THREE_DIMENSIONAL, relaxed);
+    const alignment = solveRestAlignment(src, trg, MAP);
+    expect(alignment).not.toBeNull();
+
+    const quarterTurn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
+    expect(alignment!.rotation.angleTo(quarterTurn) * DEG).toBeLessThan(1e-4);
+
+    // Stated separately from the answer above, because this is the property the
+    // caller depends on: whatever the fit wanted, the vertical is untouched.
+    const up = new Vector3(0, 1, 0);
+    expect(up.clone().applyQuaternion(alignment!.rotation).angleTo(up) * DEG).toBeLessThan(1e-9);
+
+    // And the anatomy really is still there to be tempted by — a pair that
+    // agreed after the turn would make the assertions above vacuous.
+    expect(alignment!.disagreementAfter).toBeGreaterThan(5);
   });
 
   it('refuses a rest that lays every bone on one axis', () => {

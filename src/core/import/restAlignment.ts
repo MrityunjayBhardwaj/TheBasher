@@ -39,7 +39,13 @@ const DEG = 180 / Math.PI;
  * is worth using. Angles are RMS over the mapped bones, in degrees.
  */
 export interface RestAlignment {
-  /** Carries SOURCE rest directions onto TARGET bind directions, in world. */
+  /**
+   * Carries SOURCE rest directions onto TARGET bind directions, in world.
+   *
+   * Always a turn about the world's vertical — a heading, never a lean. The
+   * caller applies it to the source's TRAVEL as well as its bone rotations, and
+   * a tilt there compounds with distance walked (#874).
+   */
   readonly rotation: Quaternion;
   readonly disagreementBefore: number;
   readonly disagreementAfter: number;
@@ -124,91 +130,45 @@ function restDirectionsInWorld(
 }
 
 /**
- * Eigenvalues of a symmetric 4x4, by cyclic Jacobi, returning the eigenvector for
- * the largest. Deterministic and exact to float precision — the alignment sits
- * under every retargeted clip, so it is solved rather than searched for.
+ * The world's vertical. Both rests reach this module already in the project's
+ * Y-up world — the BVH reader and the glTF reader each convert on the way in —
+ * so the two rigs stand on one shared ground plane. That is what makes the axis
+ * below a fact about the data rather than a convention chosen here.
  */
-function largestEigenvector4(matrix: number[][]): number[] {
-  const a = matrix.map((row) => [...row]);
-  const v = [
-    [1, 0, 0, 0],
-    [0, 1, 0, 0],
-    [0, 0, 1, 0],
-    [0, 0, 0, 1],
-  ];
-  for (let sweep = 0; sweep < 64; sweep++) {
-    let off = 0;
-    for (let p = 0; p < 4; p++) for (let q = p + 1; q < 4; q++) off += a[p][q] * a[p][q];
-    if (off < 1e-24) break;
-    for (let p = 0; p < 4; p++) {
-      for (let q = p + 1; q < 4; q++) {
-        if (Math.abs(a[p][q]) < 1e-30) continue;
-        const theta = (a[q][q] - a[p][p]) / (2 * a[p][q]);
-        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
-        const c = 1 / Math.sqrt(t * t + 1);
-        const s = t * c;
-        for (let k = 0; k < 4; k++) {
-          const akp = a[k][p];
-          const akq = a[k][q];
-          a[k][p] = c * akp - s * akq;
-          a[k][q] = s * akp + c * akq;
-        }
-        for (let k = 0; k < 4; k++) {
-          const apk = a[p][k];
-          const aqk = a[q][k];
-          a[p][k] = c * apk - s * aqk;
-          a[q][k] = s * apk + c * aqk;
-        }
-        for (let k = 0; k < 4; k++) {
-          const vkp = v[k][p];
-          const vkq = v[k][q];
-          v[k][p] = c * vkp - s * vkq;
-          v[k][q] = s * vkp + c * vkq;
-        }
-      }
-    }
-  }
-  let best = 0;
-  for (let i = 1; i < 4; i++) if (a[i][i] > a[best][best]) best = i;
-  return [v[0][best], v[1][best], v[2][best], v[3][best]];
-}
+const WORLD_UP = new Vector3(0, 1, 0);
 
 /**
- * The rotation that best carries `from` onto `to` — Davenport's q-method: build
- * the profile matrix from the direction pairs, and the rotation is the
- * eigenvector of the largest eigenvalue of the symmetric 4x4 assembled from it.
- * Closed form, no seeding, no local minima.
+ * The rotation ABOUT `axis` that best carries `from` onto `to`.
+ *
+ * Closed form. For a rotation by θ about a unit axis n, Rodrigues gives
+ * `(R·a)·b = cosθ·[(a·b) − (n·a)(n·b)] + sinθ·[(n×a)·b] + (n·a)(n·b)`, so the
+ * total over all pairs is `C·cosθ + S·sinθ + constant` and the maximum sits at
+ * `atan2(S, C)`. One arctangent: no seeding, no iteration, no local minima.
+ *
+ * This replaced an unconstrained best-fit rotation (Davenport's q-method over a
+ * 4x4 Jacobi eigen-solve). The unconstrained fit is not kept alongside it on
+ * purpose — see `solveRestAlignment`, where the extra two degrees of freedom
+ * were the whole of #874.
  */
-export function bestRigidRotation(from: readonly Vector3[], to: readonly Vector3[]): Quaternion {
-  const b = [
-    [0, 0, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-  ];
+export function bestRotationAboutAxis(
+  from: readonly Vector3[],
+  to: readonly Vector3[],
+  axis: Vector3,
+): Quaternion {
+  const n = axis.clone().normalize();
+  let cosTerm = 0;
+  let sinTerm = 0;
   for (let i = 0; i < from.length; i++) {
-    for (let r = 0; r < 3; r++) {
-      for (let c = 0; c < 3; c++) {
-        b[r][c] += from[i].getComponent(r) * to[i].getComponent(c);
-      }
-    }
+    const a = from[i];
+    const b = to[i];
+    cosTerm += a.dot(b) - n.dot(a) * n.dot(b);
+    sinTerm += n.clone().cross(a).dot(b);
   }
-  const trace = b[0][0] + b[1][1] + b[2][2];
-  const z = [b[1][2] - b[2][1], b[2][0] - b[0][2], b[0][1] - b[1][0]];
-  const s = [
-    [b[0][0] * 2 - trace, b[0][1] + b[1][0], b[0][2] + b[2][0]],
-    [b[1][0] + b[0][1], b[1][1] * 2 - trace, b[1][2] + b[2][1]],
-    [b[2][0] + b[0][2], b[2][1] + b[1][2], b[2][2] * 2 - trace],
-  ];
-  const k = [
-    [trace, z[0], z[1], z[2]],
-    [z[0], s[0][0], s[0][1], s[0][2]],
-    [z[1], s[1][0], s[1][1], s[1][2]],
-    [z[2], s[2][0], s[2][1], s[2][2]],
-  ];
-  const e = largestEigenvector4(k);
-  const q = new Quaternion(e[1], e[2], e[3], e[0]);
-  if (q.lengthSq() < 1e-12) return new Quaternion();
-  return q.normalize();
+  // Both terms vanish only when every `from` lies along the axis, and no
+  // rotation about an axis moves what is already on it. Identity is the honest
+  // answer there; anything else would be invented.
+  if (Math.abs(cosTerm) < 1e-12 && Math.abs(sinTerm) < 1e-12) return new Quaternion();
+  return new Quaternion().setFromAxisAngle(n, Math.atan2(sinTerm, cosTerm));
 }
 
 /** RMS angle between corresponding directions, in degrees, after `rotation`. */
@@ -253,7 +213,42 @@ export function solveRestAlignment(
   }
   if (from.length < MIN_PAIRS) return null;
 
-  const rotation = bestRigidRotation(from, to);
+  // ── SOLVE FOR A HEADING, NOT FOR AN ORIENTATION ──────────────────────────
+  //
+  // The rotation turns about the world's vertical and nothing else, and that
+  // constraint is the whole of the fix for #874. An unconstrained fit is free to
+  // spend a little pitch and roll buying down the per-bone residual, and on the
+  // live rig pair it did exactly that: it tilted the vertical by 4.46° to move
+  // the RMS over 17 bones from 17.56° to 17.17°. Four and a half degrees of
+  // tilt, bought for four tenths of a degree of fit.
+  //
+  // WHY THAT TRADE IS NEVER WORTH TAKING. The caller puts this rotation on the
+  // source wrapper, so the source hip's world POSITION turns with it too —
+  // `SkeletonUtils.js:134,140-142` reads that position and scales it onto the
+  // target's root. A rotation applied to a bone's ORIENTATION contributes an
+  // error no larger than its own angle. The same rotation applied to a
+  // DISPLACEMENT that accumulates along a path contributes an error proportional
+  // to the distance walked. 4.46° of tilt is 7.8 cm of climb per metre: the
+  // bundled walk ended 0.30 m in the air, on a rig whose hips sit at 0.51 m.
+  //
+  // WHY THE CONSTRAINT COSTS NOTHING REAL. A pitch between these two rests is
+  // not a thing that exists. Measured independently in Blender, both rests stand
+  // upright — spines 84-90° above the ground in the source and 86.7° in the
+  // target, legs within 5° of straight down in both. What the two disagree about
+  // is the arms (horizontal in the source, 21° below it in the target) and the
+  // feet (-21° against +6°), and that is per-bone anatomy which no whole-rig
+  // rotation can express in the first place. It stays where it already was, in
+  // the residual `alignedLocalOffsets` absorbs. See #866.
+  //
+  // WHAT HAPPENS TO A REST THAT GENUINELY IS PITCHED — a rig lying down, an axis
+  // convention that slipped past the reader. Measured on a synthetic pair pitched
+  // by a known angle, the residual this leaves rises as 0.87x the pitch, so:
+  // below about 35° the pair is still ACCEPTED, the rotation is still a pure
+  // heading, and the pitch stays in the residual for the per-bone offsets to
+  // absorb bone by bone; beyond that it crosses MAX_RESIDUAL_DEGREES and falls
+  // back to the per-bone alignment entirely. Both outcomes leave the travel in
+  // the ground plane, which is the property that matters here. Neither tips it.
+  const rotation = bestRotationAboutAxis(from, to, WORLD_UP);
   const before = rmsDisagreement(from, to, new Quaternion());
   const after = rmsDisagreement(from, to, rotation);
   // What is actually required is that the two rests CORRESPOND once the rotation
