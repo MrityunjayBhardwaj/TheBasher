@@ -84,7 +84,7 @@ and never opens a `.patch` at all.
 
 ## What they measured
 
-Run on `dec4aa2` — the commit that adds the harness, and an ancestor of this branch's head, so the citation resolves. Every pair agreed with its declared expectation; harness exit `0`; tree
+Run on `c8e385e`, an ancestor of this branch's head, so the citation resolves. Re-run after any change to a gate in the manifest and re-stamp this line. Every pair agreed with its declared expectation; harness exit `0`; tree
 byte-identical after every arm.
 
 | inversion                 | gate                               | expected  | observed  | red   | what redded                                                        |
