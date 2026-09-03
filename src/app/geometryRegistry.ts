@@ -63,6 +63,7 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 import { scopeSelection } from '../nodes/scopeQuery';
 import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
+import { arrayCopiesOf } from './arrayCopies';
 import { newellNormal, planarWeights } from './polygonInterpolation';
 import type { ScopeDomain } from '../nodes/attributes';
 
@@ -756,7 +757,11 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
   // a memo lookup on the inside of the only loop in this function for no answer that changes.
   const sourceArity = faceArityOf(d.source.descriptor);
   const copies: BufferGeometry[] = [];
-  for (let i = 0; i < d.count; i++) {
+  // #755 — the SHARED reading, not the raw field. Bare `i < d.count` emitted one copy too many
+  // for a fractional count and none at all for 0 / negative / NaN, which threw out of
+  // `mergeGeometries` below rather than building anything.
+  const wanted = arrayCopiesOf(d.count);
+  for (let i = 0; i < wanted; i++) {
     const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
     // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
     // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
