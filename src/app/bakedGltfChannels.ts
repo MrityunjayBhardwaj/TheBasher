@@ -26,7 +26,7 @@
 //      (the layering primitive); vyapti V20/V24; hetvabhasa H40/H48.
 
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
-import { buildClipBoneSamplers, type AnimationClipParams } from '../nodes/AnimationClip';
+import { buildClipBoneSamplers } from '../nodes/AnimationClip';
 import type { Vec3 } from '../nodes/types';
 import type { BakedChannel } from './resolveGltfChildTransform';
 // The radians→degrees boundary. THE SAME helper `bakeClipOntoRig` converts with
@@ -34,6 +34,7 @@ import type { BakedChannel } from './resolveGltfChildTransform';
 // the clip band below must produce the value the eager bake produced for the
 // same bone, and two conversion sites are two chances to drift.
 import { radVec3ToDeg } from '../viewport/rotation';
+import { boundClipsForAsset, type GraphNodeLike } from './animate/boundClipsForAsset';
 
 type ChannelSampler = (seconds: number) => Vec3;
 
@@ -169,31 +170,15 @@ export function bakedChannelIdsForAssetRef(
 // `GltfSkeleton`, while the 78-bone SOURCE clip it came from hangs off a plain
 // `Skeleton`, so the edge walk excludes the source clip without a special case.
 
-/** Minimal node shape the edge walk reads: type, params, and incoming edges. */
-interface GraphNodeLike {
-  readonly type: string;
-  readonly params?: unknown;
-  readonly inputs?: Readonly<Record<string, unknown>>;
-}
-
-/**
- * The node id on the far end of `node.inputs[socket]`, or null.
- *
- * A `single` socket resolves to one connection; an array is tolerated so a
- * cardinality change upstream degrades to "no clip band" rather than a crash —
- * the same tolerance `bakeClipOntoRig.skeletonIdOf` applies for the same reason.
- */
-function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
-  const s = node?.inputs?.[socket];
-  if (!s) return null;
-  const one = (Array.isArray(s) ? s[0] : s) as { node?: unknown } | undefined;
-  return typeof one?.node === 'string' ? one.node : null;
-}
-
 /**
  * Per-bone samplers over the `AnimationClip`s bound to this asset's rig, keyed
  * by childName. These are the FALLBACK band: a bone that has a real channel
  * node is served by that channel, never by this.
+ *
+ * The edge walk itself lives in `boundClipsForAsset` because #889's mint needs
+ * the SAME answer to "which clip drives this bone". Two copies would diverge
+ * silently — the read side rendering one clip while a mint seeded from another,
+ * which reads as a bad seed rather than as a disagreement.
  *
  * Only `position` and `rotation` are produced. `AnimationClipParams.keyframes`
  * carries no scale, so claiming a scale component would SUPPRESS the asset's
@@ -206,86 +191,32 @@ function clipBandSamplersForAsset(
   nodeNameMap: Readonly<Record<string, string>>,
   assetRef: string,
 ): Record<string, BakedChannelSamplers> {
-  // ONE pass to bucket the three node types this walk needs, then work over the
-  // buckets. The read-side caller hands in the WHOLE node table on every
-  // resolve, and a glTF import runs to several hundred nodes — sorting all of
-  // them, or scanning them once per skeleton, would put an O(n log n) and an
-  // O(n²) on a path that used to be a single O(n) sweep. Almost every project
-  // has no retargeted clip at all, and that case now exits after this pass
-  // having sorted nothing.
-  let assetId: string | undefined;
-  const skeletonIds: string[] = [];
-  const clipIds: string[] = [];
-  for (const id of Object.keys(nodes)) {
-    const n = nodes[id];
-    if (n.type === 'AnimationClip') clipIds.push(id);
-    else if (n.type === 'GltfSkeleton') skeletonIds.push(id);
-    else if (
-      assetId === undefined &&
-      n.type === 'GltfAsset' &&
-      (n.params as { assetRef?: unknown }).assetRef === assetRef
-    ) {
-      assetId = id;
-    }
-  }
-  if (assetId === undefined || skeletonIds.length === 0 || clipIds.length === 0) return {};
-  const skins = (nodes[assetId].params as { skins?: unknown }).skins;
-  if (!Array.isArray(skins)) return {};
-
-  // Sorted (V22): with more than one clip bound to a rig, WHICH one supplies a
-  // bone must not depend on object-key order. Today a second bind is refused by
-  // name (dispatchMutator, #807), so this is a tie-break that should not fire —
-  // deterministic anyway, because "should not fire" is not "cannot". Sorting
-  // the two small buckets rather than the table keeps it cheap.
-  skeletonIds.sort();
-  clipIds.sort();
-
   const out: Record<string, BakedChannelSamplers> = {};
-  for (const skeletonId of skeletonIds) {
-    const skel = nodes[skeletonId];
-    if (edgeTarget(skel, 'asset') !== assetId) continue;
+  for (const clip of boundClipsForAsset(nodes, assetRef)) {
+    const params = clip.params;
+    // Delegate to the CLIP's own sampling (AnimationClip.buildClipBoneSamplers)
+    // rather than rebuilding its keys as channel params — nothing is
+    // defaulted because nothing is invented. See that function's header.
+    const boneSamplers = buildClipBoneSamplers({
+      keyframes: params.keyframes ?? [],
+      duration: typeof params.duration === 'number' ? params.duration : 1,
+      loop: params.loop !== false,
+    });
 
-    // bone INDEX → childName. `skin.jointKeys` IS the projection spine: the
-    // GltfSkeleton value's bones[i].name is jointKeys[i], and the same key is a
-    // nodeNameMap key. Reading it off the asset's captured params keeps this
-    // enumerator pure over the node table — no evaluate(), no second walk.
-    const skinIndex = (skel.params as { skinIndex?: unknown }).skinIndex;
-    const skin = skins[typeof skinIndex === 'number' ? skinIndex : 0] as
-      | { jointKeys?: unknown }
-      | undefined;
-    const jointKeys = skin?.jointKeys;
-    if (!Array.isArray(jointKeys)) continue;
-
-    for (const clipId of clipIds) {
-      const clip = nodes[clipId];
-      if (edgeTarget(clip, 'skeleton') !== skeletonId) continue;
-
-      const params = clip.params as Partial<AnimationClipParams> | undefined;
-      if (!Array.isArray(params?.keyframes) || params.keyframes.length === 0) continue;
-      // Delegate to the CLIP's own sampling (AnimationClip.buildClipBoneSamplers)
-      // rather than rebuilding its keys as channel params — nothing is
-      // defaulted because nothing is invented. See that function's header.
-      const boneSamplers = buildClipBoneSamplers({
-        keyframes: params.keyframes,
-        duration: typeof params.duration === 'number' ? params.duration : 1,
-        loop: params.loop !== false,
-      });
-
-      for (const [boneIndex, sample] of boneSamplers) {
-        const childName = jointKeys[boneIndex];
-        // A bone the skeleton cannot name, or one outside this asset, cannot be
-        // addressed — the same skip bakeClipOntoRig makes for the same reason.
-        if (typeof childName !== 'string' || childName.length === 0) continue;
-        if (!(childName in nodeNameMap)) continue;
-        // First clip by sorted id wins a bone; a later one does not overwrite.
-        const slot = (out[childName] ??= {});
-        slot.position ??= (seconds) => sample(seconds).position;
-        // 🔴 UNITS: an AnimationKeyframe rotation is RADIANS and this band is
-        // DEGREES. bakeClipOntoRig documents why at length — copying through
-        // unconverted scales every bone rotation by π/180, which renders as a
-        // character standing still while its root position travels.
-        slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
-      }
+    for (const [boneIndex, sample] of boneSamplers) {
+      const childName = clip.jointKeys[boneIndex];
+      // A bone the skeleton cannot name, or one outside this asset, cannot be
+      // addressed — the same skip bakeClipOntoRig makes for the same reason.
+      if (typeof childName !== 'string' || childName.length === 0) continue;
+      if (!(childName in nodeNameMap)) continue;
+      // First clip by sorted id wins a bone; a later one does not overwrite.
+      const slot = (out[childName] ??= {});
+      slot.position ??= (seconds) => sample(seconds).position;
+      // 🔴 UNITS: an AnimationKeyframe rotation is RADIANS and this band is
+      // DEGREES. bakeClipOntoRig documents why at length — copying through
+      // unconverted scales every bone rotation by π/180, which renders as a
+      // character standing still while its root position travels.
+      slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
     }
   }
   return out;
