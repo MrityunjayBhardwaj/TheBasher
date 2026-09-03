@@ -53,6 +53,7 @@
 //      src/app/resolveMaterialFieldOwner.ts (what this node MASKS); issues #394 S3c, #647.
 
 import { z } from 'zod';
+import { colorParam } from './paramWidget';
 import type { NodeDefinition } from '../core/dag/types';
 import type { ScopeDomain } from './attributes';
 import type { MaterialValue, ObjectData } from './types';
@@ -66,11 +67,11 @@ import { refWithAttributeKey } from '../app/modifierGeometry';
 
 export const MaterialOverrideOpParams = z.object({
   name: z.string().default('override'),
-  color: z.string().default('#ffffff'),
+  color: colorParam('#ffffff'),
   roughness: z.number().min(0).max(1).default(0.5),
   metalness: z.number().min(0).max(1).default(0),
   opacity: z.number().min(0).max(1).default(1),
-  emissive: z.string().default('#000000'),
+  emissive: colorParam('#000000'),
   emissiveIntensity: z.number().min(0).default(0),
   // THE SAME sparse authored set the wrapper carries (#124, V28) — imported, not
   // re-declared, so the two hosts of this rule cannot drift in their vocabulary any

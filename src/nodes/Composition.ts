@@ -14,6 +14,7 @@
 //      discriminate on value.kind); sibling: Layer, MediaClip.
 
 import { z } from 'zod';
+import { colorParam } from './paramWidget';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CompositionValue, LayerValue } from './types';
 
@@ -25,7 +26,7 @@ export const CompositionParams = z.object({
   /** Comp length in frames. */
   durationFrames: z.number().int().positive().default(150),
   /** Solid background colour (hex) under all layers. */
-  background: z.string().default('#000000'),
+  background: colorParam('#000000'),
 });
 export type CompositionParams = z.infer<typeof CompositionParams>;
 
