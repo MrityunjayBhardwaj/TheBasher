@@ -340,3 +340,65 @@ describe('the HTTP capability', () => {
     await expect(cap.isAvailable()).resolves.toBe(false);
   });
 });
+
+// #826 — a world offset this chain cannot place is a REFUSAL, not a default.
+//
+// When a world path is requested, the generator canonicalises frame 0 to the
+// origin and returns the offset needed to put the motion back where it was
+// asked for. Nothing here applies it yet — placement is A2's build (#730) — and
+// the clip looks entirely correct at the origin, so dropping the offset would
+// put the character in the wrong place with nothing to notice.
+//
+// Unreachable today, because nothing sends waypoints yet. It becomes reachable
+// the moment #730 does, which is when the placement decision has to be taken
+// deliberately rather than discovered in a render.
+describe('#826 — an unplaceable world offset stops the import', () => {
+  /** A capability that reports a world path was rebased away, as the server does. */
+  function offsetCapability(worldOffsetXZ: readonly [number, number] | null) {
+    const stub = new StubMotionGenerationCapability();
+    return {
+      id: 'offset-probe',
+      kind: 'stub' as const,
+      isAvailable: async () => true,
+      cancel: async () => {},
+      generate: async (request: Parameters<typeof stub.generate>[0]) => ({
+        ...(await stub.generate(request)),
+        worldOffsetXZ,
+      }),
+    };
+  }
+
+  const REQUEST = { prompt: 'a person walks', model: ALLOWED_MODEL, seconds: 2 };
+
+  it('refuses, naming the offset it cannot apply', async () => {
+    await expect(
+      buildGeneratedMotionOps(
+        offsetCapability([3, 1]),
+        { request: REQUEST, ids: IDS },
+        stateWithTime(),
+      ),
+    ).rejects.toThrow(/\[3, 1\]/);
+  });
+
+  it('refuses an offset AT the origin too — [0,0] is a placement, not an absence', async () => {
+    // The trap this row guards: a truthiness check would let [0,0] through, and
+    // it means "a world path was asked for and starts here", which is a claim,
+    // not silence. Only `null` says nobody asked.
+    await expect(
+      buildGeneratedMotionOps(
+        offsetCapability([0, 0]),
+        { request: REQUEST, ids: IDS },
+        stateWithTime(),
+      ),
+    ).rejects.toThrow(/cannot place it yet/);
+  });
+
+  it('proceeds normally when no world path was requested', async () => {
+    const { ops } = await buildGeneratedMotionOps(
+      offsetCapability(null),
+      { request: REQUEST, ids: IDS },
+      stateWithTime(),
+    );
+    expect(ops.length).toBeGreaterThan(0);
+  });
+});
