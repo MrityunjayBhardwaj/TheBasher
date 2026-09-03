@@ -16,11 +16,19 @@
 //
 //   a MAPPED face   — its four corners moved inward by `a` in both in-face directions, so its
 //                     uvs are exactly the four combinations of `{a, 1 − a}`.
-//   an EDGE QUAD    — two of its corners lie in its representative face's plane at that same
-//                     inset, and the other two project ONTO that face's boundary edge, where
-//                     `interp_weights_poly_v2`'s segment hatch fires exactly. So the strip
-//                     carries `{a, 1 − a}` on one side and `{0, 1}` on the other, continuing the
-//                     source face's parametrisation across the chamfer.
+//   an EDGE QUAD    — its four corners are the edge's two endpoints pulled in within EACH of the
+//                     two flanking faces, so each corner lies at the inset INSIDE its own face
+//                     and every component is `a` or `1 − a`. The strip therefore bridges the two
+//                     faces' islands rather than continuing one of them across the chamfer.
+//
+//   🔴 THIS ROW SAID `{0, 1}` ON ONE SIDE UNTIL #880, AND THAT WAS THE FACE-WIDE MAP TALKING.
+//   With one representative for the whole quad, the two corners belonging to the OTHER face were
+//   projected onto the representative's boundary edge, where `interp_weights_poly_v2`'s segment
+//   hatch pinned them to exactly `0` or `1`. Measured before and after: `{0, .1, .9, 1}` became
+//   `{.1, .9}` at `a = 0.1`. Those `0`s and `1`s were the reference's SEAM arm's output produced
+//   away from any seam — `bev_create_ngon`'s non-seam caller passes per-corner faces and a NULL
+//   snap array (`bmesh_bevel.cc:7551`), so no corner is ever on its own face's boundary and the
+//   hatch does not fire for an edge quad at all.
 //
 // ⚠️ THE MAPPED ROW IS A JOINT CLAIM AND THAT IS WHY IT IS SHARP. Reproducing a linear function
 // exactly is a property mean-value coordinates HAVE on a convex polygon; getting `{a, 1 − a}`
@@ -180,7 +188,7 @@ describe('#825 slice 2 — the closed form a unit cube predicts', () => {
     });
   }
 
-  it('an EDGE QUAD continues its representative face across the chamfer', () => {
+  it('an EDGE QUAD sits at the inset in BOTH its flanking faces, bridging their islands', () => {
     const a = 0.1;
     const ref = bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), a);
     const layout = layoutOf(ref);
@@ -190,20 +198,29 @@ describe('#825 slice 2 — the closed form a unit cube predicts', () => {
     // Twelve edges on a cube, each minting one quad.
     expect(quads.length).toBe(12);
 
+    // 🔴 THE EXACT SET, NOT MEMBERSHIP IN A SET — AND THE DIFFERENCE IS THE WHOLE ROW.
+    // This assertion used to read `expect([0, a, 1 - a, 1]).toContain(u)` per component. Every
+    // value the per-corner map produces is still a member of that four-element set, so the row
+    // survived #880 unchanged while the sentence above it — "the other two project onto that
+    // face's BOUNDARY, where the segment hatch pins them to 0 or 1" — became false. A loose
+    // containment check cannot tell "the values I predicted" from "a subset of them", and the
+    // e2e's exact-set assertion is what actually caught the change.
+    //
+    // Pinned as the exact set, so it discriminates in BOTH directions: the face-wide map puts
+    // `0` and `1` back in and reds this, and a port that dropped the interpolation entirely
+    // reds it too.
+    const seen = new Set<number>();
     for (const quad of quads) {
       const values = quad.map(([u, v]) => [round(u), round(v)]);
-      // 🔴 EVERY COMPONENT IS ONE OF FOUR NUMBERS, AND THE SET IS THE ASSERTION. Two corners sit
-      // at the inset (`a` or `1 - a`) inside the representative's plane; the other two project
-      // onto that face's BOUNDARY, where the segment hatch pins them to `0` or `1` exactly. A
-      // mean-value result at a boundary point tends toward the edge without reaching it, so a
-      // port that dropped the hatch would land near `0.9997` and red this row.
       for (const [u, v] of values) {
-        expect([0, a, 1 - a, 1]).toContain(u);
-        expect([0, a, 1 - a, 1]).toContain(v);
+        seen.add(u);
+        seen.add(v);
       }
-      // And it is a real strip, not a collapsed one: at least two DISTINCT uvs per quad.
+      // Still a real strip rather than a collapsed one: a quad spans two faces, so its four
+      // corners are never all the same uv.
       expect(new Set(values.map(([u, v]) => `${u},${v}`)).size).toBeGreaterThanOrEqual(2);
     }
+    expect([...seen].sort((x, y) => x - y)).toEqual([a, 1 - a]);
   });
 
   it('the inset TRACKS the amount, so the uvs are a function of the geometry and not a constant', () => {
