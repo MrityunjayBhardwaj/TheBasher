@@ -13,7 +13,18 @@
 // This collector returns ONLY the nodes the two layer-derivations read:
 //   - childOverridesForAsset → `GltfChild` nodes with this `assetRef`
 //   - bakedChannelSamplersForAsset → `KeyframeChannelVec3` nodes scoped to this
-//     asset by `nodeNameMap` (childName → target agreement, BLOCK-2)
+//     asset by `nodeNameMap` (childName → target agreement, BLOCK-2), AND
+//     (#888) the `GltfAsset` → `GltfSkeleton` → `AnimationClip` chain that
+//     enumerator now walks to reach a retargeted clip
+//
+// 🔴 THE #888 ADDITION IS NOT OPTIONAL POLISH — IT IS THE H40 PAIR. The
+// enumerator is shared by the renderer (which passes THIS collector's output)
+// and the read-side resolver (which passes the WHOLE node table). Teaching the
+// enumerator to walk an edge without widening the subscription here would give
+// the read side a clip band and the renderer nothing: the gizmo/NPanel would
+// show a bone moving and the viewport would not, which is precisely the
+// displayed-≠-rendered split the shared enumerator exists to prevent — and it
+// would be silent, because both surfaces would still be "working".
 // Subscribed with zustand `shallow`, the returned array is referentially equal
 // across an unrelated edit (the DAG uses structural sharing: ops.ts:278-282 keeps
 // every unchanged node's ref identical), so GltfAssetR does NOT re-render. A
@@ -45,6 +56,42 @@ export function gltfAssetDepNodes(
   // transform channels above whose asset scope is nodeNameMap[childName]===target).
   const childIds = new Set(Object.values(nodeNameMap));
   const out: Node[] = [];
+
+  // #888 — the clip-band chain: GltfAsset → GltfSkeleton → AnimationClip.
+  // Collected in its own pass because it is a WALK (each hop needs the previous
+  // hop's id), not a predicate over one node. Three small passes over the table
+  // stay well inside the budget this collector exists to protect: the cost it
+  // was written to avoid is re-deriving the layers on every unrelated edit, not
+  // the walk itself.
+  const assetNode = Object.values(nodes).find(
+    (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
+  );
+  if (assetNode) {
+    // The asset itself: its `skins[].jointKeys` is the bone-index → childName
+    // spine the enumerator reads, and its `nodeNameMap` is the membership scope.
+    // A re-import that changes either must re-derive the band.
+    out.push(assetNode);
+    const edgeTo = (n: Node, socket: string): string | null => {
+      const s = (n.inputs as Record<string, unknown> | undefined)?.[socket];
+      if (!s) return null;
+      const one = (Array.isArray(s) ? s[0] : s) as { node?: unknown } | undefined;
+      return typeof one?.node === 'string' ? one.node : null;
+    };
+    const skeletonIds = new Set<string>();
+    for (const n of Object.values(nodes)) {
+      if (n.type === 'GltfSkeleton' && edgeTo(n, 'asset') === assetNode.id) {
+        skeletonIds.add(n.id);
+        out.push(n);
+      }
+    }
+    if (skeletonIds.size > 0) {
+      for (const n of Object.values(nodes)) {
+        const boundTo = n.type === 'AnimationClip' ? edgeTo(n, 'skeleton') : null;
+        if (boundTo !== null && skeletonIds.has(boundTo)) out.push(n);
+      }
+    }
+  }
+
   for (const node of Object.values(nodes)) {
     if (node.type === 'GltfChild') {
       const p = node.params as { assetRef?: unknown };

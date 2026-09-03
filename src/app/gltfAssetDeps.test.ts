@@ -44,7 +44,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
   it('selects this asset’s GltfChild nodes (and only them)', () => {
     const s = buildScene();
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id)).toEqual(['child1']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
   });
 
   it('is shallow-EQUAL across an UNRELATED edit (structural sharing → no re-render)', () => {
@@ -61,7 +61,8 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     // Same node refs preserved by ops.ts structural sharing → zustand `shallow`
     // sees no change → GltfAssetR does NOT re-render.
     expect(shallow(before, after)).toBe(true);
-    expect(after[0]).toBe(before[0]); // identical reference
+    const byId = (a: typeof after, id: string) => a.find((n) => n.id === id);
+    expect(byId(after, 'child1')).toBe(byId(before, 'child1')); // identical reference
   });
 
   it('is shallow-DIFFERENT after a RELEVANT edit (the asset’s own child) → re-render fires', () => {
@@ -75,7 +76,82 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     }).next;
     const after = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
     expect(shallow(before, after)).toBe(false);
-    expect(after[0]).not.toBe(before[0]); // ref flipped → the H40 freeze guard still fires
+    // Compared BY ID, not by index: since #888 the asset node leads the array and
+    // is unchanged by a child edit, so an index-0 check would assert the wrong
+    // element and pass or fail for a reason unrelated to the guard.
+    const byId = (a: typeof after, id: string) => a.find((n) => n.id === id);
+    expect(byId(after, 'child1')).not.toBe(byId(before, 'child1')); // H40 freeze guard fires
+  });
+
+  // #888 — the clip band's chain. `bakedChannelSamplersForAsset` reaches a
+  // retargeted clip by walking GltfAsset → GltfSkeleton → AnimationClip, and
+  // the renderer only ever sees what THIS collector returns. Narrowing it back
+  // would give the read-side resolver a moving bone and the viewport a still
+  // one, silently — both surfaces would still appear to work.
+  it('#888 — carries the asset, its GltfSkeleton, and the AnimationClips bound to it', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'skel',
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'gltf', socket: 'out' },
+      to: { node: 'skel', socket: 'asset' },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'clip',
+      nodeType: 'AnimationClip',
+      params: {
+        name: 'retargeted',
+        duration: 2,
+        keyframes: [{ bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] }],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'skel', socket: 'out' },
+      to: { node: 'clip', socket: 'skeleton' },
+    }).next;
+    const ids = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP).map((n) => n.id);
+    expect(ids).toContain('gltf');
+    expect(ids).toContain('skel');
+    expect(ids).toContain('clip');
+    // …and still nothing that belongs to no asset of ours.
+    expect(ids).not.toContain('box');
+  });
+
+  it('#888 — EXCLUDES a clip bound to some other skeleton', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'otherSkel',
+      nodeType: 'Skeleton',
+      params: { bones: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'foreignClip',
+      nodeType: 'AnimationClip',
+      params: {
+        name: 'source',
+        duration: 2,
+        keyframes: [{ bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] }],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'otherSkel', socket: 'out' },
+      to: { node: 'foreignClip', socket: 'skeleton' },
+    }).next;
+    // The source clip a retarget consumed is not this rig's business — pulling
+    // it into the subscription would re-render the asset on every edit to it.
+    expect(gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP).map((n) => n.id)).not.toContain(
+      'foreignClip',
+    );
   });
 
   // #188 (v0.7 Phase 3) — material channels target a GltfChild dagId DIRECTLY
@@ -102,7 +178,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
   it('#188 — selects a material channel (Number) targeting this asset’s child dagId', () => {
     const s = withMaterialChannel(buildScene());
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'matChan']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf', 'matChan']);
   });
 
   it('#188 — selects a material channel (Color) targeting this asset’s child dagId', () => {
@@ -119,7 +195,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'colChan']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'colChan', 'gltf']);
   });
 
   it('#188 — EXCLUDES a material channel targeting a DIFFERENT asset’s child', () => {
@@ -136,7 +212,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id)).toEqual(['child1']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
   });
 
   it('#188 — EXCLUDES a non-material channel (a plain scalar channel on the child) from the material path', () => {
@@ -153,7 +229,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id)).toEqual(['child1']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
   });
 
   it('#188 — editing a material channel flips its ref → re-render fires (H40 freeze guard)', () => {
