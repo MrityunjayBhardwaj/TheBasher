@@ -9,6 +9,24 @@
 // Measured in a browser before the guard below existed: a second, different clip
 // left the channel count at 46 and the rendered pose byte-identical at five bones
 // across three times, while the action reported success. This pins the fix.
+//
+// 🔴 WHAT THIS FILE GATES, AND WHAT IT DOES NOT — read before trusting its green.
+//
+// This file gates WIRING, not VALUES. Its central assertion is
+// `expect(JSON.stringify(after)).toBe(before)`: a self-comparison, which is the
+// right instrument for the second-bind guard (the claim IS "nothing changed") and
+// is structurally incapable of gating "the value is right". Any corruption present
+// in both terms cancels exactly. Measured: dropping the rad→deg conversion in
+// `bakeClipOntoRig` — a defect that scales every bone rotation by π/180 — leaves
+// every row here GREEN.
+//
+// The name reads end-to-end, so its green invites an inference it does not
+// support. What actually covers the values:
+//   - bakeClipOntoRig.test.ts       — the conversion and the emitted values
+//   - bakedClipParity.gate.test.ts  — bake vs clip BETWEEN keyframes (#877)
+//   - gltfEulerContinuity.gate.test.ts — the representative choice (#876)
+//
+// REF: issue #883.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
