@@ -30,6 +30,8 @@ import {
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import type { GltfJson } from './glb';
+import { TransformClipNode, TransformClipParams } from '../../nodes/TransformClip';
+import type { TransformClipValue } from '../../nodes/types';
 
 /** Loads the committed skinned-bar.glb fixture as an ArrayBuffer (P7.7 #91).
  *  vitest runs from the repo root, so resolve against process.cwd(). */
@@ -472,27 +474,40 @@ describe('buildGltfImportOps', () => {
       ).toBeLessThan(1e-3);
     }
 
-    // Between the keys: reproduce the consumer's own arithmetic — per-component
-    // linear interpolation of Euler degrees (TransformClip.ts:116-118) — and
-    // require the result to track the true rotation. 0.5 is kept in the list and
-    // must never be the only probe: a defect that is antisymmetric about the
-    // midpoint of an interval is invisible there, which is exactly how #877 hid.
+    // Between the keys: read the REAL consumer, not a re-implementation of its
+    // arithmetic. The emitted params are parsed through TransformClip's own zod
+    // schema — the path applyAddNode takes — and sampled through the same
+    // `sample()` the viewport calls, so this assertion follows the consumer if
+    // its interpolation ever changes instead of quietly rotting against a copy.
+    //
+    // 0.5 is kept in the list and must never be the only probe: a defect that is
+    // antisymmetric about the midpoint is invisible there, which is exactly how
+    // #877 hid. (This particular defect happens to be worst AT 0.5 — which is the
+    // point: which interior point exposes a defect is a property of the defect,
+    // so a single fraction is never the right instrument.)
     const INTERIOR_U = [0.21, 0.5, 0.79] as const;
+    const clip = TransformClipNode.evaluate(
+      TransformClipParams.parse(tcOp.params),
+      {} as never,
+      {} as never,
+    ) as TransformClipValue;
+    const targetKey = (tcOp.params as { keyframes: Array<{ targetNodeId: string }> }).keyframes[0]
+      .targetNodeId;
+
     let compared = 0;
     let worstDeg = 0;
     let worst = '';
     for (let seg = 0; seg < kf.length - 1; seg++) {
       for (const u of INTERIOR_U) {
-        const lerped = [0, 1, 2].map(
-          (axis) =>
-            kf[seg].rotation[axis] + u * (kf[seg + 1].rotation[axis] - kf[seg].rotation[axis]),
-        );
-        const truth = quatAt(ANGLES_DEG[seg] + u * (ANGLES_DEG[seg + 1] - ANGLES_DEG[seg]));
-        const delta = angleDeg(quatOfDeg(lerped), truth);
+        const t = kf[seg].time + u * (kf[seg + 1].time - kf[seg].time);
+        const sampled = clip.sample(t)[targetKey];
+        expect(sampled, `clip produced no TRS for ${targetKey} at t=${t}`).toBeDefined();
+        const trueDeg = ANGLES_DEG[seg] + u * (ANGLES_DEG[seg + 1] - ANGLES_DEG[seg]);
+        const delta = angleDeg(quatOfDeg(sampled.rotation), quatAt(trueDeg));
         compared++;
         if (delta > worstDeg) {
           worstDeg = delta;
-          worst = `seg${seg} u=${u} lerped z=${lerped[2].toFixed(3)} vs true ${(ANGLES_DEG[seg] + u * (ANGLES_DEG[seg + 1] - ANGLES_DEG[seg])).toFixed(3)}`;
+          worst = `seg${seg} u=${u} sampled z=${sampled.rotation[2].toFixed(3)} vs true ${trueDeg.toFixed(3)}`;
         }
       }
     }

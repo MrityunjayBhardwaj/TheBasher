@@ -348,7 +348,10 @@ describe('mutator.timeline.bakeGltfChannel (D1)', () => {
       }
     }
 
-    // 1 segment x 3 fractions x 3 components x 3 axes.
+    // 1 segment x 3 fractions x 3 components x 3 axes. ONE interval, because
+    // this file's fixture is the 2-key clip the rest of its rows need. Multiple
+    // intervals of UNEQUAL length — where a bug that cancels on a uniform grid
+    // cannot hide — are bakedClipParity.gate.test.ts's job, on the same emitter.
     expect(compared).toBe(27);
     // Exact, not approximate: a linear bake of a linearly-sampled clip is the
     // SAME arithmetic, so the only admissible slack is float representation.
