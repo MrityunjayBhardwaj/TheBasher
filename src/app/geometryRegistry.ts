@@ -63,6 +63,7 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 import { scopeSelection } from '../nodes/scopeQuery';
 import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
+import { newellNormal, planarWeights } from './polygonInterpolation';
 import type { ScopeDomain } from '../nodes/attributes';
 
 const cache = new Map<string, BufferGeometry>();
@@ -1009,12 +1010,35 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
  * around it and produce a rounded blob. It is also what `BoxGeometry` does (24 split positions
  * for 8 points), so the position weld reads the same topological count either way.
  *
- * ⚠️ NO `uv` ATTRIBUTE, AND ITS ABSENCE IS THE HONEST ANSWER RATHER THAN AN OMISSION. In
- * three.js `uv` is per split vertex — CORNER data — and the corner domain is exactly where a
- * bevel mints. Copying the source corner's uv onto a chamfer strip would be inventing a
- * plausible value for an element that has no source, which is the one thing [[V305]] says not to
- * do. P6's discriminating observation is *"bevel an edge and the new faces carry interpolated
- * UVs rather than zeros"*; leaving it absent is what keeps that observation able to discriminate.
+ * ── THE `uv` ATTRIBUTE, AND WHY ITS ABSENCE STOPPED BEING THE HONEST ANSWER (#825 slice 2) ──
+ *
+ * 🔴 THE REASON IS RE-DERIVED, NOT PATCHED — the discipline `CLASS_CARRIAGE.point` names after
+ * its own justification went false twice. What stood here read: *"NO `uv` ATTRIBUTE, AND ITS
+ * ABSENCE IS THE HONEST ANSWER RATHER THAN AN OMISSION ... copying the source corner's uv onto a
+ * chamfer strip would be inventing a plausible value for an element that has no source"*. Every
+ * clause of that was true of a COPY, and #825 slice 2 is not a copy.
+ *
+ * The reference does not copy a minted corner's value either — it INTERPOLATES it, projecting a
+ * representative face into 2D along its normal and taking generalised barycentric weights at the
+ * destination corner's own position (`BM_loop_interp_from_face`, `bmesh_interp.cc:688`, called
+ * from `bev_create_ngon`, `bmesh_bevel.cc:1279`). An interpolated value is not invented: it is
+ * the source's own function sampled where the new corner actually landed, and for the common
+ * case — a chamfer point that slid ALONG a source edge — it is exactly the linear blend of that
+ * edge's two ends, which is the only defensible answer there is.
+ *
+ * ⚠️ AND THE ABSENCE WAS BROADER THAN THE ARGUMENT FOR IT. Measured before this landed: a
+ * bevelled box built `[normal, position]` while its box source built `[normal, position, uv]`, so
+ * the SIX MAPPED faces lost their UVs too — and those have a source corner apiece and were never
+ * what the "no source to copy from" argument was about. The old text justified dropping the
+ * minted corners and quietly dropped every corner.
+ *
+ * 🔑 THIS IS THE ONLY ROAD A BEVEL'S UVs CAN TRAVEL, WHICH IS WHY THE WORK IS HERE AND NOT IN THE
+ * CARRIAGE TABLE. `uvAttributes.ts` LIFTS a corner layer OFF built geometry into the store
+ * (`mintAttributes({ [UV_MAP]: lifted })`) — the direction is geometry → store, and censused
+ * across 603 non-test files the only `setAttribute('uv', …)` anywhere else is
+ * `bakedGeometryStore` restoring OPFS bytes. So nothing downstream can put UVs onto a bevel that
+ * this function did not write, and `carriageForDomain`'s corner refusal — which is about the
+ * store-side gather — is a different question that this does not close.
  */
 function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGeometry | null {
   const verdict = bevelLayoutOf(d);
@@ -1160,6 +1184,23 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
   const corners = layout.corners.reduce((sum, n) => sum + n, 0);
   const positions = new Float32Array(corners * 3);
   const index: number[] = [];
+
+  // ── 2b. #825 slice 2 — every output corner's uv, INTERPOLATED from its representative ──
+  //
+  // Only when the source HAS a uv layer. A source without one is not a refusal: there is
+  // nothing to carry, and emitting a zeroed layer would make "no UVs" and "UVs at the origin"
+  // the same buffer — the collapse `UVAttributeVerdict` exists one module over to prevent.
+  const sourceUv = source.getAttribute('uv');
+  let longestRim = 0;
+  for (const rim of splitRims) if (rim.length > longestRim) longestRim = rim.length;
+  const uvs = sourceUv === undefined ? null : new Float32Array(corners * 2);
+  // Allocated once for the whole build rather than per face: a bevelled sphere runs this loop
+  // 704 times, and these four buffers are the only garbage it would otherwise make.
+  const repCoords = new Float64Array(longestRim * 3);
+  const repNormal = new Float64Array(3);
+  const weights = new Float64Array(longestRim);
+  const scratch2D = new Float64Array(longestRim * 2);
+
   let cursor = 0;
   for (let face = 0; face < layout.rims.length; face++) {
     const rim = layout.rims[face];
@@ -1170,6 +1211,69 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
       positions[cursor * 3 + 2] = points[point * 3 + 2];
       cursor++;
     }
+
+    if (uvs !== null && sourceUv !== undefined) {
+      // 🔑 THE REPRESENTATIVE MAP IS SLICE 1's, AND SLICE 2 IS ITS SECOND READER. `faceOrder`
+      // says where a face CAME FROM and is honestly holed; `representative` says which source
+      // face a face INHERITS from and is total. The face domain gathers a value THROUGH it; this
+      // samples a function ON it. Both need the same map and neither needs a looser `faceOrder`,
+      // which is exactly what #814 predicted when it called for *"a second map, not a looser
+      // first one"*.
+      const rep = splitRims[layout.representative[face]];
+      const n = rep.length;
+      for (let k = 0; k < n; k++) {
+        repCoords[k * 3] = position.getX(rep[k]);
+        repCoords[k * 3 + 1] = position.getY(rep[k]);
+        repCoords[k * 3 + 2] = position.getZ(rep[k]);
+      }
+      const oriented = newellNormal(repCoords, n, repNormal);
+      for (let c = 0; c < rim.length; c++) {
+        const at = base + c;
+        const dx = positions[at * 3];
+        const dy = positions[at * 3 + 1];
+        const dz = positions[at * 3 + 2];
+        const ok =
+          oriented && planarWeights(repCoords, n, repNormal, dx, dy, dz, weights, scratch2D);
+        if (ok) {
+          let u = 0;
+          let v = 0;
+          for (let k = 0; k < n; k++) {
+            u += weights[k] * sourceUv.getX(rep[k]);
+            v += weights[k] * sourceUv.getY(rep[k]);
+          }
+          uvs[at * 2] = u;
+          uvs[at * 2 + 1] = v;
+        } else {
+          // 🔴 THE FALLBACK IS THE NEAREST SOURCE CORNER'S OWN VALUE, AND IT IS BOUNDED ON
+          // PURPOSE. It is reached only when the representative face has no usable normal — a
+          // rim with no area, where there is no plane to project into and therefore no
+          // barycentric answer at all. The reference reaches for an arbitrary axis orthogonal to
+          // the face's tangent (`BM_face_calc_tangent_auto`, `bmesh_interp.cc:714-719`) and
+          // proceeds; on a zero-area rim every projected corner is collinear, so its weights
+          // then almost always come from the SEGMENT hatch anyway.
+          //
+          // Taking the nearest corner outright reaches the same neighbourhood without inventing
+          // an axis, and — the property that matters — it can only ever emit a value the source
+          // already holds at a corner of that same face. It cannot produce a uv the source does
+          // not have, and it cannot produce a NaN.
+          let best = 0;
+          let bestDistance = Infinity;
+          for (let k = 0; k < n; k++) {
+            const ex = repCoords[k * 3] - dx;
+            const ey = repCoords[k * 3 + 1] - dy;
+            const ez = repCoords[k * 3 + 2] - dz;
+            const distance = ex * ex + ey * ey + ez * ez;
+            if (distance < bestDistance) {
+              bestDistance = distance;
+              best = k;
+            }
+          }
+          uvs[at * 2] = sourceUv.getX(rep[best]);
+          uvs[at * 2 + 1] = sourceUv.getY(rep[best]);
+        }
+      }
+    }
+
     // The same fan every other polygon in this codebase materialises to — `(0, i, i+1)` around
     // corner 0 — so `materialisedTriangles` and `faceElementStarts` describe this buffer without
     // a second convention to keep in step.
@@ -1178,6 +1282,7 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
 
   const built = new BufferGeometry();
   built.setAttribute('position', new Float32BufferAttribute(positions, 3));
+  if (uvs !== null) built.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
   built.setIndex(index);
   built.computeVertexNormals();
   // 🔑 A CLAMPED BEVEL SAYS SO ON THE GEOMETRY, BECAUSE ONLY THIS FUNCTION KNOWS (#817).
