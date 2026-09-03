@@ -49,6 +49,7 @@ import { polygonArityOf, polygonCornersOf, reversedCornerAt } from './polygonLay
 // why and states the one rule that keeps it safe (nothing in the ring reads an import at module
 // level). Every use below is inside a function body, which is where a cycle is already resolved.
 import { bevelLayoutOf } from './bevelLayout';
+import { arrayCopiesOf } from './arrayCopies';
 
 /**
  * How many FACES a descriptor tessellates to, or `null` when that is not derivable from
@@ -213,7 +214,7 @@ function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror') return null;
   const sourceFaces = faceCountOf(descriptor.source.descriptor);
   if (sourceFaces === null) return null;
-  const repeats = descriptor.kind === 'array' ? Math.max(1, Math.floor(descriptor.count)) - 1 : 1;
+  const repeats = descriptor.kind === 'array' ? arrayCopiesOf(descriptor.count) - 1 : 1;
   return { sourceFaces, scope: descriptor.scope, repeats };
 }
 
