@@ -64,6 +64,55 @@ function uvsByFace(ref: GeometryRef): [number, number][][] {
   return faces;
 }
 
+/**
+ * The worst distance any output corner lands OUTSIDE the uv range of the source face `pick` names
+ * for it, with the denominators that say the walk was not vacuous.
+ *
+ * `pick` takes the FLAT output corner index, because that is the numbering both
+ * `cornerRepresentative` and the uv buffer use — passing the face index too is what lets a
+ * falsification swap the per-corner map for the face-wide one without touching anything else.
+ */
+function worstExcursion(
+  ref: GeometryRef,
+  pick: (layout: BevelLayout, face: number, at: number) => number,
+  only: (layout: BevelLayout, face: number) => boolean = () => true,
+): { worst: number; corners: number; faces: number } {
+  const source = getForRead(bevelSourceOf(ref));
+  if (source === null) throw new Error('no source');
+  const sourceUv = source.getAttribute('uv');
+  const layout = layoutOf(ref);
+  const rims = sourceRims(ref, source.getAttribute('position').count);
+  const faces = uvsByFace(ref);
+
+  let worst = 0;
+  let corners = 0;
+  let examined = 0;
+  let cursor = 0;
+  for (let f = 0; f < faces.length; f++) {
+    const base = cursor;
+    cursor += faces[f].length;
+    if (!only(layout, f)) continue;
+    examined++;
+    for (let c = 0; c < faces[f].length; c++) {
+      const rep = rims[pick(layout, f, base + c)];
+      let minU = Infinity;
+      let maxU = -Infinity;
+      let minV = Infinity;
+      let maxV = -Infinity;
+      for (const corner of rep) {
+        minU = Math.min(minU, sourceUv.getX(corner));
+        maxU = Math.max(maxU, sourceUv.getX(corner));
+        minV = Math.min(minV, sourceUv.getY(corner));
+        maxV = Math.max(maxV, sourceUv.getY(corner));
+      }
+      const [u, v] = faces[f][c];
+      worst = Math.max(worst, minU - u, u - maxU, minV - v, v - maxV, 0);
+      corners++;
+    }
+  }
+  return { worst, corners, faces: examined };
+}
+
 const UNIT_BOX = [1, 1, 1] as never;
 
 describe('#825 slice 2 — a bevel carries a uv layer at all', () => {
@@ -196,12 +245,14 @@ describe('#825 slice 2 — what must hold for ANY source, not just a cube', () =
         // a vertex buffer, and a NaN uv does not draw wrong — it can take the mesh off screen.
         expect(Number.isFinite(u)).toBe(true);
         expect(Number.isFinite(v)).toBe(true);
-        // BOUNDED rather than contained — see the `NON-PLANAR` block below for the measurement
-        // that replaced the containment claim this row used to make.
-        expect(u).toBeGreaterThanOrEqual(-EXTRAPOLATION_BOUND);
-        expect(u).toBeLessThanOrEqual(1 + EXTRAPOLATION_BOUND);
-        expect(v).toBeGreaterThanOrEqual(-EXTRAPOLATION_BOUND);
-        expect(v).toBeLessThanOrEqual(1 + EXTRAPOLATION_BOUND);
+        // CONTAINED, not bounded (#880). This row used to allow a slack of 0.06 because a corner
+        // was interpolated in a face it need not touch, which extrapolates. Given its OWN source
+        // face the weights are non-negative, so a blend of values in `[0,1]` cannot leave `[0,1]`
+        // — and the slack is float noise rather than a modelling allowance.
+        expect(u).toBeGreaterThanOrEqual(-1e-9);
+        expect(u).toBeLessThanOrEqual(1 + 1e-9);
+        expect(v).toBeGreaterThanOrEqual(-1e-9);
+        expect(v).toBeLessThanOrEqual(1 + 1e-9);
         if (u === 0 && v === 0) atOrigin++;
       }
       // P6's discriminating observation, stated as a count rather than as a vibe: the minted
@@ -212,126 +263,191 @@ describe('#825 slice 2 — what must hold for ANY source, not just a cube', () =
     });
   }
 
-  it('a MINTED face stays within a MEASURED bound of its representative, and a PLANAR source is exact', () => {
-    // 🔴 THIS ROW USED TO CLAIM STRICT CONTAINMENT AND THAT CLAIM WAS FALSE — measured, not
-    // reasoned. The argument was that mean-value weights inside a convex polygon are positive
-    // and sum to one, so a blend of values in `[0,1]` cannot leave it. Both premises fail here:
-    // the destination is not always INSIDE its representative, and a projected source face is
-    // not always CONVEX.
+  it('a minted corner lands inside ITS OWN source face, exactly — the row a bound used to hold', () => {
+    // 🔴 THIS ROW ASSERTED A SLACK OF 0.06, AND THE SLACK WAS THE DEFECT RATHER THAN THE LIMIT OF
+    // MEASUREMENT. The reasoning it replaced ran: a minted corner sits on a source EDGE, the
+    // representative is ONE of the faces meeting there, and on a non-planar quad the corner
+    // projects slightly outside that face's rim — negative weights, so the blend extrapolates.
+    // Every step of that is true. What was wrong was treating it as a planarity artefact to be
+    // bounded, when it is a WRONG-FACE artefact to be removed: the corner has a face of its own,
+    // and interpolating it there makes the weights non-negative by construction.
     //
-    // Why, structurally. A minted corner sits on a source EDGE, and the representative is ONE of
-    // the faces meeting there. On a cube — planar faces — every such corner projects inside its
-    // representative and the answer is exact. On a sphere the quads are NOT planar, so the
-    // Newell plane is an average no corner lies in, and a corner slightly off it projects
-    // slightly outside the rim. Negative weights follow, and a blend with a negative weight
-    // extrapolates.
-    //
-    // MEASURED, by face kind, across four shapes:
-    //
-    //   shape                | mapped | edge quad | corner n-gon
-    //   cube        a=0.1    |      0 |         0 |            0
-    //   sphere 8x6  a=0.05   |      0 |   1.46e-2 |      2.72e-2
-    //   sphere 6x4  a=0.08   |      0 |   1.03e-2 |      1.64e-2
-    //   sphere 16x12 a=0.02  |      0 |   9.34e-3 |      1.37e-2
-    //
-    // Three things that reading gives which "it extrapolates" does not: MAPPED faces are exact
-    // on every shape (their corners cannot leave their own face, so a non-zero there would be a
-    // real defect); a PLANAR source is exact everywhere; and the error SHRINKS as tessellation
-    // refines, which is the signature of a planarity artefact rather than of a wrong map.
-    //
-    // 🔑 THE REFERENCE REMOVES BOTH CAUSES AND WE SHIP NEITHER MECHANISM YET. `bev_create_ngon`
-    // can interpolate each corner from its OWN source face (`face_arr[i]`, `bmesh_bevel.cc:1259`)
-    // instead of one representative for the whole face, and it SNAPS the destination onto its
-    // edge before interpolating (`closest_to_line_segment_v3`, `:1274-1277`) so the segment hatch
-    // fires exactly rather than nearly. Both are follow-up work and are filed as such; this slice
-    // is the projection, the weights and the blend, which is what #825 scopes it to.
+    // The ceiling was measured BEFORE the fix existed, by brute force — for each corner try every
+    // face incident to its source point and keep the best. That oracle reads EXACTLY 0 on every
+    // shape and tessellation, against 2.13e-2 here for the face-wide map. No per-corner rule can
+    // beat an oracle over all per-corner choices, so `< 1e-9` is the honest exit and a bound
+    // would now be strictly weaker than what the code does.
     const ref = bevelGeometryRef(sphereGeometryRef(1, 8, 6, null), 0.05);
-    const geometry = getForRead(ref);
-    const layout = layoutOf(ref);
-    if (geometry === null) throw new Error('no build');
-    const source = getForRead(bevelSourceOf(ref));
-    if (source === null) throw new Error('no source');
-    const sourceUv = source.getAttribute('uv');
-    const faces = uvsByFace(ref);
-
-    // The source's rims, in the same split numbering `buildBevel` uses.
-    const rims = sourceRims(ref, source.getAttribute('position').count);
-    let checked = 0;
-    for (let f = 0; f < faces.length; f++) {
-      if (layout.faceOrder[f] !== null) continue;
-      const rep = rims[layout.representative[f]];
-      let minU = Infinity;
-      let maxU = -Infinity;
-      let minV = Infinity;
-      let maxV = -Infinity;
-      for (const corner of rep) {
-        minU = Math.min(minU, sourceUv.getX(corner));
-        maxU = Math.max(maxU, sourceUv.getX(corner));
-        minV = Math.min(minV, sourceUv.getY(corner));
-        maxV = Math.max(maxV, sourceUv.getY(corner));
-      }
-      for (const [u, v] of faces[f]) {
-        expect(u).toBeGreaterThanOrEqual(minU - EXTRAPOLATION_BOUND);
-        expect(u).toBeLessThanOrEqual(maxU + EXTRAPOLATION_BOUND);
-        expect(v).toBeGreaterThanOrEqual(minV - EXTRAPOLATION_BOUND);
-        expect(v).toBeLessThanOrEqual(maxV + EXTRAPOLATION_BOUND);
-      }
-      checked++;
-    }
-    // The denominator, printed as an assertion: a loop that examined nothing would otherwise
-    // report the same silent success as one that examined every minted face.
-    expect(checked).toBeGreaterThan(0);
-  });
-
-  it('a PLANAR source extrapolates by EXACTLY zero — the half of the bound that is sharp', () => {
-    // The bound above is loose by design; this is the row that is not. A cube's faces are planar,
-    // so every minted corner projects inside its representative and every weight is positive.
-    // Anything non-zero here is a wrong representative or a wrong plane, not a planarity
-    // artefact — and it would be invisible in the bounded row.
-    const ref = bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), 0.1);
-    const source = getForRead(bevelSourceOf(ref));
-    if (source === null) throw new Error('no source');
-    const sourceUv = source.getAttribute('uv');
-    const layout = layoutOf(ref);
-    const rims = sourceRims(ref, source.getAttribute('position').count);
-    const faces = uvsByFace(ref);
-
-    let worst = 0;
-    let checked = 0;
-    for (let f = 0; f < faces.length; f++) {
-      const rep = rims[layout.representative[f]];
-      let minU = Infinity;
-      let maxU = -Infinity;
-      let minV = Infinity;
-      let maxV = -Infinity;
-      for (const corner of rep) {
-        minU = Math.min(minU, sourceUv.getX(corner));
-        maxU = Math.max(maxU, sourceUv.getX(corner));
-        minV = Math.min(minV, sourceUv.getY(corner));
-        maxV = Math.max(maxV, sourceUv.getY(corner));
-      }
-      for (const [u, v] of faces[f]) {
-        worst = Math.max(worst, minU - u, u - maxU, minV - v, v - maxV, 0);
-      }
-      checked++;
-    }
-    // All 26 output faces of a bevelled cube — mapped, edge quads and corner n-gons alike.
-    expect(checked).toBe(26);
+    const { worst, corners, faces } = worstExcursion(
+      ref,
+      (l, _f, at) => l.cornerRepresentative[at],
+    );
+    // The denominators, as assertions: a walk that examined nothing reports the same silent zero.
+    expect(faces).toBe(178);
+    expect(corners).toBe(704);
     expect(worst).toBeLessThan(1e-9);
   });
-});
 
-/**
- * How far outside its representative's uv range a minted corner may land.
- *
- * MEASURED at `2.72e-2` on the coarsest sphere this file builds and falling to `1.37e-2` at
- * 16x12 — see the block in the row above for the full table and the cause. The bound is set a
- * little over twice the worst observation rather than snugly against it: it exists to catch a
- * BROKEN representative map (which would put a value in a different face's range entirely,
- * typically 0.1 to 1.0 away), not to freeze the current numeric error, which is expected to fall
- * when the per-corner source and the edge snap land.
- */
-const EXTRAPOLATION_BOUND = 0.06;
+  // ── The sweep, with AMOUNT HELD FIXED so tessellation is the only variable ──────────────
+  //
+  // 🔴 THE TABLE THAT USED TO SIT HERE MOVED TWO INPUTS AT ONCE and read a trend off the column:
+  // it varied tessellation AND amount together (0.08 → 0.05 → 0.02) and concluded the error
+  // "SHRINKS as tessellation refines", offered as the signature of a planarity artefact. Holding
+  // `amount = 0.02` and moving only the tessellation, the worst excursion under the OLD face-wide
+  // map GROWS monotonically — 6.14e-3 → 8.53e-3 → 9.10e-3 → 1.37e-2 → 1.78e-2 for edge quads
+  // across 6x4 → 24x16. Consistent with the error scaling with chamfer size RELATIVE to source
+  // face size, which refining at a fixed amount increases. The direction never mattered to the
+  // fix, but the claim had reached a comment and was being read as established.
+  //
+  // These rows are the same sweep under the per-corner map, where every row is exactly 0. That is
+  // what makes them worth keeping: the quantity that used to grow with refinement no longer
+  // exists, so a regression toward the face-wide map reddens at EVERY tessellation, not just the
+  // coarsest one somebody remembered to fixture.
+  const FIXED_AMOUNT_SWEEP: [string, number, number][] = [
+    ['6x4', 6, 4],
+    ['8x6', 8, 6],
+    ['12x8', 12, 8],
+    ['16x12', 16, 12],
+    ['24x16', 24, 16],
+  ];
+
+  for (const [name, w, h] of FIXED_AMOUNT_SWEEP) {
+    it(`sphere ${name} at a fixed amount: every corner is inside its own source face, exactly`, () => {
+      const ref = bevelGeometryRef(sphereGeometryRef(1, w, h, null), 0.02);
+      const { worst, corners } = worstExcursion(ref, (l, _f, at) => l.cornerRepresentative[at]);
+      expect(corners).toBeGreaterThan(0);
+      expect(worst).toBeLessThan(1e-9);
+    });
+  }
+
+  it("a PLANAR source is exact too, over every one of a bevelled cube's 26 faces", () => {
+    // Kept from before the per-corner map, and it is not redundant with the rows above: a cube
+    // was ALREADY exact under the face-wide map, because planar faces put every minted corner
+    // inside whichever incident face was chosen. So this row is the control — it stays green
+    // across the change, and if it ever reds the map is wrong rather than merely coarse.
+    const ref = bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), 0.1);
+    const { worst, corners, faces } = worstExcursion(
+      ref,
+      (l, _f, at) => l.cornerRepresentative[at],
+    );
+    expect(faces).toBe(26);
+    expect(corners).toBe(96);
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  it('a MAPPED face is exact on a non-planar source — its corners never leave their own face', () => {
+    // Stated on its own rather than left inside the total. A mapped face is its own
+    // representative under BOTH maps, so this quantity cannot be moved by the per-corner change;
+    // a non-zero here would be a defect in the projection or the weights, and it would otherwise
+    // hide inside a row whose headline number is dominated by minted faces.
+    const ref = bevelGeometryRef(sphereGeometryRef(1, 8, 6, null), 0.05);
+    const { worst, corners, faces } = worstExcursion(
+      ref,
+      (l, _f, at) => l.cornerRepresentative[at],
+      (l, f) => l.faceOrder[f] !== null,
+    );
+    expect(faces).toBe(48);
+    // 176, not 48x4: a UV-sphere's pole rings are TRIANGLES. 16 pole tris x3 + 32 quads x4. The
+    // figure was guessed as 192 when this row was written and the assertion caught it, which is
+    // the whole reason a denominator is asserted rather than trusted.
+    expect(corners).toBe(176);
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  it('the per-corner map is NOT the face-wide one renamed — every minted face really does split', () => {
+    // 🔴 WITHOUT THIS ROW THE WHOLE CHANGE COULD BE A NO-OP AND EVERY ROW ABOVE WOULD STILL PASS.
+    // If `cornerRepresentative[at]` were just `representative[face]` broadcast to each corner, the
+    // excursions would read exactly what they read before the fix — and on a cube, which is exact
+    // either way, nothing at all would move. So the property asserted here is DISAGREEMENT: a
+    // count of output faces whose corners do not all name the same source face.
+    //
+    // Pinned as a derived identity rather than a magic number: every MINTED face splits, and no
+    // mapped face does. That is the strongest true form — an edge quad straddles two faces by
+    // construction and a corner n-gon has one face per ring position, while a mapped face is its
+    // own representative at every corner.
+    for (const [name, ref] of [
+      ['cube', bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), 0.1)],
+      ['sphere', bevelGeometryRef(sphereGeometryRef(1, 8, 6, null), 0.05)],
+    ] as const) {
+      const layout = layoutOf(ref);
+      let split = 0;
+      let cursor = 0;
+      for (let f = 0; f < layout.corners.length; f++) {
+        const base = cursor;
+        cursor += layout.corners[f];
+        const first = layout.cornerRepresentative[base];
+        for (let c = 1; c < layout.corners[f]; c++) {
+          if (layout.cornerRepresentative[base + c] !== first) {
+            split++;
+            break;
+          }
+        }
+      }
+      const minted = layout.corners.length - layout.sourceFaces;
+      expect({ name, split }).toEqual({ name, split: minted });
+      expect(minted).toBeGreaterThan(0);
+      // And the map is exactly as long as the corner numbering it is indexed by.
+      expect(layout.cornerRepresentative.length).toBe(cursor);
+    }
+  });
+
+  it('on an all-edges bevel every n-gon ring position is ONE corner, so the tie-break never fires', () => {
+    // The n-gon arm takes the LOWEST face index when a run of corners collapses into one ring
+    // position. On an all-edges bevel no run is longer than one corner, so the choice is over a
+    // single candidate and the tie-break is unexercised — which is why it can be simple, and why
+    // that fact should have a reader rather than living in a comment. Observable from outside as:
+    // an n-gon's corner sources are all DISTINCT. A run spanning two faces would name one of them
+    // twice and drop the other.
+    //
+    // This row gains a reader the day a partial bevel makes runs longer than one, which is
+    // exactly when somebody should look at the tie-break again.
+    for (const [name, ref] of [
+      ['cube', bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), 0.1)],
+      ['sphere', bevelGeometryRef(sphereGeometryRef(1, 8, 6, null), 0.05)],
+    ] as const) {
+      const layout = layoutOf(ref);
+      // An all-edges bevel mints one quad per source edge, so the n-gons are the tail after them.
+      const ngonStart = layout.sourceFaces + layout.sourceEdges;
+      let ngons = 0;
+      let repeated = 0;
+      let cursor = 0;
+      for (let f = 0; f < layout.corners.length; f++) {
+        const base = cursor;
+        cursor += layout.corners[f];
+        if (f < ngonStart) continue;
+        ngons++;
+        const reps = new Set<number>();
+        for (let c = 0; c < layout.corners[f]; c++) reps.add(layout.cornerRepresentative[base + c]);
+        if (reps.size !== layout.corners[f]) repeated++;
+      }
+      expect({ name, ngons: ngons > 0, repeated }).toEqual({ name, ngons: true, repeated: 0 });
+    }
+  });
+
+  it('a PARTIAL bevel is exact too — the one case where the tie-break actually fires', () => {
+    // The row above says the lowest-index tie-break is unexercised on an all-edges bevel. This is
+    // the case where it IS exercised: chamfer only some edges and a point's corners fall into runs
+    // that span more than one source face, so a ring position has several candidates and the rule
+    // decides. It was filed as a risk on the grounds that a chosen-not-derived source might
+    // reintroduce the excursion the per-corner map removes.
+    //
+    // Measured: it does not. Every scope a partial bevel can currently be built with reads exactly
+    // zero, so the claim stays sharp rather than falling back to a bound.
+    //
+    // ⚠️ AND THE LIMIT OF THAT, STATED. A partial bevel is only buildable on a box today (#830),
+    // and a box is PLANAR — so these rows confirm the tie-break does not break exactness, and do
+    // NOT establish it on a non-planar source. They cannot, until a partial bevel of one builds.
+    for (const scope of ['0-3', '0', '0-2', '0,2,4']) {
+      const ref = bevelGeometryRef(boxGeometryRef(UNIT_BOX, null), 0.1, scope);
+      const { worst, corners } = worstExcursion(ref, (l, _f, at) => l.cornerRepresentative[at]);
+      expect({ scope, exact: worst < 1e-9, walked: corners > 0 }).toEqual({
+        scope,
+        exact: true,
+        walked: true,
+      });
+    }
+  });
+});
 
 function round(n: number): number {
   return Math.round(n * 1e6) / 1e6;
