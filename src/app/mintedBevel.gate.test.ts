@@ -506,8 +506,17 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     expect(face.layout.order.every((f) => typeof f === 'number')).toBe(true);
     expect(faces.order.filter((f) => f === null)).toHaveLength(20);
 
-    // CORNER: still refuses, and names #825's second slice. This is the domain a second map
-    // cannot rescue — the reference interpolates it at a position, and this road has none.
+    // CORNER: still refuses. This is the domain a second map cannot rescue — the reference
+    // interpolates it at a position, and this STORE-SIDE road has none.
+    //
+    // 🔴 THE `until` MOVED FROM #825 TO #881 AND THE REFUSAL DID NOT, WHICH IS THE POINT. #825
+    // slice 2 shipped the interpolation — on the GEOMETRY road, where the positions are:
+    // `buildBevel` blends each output corner from its representative and writes a `uv`, and
+    // `uvAttributes` lifts that layer back into the store. So a bevel HAS uvs now and this arm
+    // still refuses, because the two are different roads and the corner layer's direction of
+    // travel is geometry → store. Pointing `until` at an issue that this very PR closes would
+    // leave a dangling promise; #881 is the narrower gap that actually remains — a corner
+    // attribute that is NOT derivable from the built geometry, which nothing writes yet.
     const corner = carriageForDomain(
       { domain: 'corner', type: 'float2', count: 24, data: new Float32Array(48) },
       'bevel',
@@ -517,8 +526,10 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
     );
     expect(corner.kind).toBe('refused');
     if (corner.kind !== 'refused') throw new Error('unreachable — asserted above');
-    expect(corner.until).toBe('#825');
+    expect(corner.until).toBe('#881');
     expect(corner.why).toMatch(/interpolat/i);
+    // And the message must not read as "your UVs were dropped" on a mesh that has them.
+    expect(corner.why).toMatch(/DOES interpolate the uv layer it builds/);
 
     // ⚠️ THIS SOURCE CARRIES NO ATTRIBUTES AT ALL — `boxGeometryRef(SIZE, null)` — so its bevel
     // has no component for the reason it never had one: there is nothing to carry. That is a
