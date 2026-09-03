@@ -91,8 +91,20 @@ export function bakeChannelOpsForBone(args: {
         keyframes: keys.map((k) => ({
           time: k.time,
           value: k.value,
-          // Mirrors KeyframeChannelVec3's own default for spatial channels.
-          easing: 'cubic' as const,
+          // #877 — LINEAR, and it must be stated: the schema's own default is
+          // 'cubic', so omitting this field would silently restore smoothstep.
+          //
+          // These keys are not hand-authored — they are a per-frame RESTATEMENT
+          // of a clip whose sampler is raw `lerpVec3` (AnimationClip.ts:89-90,
+          // TransformClip.ts:116-118) and whose keyframes cannot express easing
+          // at all. Stamping the authored-curve default onto baked data made the
+          // bake disagree with its own source between keyframes: identical at
+          // every key, but up to |smoothstep(u) - u| = 1/(6*sqrt(3)) ~ 9.6% of
+          // each interval away from it in between (8.5357 deg on a real clip).
+          //
+          // Same producer-vs-consumer distinction as #867: 'cubic' is right for
+          // a curve a director drew, and wrong for a frame-by-frame copy.
+          easing: 'linear' as const,
         })),
       },
     });
