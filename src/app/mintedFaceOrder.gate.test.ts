@@ -4,9 +4,21 @@
 //
 // The change is a type widening: `TiledFaceOrder.order` went from `readonly number[]` to
 // `readonly SourceFace[]`, where `null` means the face was MINTED rather than mapped from a
-// source. Seven consumer arms follow from it. **No descriptor kind can produce a hole today** —
-// `array`, `mirror` and `subset` map every output face to a source face by construction — so
-// every one of those arms is unreachable in production until a minting kind exists.
+// source. Seven consumer arms follow from it.
+//
+// 🔴 THE ORIGINAL CLAIM HERE WENT FALSE AND IS RE-DERIVED RATHER THAN PATCHED. It read
+// *"**No descriptor kind can produce a hole today** — `array`, `mirror` and `subset` map every
+// output face to a source face by construction — so every one of those arms is unreachable in
+// production until a minting kind exists."* A minting kind now exists and the first half is
+// measured false: `bevel(box, 0.1)` lays 26 faces of which **20 are holes**, and
+// `bevel(box, "0-2")` 9 of which 3 are.
+//
+// The second half survives, for a reason the sentence did not anticipate. A hole still never
+// reaches the gather road, and NOT because none exists — because #814 gave `faceArityOf`,
+// `faceCornersOf` and `tiledCornerOrder` a dedicated `bevel` arm that returns the layout's own
+// answer BEFORE any of them reaches `mappedFacesOf`. The mapping kinds cannot carry a hole
+// either, even over a minting source: a tiling order indexes its SOURCE's faces, so
+// `array(bevel(box), 2)` measures 52 entries and **0 holes**.
 //
 // That is the exact shape of a claim with no reader, which can be wrong and green at the same
 // time. So this file does two separate jobs and is explicit about which rows do which:
@@ -21,8 +33,17 @@
 // HIDDEN. `faceArityOf`, `faceCornersOf` and `tiledCornerOrder` call `tiledFaceOrder` from
 // INSIDE `faceCount.ts`, so a module mock cannot intercept the call and no descriptor can make
 // it hole. The tripwire asserts each routes through `mappedFacesOf`; it would survive an arm
-// that routes correctly and then does the wrong thing with the answer. The day a minting kind
-// exists these three become executable rows and the tripwire should be replaced, not kept.
+// that routes correctly and then does the wrong thing with the answer.
+//
+// 🔴 ITS STATED EXIT CONDITION WAS WRONG, AND THE WAY IT WAS WRONG IS WORTH KEEPING. It read
+// *"the day a minting kind exists these three become executable rows and the tripwire should be
+// replaced, not kept."* That day came — and instead of making these arms hole-aware, #814 routed
+// each of them AROUND the hole. So the condition cannot fire the way it was written. The real
+// one is narrower: a **tiling** kind whose own order carries holes, which nothing produces and
+// nothing is planned to.
+//
+// So the tripwire stays, and row 7 was strengthened rather than replaced — see the row for what
+// it could not previously catch.
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -235,9 +256,21 @@ describe('HALF B — the hole is exercised where it can be reached', () => {
   });
 
   it('7 — 🔴 TRIPWIRE: the three intra-module consumers each route through mappedFacesOf', () => {
-    // NOT a behavioural test, and the header says why it cannot be one. It fails the day someone
-    // adds an arm that indexes a source array with an order entry without asking whether the
-    // entry names anything — which is the whole failure class this issue exists to close.
+    // NOT a behavioural test, and the header says why it cannot be one.
+    //
+    // 🔴 THE PRESENCE CHECK ALONE DID NOT DO WHAT THIS ROW'S OWN COMMENT CLAIMED, AND IT WAS
+    // MEASURED RATHER THAN NOTICED. The comment read *"it fails the day someone adds an arm that
+    // indexes a source array with an order entry without asking whether the entry names
+    // anything."* It does not: adding exactly that arm to `faceArityOf` — indexing `sourceArity`
+    // with `tiled.order[0]`, ABOVE the existing call — left this row GREEN, because
+    // `mappedFacesOf(` was still present further down the same body. A presence check passes for
+    // every body that ALSO does the right thing somewhere.
+    //
+    // So the discriminating half is the second assertion: an order is never SUBSCRIPTED in these
+    // bodies. Reading one whole — as a cache key, or as the argument to `mappedFacesOf` — is
+    // fine and happens today (`arityCache.get(tiled.order)`); reaching an individual entry is
+    // the necessary first step of the failure class, so forbidding it is a sound gate rather
+    // than a restatement. Measured against the real file: zero occurrences in all three bodies.
     const src = readFileSync(join(__dirname, 'faceCount.ts'), 'utf8');
     for (const fn of ['faceArityOf', 'faceCornersOf', 'tiledCornerOrder']) {
       const start = src.indexOf(`export function ${fn}(`);
@@ -250,6 +283,17 @@ describe('HALF B — the hole is exercised where it can be reached', () => {
       expect(body, `${fn} reads an order without going through mappedFacesOf`).toContain(
         'mappedFacesOf(',
       );
+      // The half that discriminates. `\.order\[` is an order being subscripted, whatever the
+      // holder is called — `tiled.order[i]`, `faces.order[i]`, `verdict.layout.faceOrder[i]`
+      // spelled through a local. The one legitimate road to an entry returns `readonly number[]`
+      // from `mappedFacesOf`, which is a different binding and so does not match.
+      const subscripts = body.match(/\.order\[/g) ?? [];
+      expect(
+        subscripts.length,
+        `${fn} SUBSCRIPTS an order directly (${subscripts.length}×) — an entry may be null, so ` +
+          `the only road to one is mappedFacesOf, which refuses the whole descriptor instead of ` +
+          `handing back a hole that indexes a source array`,
+      ).toBe(0);
     }
   });
 });
