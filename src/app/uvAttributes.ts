@@ -42,39 +42,12 @@ import { insert } from './attributeStore';
 import { extractUVIslands } from './uvIslands';
 import { UV_MAP, type AttributeData } from '../nodes/attributes';
 import { mintAttributes } from '../nodes/attributeKey';
-import type { EvaluatedUVs, GeometryDescriptor, GeometryRef } from '../nodes/types';
-
-/**
- * A mesh's UVs, or the reason there are none — the same four-way answer the geometry read
- * gives, because the UVs cannot be more available than the buffers they live in.
- */
-/**
- * Where the corner-domain UV layer is, or why there is none — #776.
- *
- * Typed rather than nulled, for the reason the whole module is: the layer can be absent while
- * the ISLANDS are present, and a `null` key beside a drawable projection would read as "this
- * mesh has no UVs" at a call site that can see them on screen.
- */
-export type UVAttributeVerdict =
-  /** Minted and resident in the attribute store, under this content key. */
-  | { readonly kind: 'resident'; readonly key: string }
-  /** The buffer is there and cannot be expressed at the corner domain; this says why. */
-  | { readonly kind: 'not-derivable'; readonly why: string };
-
-export type MeshUVRead =
-  | {
-      readonly status: 'ok';
-      /** The display projection (islands), for the UV editor. */
-      readonly islands: EvaluatedUVs;
-      /** The corner-domain layer, or the named reason it could not be lifted. */
-      readonly attribute: UVAttributeVerdict;
-    }
-  /** The buffers live in a loaded asset clone — ask it, not the registry. */
-  | { readonly status: 'elsewhere' }
-  /** The bytes exist but have not been read in yet. Waiting helps. */
-  | { readonly status: 'loading' }
-  /** There genuinely are none. Waiting does not help. */
-  | { readonly status: 'none' };
+import type {
+  GeometryDescriptor,
+  GeometryRef,
+  MeshUVRead,
+  UVAttributeVerdict,
+} from '../nodes/types';
 
 const ELSEWHERE: MeshUVRead = { status: 'elsewhere' };
 const LOADING: MeshUVRead = { status: 'loading' };
