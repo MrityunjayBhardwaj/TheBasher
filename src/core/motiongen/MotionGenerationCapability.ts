@@ -24,7 +24,21 @@ import { readBvhProfile } from '../import/bvhProfile';
  * field rather than a changed contract.
  */
 export interface MotionConstraints {
-  /** Planar waypoints in world XZ, in order. */
+  /**
+   * Planar waypoints in world XZ, in order, **in metres**.
+   *
+   * The unit is stated because the receiver states it — Kimodo's
+   * `authoring.rebase_to_origin` documents its argument as "(x, z) ground
+   * positions in metres, in world space" — and because every silent defect this
+   * boundary has produced so far was a unit nobody wrote down. A path in the
+   * wrong unit does not fail; it generates a walk of the wrong length, which
+   * looks like a model quality problem rather than a contract one.
+   *
+   * The wire shape is NOT this shape: the server takes `waypoints` as a
+   * top-level list of `[x, z]` pairs, and the translation happens in
+   * HttpMotionGenerationCapability, where the reason is documented. Sending this
+   * object across as-is is the defect #826 records.
+   */
   readonly waypoints?: readonly { readonly x: number; readonly z: number }[];
 }
 
@@ -80,6 +94,30 @@ export interface MotionGenerationResult {
    * rather than declared here. Declare only what the artifact cannot say.
    */
   readonly unitScale: number;
+
+  /**
+   * Where in the world the clip was generated FROM, as `[x, z]`, or null when no
+   * world path was asked for.
+   *
+   * The SECOND thing this result declares that the clip cannot say, and it is
+   * here for the same reason `unitScale` is. Generation canonicalises frame 0 to
+   * the origin, so a world path cannot be authored directly: the server rebases
+   * the waypoints, generates about the origin, and hands back the offset a caller
+   * must add to put the motion where it was actually asked for
+   * (`serve.py:_build_constraints`, returned as `meta.world_offset_xz`).
+   *
+   * BVH cannot carry this. Frame 0 of the returned clip sits at the origin and
+   * looks entirely correct there, so a consumer that is not told has nothing to
+   * notice: the motion arrives right in shape and wrong in place — on the origin
+   * rather than on the curve the director drew. That is a plausible result from a
+   * silent failure, which is the class this boundary keeps producing.
+   *
+   * `null` is NOT `[0, 0]`, and the difference is the point: null means no world
+   * path was requested and there is nothing to place, while `[0, 0]` means a path
+   * was requested and happened to start at the origin. A consumer that collapses
+   * them cannot tell "nobody asked" from "it belongs here".
+   */
+  readonly worldOffsetXZ: readonly [number, number] | null;
 }
 
 export interface MotionGenerationCapability {
@@ -219,6 +257,24 @@ export function assertValidMotionResult(result: MotionGenerationResult): void {
     issues.push(
       `unitScale: must be a positive, finite number of metres per BVH unit — got ${result.unitScale}`,
     );
+  }
+  // Checked, not merely typed: this arrives from a service nobody in this repo
+  // wrote, and the whole reason the field exists is that a wrong value here is
+  // invisible in the clip. `undefined` is rejected as firmly as a malformed pair
+  // — a producer that stays silent about placement is exactly the state the field
+  // was added to end, and treating silence as "no offset" would reinstate it.
+  const offset = result.worldOffsetXZ;
+  if (offset !== null) {
+    if (
+      !Array.isArray(offset) ||
+      offset.length !== 2 ||
+      !offset.every((n) => typeof n === 'number' && Number.isFinite(n))
+    ) {
+      issues.push(
+        `worldOffsetXZ: must be null (no world path requested) or a finite [x, z] pair — got ` +
+          `${JSON.stringify(offset)}`,
+      );
+    }
   }
   // Only worth reading the clip's own rate once the payload is known to be there.
   if (issues.length === 0) {

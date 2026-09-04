@@ -71,12 +71,35 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
       const response = await this.fetchImpl(`${this.serverUrl}/generate?format=json`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        // 🔴 `waypoints` GOES AT THE TOP LEVEL, NOT INSIDE `constraints` (#826).
+        //
+        // This client used to send `constraints: { waypoints: [...] }`, an
+        // object. The server reads two different things:
+        //   - `constraints` — a LIST of already-built constraint dicts, handed
+        //     straight to `authoring.validate(list, n)` (serve.py:78)
+        //   - `waypoints` — a SEPARATE TOP-LEVEL key, rebased to the origin and
+        //     turned into a `root_path` constraint (serve.py:81-93)
+        //
+        // So the road the server actually implements was unreachable from here,
+        // and the key we did send landed in a validator expecting another type.
+        // A dict is truthy, so the `or []` guard did not skip it: it either
+        // raised or iterated the dict's KEYS as if they were constraints. Both
+        // ends were internally consistent and every real defect was between them
+        // — the same shape as the four mismatches in #775, and none of it
+        // visible to a unit tier that only ever checks our own side.
+        //
+        // `constraints` is no longer sent at all. We have no hand-built
+        // constraint dicts to offer, and an empty list is what the server
+        // defaults to; sending a key we cannot populate correctly is what caused
+        // this.
         body: JSON.stringify({
           prompt: request.prompt,
           model: request.model,
           seconds: request.seconds ?? 2,
           seed: request.seed ?? 0,
-          constraints: request.constraints ?? null,
+          ...(request.constraints?.waypoints?.length
+            ? { waypoints: request.constraints.waypoints.map((w) => [w.x, w.z]) }
+            : {}),
           format: 'bvh',
         }),
         signal: controller.signal,
@@ -92,6 +115,10 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
         bvh?: string;
         model?: string;
         unitScale?: number;
+        // The server states the world offset it rebased away, in its `meta`
+        // block (serve.py:202). We read it because the clip cannot carry it —
+        // see MotionGenerationResult.worldOffsetXZ.
+        meta?: { world_offset_xz?: unknown };
       };
       if (typeof payload.bvh !== 'string' || payload.bvh.length === 0) {
         throw new Error(
@@ -137,11 +164,24 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
             `scale the consumer assumes.`,
         );
       }
+      // The world offset, normalised to the contract's shape. Absent, null, or
+      // an empty offset all mean the same thing HERE — no world path was
+      // requested, so there is nothing to place — but a MALFORMED one does not:
+      // it is a service telling us where the motion belongs in a way we cannot
+      // read, and silently treating that as "no offset" would put the clip at
+      // the origin with full confidence. `assertValidMotionResult` refuses it.
+      const rawOffset = payload.meta?.world_offset_xz;
+      const worldOffsetXZ =
+        rawOffset === undefined || rawOffset === null
+          ? null
+          : (rawOffset as readonly [number, number]);
+
       const result = {
         jobId: payload.jobId ?? 'unknown',
         bvh: payload.bvh,
         model: ran,
         unitScale: payload.unitScale,
+        worldOffsetXZ,
       };
       assertValidMotionResult(result);
       return result;
