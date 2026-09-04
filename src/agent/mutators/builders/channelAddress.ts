@@ -223,24 +223,29 @@ export function resolveChannelAddress(
  * The bone a channel belongs to, or null when it is not a bone's channel.
  *
  * Reads the dual key `bakeChannelOpsForBone` writes and the renderer's
- * enumerator matches on. Deliberately NOT the `nodeNameMap` membership test
+ * enumerator matches on. Exported because `removeKeyframes` needs the same
+ * question for a different reason: on a bone the band reads PRESENCE, so a
+ * channel emptied in place is not a cleared edit but a claim of zero. Deliberately NOT the `nodeNameMap` membership test
  * `bakedGltfChannels` uses: that answers "does this channel belong to THIS
  * asset", which needs the asset in hand, and the question here is the weaker
  * "is this a bone's channel at all" — answerable from the node alone, which is
  * all `resolveChannelAddress` has.
  */
-function boneKeyOf(node: {
+export function boneKeyOf(node: {
   readonly type: string;
   readonly params?: unknown;
-}): { childName: string; component: string } | null {
+}): BoneChannelAddress | null {
   if (node.type !== 'KeyframeChannelVec3') return null;
   const p = node.params as
     | { assetRef?: unknown; childName?: unknown; paramPath?: unknown }
     | undefined;
   if (typeof p?.assetRef !== 'string' || p.assetRef.length === 0) return null;
   if (typeof p?.childName !== 'string' || p.childName.length === 0) return null;
-  if (typeof p?.paramPath !== 'string') return null;
-  return { childName: p.childName, component: p.paramPath };
+  // Checked against the enum rather than `typeof string`, so the result is the
+  // SAME shape a caller would have passed as `spec.bone` — which is what lets a
+  // UI surface route a channel back onto the bone road without re-deriving it.
+  if (!BAKED_COMPONENTS.includes(p.paramPath as BakedComponent)) return null;
+  return { assetRef: p.assetRef, childName: p.childName, component: p.paramPath as BakedComponent };
 }
 
 /**

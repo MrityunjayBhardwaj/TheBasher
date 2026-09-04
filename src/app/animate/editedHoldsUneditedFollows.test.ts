@@ -207,6 +207,38 @@ describe('#889 — what the band renders after the clip changes underneath it', 
     expect(rotYAt(s, FOLLOWS, 1)).toBeCloseTo(45, 6);
   });
 
+  it('CLEARED returns to the clip — and emptying in place does not (#909)', () => {
+    let s = fresh(90);
+    const boneId = gltfChildDagId(ASSET, HELD);
+    const channelId = gltfChannelDagId(ASSET, HELD, 'rotation');
+    const minted = ensureChannelForBone(s, boneId, 'rotation')!;
+    for (const op of minted.ops) s = applyOp(s, op).next;
+    s = changeClipTo(s, -140);
+    // Holding, as the row above proves.
+    expect(rotYAt(s, HELD, 1)).toBeCloseTo(45, 6);
+
+    // THE TWO CANDIDATE MEANINGS OF "CLEAR", SIDE BY SIDE. They differ by one
+    // node, and the difference is the whole issue: the band picks on PRESENCE,
+    // so a channel that is present with no keys is a claim of zero rather than
+    // a silence.
+    const emptied = applyOp(s, {
+      type: 'setParam',
+      nodeId: channelId,
+      paramPath: 'keyframes',
+      value: [],
+    } as never).next;
+    const removed = applyOp(s, { type: 'removeNode', nodeId: channelId } as never).next;
+
+    // Emptied: the bone collapses to the origin, on a rig that is still walking.
+    expect(rotYAt(emptied, HELD, 1)).toBeCloseTo(0, 6);
+    // Removed: the bone rejoins the clip, at the clip's CURRENT value — which is
+    // -70 and not the +45 it was minted from, so this also proves the fallback
+    // is live rather than a stale copy of the seed.
+    expect(rotYAt(removed, HELD, 1)).toBeCloseTo(-70, 6);
+    // And the neighbour is untouched either way.
+    expect(rotYAt(removed, FOLLOWS, 1)).toBeCloseTo(-70, 6);
+  });
+
   it('EDITED holds and UNEDITED follows — both halves, in one scene', () => {
     let s = fresh(90);
 

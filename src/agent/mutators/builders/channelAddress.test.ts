@@ -104,6 +104,45 @@ function bakedState(extraNodes?: Record<string, unknown>): DagState {
 
 const BONE_ADDRESS = { assetRef: ASSET, childName: BONE, component: 'rotation' as const };
 
+/** The same bone, carrying exactly ONE authored key at t=1. */
+function oneKeyState(): DagState {
+  return riggedState({
+    [ROT_CHANNEL]: {
+      id: ROT_CHANNEL,
+      type: 'KeyframeChannelVec3',
+      params: {
+        name: `${BONE} — rotation`,
+        target: BONE_ID,
+        childName: BONE,
+        assetRef: ASSET,
+        paramPath: 'rotation',
+        keyframes: [{ time: 1, value: [90, 0, 0], easing: 'linear' }],
+      },
+      inputs: {},
+    },
+  });
+}
+
+/** The same bone, carrying a channel with NO keys — the state a pre-#909 clear
+ *  could leave behind, and the one a fresh removal does not create. */
+function emptyChannelState(): DagState {
+  return riggedState({
+    [ROT_CHANNEL]: {
+      id: ROT_CHANNEL,
+      type: 'KeyframeChannelVec3',
+      params: {
+        name: `${BONE} — rotation`,
+        target: BONE_ID,
+        childName: BONE,
+        assetRef: ASSET,
+        paramPath: 'rotation',
+        keyframes: [],
+      },
+      inputs: {},
+    },
+  });
+}
+
 /** Every mutator that takes a channel address, with a spec that is valid apart
  *  from the address itself. Listed rather than derived so a new authoring
  *  mutator has to be added here deliberately. */
@@ -380,10 +419,12 @@ describe('removeKeyframes addresses a bone but never mints', () => {
     // refusal it was no longer making.
   });
 
-  it('still removes from a bone that HAS an authored channel', () => {
+  it('still removes ONE key from a bone that HAS an authored channel', () => {
+    // The channel keeps a key, so the removal is an edit to a track that
+    // survives — which is what this mutator is for.
     const plan = validatePlan(
       removeKeyframesMutator,
-      { bone: BONE_ADDRESS, scope: 'all' as const },
+      { bone: BONE_ADDRESS, scope: { time: 0 } },
       bakedState(),
       'test',
     );
@@ -391,6 +432,75 @@ describe('removeKeyframes addresses a bone but never mints', () => {
     if (!plan.ok) return;
     expect(plan.ops).toHaveLength(1);
     expect(plan.ops.map((o) => ('nodeId' in o ? o.nodeId : null))).toEqual([ROT_CHANNEL]);
+    const set = plan.ops[0] as unknown as { value: { time: number }[] };
+    expect(set.value.map((k) => k.time)).toEqual([1]);
+  });
+
+  // 🔴 INVERTED BY #909. This asserted that `scope:'all'` on a bone SUCCEEDS and
+  // emitted one setParam. It does not any more, and the change cannot land
+  // silently: emptying a bone's channel in place leaves it claiming its
+  // component at [0,0,0], so the bone collapses to the origin instead of
+  // returning to the clip.
+  it('REFUSES a removal that would empty a bone\u2019s channel, by either road', () => {
+    const roads = [
+      ['all at once', { bone: BONE_ADDRESS, scope: 'all' as const }],
+      // The end state is the rule, not the scope: taking the keys one at a time
+      // reaches the same place, and a gate written against `scope:'all'` alone
+      // would wave this through. Measured before the fix — it did.
+      ['the last one by time', { bone: BONE_ADDRESS, scope: { time: 1 } }],
+    ] as const;
+    for (const [road, spec] of roads) {
+      // `bakedState` has two keys; drop one first so `{time:1}` is the last.
+      const state = road === 'the last one by time' ? oneKeyState() : bakedState();
+      const plan = validatePlan(removeKeyframesMutator, spec, state, 'test');
+      expect(plan.ok, road).toBe(false);
+      if (plan.ok) continue;
+      // The reason names the CONSEQUENCE, not the rule. "Not allowed" tells a
+      // director nothing; "renders the bone at the origin" tells them why they
+      // do not want it, and names the act that does what they meant.
+      expect(plan.reason, road).toContain('renders the bone at the origin');
+      expect(plan.reason, road).toContain(BONE);
+    }
+  });
+
+  it('does NOT refuse on an already-empty channel — that removal empties nothing', () => {
+    // The condition is "this removal would empty it", not "it is empty". A
+    // no-op reported as a fault is its own defect.
+    const plan = validatePlan(
+      removeKeyframesMutator,
+      { bone: BONE_ADDRESS, scope: 'all' as const },
+      emptyChannelState(),
+      'test',
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.ops).toEqual([]);
+  });
+
+  it('an ORDINARY node\u2019s channel may still be emptied in place', () => {
+    // The band's presence rule is specific to the glTF child road. Emptying an
+    // object's channel is the long-standing Blender Clear and must not move.
+    const plan = validatePlan(
+      removeKeyframesMutator,
+      { channelId: 'n_plain_channel', scope: 'all' as const },
+      bakedState({
+        n_plain_channel: {
+          id: 'n_plain_channel',
+          type: 'KeyframeChannelVec3',
+          params: {
+            name: 'cube position',
+            target: 'n_cube',
+            paramPath: 'position',
+            keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+          },
+          inputs: {},
+        },
+      }),
+      'test',
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.ops).toHaveLength(1);
   });
 });
 

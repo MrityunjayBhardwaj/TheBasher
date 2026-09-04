@@ -415,6 +415,17 @@ export interface RevertGltfChannelArgs {
   assetRef: string;
   /** The bone's childName. */
   childName: string;
+  /**
+   * ONE component to revert, or omitted for the whole bone.
+   *
+   * The whole-bone form is the original (#121): the per-bone button in the
+   * inspector reverts a bone, because that is the unit a director points at
+   * there. The dopesheet points at a ROW, which is one component, and reverting
+   * all three from a row would take away a position track the director never
+   * touched — removal granularity has to match the granularity of the thing
+   * that created it, and copy-on-write mints per component (#889).
+   */
+  component?: 'position' | 'rotation' | 'scale';
 }
 
 /**
@@ -432,12 +443,16 @@ export interface RevertGltfChannelArgs {
  * ops) when the bone has no baked channels (already on the clip).
  */
 export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): DispatchResult {
-  const { assetRef, childName } = args;
+  const { assetRef, childName, component } = args;
   const base = useDagStore.getState().state;
 
-  // Collect the deterministic baked-channel ids that EXIST for this bone.
-  const targets = (['position', 'rotation', 'scale'] as const)
-    .map((component) => gltfChannelDagId(assetRef, childName, component))
+  // Collect the deterministic baked-channel ids that EXIST for this bone —
+  // narrowed to one component when the caller named one.
+  const components = component
+    ? ([component] as const)
+    : (['position', 'rotation', 'scale'] as const);
+  const targets = components
+    .map((c) => gltfChannelDagId(assetRef, childName, c))
     .filter((id) => base.nodes[id]);
 
   // Nothing baked → already on the clip; revert is a no-op (not an error).
@@ -446,7 +461,7 @@ export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): Dispatch
   return dispatchMutatorFromUI(
     'mutator.deleteNode',
     { targetSelectors: targets },
-    `Revert ${childName} to imported clip`,
+    `Revert ${childName}${component ? `.${component}` : ''} to imported clip`,
   );
 }
 

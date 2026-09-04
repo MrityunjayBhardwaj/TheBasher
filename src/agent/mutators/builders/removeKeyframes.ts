@@ -36,6 +36,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
 import {
+  boneKeyOf,
   CHANNEL_ADDRESS_DOC_NO_MINT,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
@@ -63,7 +64,11 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     'sample at that time (Blender Alt-I delete-at-playhead). Silent no-op ' +
     'when there is nothing to remove. The channel node and its wiring ' +
     '(target / paramPath / TimeSource / AnimationLayer) are preserved ' +
-    'either way; only the keyframes array changes. ' +
+    'either way; only the keyframes array changes. On a glTF BONE a removal ' +
+    'that would leave the channel with NO keyframes is REFUSED: an empty ' +
+    'channel is not a cleared edit, it claims the component and renders the ' +
+    'bone at the origin. Delete the channel node instead (mutator.deleteNode) ' +
+    'to return the bone to its clip. ' +
     CHANNEL_ADDRESS_DOC_NO_MINT,
   spec: RemoveKeyframesSpec,
   specExample: {
@@ -125,6 +130,52 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     // sample. Blender's Alt-I on a non-keyed frame is a silent no-op, not
     // an error. Same for 'all' on an already-empty channel. The no-op is
     // handled in build().
+
+    // 🔴 ON A BONE, THE RULE IS ABOUT THE END STATE, NOT ABOUT THE SCOPE.
+    //
+    // The band reads PRESENCE, per component. A bone's channel emptied in
+    // place still claims its component, `buildVec3Sampler` answers [0,0,0] at
+    // every time, and the resolver hands that zero to the renderer in
+    // preference to the clip underneath — so "clear my edits on this bone"
+    // renders as the bone collapsing to the origin while its neighbours keep
+    // walking. Measured: a cleared bone reads [0,0,0] at 1s where its untouched
+    // neighbour reads [0,45,0] from the clip.
+    //
+    // Gating on `scope: 'all'` would not close it. Removing the keys ONE AT A
+    // TIME by `{time}` reaches the identical end state, and measured, it did:
+    // a channel minted with two keys, both removed by time, left the node
+    // present with `keyframes: []`. The condition is "this removal would empty
+    // a bone's channel", whichever road asked for it.
+    //
+    // Refused rather than absorbed. "Stop overriding this bone" is a channel
+    // REMOVAL — the act `dispatchRevertGltfChannel` has performed since #121 —
+    // and a mutator named removeKeyframes that sometimes deletes its own node
+    // would be lying about what it does to every caller reading its name. The
+    // keyboard road already refuses to remove a bone's last key for exactly
+    // this reason; this makes the mutator road agree with it, which it did not.
+    const bone = boneKeyOf(channel);
+    if (bone) {
+      const existing = (((channel.params ?? {}) as { keyframes?: unknown[] }).keyframes ?? []) as {
+        time: number;
+      }[];
+      // Hoisted for the same reason `build()` hoists it: property narrowing on
+      // `spec.scope` does not survive into the `.filter` arrow callback.
+      const scope = spec.scope;
+      const remaining = scope === 'all' ? 0 : existing.filter((k) => k.time !== scope.time).length;
+      // `existing.length > 0` keeps the no-op honest: 'all' on an ALREADY empty
+      // channel removes nothing, so it is not this removal that emptied it and
+      // refusing would report a fault where there is none.
+      if (existing.length > 0 && remaining === 0) {
+        return {
+          ok: false,
+          reason:
+            `removing this would leave bone "${bone.childName}"'s ${bone.component} channel with no ` +
+            'keyframes, and an empty channel is not a cleared edit — it claims the component and ' +
+            'renders the bone at the origin. Delete the channel node instead to return the bone ' +
+            'to its clip.',
+        };
+      }
+    }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
