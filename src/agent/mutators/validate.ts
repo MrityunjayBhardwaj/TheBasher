@@ -196,6 +196,12 @@ export function validatePlan<S>(
       warnings.push(`${lossy.kind}: ${lossy.reason}`);
     }
   }
+  // Spec-dependent advisories (#917). Runs only here, on the success path, so it cannot
+  // turn an accepted plan into a rejected one — that is `preconditions`' job. A throw would
+  // be a build-time bug in the Mutator, so it is left to surface rather than swallowed.
+  if (mutator.advisories) {
+    warnings.push(...mutator.advisories(spec, closure, state));
+  }
 
   const plan: MutatorPlan = {
     ok: true,

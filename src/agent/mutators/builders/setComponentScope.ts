@@ -27,7 +27,8 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { getNodeType } from '../../../core/dag/registry';
-import { SCOPE_PARAM } from '../../../nodes/componentSelection';
+import { EMPTY_SELECTION_QUERY, SCOPE_PARAM } from '../../../nodes/componentSelection';
+import { selectsNothingAtEveryLength } from '../../../nodes/scopeQuery';
 
 const SetComponentScopeSpec = z.object({
   /** The scoped operator whose subset to set. */
@@ -112,6 +113,27 @@ export const setComponentScopeMutator: MutatorDefinition<SetComponentScopeSpec> 
       };
     }
     return { ok: true };
+  },
+  /**
+   * #917 — an empty scope is LEGAL and is minted on purpose (`EMPTY_SELECTION_QUERY`, #862),
+   * so it must not be refused. But it is also trivially easy to write by accident: a query
+   * whose terms only REMOVE starts from an empty mask and stays there, so `'^0-11'` reads
+   * like "everything but the first twelve" and means nothing at all. Silently applying an
+   * operator to no elements is the quiet half of the failure this query language refuses
+   * loudly everywhere else, so it is said out loud here rather than left to be discovered.
+   *
+   * Only the length-INDEPENDENT case is reported. Whether `'100-200'` is empty depends on
+   * the element count, which this mutator cannot see — that half is still open, and is not
+   * silently implied to be covered by the sentence below.
+   */
+  advisories(spec): string[] {
+    if (!selectsNothingAtEveryLength(spec.scope)) return [];
+    return [
+      `empty-scope: '${spec.scope}' selects NO elements at any mesh size, so the operator ` +
+        `will apply to nothing. This is a legal state — '${EMPTY_SELECTION_QUERY}' is how the ` +
+        `empty selection is spelled — but if you meant "everything except these", write a ` +
+        `complement like '!0-5'; if you meant "everything", clear the scope to blank.`,
+    ];
   },
   build(spec, _closure: ClosureSet, _state: DagState): Op[] {
     return [{ type: 'setParam', nodeId: spec.nodeId, paramPath: SCOPE_PARAM, value: spec.scope }];

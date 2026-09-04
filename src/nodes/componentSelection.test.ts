@@ -654,6 +654,14 @@ describe('#607 the query has exactly one reader', () => {
       // never terms, so neither lets a caller re-read the language a second way.
       'scopeSelectedCount',
       'scopeSelection',
+      // #917 — one more BOOLEAN, and it is here for the same reason `isParsableScopeQuery`
+      // is: it answers a yes/no ABOUT a query and hands back nothing a caller could act on.
+      // "Does this select nothing at every length?" cannot be used to apply a scope, only to
+      // warn about one. It is deliberately not a refusal — `'^0'` is the canonical empty
+      // selection (#862) and is minted on purpose — so the answer travels to an advisory,
+      // never to a gate. And it delegates to `scopeSelection` rather than re-walking terms,
+      // so it cannot become a second reading of the language by drifting.
+      'selectsNothingAtEveryLength',
     ]);
   });
 });

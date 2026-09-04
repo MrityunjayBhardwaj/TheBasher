@@ -26,8 +26,8 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { getNodeType, listNodeTypes } from '../../../core/dag/registry';
 import type { Op } from '../../../core/dag/types';
 import { registerAllNodes } from '../../../nodes/registerAll';
-import { SCOPE_PARAM } from '../../../nodes/componentSelection';
-import { scopeSelection } from '../../../nodes/scopeQuery';
+import { EMPTY_SELECTION_QUERY, SCOPE_PARAM } from '../../../nodes/componentSelection';
+import { scopeSelection, selectsNothingAtEveryLength } from '../../../nodes/scopeQuery';
 import {
   getStrategy,
   registerAllStrategies,
@@ -259,5 +259,84 @@ describe('#667 — the componentScope strategy body tells the truth', () => {
     const scoped = scopedTypes();
     expect(scoped).toContain('BevelModifier');
     expect(scoped).toHaveLength(6);
+  });
+});
+
+// ── #917 — THE EMPTY SCOPE IS SAID OUT LOUD, AND STILL ALLOWED ───────────────────────
+//
+// The issue was filed believing an empty scope was a defect to refuse. It is not: `'^0'` is
+// the project's canonical spelling for the empty set (#862), minted when a derived selection
+// qualifies nothing, and `SetMaterialOp`'s retired-face-range migration produces it. Refusing
+// it would have broken a shipped migration. So the fix is a WARNING, and the row that matters
+// most here is the one asserting the query is still ACCEPTED.
+describe('#917 — an empty scope warns, and is never refused', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    __resetStrategyRegistryForTests();
+    registerAllStrategies();
+  });
+
+  const empty = (p: ReturnType<typeof plan>) =>
+    p.ok ? p.warnings.filter((w) => w.startsWith('empty-scope:')) : null;
+
+  it('the predicate answers the truth table, with a denominator', () => {
+    const table: ReadonlyArray<readonly [string, boolean]> = [
+      ['^0', true], // the canonical empty selection
+      ['^0-11', true], // remove-only: the trap that reads like a complement
+      ['0-5 ^0-5', true], // added then fully removed
+      ['', false], // 🔑 blank is "none written" = EVERYTHING, never "selects nothing"
+      ['!0-11', false], // complement: empty at 12, all 12 at 24 — length-DEPENDENT
+      ['100-200', false], // out of range at 12, in range at 960 — length-DEPENDENT
+      ['0-5', false],
+      ['0-10:2', false],
+    ];
+    const wrong = table.filter(([q, want]) => selectsNothingAtEveryLength(q) !== want);
+    expect({ examined: table.length, wrong }).toEqual({ examined: table.length, wrong: [] });
+  });
+
+  it('🔑 the canonical empty selection is ACCEPTED — refusing it would break #862', () => {
+    const p = plan(withNode(emptyDagState(), 'arr', 'ArrayModifier'), {
+      nodeId: 'arr',
+      scope: EMPTY_SELECTION_QUERY,
+    });
+    expect(p.ok).toBe(true);
+    if (!p.ok) throw new Error(p.reason);
+    // It lands on the node exactly as written — the warning is advice, not a veto.
+    const next = applyAll(withNode(emptyDagState(), 'arr', 'ArrayModifier'), p.ops);
+    expect(scopeOf(next, 'arr')).toBe(EMPTY_SELECTION_QUERY);
+    expect(empty(p)).toHaveLength(1);
+  });
+
+  it('warns on every universally-empty query and on NONE of the others', () => {
+    const state = withNode(emptyDagState(), 'arr', 'ArrayModifier');
+    const warned = ['^0', '^0-11', '0-5 ^0-5'].map(
+      (q) => empty(plan(state, { nodeId: 'arr', scope: q }))!.length,
+    );
+    const quiet = ['', '0-5', '!0-11', '100-200'].map(
+      (q) => empty(plan(state, { nodeId: 'arr', scope: q }))!.length,
+    );
+    expect({ warned, quiet }).toEqual({ warned: [1, 1, 1], quiet: [0, 0, 0, 0] });
+  });
+
+  it('the advisory names the complement as the likely intent, since that is the actual trap', () => {
+    const state = withNode(emptyDagState(), 'arr', 'ArrayModifier');
+    const [w] = empty(plan(state, { nodeId: 'arr', scope: '^0-11' }))!;
+    expect(w).toContain("'^0-11'");
+    expect(w).toContain('!0-5');
+    expect(w).toContain('blank');
+    // And it is a warning beside the static lossy one, not instead of it.
+    const p = plan(state, { nodeId: 'arr', scope: '^0-11' });
+    expect(p.ok && p.warnings.some((x) => x.startsWith('prior-component-scope:'))).toBe(true);
+  });
+
+  it('the strategy body teaches the ^ vs ! trap, since the doc is what an agent reads', () => {
+    const body = getStrategy('componentScope')!.body;
+    expect(body).toContain('`^0-11` — nothing');
+    expect(body).toContain('`!0-11` — everything except');
+    expect(body).toContain('empty-scope:');
+    // and the claim the body makes is the one the resolver holds
+    expect(scopeSelection('^0-11', 24).count).toBe(0);
+    expect(scopeSelection('!0-11', 24).count).toBe(12);
   });
 });

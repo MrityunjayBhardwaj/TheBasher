@@ -560,6 +560,21 @@ range, which is not the same query.
 Indices outside the mesh are DROPPED, not refused — \`0-999\` on a 12-face mesh selects all
 12. An INVERTED range like \`5-2\` is refused, because it cannot be an authoring intent.
 
+## The empty selection, and the trap next to it
+
+Terms accumulate from an EMPTY set, so a query that only REMOVES selects nothing:
+\`^0-11\` looks like "everything but the first twelve" and actually means **nothing at all**.
+If you want "everything except these", use the complement \`!\`, not the removal \`^\`:
+
+- \`!0-11\` — everything except 0-11. This is almost always what you meant.
+- \`^0-11\` — nothing. Removal only subtracts from what earlier terms already added.
+
+The empty selection is a legal, deliberate state — \`^0\` is its canonical spelling, and
+operators mint it when a derived selection qualifies nothing. So it is never refused. But
+\`mutator.setComponentScope\` returns an \`empty-scope:\` warning when the query you gave
+selects nothing at any mesh size. If you see that warning and did not mean it, you almost
+certainly wanted \`!\` where you wrote \`^\`, or a blank scope.
+
 ## What is NOT implemented, and will be refused by name
 
 - **Wildcards** (\`arm*\`) — they match stored group NAMES, and no group can be named yet.
