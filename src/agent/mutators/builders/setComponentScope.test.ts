@@ -45,6 +45,11 @@ function withNode(state: DagState, id: string, type: string): DagState {
   return applyOp(state, { type: 'addNode', nodeId: id, nodeType: type, params: {} }).next;
 }
 
+/** The scope param as written on a node — `DagNode.params` is `unknown`, so read it once. */
+function scopeOf(state: DagState, nodeId: string): unknown {
+  return (state.nodes[nodeId].params as Record<string, unknown>)[SCOPE_PARAM];
+}
+
 /** Apply, asserting the write was not ACCEPTED-BUT-DROPPED (#423). */
 function applyAll(state: DagState, ops: readonly Op[]): DagState {
   return ops.reduce<DagState>((s, op) => {
@@ -118,7 +123,7 @@ describe('#667 — setComponentScope', () => {
     // 🔑 The #423 check — an accepted-but-dropped setParam would leave every row above
     // green while changing nothing on the node.
     const next = applyAll(state, p.ops);
-    expect(next.nodes['arr'].params[SCOPE_PARAM]).toBe('0-9 ^3');
+    expect(scopeOf(next, 'arr')).toBe('0-9 ^3');
   });
 
   it('BLANK is an authoring intent, not an error — it clears back to the whole mesh', () => {
@@ -129,13 +134,13 @@ describe('#667 — setComponentScope', () => {
     expect(seeded.ok).toBe(true);
     if (!seeded.ok) throw new Error(seeded.reason);
     const state = applyAll(withNode(emptyDagState(), 'arr', 'ArrayModifier'), seeded.ops);
-    expect(state.nodes['arr'].params[SCOPE_PARAM]).toBe('0-5');
+    expect(scopeOf(state, 'arr')).toBe('0-5');
 
     const cleared = plan(state, { nodeId: 'arr', scope: '' });
     expect(cleared.ok).toBe(true);
     if (!cleared.ok) throw new Error(cleared.reason);
     const next = applyAll(state, cleared.ops);
-    expect(next.nodes['arr'].params[SCOPE_PARAM]).toBe('');
+    expect(scopeOf(next, 'arr')).toBe('');
   });
 
   it('refuses a node that declares no scope, and says so about the TYPE', () => {
