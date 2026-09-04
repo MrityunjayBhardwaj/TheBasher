@@ -153,16 +153,43 @@ function refNodeIds(binding: unknown): string[] {
     .filter((n): n is string => typeof n === 'string');
 }
 
+/** The active `TransformClip`, as ONE answer.
+ *
+ *  🔴 THE KEYS AND THE TIME DOMAIN TRAVEL TOGETHER, AND THAT IS THE POINT (#916).
+ *  This mirrors what `seedKeysFromClip` returns on the sibling `AnimationClip`
+ *  road after #913: a caller that could take the keys WITHOUT the domain is a
+ *  caller that can mint a copy which stops where its source wraps. Handing the
+ *  domain back through a second function would rebuild exactly the separability
+ *  that defect was made of. */
+export interface ActiveClip {
+  readonly keyframes: ClipKeyframe[];
+  /** Does the source REPEAT past its duration?
+   *
+   *  🔴 TWO CARRIERS, TWO SPELLINGS, OPPOSITE DEFAULTS. `TransformClip.loop` is
+   *  an ENUM defaulting to `'clamp'` (TransformClip.ts:47) where
+   *  `AnimationClip.loop` is a BOOLEAN defaulting to `true`. Same concept, and
+   *  the opposite default is exactly why this road's missing time domain never
+   *  bit while the other one bit immediately. Normalised to the boolean the
+   *  shared emitter takes, so the disagreement is resolved HERE rather than at
+   *  the call site.
+   *
+   *  The precondition is the same one #913 measured and it holds for the same
+   *  reason: a Cycles modifier repeats the CHANNEL'S key range, while the clip
+   *  folds at `duration`, so the two agree only when the keys span the clip.
+   *  A glTF import derives `duration` as `max(keyTime)` itself
+   *  (gltfImportChain.ts:593), so the span is exact by construction. */
+  readonly cyclic: boolean;
+}
+
 /**
- * Resolve the active TransformClip's keyframes for the GltfChild whose params
- * carry `assetRef` + `childName`. Pure: walks `nodes` by params + edges.
- * Returns [] when there is no asset / no clip / no selected clip — the caller
- * (B2) then surfaces no clip rows (the bone simply has no imported animation).
+ * Resolve the active TransformClip for the asset `assetRef`, keys and time
+ * domain together. Pure: walks `nodes` by params + edges.
+ * Returns null when there is no asset / no clip / no selected clip.
  */
-export function activeClipKeyframesForAsset(
+export function activeClipForAsset(
   nodes: Record<string, ClipWalkNode>,
   assetRef: string,
-): ClipKeyframe[] {
+): ActiveClip | null {
   // 1. The owning GltfAsset (matched by assetRef param).
   let asset: ClipWalkNode | undefined;
   for (const node of Object.values(nodes)) {
@@ -172,27 +199,48 @@ export function activeClipKeyframesForAsset(
       break;
     }
   }
-  if (!asset) return [];
+  if (!asset) return null;
 
   // 2. The ClipSelect feeding the asset's `transformClip` socket.
   const clipSelectId = refNodeIds(asset.inputs?.transformClip)[0];
   const clipSelect = clipSelectId ? nodes[clipSelectId] : undefined;
-  if (!clipSelect || clipSelect.type !== 'ClipSelect') return [];
+  if (!clipSelect || clipSelect.type !== 'ClipSelect') return null;
   const selectedClipName = (clipSelect.params as { selectedClipName?: unknown } | undefined)
     ?.selectedClipName;
-  if (typeof selectedClipName !== 'string') return [];
+  if (typeof selectedClipName !== 'string') return null;
 
   // 3. The TransformClip whose name matches, among the ClipSelect's `clips`.
   const clipIds = refNodeIds(clipSelect.inputs?.clips);
   for (const id of clipIds) {
     const clip = nodes[id];
     if (!clip || clip.type !== 'TransformClip') continue;
-    const cp = clip.params as { name?: unknown; keyframes?: unknown } | undefined;
+    const cp = clip.params as { name?: unknown; keyframes?: unknown; loop?: unknown } | undefined;
     if (cp?.name !== selectedClipName) continue;
     const kfs = cp?.keyframes;
-    return Array.isArray(kfs) ? (kfs as ClipKeyframe[]) : [];
+    return {
+      keyframes: Array.isArray(kfs) ? (kfs as ClipKeyframe[]) : [],
+      // `'loop'` and nothing else. An absent value is the schema's `'clamp'`, so
+      // reading it positively keeps an unset clip on the holding road it is on
+      // today rather than inventing a repeat for it.
+      cyclic: cp?.loop === 'loop',
+    };
   }
-  return [];
+  return null;
+}
+
+/**
+ * The active TransformClip's keyframes for `assetRef`, or [] when there is
+ * none — the caller (B2) then surfaces no clip rows (the bone simply has no
+ * imported animation).
+ *
+ * Delegates rather than walking again: two walks are two answers to "which clip
+ * is active", and they would diverge silently.
+ */
+export function activeClipKeyframesForAsset(
+  nodes: Record<string, ClipWalkNode>,
+  assetRef: string,
+): ClipKeyframe[] {
+  return activeClipForAsset(nodes, assetRef)?.keyframes ?? [];
 }
 
 const CHANNEL_TYPES = new Set([
