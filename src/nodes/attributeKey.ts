@@ -112,6 +112,19 @@ export function attributeKeyOf(set: AttributeSet): string | null {
       domain: attribute.domain,
       type: attribute.type,
       count: attribute.count,
+      // #723 — PART OF THE IDENTITY, because it changes what the values MEAN under an
+      // operator. Two sets identical but for this are two different geometries after a
+      // mirror — one reflected, one not — and without this they collapsed onto one cached
+      // build and the second silently took the first's values. That is #649's defect in a
+      // new field, and it was found by a probe whose six cases all returned the first one's
+      // answer.
+      //
+      // 🔴 SPREAD IN ONLY WHEN DECLARED, never written as `transform: undefined`.
+      // `stableStringify` walks `Object.keys`, which INCLUDES a key whose value is
+      // `undefined`, and emits it as `null` — so the obvious spelling re-hashed every
+      // existing attribute in the codebase. Measured, not assumed: it moved
+      // `array|box|1,1,1|3|2,0,0|a:21ea791e` to `a:c0b467b5` and reddened four pinned keys.
+      ...(attribute.transform === undefined ? {} : { transform: attribute.transform }),
       data: Array.from(attribute.data),
     });
   }

@@ -42,6 +42,7 @@ import {
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { attributeAt, MATERIAL_INDEX } from '../nodes/attributes';
+import { copyMatrixOf, mirrorMatrixOf } from './copyTransform';
 import { read } from './attributeStore';
 import {
   faceArityOf,
@@ -765,7 +766,8 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
   // `mergeGeometries` below rather than building anything.
   const wanted = arrayCopiesOf(d.count);
   for (let i = 0; i < wanted; i++) {
-    const m = new Matrix4().makeTranslation(d.offset[0] * i, d.offset[1] * i, d.offset[2] * i);
+    // #723 — the same one statement the attribute gather reads.
+    const m = copyMatrixOf(d, i) ?? new Matrix4();
     // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
     // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
     // scope selecting nothing the identity rather than an empty mesh.
@@ -964,15 +966,11 @@ function buildSubset(d: Extract<GeometryDescriptor, { kind: 'subset' }>): Buffer
 function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): BufferGeometry | null {
   const source = get(d.source, 'internal');
   if (!source) return null;
-  // Reflection across the plane perpendicular to `axis` at `offset` along it:
-  // p' = 2·offset − p on that axis (a scale of −1 plus a translation of 2·offset).
-  const reflect = new Matrix4().makeScale(
-    d.axis === 'x' ? -1 : 1,
-    d.axis === 'y' ? -1 : 1,
-    d.axis === 'z' ? -1 : 1,
-  );
-  const t = 2 * d.offset;
-  reflect.setPosition(d.axis === 'x' ? t : 0, d.axis === 'y' ? t : 0, d.axis === 'z' ? t : 0);
+  // #723 — taken from `copyTransform.ts`, not spelled here. The attribute gather needs the
+  // IDENTICAL matrix to transform this copy's directional attributes, and two spellings of
+  // "where does the reflected copy go" would let the geometry move one way and its normals
+  // another — a mesh that draws plausibly and is wrong.
+  const reflect = mirrorMatrixOf(d.axis, d.offset);
   // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
   // primitives to mirror, so the original is never subset and the reflection always is.
   const original = source.clone();

@@ -184,6 +184,49 @@ export const ATTRIBUTE_TYPES = ['int', 'float', 'float2', 'float3'] as const;
 
 export type AttributeType = (typeof ATTRIBUTE_TYPES)[number];
 
+/**
+ * What a matrix may do to an attribute's values — Houdini's transform types (#723).
+ *
+ * ── WHY THIS IS NOT DERIVABLE FROM {@link AttributeType} ──────────────────────────────
+ *
+ * `AttributeType` is a STORAGE WIDTH. A `float3` may be a position, a velocity, a normal or
+ * a colour, and under a matrix those four must not be treated alike: a position follows the
+ * full matrix including its translation, a direction takes the linear part only, a normal
+ * takes the inverse-transpose of the linear part so it stays perpendicular under non-uniform
+ * scale, and a colour is not transformed at all. Nothing about the width says which.
+ *
+ * ⚠️ THE LIST AND THE TYPE ARE ONE DECLARATION, exactly as `KNOWN_DOMAINS` and
+ * `ATTRIBUTE_TYPES` are, so a member cannot be added to one without the other.
+ *
+ * ── ALL SIX ARE DECLARED, INCLUDING THE TWO NOTHING CAN HONOUR YET ────────────────────
+ *
+ * `quaternion` and `matrix` have no producer and no operator that can transform them — a
+ * mirror is IMPROPER (determinant -1), and a reflection is not a rotation, so what a
+ * quaternion should become under one is genuinely undecided. They are declared anyway and
+ * REFUSED by name where they are met, which is a different thing from being absent: a
+ * producer that has a per-point orientation can say so and get a loud, named refusal, rather
+ * than being forced to spell it as something it is not.
+ *
+ * The alternative considered and rejected was a narrower `'none' | 'direction'` covering only
+ * what today's two operators can exercise. That sizes the vocabulary to the implementation
+ * rather than to the domain, and it destroys information at the mint: a producer KNOWS
+ * whether its `float3` is a velocity or a normal, and a type that cannot record the
+ * difference makes it unrecoverable the moment the distinction starts to matter.
+ *
+ * REF: `ref/houdini/SOP.md:24` (the five types and their rules); `src/app/attributeTransform.ts`
+ *      (which of them this build can honour, and how).
+ */
+export const TRANSFORM_TYPES = [
+  'none',
+  'position',
+  'vector',
+  'normal',
+  'quaternion',
+  'matrix',
+] as const;
+
+export type TransformType = (typeof TRANSFORM_TYPES)[number];
+
 /** Components per element. Closed by a `never` — a new type must declare its width here. */
 export function componentsOf(type: AttributeType): number {
   switch (type) {
@@ -238,6 +281,18 @@ export interface AttributeData {
   readonly type: AttributeType;
   readonly count: number;
   readonly data: AttributeArray;
+  /**
+   * What a matrix may do to these values (#723). OPTIONAL, and its absence means
+   * UNCLASSIFIED rather than {@link TRANSFORM_TYPES} `'none'` — the two are deliberately
+   * different answers. `'none'` is a producer saying "a matrix must not touch this"; absent
+   * is a producer that has not said, and a `float3` that has not said is REFUSED by an
+   * operator that would transform it rather than silently carried through unchanged.
+   *
+   * Optional rather than required because the safe behaviour for an unclassified attribute
+   * already exists and is enforced elsewhere: making it required would restate `'none'` at
+   * every construction site in the codebase and buy nothing the refusal does not already give.
+   */
+  readonly transform?: TransformType;
 }
 
 /**
