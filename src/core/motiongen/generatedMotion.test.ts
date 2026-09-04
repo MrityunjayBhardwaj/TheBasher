@@ -340,3 +340,96 @@ describe('the HTTP capability', () => {
     await expect(cap.isAvailable()).resolves.toBe(false);
   });
 });
+
+// #826/#730 — a world offset a CALLER cannot place is a REFUSAL, not a default.
+//
+// When a world path is requested, the generator canonicalises frame 0 to the
+// origin and returns the offset needed to put the motion back where it was
+// asked for. The clip looks entirely correct at the origin, so dropping the
+// offset would put the character in the wrong place with nothing to notice.
+//
+// #730 took the placement decision — the offset goes to the bound character's
+// root group — so the refusal NARROWED rather than disappeared. It now fires for
+// a caller that cannot place, and the agent tool is exactly such a caller: it
+// runs on a forked state and returns ops for the Diff without ever binding, so
+// there is no character in its world to move. These rows hold that line: the
+// gate has to keep refusing by DEFAULT, or the road that cannot place silently
+// starts placing at the origin.
+describe('#826 — an unplaceable world offset stops the import', () => {
+  /** A capability that reports a world path was rebased away, as the server does. */
+  function offsetCapability(worldOffsetXZ: readonly [number, number] | null) {
+    const stub = new StubMotionGenerationCapability();
+    return {
+      id: 'offset-probe',
+      kind: 'stub' as const,
+      isAvailable: async () => true,
+      cancel: async () => {},
+      generate: async (request: Parameters<typeof stub.generate>[0]) => ({
+        ...(await stub.generate(request)),
+        worldOffsetXZ,
+      }),
+    };
+  }
+
+  const REQUEST = { prompt: 'a person walks', model: ALLOWED_MODEL, seconds: 2 };
+
+  it('refuses, naming the offset it cannot apply', async () => {
+    await expect(
+      buildGeneratedMotionOps(
+        offsetCapability([3, 1]),
+        { request: REQUEST, ids: IDS },
+        stateWithTime(),
+      ),
+    ).rejects.toThrow(/\[3, 1\]/);
+  });
+
+  it('refuses an offset AT the origin too — [0,0] is a placement, not an absence', async () => {
+    // The trap this row guards: a truthiness check would let [0,0] through, and
+    // it means "a world path was asked for and starts here", which is a claim,
+    // not silence. Only `null` says nobody asked.
+    await expect(
+      buildGeneratedMotionOps(
+        offsetCapability([0, 0]),
+        { request: REQUEST, ids: IDS },
+        stateWithTime(),
+      ),
+    ).rejects.toThrow(/cannot place it/);
+  });
+
+  // The narrowing, in both directions. A gate that only ever refuses is not a
+  // gate that lets the right caller through, and one that only ever passes is not
+  // a gate at all — so the SAME offset is run past it twice, differing in nothing
+  // but the caller's declaration.
+  it('lets a caller that can place through, and hands it the offset to apply', async () => {
+    const { worldOffsetXZ, ops } = await buildGeneratedMotionOps(
+      offsetCapability([3, 1]),
+      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
+      stateWithTime(),
+    );
+    expect(worldOffsetXZ).toEqual([3, 1]);
+    // The ops are the ordinary import ops and nothing more: the placement is the
+    // CALLER's to dispatch, so nothing here may quietly encode a position.
+    expect(ops.some((o) => o.type === 'setParam')).toBe(false);
+  });
+
+  it('keeps null distinct from [0,0] on the way out, not just on the way in', async () => {
+    const { worldOffsetXZ } = await buildGeneratedMotionOps(
+      offsetCapability(null),
+      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
+      stateWithTime(),
+    );
+    // `[0,0]` would mean "a path was asked for and it starts at the origin".
+    // Collapsing the two is what makes a character that was never given a path
+    // indistinguishable from one that was.
+    expect(worldOffsetXZ).toBeNull();
+  });
+
+  it('proceeds normally when no world path was requested', async () => {
+    const { ops } = await buildGeneratedMotionOps(
+      offsetCapability(null),
+      { request: REQUEST, ids: IDS },
+      stateWithTime(),
+    );
+    expect(ops.length).toBeGreaterThan(0);
+  });
+});

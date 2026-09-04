@@ -30,6 +30,9 @@ import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import { retargetedClipId } from './bindMotionToCharacter';
 import type { GltfSkinMetadata } from '../../nodes/types';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
+import { makeSplitCurve } from '../../test-utils/splitCurve';
+import { useSelectionStore } from '../stores/selectionStore';
+import { assertValidMotionRequest } from '../../core/motiongen/MotionGenerationCapability';
 
 const stub = new StubMotionGenerationCapability();
 // Mutable so one case can hand back a SOMA clip instead — the stub's three-joint
@@ -62,6 +65,11 @@ beforeEach(() => {
   useImportRefreshStore.setState({ tick: 0 });
   useGeneratedMotionStore.getState().clear();
   useSettingsStore.setState({ motionGenModel: DEFAULT_MOTIONGEN_MODEL });
+  // The selection is an INPUT to generation now (#730 — it chooses the path), so
+  // it has to be reset like any other input. A leaked selection would make these
+  // cases order-dependent in the one direction that is hard to see: a curve
+  // silently steering a generation that never asked for one.
+  useSelectionStore.setState({ selectedNodeId: null });
   seedTime();
 });
 
@@ -165,6 +173,11 @@ function somaCapability(): MotionGenerationCapability {
       bvh: SOMA_BVH(),
       model: DEFAULT_MOTIONGEN_MODEL,
       unitScale: 0.01,
+      // #826 — no world path was requested, so there is no offset to place.
+      // `null` is a statement here, not a placeholder: a fixture that omitted
+      // the field would be claiming silence about placement, which
+      // `assertValidMotionResult` refuses on purpose.
+      worldOffsetXZ: null,
     }),
     cancel: async () => {},
   };
@@ -328,5 +341,170 @@ describe('UI == agent — the two routes produce the same graph', () => {
     const uiState = useDagStore.getState().state;
 
     expect(normalise(nodesOf(agentState))).toEqual(normalise(nodesOf(uiState)));
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #730 — a curve is a CONTROL INPUT to the generator, not a rail fitted after
+// ─────────────────────────────────────────────────────────────────────────
+// Two properties, and the order between them is the phase's whole claim. The
+// waypoints must reach the GENERATOR (so dragging a control point changes the
+// motion that comes back), and the offset it returns must reach the CHARACTER
+// (so the motion plays where the curve was drawn rather than at the origin).
+//
+// A version of this that fitted the finished clip to the curve afterwards would
+// pass any test about final position and fail the first one here — which is why
+// the request is captured rather than only the outcome.
+describe('#730 — an authored curve steers the generation', () => {
+  /** Captures what the generator was ASKED for, and reports a world offset back. */
+  function capturingCapability(worldOffsetXZ: readonly [number, number] | null) {
+    const seen: Record<string, unknown>[] = [];
+    const cap: MotionGenerationCapability = {
+      id: 'capture',
+      kind: 'stub',
+      isAvailable: async () => true,
+      cancel: async () => {},
+      generate: async (request) => {
+        // VALIDATE, exactly as the HTTP capability does before it hits the wire.
+        // Without this the stub accepts any shape, and a request built in the
+        // WIRE shape instead of the API shape sails through every unit test while
+        // the real server road refuses it — which is precisely what happened here
+        // and was caught only by running against the live server. A test double
+        // that is more permissive than the thing it doubles measures nothing.
+        assertValidMotionRequest(request);
+        seen.push(request as unknown as Record<string, unknown>);
+        return {
+          jobId: 'j_path',
+          bvh: SOMA_BVH(),
+          model: DEFAULT_MOTIONGEN_MODEL,
+          unitScale: 0.01,
+          worldOffsetXZ,
+        };
+      },
+    };
+    return { cap, seen };
+  }
+
+  /** The character fixture PLUS the root Group a real glTF import emits — the
+   *  node that owns where the character stands, and so the node a placement
+   *  must move. Without it there is nothing to place and the code says so. */
+  function seedCharacterWithGroup(position: [number, number, number] = [0, 0, 0]): void {
+    seedCharacter();
+    let next: DagState = useDagStore.getState().state;
+    for (const op of [
+      {
+        type: 'addNode' as const,
+        nodeId: 'n_char_group',
+        nodeType: 'Group',
+        params: { position, rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+      },
+      {
+        type: 'connect' as const,
+        from: { node: 'n_char_asset', socket: 'out' },
+        to: { node: 'n_char_group', socket: 'children' },
+      },
+      {
+        type: 'connect' as const,
+        from: { node: 'n_char_group', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]) {
+      next = applyOp(next, op).next;
+    }
+    useDagStore.getState().hydrate(next);
+  }
+
+  /** A straight curve in the scene, running from [-2,0,0] to [2,0,0]. */
+  function seedCurve(position: [number, number, number] = [0, 0, 0]): string {
+    const built = makeSplitCurve(useDagStore.getState().state, {
+      objectId: 'n_path',
+      position,
+      connectTo: { node: 'n_scene', socket: 'children' },
+      points: [
+        [-2, 0, 0],
+        [-1, 0, 0],
+        [1, 0, 0],
+        [2, 0, 0],
+      ],
+    });
+    useDagStore.getState().hydrate(built.state);
+    return built.objectId;
+  }
+
+  it('sends the selected curve to the GENERATOR as waypoints', async () => {
+    const { cap, seen } = capturingCapability(null);
+    capability = cap;
+    const curveId = seedCurve();
+    useSelectionStore.setState({ selectedNodeId: curveId });
+
+    await generateMotionIntoScene('a figure walks');
+
+    expect(seen).toHaveLength(1);
+    // `constraints.waypoints` is the API shape. Asserting the top-level key here
+    // would repeat whatever mistake the code made and agree with it.
+    const wp = (seen[0].constraints as { waypoints?: { x: number; z: number }[] } | undefined)
+      ?.waypoints;
+    expect(wp).toBeDefined();
+    // World XZ in metres, spanning the drawn curve end to end. If these ever
+    // arrive as local points, a curve under a transform steers the wrong path.
+    expect(wp![0].x).toBeCloseTo(-2, 5);
+    expect(wp![wp!.length - 1].x).toBeCloseTo(2, 5);
+  });
+
+  it('sends NO waypoints when no curve is selected', async () => {
+    // A curve sits in the scene and is deliberately not selected. A curve here is
+    // already a camera rail; drawing one must never start steering characters.
+    const { cap, seen } = capturingCapability(null);
+    capability = cap;
+    seedCurve();
+    useSelectionStore.setState({ selectedNodeId: null });
+
+    await generateMotionIntoScene('a figure walks');
+
+    expect(seen[0].constraints).toBeUndefined();
+  });
+
+  it('moves the character to where the path starts', async () => {
+    const { cap } = capturingCapability([3, 1]);
+    capability = cap;
+    seedCharacterWithGroup([0, 0, 0]);
+    const curveId = seedCurve();
+    useSelectionStore.setState({ selectedNodeId: curveId });
+
+    const result = await generateMotionIntoScene('a figure walks');
+    expect(result.ok).toBe(true);
+
+    const group = useDagStore.getState().state.nodes.n_char_group;
+    expect((group.params as { position: [number, number, number] }).position).toEqual([3, 0, 1]);
+    expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
+  });
+
+  it('leaves the character alone when no world path was requested', async () => {
+    // `null` means nobody asked for a path. A character standing where the
+    // director put it must not be dragged to the origin by a generation.
+    const { cap } = capturingCapability(null);
+    capability = cap;
+    seedCharacterWithGroup([4, 0, 4]);
+
+    await generateMotionIntoScene('a figure walks');
+
+    const group = useDagStore.getState().state.nodes.n_char_group;
+    expect((group.params as { position: [number, number, number] }).position).toEqual([4, 0, 4]);
+  });
+
+  it('reports — never swallows — an offset it could not place', async () => {
+    // The character has no root group, so the clip binds and plays at the origin.
+    // That is the failure that looks identical to success in a screenshot, so it
+    // has to reach the surface that persists.
+    const { cap } = capturingCapability([3, 1]);
+    capability = cap;
+    seedCharacter();
+    const curveId = seedCurve();
+    useSelectionStore.setState({ selectedNodeId: curveId });
+
+    await generateMotionIntoScene('a figure walks');
+
+    const reported = JSON.stringify(useAssetErrorStore.getState().errors);
+    expect(reported).toMatch(/origin rather than along the path/);
   });
 });
