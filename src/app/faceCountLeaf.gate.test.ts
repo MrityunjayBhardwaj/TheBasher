@@ -76,11 +76,20 @@ describe('#638 the count is a leaf', () => {
     // cycle in the product — the two that predate this work included — and holds the one rule
     // that makes them safe: nothing in a ring may read across it at module level, because that
     // is the read which silently evaluates to `undefined`.
+    //
+    // 🔴 WIDENED AGAIN at #755, by one, and this one is back to the strictest bar — the one
+    // `polygonInterpolation` met at #825 and the two at #814 openly did not. `arrayCopies`
+    // imports NOTHING (asserted in the row below), so it cannot depend back on this module or
+    // on anything else. It is its own file for a reason that is about THIS graph: four modules
+    // need one statement of how many copies an array means — the constructor, the builder, and
+    // both arithmetics — and they sit on both sides of the ring named above. Homing the rule in
+    // any one of them adds an edge between two of the others.
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',
       './polygonLayout',
       './bevelLayout',
+      './arrayCopies',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
@@ -131,6 +140,14 @@ describe('#638 the count is a leaf', () => {
     // descriptor and no registry. It is asserted to import nothing in the row below, so it
     // cannot quietly grow a graph into the registry the way an unheld addition could.
     //
+    // 🔴 WIDENED AGAIN at #755, by one, and it is a LEAF by the strictest measure in this file:
+    // `arrayCopies` imports NOTHING at all. The registry needs it because `buildArray` was the
+    // one reading of an array's copy count that did not go through the shared rule — a bare
+    // `i < d.count` against three floored spellings elsewhere — so a fractional count built one
+    // copy more than every count function derived, and 0 / negative / NaN built none and threw
+    // out of `mergeGeometries`. Importing the rule is what makes those one reading rather than
+    // four that happened to agree.
+    //
     // Why the registry needs it at all: a bevel's UVs cannot be written anywhere else. The
     // corner layer travels geometry → store (`uvAttributes.ts` LIFTS it off built geometry), so
     // a bevel that does not emit `uv` here has none anywhere downstream — censused across 603
@@ -149,6 +166,7 @@ describe('#638 the count is a leaf', () => {
       '../nodes/scopeQuery',
       './bevelLayout',
       './builtRims',
+      './arrayCopies',
       './polygonInterpolation',
     ]);
   });
@@ -162,6 +180,10 @@ describe('#638 the count is a leaf', () => {
     // graph through exactly the door this file guards, and nothing else would notice.
     expect(importsOf('src/app/polygonInterpolation.ts')).toEqual([]);
     expect(importsOf('src/app/attributeStore.ts')).toEqual(['../nodes/attributes']);
+    // #755 — the claim made in both widening notes above, checked. `arrayCopies` states how many
+    // copies an array descriptor means, and it is read by four modules on both sides of the ring.
+    // The day it grows ANY import it stops being safe for all four, and nothing else would say so.
+    expect(importsOf('src/app/arrayCopies.ts')).toEqual([]);
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',
@@ -169,6 +191,7 @@ describe('#638 the count is a leaf', () => {
       // #814 — the one that is NOT a leaf. See the first row in this file for why it was taken
       // anyway and what replaced the property it broke.
       './bevelLayout',
+      './arrayCopies',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
@@ -182,6 +205,8 @@ describe('#638 the count is a leaf', () => {
       'three',
       '../nodes/types',
       './bevelLayout',
+      // #755 — the point arithmetic reads the SAME copy count the builder does.
+      './arrayCopies',
     ]);
     expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
