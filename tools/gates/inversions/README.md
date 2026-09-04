@@ -84,8 +84,7 @@ and never opens a `.patch` at all.
 
 ## What they measured
 
-Run on `d753af2`, an ancestor of this branch's head, so the citation resolves. Re-run after any change to a gate in the manifest and re-stamp this line. Every pair agreed with its declared expectation; harness exit `0`; tree
-byte-identical after every arm.
+Run on `aeaa006`. Re-run after any change to a gate in the manifest and re-stamp this line. Every pair agreed with its declared expectation; harness exit `0`; tree byte-identical after every arm (`reverted: true`).
 
 | inversion                 | gate                               | expected  | observed | red   | what redded                                                        |
 | ------------------------- | ---------------------------------- | --------- | -------- | ----- | ------------------------------------------------------------------ |
@@ -109,6 +108,13 @@ would be a mistake.** It asserts which NODES a bind creates — under #889 slice
 channels — and never what a rotation is, so it is structurally incapable of gating "the
 value is right". The pair exists so that blindness stays visible and stays deliberate. What
 covers the values is `ensureChannelForBone.test.ts`, one level down.
+
+🔴 **RE-AIMING COST COVERAGE, AND THAT IS WORTH SAYING OUT LOUD.** The deleted
+\`bakeClipOntoRig.test.ts\` redded **three** rows on this inversion, including its own
+falsifying arm; \`ensureChannelForBone.test.ts\` reds **one**. One row is enough to make the
+gate informative and is not enough to call the boundary well covered — the mint's seed has a
+single by-name assertion on the unit, and nothing asserts the shape of what a wrong unit does
+to a rendered pose. That is a gap in the inheriting file, not in the sweep.
 
 📌 **#889 slice 3 re-aimed this pair.** The inverse edit used to drop `radVec3ToDeg` in
 `bakeClipOntoRig.ts`; that mutator was deleted when binding stopped baking, and the same
