@@ -104,7 +104,7 @@ test('#521 — a MaterialOverride colour is editable in the Inspector and reache
   // 🔑 THE CONTROLS EXIST. This is the half that was missing: before #521 the row rendered
   // `color  #ffffff` as text with no input in it at all.
   const swatch = page.getByTestId('inspector-color-mo521-color');
-  const hex = page.getByTestId('inspector-color-hex-mo521-color');
+  const hex = page.getByTestId('inspector-colorhex-mo521-color');
   await expect(swatch).toBeVisible();
   await expect(hex).toBeVisible();
   // The emissive channel is the second one the issue names, and it is the same road.

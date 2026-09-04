@@ -774,7 +774,12 @@ function ColorParamField({
       label={paramPath}
       value={value}
       testidColor={`inspector-color-${nodeId}-${paramPath}`}
-      testidHex={`inspector-color-hex-${nodeId}-${paramPath}`}
+      // #521 — `inspector-colorhex-`, NOT `inspector-color-hex-`. The panel scrape in
+      // `p394-material-operator-rows.spec.ts` matches `inspector-(input|scrub|color|colorhex|…)-<nodeId>-<param>`,
+      // and `color` wins that alternation, so a hyphen here makes the next segment read as
+      // the NODE ID: the material section reported a node called `hex`. Same spelling as the
+      // OpenPBR row below, which is where the convention already was.
+      testidHex={`inspector-colorhex-${nodeId}-${paramPath}`}
       overrideInfo={overrideInfo}
       masked={masked}
       onSource={(next) => {
