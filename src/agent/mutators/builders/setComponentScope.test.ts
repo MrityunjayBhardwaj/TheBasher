@@ -27,6 +27,12 @@ import { getNodeType, listNodeTypes } from '../../../core/dag/registry';
 import type { Op } from '../../../core/dag/types';
 import { registerAllNodes } from '../../../nodes/registerAll';
 import { SCOPE_PARAM } from '../../../nodes/componentSelection';
+import { scopeSelection } from '../../../nodes/scopeQuery';
+import {
+  getStrategy,
+  registerAllStrategies,
+  __resetStrategyRegistryForTests,
+} from '../../strategy';
 import { setComponentScopeMutator, type SetComponentScopeSpec } from './setComponentScope';
 import { validatePlan } from '../validate';
 
@@ -176,5 +182,77 @@ describe('#667 — setComponentScope', () => {
     expect(p.ok).toBe(false);
     if (p.ok) throw new Error('expected a refusal');
     expect(p.reason).toContain('ghost');
+  });
+});
+
+// ── THE STRATEGY BODY IS A CLAIM, SO IT IS CHECKED ───────────────────────────────────
+//
+// The `componentScope` strategy is what the agent reads to learn the grammar, and every
+// worked example in it is a behavioural assertion about `scopeSelection`. This repo has
+// been bitten five times by a comment that documented an enforcement the code did not
+// have; a strategy body is the same hazard aimed at a model instead of a reader, and it
+// is worse, because the model will act on it.
+//
+// So each example is pinned against the resolver, AND the body is asserted to still
+// contain the example — otherwise someone could reword the doc and leave these rows
+// passing against text nobody ships.
+describe('#667 — the componentScope strategy body tells the truth', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    __resetStrategyRegistryForTests();
+    registerAllStrategies();
+  });
+
+  const selected = (query: string, length: number): number[] =>
+    Array.from(scopeSelection(query, length).mask).flatMap((v, i) => (v === 1 ? [i] : []));
+
+  it('every worked example in the body resolves the way the body says', () => {
+    const body = getStrategy('componentScope')!.body;
+
+    const claims: ReadonlyArray<readonly [string, string, number, number[]]> = [
+      // [ the substring that must appear in the body, query, length, expected indices ]
+      ['`0-10:2` — a range with a step (0, 2, 4, 6, 8, 10)', '0-10:2', 12, [0, 2, 4, 6, 8, 10]],
+      ['`0-9 ^3` is "the first ten, minus index 3"', '0-9 ^3', 12, [0, 1, 2, 4, 5, 6, 7, 8, 9]],
+      ['`!0-4` is "everything except the first', '!0-4', 8, [5, 6, 7]],
+      [
+        '`0-999` on a 12-face mesh selects all',
+        '0-999',
+        12,
+        [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      ],
+    ];
+
+    for (const [quote, query, length, expected] of claims) {
+      expect(body, `body no longer contains: ${quote}`).toContain(quote);
+      expect(selected(query, length), `${query} over ${length}`).toEqual(expected);
+    }
+    expect(claims).toHaveLength(4);
+  });
+
+  it('the ORDER claim holds — `^3 0-9` is not the same query as `0-9 ^3`', () => {
+    expect(getStrategy('componentScope')!.body).toContain('Order matters');
+    expect(selected('^3 0-9', 12)).toContain(3);
+    expect(selected('0-9 ^3', 12)).not.toContain(3);
+  });
+
+  it('the constructs the body calls refused ARE refused, and the ones it offers are not', () => {
+    const body = getStrategy('componentScope')!.body;
+    for (const refused of ['arm*', '@v>0', '5-2']) {
+      expect(body).toContain(refused);
+      expect(() => scopeSelection(refused, 12), refused).toThrow();
+    }
+    for (const accepted of ['3', '0-5', '0-10:2', '^7', '!3']) {
+      expect(body).toContain(accepted);
+      expect(() => scopeSelection(accepted, 12), accepted).not.toThrow();
+    }
+  });
+
+  it('BevelModifier really is the edge-domain outlier the body singles out', () => {
+    expect(getStrategy('componentScope')!.body).toContain('**edges**, not faces');
+    // Derived: exactly one scoped operator disagrees with the rest on domain.
+    const scoped = scopedTypes();
+    expect(scoped).toContain('BevelModifier');
+    expect(scoped).toHaveLength(6);
   });
 });
