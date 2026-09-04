@@ -311,3 +311,64 @@ describe('#814 the import cycles, enumerated and held', () => {
     }
   });
 });
+
+// ── #641 — `src/nodes/types.ts` SITS BELOW THE APP LAYER, AND SAYS SO AT THE TOP ──────────
+//
+// The gate above deliberately drops `import type` edges, because an erased import cannot
+// participate in a module-initialisation order and so cannot produce the silent `undefined`
+// that is the whole hazard there. That is correct for THAT question and it is exactly why it
+// could not see this one: `types.ts` carried `import type { MeshUVRead } from '../app/...'`
+// 443 lines into the file, closing `nodes/types -> app/uvAttributes -> nodes/types`. Nothing
+// was broken, and nothing would have been until the first VALUE crossed that edge — at the
+// module every other module imports. Erasure was the only thing holding it.
+//
+// #641 moved the declaration instead of keeping the rule: `MeshUVRead` is the declared type of
+// `EvaluatedMesh.uvRead`, so it belongs beside the interface it describes. These two rows keep
+// the edge from coming back — one for the DIRECTION, one for the PLACEMENT that hid it.
+//
+// 🔴 BOTH ROWS ARE ABSENCE ASSERTIONS ON PURPOSE. A presence check ("types.ts still imports X")
+// is monotone in the size of the file and so can never red on an ADDITION, which is the entire
+// failure mode here. Each row also asserts its own denominator first, so a passing zero can
+// never mean "the scan found nothing at all".
+//
+// REF: src/nodes/types.ts (the rehomed `MeshUVRead` / `UVAttributeVerdict` and the reason);
+//      src/app/uvAttributes.ts (`readMeshUVs` — the implementation, which stayed); issue #641.
+
+/** Every import specifier in `file`, type-only ones INCLUDED — the opposite of `valueImportsOf`. */
+function allImportSpecifiersOf(file: string): string[] {
+  const pattern = /^\s*import\s+(?:type\s+)?[^;]*?\s*from\s*['"]([^'"]+)['"]/gm;
+  return [...stripComments(sourceOf(file)).matchAll(pattern)].map((m) => m[1]);
+}
+
+describe('#641 nodes/types.ts declares its layer at the top and does not reach up', () => {
+  const TYPES = 'src/nodes/types.ts';
+
+  it('imports NOTHING from src/app/ — type-only included, which is the whole point', () => {
+    const specifiers = allImportSpecifiersOf(TYPES);
+    // DENOMINATOR FIRST: this file does import things. A zero below therefore means "none of
+    // them reach the app layer", and can never mean "the pattern matched nothing".
+    expect(specifiers.length).toBeGreaterThan(0);
+
+    const intoApp = specifiers.filter((s) =>
+      path.posix.normalize(path.posix.join(path.posix.dirname(TYPES), s)).startsWith('src/app/'),
+    );
+    expect(intoApp).toEqual([]);
+  });
+
+  it('has every import at the top, above the first declaration', () => {
+    const lines = sourceOf(TYPES).split('\n');
+    const importLines = lines
+      .map((line, i) => (/^import\s/.test(line) ? i : -1))
+      .filter((i) => i >= 0);
+    const firstDeclaration = lines.findIndex((line) => /^export\s/.test(line));
+
+    // DENOMINATOR FIRST: both ends of the comparison were actually found.
+    expect(importLines.length).toBeGreaterThan(0);
+    expect(firstDeclaration).toBeGreaterThan(0);
+
+    const belowFirstDeclaration = importLines
+      .filter((i) => i > firstDeclaration)
+      .map((i) => `${TYPES}:${i + 1}: ${lines[i].trim()}`);
+    expect(belowFirstDeclaration).toEqual([]);
+  });
+});

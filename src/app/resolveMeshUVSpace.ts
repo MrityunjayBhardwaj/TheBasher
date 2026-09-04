@@ -82,7 +82,7 @@ import { extractUVIslands } from './uvIslands';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
 import { primaryMaterial } from './materialAssignment';
-import type { MeshUVRead } from './uvAttributes';
+import type { MeshUVRead } from '../nodes/types';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
 // the map binding is a material param, not a channel), so a zero ctx is exact for the
