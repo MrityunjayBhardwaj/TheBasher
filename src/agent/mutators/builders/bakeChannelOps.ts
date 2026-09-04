@@ -34,6 +34,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import type { Vec3 } from '../../../nodes/types';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
+import { defaultModifier } from '../../../nodes/channelModifiers';
 
 /** The TRS components a bone can carry, in stable emission order. */
 export const BAKED_COMPONENTS = ['position', 'rotation', 'scale'] as const;
@@ -62,8 +63,21 @@ export function bakeChannelOpsForBone(args: {
   readonly childName: string;
   readonly byComponent: Partial<Record<BakedComponent, readonly BakedKey[]>>;
   readonly state: DagState;
+  /** #913 — does the SOURCE these keys were copied from repeat past its end?
+   *
+   *  Same producer-vs-consumer distinction as the `easing` field below, on the
+   *  time axis instead of the value axis. A channel's schema default is `hold`,
+   *  which is right for a curve a director drew from nothing and wrong for a
+   *  frame-by-frame copy of a LOOPING clip: the clip wraps at its duration and
+   *  the copy would stop dead, so the bone freezes after one cycle while its
+   *  neighbours keep going. Stating the source's time domain is what keeps the
+   *  copy indistinguishable from what it copied.
+   *
+   *  Optional and default-false, so the road that does not know its source's
+   *  time domain emits exactly the params it emitted before. */
+  readonly cyclic?: boolean;
 }): Op[] {
-  const { assetRef, childName, byComponent, state } = args;
+  const { assetRef, childName, byComponent, state, cyclic = false } = args;
   const target = gltfChildDagId(assetRef, childName);
   const ops: Op[] = [];
 
@@ -108,6 +122,17 @@ export function bakeChannelOpsForBone(args: {
           // a curve a director drew, and wrong for a frame-by-frame copy.
           easing: 'linear' as const,
         })),
+        // #913 — the source's time domain, expressed the way this project
+        // decided to express cycling (#275 moved the repeat family out of the
+        // extend enum and into a Cycles F-Modifier). `repeat` cycles the
+        // channel's key range, which equals the clip's `[0, duration)` fold
+        // whenever the seeded keys span the clip — true for every generated,
+        // imported and retargeted clip, because they carry a key per frame.
+        // Measured on Robot-Walk.basher: 78 of 78 bones span it exactly.
+        //
+        // The key is OMITTED rather than set to `[]` when the source does not
+        // cycle, so a non-looping mint stays byte-identical to pre-#913.
+        ...(cyclic ? { modifiers: [defaultModifier('cycles')] } : {}),
       },
     });
   }

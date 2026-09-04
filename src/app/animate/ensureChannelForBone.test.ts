@@ -11,6 +11,8 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 import { ensureChannelForBone } from './ensureChannelForBone';
 import type { DagState } from '../../core/dag/state';
+import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
+import { buildClipBoneSamplers, type AnimationClipParams } from '../../nodes/AnimationClip';
 
 const ASSET = 'user-imports/dwarf.glb';
 const BONE = 'mixamorig_LeftArm';
@@ -25,6 +27,8 @@ beforeEach(() => {
  *  `jointKeys` is the index→name spine the clip's bone indices are read by. */
 function riggedState(opts?: {
   withClip?: boolean;
+  /** #913 — the clip's own time domain. Defaults to the schema default. */
+  loop?: boolean;
   extraNodes?: Record<string, unknown>;
 }): DagState {
   const jointKeys = [OTHER, BONE];
@@ -61,7 +65,7 @@ function riggedState(opts?: {
       type: 'AnimationClip',
       params: {
         duration: 1,
-        loop: true,
+        loop: opts?.loop ?? true,
         keyframes: [
           // Bone 1 is BONE. Rotations are RADIANS in a clip.
           { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
@@ -174,5 +178,104 @@ describe('minting a channel for a bone', () => {
     // A spec error rather than a graph state — it should surface as a refusal,
     // not as a silent no-op that leaves the edit with nowhere to go.
     expect(ensureChannelForBone(riggedState(), 'n_rig', 'position')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #913 — the mint carries the SOURCE's time domain, not just its keys.
+//
+// A clip wraps past its duration; a channel's schema default is `hold`. Copying
+// the keys without the domain makes an edited bone stop dead after one cycle
+// while its unedited neighbours keep going.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#913 the mint carries the clip time domain', () => {
+  const D = 1; // the fixture clip's duration
+  const boneId = gltfChildDagId(ASSET, BONE);
+
+  /** The params the mint's addNode would create for `component`. */
+  function mintedParams(state: DagState, component: 'position' | 'rotation') {
+    const res = ensureChannelForBone(state, boneId, component);
+    expect(res).not.toBeNull();
+    const add = res!.ops.find(
+      (o) => o.type === 'addNode' && o.nodeId === gltfChannelDagId(ASSET, BONE, component),
+    ) as { params: KeyframeChannelVec3Params } | undefined;
+    expect(add).toBeDefined();
+    return add!.params;
+  }
+
+  it('a bone minted from a LOOPING clip repeats instead of freezing', () => {
+    const sample = buildVec3Sampler(mintedParams(riggedState(), 'position'));
+    // The defect, stated as the director sees it: one duration later the bone
+    // is where it was, not stuck where it stopped.
+    expect(sample(D + 0.25)).toEqual(sample(0.25));
+    expect(sample(2 * D + 0.25)).toEqual(sample(0.25));
+    // And it is genuinely moving out there, not holding a constant that happens
+    // to match — without this the row passes on a frozen channel.
+    expect(sample(D + 0.25)).not.toEqual(sample(D + 0.75));
+  });
+
+  it('the minted channel agrees with the CLIP past the duration, which is the point', () => {
+    const state = riggedState();
+    const sample = buildVec3Sampler(mintedParams(state, 'position'));
+    const clipSamplers = buildClipBoneSamplers({
+      keyframes: (state.nodes.n_clip as { params: AnimationClipParams }).params.keyframes,
+      duration: D,
+      loop: true,
+    });
+    const fromClip = clipSamplers.get(1)!;
+    for (const t of [D + 0.01, D * 1.5, D * 2 + 0.01]) {
+      const a = fromClip(t).position;
+      const b = sample(t);
+      b.forEach((v, i) => expect(v).toBeCloseTo(a[i], 6));
+    }
+  });
+
+  it('a bone minted from a NON-looping clip still holds — the fix must not make everything cycle', () => {
+    const params = mintedParams(riggedState({ loop: false }), 'position');
+    expect(params.modifiers ?? []).toEqual([]);
+    const sample = buildVec3Sampler(params);
+    // Held at the last key, forever.
+    expect(sample(D + 0.25)).toEqual(sample(D));
+    expect(sample(D * 5)).toEqual(sample(D));
+  });
+
+  it('inside the authored range the minted values are unchanged by the fix', () => {
+    const looping = buildVec3Sampler(mintedParams(riggedState(), 'position'));
+    const held = buildVec3Sampler(mintedParams(riggedState({ loop: false }), 'position'));
+    // The time domain is about OUTSIDE the range. Inside it the two must be
+    // identical, or the fix changed something it had no business changing.
+    for (const t of [0, 0.25, 0.5, 0.75, D]) expect(looping(t)).toEqual(held(t));
+  });
+
+  it('a bone with NO clip mints from its base pose and claims no cycling', () => {
+    // Invisible in the sampled value — one key repeated is the same constant
+    // either way — so it has to be asserted on the params. Without this row the
+    // guard that distinguishes a clip seed from a base seed has no reader, and
+    // the director gets a Cycles modifier in their list that they never added.
+    const params = mintedParams(riggedState({ withClip: false }), 'position');
+    expect(params.modifiers ?? []).toEqual([]);
+  });
+
+  it('an existing channel is never re-seeded, so an authored extend survives', () => {
+    // A director who sets `hold` on a looping rig keeps `hold`. The mint's
+    // contract is "ensure", not "refresh".
+    const authored = {
+      [gltfChannelDagId(ASSET, BONE, 'position')]: {
+        id: gltfChannelDagId(ASSET, BONE, 'position'),
+        type: 'KeyframeChannelVec3',
+        params: {
+          target: boneId,
+          childName: BONE,
+          assetRef: ASSET,
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [7, 7, 7] }],
+          modifiers: [],
+        },
+        inputs: {},
+      },
+    };
+    const res = ensureChannelForBone(riggedState({ extraNodes: authored }), boneId, 'position');
+    expect(res).not.toBeNull();
+    expect(res!.ops).toEqual([]);
   });
 });

@@ -134,17 +134,27 @@ function seedKeysFromBase(state: DagState, boneId: string, component: BakedCompo
  * Returns `[]` when no bound clip carries the bone — not a failure, just nothing
  * to copy. The caller falls back to the base pose rather than to emptiness.
  */
+/** The keys copied from the bound clip, and whether that clip REPEATS.
+ *
+ *  Returned together on purpose (#913): the keys and the time domain are two
+ *  halves of one answer, and a caller that could take the first without the
+ *  second is a caller that can mint a copy which stops where its source wraps. */
+interface ClipSeed {
+  readonly keys: BakedKey[];
+  readonly cyclic: boolean;
+}
+
 function seedKeysFromClip(
   state: DagState,
   assetRef: string,
   childName: string,
   component: BakedComponent,
-): BakedKey[] {
+): ClipSeed {
   // Scale is never seeded: `AnimationClipParams.keyframes` carries no scale, and
   // the read band omits it for the same reason. Claiming the component would
   // SUPPRESS the asset's own scale track underneath it, because the resolver
   // reads presence rather than value.
-  if (component === 'scale') return [];
+  if (component === 'scale') return { keys: [], cyclic: false };
 
   for (const clip of boundClipsForAsset(state.nodes, assetRef)) {
     const index = boneIndexOf(clip, childName);
@@ -155,12 +165,18 @@ function seedKeysFromClip(
     // Sorted by time so the minted channel's keys are ordered the way the node's
     // own sampler expects, rather than in whatever order the clip stored them.
     const sorted = mine.slice().sort((a, b) => a.time - b.time);
-    return sorted.map((k) => ({
-      time: k.time,
-      value: component === 'rotation' ? radVec3ToDeg(k.rotation) : k.position,
-    }));
+    return {
+      keys: sorted.map((k) => ({
+        time: k.time,
+        value: component === 'rotation' ? radVec3ToDeg(k.rotation) : k.position,
+      })),
+      // `loop` defaults to true in the schema, and the band reads it the same
+      // way (`params.loop !== false`) — so the mint and the read side agree on
+      // what an unset value means rather than each picking a default.
+      cyclic: (clip.params as Partial<AnimationClipParams>).loop !== false,
+    };
   }
-  return [];
+  return { keys: [], cyclic: false };
 }
 
 /**
@@ -204,7 +220,12 @@ export function ensureChannelForBone(
   // Clip first, base second. Never empty: an empty channel is present-and-zero,
   // not absent, so it would suppress the pose underneath it.
   const fromClip = seedKeysFromClip(state, assetRef, childName, component);
-  const keys = fromClip.length > 0 ? fromClip : seedKeysFromBase(state, boneId, component);
+  const keys =
+    fromClip.keys.length > 0 ? fromClip.keys : seedKeysFromBase(state, boneId, component);
+  // Only a clip seed carries a time domain. The base-pose fallback is a single
+  // key standing for a bone that was never animated — cycling one key repeats a
+  // constant, which is the same constant, so claiming it would be noise.
+  const cyclic = fromClip.keys.length > 0 && fromClip.cyclic;
   // `bakeChannelOpsForBone` owns the node shape — the dual `target`/`childName`
   // key, the param names, and the same skip-if-present guard. Going through it
   // rather than emitting an addNode here means a minted channel and a baked one
@@ -215,6 +236,7 @@ export function ensureChannelForBone(
     childName,
     byComponent: { [component]: keys } as Partial<Record<BakedComponent, readonly BakedKey[]>>,
     state,
+    cyclic,
   });
   return { channelId, ops };
 }
