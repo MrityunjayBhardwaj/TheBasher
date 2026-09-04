@@ -55,6 +55,9 @@ import {
   type KnownDomain,
 } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
+import { Vector3 } from 'three';
+import { transformRuleFor } from '../app/attributeTransform';
+import { copyMatrixOf } from '../app/copyTransform';
 import type { GeometryDescriptor, GeometryRef } from './types';
 // TYPE ONLY, and that is the whole relationship: this module reads a selection through its
 // accessor and can never construct one, so the memoized total stays un-forgeable here.
@@ -510,7 +513,7 @@ const FOREIGN: ClassCarriage = { kind: 'foreign' };
  * share a reason. `classCarriage.gate.test.ts` row 9 reds the day this list grows, and says
  * what the message must do first. Widen it there, not here.
  */
-const REFLECTION_REFUSES: readonly AttributeType[] = ['float3'];
+const SPATIALLY_TRANSFORMED: readonly AttributeType[] = ['float3'];
 
 /**
  * Resolve a domain to its carriage, binding the declared order to the real one.
@@ -566,13 +569,39 @@ export function carriageForDomain(
   // Asked here rather than at the call sites for the reason this function exists at all: the
   // filter, the fit check and the gather have to agree about which attributes travel, and
   // three separate spellings of that is exactly the drift the doc above records.
-  if (operator === 'mirror' && REFLECTION_REFUSES.includes(data.type))
+  // #723 — KEYED ON THE DECLARED TRANSFORM TYPE, not on the storage width. This used to
+  // refuse every `float3` under a mirror on the grounds that the model could not tell a
+  // position from a velocity from a normal from a colour. It can now: the attribute says.
+  //
+  // What is refused is NARROWER than before: a `float3` that declares `'none'` — a per-point
+  // colour — is transform-invariant and now travels, instead of being dropped to protect data
+  // it never was.
+  //
+  // 🔴 AND IT STAYS MIRROR-ONLY, WHICH IS A DELIBERATE NON-WIDENING. An array places copies by
+  // a matrix too, so an unclassified POSITION carried verbatim across its copies is already
+  // wrong. But refusing every unclassified `float3` there would also refuse the one #717
+  // shipped tiling under an array — measured: `modifierAttributeTiling`'s row *"#717 a
+  // POINT-domain attribute now TILES"* reds. A translation leaves a direction correct and only
+  // a position wrong, so a blanket refusal would take three right answers to prevent one wrong
+  // one. Retiring that carriage is a contract change #717 owns; what #723 gives it is the way
+  // out — DECLARE the type, and the value is transformed correctly under BOTH operators.
+  if (SPATIALLY_TRANSFORMED.includes(data.type) && operator === 'mirror') {
+    const rule = transformRuleFor(data.transform);
+    if (rule.kind === 'refused') return { kind: 'refused', why: rule.why, until: '#723' };
+  }
+  // A spatial transform type on a width that cannot hold a 3-vector is a producer error rather
+  // than an unwritten rule, and it is refused rather than ignored: silently dropping the
+  // declaration would make the attribute read as classified when nothing honoured it.
+  if (
+    data.transform !== undefined &&
+    data.transform !== 'none' &&
+    !SPATIALLY_TRANSFORMED.includes(data.type)
+  )
     return {
       kind: 'refused',
       why:
-        `a '${data.type}' may be a position, a velocity, a normal or a colour, and this model ` +
-        `carries no transform type to tell them apart — so a mirror would hand the reflected ` +
-        `copy UNREFLECTED values`,
+        `it declares the transform type '${data.transform}', which acts on a 3-vector, but ` +
+        `its storage is '${data.type}'`,
       until: '#723',
     };
 
@@ -837,7 +866,33 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // is what makes it a sound key for a memo that must not confuse two geometries.
   const memoKey = corners?.order ?? tiled.order;
   const perSource = tiledKeyCache.get(memoKey);
-  const remembered = perSource?.get(sourceKey);
+  // 🔴 #723 — THE MEMO KEY CARRIES THE MATRIX NOW, AND IT MUST. While the gather was a pure
+  // permutation, `(order, sourceKey)` was the whole of what the answer depended on: which
+  // source element each output element came from, and what the source held. A transformed
+  // attribute breaks that — the VALUES now depend on the matrix each copy is placed with, and
+  // two mirrors of the same source across different offsets share an order and a source key
+  // while producing different values.
+  //
+  // Measured, which is the only reason it is here: a `position` through `mirror(x, 5)` came
+  // back `[-1,0,0]` — the answer memoised for `mirror(x, 0)` — instead of `[9,0,0]`.
+  //
+  // Copy 1's matrix is the whole family for both kinds (an array's copy `i` is `offset*i` and
+  // a mirror has exactly two copies), and it is taken from `copyMatrixOf` rather than spelled
+  // here, so it cannot drift from the matrix the gather actually applies.
+  // ⚠️ AND ONLY WHEN SOMETHING IS ACTUALLY TRANSFORMED, which the first spelling of this got
+  // wrong. Keying on the matrix unconditionally busts the memo on every step of an offset
+  // DRAG — measured by `#649`'s row: 20 gathers over one unchanged source at 4096 merged
+  // faces, where the whole point of the cache is 0. When no carried attribute has a mapped
+  // rule the gather is still a pure permutation, so `(order, sourceKey)` remains the complete
+  // description of its answer and the matrix must stay out of the key.
+  //
+  // Cheap to ask here: it reads the set that was already loaded, and takes no layout.
+  const anyTransformed = Object.values(carried).some(
+    (a) => transformRuleFor(a.transform).kind === 'mapped',
+  );
+  const matrixKey = anyTransformed ? (copyMatrixOf(descriptor, 1)?.elements.join(',') ?? '') : '';
+  const cacheKey = `${sourceKey}|${matrixKey}`;
+  const remembered = perSource?.get(cacheKey);
   if (remembered !== undefined) return remembered;
 
   // ONE layout per attribute, resolved once and carried to all three users below (the empty
@@ -876,11 +931,22 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // behaviour for anything off that list is UNVERIFIED from the manual, so it cannot be cited
   // either way. What this follows is our own precedent: the misfit path warns by name and
   // declines rather than laying out something wrong.
-  if (refused.length > 0)
+  // #723 — ONE MESSAGE PER REASON, and this is the deferral `classCarriage.gate.test.ts`
+  // row 9 was holding open. It used to take `refused[0]`'s `why` for every refused name,
+  // which was correct only while the refused set had a single member and one reason. It now
+  // has several — an unclassified value, a quaternion under an improper matrix, a per-element
+  // frame with no producer — so a single interpolated reason would print an attribute of one
+  // kind beside an explanation belonging to another. Grouped by reason, each message names
+  // only the attributes that reason is true of.
+  const byReason = new Map<string, { names: string[]; until: string }>();
+  for (const [name, verdict] of refused) {
+    const entry = byReason.get(verdict.why) ?? { names: [], until: verdict.until };
+    entry.names.push(`'${name}' (${carried[name].type} at ${carried[name].domain})`);
+    byReason.set(verdict.why, entry);
+  }
+  for (const [why, { names, until }] of byReason)
     console.warn(
-      `meshAttributes: '${descriptor.kind}' refuses to carry ${refused
-        .map(([name]) => `'${name}' (${carried[name].type} at ${carried[name].domain})`)
-        .join(', ')} — ${refused[0][1].why}; until ${refused[0][1].until}`,
+      `meshAttributes: '${descriptor.kind}' refuses to carry ${names.join(', ')} — ${why}; until ${until}`,
     );
   // Not "no attributes" but "none this road can lay out": a source carrying only point- or
   // edge-domain data reaches here and takes the historical road, which is why this is a
@@ -993,6 +1059,31 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
         data[to + component] = attribute.data[from + component];
       }
     }
+    // #723 — AND THEN THE VALUES ARE TRANSFORMED, WHICH THE GATHER ALONE NEVER DID. A gather
+    // is a permutation: it decides which source element each output element came FROM, and
+    // says nothing about what its value should BE once that element has been moved in space.
+    // For a position or a direction those are different questions, and answering only the
+    // first is how a reflected half ends up carrying the source half's normals.
+    //
+    // The copy index is derivable rather than carried: the order is copy-major over the
+    // source's element count, so element `i` belongs to copy `floor(i / sourceElements)`.
+    // `elementsPerCopy` is 0 only for an empty source, where the loop body never runs.
+    const rule = transformRuleFor(attribute.transform);
+    const elementsPerCopy = attribute.count;
+    if (rule.kind === 'mapped' && elementsPerCopy > 0 && components === 3) {
+      const v = new Vector3();
+      for (let element = 0; element < layout.order.length; element++) {
+        const copy = Math.floor(element / elementsPerCopy);
+        const m = copyMatrixOf(descriptor, copy);
+        if (m === null) break;
+        const at = element * components;
+        v.set(data[at], data[at + 1], data[at + 2]);
+        rule.apply(v, m);
+        data[at] = v.x;
+        data[at + 1] = v.y;
+        data[at + 2] = v.z;
+      }
+    }
     // The domain is FORWARDED, not re-declared as `'face'`. They are equal by the filter
     // above, and writing the literal would make this the second place that decides what
     // domain the tiled attribute is at — one of them free to drift.
@@ -1011,8 +1102,8 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // whose assignment does not fit gets the warning EVERY time rather than once. A guard that
   // goes quiet after its first firing is a guard that stops reporting a condition which is
   // still true.
-  if (perSource === undefined) tiledKeyCache.set(memoKey, new Map([[sourceKey, minted.key]]));
-  else perSource.set(sourceKey, minted.key);
+  if (perSource === undefined) tiledKeyCache.set(memoKey, new Map([[cacheKey, minted.key]]));
+  else perSource.set(cacheKey, minted.key);
   return minted.key;
 }
 
