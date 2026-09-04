@@ -335,17 +335,41 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
     }
 
     let meets = 0;
+    let onEdges = 0;
     for (const rule of layout.placement) {
-      if (rule.kind !== 'meet') continue;
-      meets++;
-      for (const toward of rule.toward)
-        expect({ point: rule.point, toward }).toEqual({
+      if (rule.kind === 'meet') {
+        meets++;
+        for (const toward of rule.toward)
+          expect({ point: rule.point, toward }).toEqual({
+            point: rule.point,
+            toward: chamferedFarEnds.get(rule.point)?.has(toward) ? toward : 'NOT A CHAMFERED EDGE',
+          });
+      } else if (rule.kind === 'onEdge') {
+        onEdges++;
+        // #891 — the mirror claim for the other arm, and it is the OPPOSITE polarity: this vertex
+        // sits ON an UNCHAMFERED edge, and the two edges it is measured against are the chamfered
+        // ones. Asserting both directions is what stops the two arms being told apart by name only.
+        expect({ point: rule.point, toward: rule.toward }).toEqual({
           point: rule.point,
-          toward: chamferedFarEnds.get(rule.point)?.has(toward) ? toward : 'NOT A CHAMFERED EDGE',
+          toward: chamferedFarEnds.get(rule.point)?.has(rule.toward)
+            ? 'SHOULD NOT BE A CHAMFERED EDGE'
+            : rule.toward,
         });
+        for (const against of rule.against)
+          expect({ point: rule.point, against }).toEqual({
+            point: rule.point,
+            against: chamferedFarEnds.get(rule.point)?.has(against)
+              ? against
+              : 'NOT A CHAMFERED EDGE',
+          });
+      }
     }
-    // Eight of them, so the loop above is not passing by never running.
-    expect(meets).toBe(8);
+    // 🔴 THE SPLIT IS THE ASSERTION, AND THIS DENOMINATOR ALREADY EARNED ITS KEEP (#891). It read
+    // `expect(meets).toBe(8)` until the two runs at each of these four points stopped sharing one
+    // rule: four still meet two chamfered edges, and four now sit on the unchamfered edge between
+    // them. That change is invisible to the per-rule loop above — it would simply have iterated
+    // half as often — so the count is what caught it, exactly as the note it replaces predicted.
+    expect({ meets, onEdges, total: meets + onEdges }).toEqual({ meets: 4, onEdges: 4, total: 8 });
   });
 
   it('🔑 #830 THE SLIDE ARM REACHES THE GEOMETRY — on-edge, and split by face adjacency', () => {
@@ -479,5 +503,123 @@ describe('#827 — a partial bevel agrees with the rule measured in the referenc
       }
       expect(nrm[0] * cen[0] + nrm[1] * cen[1] + nrm[2] * cen[2]).toBeGreaterThan(0);
     }
+  });
+
+  // ── #891 — A DERIVED POINT IS A POSITION SOMETHING ACTUALLY OCCUPIES ────────────────────
+  //
+  // `layout.points` is the operator's own statement of how many topological points it produces,
+  // and other derived kinds compose on top of it. Until #891 that number disagreed with the
+  // geometry for every partial bevel whose chamfered edges shared a point: two runs meeting at
+  // such a point were bounded by the SAME unordered pair of chamfered edges, and the `meet`
+  // placement is symmetric in that pair, so both boundary vertices were given one position.
+  //
+  // The count was the symptom rather than the defect. On a chamfered edge loop the two faces
+  // beside each corner were pulled onto the chamfered face's corner and the edge between the two
+  // chamfer strips was degenerate — wrong geometry that a count check alone would not name.
+  it('#891 — every derived point occupies a position of its own, across every buildable scope', () => {
+    const cases: [string | null, number][] = [
+      [null, 24],
+      ['0-11', 24],
+      ['0', 10],
+      ['0,2,4', 14],
+      ['0-1', 11],
+      ['0-2', 12],
+      ['0-3', 12],
+      ['0-5', 15],
+    ];
+    for (const amount of [0.05, 0.1]) {
+      for (const [scope, expected] of cases) {
+        const ref = bevelGeometryRef(box(), amount, scope);
+        const verdict = bevelLayoutOf(ref.descriptor);
+        expect({ scope, kind: verdict.kind }).toEqual({ scope, kind: 'laid-out' });
+        if (verdict.kind !== 'laid-out') continue;
+        const geometry = getForRead(ref);
+        expect({ scope, built: geometry !== null }).toEqual({ scope, built: true });
+        if (geometry === null) continue;
+        const position = geometry.getAttribute('position');
+        const distinct = new Set<string>();
+        for (let i = 0; i < position.count; i++)
+          distinct.add(
+            `${Math.round(position.getX(i) * 1e6)},${Math.round(position.getY(i) * 1e6)},${Math.round(position.getZ(i) * 1e6)}`,
+          );
+        // The derived count is pinned too, so a future change cannot bring the two into agreement
+        // by deriving FEWER points — which would be the other way to make this row green.
+        expect({ scope, amount, derived: verdict.layout.points, welded: distinct.size }).toEqual({
+          scope,
+          amount,
+          derived: expected,
+          welded: expected,
+        });
+      }
+    }
+  });
+
+  it('#891 — the two vertices at a point with exactly two chamfered edges are DISTINCT, and one is ON the unchamfered edge', () => {
+    // 🔴 THE COUNT ROW ABOVE IS NOT ENOUGH ON ITS OWN. A rule that placed both vertices at some
+    // other single wrong position would still weld to one and still red that row, but a rule that
+    // separated them by putting the second one anywhere at all would pass it. This names WHERE.
+    //
+    // A chamfered edge loop round the +X face. At each of its four corners one run has no
+    // unchamfered edge between its bounds and meets the two chamfered ones; the other has exactly
+    // one, and the reference puts that vertex ON it (`offset_on_edge_between`).
+    const amount = 0.1;
+    const ref = bevelGeometryRef(box(), amount, '0-3');
+    const verdict = bevelLayoutOf(ref.descriptor);
+    expect(verdict.kind).toBe('laid-out');
+    if (verdict.kind !== 'laid-out') return;
+    const layout = verdict.layout;
+    const geometry = getForRead(ref);
+    expect(geometry).not.toBeNull();
+    if (geometry === null) return;
+
+    const position = geometry.getAttribute('position');
+    const at = new Map<number, readonly [number, number, number]>();
+    let cursor = 0;
+    for (const rim of layout.rims)
+      for (const point of rim) {
+        at.set(point, [
+          Math.round(position.getX(cursor) * 1e6) / 1e6,
+          Math.round(position.getY(cursor) * 1e6) / 1e6,
+          Math.round(position.getZ(cursor) * 1e6) / 1e6,
+        ]);
+        cursor++;
+      }
+
+    const bySource = new Map<number, number[]>();
+    for (let i = 0; i < layout.placement.length; i++) {
+      const list = bySource.get(layout.placement[i].point) ?? [];
+      list.push(i);
+      bySource.set(layout.placement[i].point, list);
+    }
+
+    let pairs = 0;
+    for (const [, ids] of bySource) {
+      if (ids.length !== 2) continue;
+      pairs++;
+      const kinds = ids.map((i) => layout.placement[i].kind).sort();
+      expect(kinds).toEqual(['meet', 'onEdge']);
+      const places = ids.map((i) => at.get(i));
+      expect(places[0]).not.toEqual(places[1]);
+    }
+    // Four corners on the loop, so neither loop above passed by never running.
+    expect(pairs).toBe(4);
+
+    // And the closed form, which is what makes this a position and not just an inequality. The
+    // source corner is `(0.5, 0.5, 0.5)`: the meet insets it within the +X face by `amount` in
+    // both in-face directions, and the on-edge vertex slides back along the unchamfered edge,
+    // which for a right-angled corner is a flat `amount` because both sines are 1.
+    const corner = [...bySource.entries()].find(
+      ([, ids]) =>
+        ids.length === 2 &&
+        ids.some((i) => {
+          const p = at.get(i);
+          return p !== undefined && p[0] === 0.5 && p[1] === 0.4 && p[2] === 0.4;
+        }),
+    );
+    expect(corner).toBeDefined();
+    if (corner === undefined) return;
+    const places = corner[1].map((i) => at.get(i));
+    expect(places).toContainEqual([0.5, 0.4, 0.4]);
+    expect(places).toContainEqual([0.4, 0.5, 0.5]);
   });
 });
