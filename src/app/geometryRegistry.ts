@@ -41,7 +41,7 @@ import {
 } from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
-import { MATERIAL_INDEX } from '../nodes/attributes';
+import { attributeAt, MATERIAL_INDEX } from '../nodes/attributes';
 import { read } from './attributeStore';
 import {
   faceArityOf,
@@ -629,7 +629,10 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // knows.
 
   if (ref.attributeKey === undefined) return built;
-  const index = read(ref.attributeKey)?.[MATERIAL_INDEX];
+  // #724 — AT THE FACE DOMAIN, stated. This read used to take `material_index` at ANY domain
+  // and use its data as per-face indices; a point-domain entry of the same name would have been
+  // laid over the faces with nothing said.
+  const index = attributeAt(read(ref.attributeKey), MATERIAL_INDEX, 'face');
   if (index === undefined) return built;
 
   // Two refusals, both by name, because a silently skipped derivation is indistinguishable

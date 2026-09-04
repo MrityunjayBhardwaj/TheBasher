@@ -269,6 +269,43 @@ export const UV_MAP = 'UVMap';
 export type AttributeSet = Readonly<Record<string, AttributeData>>;
 
 /**
+ * The attribute called `name` AT `domain`, or `undefined` — the one seam that resolves a name
+ * against a set (#724).
+ *
+ * ── WHY A READER MUST SAY WHICH DOMAIN, RATHER THAN A PRECEDENCE ORDER DECIDING FOR IT ────
+ *
+ * A name can exist at more than one domain: the same `bevel_weight` at point and at edge, the
+ * same `Cd` at point and at corner. Houdini answers that with a strict precedence — finest
+ * wins, Vertex > Point > Primitive > Detail, which maps to our nouns as corner > point > face.
+ * That is a real answer and it is the wrong one HERE, measured rather than argued:
+ * `targetedMaterialAttributes` merges a minted FACE `material_index` over whatever the source
+ * carried, and under finest-wins a carried CORNER entry of the same name would outrank the
+ * operator's own output. A precedence order silently reverses that operator.
+ *
+ * So the rule is the stricter one, and it is the one the ladder asks for: a reader states the
+ * domain it can actually use, and an attribute at any other domain is simply not found. No
+ * precedence to remember, and no reading that depends on which entry was written last.
+ *
+ * 🔴 THIS IS NOT COSMETIC — IT WAS ALREADY WRONG IN TWO PLACES. `geometryRegistry` took
+ * `material_index` at ANY domain and used it as per-face data, and `rebuiltMeshAttributes`
+ * documented the check ("or nothing face-domain in it") without performing it. #724 was filed
+ * as latent; it was not.
+ *
+ * Total, and `null`/`undefined`-tolerant on the way in, so a caller that has no set at all asks
+ * the same question as one that does.
+ */
+export function attributeAt(
+  set: AttributeSet | null | undefined,
+  name: string,
+  domain: KnownDomain,
+): AttributeData | undefined {
+  const attribute = set?.[name] as AttributeData | undefined;
+  // An entry explicitly set to `undefined` is ABSENT — the same rule the content key rests on.
+  if (attribute === undefined || attribute === null) return undefined;
+  return attribute.domain === domain ? attribute : undefined;
+}
+
+/**
  * The element counts of a mesh's topology — the denominator every domain resolves against.
  *
  * This is what makes a domain identifier MEAN something rather than label something: an
