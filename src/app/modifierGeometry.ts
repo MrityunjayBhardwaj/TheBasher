@@ -39,6 +39,7 @@ import { modifierDataSource } from './modifierDataSource';
 import { mintTiledModifierAttributes, rebuiltMeshAttributes } from '../nodes/meshAttributes';
 import { canonicalScopeQuery } from '../nodes/scopeQuery';
 import type { ScopeDomain } from '../nodes/attributes';
+import { arrayCopiesOf } from './arrayCopies';
 
 /**
  * The box descriptor for a size — the ONE spelling of that literal.
@@ -337,7 +338,7 @@ export function arrayGeometryRef(
   scope?: string | null,
   domain: ScopeDomain = 'face',
 ): GeometryRef {
-  const n = Math.max(1, Math.floor(count));
+  const n = arrayCopiesOf(count);
   const scoped = scopeField(scope, domain);
   const suffix = scopeSuffix(scoped);
   const descriptor = { kind: 'array' as const, source, count: n, offset, ...scoped };

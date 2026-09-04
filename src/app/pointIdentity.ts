@@ -42,6 +42,7 @@ import type { BufferGeometry } from 'three';
 import type { CountVerdict, GeometryDescriptor, GeometryRef } from '../nodes/types';
 // #814 — part of the `faceCount -> bevelLayout -> edgeIdentity` ring; see `bevelLayout.ts`.
 import { bevelLayoutOf } from './bevelLayout';
+import { arrayCopiesOf } from './arrayCopies';
 
 /**
  * A weld: which topological point each split-buffer position belongs to.
@@ -240,7 +241,7 @@ interface PointTiling {
 function pointTilingOf(descriptor: GeometryDescriptor): PointTiling | null {
   switch (descriptor.kind) {
     case 'array':
-      return { source: descriptor.source, copies: Math.max(1, Math.floor(descriptor.count)) };
+      return { source: descriptor.source, copies: arrayCopiesOf(descriptor.count) };
     case 'mirror':
       // The whole input, plus its reflection. Blender's Mirror, and Houdini's *Keep Original*.
       return { source: descriptor.source, copies: 2 };
