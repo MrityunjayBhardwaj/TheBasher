@@ -739,6 +739,62 @@ function fieldSchemaOf(nodeId: string, paramPath: string): z.ZodTypeAny | null {
  * of retyping the query; and a subsequent valid value clears the message, which is the
  * recovery an author-reachable refusal owes.
  */
+/**
+ * #521 — A BARE HEX COLOUR PARAM, AUTHORED WITH THE SWATCH+HEX ROW THE MATERIAL EDITOR USES.
+ *
+ * A component of its own rather than an inline branch in `ParamRow`, for the reason
+ * `QueryField` is one: it needs the store, and `ParamRow` returns early half a dozen times
+ * before it would reach the hook.
+ *
+ * 🔴 THE COMMIT GOES THROUGH `dispatchOverrideValueEdit`, AND THAT IS THE WHOLE FIX ON THE
+ * WRITE SIDE. Since #529 the data lane folds only what the director AUTHORED, so a covered
+ * override field has to MARK itself in the same atomic as the value. A plain `setParam` here
+ * would move the param, redraw the swatch, and then be discarded by the fold — a control that
+ * looks like it works and changes nothing, which is strictly worse than the read-only span it
+ * replaces. `NumericField` routes through the same chokepoint; this is not a second rule.
+ */
+function ColorParamField({
+  nodeId,
+  paramPath,
+  value,
+  overrideInfo,
+  masked,
+}: {
+  nodeId: string;
+  paramPath: string;
+  value: string;
+  overrideInfo?: OverrideInfo;
+  masked?: MaskSource;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  return (
+    <MaterialColorRow
+      nodeId={nodeId}
+      paramPath={paramPath}
+      label={paramPath}
+      value={value}
+      testidColor={`inspector-color-${nodeId}-${paramPath}`}
+      // #521 — `inspector-colorhex-`, NOT `inspector-color-hex-`. The panel scrape in
+      // `p394-material-operator-rows.spec.ts` matches `inspector-(input|scrub|color|colorhex|…)-<nodeId>-<param>`,
+      // and `color` wins that alternation, so a hyphen here makes the next segment read as
+      // the NODE ID: the material section reported a node called `hex`. Same spelling as the
+      // OpenPBR row below, which is where the convention already was.
+      testidHex={`inspector-colorhex-${nodeId}-${paramPath}`}
+      overrideInfo={overrideInfo}
+      masked={masked}
+      onSource={(next) => {
+        if (!dispatchOverrideValueEdit(nodeId, paramPath, next, overrideInfo)) {
+          dispatch(
+            { type: 'setParam', nodeId, paramPath, value: next },
+            'user',
+            `set ${paramPath}`,
+          );
+        }
+      }}
+    />
+  );
+}
+
 function QueryField({
   nodeId,
   paramPath,
@@ -2142,6 +2198,7 @@ function MaterialColorRow({
   testidHex,
   onSource,
   masked,
+  overrideInfo,
 }: {
   nodeId: string;
   paramPath: string;
@@ -2151,6 +2208,10 @@ function MaterialColorRow({
   testidHex: string;
   onSource: (next: string) => void;
   masked?: MaskSource;
+  /** #521 — the override dot, for the callers whose param is a covered override field.
+   *  Optional: the lobe editor's rows are not override-tracked and pass nothing, so they
+   *  render byte-identical to before this prop existed. */
+  overrideInfo?: OverrideInfo;
 }) {
   // The shared animatable-field spine (H104); this row owns only its colour chrome.
   const { effective, readOnly, onEdit } = useAnimatableField(nodeId, paramPath, value, onSource);
@@ -2170,6 +2231,14 @@ function MaterialColorRow({
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1 font-mono text-fg/60">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {overrideInfo ? (
+          <OverrideDecorator
+            nodeId={nodeId}
+            descriptor={overrideInfo.descriptor}
+            field={paramPath}
+            marked={overrideInfo.marked}
+          />
+        ) : null}
         {label}
         {masked ? <MaskedMarker nodeId={nodeId} paramPath={paramPath} masked={masked} /> : null}
       </span>
@@ -2399,6 +2468,16 @@ function ParamRow({
         case 'query':
           return (
             <QueryField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />
+          );
+        case 'color':
+          return (
+            <ColorParamField
+              nodeId={nodeId}
+              paramPath={paramPath}
+              value={value}
+              overrideInfo={overrideInfo}
+              masked={maskedBy?.[paramPath]}
+            />
           );
         default: {
           // Exhaustive: a new ParamWidget member must be answered for HERE, at the site

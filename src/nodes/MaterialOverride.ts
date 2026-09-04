@@ -6,6 +6,7 @@
 // REF: THESIS.md §39, vyapti V9.
 
 import { z } from 'zod';
+import { colorParam } from './paramWidget';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MaterialOverrideValue, SceneChild } from './types';
 
@@ -29,11 +30,11 @@ export const MaterialOverriddenSet = z
 
 export const MaterialOverrideParams = z.object({
   name: z.string().default('override'),
-  color: z.string().default('#ffffff'),
+  color: colorParam('#ffffff'),
   roughness: z.number().min(0).max(1).default(0.5),
   metalness: z.number().min(0).max(1).default(0),
   opacity: z.number().min(0).max(1).default(1),
-  emissive: z.string().default('#000000'),
+  emissive: colorParam('#000000'),
   emissiveIntensity: z.number().min(0).default(0),
   overridden: MaterialOverriddenSet,
   // #131 (D-05): the coarse flatten / clay toggle. `true` ⇒ the renderer

@@ -38,6 +38,7 @@
 //      (the flat-LightValue reconstruction); issue #386.
 
 import { z } from 'zod';
+import { colorParam } from './paramWidget';
 import type { NodeDefinition } from '../core/dag/types';
 import type { LightDataValue } from './types';
 
@@ -50,7 +51,7 @@ export const LightDataParams = z.object({
   // only the subset it owns (the recompose picks them per kind); the rest carry
   // their defaults harmlessly. Ranges are the widest across kinds (see file head).
   intensity: z.number().min(0).max(100).default(1),
-  color: z.string().default('#ffffff'),
+  color: colorParam('#ffffff'),
   distance: z.number().min(0).default(0),
   decay: z.number().min(0).default(2),
   angle: z
