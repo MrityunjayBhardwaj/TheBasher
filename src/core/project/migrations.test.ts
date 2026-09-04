@@ -2999,6 +2999,37 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     expect(channelsOf(loadFromBytes(raw))).toHaveLength(1);
   });
 
+  it('a channel saved at an OLDER node version is kept — its params are a different vocabulary', () => {
+    // This pass runs before `migrateNodes`, so a v1 channel still carries
+    // `cyclesBefore`/`cyclesAfter` — the pre-#275 spelling of a Cycles modifier.
+    // The predicate does not read those keys, so dropping such a channel would
+    // discard a director's cycling setup while every field it DOES read looks
+    // untouched. The version check is what makes that unreachable.
+    const raw = buildV9EagerJson();
+    const id = gltfChannelDagId(REF, 'boneA', 'rotation');
+    const nodes = (raw.state as { nodes: Record<string, Record<string, unknown>> }).nodes;
+    nodes[id].version = 1;
+    (nodes[id].params as Record<string, unknown>).cyclesAfter = 2;
+    expect(channelsOf(loadFromBytes(raw))).toHaveLength(1);
+  });
+
+  it('the version the predicate compares against IS the registered one', () => {
+    // The predicate pins a literal so the format pass stays registry-free. That
+    // literal is only correct while it matches the live node version — a bump
+    // that left it behind would silently make the pass keep everything, which is
+    // safe but is not what anyone intended. This row is what says so out loud.
+    expect(getNodeType('KeyframeChannelVec3')?.version).toBe(2);
+  });
+
+  it('a RENAMED channel is kept, even with every key and setting untouched', () => {
+    const raw = buildV9EagerJson();
+    const id = gltfChannelDagId(REF, 'boneB', 'position');
+    const nodes = (raw.state as { nodes: Record<string, { params: Record<string, unknown> }> })
+      .nodes;
+    nodes[id].params.name = 'left hand, my pass';
+    expect(channelsOf(loadFromBytes(raw))).toHaveLength(1);
+  });
+
   it('a channel with NO clip driving its bone is kept — it has nothing to fall back to', () => {
     // `bakeGltfChannel`'s output (the asset's OWN embedded TransformClip road) and
     // a base-pose seed both look like this. Removing one would delete motion with

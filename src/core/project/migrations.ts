@@ -1119,6 +1119,22 @@ const EAGER_CHANNEL_FIELDS: Readonly<Record<string, unknown>> = {
  *  more than these carries authoring the bake cannot have produced. */
 const EAGER_KEY_FIELDS = ['easing', 'time', 'value'] as const;
 
+/** The `KeyframeChannelVec3` version whose param shape the predicate below
+ *  compares against.
+ *
+ *  🔴 THIS PASS RUNS ON RAW JSON, BEFORE `migrateNodes`, so it sees params in
+ *  whatever shape the file was SAVED in — not the shape the registry describes.
+ *  A v1 channel is a different vocabulary: it carries `cyclesBefore` /
+ *  `cyclesAfter`, which the node ladder later folds into a Cycles modifier. The
+ *  predicate does not read those keys, so a v1 channel with a director's cycling
+ *  set up would look untouched and be dropped, discarding it.
+ *
+ *  So anything not at this exact version is KEPT. The literal (rather than a
+ *  registry lookup) keeps this pass registry-free like every format migration
+ *  above it, and `migrations.test.ts` pins it to the registered version so a
+ *  future node bump reds instead of silently widening what gets deleted. */
+const EAGER_CHANNEL_NODE_VERSION = 2;
+
 function isDefaultedEmpty(v: unknown): boolean {
   return v === undefined || (Array.isArray(v) && v.length === 0);
 }
@@ -1138,6 +1154,8 @@ function eagerChannelKeepReason(
 ): KeepReason | null {
   const p = node.params;
   if (!p) return 'not-baked-shape';
+  // Saved in a param vocabulary this predicate does not read — see the constant.
+  if (node.version !== EAGER_CHANNEL_NODE_VERSION) return 'not-baked-shape';
   const { assetRef, childName, paramPath } = p as Record<string, unknown>;
   if (typeof assetRef !== 'string' || typeof childName !== 'string') return 'not-baked-shape';
   // Scale was never eager-baked: `AnimationClipParams.keyframes` carries none.
@@ -1147,6 +1165,11 @@ function eagerChannelKeepReason(
   if (nodeId !== gltfChannelDagId(assetRef, childName, paramPath)) return 'not-baked-shape';
   if (p.target !== gltfChildDagId(assetRef, childName)) return 'not-baked-shape';
   if (node.inputs && Object.keys(node.inputs).length > 0) return 'not-baked-shape';
+  // The emitter's own deterministic label. No surface renames a channel today,
+  // so this closes the hole rather than catching a known case — but a rename IS
+  // authoring, and a predicate that ignored the field would delete it if one
+  // ever ships.
+  if (p.name !== `${childName} — ${paramPath}`) return 'edited-channel';
 
   for (const [field, expected] of Object.entries(EAGER_CHANNEL_FIELDS)) {
     const actual = p[field];
