@@ -27,6 +27,7 @@ import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { clipRowMintOps } from './clipRowMint';
 import {
   importComfyGraph,
   parseComfyParamPath,
@@ -304,39 +305,37 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
 
   const base = useDagStore.getState().state;
 
-  const bake = getMutator('mutator.timeline.bakeGltfChannel');
   const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
   const keyframe = getMutator('mutator.timeline.keyframe');
-  if (!bake || !removeKeyframes || !keyframe) {
+  if (!removeKeyframes || !keyframe) {
     return {
       ok: false,
-      reason: 'Timeline Mutators not registered (bakeGltfChannel / removeKeyframes / keyframe).',
+      reason: 'Timeline Mutators not registered (removeKeyframes / keyframe).',
     };
   }
 
-  // 1 — validate the bake against the base DAG.
-  const bParsed = bake.spec.safeParse({ assetRef, childName });
-  if (!bParsed.success) {
-    return { ok: false, reason: `bakeGltfChannel spec invalid: ${bParsed.error.message}` };
-  }
-  const bResult = validatePlan(bake, bParsed.data, base, intent);
-  if (!bResult.ok) {
-    return { ok: false, reason: `bakeGltfChannel rejected: ${bResult.reason}` };
-  }
+  // 1 — mint the bone's channel, by the road the bone is actually on. A
+  //     TransformClip bone bakes whole-bone the way it always has; an
+  //     AnimationClip bone (generated / BVH / retargeted) mints per component,
+  //     seeded from that clip. `bakeGltfChannel` REFUSES on the second road —
+  //     measured, "No active clip track for bone" — which is why this is a
+  //     choice here rather than one mutator for both.
+  const mint = clipRowMintOps(base, assetRef, childName, component);
+  if (!mint.ok) return { ok: false, reason: mint.reason };
 
-  // 2 — fork1 = base + bake ops (the baked channels now exist in the fork).
+  // 2 — fork1 = base + mint ops (the channel now exists in the fork).
   let fork1: DagState;
   try {
-    fork1 = createFork(base, bResult.ops).fork;
+    fork1 = createFork(base, mint.ops as Op[]).fork;
   } catch (err) {
-    return { ok: false, reason: `bake fork failed: ${(err as Error).message}` };
+    return { ok: false, reason: `mint fork failed: ${(err as Error).message}` };
   }
 
-  // 3 — the dragged component's baked channel id (deterministic, D1).
+  // 3 — the dragged component's channel id (deterministic, content-addressed).
   const channelId = gltfChannelDagId(assetRef, childName, component);
   const channel = fork1.nodes[channelId];
   if (!channel) {
-    return { ok: false, reason: `baked channel "${channelId}" missing after bake.` };
+    return { ok: false, reason: `channel "${channelId}" missing after mint.` };
   }
   // Read the sample at fromTime off the FORKED baked channel — its keyframes
   // were seeded from the clip at the clip times, so the dragged key exists.
@@ -381,20 +380,24 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   // 7 — propose ALL ops (bake + remove + keyframe) as ONE diff with the COMBINED
   //     closure, then accept → one dispatchAtomic → one Cmd+Z (K6).
   const combinedClosure = unionClosureSpecs(
-    unionClosureSpecs(bResult.closure.spec, rResult.closure.spec),
+    unionClosureSpecs(mint.closure, rResult.closure.spec),
     kResult.closure.spec,
   );
   return proposeAndAccept(
     base,
-    [...bResult.ops, ...rResult.ops, ...kResult.ops],
+    [...mint.ops, ...rResult.ops, ...kResult.ops],
     intent,
     [
-      'user:mutator.timeline.bakeGltfChannel',
+      // The provenance names the road, because the two mints seed from different
+      // clips and a diff that said only "bake" could not tell them apart.
+      mint.source === 'animation-clip'
+        ? 'user:mint.channelForBone'
+        : 'user:mutator.timeline.bakeGltfChannel',
       'user:mutator.timeline.removeKeyframes',
       'user:mutator.timeline.keyframe',
     ],
     combinedClosure,
-    [...bResult.warnings, ...rResult.warnings, ...kResult.warnings],
+    [...mint.warnings, ...rResult.warnings, ...kResult.warnings],
   );
 }
 
