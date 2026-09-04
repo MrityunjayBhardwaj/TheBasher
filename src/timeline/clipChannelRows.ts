@@ -309,3 +309,148 @@ export function resolveClipRow(
 export function componentIndex(component: Component): number {
   return COMPONENTS.indexOf(component);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// THE AnimationClip ROAD (#903) — the other kind of clip, and the only kind
+// the AI track produces
+// ─────────────────────────────────────────────────────────────────────────
+// Everything above serves `TransformClip`: a glTF file's OWN embedded
+// animation, emitted at gltfImportChain.ts:887, keyed by `targetNodeId` with a
+// full TRS per key and rotation in degrees.
+//
+// A generated, BVH-imported, FBX-imported or retargeted motion is an
+// `AnimationClip` — a different node type with a different schema: keyed by
+// bone INDEX, position and rotation only, rotation in RADIANS
+// (AnimationClip.ts:45-48). The walk above skips it by type
+// (`clip.type !== 'TransformClip'`), so those characters had no clip rows at
+// all.
+//
+// That was invisible while an eager bake gave every bone a real channel. The
+// moment it stops (#889 slice 3), a character on this road animates perfectly
+// and shows NOTHING in the timeline — measured on Robot-Walk.basher, 46 rows to
+// 0 — which leaves no way to reach the minting road at all.
+//
+// TWO COMPONENTS, NOT THREE. An AnimationClip carries no scale track, and the
+// eager bake agreed: 46 channels for 23 bones is position + rotation, never
+// scale. A projected scale row would claim a track that does not exist.
+//
+// PER ASSET, NOT PER SELECTION. `collectChannelRows` lists every channel in the
+// DAG regardless of what is selected — measured, 46 rows with a bone selected
+// and 46 with nothing selected. Projecting only the selected bone's rows would
+// silently shrink the dopesheet from the whole rig to two rows, so the
+// projection covers the asset.
+//
+// REF: src/app/animate/boundClipsForAsset.ts (the shared bone→clip walk);
+//      src/nodes/AnimationClip.ts:45-48 (the schema); issues #903, #889, #877.
+
+import { boundClipsForAsset, type GraphNodeLike } from '../app/animate/boundClipsForAsset';
+import type { AnimationClipParams } from '../nodes/AnimationClip';
+
+/** The components an `AnimationClip` can carry. Scale is absent from the schema,
+ *  so it is absent here — a row for it would be a claim with nothing behind it. */
+const ANIMATION_CLIP_COMPONENTS = ['position', 'rotation'] as const;
+
+/**
+ * The (bone, component) pairs that already have a minted channel for this asset.
+ *
+ * PER COMPONENT, and that is the whole difference from `bakedChildNamesForAsset`
+ * above. The eager bake was whole-bone, so "is this bone baked?" was a complete
+ * question. Minting is per component (#889 slice 1): a bone can hold an authored
+ * rotation while its position still follows the clip. Suppressing by bone would
+ * then hide the position row entirely — the track would vanish from the timeline
+ * while still driving the character, which reads as lost animation rather than
+ * as a suppressed row.
+ */
+export function bakedChannelKeysForAsset(
+  nodes: Record<string, ClipWalkNode>,
+  assetRef: string,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const node of Object.values(nodes)) {
+    if (!CHANNEL_TYPES.has(node.type)) continue;
+    const cp = node.params as
+      | { childName?: unknown; assetRef?: unknown; paramPath?: unknown }
+      | undefined;
+    if (typeof cp?.childName !== 'string' || typeof cp?.paramPath !== 'string') continue;
+    if (cp.assetRef !== undefined && cp.assetRef !== assetRef) continue;
+    keys.add(`${cp.childName}:${cp.paramPath}`);
+  }
+  return keys;
+}
+
+/**
+ * Project the clip(s) bound to `assetRef` into read-only dopesheet rows — one
+ * per (bone, component) the clip actually carries, minus the ones a director has
+ * already authored.
+ *
+ * Uses the same `boundClipsForAsset` edge walk the read band and the mint use,
+ * rather than a third answer to "which clip drives this bone". A row set built
+ * from a different walk than the one that renders would show a director keys
+ * that are not the ones playing.
+ */
+export function animationClipRowsForAsset(args: {
+  nodes: Record<string, ClipWalkNode>;
+  assetRef: string;
+}): ChannelRow[] {
+  const { nodes, assetRef } = args;
+  const suppressed = bakedChannelKeysForAsset(nodes, assetRef);
+  const rows: ChannelRow[] = [];
+  const seen = new Set<string>();
+
+  for (const clip of boundClipsForAsset(nodes as Record<string, GraphNodeLike>, assetRef)) {
+    const keyframes = (clip.params as Partial<AnimationClipParams>).keyframes ?? [];
+    // bone INDEX → the times that bone has keys at. The index is only meaningful
+    // against the skeleton the clip hangs off, which is why the walk resolves it
+    // by edge rather than by name.
+    const byBone = new Map<number, number[]>();
+    for (const k of keyframes) {
+      const list = byBone.get(k.bone);
+      if (list) list.push(k.time);
+      else byBone.set(k.bone, [k.time]);
+    }
+    for (const [index, times] of byBone) {
+      const childName = clip.jointKeys[index];
+      if (typeof childName !== 'string' || childName.length === 0) continue;
+      const sorted = times
+        .slice()
+        .sort((a, b) => a - b)
+        .map((time) => ({ time }));
+      for (const component of ANIMATION_CLIP_COMPONENTS) {
+        const key = `${childName}:${component}`;
+        // A bone whose component is authored shows its EDITABLE row from
+        // `collectChannelRows`; showing both would break the one-row-set-per
+        // (bone, component) invariant the dopesheet rests on.
+        if (suppressed.has(key) || seen.has(key)) continue;
+        seen.add(key);
+        rows.push({
+          channelId: clipRowChannelId(childName, component),
+          name: `${childName} — ${component}`,
+          keyframes: sorted,
+          readOnly: true,
+        });
+      }
+    }
+  }
+  return rows;
+}
+
+/**
+ * Append the read-only `AnimationClip` rows for every asset in the graph.
+ *
+ * Selection-independent, matching `collectChannelRows`: the dopesheet shows the
+ * whole rig, not just what is selected.
+ */
+export function appendAnimationClipRows(args: {
+  baseRows: ChannelRow[];
+  nodes: Record<string, ClipWalkNode>;
+}): ChannelRow[] {
+  const { baseRows, nodes } = args;
+  const out = [...baseRows];
+  for (const node of Object.values(nodes)) {
+    if (node.type !== 'GltfAsset') continue;
+    const assetRef = (node.params as { assetRef?: unknown } | undefined)?.assetRef;
+    if (typeof assetRef !== 'string' || assetRef.length === 0) continue;
+    out.push(...animationClipRowsForAsset({ nodes, assetRef }));
+  }
+  return out;
+}
