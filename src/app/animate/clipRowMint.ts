@@ -47,6 +47,7 @@ import { validatePlan } from '../../agent/mutators/validate';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { assetRefForChild, parseClipRowId } from './bakeOnEdit';
+import { paramAnimationState, type ParamAnimationState } from './paramAnimationState';
 import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
 import { ensureChannelForBone } from './ensureChannelForBone';
 import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
@@ -171,6 +172,73 @@ export function boneComponentAddress(
   if (typeof p?.assetRef !== 'string' || p.assetRef.length === 0) return null;
   if (typeof p?.childName !== 'string' || p.childName.length === 0) return null;
   return { assetRef: p.assetRef, childName: p.childName, component: paramPath as BakedComponent };
+}
+
+/**
+ * The components an `AnimationClip` can drive.
+ *
+ * NOT all three: `AnimationClipParams.keyframes` carries `position` and
+ * `rotation` and no scale (`AnimationClip.ts` schema), and the read band
+ * supplies exactly those two for exactly that reason — claiming scale would
+ * suppress the asset's own scale track underneath it. So a clip-driven bone's
+ * scale is honestly un-animated, and saying otherwise would be the same lie in
+ * the other direction.
+ */
+const CLIP_DRIVEN_COMPONENTS: ReadonlySet<string> = new Set(['position', 'rotation']);
+
+/**
+ * The animation state a READ-ONLY INDICATOR should show for `(nodeId, paramPath)`
+ * — the authored-channel state, widened by "and a bound clip drives this bone".
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A SECOND FUNCTION RATHER THAN A WIDER `paramAnimationState`
+ * ─────────────────────────────────────────────────────────────────────────
+ * There are two questions here and copy-on-write is what pulled them apart.
+ * While an eager bake gave every bone a channel they had the same answer, so
+ * one function could serve both; now they differ on every bone nobody edited.
+ *
+ *   "is there an AUTHORED CHANNEL for this param?"  → `paramAnimationState`
+ *   "does ANYTHING animate this param?"             → here
+ *
+ * Every one of `paramAnimationState`'s non-display callers wants the FIRST, and
+ * censused rather than assumed:
+ *   - `ParamDiamond`'s own delete path — it addresses a channel and its comment
+ *     says so: the id form "works here only because `animState !== 'none'`
+ *     already proved a channel exists". Widening that value in place would arm
+ *     a delete on a bone with nothing of its own to delete.
+ *   - `routeAnimatedGrab` — routes a gizmo grab to the transient/Auto-Key road
+ *     instead of a raw setParam. A clip-driven bone's raw setParam becomes a
+ *     MANUAL OVERRIDE, which outranks the clip in the resolver's precedence
+ *     (manual → baked → clip → base) and is a deliberate, shipped gesture.
+ *   - `autoKeyCommit` / `keyParamFromTransient` — both consult it only in the
+ *     arm below `if (bone)`, which a glTF bone never reaches.
+ *   - `isApplySourceAnimated` — asks only about pairs it already found a
+ *     channel node for, so it cannot see this widening at all.
+ *
+ * So this is not a parallel answer to one question ([[V101]]); it is the wider
+ * of two questions, composed FROM the narrower one, with one home each.
+ *
+ * REF: `src/app/bakedGltfChannels.ts` (`clipBandSamplersForAsset`, the band this
+ *      agrees with); `src/app/resolveGltfChildTransform.ts` (the precedence);
+ *      issues #908, #889.
+ */
+export function paramAnimationDisplayState(
+  state: DagState,
+  nodeId: string,
+  paramPath: string,
+  currentFrame: number,
+): ParamAnimationState {
+  const authored = paramAnimationState(state, nodeId, paramPath, currentFrame);
+  // An authored channel outranks the clip here for the same reason it does in
+  // the band: it IS the bone's track once it exists. `on-key` therefore stays a
+  // statement about the director's OWN keys, never about the clip's.
+  if (authored !== 'none') return authored;
+
+  const bone = boneComponentAddress(state, nodeId, paramPath);
+  if (!bone || !CLIP_DRIVEN_COMPONENTS.has(bone.component)) return 'none';
+  // Deliberately never 'on-key': a clip key is not the director's to remove —
+  // the clip is read-only and shared, and yellow reads as "click to unkey".
+  return animationClipCarriesBone(state, bone.assetRef, bone.childName) ? 'animated' : 'none';
 }
 
 /** A channel a keyboard edit is about to write to, and what it will hold. */

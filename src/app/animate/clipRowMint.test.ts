@@ -16,9 +16,13 @@ import { keyParamFromTransient } from './autoKeyCommit';
 import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../KeyboardShortcuts';
 import { useTimelineSelection } from '../../timeline/timelineSelection';
 import { useTimeStore } from '../stores/timeStore';
-import { animationClipCarriesBone, clipRowMintOps } from './clipRowMint';
+import {
+  animationClipCarriesBone,
+  clipRowMintOps,
+  paramAnimationDisplayState,
+} from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
-
+import { paramAnimationState } from './paramAnimationState';
 const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const ASSET = 'asset-generated';
 const BONE = 'mixamorig_LeftArm';
@@ -278,5 +282,91 @@ describe('the diamond / auto-key chokepoint on a bone', () => {
     const keys = params.keyframes as { time: number; value: number[] }[];
     expect(keys.map((k) => k.time)).toEqual([0, 0.25, 1]);
     expect(keys.find((k) => k.time === 0.25)!.value).toEqual([5, 5, 5]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #908 — the inspector diamond reports a clip-driven bone as animated.
+//
+// Built on `generatedScene()` above, so every row runs against nodes the real
+// schemas accepted rather than an object literal cast into shape.
+// ─────────────────────────────────────────────────────────────────────────
+
+/** `generatedScene()` plus a GltfChild for OTHER and one ordinary node. */
+function sceneWithNeighbours(): DagState {
+  let s = generatedScene();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: gltfChildDagId(ASSET, OTHER),
+    nodeType: 'GltfChild',
+    params: {
+      assetRef: ASSET,
+      childName: OTHER,
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    },
+  }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: 'n_plain', nodeType: 'Transform', params: {} }).next;
+  return s;
+}
+
+/** The scene with BONE's rotation channel actually minted, through the mint. */
+function sceneWithAuthoredChannel(): DagState {
+  let s = sceneWithNeighbours();
+  const mint = clipRowMintOps(s, ASSET, BONE, 'rotation');
+  if (!mint.ok) throw new Error(`mint failed: ${mint.reason}`);
+  for (const op of mint.ops) s = applyOp(s, op).next;
+  return s;
+}
+
+describe('#908 — what the diamond shows for a clip-driven bone', () => {
+  const BONE_ID = gltfChildDagId(ASSET, BONE);
+
+  it('a clip-driven bone with NO channel reports animated, where the narrow reader says none', () => {
+    const s = sceneWithNeighbours();
+    // The narrow reader is not wrong — it answers a different question, and
+    // ParamDiamond's delete gate still depends on that answer.
+    expect(paramAnimationState(s, BONE_ID, 'rotation', 30)).toBe('none');
+    expect(paramAnimationDisplayState(s, BONE_ID, 'rotation', 30)).toBe('animated');
+    expect(paramAnimationDisplayState(s, BONE_ID, 'position', 30)).toBe('animated');
+  });
+
+  it('a bone the bound clip never keys still reports none', () => {
+    // Without this row a fix that returned 'animated' for every bone passes.
+    const s = sceneWithNeighbours();
+    expect(paramAnimationDisplayState(s, gltfChildDagId(ASSET, OTHER), 'rotation', 30)).toBe(
+      'none',
+    );
+  });
+
+  it('scale reports none — an AnimationClip has no scale track to be animated by', () => {
+    // Claiming scale would be the same lie pointing the other way, and it is
+    // the same call the read band makes when it supplies position and rotation
+    // only.
+    const s = sceneWithNeighbours();
+    expect(paramAnimationDisplayState(s, BONE_ID, 'scale', 30)).toBe('none');
+  });
+
+  it('never reports on-key from the clip alone — a clip key is not the director to remove', () => {
+    // The clip has a key at t=0, so frame 0 is ON one. Yellow reads as "click
+    // to unkey", and the clip is read-only and shared.
+    const s = sceneWithNeighbours();
+    expect(paramAnimationDisplayState(s, BONE_ID, 'rotation', 0)).toBe('animated');
+  });
+
+  it('an authored channel outranks the clip, and only then does the playhead light yellow', () => {
+    // Same bone, same frame 0, one difference: the channel now exists. The
+    // contrast with the row above IS the outranking.
+    const s = sceneWithAuthoredChannel();
+    expect(paramAnimationState(s, BONE_ID, 'rotation', 0)).toBe('on-key');
+    expect(paramAnimationDisplayState(s, BONE_ID, 'rotation', 0)).toBe('on-key');
+    // Between its own keys it is animated — the widening never demotes.
+    expect(paramAnimationDisplayState(s, BONE_ID, 'rotation', 30)).toBe('animated');
+  });
+
+  it('an ordinary node is untouched — the widening reaches glTF bones only', () => {
+    const s = sceneWithNeighbours();
+    expect(paramAnimationDisplayState(s, 'n_plain', 'position', 30)).toBe('none');
   });
 });
