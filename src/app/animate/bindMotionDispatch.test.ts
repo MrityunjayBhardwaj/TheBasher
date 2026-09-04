@@ -179,11 +179,21 @@ describe('binding a motion to a character', () => {
     expect(nodes[gltfChannelDagId(ASSET, 'mixamorig_Spine', 'rotation')]).toBeUndefined();
   });
 
-  it('lands as ONE undo entry', () => {
+  it('lands as ONE undo entry, and that entry takes BOTH minted nodes', () => {
     useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
     expect(useDagStore.getState().undoStack).toHaveLength(0);
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
     expect(useDagStore.getState().undoStack).toHaveLength(1);
+
+    // #901 — the bind mints TWO nodes now. One undo entry that removed only the
+    // one the caller named would leave an orphan bone map behind, and the count
+    // above would still read 1 — so the entry is asserted by what it UNDOES.
+    useDagStore.getState().undo();
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodes['n_out_a']).toBeUndefined();
+    expect(nodes['n_out_a_map']).toBeUndefined();
+    // …and the source clip it was built from is untouched.
+    expect(nodes['n_clip_a']).toBeDefined();
   });
 
   it('ACCEPTS a second, different motion — there is no longer anything to destroy', () => {
