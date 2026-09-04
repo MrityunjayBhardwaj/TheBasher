@@ -34,6 +34,13 @@ import {
   type EaseDir,
   type HandleType,
 } from '../../../nodes/keyframeInterp';
+import {
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  channelViewAfterMint,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
 /** The KeyframeChannel node types that carry the broadened per-keyframe interp /
  *  ease / handle vocabulary (Number/Vec2/Vec3, from #272/#273). Quat/Color keep the
@@ -49,8 +56,7 @@ const KeyframeScope = z.union([z.literal('all'), z.object({ time: z.number() })]
 
 const SetKeyframeInterpSpec = z
   .object({
-    /** The KeyframeChannel{Number,Vec2,Vec3} whose keyframes to re-interp. */
-    channelId: z.string().min(1),
+    ...CHANNEL_ADDRESS_FIELDS,
     /** Which keyframes: 'all' (every key) or { time } (the key AT that exact time). */
     scope: KeyframeScope.optional().default('all'),
     /** Interpolation mode — how the curve ARRIVES at each targeted key. */
@@ -64,7 +70,8 @@ const SetKeyframeInterpSpec = z
   })
   .refine((s) => s.easing !== undefined || s.ease !== undefined || s.handleType !== undefined, {
     message: 'provide at least one of `easing` / `ease` / `handleType`.',
-  });
+  })
+  .superRefine(superRefineChannelAddress);
 export type SetKeyframeInterpSpec = z.infer<typeof SetKeyframeInterpSpec>;
 
 interface RawKey {
@@ -76,9 +83,12 @@ interface RawKey {
   [k: string]: unknown;
 }
 
-function channelKeyframes(state: DagState, channelId: string): RawKey[] {
-  const params = (state.nodes[channelId]?.params ?? {}) as { keyframes?: RawKey[] };
-  return Array.isArray(params.keyframes) ? params.keyframes : [];
+/** The keys the channel WILL have — from the mint when this op is the first
+ *  edit of the bone, so re-interping a freshly-minted channel re-interps the
+ *  clip's own keys rather than an empty array. */
+function channelKeyframes(view: { params: Record<string, unknown> }): RawKey[] {
+  const keyframes = view.params.keyframes;
+  return Array.isArray(keyframes) ? (keyframes as RawKey[]) : [];
 }
 
 /** Normalize scope to 'all' when absent. The zod `.default('all')` only applies at
@@ -103,7 +113,8 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     "`handleType` = the bézier handle 'auto'|'auto-clamped'|'vector'|'aligned'|" +
     "'free' for linear/cubic keys. `scope` = 'all' (every key, the default) or " +
     '{ time } (the key at that exact time). Only the provided fields change; each ' +
-    "key's time and value are preserved.",
+    "key's time and value are preserved." +
+    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
   spec: SetKeyframeInterpSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -130,15 +141,19 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     ],
   },
   buildClosureSpec(spec): ClosureSpec {
-    return { rootSelectors: [spec.channelId], followedEdges: [] };
+    return { rootSelectors: channelRootSelectors(spec), followedEdges: [] };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
-    if (!channel) return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
-    if (!INTERP_CHANNEL_TYPES.has(channel.type)) {
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) {
+      return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
+    }
+    if (!INTERP_CHANNEL_TYPES.has(view.type)) {
       return {
         ok: false,
-        reason: `channel "${spec.channelId}" is ${channel.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3}.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3}.`,
       };
     }
     // Defense-in-depth vs the spec `.refine()` (only fires at safeParse): an
@@ -146,21 +161,25 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     if (spec.easing === undefined && spec.ease === undefined && spec.handleType === undefined) {
       return { ok: false, reason: 'provide at least one of `easing` / `ease` / `handleType`.' };
     }
-    const keys = channelKeyframes(state, spec.channelId);
+    const keys = channelKeyframes(view);
     if (keys.length === 0) {
-      return { ok: false, reason: `channel "${spec.channelId}" has no keyframes.` };
+      return { ok: false, reason: `channel "${resolved.channelId}" has no keyframes.` };
     }
     const scope = resolveScope(spec);
     if (scope !== 'all' && !keys.some((k) => k.time === scope.time)) {
       return {
         ok: false,
-        reason: `no keyframe at time ${scope.time} on "${spec.channelId}".`,
+        reason: `no keyframe at time ${scope.time} on "${resolved.channelId}".`,
       };
     }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const keys = channelKeyframes(state, spec.channelId);
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
+    const keys = channelKeyframes(view);
     const scope = resolveScope(spec);
     const next = keys.map((k) => {
       if (!matches(scope, k)) return k;
@@ -171,9 +190,10 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
       return updated;
     });
     return [
+      ...resolved.mintOps,
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'keyframes',
         value: next,
       },

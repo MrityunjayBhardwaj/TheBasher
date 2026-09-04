@@ -24,21 +24,32 @@ import {
   type EaseDir,
   type HandleType,
 } from '../../../nodes/keyframeInterp';
+import {
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  channelViewAfterMint,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
-const KeyframeSpec = z.object({
-  channelId: z.string().min(1),
-  time: z.number().nonnegative(),
-  value: z.unknown(),
-  // #281 — broadened from the pre-#272 {linear,cubic} to the full per-keyframe
-  // interpolation vocabulary (#272/#273), so an agent can author an eased/stepped
-  // key at CREATION time (not just linear/cubic). Omitted → the channel's per-type
-  // default (byte-identical to pre-#281). `ease`/`handleType` are meaningful only
-  // for Number/Vec2/Vec3 channels; on a Quat/Color channel their paramSchema strips
-  // the extra fields and rejects a non-{linear,cubic} easing at gate 2.
-  easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).optional(),
-  ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
-  handleType: z.enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]]).optional(),
-});
+const KeyframeSpec = z
+  .object({
+    ...CHANNEL_ADDRESS_FIELDS,
+    time: z.number().nonnegative(),
+    value: z.unknown(),
+    // #281 — broadened from the pre-#272 {linear,cubic} to the full per-keyframe
+    // interpolation vocabulary (#272/#273), so an agent can author an eased/stepped
+    // key at CREATION time (not just linear/cubic). Omitted → the channel's per-type
+    // default (byte-identical to pre-#281). `ease`/`handleType` are meaningful only
+    // for Number/Vec2/Vec3 channels; on a Quat/Color channel their paramSchema strips
+    // the extra fields and rejects a non-{linear,cubic} easing at gate 2.
+    easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).optional(),
+    ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
+    handleType: z
+      .enum(KEYFRAME_HANDLE_TYPES as unknown as [HandleType, ...HandleType[]])
+      .optional(),
+  })
+  .superRefine(superRefineChannelAddress);
 export type KeyframeSpec = z.infer<typeof KeyframeSpec>;
 
 const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
@@ -78,9 +89,10 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|'elastic' " +
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
     'channels; Quat/Color take only linear|cubic). Omitting easing uses the ' +
-    "channel's default. Use mutator.timeline.addChannel to create a channel; this " +
-    'Mutator only mutates an existing one. To re-interp keys you already placed, ' +
-    'use mutator.timeline.setKeyframeInterp.',
+    "channel's default. Use mutator.timeline.addChannel to create a channel on an " +
+    'ordinary node. To re-interp keys you already placed, ' +
+    'use mutator.timeline.setKeyframeInterp.' +
+    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
   spec: KeyframeSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -109,34 +121,48 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
-      rootSelectors: [spec.channelId],
+      rootSelectors: channelRootSelectors(spec),
       followedEdges: [],
     };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
-    if (!channel) return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
-    if (!VALUE_SHAPE_BY_TYPE[channel.type]) {
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    // The channel's TYPE, read through the mint: on the bone road the node is
+    // not in state yet, and the value-shape gate still has to run against the
+    // type it is ABOUT to have.
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) {
+      return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
+    }
+    if (!VALUE_SHAPE_BY_TYPE[view.type]) {
       return {
         ok: false,
-        reason: `channelId "${spec.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; expected a KeyframeChannel*.`,
       };
     }
-    if (!VALUE_SHAPE_BY_TYPE[channel.type](spec.value)) {
+    if (!VALUE_SHAPE_BY_TYPE[view.type](spec.value)) {
       return {
         ok: false,
-        reason: `value shape does not match channel type "${channel.type}".`,
+        reason: `value shape does not match channel type "${view.type}".`,
       };
     }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const channel = state.nodes[spec.channelId];
-    const params = (channel.params ?? {}) as {
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
+    const params = view.params as {
       keyframes?: Array<{ time: number; value: unknown; easing: Easing }>;
     };
+    // The SEEDED keys when this mint just took them from the clip — reading
+    // `state` here instead would author onto an empty channel and throw the
+    // seed away, which is the difference between editing a motion and
+    // replacing it.
     const existing = params.keyframes ?? [];
-    const easing = spec.easing ?? DEFAULT_EASING_BY_TYPE[channel.type] ?? 'linear';
+    const easing = spec.easing ?? DEFAULT_EASING_BY_TYPE[view.type] ?? 'linear';
 
     // Build the new sample. `ease`/`handleType` are added ONLY when provided so a
     // legacy call (linear/cubic, no ease/handle) stays byte-identical to pre-#281.
@@ -157,9 +183,10 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     const next = [...filtered, key].sort((a, b) => a.time - b.time);
 
     return [
+      ...resolved.mintOps,
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'keyframes',
         value: next,
       },

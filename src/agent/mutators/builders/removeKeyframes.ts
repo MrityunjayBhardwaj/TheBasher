@@ -35,15 +35,23 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
+import {
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
-const RemoveKeyframesSpec = z.object({
-  channelId: z.string().min(1),
-  /**
-   * 'all' wipes every sample. `{ time }` removes the single sample at that
-   * time. Either is a silent no-op when there is nothing to remove.
-   */
-  scope: z.union([z.literal('all'), z.object({ time: z.number().nonnegative() })]),
-});
+const RemoveKeyframesSpec = z
+  .object({
+    ...CHANNEL_ADDRESS_FIELDS,
+    /**
+     * 'all' wipes every sample. `{ time }` removes the single sample at that
+     * time. Either is a silent no-op when there is nothing to remove.
+     */
+    scope: z.union([z.literal('all'), z.object({ time: z.number().nonnegative() })]),
+  })
+  .superRefine(superRefineChannelAddress);
 export type RemoveKeyframesSpec = z.infer<typeof RemoveKeyframesSpec>;
 
 export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
@@ -54,7 +62,8 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     'sample at that time (Blender Alt-I delete-at-playhead). Silent no-op ' +
     'when there is nothing to remove. The channel node and its wiring ' +
     '(target / paramPath / TimeSource / AnimationLayer) are preserved ' +
-    'either way; only the keyframes array changes.',
+    'either way; only the keyframes array changes. ' +
+    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone. Exactly one of the two. The bone form never mints: a bone with no channel follows the clip and has no edit to remove, so it is refused rather than handed an empty channel.',
   spec: RemoveKeyframesSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -86,19 +95,29 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
-      rootSelectors: [spec.channelId],
+      rootSelectors: channelRootSelectors(spec),
       followedEdges: [],
     };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
+    // `mint: false`, and it is the one mutator that passes it. Removal is
+    // subtractive: a bone with no channel has no edit to remove, and minting
+    // one in order to empty it would be a copy created solely to be emptied —
+    // worse, an EMPTY channel is a claim rather than silence (the band collects
+    // it and the sampler answers [0,0,0] at every time), so the bone would snap
+    // to the origin instead of returning to the clip. The rule stays "an op
+    // mints when it needs somewhere for a value to LAND"; this one needs
+    // something already there, which is a precondition, not a mint.
+    const resolved = resolveChannelAddress(state, spec, { mint: false });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const channel = state.nodes[resolved.channelId];
     if (!channel) {
-      return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
+      return { ok: false, reason: `channelId "${resolved.channelId}" not in DAG.` };
     }
     if (!isKeyframeChannelNode(channel)) {
       return {
         ok: false,
-        reason: `channelId "${spec.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
+        reason: `channelId "${resolved.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
       };
     }
     // Deliberately NOT failing here when scope:{time} has no matching
@@ -108,7 +127,10 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const channel = state.nodes[spec.channelId];
+    const resolved = resolveChannelAddress(state, spec, { mint: false });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const channelId = resolved.channelId;
+    const channel = state.nodes[channelId];
     const params = (channel.params ?? {}) as {
       keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
     };
@@ -116,7 +138,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
 
     if (spec.scope === 'all') {
       if (existing.length === 0) return []; // already empty → no-op
-      return [{ type: 'setParam', nodeId: spec.channelId, paramPath: 'keyframes', value: [] }];
+      return [{ type: 'setParam', nodeId: channelId, paramPath: 'keyframes', value: [] }];
     }
 
     // scope: { time }
@@ -129,7 +151,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     return [
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: channelId,
         paramPath: 'keyframes',
         value: filtered,
       },
