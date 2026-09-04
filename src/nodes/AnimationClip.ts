@@ -175,11 +175,15 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
     const tSeconds = time?.seconds ?? 0;
 
     if (!skeleton) {
+      const empty: SkeletonValue = { kind: 'Skeleton', bones: [] };
       return {
         kind: 'AnimationClip',
         name: params.name,
         duration: params.duration,
-        pose: { kind: 'PosedSkeleton', skeleton: { kind: 'Skeleton', bones: [] }, poses: [] },
+        loop: params.loop,
+        keyframes: params.keyframes,
+        skeleton: empty,
+        pose: { kind: 'PosedSkeleton', skeleton: empty, poses: [] },
       };
     }
 
@@ -204,6 +208,11 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
       kind: 'AnimationClip',
       name: params.name,
       duration: params.duration,
+      loop: params.loop,
+      keyframes: params.keyframes,
+      // The rig the keys are indexed against — the SAME one this pose was
+      // sampled on, so a consumer cannot pair the two from different sources.
+      skeleton,
       pose: { kind: 'PosedSkeleton', skeleton, poses },
     };
   },

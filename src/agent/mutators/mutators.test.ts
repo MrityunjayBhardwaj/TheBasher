@@ -35,6 +35,8 @@ import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
 import { retargetMutator } from './builders/retarget';
+import { retargetClipParamsFromNodes } from '../../app/animate/retargetFromNodes';
+import type { GraphNodeLike } from '../../app/animate/boundClipsForAsset';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
@@ -3903,9 +3905,12 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     return s;
   }
 
-  // retarget needs an AnimationClip + two Skeletons + a TimeSource.
-  // buildSceneWithTime already carries `time`; Skeleton / AnimationClip
-  // default params are valid as-is.
+  // retarget needs an AnimationClip WIRED TO ITS OWN RIG + two Skeletons.
+  // buildSceneWithTime already carries `time` (unused by the retarget since
+  // #901 — the emitted node is time-free — but harmless); Skeleton /
+  // AnimationClip default params are valid as-is. The clip→skeleton edge is
+  // load-bearing: a clip's keyframes are bone INDICES, so the retarget reads
+  // the source rig off the clip's own edge rather than off the spec.
   function buildSceneForRetarget(): DagState {
     let s = buildSceneWithTime();
     s = applyOp(s, {
@@ -3925,6 +3930,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       nodeId: 'src_clip',
       nodeType: 'AnimationClip',
       params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'src_skel', socket: 'out' },
+      to: { node: 'src_clip', socket: 'skeleton' },
     }).next;
     return s;
   }
@@ -4490,6 +4500,14 @@ describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #10
       nodeType: 'AnimationClip',
       params: { name: 'walk', duration: 1, keyframes: MIXAMO_SOURCE_KFS },
     }).next;
+    // The clip's own rig edge — what an import writes, and since #901 what the
+    // retarget reads the source bones off. Its keyframes are bone INDICES into
+    // THIS rig; naming a different one in the spec is a refusal, not a choice.
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'src_skel', socket: 'out' },
+      to: { node: 'src_clip', socket: 'skeleton' },
+    }).next;
     return s;
   }
 
@@ -4524,27 +4542,42 @@ describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #10
       throw new Error(`retarget rejected (gate ${result.gate}/${result.label}): ${result.reason}`);
     }
 
-    // (b) It emitted a fresh AnimationClip wired to time + the glTF skeleton.
-    const addClip = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'AnimationClip');
-    expect(addClip).toBeDefined();
-    if (addClip?.type !== 'addNode') throw new Error('no AnimationClip addNode');
-    expect(addClip.nodeId).toBe('walk_on_gltf');
-    const wiredToTarget = result.ops.some(
-      (o) =>
-        o.type === 'connect' &&
-        o.from.node === 'gltf_skel' &&
-        o.to.node === 'walk_on_gltf' &&
-        o.to.socket === 'skeleton',
+    // (b) It emitted the RELATIONSHIP (#901): a RetargetClip wired to the source
+    // clip, to a minted BoneNameMap, and to the glTF rig — not a baked copy.
+    const addRetarget = result.ops.find(
+      (o) => o.type === 'addNode' && o.nodeType === 'RetargetClip',
     );
-    expect(wiredToTarget).toBe(true);
+    expect(addRetarget).toBeDefined();
+    if (addRetarget?.type !== 'addNode') throw new Error('no RetargetClip addNode');
+    expect(addRetarget.nodeId).toBe('walk_on_gltf');
+    expect(result.ops.some((o) => o.type === 'addNode' && o.nodeType === 'BoneNameMap')).toBe(true);
+    const wiredFrom = (node: string, socket: string) =>
+      result.ops.some(
+        (o) =>
+          o.type === 'connect' &&
+          o.from.node === node &&
+          o.to.node === 'walk_on_gltf' &&
+          o.to.socket === socket,
+      );
+    expect(wiredFrom('gltf_skel', 'skeleton')).toBe(true);
+    expect(wiredFrom('src_clip', 'sourceClip')).toBe(true);
+    expect(wiredFrom('walk_on_gltf_map', 'boneMap')).toBe(true);
+    // …and NOT to a clock. The node is time-free on purpose (#901).
+    expect(result.ops.some((o) => o.type === 'connect' && o.to.socket === 'time')).toBe(false);
 
-    // (c) The clip's tracks bind to the TARGET (glTF-native) bones. The
-    // GltfSkeleton projects ['Bone0','Bone1']; every emitted keyframe's
-    // `bone` index must address one of THOSE, proving the target rig was
-    // resolved by EVALUATION (not by reading absent params.bones, which
-    // would have produced an empty rig → zero/out-of-range tracks).
-    const params = addClip.params as { keyframes?: { bone: number }[] };
-    const kfs = params.keyframes ?? [];
+    // (c) The keys bind to the TARGET (glTF-native) bones. Read where the render
+    // band reads — the resolved node, after the plan is applied — because that is
+    // now where the answer exists at all. The GltfSkeleton projects
+    // ['Bone0','Bone1']; every key's `bone` must address one of THOSE, proving
+    // the target rig was resolved by PROJECTION and not from absent params.bones,
+    // which would have produced an empty rig → zero/out-of-range tracks.
+    let applied = state;
+    for (const op of result.ops) applied = applyOp(applied, op).next;
+    const resolved = retargetClipParamsFromNodes(
+      applied.nodes as unknown as Record<string, GraphNodeLike>,
+      applied.nodes['walk_on_gltf'] as unknown as GraphNodeLike,
+    );
+    const kfs = resolved?.keyframes ?? [];
     expect(kfs.length).toBeGreaterThan(0);
     const projectedTargetNames = ['Bone0', 'Bone1'];
     for (const kf of kfs) {
@@ -4564,14 +4597,19 @@ describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #10
       state,
       'empty map — nothing should bind',
     );
-    // The plan still validates (an empty clip is structurally valid), but the
-    // mixamorig_* source matches NO glTF joint key, so NO tracks bind.
+    // The plan still validates (an empty map is structurally valid), but the
+    // mixamorig_* source matches NO glTF joint key, so NO tracks bind. Since
+    // #901 the emptiness has to be observed where the keys now live — in the
+    // RESOLVED node, not in the emitted params, which carry no keys either way.
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    const addClip = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'AnimationClip');
-    if (addClip?.type !== 'addNode') throw new Error('no AnimationClip addNode');
-    const params = addClip.params as { keyframes?: { bone: number }[] };
-    expect(params.keyframes ?? []).toHaveLength(0);
+    let applied = state;
+    for (const op of result.ops) applied = applyOp(applied, op).next;
+    const resolved = retargetClipParamsFromNodes(
+      applied.nodes as unknown as Record<string, GraphNodeLike>,
+      applied.nodes['walk_on_gltf'] as unknown as GraphNodeLike,
+    );
+    expect(resolved?.keyframes ?? []).toHaveLength(0);
   });
 
   it('rejects a non-skeleton target with a Skeleton-or-GltfSkeleton reason (precondition gate)', () => {

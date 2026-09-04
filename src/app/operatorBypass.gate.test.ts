@@ -146,7 +146,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this phase's own thesis — the most expensive kind.
     expect(unreadableSchemas()).toEqual([]);
-    expect(listNodeTypes()).toHaveLength(82);
+    // 82 -> 83 at #901 (RetargetClip). Stated exactly, not floored: the count is
+    // the instrument's denominator, and a floor would not catch an over-deletion.
+    expect(listNodeTypes()).toHaveLength(83);
   });
 
   it('`muted` is declared NINE times in source, and that is three different populations', () => {

@@ -128,6 +128,8 @@ const ALL_TYPES = [
   'Prompt',
   'RenderJob',
   'RenderOutput',
+  // #901 — the retarget as an operator (sourceClip + boneMap + rig -> clip).
+  'RetargetClip',
   'SampleGeometry',
   'Scatter',
   'Scene',
@@ -719,7 +721,7 @@ describe('P2 — AnimationClip (pure, time-aware)', () => {
   it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
     const state = buildClip();
     const v = evalAt<AnimationClipValue>(state, 'clip', 0.5);
-    const torsoRot = v.pose.poses[1].rotation;
+    const torsoRot = v.pose!.poses[1].rotation;
     expect(torsoRot[1]).toBeCloseTo(0.25, 5);
   });
 
@@ -727,7 +729,7 @@ describe('P2 — AnimationClip (pure, time-aware)', () => {
     const state = buildClip();
     const v0 = evalAt<AnimationClipValue>(state, 'clip', 0);
     const vWrap = evalAt<AnimationClipValue>(state, 'clip', 2.0);
-    expect(vWrap.pose.poses[1].rotation).toEqual(v0.pose.poses[1].rotation);
+    expect(vWrap.pose!.poses[1].rotation).toEqual(v0.pose!.poses[1].rotation);
   });
 });
 

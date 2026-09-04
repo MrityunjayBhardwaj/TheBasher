@@ -187,6 +187,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Prompt: '[render] text=(unrouted) negative=(unrouted) tags=(unrouted)',
   RenderJob: '[render] jobId=render frameStart=render frameEnd=render fps=render outputPath=render',
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
+  // #901 — one param, the output clip's name. Everything else it produces comes
+  // from its three inputs, which is the point of the node.
+  RetargetClip: '[animate] name=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -249,4 +252,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // reads. `types` and `unrouted` are UNCHANGED, which is the derived half of the claim that the
 // append re-homed nothing: an angle limit is a SECOND producer of the selection this operator
 // already had, not a re-routing of the scope it produced before.
-export const GOLDEN_TOTALS = { types: 82, routed: 135, unrouted: 217 } as const;
+// 82 → 83 types and 217 → 218 unrouted at #901: `RetargetClip`'s whole row arrives under
+// the fifth arm above, and its ONE cell (`name`) does not route. `routed` is UNCHANGED —
+// the derived half of the claim that nothing existing was re-homed to make room for it.
+// The row is one cell because the node's output is a function of its three INPUTS; there
+// is nothing else about it to author as a param, which is the point of the node.
+export const GOLDEN_TOTALS = { types: 83, routed: 135, unrouted: 218 } as const;

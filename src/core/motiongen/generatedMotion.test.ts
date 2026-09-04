@@ -203,8 +203,10 @@ describe("the identical road — the phase's discriminating observation", () => 
     // if a generated clip needed a weaker check, it would not be the same object.
     expect(clip.kind).toBe('AnimationClip');
     expect(clip.duration).toBeGreaterThan(0);
-    expect(clip.pose.kind).toBe('PosedSkeleton');
-    expect(clip.pose.poses.length).toBeGreaterThan(0);
+    // Optional since #901; an `AnimationClip` node still always answers one.
+    expect(clip.pose).toBeDefined();
+    expect(clip.pose!.kind).toBe('PosedSkeleton');
+    expect(clip.pose!.poses.length).toBeGreaterThan(0);
   });
 
   it('retargets onto a different skeleton like any other clip', async () => {

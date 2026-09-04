@@ -28,13 +28,12 @@
 //      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889.
 
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
+import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { retargetClipParamsFromNodes } from './retargetFromNodes';
 
-/** Minimal node shape the walk reads: type, params, and incoming edges. */
-export interface GraphNodeLike {
-  readonly type: string;
-  readonly params?: unknown;
-  readonly inputs?: Readonly<Record<string, unknown>>;
-}
+// Re-exported so every existing importer of the walk keeps its one import site.
+export { edgeTarget };
+export type { GraphNodeLike };
 
 /** One clip bound to an asset's rig, with the index→name spine to read it by. */
 export interface BoundClip {
@@ -45,22 +44,8 @@ export interface BoundClip {
 }
 
 /**
- * The node id on the far end of `node.inputs[socket]`, or null.
- *
- * A `single` socket resolves to one connection; an array is tolerated so a
- * cardinality change upstream degrades to "no clip found" rather than a crash —
- * the same tolerance `bindMotionToCharacter.assetRefOfSkeleton` applies for the
- * same reason.
- */
-export function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
-  const s = node?.inputs?.[socket];
-  if (!s) return null;
-  const one = (Array.isArray(s) ? s[0] : s) as { node?: unknown } | undefined;
-  return typeof one?.node === 'string' ? one.node : null;
-}
-
-/**
- * Every `AnimationClip` bound to `assetRef`'s rig, in deterministic order.
+ * Every clip bound to `assetRef`'s rig, in deterministic order — a materialised
+ * `AnimationClip` or a `RetargetClip` resolved from its inputs (#901).
  *
  * ONE pass buckets the three node types the walk needs, then the work happens
  * over the buckets. The read-side caller hands in the WHOLE node table on every
@@ -83,7 +68,7 @@ export function boundClipsForAsset(
   const clipIds: string[] = [];
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
-    if (n.type === 'AnimationClip') clipIds.push(id);
+    if (n.type === 'AnimationClip' || n.type === 'RetargetClip') clipIds.push(id);
     else if (n.type === 'GltfSkeleton') skeletonIds.push(id);
     else if (
       assetId === undefined &&
@@ -119,7 +104,14 @@ export function boundClipsForAsset(
     for (const clipId of clipIds) {
       const clip = nodes[clipId];
       if (edgeTarget(clip, 'skeleton') !== skeletonId) continue;
-      const params = clip.params as Partial<AnimationClipParams> | undefined;
+      // #901 — a RetargetClip's keys are not in its params; they are the graph
+      // relationship, resolved here. Both kinds answer the same question ("which
+      // keys drive this rig"), so they share the one bucket and the one edge
+      // check rather than forking the walk.
+      const params =
+        clip.type === 'RetargetClip'
+          ? retargetClipParamsFromNodes(nodes, clip)
+          : (clip.params as Partial<AnimationClipParams> | undefined);
       if (!Array.isArray(params?.keyframes) || params.keyframes.length === 0) continue;
       out.push({ clipId, jointKeys: jointKeys as readonly string[], params });
     }

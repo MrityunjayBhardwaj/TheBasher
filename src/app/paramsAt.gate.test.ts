@@ -141,7 +141,6 @@ const CONSUMERS: Record<string, Decision> = {
   'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
-  'src/agent/mutators/builders/retarget.ts': authored('fixed-ctx-by-design'),
   // #807 — the third member of the same family, and it evaluates for the same
   // reason the other two do: it reads a `GltfSkeleton`'s bone NAMES to decide
   // which bone-name map bridges a dropped clip onto a character. Names are
@@ -209,7 +208,12 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // could bake the whole rig at bind time; binding no longer bakes, so the mutator
     // is gone and so is its evaluate. The road did not move — it collapsed. A floor
     // would have gone quietly green here, which is the whole reason this is not one.
-    expect(evaluatorConsumers()).toHaveLength(38);
+    // 38 → 37 at #901, and it is the SAME shrink for the same reason. The retarget
+    // mutator evaluated a `GltfSkeleton` for its bind pose so it could bake the
+    // retargeted clip at build time; it now emits a `RetargetClip` node that NAMES
+    // the rig with an edge and lets the reader project it. The road collapsed rather
+    // than moved — the evaluate went away with the bake, and the row went with it.
+    expect(evaluatorConsumers()).toHaveLength(37);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

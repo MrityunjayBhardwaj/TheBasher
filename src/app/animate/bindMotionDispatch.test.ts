@@ -140,6 +140,16 @@ const bind = (clipId: string, out: string) =>
     'Bind motion to rig: bound motion',
   );
 
+/** The node feeding one of a node's input sockets, by id. */
+const edgeOf = (nodeId: string, socket: string) => {
+  const c = (
+    useDagStore.getState().state.nodes[nodeId]?.inputs as
+      | Record<string, { node?: string }>
+      | undefined
+  )?.[socket];
+  return c?.node;
+};
+
 /** Every baked/minted channel node in the graph, whatever bone it is for. */
 const channelIds = () =>
   Object.values(useDagStore.getState().state.nodes)
@@ -152,7 +162,15 @@ describe('binding a motion to a character', () => {
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
-    expect(nodes['n_out_a']?.type).toBe('AnimationClip');
+    // #901 — the bind emits the RELATIONSHIP, not a baked copy: a RetargetClip
+    // wired to the source, the minted map and the rig. Asserting the wiring and
+    // not just the type, because a node of the right type with no edges would
+    // satisfy a type check and drive nothing.
+    expect(nodes['n_out_a']?.type).toBe('RetargetClip');
+    expect(nodes['n_out_a_map']?.type).toBe('BoneNameMap');
+    expect(edgeOf('n_out_a', 'sourceClip')).toBe('n_clip_a');
+    expect(edgeOf('n_out_a', 'boneMap')).toBe('n_out_a_map');
+    expect(edgeOf('n_out_a', 'skeleton')).toBe(SKEL);
     // THE ASSERTION. Copy-on-write: the clip drives every bone through the read
     // band, and a channel appears only when a director edits one.
     expect(channelIds()).toEqual([]);
@@ -207,8 +225,12 @@ describe('binding a motion to a character', () => {
     expect(bind('n_clip_b', 'n_out_b')).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
-    expect(nodes['n_out_a']?.type).toBe('AnimationClip');
-    expect(nodes['n_out_b']?.type).toBe('AnimationClip');
+    expect(nodes['n_out_a']?.type).toBe('RetargetClip');
+    expect(nodes['n_out_b']?.type).toBe('RetargetClip');
+    // Each bind minted its OWN map, so fixing one character's bone names cannot
+    // silently re-map the other's.
+    expect(edgeOf('n_out_a', 'boneMap')).toBe('n_out_a_map');
+    expect(edgeOf('n_out_b', 'boneMap')).toBe('n_out_b_map');
     expect(channelIds()).toEqual([]);
   });
 });
