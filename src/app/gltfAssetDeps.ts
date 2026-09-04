@@ -114,14 +114,18 @@ export function gltfAssetDepNodes(
         operandIds.add(sourceId);
         // …and the SOURCE clip's own rig: its keyframes are indices into that
         // skeleton, so editing the rig changes what the retarget produces.
-        const sourceRigId = edgeTo(nodes[sourceId] ?? ({} as Node), 'skeleton');
+        const sourceNode = nodes[sourceId];
+        const sourceRigId = sourceNode ? edgeTo(sourceNode, 'skeleton') : null;
         if (sourceRigId) operandIds.add(sourceRigId);
       }
+      // The source clip normally hangs off a DIFFERENT rig than this asset's, so
+      // the walk above excluded it — but nothing forbids the two coinciding, and
+      // a node listed twice would make `shallow` compare a longer array against a
+      // shorter one on an unrelated edit. Dedupe by identity rather than assume.
+      const already = new Set(out);
       for (const id of operandIds) {
         const n = nodes[id];
-        // The source clip is bound to a DIFFERENT rig than this asset's, so it is
-        // not already in `out` — the walk above deliberately excludes it.
-        if (n) out.push(n);
+        if (n && !already.has(n)) out.push(n);
       }
     }
   }

@@ -199,6 +199,24 @@ describe('retargetClipParamsFromNodes', () => {
       new Set(first!.keyframes!.map((k) => k.bone)),
     );
   });
+
+  it('gives two retargets sharing every operand their OWN output names', () => {
+    // Self-review found this as a WRONG ANSWER, not a worry: the memo keyed only
+    // on what the math reads, and the output name rides in the answer without
+    // being an operand — so the second node inherited the first's name.
+    const g = graph({
+      n_second: {
+        ...graph().n_retarget,
+        params: { name: 'Alien motion' },
+      },
+      n_retarget: { ...graph().n_retarget, params: { name: 'Robot motion' } },
+    });
+    expect(retargetClipParamsFromNodes(g, g.n_retarget)!.name).toBe('Robot motion');
+    expect(retargetClipParamsFromNodes(g, g.n_second)!.name).toBe('Alien motion');
+    // And the blank name still derives, rather than being remembered as ''.
+    const blank = graph();
+    expect(retargetClipParamsFromNodes(blank, blank.n_retarget)!.name).toBe('walk_retargeted');
+  });
 });
 
 describe('boundClipsForAsset reads a RetargetClip', () => {

@@ -82,8 +82,20 @@ export function bonesOfSkeletonNode(
 
 type SourceParams = { name?: string; duration?: number; keyframes?: unknown };
 
-/** operand identities → resolved params. Three levels, so any one operand changing misses. */
-const memo = new WeakMap<object, WeakMap<object, WeakMap<object, Partial<AnimationClipParams>>>>();
+/**
+ * operand identities → output name → resolved params.
+ *
+ * Three weak levels so any one operand changing misses, and a fourth keyed on the
+ * OUTPUT NAME, which is a param rather than an operand. Self-review caught it as a
+ * measured wrong answer, not a worry: two RetargetClip nodes sharing a source, a
+ * map and a rig but naming their outputs differently got the FIRST one's name,
+ * because the key described only what the math reads and not everything the answer
+ * carries. The name rides in `clipParams`, so it belongs in the key.
+ */
+const memo = new WeakMap<
+  object,
+  WeakMap<object, WeakMap<object, Map<string, Partial<AnimationClipParams>>>>
+>();
 
 /**
  * The clip params a `RetargetClip` node resolves to, or null when its graph is
@@ -125,7 +137,8 @@ export function retargetClipParamsFromNodes(
   const k1 = sourceParams as object;
   const k2 = map as object;
   const k3 = targetBones as unknown as object;
-  const cached = memo.get(k1)?.get(k2)?.get(k3);
+  const k4 = typeof outputName === 'string' ? outputName : '';
+  const cached = memo.get(k1)?.get(k2)?.get(k3)?.get(k4);
   if (cached) return cached;
 
   const result = retargetClip({
@@ -137,7 +150,7 @@ export function retargetClipParamsFromNodes(
     },
     targetBones,
     nameMap: map as Readonly<Record<string, string>>,
-    ...(typeof outputName === 'string' && outputName ? { outputName } : {}),
+    ...(k4 ? { outputName: k4 } : {}),
   });
   // Read-only in, read-only out: `retargetClip` returns readonly arrays and every
   // consumer of a BoundClip only reads. The cast widens the array type, not the
@@ -148,6 +161,8 @@ export function retargetClipParamsFromNodes(
   if (!l2) memo.set(k1, (l2 = new WeakMap()));
   let l3 = l2.get(k2);
   if (!l3) l2.set(k2, (l3 = new WeakMap()));
-  l3.set(k3, params);
+  let l4 = l3.get(k3);
+  if (!l4) l3.set(k3, (l4 = new Map()));
+  l4.set(k4, params);
   return params;
 }
