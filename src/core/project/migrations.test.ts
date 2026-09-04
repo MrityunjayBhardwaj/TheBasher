@@ -37,8 +37,12 @@ import { sampleScalarKeyframesExtended, type ChannelExtend } from '../../nodes/k
 import type { FModNoise } from '../../nodes/channelModifiers';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { migrateNodes, migrateProjectFormat } from './migrations';
+import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
+import { radVec3ToDeg } from '../../viewport/rotation';
+import { defaultModifier } from '../../nodes/channelModifiers';
+import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../../app/bakedGltfChannels';
 import { buildDefaultDagState } from './default';
-import { ProjectSchema, type Project } from './schema';
+import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -454,7 +458,7 @@ describe('object↔data split v2 → v3: fused BoxMesh → Object + BoxData (#36
     // 2 → 3 (box split) → 4 (sphere pass, no spheres) → 5 (curve pass, no curves)
     // → 6 (light pass, no lights) → 7 (camera split — this fixture HAS a camera)
     // → 8 (baked pass, no baked meshes).
-    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // The box node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_box;
     expect(obj.type).toBe('Object');
@@ -680,7 +684,7 @@ describe('object↔data split v3 → v4: fused SphereMesh → Object + SphereDat
     const migrated = loadFromBytes(buildV2FusedBoxSphereJson());
     // 2 → 3 (box split) → 4 (sphere split) → 5 (curve pass) → 6 (light pass, no
     // lights) → 7 (camera split — this fixture HAS a camera) → 8 (baked pass, none).
-    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // The sphere node keeps its id but is now an Object owning only the transform.
     const obj = migrated.state.nodes.n_sphere;
     expect(obj.type).toBe('Object');
@@ -871,7 +875,7 @@ describe('object↔data split v4 → v5: fused Curve → Object + CurveData (#38
     const migrated = loadFromBytes(buildV2FusedBoxSphereCurveJson());
     // 2 → 3 (box) → 4 (sphere) → 5 (curve) → 6 (light pass, no lights) → 7 (camera)
     // → 8 (baked pass, no baked meshes).
-    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     const obj = migrated.state.nodes.n_curve;
     expect(obj.type).toBe('Object');
     const op = obj.params as Record<string, unknown>;
@@ -1101,7 +1105,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
     const m = loadFromBytes(buildFusedLightsJson());
     // 5 → 6 (light pass) → 7 (camera pass) → 8 (baked pass); this fixture has
     // neither a camera nor a baked mesh, so the last two steps are no-ops.
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
 
     // Directional → Object(pose) + LightData{lightKind, intensity, color}.
     const dir = m.state.nodes.n_dir;
@@ -1296,7 +1300,7 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       state: { nodes, outputs: s.outputs },
     };
     const m = loadFromBytes(mixed);
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // Control a — the curve split.
     expect(m.state.nodes.n_curve.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'CurveData')).toBe(true);
@@ -1431,7 +1435,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     const m = loadFromBytes(buildFusedCamerasJson());
     // 6 → 7 (camera split) → 8 (baked pass, no baked meshes); this fixture has no
     // box/sphere/curve/light either.
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
 
     // Perspective → Object(pose only) + CameraData(the whole lens + the aim).
     const persp = m.state.nodes.n_persp;
@@ -1623,7 +1627,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
     };
     const m = loadFromBytes(strayOnNonCamera);
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
   });
 
@@ -1763,7 +1767,7 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       },
       state: { nodes, outputs: s.outputs },
     });
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // Controls — every earlier kind still splits.
     expect(m.state.nodes.n_box.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
@@ -1961,7 +1965,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
   it('splits the baked mesh: the Object inherits the id and the pose, the BakedData owns the buffer + material', () => {
     const m = loadFromBytes(buildFusedBakedMeshJson());
     // 7 → 8 (baked pass only; this fixture has no earlier fused kind).
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
 
     const obj = m.state.nodes.n_baked;
     expect(obj.type).toBe('Object');
@@ -2130,7 +2134,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       },
     };
     const m = loadFromBytes(strayOnNonBaked);
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect((m.state.nodes.n_stray.params as { target: string }).target).toBe('n_obj');
   });
 
@@ -2227,7 +2231,7 @@ describe('object↔data split v7 → v8: fused BakedMesh → Object + BakedData 
       state: { nodes, outputs: s.outputs },
     });
     // The full chain: 2 → 3 → 4 → 5 → 6 → 7 → 8, every step doing real work.
-    expect(m.formatVersion).toBe(9);
+    expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // Controls — every earlier kind still splits.
     expect(m.state.nodes.n_box.type).toBe('Object');
     expect(Object.values(m.state.nodes).some((n) => n.type === 'BoxData')).toBe(true);
@@ -2407,7 +2411,7 @@ describe('AnimationLayer v1 → v2 retirement (byte-identical render gate, #199)
   it('reverses the splice: layer gone, channel re-targets n_box, scene.children → n_box', () => {
     const migrated = loadFromBytes(buildLayerWrappedV1Json());
     // 1→2 layer → 3 box → 4 sphere → 5 curve → 6 light → 7 camera → 8 baked.
-    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     // No AnimationLayer node survives the load.
     expect(Object.values(migrated.state.nodes).some((n) => n.type === 'AnimationLayer')).toBe(
       false,
@@ -2677,7 +2681,7 @@ describe('ParamDriver v8 → v9: two source sockets collapse into one (#609)', (
     // exist — the edge vanishes on load, the driver reads 0, and the param simply stops
     // being driven. Nothing throws.
     const migrated = loadFromBytes(buildV8VecDriverJson());
-    expect(migrated.formatVersion).toBe(9);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(migrated.state.nodes.n_drv.inputs.in).toEqual({ node: 'n_vec', socket: 'out' });
     expect(migrated.state.nodes.n_drv.inputs.inVec).toBeUndefined();
   });
@@ -2740,5 +2744,285 @@ describe('ParamDriver v8 → v9: two source sockets collapse into one (#609)', (
     const migrated = loadFromBytes(both);
     expect(migrated.state.nodes.n_drv.inputs.in).toEqual({ node: 'n_vec', socket: 'out' });
     expect(migrated.state.nodes.n_drv.inputs.inVec).toBeUndefined();
+  });
+});
+
+describe("eager channels v9 → v10: the retired bake's unauthored copies are dropped (#915)", () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const REF = 'user-imports/rig/rig.glb';
+  const BONES = ['boneA', 'boneB'];
+  const DUR = 2;
+  // Three keys spanning [0, DUR] with DISTINCT values, so a channel that holds
+  // past the end is distinguishable from a clip that wraps. Rotation is RADIANS
+  // here (what an `AnimationClip` stores) and DEGREES in the channel — the
+  // conversion is the reason the migration must reuse the mint's own helper.
+  //
+  // 🔴 FRESH OBJECTS PER CALL, NOT A SHARED CONSTANT. `eagerKeys` copies the
+  // clip's own numbers, so a shared literal would hand the channel and the clip
+  // THE SAME array — and perturbing "the channel" would move the clip with it,
+  // leaving the two equal and the falsification green. That is a statement about
+  // the fixture, not about the predicate.
+  const clipKeys = () =>
+    BONES.flatMap((_, bone) =>
+      [0, 1, 2].map((time) => ({
+        bone,
+        time,
+        position: [time + bone, 0, 0] as Vec3,
+        rotation: [0.1 * (time + 1) * (bone + 1), 0, 0] as Vec3,
+      })),
+    );
+
+  function eagerKeys(bone: number, component: 'position' | 'rotation') {
+    return clipKeys()
+      .filter((k) => k.bone === bone)
+      .map((k) => ({
+        time: k.time,
+        value: (component === 'rotation' ? radVec3ToDeg(k.rotation) : [...k.position]) as Vec3,
+        easing: 'linear' as const,
+      }));
+  }
+
+  /** A channel node in exactly the shape `bakeChannelOpsForBone` emits, plus the
+   *  fields `ProjectSchema` persists at their defaults — i.e. what a pre-#889
+   *  save actually contains on disk. */
+  function eagerChannel(bone: number, component: 'position' | 'rotation') {
+    const childName = BONES[bone];
+    const id = gltfChannelDagId(REF, childName, component);
+    return {
+      id,
+      type: 'KeyframeChannelVec3',
+      version: 2,
+      params: {
+        name: `${childName} — ${component}`,
+        target: gltfChildDagId(REF, childName),
+        paramPath: component,
+        mute: false,
+        solo: false,
+        weight: 1,
+        blendMode: 'replace',
+        order: 0,
+        extendBefore: 'hold',
+        extendAfter: 'hold',
+        modifiers: [],
+        childName,
+        assetRef: REF,
+        keyframes: eagerKeys(bone, component),
+      },
+      inputs: {},
+    };
+  }
+
+  /** A v9 save carrying the full eager bake: one channel per bone per component,
+   *  every one a bit-for-bit copy of the clip bound to the rig. */
+  function buildV9EagerJson(): Record<string, unknown> {
+    const nodes: Record<string, unknown> = {
+      n_asset: {
+        id: 'n_asset',
+        type: 'GltfAsset',
+        version: 1,
+        params: {
+          assetRef: REF,
+          nodeNameMap: Object.fromEntries(BONES.map((b) => [b, gltfChildDagId(REF, b)])),
+          skins: [
+            {
+              jointKeys: BONES,
+              bindTRS: BONES.map(() => ({
+                position: [0, 0, 0],
+                rotation: [0, 0, 0],
+                scale: [1, 1, 1],
+              })),
+              parentJointIndex: [-1, 0],
+              inverseBindMatrices: BONES.map(() => Array(16).fill(0)),
+            },
+          ],
+        },
+        inputs: {},
+      },
+      n_skel: {
+        id: 'n_skel',
+        type: 'GltfSkeleton',
+        version: 1,
+        params: { skinIndex: 0 },
+        inputs: { asset: { node: 'n_asset', socket: 'out' } },
+      },
+      n_clip: {
+        id: 'n_clip',
+        type: 'AnimationClip',
+        version: 1,
+        params: { name: 'walk', duration: DUR, loop: true, keyframes: clipKeys() },
+        inputs: { skeleton: { node: 'n_skel', socket: 'out' } },
+      },
+    };
+    for (let b = 0; b < BONES.length; b++)
+      for (const c of ['position', 'rotation'] as const) {
+        const n = eagerChannel(b, c);
+        nodes[n.id] = n;
+      }
+    return {
+      formatVersion: 9,
+      id: 'p915-migration',
+      name: 'pre-copy-on-write eager bake',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: {},
+      state: { nodes, outputs: {} },
+    };
+  }
+
+  const channelsOf = (p: Project) =>
+    Object.values(p.state.nodes).filter((n) => n.type === 'KeyframeChannelVec3');
+
+  /** The band both the renderer and the read side consume, sampled per bone. */
+  function bandAt(p: Project, bone: string, seconds: number) {
+    const asset = p.state.nodes.n_asset.params as { nodeNameMap: Record<string, string> };
+    const s = bakedChannelSamplersForAsset(p.state.nodes as never, asset.nodeNameMap, REF);
+    const v = sampleBakedChannel(s[bone], seconds);
+    return [...(v?.position ?? []), ...(v?.rotation ?? [])];
+  }
+
+  it('THE DEFECT: before the migration the rig HOLDS past the clip, after it it WRAPS', () => {
+    // The pre-state is asserted first on purpose. A gate that only shows the
+    // migrated project looping proves the clip band loops — which was never in
+    // doubt — and says nothing about the channels this migration exists to
+    // remove. Showing the same graph freeze without it is what makes the second
+    // half a measurement of the subject.
+    const raw = buildV9EagerJson();
+    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    expect(channelsOf(before)).toHaveLength(4);
+    for (const bone of BONES) {
+      // t = 0.5 is inside the authored range; t = 0.5 + DUR is past its end.
+      const inside = bandAt(before, bone, 0.5);
+      const wrapped = bandAt(before, bone, 0.5 + DUR);
+      expect(wrapped).not.toEqual(inside);
+      // and it is FROZEN, not merely different — the same constant forever.
+      expect(bandAt(before, bone, 3 * DUR)).toEqual(wrapped);
+    }
+
+    const after = loadFromBytes(raw);
+    expect(after.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    expect(channelsOf(after)).toHaveLength(0);
+    for (const bone of BONES) {
+      expect(bandAt(after, bone, 0.5 + DUR)).toEqual(bandAt(after, bone, 0.5));
+      expect(bandAt(after, bone, 0.5 + 3 * DUR)).toEqual(bandAt(after, bone, 0.5));
+    }
+  });
+
+  it('IN-RANGE MOTION SURVIVES: the clip band serves what the dropped channels served', () => {
+    // Dropping a channel is only safe because something underneath it renders the
+    // same motion. If the bone fell to its base pose instead, this suite's wrap
+    // rows would still pass — a frozen bone and a base-pose bone both "loop".
+    const raw = buildV9EagerJson();
+    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    const after = loadFromBytes(raw);
+    for (const bone of BONES)
+      // 🔴 NEVER t = DUR. A bound clip WRAPS at its duration and a channel CLAMPS
+      // there, so that one sample measures the wrap rather than the motion — the
+      // two roads agree everywhere else in range.
+      for (const t of [0, 0.25, 1, 1.75, 1.99]) {
+        const a = bandAt(before, bone, t);
+        const b = bandAt(after, bone, t);
+        expect(b).toHaveLength(6);
+        for (let i = 0; i < a.length; i++) expect(b[i]).toBeCloseTo(a[i], 9);
+      }
+  });
+
+  it('A HAND-EDITED BONE KEEPS ITS EDIT — the row that must not go green by accident', () => {
+    const raw = buildV9EagerJson();
+    const id = gltfChannelDagId(REF, 'boneA', 'rotation');
+    const nodes = (
+      raw.state as { nodes: Record<string, { params: { keyframes: { value: number[] }[] } }> }
+    ).nodes;
+    nodes[id].params.keyframes[1].value[0] += 15;
+    const edited = nodes[id].params.keyframes[1].value[0];
+
+    const after = loadFromBytes(raw);
+    const survivor = after.state.nodes[id];
+    expect(survivor).toBeDefined();
+    expect((survivor.params as { keyframes: { value: number[] }[] }).keyframes[1].value[0]).toBe(
+      edited,
+    );
+    // and only that one survives — the other three were untouched copies.
+    expect(channelsOf(after)).toHaveLength(1);
+  });
+
+  it('a single key differing by 1e-9 is enough to keep the channel', () => {
+    // The comparison is exact, not tolerant. A tolerance would silently swallow
+    // a small deliberate offset — the very thing a director tweaking one bone
+    // produces.
+    const raw = buildV9EagerJson();
+    const id = gltfChannelDagId(REF, 'boneB', 'position');
+    const nodes = (
+      raw.state as { nodes: Record<string, { params: { keyframes: { value: number[] }[] } }> }
+    ).nodes;
+    nodes[id].params.keyframes[2].value[1] += 1e-9;
+    expect(channelsOf(loadFromBytes(raw))).toHaveLength(1);
+  });
+
+  it('an edited channel SETTING is kept even though every key still matches', () => {
+    // Authoring is not only keys. `setChannelExtend`, a modifier, a blend mode or
+    // a mute are all edits that leave the curve alone, and a predicate reading
+    // keyframes only would delete every one of them.
+    for (const patch of [
+      { extendAfter: 'slope' },
+      { blendMode: 'combine' },
+      { mute: true },
+      { weight: 0.5 },
+      { order: 3 },
+      { modifiers: [defaultModifier('cycles')] },
+      { axisExtend: [null, null, { before: 'hold', after: 'slope' }] },
+    ] as Record<string, unknown>[]) {
+      const raw = buildV9EagerJson();
+      const id = gltfChannelDagId(REF, 'boneA', 'position');
+      const nodes = (raw.state as { nodes: Record<string, { params: Record<string, unknown> }> })
+        .nodes;
+      Object.assign(nodes[id].params, patch);
+      const after = loadFromBytes(raw);
+      expect(
+        after.state.nodes[id],
+        `a channel with ${JSON.stringify(patch)} must survive`,
+      ).toBeDefined();
+      expect(channelsOf(after)).toHaveLength(1);
+    }
+  });
+
+  it('a key carrying a bézier handle is kept — the bake writes exactly time/value/easing', () => {
+    const raw = buildV9EagerJson();
+    const id = gltfChannelDagId(REF, 'boneB', 'rotation');
+    const nodes = (
+      raw.state as { nodes: Record<string, { params: { keyframes: Record<string, unknown>[] } }> }
+    ).nodes;
+    nodes[id].params.keyframes[1].handleType = 'free';
+    expect(channelsOf(loadFromBytes(raw))).toHaveLength(1);
+  });
+
+  it('a channel with NO clip driving its bone is kept — it has nothing to fall back to', () => {
+    // `bakeGltfChannel`'s output (the asset's OWN embedded TransformClip road) and
+    // a base-pose seed both look like this. Removing one would delete motion with
+    // no band underneath to serve it.
+    const raw = buildV9EagerJson();
+    const nodes = (raw.state as { nodes: Record<string, unknown> }).nodes;
+    delete nodes.n_clip;
+    expect(channelsOf(loadFromBytes(raw))).toHaveLength(4);
+  });
+
+  it('IDEMPOTENT, and a project already at v10 is not re-examined', () => {
+    const once = loadFromBytes(buildV9EagerJson());
+    const twice = loadFromBytes(once);
+    expect(twice.state.nodes).toEqual(once.state.nodes);
+
+    // A post-#913 save: its channel carries the Cycles modifier and is already
+    // correct. It must survive both because it is authored-shaped and because the
+    // ladder never re-runs on a v10 file.
+    const current = buildV9EagerJson();
+    current.formatVersion = 10;
+    const id = gltfChannelDagId(REF, 'boneA', 'rotation');
+    const nodes = (current.state as { nodes: Record<string, { params: Record<string, unknown> }> })
+      .nodes;
+    nodes[id].params.modifiers = [defaultModifier('cycles')];
+    expect(channelsOf(loadFromBytes(current))).toHaveLength(4);
   });
 });
