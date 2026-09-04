@@ -41,7 +41,7 @@
 //      src/app/resolveEvaluatedMesh.ts (the read consumer); src/app/resolveMeshMaterial.ts
 //      (the render consumer, and the owner of the decision); issues #634, #633, #638, #651.
 
-import { MATERIAL_INDEX } from '../nodes/attributes';
+import { attributeAt, MATERIAL_INDEX } from '../nodes/attributes';
 import type { MaterialAssignment } from '../nodes/types';
 import { read } from './attributeStore';
 
@@ -57,9 +57,8 @@ export function materialAssignmentOf<M>(
   slots: readonly M[],
 ): MaterialAssignment<M> {
   if (attributeKey === null) return { slots, indices: null };
-  const set = read(attributeKey);
-  const attribute = set?.[MATERIAL_INDEX];
-  if (!attribute || attribute.domain !== 'face') return { slots, indices: null };
+  const attribute = attributeAt(read(attributeKey), MATERIAL_INDEX, 'face');
+  if (attribute === undefined) return { slots, indices: null };
   return { slots, indices: attribute.data };
 }
 

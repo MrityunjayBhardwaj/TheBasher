@@ -45,6 +45,7 @@ import { tiledPointOrder, type TiledPointOrder } from '../app/pointIdentity';
 import { insert, read, type AttributeGrowthSource } from '../app/attributeStore';
 import {
   MATERIAL_INDEX,
+  attributeAt,
   componentsOf,
   emptyLike,
   isKnownDomain,
@@ -277,7 +278,11 @@ export function mintTargetedAttributes(
   const minted = targetedMaterialAttributes(descriptor, selection, carried);
   if (minted === null || faces === null) return null;
   insert(minted.key, minted.set, via);
-  const assigned = minted.set[MATERIAL_INDEX].data;
+  // Minted one line above at the face domain; asked for by domain so the read cannot drift
+  // from the mint if that ever stops being true.
+  const assignedAttribute = attributeAt(minted.set, MATERIAL_INDEX, 'face');
+  if (assignedAttribute === undefined) return null;
+  const assigned = assignedAttribute.data;
   let covered = 0;
   for (let face = 0; face < faces; face++) if (assigned[face] === 1) covered += 1;
   return { key: minted.key, covered, faces };
@@ -1056,7 +1061,10 @@ export function rebuiltMeshAttributes(
   if (carriedKey === undefined) return { key: null, reason: null };
 
   const carried = read(carriedKey);
-  const index = carried?.[MATERIAL_INDEX];
+  // #724 — the domain is now ASKED FOR rather than assumed. This line read `carried?.[MATERIAL_INDEX]`
+  // while the comment below already claimed "or nothing face-domain in it": the sentence was true
+  // of the intent and false of the code, so a non-face entry of that name propagated as face data.
+  const index = attributeAt(carried, MATERIAL_INDEX, 'face');
   // Nothing resident under the carried key, or nothing face-domain in it: re-derive rather
   // than propagate a name the store cannot resolve.
   if (index === undefined) return { key: mintMeshAttributes(rebuilt, 'overlay'), reason: null };
