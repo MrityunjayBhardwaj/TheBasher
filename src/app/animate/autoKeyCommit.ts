@@ -25,6 +25,7 @@ import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMuta
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
+import { boneComponentAddress } from './clipRowMint';
 
 /**
  * THE single animated-param edit-route gate (P7.3 / D-02 — lifted here in
@@ -149,7 +150,24 @@ export function keyParamFromTransient(
 
   let result: { ok: true } | { ok: false; reason: string };
   if (paramAnimationState(dagState, nodeId, paramPath, frame) === 'none') {
-    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
+    // A glTF bone takes the BONE road, not the first-key composite. The
+    // composite builds a channel through `addChannel`, whose id is the generic
+    // `<target>_<paramPath>_channel` and which carries none of the dual key the
+    // renderer's enumerator matches on — so the key would appear in the
+    // dopesheet and drive nothing. The `keyframe` Mutator's bone form mints the
+    // content-addressed channel, seeded from the clip, and writes the key in the
+    // same plan (one undo entry).
+    //
+    // Unreachable before copy-on-write: an eager bake gave every bone a channel,
+    // so `paramAnimationState` never answered 'none' for one.
+    const bone = boneComponentAddress(dagState, nodeId, paramPath);
+    result = bone
+      ? dispatchMutatorFromUI(
+          'mutator.timeline.keyframe',
+          { bone, time: seconds, value: v },
+          `Key ${nodeId}.${paramPath}`,
+        )
+      : dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
   } else {
     const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
     if (!resolved) {

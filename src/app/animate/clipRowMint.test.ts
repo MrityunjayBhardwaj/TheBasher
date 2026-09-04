@@ -12,6 +12,10 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
 import { dispatchBakeThenRetime } from './dispatchMutator';
+import { keyParamFromTransient } from './autoKeyCommit';
+import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../KeyboardShortcuts';
+import { useTimelineSelection } from '../../timeline/timelineSelection';
+import { useTimeStore } from '../stores/timeStore';
 import { animationClipCarriesBone, clipRowMintOps } from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 
@@ -190,5 +194,89 @@ describe('dragging a key on a generated character’s clip row', () => {
       toTime: 0.5,
     });
     expect(res.ok).toBe(false);
+  });
+});
+
+describe('the keyboard paths on a read-only clip row', () => {
+  beforeEach(() => {
+    useDagStore.getState().hydrate(generatedScene());
+    useTimelineSelection.getState().setActiveKeyframe(null);
+  });
+
+  it('K mints the channel and keys the RENDERED pose, not the base pose', () => {
+    // The bone's own `position` param is [0,0,0] — its base pose. The clip puts
+    // it at [0,1,0] at t=0 and [0,2,0] at t=1. Keying the base pose here would
+    // drop a key a metre from what the director is looking at, on a bone that
+    // had been moving correctly.
+    useTimelineSelection.getState().setActiveChannel(`clip:${BONE}:position`);
+    useTimeStore.getState().setTime(0.5);
+
+    const ops = buildKeyframeInsertOp();
+    expect(ops).not.toBeNull();
+    expect(ops!.length).toBe(2); // mint + write
+    const channelId = gltfChannelDagId(ASSET, BONE, 'position');
+    const write = ops!.find((o) => o.type === 'setParam') as unknown as {
+      nodeId: string;
+      value: { time: number; value: number[] }[];
+    };
+    expect(write.nodeId).toBe(channelId);
+    const keyed = write.value.find((k) => k.time === 0.5)!;
+    expect(keyed.value[1]).toBeCloseTo(1.5, 6); // halfway between 1 and 2
+    // and the clip's own keys survived
+    expect(write.value.map((k) => k.time)).toEqual([0, 0.5, 1]);
+  });
+
+  it('Delete on a clip-row key mints and removes THAT key', () => {
+    useTimelineSelection
+      .getState()
+      .setActiveKeyframe({ channelId: `clip:${BONE}:position`, time: 1 });
+    const ops = buildKeyframeDeleteOp();
+    expect(ops).not.toBeNull();
+    const write = ops!.find((o) => o.type === 'setParam') as unknown as {
+      value: { time: number }[];
+    };
+    expect(write.value.map((k) => k.time)).toEqual([0]);
+  });
+
+  it('refuses to delete the LAST key rather than leaving an empty channel', () => {
+    // An empty channel is a claim, not silence: the band collects it and the
+    // sampler answers [0,0,0] at every time, so emptying it would snap the bone
+    // to the origin instead of returning it to the clip.
+    useDagStore.getState().hydrate(generatedScene());
+    useTimelineSelection
+      .getState()
+      .setActiveKeyframe({ channelId: `clip:${BONE}:position`, time: 1 });
+    const first = buildKeyframeDeleteOp();
+    useDagStore.getState().dispatchAtomic(first!, 'user', 'delete');
+    const channelId = gltfChannelDagId(ASSET, BONE, 'position');
+    useTimelineSelection.getState().setActiveKeyframe({ channelId, time: 0 });
+    expect(buildKeyframeDeleteOp()).toBeNull();
+  });
+});
+
+describe('the diamond / auto-key chokepoint on a bone', () => {
+  it('mints the CONTENT-ADDRESSED channel, not addChannel’s generic one', () => {
+    // The first-key composite builds `<target>_<paramPath>_channel` and carries
+    // none of the dual key the renderer's enumerator matches on — the key would
+    // appear in the dopesheet and drive nothing.
+    useDagStore.getState().hydrate(generatedScene());
+    useTimeStore.getState().setTime(0.25);
+    const boneId = gltfChildDagId(ASSET, BONE);
+    const res = keyParamFromTransient(boneId, 'position', [5, 5, 5]);
+    expect(res.ok).toBe(true);
+
+    const nodes = useDagStore.getState().state.nodes;
+    const contentAddressed = gltfChannelDagId(ASSET, BONE, 'position');
+    expect(nodes[contentAddressed]).toBeDefined();
+    expect(nodes[`${boneId}_position_channel`]).toBeUndefined();
+    // The dual key the enumerator reads.
+    const params = nodes[contentAddressed]!.params as Record<string, unknown>;
+    expect(params.target).toBe(boneId);
+    expect(params.childName).toBe(BONE);
+    expect(params.assetRef).toBe(ASSET);
+    // Seeded, then keyed — the clip's track is still there under the new key.
+    const keys = params.keyframes as { time: number; value: number[] }[];
+    expect(keys.map((k) => k.time)).toEqual([0, 0.25, 1]);
+    expect(keys.find((k) => k.time === 0.25)!.value).toEqual([5, 5, 5]);
   });
 });

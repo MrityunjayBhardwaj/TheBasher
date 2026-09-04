@@ -252,16 +252,18 @@ function DockToolbar() {
   const [simplifyOpen, setSimplifyOpen] = useState(false);
 
   function onKey() {
-    const op = buildKeyframeInsertOp();
-    if (op) {
-      useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+    // Op LIST, not one op: on a bone that has no channel yet the insert is
+    // preceded by the mint that gives it one, and both land as one undo entry.
+    const ops = buildKeyframeInsertOp();
+    if (ops) {
+      useDagStore.getState().dispatchAtomic(ops, 'user', 'insert keyframe');
     }
   }
 
   function onDelete() {
-    const op = buildKeyframeDeleteOp();
-    if (op) {
-      useDagStore.getState().dispatchAtomic([op], 'user', 'delete keyframe');
+    const ops = buildKeyframeDeleteOp();
+    if (ops) {
+      useDagStore.getState().dispatchAtomic(ops, 'user', 'delete keyframe');
       useTimelineSelection.getState().setActiveKeyframe(null);
     }
   }
