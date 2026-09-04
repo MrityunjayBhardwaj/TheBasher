@@ -19,10 +19,13 @@
 // ─────────────────────────────────────────────────────────────────────────
 // THE REGRESSION IT GUARDS
 // ─────────────────────────────────────────────────────────────────────────
-// `bakeClipOntoRig` wrote the clip's RADIANS into the GltfChild rotation band,
-// which is DEGREES, so every bone rotation rendered at π/180 of its size (#843).
-// The clip was right, the channels were minted, the bones resolved — and a 40°
-// leg swing rendered as 0.7°. The only assertion that could have caught it is
+// The bind road wrote the clip's RADIANS into the GltfChild rotation band, which
+// is DEGREES, so every bone rotation rendered at π/180 of its size (#843). The
+// clip was right, the channels were minted, the bones resolved — and a 40° leg
+// swing rendered as 0.7°. (The conversion lived in `bakeClipOntoRig` then; #889
+// deleted that eager bake, and the same boundary is now crossed in two places —
+// the read band for an unedited bone, the mint for an edited one — so this
+// assertion covers strictly more than it did.) The only assertion that could have caught it is
 // the one below: a rendered bone must rotate by an amount a person could SEE.
 // `MIN_VISIBLE_DEG` is far above the ~0.4° the defect produced and far below the
 // ~34° a real walk produces, so it cannot be satisfied by accident.
@@ -44,7 +47,8 @@
 // rather than failing. That means it does not gate CI today; giving it a small
 // generated stand-in rig is tracked separately.
 //
-// REF: src/agent/mutators/builders/bakeClipOntoRig.ts (the units boundary);
+// REF: src/app/bakedGltfChannels.ts + src/app/animate/ensureChannelForBone.ts
+//        (the two sides of the units boundary);
 //      src/app/asset/bindMotionToCharacter.ts (the bind decisions);
 //      src/viewport/SceneFromDAG.tsx (the TRS useFrame — the read site);
 //      issues #843, #844, #807, #820.

@@ -29,10 +29,12 @@ import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/Keyfr
 import { buildClipBoneSamplers } from '../nodes/AnimationClip';
 import type { Vec3 } from '../nodes/types';
 import type { BakedChannel } from './resolveGltfChildTransform';
-// The radians→degrees boundary. THE SAME helper `bakeClipOntoRig` converts with
-// (builders/bakeClipOntoRig.ts, where the unit change is documented at length):
-// the clip band below must produce the value the eager bake produced for the
-// same bone, and two conversion sites are two chances to drift.
+// The radians→degrees boundary. THE SAME helper `ensureChannelForBone` seeds a
+// minted channel with (animate/ensureChannelForBone.ts, where the unit change is
+// documented at length): the clip band below must produce, for an UNEDITED bone,
+// the value a mint would have produced for that same bone the instant it is
+// edited — otherwise the bone visibly jumps on its first keyframe. Two
+// conversion sites are two chances to drift, which is why they name each other.
 import { radVec3ToDeg } from '../viewport/rotation';
 import { boundClipsForAsset, type GraphNodeLike } from './animate/boundClipsForAsset';
 
@@ -148,24 +150,27 @@ export function bakedChannelIdsForAssetRef(
 //                       asset's `transformClip` socket, so the resolver falls
 //                       through to it. The bake is a duplicate of what would
 //                       have been read anyway.
-//   bakeClipOntoRig   — a FOREIGN retargeted clip. An `AnimationClip` is not on
-//                       that socket, so nothing falls through and materialising
-//                       every bone is today the only bridge to the rendered
-//                       skin. That is the copy that goes stale.
+//   the clip band     — a FOREIGN clip: BVH, FBX, retarget, or generated. An
+//   below               `AnimationClip` is not on that socket, so nothing falls
+//                       through, and until #888 materialising every bone was the
+//                       only bridge to the rendered skin. That was the copy that
+//                       went stale, and #889 deleted the mutator that made it.
 //
-// It does not have to be. The retargeted clip is already edged to the rig —
-// nothing had ever looked at the edge:
+// It did not have to be. The clip is already edged to the rig — nothing had ever
+// looked at the edge:
 //
 //   AnimationClip  --inputs.skeleton-->  GltfSkeleton  --inputs.asset-->  GltfAsset
 //
-// Walking it gives a bone with no channel a sampler over the clip, so the bake
-// stops being load-bearing and #889 can stop making the copy at all.
+// Walking it gives a bone with no channel a sampler over the clip, which is what
+// let #889 stop making the copy at all. Measured on `Robot-Walk.basher`:
+// stripping all 46 baked channels leaves the same 23 bones driven, with the
+// sampled rotations agreeing to 6e-14.
 //
 // WHY THE EDGE AND NOT A NAME MATCH. The bone INDEX in a clip keyframe is only
 // meaningful against the skeleton the indices were authored for. Reading the
 // skeleton off the clip's own edge makes an index/rig mismatch unrepresentable
-// rather than merely unlikely — the same argument `bakeClipOntoRig` makes for
-// taking one parameter instead of two. In `Robot-Walk.basher` this is load
+// rather than merely unlikely — the same argument `retarget` makes for reading
+// the rig off an edge instead of a parameter. In `Robot-Walk.basher` this is load
 // bearing rather than theoretical: the retargeted 23-bone clip hangs off the
 // `GltfSkeleton`, while the 78-bone SOURCE clip it came from hangs off a plain
 // `Skeleton`, so the edge walk excludes the source clip without a special case.
@@ -184,7 +189,7 @@ export function bakedChannelIdsForAssetRef(
  * carries no scale, so claiming a scale component would SUPPRESS the asset's
  * own scale track underneath it (the resolver reads presence, not value) —
  * omitting it leaves scale to the bands below, which is the honest answer and
- * the same call `bakeClipOntoRig` makes.
+ * the same call `ensureChannelForBone` makes when it mints.
  */
 function clipBandSamplersForAsset(
   nodes: Readonly<Record<string, GraphNodeLike>>,
@@ -206,16 +211,18 @@ function clipBandSamplersForAsset(
     for (const [boneIndex, sample] of boneSamplers) {
       const childName = clip.jointKeys[boneIndex];
       // A bone the skeleton cannot name, or one outside this asset, cannot be
-      // addressed — the same skip bakeClipOntoRig makes for the same reason.
+      // addressed — the same skip `bakeChannelOpsForBone` makes for the same
+      // reason: a channel under an empty key is scoped to no asset and silently
+      // never applies.
       if (typeof childName !== 'string' || childName.length === 0) continue;
       if (!(childName in nodeNameMap)) continue;
       // First clip by sorted id wins a bone; a later one does not overwrite.
       const slot = (out[childName] ??= {});
       slot.position ??= (seconds) => sample(seconds).position;
       // 🔴 UNITS: an AnimationKeyframe rotation is RADIANS and this band is
-      // DEGREES. bakeClipOntoRig documents why at length — copying through
-      // unconverted scales every bone rotation by π/180, which renders as a
-      // character standing still while its root position travels.
+      // DEGREES. `ensureChannelForBone` documents why at length — copying
+      // through unconverted scales every bone rotation by π/180, which renders
+      // as a character standing still while its root position travels (#843).
       slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
     }
   }

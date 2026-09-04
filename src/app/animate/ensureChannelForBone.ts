@@ -5,7 +5,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 // Two files call the baked band a copy-on-write edit layer — "once a bone is
 // edited, its track lives here, not in the clip" (resolveGltfChildTransform.ts).
-// `bakeClipOntoRig` then emitted a channel for every bone on the skeleton.
+// `bakeClipOntoRig` then emitted a channel for every bone on the skeleton (it
+// was deleted in #889 slice 3, once this file replaced it).
 // Copy-on-write in the documentation, copy-always in the implementation: in
 // `Robot-Walk.basher`, 46 channels for 23 bones and not one authored by anybody.
 //
@@ -47,8 +48,8 @@
 //
 // REF: src/app/animate/boundClipsForAsset.ts (the one edge walk);
 //      src/agent/mutators/builders/bakeChannelOps.ts (the op shape + skip);
-//      src/agent/mutators/builders/bakeClipOntoRig.ts (the units, at length);
-//      issues #889, #888, #877.
+//      src/app/bakedGltfChannels.ts (the read band a channel-less bone falls to);
+//      issues #889, #888, #877, #843.
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -60,10 +61,25 @@ import {
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
-// The radians→degrees boundary. THE SAME helper `bakeClipOntoRig` and the read
-// band convert with: a seed that skipped it would scale every bone rotation by
-// π/180, which renders as a character standing still while its root position
-// travels — the exact defect #843 records.
+// 🔴 THE RADIANS→DEGREES BOUNDARY, AND THIS FILE IS NOW ONE OF THE TWO PLACES
+// THAT KNOWS IT. An `AnimationKeyframe.rotation` is RADIANS —
+// `quaternionToEulerVec3` returns a raw `Euler` and nothing converts it on the
+// way in. The `GltfChild` rotation band a channel writes into is DEGREES: the
+// import seeds a child's base rotation through `radVec3ToDeg` (gltfImportChain
+// `defaultTRS`) and the renderer converts back out with `degVec3ToRad`
+// (SceneFromDAG's TRS useFrame).
+//
+// Copying the value through unconverted does not FAIL — it scales every bone
+// rotation by π/180. A 40° leg swing becomes 0.7° and a rig's −90° corrective
+// root becomes −1.57°, so a character with a correct clip stands still while its
+// root POSITION channel — which needs no conversion — travels at full strength.
+// That is a character sliding across the floor without animating, and it reads
+// as "motion application is broken" rather than as a unit bug (#843).
+//
+// The sibling `bakeGltfChannel` needs no conversion because its source is a
+// `TransformClip`, which is already degrees. The two clip families differ in
+// units, and this road is the one that has to say so — the other place is the
+// read band's `clipBandSamplersForAsset`, which converts for the same reason.
 import { radVec3ToDeg } from '../../viewport/rotation';
 
 /** What minting decided. `ops` is empty when the channel already existed — the

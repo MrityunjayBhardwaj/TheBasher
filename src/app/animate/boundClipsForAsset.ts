@@ -49,7 +49,8 @@ export interface BoundClip {
  *
  * A `single` socket resolves to one connection; an array is tolerated so a
  * cardinality change upstream degrades to "no clip found" rather than a crash —
- * the same tolerance `bakeClipOntoRig.skeletonIdOf` applies for the same reason.
+ * the same tolerance `bindMotionToCharacter.assetRefOfSkeleton` applies for the
+ * same reason.
  */
 export function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
   const s = node?.inputs?.[socket];

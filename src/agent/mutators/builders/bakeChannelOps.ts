@@ -4,8 +4,10 @@
 // Extracted when the second consumer arrived (the "2nd consumer justifies the
 // module" retrofit this codebase already applies at D-06). Consumer 1 is
 // `bakeGltfChannel`, whose source is the asset's OWN embedded TransformClip.
-// Consumer 2 is `bakeClipOntoRig`, whose source is a retargeted `AnimationClip`
-// that arrived from somewhere else entirely.
+// Consumer 2 is `ensureChannelForBone`, whose source is a bound `AnimationClip`
+// that arrived from somewhere else entirely — a BVH, an FBX, a retarget, or a
+// generator. (Consumer 2 was `bakeClipOntoRig` until #889: same source, but it
+// emitted for every bone at bind time instead of for one bone at edit time.)
 //
 // 🔑 THE SOURCE DIFFERS; EVERYTHING DOWNSTREAM OF IT MUST NOT. Both consumers
 // must emit the same node type, under the same content-addressed ids, carrying

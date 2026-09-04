@@ -118,8 +118,10 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * and a bone the clip never touched has no opinion to contribute.
  *
  * Rotation is in the clip's own units (RADIANS). Callers writing into a
- * degrees-valued band convert at that boundary; see bakeClipOntoRig.ts, which
- * is where that unit change is documented.
+ * degrees-valued band convert at that boundary; see
+ * app/animate/ensureChannelForBone.ts, which is where that unit change is
+ * documented, and app/bakedGltfChannels.ts, which makes the same conversion for
+ * the read band.
  */
 export function buildClipBoneSamplers(
   params: Pick<AnimationClipParams, 'keyframes' | 'duration' | 'loop'>,

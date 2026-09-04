@@ -1,32 +1,31 @@
-// dispatchRetargetThenBake — the composite behind the drop road (#807).
+// The dispatch behind the drop road — what binding a motion to a character
+// actually puts in the graph (#807, #889).
 //
-// The load-bearing case is the SECOND bind. A baked channel's id is
-// content-addressed on assetRef + bone + component and NOT on the clip, and the
-// shared emitter skips a channel that already exists. That guard is right for the
-// sibling consumer (re-baking a bone from the asset's own embedded clip really is
-// a no-op) and wrong here, where the source can be a completely different motion.
+// ─────────────────────────────────────────────────────────────────────────
+// 🔑 THIS FILE EXISTS TO PIN AN ABSENCE
+// ─────────────────────────────────────────────────────────────────────────
+// Until #889 slice 3 this dispatched retarget AND `bakeClipOntoRig` as one
+// composite, and `bakeClipOntoRig` emitted a `KeyframeChannelVec3` for every
+// bone on the rig. The read band reaches a bound clip directly (#888), so those
+// channels were a duplicate of what the clip already produced — measured on
+// `Robot-Walk.basher`: 46 channels for 23 bones, and stripping all 46 leaves the
+// same 23 bones driven with the sampled rotations agreeing to 6e-14.
 //
-// Measured in a browser before the guard below existed: a second, different clip
-// left the channel count at 46 and the rendered pose byte-identical at five bones
-// across three times, while the action reported success. This pins the fix.
+// So the central assertion here is a ZERO. A bind that quietly started emitting
+// channels again would be invisible in the viewport (the values would match) and
+// would restore every staleness defect #877 catalogued, so the count is the only
+// thing that can catch it.
 //
-// 🔴 WHAT THIS FILE GATES, AND WHAT IT DOES NOT — read before trusting its green.
-//
-// This file gates WIRING, not VALUES. Its central assertion is
-// `expect(JSON.stringify(after)).toBe(before)`: a self-comparison, which is the
-// right instrument for the second-bind guard (the claim IS "nothing changed") and
-// is structurally incapable of gating "the value is right". Any corruption present
-// in both terms cancels exactly. Measured: dropping the rad→deg conversion in
-// `bakeClipOntoRig` — a defect that scales every bone rotation by π/180 — leaves
-// every row here GREEN.
-//
-// The name reads end-to-end, so its green invites an inference it does not
-// support. What actually covers the values:
-//   - bakeClipOntoRig.test.ts       — the conversion and the emitted values
-//   - bakedClipParity.gate.test.ts  — bake vs clip BETWEEN keyframes (#877)
+// ─────────────────────────────────────────────────────────────────────────
+// 🔴 WHAT THIS FILE GATES, AND WHAT IT DOES NOT
+// ─────────────────────────────────────────────────────────────────────────
+// WIRING, not VALUES. It asserts which nodes exist after a bind, never what a
+// bone's rotation is at a given time. What covers the values:
+//   - ensureChannelForBone.test.ts     — the mint's seed and its rad→deg boundary
+//   - bakedClipParity.gate.test.ts     — band vs clip BETWEEN keyframes (#877)
 //   - gltfEulerContinuity.gate.test.ts — the representative choice (#876)
 //
-// REF: issue #883.
+// REF: issues #883, #807, #889.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
@@ -34,7 +33,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
-import { dispatchRetargetThenBake } from './dispatchMutator';
+import { dispatchMutatorFromUI } from './dispatchMutator';
 import { gltfChannelDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import type { GltfSkinMetadata } from '../../nodes/types';
 
@@ -125,45 +124,60 @@ function buildScene(clipId: string, rotationAtEnd: number): DagState {
   return s;
 }
 
+/** The same call `bindMotionToCharacter` makes once it has chosen the character
+ *  and the bone-name bridge. */
 const bind = (clipId: string, out: string) =>
-  dispatchRetargetThenBake({
-    sourceClipId: clipId,
-    sourceSkeletonId: 'n_src_skel',
-    targetSkeletonId: SKEL,
-    mapPresetId: null,
-    customMap: Object.fromEntries(BONES.map((b) => [b, b])),
-    outputClipId: out,
-    outputName: 'bound motion',
-  });
+  dispatchMutatorFromUI(
+    'mutator.animation.retarget',
+    {
+      sourceClipId: clipId,
+      sourceSkeletonId: 'n_src_skel',
+      targetSkeletonId: SKEL,
+      customMap: Object.fromEntries(BONES.map((b) => [b, b])),
+      outputClipId: out,
+      outputName: 'bound motion',
+    },
+    'Bind motion to rig: bound motion',
+  );
 
-describe('dispatchRetargetThenBake', () => {
-  it('binds a clip and emits the baked channels the renderer reads', () => {
+/** Every baked/minted channel node in the graph, whatever bone it is for. */
+const channelIds = () =>
+  Object.values(useDagStore.getState().state.nodes)
+    .filter((n) => n.type === 'KeyframeChannelVec3')
+    .map((n) => n.id);
+
+describe('binding a motion to a character', () => {
+  it('creates the retargeted clip and NOT ONE channel', () => {
     useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
     expect(nodes['n_out_a']?.type).toBe('AnimationClip');
-    expect(nodes[gltfChannelDagId(ASSET, 'mixamorig_Spine', 'rotation')]).toBeDefined();
+    // THE ASSERTION. Copy-on-write: the clip drives every bone through the read
+    // band, and a channel appears only when a director edits one.
+    expect(channelIds()).toEqual([]);
+    // Named as well as counted — a zero can be satisfied by a bind that failed,
+    // and the clip above proves this one did not.
+    expect(nodes[gltfChannelDagId(ASSET, 'mixamorig_Spine', 'rotation')]).toBeUndefined();
   });
 
-  it('lands both mutators as ONE undo entry', () => {
+  it('lands as ONE undo entry', () => {
     useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
     expect(useDagStore.getState().undoStack).toHaveLength(0);
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
-    // One entry, not two — a single undo must not leave a retargeted clip that
-    // poses the rig while nothing renders it.
     expect(useDagStore.getState().undoStack).toHaveLength(1);
   });
 
-  it('REFUSES a second bind instead of reporting a success that changed nothing', () => {
+  it('ACCEPTS a second, different motion — there is no longer anything to destroy', () => {
     useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
 
-    const channelId = gltfChannelDagId(ASSET, 'mixamorig_Spine', 'rotation');
-    const before = JSON.stringify(useDagStore.getState().state.nodes[channelId].params);
-
-    // A DIFFERENT motion onto the same rig. Every channel id it would emit
-    // already exists, so the emitter skips them all.
+    // A DIFFERENT motion onto the same rig. Under the eager bake this was
+    // REFUSED, because every channel id the second bind would emit already
+    // existed and the emitter skipped them all — so it reported success having
+    // changed nothing (measured in a browser: channel count stayed 46 and the
+    // rendered pose was byte-identical at five bones across three times). With
+    // no channels to collide with, the refusal has nothing left to protect.
     let s = useDagStore.getState().state;
     s = applyOp(s, {
       type: 'addNode',
@@ -190,18 +204,11 @@ describe('dispatchRetargetThenBake', () => {
     }).next;
     useDagStore.getState().hydrate(s);
 
-    const result = bind('n_clip_b', 'n_out_b');
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain('already carries baked motion');
-    // #813 — the refusal must NAME the way out. Before the character-level clear
-    // existed this said "remove the existing baked channels first", an instruction
-    // with no affordance behind it at that granularity.
-    expect(result.reason).toContain('Clear baked motion');
+    expect(bind('n_clip_b', 'n_out_b')).toEqual({ ok: true });
 
-    // And it mutated NOTHING — not a half-applied retarget, not a changed curve.
-    const after = useDagStore.getState().state.nodes[channelId].params;
-    expect(JSON.stringify(after)).toBe(before);
-    expect(useDagStore.getState().state.nodes['n_out_b']).toBeUndefined();
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodes['n_out_a']?.type).toBe('AnimationClip');
+    expect(nodes['n_out_b']?.type).toBe('AnimationClip');
+    expect(channelIds()).toEqual([]);
   });
 });

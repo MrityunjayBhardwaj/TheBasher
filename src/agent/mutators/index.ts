@@ -43,7 +43,6 @@ import { addAIPassMutator } from './builders/addAIPass';
 import { addStitchMutator } from './builders/addStitch';
 import { randomizeMutator } from './builders/randomize';
 import { bakeGltfChannelMutator } from './builders/bakeGltfChannel';
-import { bakeClipOntoRigMutator } from './builders/bakeClipOntoRig';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
@@ -72,7 +71,6 @@ export {
   addStitchMutator,
   randomizeMutator,
   bakeGltfChannelMutator,
-  bakeClipOntoRigMutator,
   addModifierMutator,
   addChannelModifierMutator,
   setChannelExtendMutator,
@@ -122,7 +120,6 @@ export function registerAllMutators(): void {
   // P7.12 — issue #108 / D1: copy-on-write bake of an imported glTF bone's
   // clip track into editable per-bone KeyframeChannel nodes (no edges, R4).
   registerMutator(bakeGltfChannelMutator);
-  registerMutator(bakeClipOntoRigMutator);
   // #209 (epic #201) — the geometry OperatorStack's agent op: add a SOP/modifier
   // (ArrayModifier) on top of a mesh's stack, through the same operatorStack
   // wiring the UI uses (V58, §2.2 "add a Subdivide / add a Track-To").
