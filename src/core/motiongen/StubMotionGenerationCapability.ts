@@ -189,6 +189,12 @@ export class StubMotionGenerationCapability implements MotionGenerationCapabilit
       bvh: synthesiseBvh(request),
       model: request.model,
       unitScale: STUB_UNIT_SCALE,
+      // ALWAYS null, on the same principle that keeps `constraints` out of the
+      // digest above: this stub does not walk a path, so it has no world path to
+      // have been rebased from, and reporting an offset it never applied would
+      // be the fabrication that reasoning exists to prevent. `null` here is a
+      // true statement — nobody asked for a world path — not a placeholder.
+      worldOffsetXZ: null,
     };
     // Check the way out too, and for the same reason the licence check runs here
     // rather than only in the HTTP impl: a stub exempt from a rule lets a test
