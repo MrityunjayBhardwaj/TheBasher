@@ -53,6 +53,7 @@ import { addStripMutator } from './builders/addStrip';
 import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
+import { setComponentScopeMutator } from './builders/setComponentScope';
 
 export {
   rotateMutator,
@@ -83,6 +84,7 @@ export {
   setStripBlendMutator,
   setTrackStateMutator,
   setObjectSlotMaterialMutator,
+  setComponentScopeMutator,
 };
 
 export function registerAllMutators(): void {
@@ -152,4 +154,9 @@ export function registerAllMutators(): void {
   // #283 Phase 4 inc 4C — Track state: order (cross-track fold rank, I-2) / mute / solo.
   // requiredNodeTypes:['Track'] is the honest V14 discriminator vs the set-Strip family.
   registerMutator(setTrackStateMutator);
+
+  // #667 — the agent's road to a component scope. Eligibility is derived from the
+  // registry (does the target declare a `scope` param?), so requiredNodeTypes is empty
+  // and a seventh scoped operator needs no edit here.
+  registerMutator(setComponentScopeMutator);
 }
