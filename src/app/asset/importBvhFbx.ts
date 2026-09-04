@@ -32,7 +32,7 @@ import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { importGltfFromOpfs } from './importGltf';
-import { bindMotionToCharacter } from './bindMotionToCharacter';
+import { bindMotionToCharacter, type BindMotionOutcome } from './bindMotionToCharacter';
 
 /**
  * What a motion import produced, so a caller can act on it (#807).
@@ -152,10 +152,17 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
  * `bindMotionToCharacter` directly, so "bind after motion lands" — and the
  * null-handling that goes with it — is decided in exactly one place.
  *
- * `bindMotionToCharacter` surfaces its own outcome, so there is nothing to
- * report here; the result is ignored deliberately rather than by omission.
+ * `bindMotionToCharacter` surfaces its own outcome, so a caller that only wants
+ * the motion bound can keep ignoring the return — the drop road above does, and
+ * nothing is left unreported when it does.
+ *
+ * It is RETURNED rather than swallowed because the generation road needs to know
+ * WHICH character was chosen (#730): a motion generated along an authored path
+ * has to move that character to the path's start, and the choice is made in here.
+ * `null` means no bind was attempted at all, which is a different answer from a
+ * bind that was attempted and refused.
  */
-export function bindImportedMotion(imported: MotionImportResult | null): void {
-  if (!imported) return;
-  bindMotionToCharacter(imported);
+export function bindImportedMotion(imported: MotionImportResult | null): BindMotionOutcome | null {
+  if (!imported) return null;
+  return bindMotionToCharacter(imported);
 }
