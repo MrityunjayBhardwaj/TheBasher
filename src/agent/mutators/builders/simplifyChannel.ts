@@ -22,6 +22,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
 import {
+  CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   channelViewAfterMint,
@@ -51,7 +52,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     'Preserves curve shape within tolerance ε. Supports Number + Vec3; ' +
     'Quat / Color channels return a no-op (their distance metrics need a ' +
     'separate implementation pass).' +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
+    CHANNEL_ADDRESS_DOC,
   spec: SimplifyChannelSpec,
   specExample: {
     channelId: 'cube_position_channel',

@@ -80,8 +80,9 @@ function riggedState(extraNodes?: Record<string, unknown>): DagState {
 
 /** The same rig with the bone's rotation channel ALREADY there — the road where
  *  gate 3 has something real to reject, since a freshly-added node is exempt. */
-function bakedState(): DagState {
+function bakedState(extraNodes?: Record<string, unknown>): DagState {
   return riggedState({
+    ...(extraNodes ?? {}),
     [ROT_CHANNEL]: {
       id: ROT_CHANNEL,
       type: 'KeyframeChannelVec3',
@@ -231,6 +232,130 @@ describe('the bone form on a bone that already HAS a channel', () => {
     if (!plan.ok) return;
     const set = plan.ops[0] as unknown as { value: { time: number }[] };
     expect(set.value.map((k) => k.time)).toEqual([0, 0.25, 1]);
+  });
+});
+
+describe('the agent surface says so', () => {
+  // The model never sees the schema: `listMutators` returns a name and a first
+  // sentence, `getMutator` the description, and the spec is a free-form object
+  // composed by copying a `specExample` that can only show ONE address form. So
+  // an enforcement the description does not mention is a refusal the caller
+  // cannot predict and cannot read its way out of — the capability is present
+  // and unreachable, and nothing else in the suite can see that.
+  it('every authoring mutator states the bone-form requirement in its description', () => {
+    const silent = (
+      [
+        ['keyframe', keyframeMutator],
+        ['removeKeyframes', removeKeyframesMutator],
+        ['simplifyChannel', simplifyChannelMutator],
+        ['setChannelExtend', setChannelExtendMutator],
+        ['setKeyframeInterp', setKeyframeInterpMutator],
+        ['addChannelModifier', addChannelModifierMutator],
+      ] as const
+    )
+      .filter(([, m]) => !m.description.includes('is REFUSED for a'))
+      .map(([n]) => n);
+    // Named, not counted — a count says how many drifted, never which.
+    expect(silent).toEqual([]);
+  });
+});
+
+describe('the channelId form REFUSES a bone\u2019s channel (#889 slice 3)', () => {
+  // The refusal is the point, and it fires on a channel that EXISTS. Anything
+  // weaker is not a rule: addressing a bone by id works perfectly for as long
+  // as somebody has already edited that bone, so a caller written against one
+  // is green in every test that ran after an edit and silently wrong on the 22
+  // bones of 23 that nobody has touched. A gate that only refused a MISSING
+  // channel would refuse exactly the cases that already fail loudly.
+  it('refuses, even though the channel is right there and the write would work', () => {
+    const state = bakedState();
+    expect(state.nodes[ROT_CHANNEL]).toBeDefined();
+
+    const plan = validatePlan(
+      keyframeMutator,
+      { channelId: ROT_CHANNEL, time: 0.5, value: [1, 2, 3] },
+      state,
+      'test',
+    );
+    expect(plan.ok).toBe(false);
+    if (plan.ok) return;
+    // The reason NAMES the bone and the component, so the fix is mechanical
+    // rather than a hunt for which of 23 bones the hash stood for.
+    expect(plan.reason).toContain(BONE);
+    expect(plan.reason).toContain('rotation');
+    expect(plan.reason).toContain('bone: {assetRef, childName, component}');
+  });
+
+  it('refuses on every authoring mutator, not just the one', () => {
+    const state = bakedState();
+    // 🔴 EACH SPEC GOES THROUGH ITS OWN SCHEMA FIRST. `validatePlan` does not
+    // parse — the boundary does (tool.ts / dispatchMutatorFromUI) — so a spec
+    // with a misspelt field reaches `preconditions` anyway and is refused by the
+    // gate, which is the RIGHT answer to the WRONG question: it proves the gate
+    // fires on a shape no caller could ever send. Parsing here makes the row
+    // assert what it claims. Measured: `addChannelModifier` took `kind` rather
+    // than `modifierType` in the first draft of this row, and every assertion
+    // passed. The changed-file type sweep found it; vitest could not.
+    const cases = [
+      ['keyframe', keyframeMutator, { channelId: ROT_CHANNEL, time: 0, value: [0, 0, 0] }],
+      ['removeKeyframes', removeKeyframesMutator, { channelId: ROT_CHANNEL, scope: 'all' }],
+      ['simplifyChannel', simplifyChannelMutator, { channelId: ROT_CHANNEL, tolerance: 0.1 }],
+      [
+        'setChannelExtend',
+        setChannelExtendMutator,
+        { channelId: ROT_CHANNEL, before: 'hold', after: 'hold' },
+      ],
+      [
+        'setKeyframeInterp',
+        setKeyframeInterpMutator,
+        { channelId: ROT_CHANNEL, scope: 'all', easing: 'linear' },
+      ],
+      [
+        'addChannelModifier',
+        addChannelModifierMutator,
+        { channelId: ROT_CHANNEL, modifierType: 'noise' },
+      ],
+    ] as const;
+
+    const unparsed = cases.filter(([, m, spec]) => !m.spec.safeParse(spec).success).map(([n]) => n);
+    expect(unparsed).toEqual([]);
+
+    const wrongReason = cases
+      .map(([name, m, spec]) => {
+        const plan = validatePlan(m as never, m.spec.parse(spec) as never, state, 't');
+        return [name, plan] as const;
+      })
+      .filter(([, plan]) => plan.ok || !plan.reason.includes('address a bone by its parts'))
+      .map(([n]) => n);
+    // Named, not counted: a count cannot tell "all six refused for the right
+    // reason" from "one of them refused for an unrelated schema error".
+    expect(wrongReason).toEqual([]);
+  });
+
+  it('leaves an ORDINARY node\u2019s channel alone — the gate is about bones, not about ids', () => {
+    // The discriminator is the dual key, not the node type: a channel with no
+    // `assetRef`/`childName` is an object's or a camera's, and the id form is
+    // the only way to address one.
+    const state = bakedState({
+      n_plain_channel: {
+        id: 'n_plain_channel',
+        type: 'KeyframeChannelVec3',
+        params: {
+          name: 'cube position',
+          target: 'n_cube',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+        },
+        inputs: {},
+      },
+    });
+    const plan = validatePlan(
+      keyframeMutator,
+      { channelId: 'n_plain_channel', time: 0.5, value: [1, 2, 3] },
+      state,
+      'test',
+    );
+    expect(plan.ok).toBe(true);
   });
 });
 

@@ -34,6 +34,21 @@
 //   bone      — a glTF bone's TRS component. May or may not have a channel yet;
 //               that is the caller's business, not the caller's problem.
 //
+// 🔑 AND THE SPLIT IS ENFORCED, NOT DOCUMENTED (#889 slice 3). `resolveChannelAddress`
+// REFUSES a `channelId` that names a bone's channel. Without that, "address a bone
+// by its parts" is a convention, and a convention is kept by whoever noticed it:
+// the id form works perfectly for a bone that HAS been edited, so a call site
+// written against one is green in every test that ran after an edit and silently
+// wrong on the 22 bones of 23 that nobody has touched. The refusal turns a
+// condition a caller must remember into one it cannot get wrong — and it names
+// the bone, so the fix is mechanical.
+//
+// This became enforceable only once nothing needed the old road: the three UI
+// surfaces that addressed an already-existing bone channel by id (the NPanel
+// diamond's delete, and both Auto-Key chokepoints) now take the bone form on
+// BOTH sides of their "does it have a channel yet" branch, which collapses that
+// branch rather than duplicating it.
+//
 // REF: src/app/animate/ensureChannelForBone.ts (the mint + the seed);
 //      src/agent/mutators/builders/bakeGltfChannel.ts (the same spec shape);
 //      src/agent/mutators/types.ts:113 (buildClosureSpec takes no state);
@@ -47,6 +62,35 @@ import type { NodeId, Op } from '../../../core/dag/types';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
 import { ensureChannelForBone } from '../../../app/animate/ensureChannelForBone';
 import { BAKED_COMPONENTS, type BakedComponent } from './bakeChannelOps';
+
+/**
+ * The agent-facing address contract, WORD FOR WORD, for every authoring mutator's
+ * `description`.
+ *
+ * It is a shared constant because the model never sees the schema — `listMutators`
+ * returns name + first sentence, `getMutator` the description + contract, and the
+ * spec argument is a free-form object composed by copying `specExample`. So the
+ * description IS the contract, and `specExample` is a SINGLE object that cannot
+ * show two addressing forms at once. Six copies of a paragraph that must say the
+ * same thing is six chances for one of them to keep saying the old thing after the
+ * rule changes — which for this surface is silent in both directions: the mutator
+ * still works, typechecking still passes, and only the caller is misinformed.
+ */
+export const CHANNEL_ADDRESS_DOC =
+  'Address the channel EITHER by `channelId` (one that already exists and is NOT a ' +
+  'glTF bone\u2019s) OR by `bone` = {assetRef, childName, component} for a glTF bone, ' +
+  'which mints that bone\u2019s channel, seeded from the clip, when it has none yet. ' +
+  'Exactly one of the two. A bone MUST use the bone form: `channelId` is REFUSED for a ' +
+  'bone\u2019s channel even when that channel already exists, because an id can only name ' +
+  'something that exists and under copy-on-write most bones have no channel.';
+
+/** The same contract for a SUBTRACTIVE op, which addresses without ever minting. */
+export const CHANNEL_ADDRESS_DOC_NO_MINT =
+  'Address the channel EITHER by `channelId` (one that already exists and is NOT a ' +
+  'glTF bone\u2019s) OR by `bone` = {assetRef, childName, component} for a glTF bone. ' +
+  'Exactly one of the two, and a bone MUST use the bone form \u2014 `channelId` is REFUSED ' +
+  'for a bone\u2019s channel. The bone form never mints: a bone with no channel follows the ' +
+  'clip and has no edit to remove, so it is refused rather than handed an empty channel.';
 
 /** The bone form: the parts a channel id is hashed FROM, so both the bone's id
  *  and the channel's id are pure functions of the spec. */
@@ -158,10 +202,45 @@ export function resolveChannelAddress(
     // asserted so a direct caller that skipped `safeParse` gets a reason.
     return { ok: false, reason: 'no channel address: provide `channelId` or `bone`.' };
   }
-  if (!state.nodes[channelId]) {
+  const node = state.nodes[channelId];
+  if (!node) {
     return { ok: false, reason: `channelId "${channelId}" not in DAG.` };
   }
+  const asBone = boneKeyOf(node);
+  if (asBone) {
+    return {
+      ok: false,
+      reason:
+        `channelId "${channelId}" is bone "${asBone.childName}"'s ${asBone.component} channel — ` +
+        'address a bone by its parts: `bone: {assetRef, childName, component}`. An id can only ' +
+        'name a channel that already exists, and under copy-on-write most bones have none.',
+    };
+  }
   return { ok: true, channelId, mintOps: [] };
+}
+
+/**
+ * The bone a channel belongs to, or null when it is not a bone's channel.
+ *
+ * Reads the dual key `bakeChannelOpsForBone` writes and the renderer's
+ * enumerator matches on. Deliberately NOT the `nodeNameMap` membership test
+ * `bakedGltfChannels` uses: that answers "does this channel belong to THIS
+ * asset", which needs the asset in hand, and the question here is the weaker
+ * "is this a bone's channel at all" — answerable from the node alone, which is
+ * all `resolveChannelAddress` has.
+ */
+function boneKeyOf(node: {
+  readonly type: string;
+  readonly params?: unknown;
+}): { childName: string; component: string } | null {
+  if (node.type !== 'KeyframeChannelVec3') return null;
+  const p = node.params as
+    | { assetRef?: unknown; childName?: unknown; paramPath?: unknown }
+    | undefined;
+  if (typeof p?.assetRef !== 'string' || p.assetRef.length === 0) return null;
+  if (typeof p?.childName !== 'string' || p.childName.length === 0) return null;
+  if (typeof p?.paramPath !== 'string') return null;
+  return { childName: p.childName, component: p.paramPath };
 }
 
 /**

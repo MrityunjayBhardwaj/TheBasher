@@ -25,6 +25,7 @@ import {
   type HandleType,
 } from '../../../nodes/keyframeInterp';
 import {
+  CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   channelViewAfterMint,
@@ -92,7 +93,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "channel's default. Use mutator.timeline.addChannel to create a channel on an " +
     'ordinary node. To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
+    CHANNEL_ADDRESS_DOC,
   spec: KeyframeSpec,
   specExample: {
     channelId: 'cube_position_channel',

@@ -25,6 +25,7 @@ import { useDagStore } from '../core/dag/store';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
+import { boneComponentAddress } from './animate/clipRowMint';
 import { useTimeStore } from './stores/timeStore';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
 
@@ -77,9 +78,18 @@ export function ParamDiamond({
       }
       const t = resolved.onKeySeconds ?? null;
       if (t === null) return; // Alt off-key → silent no-op
+      // A bone is addressed by its PARTS, never by the channel's id. The id
+      // works here only because `animState !== 'none'` already proved a channel
+      // exists — a precondition this call site happens to hold and cannot
+      // export. The parts hold in both worlds, and when the bone has no
+      // authored channel the refusal says so ("it follows the clip; there is
+      // nothing to remove") instead of "not in DAG", which reads as corruption.
+      // `removeKeyframes` addresses without minting: clearing an edit must not
+      // create one.
+      const bone = boneComponentAddress(useDagStore.getState().state, nodeId, paramPath);
       const del = dispatchMutatorFromUI(
         'mutator.timeline.removeKeyframes',
-        { channelId: resolved.channelId, scope: { time: t } },
+        bone ? { bone, scope: { time: t } } : { channelId: resolved.channelId, scope: { time: t } },
         `Delete key ${nodeId}.${paramPath}`,
       );
       if (!del.ok) {

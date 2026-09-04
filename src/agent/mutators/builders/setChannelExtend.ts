@@ -25,6 +25,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { EXTRAPOLATE_RULES, type ChannelExtrapolate } from '../../../nodes/keyframeInterp';
 import {
+  CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   channelViewAfterMint,
@@ -78,7 +79,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     'authored keyframes and the in-range curve are untouched — only the ' +
     'out-of-range tails change. For repeating/mirroring a range, add a Cycles ' +
     'F-Modifier via mutator.timeline.addChannelModifier instead.' +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
+    CHANNEL_ADDRESS_DOC,
   spec: SetChannelExtendSpec,
   specExample: {
     channelId: 'cube_position_channel',

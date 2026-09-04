@@ -33,6 +33,7 @@ import {
   type FChannelModifier,
 } from '../../../nodes/channelModifiers';
 import {
+  CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   channelViewAfterMint,
@@ -108,7 +109,7 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
     'to tune fields in one call (e.g. { strength: 3, offset: 10 } for a noise, or ' +
     '{ coefficients: [0, 2] } for a generator). Appends to the stack unless ' +
     '`index` is given. Tune further later with dag.exec setParam on `modifiers`.' +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
+    CHANNEL_ADDRESS_DOC,
   spec: AddChannelModifierSpec,
   specExample: {
     channelId: 'cube_position_channel',

@@ -35,6 +35,7 @@ import {
   type HandleType,
 } from '../../../nodes/keyframeInterp';
 import {
+  CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   channelViewAfterMint,
@@ -114,7 +115,7 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     "'free' for linear/cubic keys. `scope` = 'all' (every key, the default) or " +
     '{ time } (the key at that exact time). Only the provided fields change; each ' +
     "key's time and value are preserved." +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone, which mints that bone\u2019s channel, seeded from the clip, when it has none yet. Exactly one of the two.',
+    CHANNEL_ADDRESS_DOC,
   spec: SetKeyframeInterpSpec,
   specExample: {
     channelId: 'cube_position_channel',

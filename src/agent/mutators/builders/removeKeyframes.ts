@@ -36,6 +36,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
 import {
+  CHANNEL_ADDRESS_DOC_NO_MINT,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
   resolveChannelAddress,
@@ -63,7 +64,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     'when there is nothing to remove. The channel node and its wiring ' +
     '(target / paramPath / TimeSource / AnimationLayer) are preserved ' +
     'either way; only the keyframes array changes. ' +
-    'Address the channel EITHER by `channelId` (one that already exists) OR by `bone` = {assetRef, childName, component} for a glTF bone. Exactly one of the two. The bone form never mints: a bone with no channel follows the clip and has no edit to remove, so it is refused rather than handed an empty channel.',
+    CHANNEL_ADDRESS_DOC_NO_MINT,
   spec: RemoveKeyframesSpec,
   specExample: {
     channelId: 'cube_position_channel',

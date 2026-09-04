@@ -350,7 +350,16 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   const easing = sample.easing;
 
   // 4 — validate removeKeyframes({time:fromTime}) against fork1.
-  const rParsed = removeKeyframes.spec.safeParse({ channelId, scope: { time: fromTime } });
+  //
+  // Addressed by the BONE, not by `channelId`, even though the mint above has
+  // already put the channel in `fork1` and the id would resolve. The id form
+  // refuses a bone's channel on purpose (channelAddress.ts): a call site that
+  // holds an id holds a precondition — "this channel exists" — that it cannot
+  // export to the next reader, and this composite's precondition is true only
+  // because of a fork three steps up. The parts carry no precondition, and both
+  // steps below find the minted channel and add nothing.
+  const bone = { assetRef, childName, component };
+  const rParsed = removeKeyframes.spec.safeParse({ bone, scope: { time: fromTime } });
   if (!rParsed.success) {
     return { ok: false, reason: `removeKeyframes spec invalid: ${rParsed.error.message}` };
   }
@@ -368,7 +377,7 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   }
 
   // 6 — validate keyframe({time:toTime,value,easing}) against fork2.
-  const kParsed = keyframe.spec.safeParse({ channelId, time: toTime, value, easing });
+  const kParsed = keyframe.spec.safeParse({ bone, time: toTime, value, easing });
   if (!kParsed.success) {
     return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
   }

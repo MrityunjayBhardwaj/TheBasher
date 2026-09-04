@@ -148,26 +148,34 @@ export function keyParamFromTransient(
   const transient = useTransientEditStore.getState().get(nodeId, paramPath);
   const v = transient ? transient.value : authoredValue;
 
+  // 🔑 A BONE TAKES ONE ROAD, WHETHER OR NOT IT ALREADY HAS A CHANNEL.
+  //
+  // The `has a channel?` branch below is the right question for an ordinary
+  // node, where the two answers need two different mutators. For a bone it is
+  // the wrong question TWICE OVER. On the 'none' side the first-key composite
+  // builds a channel through `addChannel`, whose id is the generic
+  // `<target>_<paramPath>_channel` and which carries none of the dual key the
+  // renderer's enumerator matches on — a key that appears in the dopesheet and
+  // drives nothing. On the other side it addresses the channel by ID, which
+  // works only for as long as the channel happens to exist, so a caller is
+  // green in every test that ran after an edit and broken on the 22 bones of 23
+  // that nobody has touched.
+  //
+  // The bone form answers both: `resolveChannelAddress` mints when there is no
+  // channel and returns the existing one when there is, in the same plan and
+  // one undo entry. So the branch collapses, and with it the obligation to keep
+  // its two arms agreeing.
+  const bone = boneComponentAddress(dagState, nodeId, paramPath);
+
   let result: { ok: true } | { ok: false; reason: string };
-  if (paramAnimationState(dagState, nodeId, paramPath, frame) === 'none') {
-    // A glTF bone takes the BONE road, not the first-key composite. The
-    // composite builds a channel through `addChannel`, whose id is the generic
-    // `<target>_<paramPath>_channel` and which carries none of the dual key the
-    // renderer's enumerator matches on — so the key would appear in the
-    // dopesheet and drive nothing. The `keyframe` Mutator's bone form mints the
-    // content-addressed channel, seeded from the clip, and writes the key in the
-    // same plan (one undo entry).
-    //
-    // Unreachable before copy-on-write: an eager bake gave every bone a channel,
-    // so `paramAnimationState` never answered 'none' for one.
-    const bone = boneComponentAddress(dagState, nodeId, paramPath);
-    result = bone
-      ? dispatchMutatorFromUI(
-          'mutator.timeline.keyframe',
-          { bone, time: seconds, value: v },
-          `Key ${nodeId}.${paramPath}`,
-        )
-      : dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
+  if (bone) {
+    result = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { bone, time: seconds, value: v },
+      `Key ${nodeId}.${paramPath}`,
+    );
+  } else if (paramAnimationState(dagState, nodeId, paramPath, frame) === 'none') {
+    result = dispatchFirstKeyComposite({ targetId: nodeId, paramPath, value: v, seconds });
   } else {
     const resolved = resolveChannel(dagState.nodes, nodeId, paramPath, frame);
     if (!resolved) {
@@ -210,12 +218,22 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
   // v0.7 #199: the key lands on the node directly — no AnimationLayer wrapper (V57).
   const targetId = nodeId;
 
+  // A bone takes the bone road on BOTH sides of the exists question — see
+  // `keyParamFromTransient` above, which carries the reasoning at length.
+  const bone = boneComponentAddress(dagState, targetId, paramPath);
+
   // `paramAnimationState !== 'none'` ⇔ a KeyframeChannel* already animates
   // this (targetId, paramPath) — the SAME pure scan the diamond uses (C1).
   const exists = paramAnimationState(dagState, targetId, paramPath, frame) !== 'none';
 
   let result: { ok: true } | { ok: false; reason: string };
-  if (!exists) {
+  if (bone) {
+    result = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { bone, time: seconds, value },
+      `Auto-Key ${targetId}.${paramPath}`,
+    );
+  } else if (!exists) {
     result = dispatchFirstKeyComposite({ targetId, paramPath, value, seconds });
   } else {
     const resolved = resolveChannel(dagState.nodes, targetId, paramPath, frame);
