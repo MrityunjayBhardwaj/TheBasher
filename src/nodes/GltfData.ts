@@ -27,19 +27,40 @@
 // `BakedData` failure mode, and it does not apply here: the geometry half is a recipe
 // the registry can resolve since #367, so the value never has to carry buffers.
 //
-// ── WHY THE POSE FLAGS LIVE HERE AND NOT ON THE OBJECT ───────────────────────────────
+// ── WHY THE POSE FLAGS DO **NOT** LIVE HERE ──────────────────────────────────────────
 //
 // `overridden` is the manual band's win signal: `manual → baked channel → clip → base`
 // (resolveGltfChildTransform.ts). It exists because the importer SEEDS a child's TRS
 // with its captured base pose, so value-equality cannot tell "the director dragged this
 // bone back to base" from "this IS base" — only an explicit flag can, and dropping it
-// would let the clip resurface under an author's own edit.
+// would let the clip resurface under an author's own edit. That much is unchanged.
 //
-// It sits on the DATA half because it is a fact about this object's relationship to the
-// asset it was imported from, which is precisely what this node describes. The
-// alternative — putting it on `Object` — would give every box, camera and light three
-// dead booleans to carry a glTF-only concern, which is the parallel vocabulary this
-// epic exists to remove. The pose itself stays on the Object, universal and unchanged.
+// An earlier draft of this file put the flags HERE, arguing they are a fact about the
+// child's relationship to its source asset. That argument was reversed on grounding, and
+// the reason is worth keeping because it is not obvious:
+//
+//   · Blender records an override on the ID that OWNS the overridden property —
+//     `IDOverrideLibraryProperty.rna_path` is "RNA path leading to that property, from
+//     owning ID", and the container hangs off `ID.override_library`, one per ID. After
+//     this split the pose is the OBJECT's property, so the record is the Object's.
+//   · Blender answers the identical object↔data question one value over the same way:
+//     `material_slots[n].link ∈ {DATA, OBJECT}` puts the discriminant on the Object and
+//     defaults to the data.
+//   · Basher already ships exactly that shape — `Object.slotOverrides` (#645), whose own
+//     comment cites `link == DATA`.
+//
+// The objection that drove the first draft — "putting it on `Object` gives every box,
+// camera and light three dead booleans" — is void for the shape actually used. It is
+// `.optional()` and sparse, so a box carries NOTHING, not three `false`s, and there is a
+// passing assertion that the key is absent from a plain Object's value
+// (`objectSlotOverrides.test.ts` makes the same claim for its sibling).
+//
+// The decisive constraint is mechanical rather than aesthetic: the panel's override
+// decorator resolves the descriptor from ONE node's type and reads the authored bit from
+// THAT SAME node's params (`NPanel.overrideInfoFor`), for a param path that must be one
+// of that node's own rows. With the bit here and the TRS on the Object, neither key
+// works — this node has no TRS rows, and the Object has no bit. Splitting them would
+// need a hop that call site does not have.
 //
 // REF: src/nodes/SphereData.ts (the node template); src/nodes/GltfChild.ts (the fused
 //      kind this splits); src/app/resolveGltfChildTransform.ts (the precedence rule);
@@ -80,18 +101,6 @@ export const GltfDataParams = z.object({
    * `MeshDataValue.materialSlots` is typed to say so rather than synthesising a grey.
    */
   materialSlots: z.array(openpbrMaterialSchema().nullable()).optional(),
-  /**
-   * The manual-override dirty signal, per TRS component — see the header. `true` means
-   * "the director moved this component", so the manual band wins over any active clip.
-   * Default all-false: a freshly imported child carries only its captured base.
-   */
-  overridden: z
-    .object({
-      position: z.boolean(),
-      rotation: z.boolean(),
-      scale: z.boolean(),
-    })
-    .default({ position: false, rotation: false, scale: false }),
 });
 export type GltfDataParams = z.infer<typeof GltfDataParams>;
 
@@ -109,10 +118,8 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
   //
   // A home names the section that RENDERS a param. `material` renders, exactly as it does
   // on every other data node. The other four do not: `assetRef` and `childName` are the
-  // child's ADDRESS (the fused kind homes neither, for the same reason), `materialSlots` is
-  // a captured readout, and `overridden` is an internal dirty flag the gizmo write path
-  // sets alongside a value — homing it would put three checkboxes in front of a director
-  // for a signal they never author.
+  // child's ADDRESS (the fused kind homes neither, for the same reason), and `materialSlots` is
+  // a captured readout.
   //
   // Routing them "for completeness" is the specific trap this split has already paid for
   // once: a declaration written so a field would not look empty, believed afterwards by

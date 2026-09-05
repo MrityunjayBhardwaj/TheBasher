@@ -178,7 +178,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -257,4 +257,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // the derived half of the claim that nothing existing was re-homed to make room for it.
 // The row is one cell because the node's output is a function of its three INPUTS; there
 // is nothing else about it to author as a param, which is the point of the node.
-export const GOLDEN_TOTALS = { types: 83, routed: 135, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 83, routed: 135, unrouted: 219 } as const;

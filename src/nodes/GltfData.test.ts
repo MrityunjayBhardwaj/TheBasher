@@ -78,10 +78,16 @@ describe('GltfData node', () => {
     expect(value.materialSlots?.[2]?.base.color).toBe('#1e9ac8');
   });
 
-  it('defaults every override flag to false — a fresh import carries only its base pose', () => {
+  it('carries NO override flags — they belong to the Object that owns the pose', () => {
+    // Reversed from an earlier draft, on grounding. An override record belongs to the ID
+    // that owns the overridden property (Blender's `IDOverrideLibraryProperty.rna_path`
+    // is "from owning ID"), and after this split the pose is the Object's. The mechanical
+    // half is sharper than the principle: the panel's decorator reads the descriptor from
+    // a node's TYPE and the authored bit from that SAME node's params, so the bit and the
+    // TRS rows it decorates cannot live on different nodes.
     const params = GltfDataParams.parse(baseParams);
 
-    expect(params.overridden).toEqual({ position: false, rotation: false, scale: false });
+    expect('overridden' in params).toBe(false);
   });
 
   it('owns no pose and no scene output', () => {
