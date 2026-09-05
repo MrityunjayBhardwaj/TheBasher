@@ -20,7 +20,10 @@ export type StrategyTopic =
   // P4 Wave C — render graph + pass dispatch.
   | 'rendering'
   // P5 Wave C — AI render bridge (ComfyUI presets + temporal coherence).
-  | 'aiRender';
+  | 'aiRender'
+  // #667 — the component scope query language. A director can type a scope since #872;
+  // this is the road by which the agent learns the field exists and what it accepts.
+  | 'componentScope';
 
 export interface StrategyResource {
   topic: StrategyTopic;
