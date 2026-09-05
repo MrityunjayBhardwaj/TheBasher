@@ -6,7 +6,7 @@
 // than a synthetic a/b/c — a row list that cannot show it is not worth drawing.
 
 import { describe, expect, it } from 'vitest';
-import { boneMapView, mapWithRow, sharedPrefix } from './boneMapRows';
+import { boneMapView, elidePrefix, mapWithRow, sharedPrefix } from './boneMapRows';
 import type { GraphNodeLike } from './graphNodes';
 
 function bone(name: string, parent = -1) {
@@ -113,7 +113,22 @@ describe('boneMapView — the rows a director reads', () => {
     const v = boneMapView(graph({ ...CORRECT_MAP, Tail: 'tail' }), 'rt')!;
     const orphan = v.rows.find((r) => r.source === 'Tail');
     expect(orphan).toBeDefined();
-    expect(orphan!.state).toBe('dangling');
+    expect(orphan!.state).toBe('orphan');
+  });
+
+  it('an ORPHAN with a perfectly valid target is still not driving anything', () => {
+    // Self-review found this reading as an ordinary `mapped` row: its target exists,
+    // so it looked healthy AND was counted in coverage — overstating the one number
+    // the panel leads with. No keyframe addresses a bone the source rig lacks.
+    const v = boneMapView(graph({ ...CORRECT_MAP, Tail: 'foot.L' }), 'rt')!;
+    const orphan = v.rows.find((r) => r.source === 'Tail')!;
+    expect(orphan.state).toBe('orphan');
+    expect(v.drivenTargets).toBe(4); // NOT 5 — foot.L was already driven by LeftFoot
+  });
+
+  it('an orphan naming an otherwise-undriven target does not inflate coverage', () => {
+    const v = boneMapView(graph({ Hips: 'hips', Tail: 'thigh.L' }), 'rt')!;
+    expect(v.drivenTargets).toBe(1);
   });
 
   it('offers the target rig its own joint names, in rig order', () => {
@@ -237,6 +252,32 @@ describe('sharedPrefix — the redundant half is what gives way', () => {
   it('the view offers FULL names even while the prefix is elided', () => {
     const v = boneMapView(graph(CORRECT_MAP), 'rt')!;
     expect(v.targetBoneNames).toContain('thigh.L');
+  });
+
+  it('the SOURCE column gets the same treatment — the defect is symmetric', () => {
+    // A Mixamo-authored clip: every row would read `mixamorig_…` and truncate.
+    // NOTE the fixture has to CARRY a prefix. The first version of this test asserted
+    // `''` against the SOMA rig, which shares nothing — so it passed whether the
+    // computation ran or not, and a falsifier that stubbed `sourcePrefix: ''` left it
+    // green. An assertion that cannot discriminate is not a test.
+    const nodes = graph(CORRECT_MAP);
+    (nodes.srcRig as { params: Record<string, unknown> }).params = {
+      bones: [bone('mixamorig_Hips'), bone('mixamorig_LeftLeg', 0), bone('mixamorig_LeftUpLeg', 0)],
+    };
+    expect(boneMapView(nodes, 'rt')!.sourcePrefix).toBe('mixamorig_');
+  });
+
+  it('NEVER blanks the odd bone out — the measured defect', () => {
+    // 22 `mixamorig_*` joints and a bare `Root`. An unguarded slice rendered `Root` as
+    // an EMPTY option, which is a picker entry a director cannot read or choose.
+    expect(elidePrefix('Root', 'mixamorig_')).toBe('Root');
+    expect(elidePrefix('mixamorig_Hips', 'mixamorig_')).toBe('Hips');
+    expect(elidePrefix('mixamorig_', 'mixamorig_')).toBe('mixamorig_');
+    expect(elidePrefix('Hips', '')).toBe('Hips');
+  });
+
+  it('and stays empty for a source rig with no convention', () => {
+    expect(boneMapView(graph(CORRECT_MAP), 'rt')!.sourcePrefix).toBe('');
   });
 });
 

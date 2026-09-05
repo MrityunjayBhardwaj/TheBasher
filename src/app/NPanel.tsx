@@ -87,7 +87,7 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
-import { boneMapView, mapWithRow } from './animate/boneMapRows';
+import { boneMapView, elidePrefix, mapWithRow } from './animate/boneMapRows';
 import { useAnimatableField } from './animate/useAnimatableField';
 import { useColorPickerInteraction } from './useColorPickerInteraction';
 import { useDragScrub } from './dragScrub';
@@ -1415,7 +1415,7 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
               dir="rtl"
               title={row.source}
             >
-              {row.source}
+              {elidePrefix(row.source, view.sourcePrefix)}
             </span>
             <span
               className={`text-center font-mono text-[10px] ${
@@ -1451,7 +1451,7 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
               ) : null}
               {view.targetBoneNames.map((name) => (
                 <option key={name} value={name} title={name}>
-                  {view.targetPrefix ? name.slice(view.targetPrefix.length) : name}
+                  {elidePrefix(name, view.targetPrefix)}
                 </option>
               ))}
             </select>

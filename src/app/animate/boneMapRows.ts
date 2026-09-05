@@ -54,7 +54,14 @@ export type BoneMapRowState =
   /** Mapped onto a name the target rig does NOT carry — the entry drives nothing.
    *  Distinct from `unmapped` because the fix is different: an unmapped bone needs
    *  a decision, a dangling one needs a correction. */
-  | 'dangling';
+  | 'dangling'
+  /** The entry's SOURCE bone is not in the source rig, so no keyframe ever addresses
+   *  it — the row drives nothing however valid its target looks.
+   *
+   *  Its own state because self-review caught it reading as an ordinary `mapped` row:
+   *  a map carried over from another clip would show a healthy pairing AND be counted
+   *  in target coverage, overstating the one number the panel leads with. */
+  | 'orphan';
 
 export interface BoneMapRow {
   /** A bone of the SOURCE rig. Read-only: the clip's vocabulary is a fact. */
@@ -80,6 +87,9 @@ export interface BoneMapView {
    *  half and the tail is the discriminating one, so the prefix is what gives way.
    *  Empty when the rig's names share nothing worth hiding. */
   readonly targetPrefix: string;
+  /** The same, for the SOURCE column. A Mixamo-authored clip makes every row read
+   *  `mixamorig_…` and truncate — the identical defect, one column to the left. */
+  readonly sourcePrefix: string;
   /** Distinct target bones actually driven. The number that predicts a frozen limb. */
   readonly drivenTargets: number;
   readonly targetTotal: number;
@@ -125,6 +135,39 @@ export function sharedPrefix(names: readonly string[]): string {
   return bestN * 2 >= names.length ? best : '';
 }
 
+/**
+ * `chooseBoneNameMap` scores every registered candidate over both name sets, and it
+ * runs on every render of this panel. The inspector subscribes to the whole node
+ * table, whose ref flips on EVERY dispatch, so dragging any unrelated param in the
+ * project re-derives this once per pointer move — the exact cost the sibling resolver
+ * in `retargetFromNodes.ts` memoizes against, and which self-review caught me not
+ * carrying across when I extracted the walk from it.
+ *
+ * Keyed on the identity of the two BONE ARRAYS, which are stable objects: a glTF rig
+ * is a cached projection of the captured skin, and a `Skeleton` node's array is
+ * replaced only when its bones are edited. So this recomputes exactly when a rig
+ * changes and is free otherwise.
+ */
+const proposalMemo = new WeakMap<
+  object,
+  WeakMap<object, { map: Readonly<Record<string, string>>; label: string | null }>
+>();
+
+function proposedMapCached(
+  sourceBones: object,
+  targetBones: object,
+  sourceNames: readonly string[],
+  targetNames: readonly string[],
+): { map: Readonly<Record<string, string>>; label: string | null } {
+  const hit = proposalMemo.get(sourceBones)?.get(targetBones);
+  if (hit) return hit;
+  const answer = proposedMap(sourceNames, targetNames);
+  let inner = proposalMemo.get(sourceBones);
+  if (!inner) proposalMemo.set(sourceBones, (inner = new WeakMap()));
+  inner.set(targetBones, answer);
+  return answer;
+}
+
 /** The proposal `chooseBoneNameMap` makes for these two rigs, as a flat record. */
 function proposedMap(
   sourceNames: readonly string[],
@@ -148,9 +191,10 @@ function proposedMap(
  */
 const GROUP_RANK: Record<string, number> = {
   dangling: 0,
-  unmapped: 1,
-  'mapped-edited': 2,
-  'mapped-preset': 3,
+  orphan: 1,
+  unmapped: 2,
+  'mapped-edited': 3,
+  'mapped-preset': 4,
 };
 
 function rank(row: BoneMapRow): number {
@@ -182,7 +226,12 @@ export function boneMapView(
   const sourceNames = sourceBones.map((b) => b.name);
   const targetNames = targetBones.map((b) => b.name);
   const targetSet = new Set(targetNames);
-  const proposal = proposedMap(sourceNames, targetNames);
+  const proposal = proposedMapCached(
+    sourceBones as unknown as object,
+    targetBones as unknown as object,
+    sourceNames,
+    targetNames,
+  );
 
   // Every source bone gets a row, plus any map key the source rig does not carry.
   // The second half matters: a map written for a different clip leaves entries
@@ -197,6 +246,7 @@ export function boneMapView(
     if (target === null || target === '') {
       return { source, target: null, state: 'unmapped', origin };
     }
+    if (!seen.has(source)) return { source, target, state: 'orphan', origin };
     return {
       source,
       target,
@@ -210,6 +260,9 @@ export function boneMapView(
     .sort((a, b) => rank(a.row) - rank(b.row) || a.i - b.i)
     .map((x) => x.row);
 
+  // ONLY `mapped`. An `orphan` names a real target bone but no keyframe addresses its
+  // source, and a `dangling` names no real bone at all; counting either inflates the
+  // one number a director reads to predict a frozen limb.
   const driven = new Set(rows.filter((r) => r.state === 'mapped').map((r) => r.target as string));
 
   return {
@@ -217,6 +270,10 @@ export function boneMapView(
     rows: ordered,
     targetBoneNames: targetNames,
     targetPrefix: sharedPrefix(targetNames),
+    // Over the SOURCE RIG's names, not over the rows: rows also carry orphan map keys
+    // from another rig, and letting a foreign vocabulary vote decides the convention
+    // of a rig it does not belong to.
+    sourcePrefix: sharedPrefix(sourceNames),
     drivenTargets: driven.size,
     targetTotal: targetNames.length,
     unmappedCount: rows.filter((r) => r.state === 'unmapped').length,
@@ -243,6 +300,20 @@ export function boneMapView(
  * the whole record is immune to any bone name, is the only shape that can express a
  * REMOVAL, and costs one small object per edit.
  */
+/**
+ * `name` with `prefix` removed — but ONLY when it actually carries it.
+ *
+ * The unguarded `slice(prefix.length)` is a real defect and this is the guard for it:
+ * a rig's odd bone out (`Root` among 22 `mixamorig_*`) does not carry the convention,
+ * so slicing ten characters off it renders an EMPTY label in the picker. The prefix is
+ * adopted by a majority precisely so the minority can exist; they must render whole.
+ */
+export function elidePrefix(name: string, prefix: string): string {
+  return prefix && name.startsWith(prefix) && name.length > prefix.length
+    ? name.slice(prefix.length)
+    : name;
+}
+
 export function mapWithRow(
   map: Readonly<Record<string, string>>,
   source: string,
