@@ -67,11 +67,33 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
 }
 
 /**
- * Fold a wall-clock time into the clip's own time domain — looping folds into
- * [0, duration), else it clamps to the range. THE one folding rule: both
- * `evaluate` and the exported per-bone samplers below go through it, so a clip
- * sampled by the band and the same clip sampled by the node cannot disagree
- * about where time `t` lands.
+ * The per-side extend rule each component takes, derived from the clip's `loop`
+ * flag. THE one rule: `evaluate` and the exported per-bone samplers both go
+ * through it, so a clip sampled by the band and the same clip sampled by the node
+ * cannot disagree about what happens outside the authored range.
+ *
+ * `loop` is TRANSPORT INTENT and is deliberately not a sampling rule. It used to
+ * be one — time was folded with `t % duration` — and a range loop cannot express
+ * travel, because it replays identical frames: a root that covers ground snapped
+ * back to its start once per period (#924).
+ *
+ * POSITION cycles WITH OFFSET; rotation cycles plain. Offset adds
+ * `(last - first)` once per period, so travel carries across the seam. It is
+ * self-limiting: for a bone whose track is constant — every bone but the root,
+ * since a retarget writes bind position for the rest — `last === first` and the
+ * offset is exactly zero. Rotation is bounded and returns to its start;
+ * offsetting it would compound a residual every cycle without bound.
+ *
+ * This MUST match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
+ * which makes the same split for a channel minted from a clip. They are the
+ * unedited and edited halves of one band, and `ensureChannelForBone`'s spec
+ * asserts they agree past the duration — it reds if either side moves alone.
+ *
+ * REF: Blender `FModifierCycles.mode_after` REPEAT vs REPEAT_OFFSET ("offset
+ * based on gradient between start and end values") layered over
+ * `FCurve.extrapolation` (default CONSTANT/hold); Houdini's per-channel extend
+ * conditions, where cycle-with-offset against plain cycle is the difference
+ * between a seamless walk and a teleport every loop.
  */
 function clipExtendRules(loop: boolean): {
   position: ChannelExtend;
@@ -125,7 +147,10 @@ export function buildClipBoneSamplers(
   const out = new Map<number, ClipBoneSampler>();
   for (const [bone, track] of groupByBone(params.keyframes)) {
     if (track.length === 0) continue;
-    const sorted = [...track].sort((a, b) => a.time - b.time);
+    // `groupByBone` already returns each track sorted ascending by time, which is
+    // what the sampler requires; re-sorting here would be a second answer to a
+    // question already answered.
+    const sorted = track;
     // `easing: 'linear'` STATES what the clip does rather than choosing for it —
     // a clip keyframe carries no easing field and interpolates linearly. The mint
     // makes the identical call for the identical reason (bakeChannelOps.ts), so an
