@@ -67,7 +67,7 @@
 //      (the shared read-side twin); vyapti V33 (read-only projection), V48 (flipY
 //      registration); hetvabhasa H178. Issue #406, follow-up from #378.
 
-import type { BufferGeometry, Material, Mesh, Object3D, Texture } from 'three';
+import type { Material, Mesh, Object3D, Texture } from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
@@ -79,6 +79,7 @@ import type {
 } from '../nodes/types';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { extractUVIslands } from './uvIslands';
+import { firstMeshGeometry } from './firstMeshGeometry';
 import { getGltfClone } from './asset/gltfCloneRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
 import { primaryMaterial } from './materialAssignment';
@@ -126,16 +127,6 @@ const TEX_LOADING: MeshTextureSource = { ...TEX_NONE, status: 'loading' };
 
 const SPACE_NONE: MeshUVSpace = { uvs: UV_NONE, texture: TEX_NONE };
 const SPACE_LOADING: MeshUVSpace = { uvs: UV_LOADING, texture: TEX_LOADING };
-
-/** First isMesh descendant's BufferGeometry under `root` (or root itself). */
-function firstMeshGeometry(root: Object3D | null | undefined): BufferGeometry | null {
-  if (!root) return null;
-  let geo: BufferGeometry | null = null;
-  root.traverse((o) => {
-    if (!geo && (o as Mesh).isMesh) geo = (o as Mesh).geometry;
-  });
-  return geo;
-}
 
 /** Union the UV islands of every mesh under a clone root (whole-asset view). */
 function extractCloneUVs(root: Object3D): EvaluatedUVs {
@@ -312,10 +303,17 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
     // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED descriptor
     // rather than the node's params — so any node that resolves to a gltf-kind geometry
     // works, not just the GltfChild type.
-    const d = geometry.descriptor as { assetRef?: string; childName?: string };
-    const clone = d.assetRef ? getGltfClone(d.assetRef) : null;
+    // #367 — NO CAST HERE ANY MORE, and the branch condition above is why. While this arm was
+    // keyed on `uvRead.status === 'elsewhere'` the descriptor stayed a union, so reading
+    // `assetRef` off it needed a widening cast — and that cast made two REQUIRED fields
+    // optional, which grew two fallbacks for states the type cannot hold. One of them
+    // (`childName` absent) would have answered with the whole asset's first mesh: a different
+    // question, silently. Keying on the discriminant narrows the descriptor, so both fields
+    // are `string` and both fallbacks are gone rather than merely unreachable.
+    const d = geometry.descriptor;
+    const clone = getGltfClone(d.assetRef);
     if (!clone) return SPACE_LOADING;
-    const sub = d.childName ? clone.getObjectByName(d.childName) : clone;
+    const sub = clone.getObjectByName(d.childName);
     const geo = firstMeshGeometry(sub);
     return {
       uvs: geo ? { uvs: extractUVIslands(geo), status: 'ok' } : UV_NONE,

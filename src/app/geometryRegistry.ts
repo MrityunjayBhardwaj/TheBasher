@@ -72,6 +72,9 @@ import { newellNormal, planarWeights } from './polygonInterpolation';
 // geometry model, and the model is the one place that should know where a kind's buffers are
 // — see `gltfCloneGeometry` below for why reaching for it here is not a fifth clone-arm.
 import { getGltfClone } from './asset/gltfCloneRegistry';
+// #367 — the same walk `resolveMeshUVSpace` makes into a clone, so the operator chain and the
+// UV editor cannot disagree about which mesh a glTF child is. See that module's header.
+import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
 
 const cache = new Map<string, BufferGeometry>();
@@ -203,15 +206,11 @@ function gltfCloneGeometry(
 ): BufferGeometry | null {
   const clone = getGltfClone(descriptor.assetRef);
   if (!clone) return null;
-  const sub = descriptor.childName ? clone.getObjectByName(descriptor.childName) : clone;
-  if (!sub) return null;
-  let found: BufferGeometry | null = null;
-  sub.traverse((o) => {
-    if (found) return;
-    const mesh = o as { isMesh?: boolean; geometry?: BufferGeometry };
-    if (mesh.isMesh && mesh.geometry) found = mesh.geometry;
-  });
-  return found;
+  // `childName` is a REQUIRED string on this descriptor member, so there is no whole-clone
+  // fallback to write: an absent name is not a state this type can be in. The earlier draft
+  // guarded it anyway and would have answered with the asset's first mesh — a different
+  // question, answered silently.
+  return firstMeshGeometry(clone.getObjectByName(descriptor.childName));
 }
 
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {

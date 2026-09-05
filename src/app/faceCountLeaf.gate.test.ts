@@ -187,6 +187,11 @@ describe('#638 the count is a leaf', () => {
       // RENDERER's side of the world, which is why it also answers to the arms ratchet in
       // `asset/gltfCloneArms.gate.test.ts` rather than only to this row.
       './asset/gltfCloneRegistry',
+      // #367 — WHICH mesh a glTF child is, shared with `resolveMeshUVSpace` rather than
+      // written twice. The duplicate copies could not disagree loudly: the chain would build
+      // from one mesh and the UV editor draw another, each correct alone. A leaf by the
+      // strictest bar in this file, asserted in the row below.
+      './firstMeshGeometry',
     ]);
   });
 
@@ -223,6 +228,10 @@ describe('#638 the count is a leaf', () => {
     // reaches for the geometry model, a node type or a store, it stops being safe to import
     // from inside the geometry model, and nothing else would say so.
     expect(importsOf('src/app/asset/gltfCloneRegistry.ts')).toEqual(['three']);
+    // #367 — the other half of that reach. One TYPE import of `three` and nothing else, which
+    // is the bar that lets the geometry model import it at all; the day it reaches for a
+    // registry, a node type or a store, this row is what says so.
+    expect(importsOf('src/app/firstMeshGeometry.ts')).toEqual(['three']);
     // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
     // one type import, no value imports at all.
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
