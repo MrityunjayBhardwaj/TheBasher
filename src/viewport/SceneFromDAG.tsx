@@ -43,7 +43,7 @@ import {
 } from '../app/dataLaneOverlay';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
-import { getForAttach } from '../app/geometryRegistry';
+import { drawnByAssetClone, getForAttach } from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import {
@@ -2543,7 +2543,13 @@ function ObjectMeshR({
     // caller knows which one it is making.
     mat && mat === data?.material ? (data?.materialKey ?? null) : null,
   );
-  const geom = data ? getForAttach(data.geometry) : null;
+  // #389 — an Object does not draw what the asset clone is already drawing. `getForAttach`
+  // resolves a glTF child's buffers since #367, so "can I draw this" and "is this mine to
+  // draw" stopped being the same question; without this the pair draws a second mesh from
+  // one geometry, and on a skinned child that second draw is the undeformed bind pose.
+  // A recipe OVER a glTF source is not clone-drawn and is unaffected — see the predicate.
+  const geom =
+    data && !drawnByAssetClone(data.geometry.descriptor) ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This
   // component is only mounted for a one-entry table (`ObjectR` dispatches the rest to
