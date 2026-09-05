@@ -159,6 +159,12 @@ describe('#638 the count is a leaf', () => {
       'three/examples/jsm/utils/BufferGeometryUtils.js',
       '../nodes/types',
       '../nodes/attributes',
+      // #723 — the matrix each copy is placed with, read here by `buildArray`/`buildMirror`
+      // and by the attribute gather in `meshAttributes.ts`. In the registry's set for the same
+      // reason `arrayCopies` is: the geometry road and the attribute road must apply the SAME
+      // matrix, and two spellings would let a mesh's positions move one way while its normals
+      // moved another — which draws plausibly and is wrong.
+      './copyTransform',
       './attributeStore',
       './faceCount',
       './pointIdentity',
@@ -184,6 +190,10 @@ describe('#638 the count is a leaf', () => {
     // copies an array descriptor means, and it is read by four modules on both sides of the ring.
     // The day it grows ANY import it stops being safe for all four, and nothing else would say so.
     expect(importsOf('src/app/arrayCopies.ts')).toEqual([]);
+    // #723 — the same claim for the copy matrix, checked rather than asserted. `three` for
+    // `Matrix4` and one TYPE import for the descriptor, and nothing else: the day it reaches
+    // for the registry, the store or a count, it stops being safe to read from both roads.
+    expect(importsOf('src/app/copyTransform.ts')).toEqual(['three', '../nodes/types']);
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',

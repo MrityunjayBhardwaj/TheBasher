@@ -49,14 +49,18 @@ import { z } from 'zod';
 /**
  * The controls a declared param can ask for.
  *
- * ONE MEMBER TODAY, deliberately. `'query'` is the component-selection field — a free-text
- * control over a small query language whose refusals are named. A colour picker (#521) is
- * the next member and is NOT added here on speculation: it needs its own widget and its own
- * row, and adding the name before the row exists would make this union a wish list rather
- * than a census of what the panel can actually draw. The `never` in the panel's exhaustive
- * switch is what forces the next member to be answered for at the site that must draw it.
+ * `'query'` is the component-selection field — a free-text control over a small query
+ * language whose refusals are named. `'color'` (#521) is the swatch-plus-hex row the
+ * material editor already draws, and it was added the way this comment said it would be:
+ * the member first, then the `never` in the panel's exhaustive switch reddening at the site
+ * that has to draw it, then the row. Observed — `Type '"color"' is not assignable to type
+ * 'never'` — rather than assumed, which is the only thing that makes the forcing function a
+ * fact rather than an intention.
+ *
+ * A member is still not added on speculation: the name and the row land together, so this
+ * union stays a census of what the panel can actually draw rather than a wish list.
  */
-export type ParamWidget = 'query';
+export type ParamWidget = 'query' | 'color';
 
 /**
  * Schema instance → the control it asks for.
@@ -90,4 +94,29 @@ export function widget<S extends z.ZodTypeAny>(kind: ParamWidget, schema: S): S 
 export function widgetOf(schema: unknown): ParamWidget | undefined {
   if (schema === null || typeof schema !== 'object') return undefined;
   return WIDGETS.get(schema);
+}
+
+/**
+ * A hex colour param, declared with the picker it is authored by (#521).
+ *
+ * ── WHY IT LIVES HERE AND NOT BESIDE A COLOUR MODULE ──────────────────────────────────
+ *
+ * `scopeParam()` lives in `componentSelection.ts` because that module owns what a scope IS —
+ * the parser, the refusal, the default. A colour has no such module: it is a hex string and
+ * nothing in this codebase owns that fact. The alternative was a file holding one function,
+ * which this project's own rule calls a function rather than a module. So it sits beside the
+ * declaration mechanism it uses, with seven callers.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────
+ *
+ * 🔴 IT ADDS NO `.refine(isHex6)`, AND THAT IS A DECISION RATHER THAN AN OVERSIGHT.
+ * `scopeParam()` refines because an unparseable query reaching the resolver is a THROW on the
+ * render walk. A non-hex colour is not: it reaches three.js, which resolves CSS names, and the
+ * panel's own field already refuses a non-hex edit before dispatching. Adding a refinement
+ * here would narrow what EXISTING SAVED PROJECTS validate against — a migration risk taken for
+ * a failure that does not occur. The widget is presentation; it must not change what the
+ * schema accepts, which is the same rule {@link widget} states about itself.
+ */
+export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
+  return widget('color', z.string().default(defaultHex));
 }

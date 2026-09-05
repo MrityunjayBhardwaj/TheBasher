@@ -184,6 +184,49 @@ export const ATTRIBUTE_TYPES = ['int', 'float', 'float2', 'float3'] as const;
 
 export type AttributeType = (typeof ATTRIBUTE_TYPES)[number];
 
+/**
+ * What a matrix may do to an attribute's values — Houdini's transform types (#723).
+ *
+ * ── WHY THIS IS NOT DERIVABLE FROM {@link AttributeType} ──────────────────────────────
+ *
+ * `AttributeType` is a STORAGE WIDTH. A `float3` may be a position, a velocity, a normal or
+ * a colour, and under a matrix those four must not be treated alike: a position follows the
+ * full matrix including its translation, a direction takes the linear part only, a normal
+ * takes the inverse-transpose of the linear part so it stays perpendicular under non-uniform
+ * scale, and a colour is not transformed at all. Nothing about the width says which.
+ *
+ * ⚠️ THE LIST AND THE TYPE ARE ONE DECLARATION, exactly as `KNOWN_DOMAINS` and
+ * `ATTRIBUTE_TYPES` are, so a member cannot be added to one without the other.
+ *
+ * ── ALL SIX ARE DECLARED, INCLUDING THE TWO NOTHING CAN HONOUR YET ────────────────────
+ *
+ * `quaternion` and `matrix` have no producer and no operator that can transform them — a
+ * mirror is IMPROPER (determinant -1), and a reflection is not a rotation, so what a
+ * quaternion should become under one is genuinely undecided. They are declared anyway and
+ * REFUSED by name where they are met, which is a different thing from being absent: a
+ * producer that has a per-point orientation can say so and get a loud, named refusal, rather
+ * than being forced to spell it as something it is not.
+ *
+ * The alternative considered and rejected was a narrower `'none' | 'direction'` covering only
+ * what today's two operators can exercise. That sizes the vocabulary to the implementation
+ * rather than to the domain, and it destroys information at the mint: a producer KNOWS
+ * whether its `float3` is a velocity or a normal, and a type that cannot record the
+ * difference makes it unrecoverable the moment the distinction starts to matter.
+ *
+ * REF: `ref/houdini/SOP.md:24` (the five types and their rules); `src/app/attributeTransform.ts`
+ *      (which of them this build can honour, and how).
+ */
+export const TRANSFORM_TYPES = [
+  'none',
+  'position',
+  'vector',
+  'normal',
+  'quaternion',
+  'matrix',
+] as const;
+
+export type TransformType = (typeof TRANSFORM_TYPES)[number];
+
 /** Components per element. Closed by a `never` — a new type must declare its width here. */
 export function componentsOf(type: AttributeType): number {
   switch (type) {
@@ -238,6 +281,18 @@ export interface AttributeData {
   readonly type: AttributeType;
   readonly count: number;
   readonly data: AttributeArray;
+  /**
+   * What a matrix may do to these values (#723). OPTIONAL, and its absence means
+   * UNCLASSIFIED rather than {@link TRANSFORM_TYPES} `'none'` — the two are deliberately
+   * different answers. `'none'` is a producer saying "a matrix must not touch this"; absent
+   * is a producer that has not said, and a `float3` that has not said is REFUSED by an
+   * operator that would transform it rather than silently carried through unchanged.
+   *
+   * Optional rather than required because the safe behaviour for an unclassified attribute
+   * already exists and is enforced elsewhere: making it required would restate `'none'` at
+   * every construction site in the codebase and buy nothing the refusal does not already give.
+   */
+  readonly transform?: TransformType;
 }
 
 /**
@@ -267,6 +322,43 @@ export const UV_MAP = 'UVMap';
  * attribute the model exists to make possible.
  */
 export type AttributeSet = Readonly<Record<string, AttributeData>>;
+
+/**
+ * The attribute called `name` AT `domain`, or `undefined` — the one seam that resolves a name
+ * against a set (#724).
+ *
+ * ── WHY A READER MUST SAY WHICH DOMAIN, RATHER THAN A PRECEDENCE ORDER DECIDING FOR IT ────
+ *
+ * A name can exist at more than one domain: the same `bevel_weight` at point and at edge, the
+ * same `Cd` at point and at corner. Houdini answers that with a strict precedence — finest
+ * wins, Vertex > Point > Primitive > Detail, which maps to our nouns as corner > point > face.
+ * That is a real answer and it is the wrong one HERE, measured rather than argued:
+ * `targetedMaterialAttributes` merges a minted FACE `material_index` over whatever the source
+ * carried, and under finest-wins a carried CORNER entry of the same name would outrank the
+ * operator's own output. A precedence order silently reverses that operator.
+ *
+ * So the rule is the stricter one, and it is the one the ladder asks for: a reader states the
+ * domain it can actually use, and an attribute at any other domain is simply not found. No
+ * precedence to remember, and no reading that depends on which entry was written last.
+ *
+ * 🔴 THIS IS NOT COSMETIC — IT WAS ALREADY WRONG IN TWO PLACES. `geometryRegistry` took
+ * `material_index` at ANY domain and used it as per-face data, and `rebuiltMeshAttributes`
+ * documented the check ("or nothing face-domain in it") without performing it. #724 was filed
+ * as latent; it was not.
+ *
+ * Total, and `null`/`undefined`-tolerant on the way in, so a caller that has no set at all asks
+ * the same question as one that does.
+ */
+export function attributeAt(
+  set: AttributeSet | null | undefined,
+  name: string,
+  domain: KnownDomain,
+): AttributeData | undefined {
+  const attribute = set?.[name] as AttributeData | undefined;
+  // An entry explicitly set to `undefined` is ABSENT — the same rule the content key rests on.
+  if (attribute === undefined || attribute === null) return undefined;
+  return attribute.domain === domain ? attribute : undefined;
+}
 
 /**
  * The element counts of a mesh's topology — the denominator every domain resolves against.

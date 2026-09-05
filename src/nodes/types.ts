@@ -440,8 +440,6 @@ export interface MaterialAssignment<M> {
   readonly indices: ArrayLike<number> | null;
 }
 
-import type { MeshUVRead } from '../app/uvAttributes';
-
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
   readonly position: Vec3;
@@ -781,6 +779,51 @@ export interface EvaluatedUVs {
   /** true when the face cap forced stride-decimation of a large mesh (no silent truncation). */
   readonly sampled: boolean;
 }
+
+/**
+ * Where the corner-domain UV layer is, or why there is none — #776.
+ *
+ * Typed rather than nulled, for the reason the whole module is: the layer can be absent while
+ * the ISLANDS are present, and a `null` key beside a drawable projection would read as "this
+ * mesh has no UVs" at a call site that can see them on screen.
+ */
+export type UVAttributeVerdict =
+  /** Minted and resident in the attribute store, under this content key. */
+  | { readonly kind: 'resident'; readonly key: string }
+  /** The buffer is there and cannot be expressed at the corner domain; this says why. */
+  | { readonly kind: 'not-derivable'; readonly why: string };
+
+/**
+ * A mesh's UVs, or the reason there are none — the same four-way answer the geometry read
+ * gives, because the UVs cannot be more available than the buffers they live in.
+ *
+ * ── #641: THIS LIVES HERE, NOT BESIDE ITS IMPLEMENTATION ──────────────────────────────
+ *
+ * It is the declared type of {@link EvaluatedMesh.uvRead}, and it was declared one layer
+ * away in `src/app/uvAttributes.ts`. That put an `import type` from `nodes/` into `app/`
+ * 443 lines inside this file, closing a cycle
+ * (`nodes/types` -> `app/uvAttributes` -> `nodes/types`) that only erasure was holding:
+ * both legs were type-only, so nothing was broken, and nothing would have been until the
+ * first VALUE crossed that edge — at the module every other module imports.
+ *
+ * Having the interface in one layer and the type of its field in another is what produced
+ * the cycle, so the type moved rather than the rule being remembered. `readMeshUVs` and the
+ * whole implementation stay in `app/uvAttributes.ts` and import this.
+ */
+export type MeshUVRead =
+  | {
+      readonly status: 'ok';
+      /** The display projection (islands), for the UV editor. */
+      readonly islands: EvaluatedUVs;
+      /** The corner-domain layer, or the named reason it could not be lifted. */
+      readonly attribute: UVAttributeVerdict;
+    }
+  /** The buffers live in a loaded asset clone — ask it, not the registry. */
+  | { readonly status: 'elsewhere' }
+  /** The bytes exist but have not been read in yet. Waiting helps. */
+  | { readonly status: 'loading' }
+  /** There genuinely are none. Waiting does not help. */
+  | { readonly status: 'none' };
 
 /**
  * The uniform consumed mesh face — one shape every mesh-producing kind projects to, so no

@@ -140,16 +140,17 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
-    // 27 = 28 − `bakeClipOntoRig` (#889 slice 3 — binding a motion no longer bakes a
+    // 28 = 29 − `bakeClipOntoRig` (#889 slice 3 — binding a motion no longer bakes a
     // channel onto every bone, so the mutator that did it has no source of truth left
     // to be; a channel is minted per-bone at edit time by `ensureChannelForBone`).
-    // (28 was 27 + `bakeClipOntoRig`; 27 was 26 + `setObjectSlotMaterial` (#645 P4 — the object-side half of
+    // (29 was 28 + `setComponentScope` (#667 — named component scopes reach the agent);
+    // 28 was 27 + `bakeClipOntoRig`; 27 was 26 + `setObjectSlotMaterial` (#645 P4 — the object-side half of
     // `setMaterialColor`: it re-points ONE slot for one object and leaves the shared data
     // node unwritten). (26 was the prior 21 + the five #283 Phase 4 NLA mutators: 4A
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
-    expect(mutators).toHaveLength(27);
+    expect(mutators).toHaveLength(28);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animation.retarget',
@@ -167,6 +168,7 @@ describe('mutator catalog', () => {
       'mutator.render.addStitch',
       'mutator.rotate',
       'mutator.scale',
+      'mutator.setComponentScope',
       'mutator.setMaterialColor',
       'mutator.setObjectSlotMaterial',
       'mutator.shot.create',
@@ -2230,11 +2232,11 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    // 28 → 27 at #889 slice 3 — `bakeClipOntoRig` was deleted rather than left
+    // 29 → 28 at #889 slice 3 — `bakeClipOntoRig` was deleted rather than left
     // emitting nothing. A registered mutator that validates, reports success and
     // changes nothing is a capability the model can reach and cannot use, and the
     // agent surface is the one place that lie would never surface as a red.
-    expect(parsed.mutators).toHaveLength(27);
+    expect(parsed.mutators).toHaveLength(28);
   });
 });
 
@@ -3870,6 +3872,7 @@ import {
   setStripTimingMutator as _setStripTimingM,
   setStripBlendMutator as _setStripBlendM,
   setTrackStateMutator as _setTrackStateM,
+  setComponentScopeMutator as _setComponentScopeM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -4053,6 +4056,18 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // node ids (adapted from each Mutator's specExample). A probe spec that
   // gate-rejects is a broken probe → the test fails loudly with the
   // rejection reason; it is never skipped.
+  // #667 — setComponentScope needs a node that ALREADY declares a `scope` param.
+  // ArrayModifier is the cheapest one; the mutator's eligibility check reads the schema,
+  // so any of the six would do and none of them is named in the production code.
+  function buildSceneWithScopedOperator(): DagState {
+    return applyOp(buildSplitScene().state, {
+      type: 'addNode',
+      nodeId: 'arr',
+      nodeType: 'ArrayModifier',
+      params: {},
+    }).next;
+  }
+
   interface ProbeEntry {
     mutator: MutatorDefinition<unknown>;
     build: () => DagState;
@@ -4272,6 +4287,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setTrackStateM as MutatorDefinition<unknown>,
       build: buildSceneForNla,
       spec: { trackId: 'nla_trk', order: 1, mute: true, solo: false },
+    },
+    // #667 — emits setParam('scope') on the operator itself: a paramPath no other
+    // Mutator writes, so the op-shape signature is distinct by construction.
+    'mutator.setComponentScope': {
+      mutator: _setComponentScopeM as MutatorDefinition<unknown>,
+      build: buildSceneWithScopedOperator,
+      spec: { nodeId: 'arr', scope: '0-5' },
     },
   };
 

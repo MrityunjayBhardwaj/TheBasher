@@ -4,12 +4,13 @@
 // REF: THESIS.md §39, vyapti V8.
 
 import { z } from 'zod';
+import { colorParam } from './paramWidget';
 import type { NodeDefinition } from '../core/dag/types';
 import type { AmbientLightValue } from './types';
 
 export const AmbientLightParams = z.object({
   intensity: z.number().min(0).max(20).default(0.4),
-  color: z.string().default('#ffffff'),
+  color: colorParam('#ffffff'),
 });
 export type AmbientLightParams = z.infer<typeof AmbientLightParams>;
 
