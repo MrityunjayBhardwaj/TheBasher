@@ -521,6 +521,92 @@ frame placeholder name (\`prev_frame_image\`).
   default works for the standard local install.`,
 };
 
+const COMPONENT_SCOPE: StrategyResource = {
+  topic: 'componentScope',
+  description:
+    "The component scope query — restricting an operator to a subset of a mesh's faces or edges.",
+  body: `# Component scope
+
+Six operators can be restricted to a SUBSET of the mesh instead of acting on all of it.
+The subset is written as a query string in the operator's \`scope\` param.
+
+| operator | what \`scope\` selects |
+| --- | --- |
+| \`ArrayModifier\` | faces |
+| \`MaskModifier\` | faces |
+| \`MirrorModifier\` | faces |
+| \`MaterialOverrideOp\` | faces |
+| \`SetMaterialOp\` | faces |
+| \`BevelModifier\` | **edges**, not faces |
+
+**Blank or absent means EVERYTHING.** That is the default and the behaviour these operators
+had before scope existed — clearing the field is how you go back to the whole mesh.
+
+## The grammar
+
+Terms are separated by spaces or commas and accumulate LEFT TO RIGHT starting from the
+empty set:
+
+- \`3\` — a single index, added.
+- \`0-5\` — an inclusive range, added.
+- \`0-10:2\` — a range with a step (0, 2, 4, 6, 8, 10).
+- \`^7\` / \`^2-4\` — REMOVE these from what has accumulated so far.
+- \`!3\` / \`!1-10\` — add the COMPLEMENT (everything except these).
+
+So \`0-9 ^3\` is "the first ten, minus index 3", and \`!0-4\` is "everything except the first
+five". Order matters: \`^3 0-9\` removes 3 from an empty set and then adds it back with the
+range, which is not the same query.
+
+Indices outside the mesh are DROPPED, not refused — \`0-999\` on a 12-face mesh selects all
+12. An INVERTED range like \`5-2\` is refused, because it cannot be an authoring intent.
+
+## The empty selection, and the trap next to it
+
+Terms accumulate from an EMPTY set, so a query that only REMOVES selects nothing:
+\`^0-11\` looks like "everything but the first twelve" and actually means **nothing at all**.
+If you want "everything except these", use the complement \`!\`, not the removal \`^\`:
+
+- \`!0-11\` — everything except 0-11. This is almost always what you meant.
+- \`^0-11\` — nothing. Removal only subtracts from what earlier terms already added.
+
+The empty selection is a legal, deliberate state — \`^0\` is its canonical spelling, and
+operators mint it when a derived selection qualifies nothing. So it is never refused. But
+\`mutator.setComponentScope\` returns an \`empty-scope:\` warning when the query you gave
+selects nothing at any mesh size. If you see that warning and did not mean it, you almost
+certainly wanted \`!\` where you wrote \`^\`, or a blank scope.
+
+## What is NOT implemented, and will be refused by name
+
+- **Wildcards** (\`arm*\`) — they match stored group NAMES, and no group can be named yet.
+- **Attribute expressions** (\`@v>0\`).
+
+These come back as a named error, not as a silent "everything". If you need one, say so to
+the user rather than substituting a numeric range that only approximates it.
+
+## Setting it
+
+Use \`agent.proposePlan\` with \`mutator.setComponentScope\`:
+
+\`\`\`
+{ mutator: "mutator.setComponentScope", intent: "bevel only the top edges",
+  spec: { nodeId: "bevel1", scope: "0-11" } }
+\`\`\`
+
+The mutator refuses a node that has no \`scope\` param and refuses a query the grammar does
+not accept, with the same message the inspector shows a director. A raw
+\`dag.exec\` \`setParam\` on \`paramPath: "scope"\` also works and is schema-checked, but it
+skips the validation gates — prefer the mutator.
+
+## Don't
+
+- Don't invent a scope when the user did not ask for one. Blank means the whole mesh, and
+  that is almost always what "add a mirror" means.
+- Don't guess face indices. If the user says "the top face", you do not have a way to
+  resolve that to an index yet — ask, or say the selection cannot be named that way.
+- Don't use a face range on \`BevelModifier\` thinking it is faces. It is edges, and the
+  counts differ.`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
@@ -531,4 +617,5 @@ export function registerAllStrategies(): void {
   registerStrategy(ANIMATION);
   registerStrategy(RENDERING);
   registerStrategy(AI_RENDER);
+  registerStrategy(COMPONENT_SCOPE);
 }

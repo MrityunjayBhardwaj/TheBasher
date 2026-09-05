@@ -22,6 +22,7 @@ const STRATEGY_TOPICS = [
   'animation',
   'rendering',
   'aiRender',
+  'componentScope',
 ] as const satisfies readonly StrategyTopic[];
 
 // Compile-time check: STRATEGY_TOPICS covers every StrategyTopic.
