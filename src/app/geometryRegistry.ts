@@ -66,6 +66,12 @@ import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
 import { arrayCopiesOf } from './arrayCopies';
 import { newellNormal, planarWeights } from './polygonInterpolation';
+// #367 — where a glTF child's buffers actually live. A LEAF by the strictest measure in
+// `faceCountLeaf.gate.test.ts`: one TYPE import of `three` and no value imports at all, the
+// same bar `copyTransform` and `pointIdentity` met. The registry needs it because it is the
+// geometry model, and the model is the one place that should know where a kind's buffers are
+// — see `gltfCloneGeometry` below for why reaching for it here is not a fifth clone-arm.
+import { getGltfClone } from './asset/gltfCloneRegistry';
 import type { ScopeDomain } from '../nodes/attributes';
 
 const cache = new Map<string, BufferGeometry>();
@@ -146,8 +152,10 @@ const primed = new Set<string>();
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
- * Returns null for a `gltf` ref (the registry does not own loaded glTF geometry —
- * the asset clone does; see header). Returns null for a `baked` MISS — the bytes
+ * Resolves a `gltf` ref THROUGH the mounted asset clone (#367) — see
+ * {@link gltfCloneGeometry}. The registry still does not OWN that geometry; it stops
+ * pretending it cannot find it. Null there means the clone has not mounted yet, which is
+ * a WAIT and is typed as one by {@link readGeometry}. Returns null for a `baked` MISS — the bytes
  * live in OPFS and must be loaded asynchronously by the renderer hook, then
  * `prime`d (see header). Returns the SAME instance for repeated calls with an
  * identical key (cache hit).
@@ -159,8 +167,55 @@ const primed = new Set<string>();
  * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
  * outside this module reaches the cache through one of them.
  */
+/**
+ * A glTF child's buffers, read out of the mounted asset clone (#367).
+ *
+ * ── WHY THIS IS THE MODEL AND NOT A FIFTH CLONE-ARM ──────────────────────────────────
+ *
+ * `gltfCloneArms.gate.test.ts` ratchets the modules that reach `getGltfClone`, and its rule
+ * is that the count may only go DOWN. This is a call to `getGltfClone`, so it has to answer
+ * that gate rather than slip past it. The gate's own partition is the answer: it already
+ * excludes `SceneFromDAG` because that file PRODUCES clones — "it is the thing being reached
+ * into" — rather than reaching around the model. An ARM is a consumer that goes AROUND the
+ * geometry model into the renderer because the model has nowhere to put imported buffers.
+ * This is not that. This IS the geometry model, and it is the one place that should know
+ * where a kind's buffers live. The gate now names three classes rather than two, and the
+ * model class is capped at ONE member and asserted BY PATH, so a genuine fifth arm still reds.
+ *
+ * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────────────
+ *
+ * It does not CACHE. The returned geometry belongs to the live clone the renderer is
+ * drawing, so caching it would put a foreign, mutable, renderer-owned instance under a key
+ * the sweep can evict and dispose — and the key `gltf|assetRef|childName` is not
+ * content-derived, so a clone swap would leave it pointing at a disposed object. Reading
+ * through on every call means the answer always describes the CURRENT clone, and it costs a
+ * `Map` lookup plus a `traverse`, which is exactly what the four clone-arms already do.
+ *
+ * Not caching also keeps the null honest: the same ref answers `null` before the clone
+ * mounts and geometry after, with nothing to invalidate in between. That is measured, and it
+ * is what makes availability a re-render question rather than a negative-caching one.
+ *
+ * It also does not take OWNERSHIP. The caller must treat this exactly as the clone-arms do —
+ * read it, never mutate it, clone before writing.
+ */
+function gltfCloneGeometry(
+  descriptor: Extract<GeometryDescriptor, { kind: 'gltf' }>,
+): BufferGeometry | null {
+  const clone = getGltfClone(descriptor.assetRef);
+  if (!clone) return null;
+  const sub = descriptor.childName ? clone.getObjectByName(descriptor.childName) : clone;
+  if (!sub) return null;
+  let found: BufferGeometry | null = null;
+  sub.traverse((o) => {
+    if (found) return;
+    const mesh = o as { isMesh?: boolean; geometry?: BufferGeometry };
+    if (mesh.isMesh && mesh.geometry) found = mesh.geometry;
+  });
+  return found;
+}
+
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
-  if (ref.descriptor.kind === 'gltf') return null;
+  if (ref.descriptor.kind === 'gltf') return gltfCloneGeometry(ref.descriptor);
   const hit = cache.get(ref.key);
   if (hit) return hit;
   if (ref.descriptor.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
@@ -280,11 +335,21 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
  *                  A miss is "not read yet".
  *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
  *                  An absent clone is "still loading the asset".
- *   'unreachable'— a RECIPE whose source the registry can never `get`. Composition only:
- *                  no leaf kind is unreachable. A miss is permanent until #367 makes a
- *                  glTF handle resolve for the operator chain.
+ *   'mounting'   — a RECIPE rooted at a glTF source. The registry BUILDS it, unlike 'clone',
+ *                  but only once the asset clone is mounted and `get` can reach the source's
+ *                  buffers through it. A miss is "the asset has not mounted yet".
+ *                  Composition only: no leaf kind is 'mounting'.
+ *
+ * 🔴 THIS CLASS REPLACED 'unreachable', AND #367 IS PRECISELY WHY. That class read "a RECIPE
+ * whose source the registry can never `get`", and its own text named its expiry: "a miss is
+ * permanent until #367 makes a glTF handle resolve for the operator chain." `get` now
+ * delegates to the clone, so the build CAN succeed and nothing is permanently unreachable any
+ * more. Keeping the old name would have left `readGeometry` answering `none` — declared to
+ * mean "there genuinely is none, and waiting will not help" — and then answering `ok` one
+ * mount later. That is the #708 defect arriving again by the clone road, so the class is
+ * renamed with the behaviour rather than after it.
  */
-export type GeometryAvailability = 'procedural' | 'primed' | 'clone' | 'unreachable';
+export type GeometryAvailability = 'procedural' | 'primed' | 'clone' | 'mounting';
 
 /**
  * The availability class of a geometry kind.
@@ -348,12 +413,16 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
  *
  * It is not identity, and the exception is the whole reason this is a function. A `clone`
  * source does not make the generator a `clone`: nothing loads an ARRAY of a glTF child into
- * an asset clone, so `elsewhere` ("look in the clone for this geometry") would be false, and
- * it would reach `resolveMeshUVSpace`, which treats that status as "this descriptor IS a
- * gltf descriptor" and reads `assetRef` straight off it. Handed an array descriptor it finds
- * none, gets no clone, and returns a permanent loading state. So a recipe over a clone is
- * `unreachable`: `get` on a gltf ref always returns null and clone loading puts nothing in
- * the registry, so the build can never succeed here — until #367.
+ * an asset clone, so `elsewhere` ("look in the clone for this geometry") would be false —
+ * the array's buffers are built BY THE REGISTRY, out of the source it reads through the
+ * clone. A recipe over a clone is therefore `mounting`: buildable here, but not until the
+ * asset mounts.
+ *
+ * 🔴 IT RETURNED `unreachable` UNTIL #367, and that answer was true only because `get`
+ * declined the source. Now that `get` delegates, `unreachable` would be a statement the
+ * registry disproves one mount later — the #708 defect, arriving by the clone road instead
+ * of the baked one. Which is why the delegation and this arm are ONE change: shipping the
+ * first without the second ships a known-false answer on purpose.
  *
  * Closed by a `never` like its caller: a fifth availability class must decide what it means
  * under composition rather than inherit an arm by accident.
@@ -367,12 +436,13 @@ function composedOverSource(source: GeometryAvailability): GeometryAvailability 
     // defect this function exists to fix.
     case 'primed':
       return 'primed';
-    // See the block above: reachable for the source, never for a recipe over it.
+    // See the block above: the source is read out of the clone, and the recipe over it is
+    // built here — so it waits on the mount rather than being unreachable.
     case 'clone':
-      return 'unreachable';
-    // Already blocked further down the chain; blockedness does not clear by nesting.
-    case 'unreachable':
-      return 'unreachable';
+      return 'mounting';
+    // Already waiting further down the chain; a wait does not clear by nesting.
+    case 'mounting':
+      return 'mounting';
     default: {
       const unreachable: never = source;
       return unreachable;
@@ -408,15 +478,19 @@ export function readGeometry(ref: GeometryRef): GeometryReadResult {
   switch (availability) {
     case 'clone':
       return { status: 'elsewhere', availability };
+    // Both are waits, and they are one arm because the CALLER's response is the same: hold
+    // the loading state and read again. What differs is who ends the wait — the OPFS read for
+    // 'primed', the renderer mounting a clone for 'mounting' (#367) — and that difference is
+    // carried in `availability`, which travels with the result for exactly this reason.
     case 'primed':
+    case 'mounting':
       return { status: 'pending', availability };
-    // #708 — both mean "waiting will not help", and they are kept as separate CLASSES
-    // rather than folded, because they become false at different moments: 'procedural'
-    // is a malformed descriptor and stays wrong forever, while 'unreachable' is a
-    // standing limitation that #367 is expected to lift. Folding them would lose the
-    // difference exactly where the next reader needs it.
+    // #367 — 'mounting' MOVED OUT of this arm and into 'pending' above, which is the whole
+    // point of the class. It used to sit here as 'unreachable' beside 'procedural' because
+    // the two genuinely shared "waiting will not help". They no longer do: a recipe over a
+    // glTF source becomes buildable the moment the asset mounts, so answering `none` here
+    // would be a statement this same function contradicts on the next call.
     case 'procedural':
-    case 'unreachable':
       return { status: 'none', availability };
     default: {
       const unreachable: never = availability;

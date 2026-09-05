@@ -240,6 +240,10 @@ function textureFromMaterial(
  * `elsewhere` cannot arrive here — the clone-backed arm above answers those from the asset
  * itself — so it is mapped to `none` explicitly rather than by a default, which is what
  * makes a fifth status a visible edit instead of a silent collapse into "no UVs".
+ *
+ * #367 — that exclusion still holds, and now by construction rather than by coincidence:
+ * `elsewhere` is produced only for a `gltf` descriptor, and every `gltf` descriptor is taken
+ * by the arm above before reaching here.
  */
 function uvSourceOf(read: MeshUVRead): UVSource {
   switch (read.status) {
@@ -283,12 +287,28 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
 
   const geometry = mesh.geometry;
 
-  // #635 — the branch is taken on the RESOLVER'S TYPED ANSWER, not on a re-derived
-  // availability class. `elsewhere` means exactly "these buffers live in a loaded asset
-  // clone, not in the registry", which is the glTF road and nothing else. This module
-  // therefore no longer imports the geometry registry at all: the rule it used to restate
-  // now reaches it as a type, through one read the resolver already made.
-  if (mesh.uvRead.status === 'elsewhere') {
+  // #635 took this branch on the RESOLVER'S TYPED ANSWER rather than a re-derived
+  // availability class, because `elsewhere` meant exactly "these buffers live in a loaded
+  // asset clone, not in the registry" — the glTF road and nothing else.
+  //
+  // 🔴 #367 BROKE THAT COINCIDENCE, AND THE BRANCH NOW ASKS THE QUESTION IT ACTUALLY MEANS.
+  // The registry delegates a `gltf` read to the mounted clone, so `elsewhere` no longer
+  // identifies glTF — it now means "the clone has not mounted YET", and a mounted glTF mesh
+  // reads `ok`. One status was answering two questions: where the UVs come from, and where
+  // the TEXTURE comes from. Only the first moved.
+  //
+  // The texture did not move because glTF materials have no data half at all (#389/#605):
+  // `resolveEvaluatedMesh` gives a glTF mesh `EMPTY_ASSIGNMENT`, so the registry-backed arm
+  // below resolves its texture to `none`. MEASURED, on a mounted clone carrying a base-colour
+  // map: keyed on the status, the arm flipped and the UV editor's backdrop went from `ok`
+  // with an image to `none` — and NOTHING IN THE SUITE REDDENED. The row below is what makes
+  // that observable, because nothing else did.
+  //
+  // So the branch keys on the descriptor's own discriminant, which is the fact its body
+  // already consumes two lines down. That is not the re-derived availability class #635
+  // removed — it is a question about where this mesh's MATERIALS live, asked of the only
+  // thing that can answer it.
+  if (geometry.descriptor.kind === 'gltf') {
     // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED descriptor
     // rather than the node's params — so any node that resolves to a gltf-kind geometry
     // works, not just the GltfChild type.

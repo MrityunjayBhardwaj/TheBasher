@@ -18,12 +18,15 @@
 // fail typecheck) is verified by the compiler, not here — falsified once by adding a
 // hypothetical kind and observing TS2322 at the `never` branch.
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
+import { buildDefaultDagState } from '../core/project/default';
+import { registerGltfClone, __clearGltfCloneRegistryForTests } from './asset/gltfCloneRegistry';
+import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from 'three';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -143,6 +146,79 @@ describe('resolveMeshUVSpace — capability reach, not a node-type list (#378)',
     const space = resolveMeshUVSpace(emptyDagState(), 'nope');
     expect(space.uvs.status).toBe('none');
     expect(space.texture.status).toBe('none');
+  });
+});
+
+describe('resolveMeshUVSpace — a glTF mesh keeps BOTH facets once its clone mounts (#367)', () => {
+  // ── WHY THIS SUITE EXISTS ────────────────────────────────────────────────────────────
+  //
+  // Before #367, `readGeometry` answered `elsewhere` for every glTF mesh, and this module
+  // used that status to decide "read both facets off the asset clone". Two questions were
+  // riding on one answer: where the UVs come from, and where the TEXTURE comes from.
+  //
+  // #367 made the registry resolve a glTF handle through the mounted clone, so a mounted
+  // glTF mesh now reads `ok`. Only the UV half moved — glTF materials still have no data
+  // half at all (#389/#605), so `resolveEvaluatedMesh` hands a glTF mesh `EMPTY_ASSIGNMENT`
+  // and the registry-backed arm resolves its texture to `none`.
+  //
+  // 🔴 MEASURED, AND NOTHING IN THE SUITE NOTICED. With the branch still keyed on the status,
+  // a mounted clone carrying a base-colour map took the registry arm and the UV editor's
+  // backdrop went from `ok` with an image to `none` — 5221 tests, zero reds. That is the
+  // whole reason for this file's newest rows: the fix is a one-token change that no existing
+  // row can distinguish from the bug, so it needs one that can.
+  afterEach(() => __clearGltfCloneRegistryForTests());
+
+  /** A mounted clone whose `Mesh0` carries UVs and a drawable base-colour map. */
+  function mountTexturedClone(): void {
+    const group = new Group();
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const mesh = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial({ map: new Texture(canvas) }),
+    );
+    mesh.name = 'Mesh0';
+    group.add(mesh);
+    group.updateMatrixWorld(true);
+    registerGltfClone('asset-1', group);
+  }
+
+  function gltfChildState(): DagState {
+    let s = buildDefaultDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'gltf_child',
+      nodeType: 'GltfChild',
+      params: {
+        childName: 'Mesh0',
+        assetRef: 'asset-1',
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+        overridden: { position: false, rotation: false, scale: false },
+      },
+    } as never).next;
+    return s;
+  }
+
+  it('the TEXTURE still comes from the clone, though the geometry no longer has to', () => {
+    mountTexturedClone();
+    const space = resolveMeshUVSpace(gltfChildState(), 'gltf_child');
+    // The assertion that reds if the arm is ever re-keyed on the read's status. `none` here
+    // is the measured regression, and it is a blank backdrop in the UV editor.
+    expect(space.texture.status).toBe('ok');
+    expect(space.texture.image).not.toBeNull();
+    expect(space.uvs.status).toBe('ok');
+  });
+
+  it('and reports LOADING on both facets while the clone has not mounted', () => {
+    // The other half of the same branch: unmounted, the answer must be "wait", never "none".
+    // Keyed on the descriptor rather than the status, this arm is reached either way — which
+    // is what makes the two rows a pair rather than one row and its accident.
+    const space = resolveMeshUVSpace(gltfChildState(), 'gltf_child');
+    expect(space.uvs.status).toBe('loading');
+    expect(space.texture.status).toBe('loading');
   });
 });
 
