@@ -129,21 +129,42 @@ interface TerrainMesh {
  * A world-space BVH per terrain mesh, cached across samples/frames so a query is
  * ~O(log tris) instead of the brute-force O(tris)/sample the seam ran before. Keyed by the
  * positions array identity (a WeakMap — a geometry rebuild or glTF clone-swap yields a NEW
- * positions array → a fresh BVH, the old one GC'd) plus the world-matrix hash in a SINGLE
- * slot: a static terrain (the query moves, the terrain doesn't) reuses ONE BVH forever; an
- * animated terrain rebuilds per frame, but memory stays bounded to one BVH per geometry.
- * The BVH is an acceleration only — it returns the SAME hit as `rayMesh`'s brute-force core
- * (the oracle) within epsilon.
+ * positions array → a fresh BVH, the old one GC'd) plus the world-matrix hash AND the index
+ * identity in a SINGLE slot: a static terrain (the query moves, the terrain doesn't) reuses
+ * ONE BVH forever; an animated terrain rebuilds per frame, but memory stays bounded to one
+ * BVH per geometry. The BVH is an acceleration only — it returns the SAME hit as `rayMesh`'s
+ * brute-force core (the oracle) within epsilon.
+ *
+ * ── WHY THE INDEX IS IN THE KEY (#725) ───────────────────────────────────────────────
+ *
+ * The key must cover every input {@link buildMeshBvh} consumes, and it consumes three:
+ * positions, index and matrix. Keying on positions and matrix alone was a stale answer
+ * waiting for a caller — a topology change that REPLACES the index while keeping the
+ * position array (an in-place retopology; a re-triangulation; a weld that alters
+ * connectivity but not point positions) left the old acceleration structure answering about
+ * a mesh that no longer existed. Measured against a fresh-geometry oracle before the fix:
+ * the correct hit was y=1.5 and the cache returned y=2.5, the face that had been removed.
+ *
+ * ⚠️ NOT reachable in production TODAY, and that is the reason to state the rule rather
+ * than rely on it: censused over 609 non-test sources, every `setIndex` runs on a freshly
+ * constructed geometry, so nothing mutates a live one. The safety was a property of
+ * content-keyed rebuild, not of this key. The first operator that changes a topology in
+ * place would have inherited a quiet wrong answer — the failure this whole class is about,
+ * because a stale acceleration structure does not error, it just answers.
  */
-const bvhCache = new WeakMap<object, { matrixKey: string; mb: MeshBvh }>();
+const bvhCache = new WeakMap<object, { matrixKey: string; index: object | null; mb: MeshBvh }>();
 
 function cachedMeshBvh(tm: TerrainMesh): MeshBvh {
   const key = tm.positions as object;
   const matrixKey = Array.prototype.join.call(tm.matrix, ',');
+  // Identity, not contents: `buildMeshBvh` copies the index it is given, so a DIFFERENT
+  // array object is the only way the built structure can differ. Comparing contents would
+  // walk the whole index on every sample to answer a question identity already answers.
+  const index = (tm.index as object | null) ?? null;
   const cached = bvhCache.get(key);
-  if (cached && cached.matrixKey === matrixKey) return cached.mb;
+  if (cached && cached.matrixKey === matrixKey && cached.index === index) return cached.mb;
   const mb = buildMeshBvh(tm.positions, tm.index, tm.matrix);
-  bvhCache.set(key, { matrixKey, mb });
+  bvhCache.set(key, { matrixKey, index, mb });
   return mb;
 }
 
