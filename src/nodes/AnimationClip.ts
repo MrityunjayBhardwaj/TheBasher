@@ -11,10 +11,11 @@
 // invariant from NOT YET IMPLEMENTED → ALIGNED.
 //
 // Sampling: piecewise-linear interpolation between adjacent keyframes per
-// bone. Looping: the input time is folded into [0, duration) so scrubbing
-// past the clip end wraps cleanly. A pre-keyframe time clamps to keyframe 0;
-// post-keyframe clamps to the last keyframe. Bones without keyframes inherit
-// their bind-pose from the input skeleton.
+// bone. Outside the authored key range the per-side EXTEND rule decides, per
+// component: a looping clip cycles its rotation and cycles its position WITH
+// OFFSET, so a root that travels keeps travelling instead of teleporting home
+// once per period (#924); a non-looping clip holds both endpoints. Bones
+// without keyframes inherit their bind-pose from the input skeleton.
 //
 // Discipline: NO three.js AnimationMixer (it secretly clocks). NO useFrame.
 // All math is the local interpolator below.
@@ -31,6 +32,7 @@ import type {
   TimeValue,
   Vec3,
 } from './types';
+import { sampleVec3KeyframesExtended, type ChannelExtend, type Vec3Key } from './keyframeInterp';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -52,14 +54,6 @@ export const AnimationClipParams = z.object({
 });
 export type AnimationClipParams = z.infer<typeof AnimationClipParams>;
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * t;
-}
-
-function lerpVec3(a: Vec3, b: Vec3, t: number): Vec3 {
-  return [lerp(a[0], b[0], t), lerp(a[1], b[1], t), lerp(a[2], b[2], t)];
-}
-
 /** Group keyframes by bone, sorted ascending by time. Pure given (keyframes). */
 function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, AnimationKeyframe[]> {
   const map = new Map<number, AnimationKeyframe[]>();
@@ -73,22 +67,41 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
 }
 
 /**
- * Fold a wall-clock time into the clip's own time domain — looping folds into
- * [0, duration), else it clamps to the range. THE one folding rule: both
- * `evaluate` and the exported per-bone samplers below go through it, so a clip
- * sampled by the band and the same clip sampled by the node cannot disagree
- * about where time `t` lands.
+ * The per-side extend rule each component takes, derived from the clip's `loop`
+ * flag. THE one rule: `evaluate` and the exported per-bone samplers both go
+ * through it, so a clip sampled by the band and the same clip sampled by the node
+ * cannot disagree about what happens outside the authored range.
+ *
+ * `loop` is TRANSPORT INTENT and is deliberately not a sampling rule. It used to
+ * be one — time was folded with `t % duration` — and a range loop cannot express
+ * travel, because it replays identical frames: a root that covers ground snapped
+ * back to its start once per period (#924).
+ *
+ * POSITION cycles WITH OFFSET; rotation cycles plain. Offset adds
+ * `(last - first)` once per period, so travel carries across the seam. It is
+ * self-limiting: for a bone whose track is constant — every bone but the root,
+ * since a retarget writes bind position for the rest — `last === first` and the
+ * offset is exactly zero. Rotation is bounded and returns to its start;
+ * offsetting it would compound a residual every cycle without bound.
+ *
+ * This MUST match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
+ * which makes the same split for a channel minted from a clip. They are the
+ * unedited and edited halves of one band, and `ensureChannelForBone`'s spec
+ * asserts they agree past the duration — it reds if either side moves alone.
+ *
+ * REF: Blender `FModifierCycles.mode_after` REPEAT vs REPEAT_OFFSET ("offset
+ * based on gradient between start and end values") layered over
+ * `FCurve.extrapolation` (default CONSTANT/hold); Houdini's per-channel extend
+ * conditions, where cycle-with-offset against plain cycle is the difference
+ * between a seamless walk and a teleport every loop.
  */
-function foldClipTime(seconds: number, duration: number, loop: boolean): number {
-  // A non-positive duration has no time domain to fold into, and `x % 0` is
-  // NaN — which would propagate silently through every lerp into a bone pose
-  // of NaNs and a bone that vanishes rather than an error anyone can trace.
-  // The schema forbids it, but these params are also read straight off saved
-  // files by the baked band (#888), where nothing has re-validated them.
-  if (!(duration > 0)) return 0;
+function clipExtendRules(loop: boolean): {
+  position: ChannelExtend;
+  rotation: ChannelExtend;
+} {
   return loop
-    ? ((seconds % duration) + duration) % duration
-    : Math.max(0, Math.min(seconds, duration));
+    ? { position: 'cycle-offset', rotation: 'cycle' }
+    : { position: 'hold', rotation: 'hold' };
 }
 
 /** A bone's pose as a function of wall-clock time — the clip's own sampling. */
@@ -100,17 +113,20 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  *
  * WHY THIS IS EXPORTED (#888). The baked band needs to reach a retargeted clip
  * for a bone that has no channel node, and it must produce the value the CLIP
- * would produce. Two roads were available and only this one is safe:
+ * would produce.
  *
- *   - rebuild the clip's keys as `KeyframeChannelVec3` params and sample those.
- *     A clip keyframe carries no easing field at all while a channel carries
- *     twelve easing modes plus bezier handles and an extrapolation rule, so
- *     rebuilding forces a DEFAULT to be chosen for properties the source never
- *     described. The last time that default was picked without thinking it was
- *     the interpolation defect the first half of #877 fixed.
- *   - delegate to the clip's own math, below. Nothing is defaulted because
- *     nothing is invented: the clip interpolates linearly (`lerpVec3`) because
- *     that is what the clip DOES, not because linear was chosen for it.
+ * It samples through the CHANNEL sampler (`sampleVec3KeyframesExtended`) while
+ * naming the clip's own interpolation explicitly. The earlier note here warned
+ * that rebuilding a clip's keys as channel params "forces a DEFAULT to be chosen
+ * for properties the source never described", and that warning still stands for
+ * EASING — which is why `easing: 'linear'` is stated at the call site rather than
+ * inherited: it records what the clip does, it is not a default being picked.
+ *
+ * What changed (#924) is that the EXTEND rule is not such a property. A clip that
+ * is sampled outside its key range must answer somehow, and `t % duration` was an
+ * answer chosen by omission — one that cannot express travel, because it replays
+ * identical frames. The extend vocabulary is where this project already keeps
+ * that answer, so the clip band now speaks it instead of folding time itself.
  *
  * Grouping happens once, per DAG change; the returned closures are invoked per
  * frame. Bones with no keyframes are ABSENT from the map rather than mapped to
@@ -118,41 +134,52 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * and a bone the clip never touched has no opinion to contribute.
  *
  * Rotation is in the clip's own units (RADIANS). Callers writing into a
- * degrees-valued band convert at that boundary; see bakeClipOntoRig.ts, which
- * is where that unit change is documented.
+ * degrees-valued band convert at that boundary; see
+ * app/animate/ensureChannelForBone.ts, which is where that unit change is
+ * documented, and app/bakedGltfChannels.ts, which makes the same conversion for
+ * the read band.
  */
 export function buildClipBoneSamplers(
   params: Pick<AnimationClipParams, 'keyframes' | 'duration' | 'loop'>,
 ): Map<number, ClipBoneSampler> {
   const { duration, loop } = params;
+  const { position: posRule, rotation: rotRule } = clipExtendRules(loop);
   const out = new Map<number, ClipBoneSampler>();
   for (const [bone, track] of groupByBone(params.keyframes)) {
     if (track.length === 0) continue;
-    out.set(bone, (seconds: number) => sampleBone(track, foldClipTime(seconds, duration, loop)));
+    // `groupByBone` already returns each track sorted ascending by time, which is
+    // what the sampler requires; re-sorting here would be a second answer to a
+    // question already answered.
+    const sorted = track;
+    // `easing: 'linear'` STATES what the clip does rather than choosing for it —
+    // a clip keyframe carries no easing field and interpolates linearly. The mint
+    // makes the identical call for the identical reason (bakeChannelOps.ts), so an
+    // edited bone and an unedited one cannot disagree about the curve between two
+    // keys. Measured on the real fixture: 94,068 in-range scalars over 78 bones,
+    // worst delta exactly 0 against the clip's own lerp.
+    const posKeys: Vec3Key[] = sorted.map((k) => ({
+      time: k.time,
+      value: k.position,
+      easing: 'linear',
+    }));
+    const rotKeys: Vec3Key[] = sorted.map((k) => ({
+      time: k.time,
+      value: k.rotation,
+      easing: 'linear',
+    }));
+    out.set(bone, (seconds: number) => {
+      // A non-positive or NaN duration has no time domain to extend over, so every
+      // time collapses to the first key rather than producing a pose of NaNs. The
+      // schema forbids it, but these params are read straight off saved files by
+      // the baked band (#888), where nothing has re-validated them.
+      const t = duration > 0 ? seconds : sorted[0].time;
+      return {
+        position: sampleVec3KeyframesExtended(posKeys, t, posRule, posRule),
+        rotation: sampleVec3KeyframesExtended(rotKeys, t, rotRule, rotRule),
+      };
+    });
   }
   return out;
-}
-
-/** Sample a single bone's track at clip-time `t`. Clamps at endpoints. */
-function sampleBone(track: AnimationKeyframe[], t: number): { position: Vec3; rotation: Vec3 } {
-  if (track.length === 0) return { position: [0, 0, 0], rotation: [0, 0, 0] };
-  if (t <= track[0].time) return { position: track[0].position, rotation: track[0].rotation };
-  const last = track[track.length - 1];
-  if (t >= last.time) return { position: last.position, rotation: last.rotation };
-  // Linear scan: clip keyframes are typically <50; binary search overkill.
-  for (let i = 0; i < track.length - 1; i++) {
-    const a = track[i];
-    const b = track[i + 1];
-    if (t >= a.time && t <= b.time) {
-      const span = b.time - a.time;
-      const u = span > 0 ? (t - a.time) / span : 0;
-      return {
-        position: lerpVec3(a.position, b.position, u),
-        rotation: lerpVec3(a.rotation, b.rotation, u),
-      };
-    }
-  }
-  return { position: last.position, rotation: last.rotation };
 }
 
 export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationClipValue> = {
@@ -173,11 +200,15 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
     const tSeconds = time?.seconds ?? 0;
 
     if (!skeleton) {
+      const empty: SkeletonValue = { kind: 'Skeleton', bones: [] };
       return {
         kind: 'AnimationClip',
         name: params.name,
         duration: params.duration,
-        pose: { kind: 'PosedSkeleton', skeleton: { kind: 'Skeleton', bones: [] }, poses: [] },
+        loop: params.loop,
+        keyframes: params.keyframes,
+        skeleton: empty,
+        pose: { kind: 'PosedSkeleton', skeleton: empty, poses: [] },
       };
     }
 
@@ -202,6 +233,11 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
       kind: 'AnimationClip',
       name: params.name,
       duration: params.duration,
+      loop: params.loop,
+      keyframes: params.keyframes,
+      // The rig the keys are indexed against — the SAME one this pose was
+      // sampled on, so a consumer cannot pair the two from different sources.
+      skeleton,
       pose: { kind: 'PosedSkeleton', skeleton, poses },
     };
   },

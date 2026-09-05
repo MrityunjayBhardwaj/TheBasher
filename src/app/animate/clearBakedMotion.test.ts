@@ -21,6 +21,7 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
 import { dispatchClearBakedMotion } from './dispatchMutator';
+import { discardLabel, discardTitle, discardedMessage } from './ClearBakedMotionConnector';
 import { bakedChannelSamplersForAsset, bakedChannelIdsForAssetRef } from '../bakedGltfChannels';
 import { gltfChildDagId, gltfChannelDagId } from '../../core/import/gltfImportChain';
 
@@ -182,5 +183,40 @@ describe('bakedChannelIdsForAssetRef', () => {
     const s = buildTwoCharacterScene();
     const ids = bakedChannelIdsForAssetRef(s.nodes, ASSET)!;
     expect([...ids].sort()).toEqual(ids);
+  });
+});
+
+describe('what the affordance SAYS (#910)', () => {
+  // These are pure functions precisely so they can be asserted: there is no
+  // component-rendering harness here, so the same strings written inline in JSX
+  // would be gated by nothing — which is how they came to say the opposite of
+  // what the act does and stayed that way through a full behaviour change.
+  it('does not tell the director the character stopped animating', () => {
+    const msg = discardedMessage(3, 'Robot');
+    // The old wording, verbatim, is the thing this row exists to keep out: it
+    // sent a director to fix a character that had never stopped moving.
+    expect(msg).not.toContain('drop a clip');
+    expect(msg).not.toContain('baked motion');
+    expect(msg).toContain('back on its clip');
+    expect(discardTitle(3)).toContain('keeps animating');
+  });
+
+  it('names whose work is being destroyed, and how much of it', () => {
+    // "Clear baked motion" described a regenerable copy nobody authored.
+    // The same op set now destroys the director's own edits, and nothing but
+    // undo brings them back — so the label has to say so before the click.
+    expect(discardLabel(3)).toContain('3');
+    expect(discardLabel(3)).toContain('my edits');
+    expect(discardedMessage(3, 'Robot')).toContain('Robot');
+    expect(discardedMessage(3, 'Robot')).toContain('3');
+  });
+
+  it('counts in the singular when there is one', () => {
+    // A destructive confirmation that says "1 edits" reads as machine output,
+    // and machine output is what a director skims past.
+    expect(discardedMessage(1, 'Robot')).toContain('1 edit ');
+    expect(discardTitle(1)).toContain('1 channel ');
+    expect(discardedMessage(2, 'Robot')).toContain('2 edits');
+    expect(discardTitle(2)).toContain('2 channels');
   });
 });

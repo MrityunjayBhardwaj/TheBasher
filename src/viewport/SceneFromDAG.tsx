@@ -3686,9 +3686,24 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // P7.11 (#100) — the RENDER side of the H40 boundary-pair. The render
       // skeleton's bones are in `skin.joints[]` order (GLTFLoader builds them
       // that way, RESEARCH B1/B7), the SAME spine the pure `GltfSkeleton`
-      // projection emits. So `boneName(i)` (raw glTF node name) sanitized ==
-      // the projected `bones[i].name` (sanitized at import) index-by-index —
-      // the F6a both-sides equality. Read-only.
+      // projection emits. The correspondence is therefore BY INDEX: rendered
+      // bone i == projected `bones[i]` == `skin.joints[i]`. Read-only.
+      //
+      // 🔴 IT IS NOT BY NAME, AND IT NEVER WAS (#922). This string is in THREE's
+      // name space, not ours: GLTFLoader sanitises every node name as it loads
+      // (GLTFLoader.js:3655 → PropertyBinding.sanitizeNodeName, which REMOVES
+      // `[].:/`), so a Mixamo `mixamorig:Hips` arrives here as `mixamorigHips`
+      // while our params spell the same bone `mixamorig_Hips` (`sanitizeBoneName`
+      // REPLACES those characters). Measured on the tracked stand-in rig: direct
+      // comparison against the projected names matches 1 of 23 bones — only
+      // `Root`, the one joint with nothing to sanitise. Comparing them looks
+      // exactly like a broken bone map, and cost a debugging cycle in #921.
+      //
+      // To compare NAMES across this seam, put both sides through
+      // `canonicalBoneKey` (`core/import/retarget.ts`), which collapses
+      // separators and case and reconciles 23 of 23 on that same rig. There is no
+      // function from one spelling to the other — see boneNameSpaces.test.ts,
+      // which pins all of this and reds if either sanitiser's rule moves.
       boneName: (i: number): string | null => mesh.skeleton?.bones[i]?.name ?? null,
       // Bone local rotation (radians, XYZ Euler) at CALL time — drives the
       // H46 rotation-delta proof (limbs rotate under playback; position is a

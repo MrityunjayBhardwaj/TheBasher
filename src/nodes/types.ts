@@ -1220,12 +1220,36 @@ export interface AnimationKeyframe {
   readonly rotation: Vec3;
 }
 
+/**
+ * A clip, as a value.
+ *
+ * WHY THE KEYS AND THE RIG TRAVEL WITH IT (#901). A keyframe's `bone` is an
+ * INDEX, and an index means nothing except against the skeleton it was authored
+ * for. A consumer that took the keys from one place and the rig from another
+ * could pair a 78-bone source's indices with a 23-bone target's spine and get a
+ * plausible-looking wrong answer — the same producer-vs-consumer split #913 and
+ * #916 closed for the time domain. So the clip carries both, and `loop` besides:
+ * a consumer able to take the keys without the domain is a consumer able to make
+ * a copy that stops where its source wraps.
+ *
+ * WHY `pose` IS OPTIONAL. It is a sample at ONE instant, so only a producer with
+ * a `Time` input can answer it. `RetargetClip` is deliberately time-free (it is
+ * a function of the graph, not of the frame), and it omits the field rather than
+ * inventing an answer at t=0. `LocomotionState`, the only declared consumer,
+ * already falls back when it is absent.
+ */
 export interface AnimationClipValue {
   readonly kind: 'AnimationClip';
   readonly name: string;
   readonly duration: number;
-  /** Sampled pose at the input `Time`, given the clip's keyframes. */
-  readonly pose: PosedSkeletonValue;
+  /** When true, time folds into [0, duration); else it clamps at the ends. */
+  readonly loop: boolean;
+  /** The clip's keys. `bone` indexes {@link AnimationClipValue.skeleton}. */
+  readonly keyframes: readonly AnimationKeyframe[];
+  /** The rig the keyframe indices are authored against. */
+  readonly skeleton: SkeletonValue;
+  /** Sampled pose at the input `Time` — absent from a time-free producer. */
+  readonly pose?: PosedSkeletonValue;
 }
 
 /**

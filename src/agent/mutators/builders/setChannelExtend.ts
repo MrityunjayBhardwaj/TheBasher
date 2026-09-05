@@ -24,6 +24,14 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { EXTRAPOLATE_RULES, type ChannelExtrapolate } from '../../../nodes/keyframeInterp';
+import {
+  CHANNEL_ADDRESS_DOC,
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  channelViewAfterMint,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
 /** The KeyframeChannel node types that carry per-side extrapolation (Number/Vec2/Vec3).
  *  Quat/Color/Text/Image channels have no extend rule (they clamp) — targeting one is
@@ -44,8 +52,7 @@ const AXIS_ARITY: Record<string, number> = { KeyframeChannelVec2: 2, KeyframeCha
 
 const SetChannelExtendSpec = z
   .object({
-    /** The KeyframeChannel{Number,Vec2,Vec3} whose extrapolation to set. */
-    channelId: z.string().min(1),
+    ...CHANNEL_ADDRESS_FIELDS,
     /** Extrapolation for times BEFORE the first keyframe. Omit to leave unchanged. */
     before: ExtendRule.optional(),
     /** Extrapolation for times AFTER the last keyframe. Omit to leave unchanged. */
@@ -58,7 +65,8 @@ const SetChannelExtendSpec = z
   })
   .refine((s) => s.before !== undefined || s.after !== undefined, {
     message: 'provide at least one of `before` / `after`.',
-  });
+  })
+  .superRefine(superRefineChannelAddress);
 export type SetChannelExtendSpec = z.infer<typeof SetChannelExtendSpec>;
 
 export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = {
@@ -70,7 +78,8 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     'boundary segment slope, linear extrapolation). Provide either or both. The ' +
     'authored keyframes and the in-range curve are untouched — only the ' +
     'out-of-range tails change. For repeating/mirroring a range, add a Cycles ' +
-    'F-Modifier via mutator.timeline.addChannelModifier instead.',
+    'F-Modifier via mutator.timeline.addChannelModifier instead.' +
+    CHANNEL_ADDRESS_DOC,
   spec: SetChannelExtendSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -102,15 +111,19 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     ],
   },
   buildClosureSpec(spec): ClosureSpec {
-    return { rootSelectors: [spec.channelId], followedEdges: [] };
+    return { rootSelectors: channelRootSelectors(spec), followedEdges: [] };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
-    if (!channel) return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
-    if (!EXTEND_CHANNEL_TYPES.has(channel.type)) {
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) {
+      return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
+    }
+    if (!EXTEND_CHANNEL_TYPES.has(view.type)) {
       return {
         ok: false,
-        reason: `channel "${spec.channelId}" is ${channel.type}; extrapolation applies only to KeyframeChannel{Number,Vec2,Vec3}.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; extrapolation applies only to KeyframeChannel{Number,Vec2,Vec3}.`,
       };
     }
     // Defense-in-depth vs the spec `.refine()` (which only fires at the safeParse
@@ -121,24 +134,28 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     }
     // #289 — per-axis targeting: only vec channels have axes, and the index must be in range.
     if (spec.axis !== undefined) {
-      const arity = AXIS_ARITY[channel.type] ?? 0;
+      const arity = AXIS_ARITY[view.type] ?? 0;
       if (arity === 0) {
         return {
           ok: false,
-          reason: `channel "${spec.channelId}" is ${channel.type} (scalar); \`axis\` applies only to KeyframeChannel{Vec2,Vec3}.`,
+          reason: `channel "${resolved.channelId}" is ${view.type} (scalar); \`axis\` applies only to KeyframeChannel{Vec2,Vec3}.`,
         };
       }
       if (spec.axis >= arity) {
         return {
           ok: false,
-          reason: `axis ${spec.axis} out of range for ${channel.type} (0..${arity - 1}).`,
+          reason: `axis ${spec.axis} out of range for ${view.type} (0..${arity - 1}).`,
         };
       }
     }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const params = state.nodes[spec.channelId]?.params as
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
+    const params = view.params as
       | {
           extendBefore?: ChannelExtrapolate;
           extendAfter?: ChannelExtrapolate;
@@ -150,7 +167,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     // current override, then the channel-level rule — so `{axis, after}` alone doesn't wipe
     // `before`. Other axes are preserved.
     if (spec.axis !== undefined) {
-      const arity = AXIS_ARITY[state.nodes[spec.channelId]!.type] ?? 0;
+      const arity = AXIS_ARITY[view.type] ?? 0;
       const chBefore = params?.extendBefore ?? 'hold';
       const chAfter = params?.extendAfter ?? 'hold';
       const cur = params?.axisExtend;
@@ -160,15 +177,18 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
       const next = Array.from({ length: arity }, (_, k) =>
         k === spec.axis ? { before, after } : (cur?.[k] ?? null),
       );
-      return [{ type: 'setParam', nodeId: spec.channelId, paramPath: 'axisExtend', value: next }];
+      return [
+        ...resolved.mintOps,
+        { type: 'setParam', nodeId: resolved.channelId, paramPath: 'axisExtend', value: next },
+      ];
     }
     // Channel-level: one setParam per provided side (idempotent if unchanged). Deterministic
     // order: before then after.
-    const ops: Op[] = [];
+    const ops: Op[] = [...resolved.mintOps];
     if (spec.before !== undefined) {
       ops.push({
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'extendBefore',
         value: spec.before,
       });
@@ -176,7 +196,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     if (spec.after !== undefined) {
       ops.push({
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'extendAfter',
         value: spec.after,
       });

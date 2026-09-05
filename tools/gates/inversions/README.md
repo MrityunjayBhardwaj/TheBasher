@@ -80,22 +80,21 @@ and never opens a `.patch` at all.
 | `null`                    | nothing (the file is empty)                                            | The control. Every gate must stay green — that is what proves the runner produces no reds of its own. |
 | `bakeEasingCubic`         | `bakeChannelOps.ts` — `easing: 'linear'` → `'cubic'`                   | #877. The bake stamps smoothstep on keys copied from a clip whose sampler is a raw lerp.              |
 | `gltfEulerCanonical`      | `gltfImportChain.ts` — drop `continuousEuler`, keep the raw conversion | #876. Each key's Euler representative is chosen canonically, with no memory of the previous key.      |
-| `bakeClipRotationRadians` | `bakeClipOntoRig.ts` — drop `radVec3ToDeg`                             | Every baked bone rotation scaled by π/180. Included for its **green** half.                           |
+| `bakeClipRotationRadians` | `ensureChannelForBone.ts` — drop `radVec3ToDeg`                        | #843. Every minted bone rotation scaled by π/180. Included for its **green** half.                    |
 
 ## What they measured
 
-Run on `d753af2`, an ancestor of this branch's head, so the citation resolves. Re-run after any change to a gate in the manifest and re-stamp this line. Every pair agreed with its declared expectation; harness exit `0`; tree
-byte-identical after every arm.
+Run on `aeaa006`. Re-run after any change to a gate in the manifest and re-stamp this line. Every pair agreed with its declared expectation; harness exit `0`; tree byte-identical after every arm (`reverted: true`).
 
-| inversion                 | gate                               | expected  | observed  | red   | what redded                                                        |
-| ------------------------- | ---------------------------------- | --------- | --------- | ----- | ------------------------------------------------------------------ |
-| `null`                    | all six                            | green     | green     | **0** | the control                                                        |
-| `bakeEasingCubic`         | `bakedClipParity.gate.test.ts`     | red       | red       | **2** | the interval row, and the by-name easing assertion                 |
-| `bakeEasingCubic`         | `bakeGltfChannel.test.ts`          | red       | red       | **1** | the interval row **only** — the keyframe row beside it stays green |
-| `gltfEulerCanonical`      | `gltfEulerContinuity.gate.test.ts` | red       | red       | **1** | the no-jump bound: 360.1° travelled between keys 7.60° apart       |
-| `gltfEulerCanonical`      | `gltfImportChain.test.ts`          | red       | red       | **1** | the B3 SEQUENCE row — 82.5° against a true 262.5°                  |
-| `bakeClipRotationRadians` | `bakeClipOntoRig.test.ts`          | red       | red       | **3** | three rows, including the file's own falsifying arm                |
-| `bakeClipRotationRadians` | `retargetThenBake.test.ts`         | **green** | **green** | **0** | nothing — and that is the finding, not a gap. See below.           |
+| inversion                 | gate                               | expected  | observed | red   | what redded                                                        |
+| ------------------------- | ---------------------------------- | --------- | -------- | ----- | ------------------------------------------------------------------ |
+| `null`                    | all six                            | green     | green    | **0** | the control                                                        |
+| `bakeEasingCubic`         | `bakedClipParity.gate.test.ts`     | red       | red      | **2** | the interval row, and the by-name easing assertion                 |
+| `bakeEasingCubic`         | `bakeGltfChannel.test.ts`          | red       | red      | **1** | the interval row **only** — the keyframe row beside it stays green |
+| `gltfEulerCanonical`      | `gltfEulerContinuity.gate.test.ts` | red       | red      | **1** | the no-jump bound: 360.1° travelled between keys 7.60° apart       |
+| `gltfEulerCanonical`      | `gltfImportChain.test.ts`          | red       | red      | **1** | the B3 SEQUENCE row — 82.5° against a true 262.5°                  |
+| `bakeClipRotationRadians` | `ensureChannelForBone.test.ts`     | red       | ?        | ?     | RE-AIMED by #889 — re-run and re-stamp.                            |
+| `bakeClipRotationRadians` | `bindMotionDispatch.test.ts`       | **green** | ?        | ?     | RE-AIMED by #889 — re-run and re-stamp.                            |
 
 🔑 **The two rows that carry the whole point are the ones where a file redded _partially_.**
 Under `bakeEasingCubic`, `bakeGltfChannel.test.ts` reds on its interval row and stays green
@@ -104,15 +103,30 @@ on its keyframe row, from the same fixture and the same bake. Under `gltfEulerCa
 B3's own — stays green. Those are the same file disagreeing with itself about whether a
 defect exists, and the half that says "green" is the half that shipped three defects.
 
-🔴 **`retargetThenBake` under a value corruption is the one expected green, and removing it
-would be a mistake.** Its central assertion is `expect(JSON.stringify(after)).toBe(before)`
-— a self-comparison, correct for its actual subject (the second-bind guard) and structurally
-incapable of gating "the value is right", because a corruption present in both terms cancels
-exactly. The pair exists so that blindness stays visible and stays deliberate. What covers
-the values is `bakeClipOntoRig.test.ts`, one level down, which reds three times on the same
-inversion.
+🔴 **`bindMotionDispatch` under a value corruption is the one expected green, and removing it
+would be a mistake.** It asserts which NODES a bind creates — under #889 slice 3, zero
+channels — and never what a rotation is, so it is structurally incapable of gating "the
+value is right". The pair exists so that blindness stays visible and stays deliberate. What
+covers the values is `ensureChannelForBone.test.ts`, one level down.
+
+🔴 **RE-AIMING COST COVERAGE, AND THAT IS WORTH SAYING OUT LOUD.** The deleted
+\`bakeClipOntoRig.test.ts\` redded **three** rows on this inversion, including its own
+falsifying arm; \`ensureChannelForBone.test.ts\` reds **one**. One row is enough to make the
+gate informative and is not enough to call the boundary well covered — the mint's seed has a
+single by-name assertion on the unit, and nothing asserts the shape of what a wrong unit does
+to a rendered pose. That is a gap in the inheriting file, not in the sweep.
+
+📌 **#889 slice 3 re-aimed this pair.** The inverse edit used to drop `radVec3ToDeg` in
+`bakeClipOntoRig.ts`; that mutator was deleted when binding stopped baking, and the same
+rad→deg boundary is now crossed in two places — `ensureChannelForBone` for an edited bone,
+`bakedGltfChannels.clipBandSamplersForAsset` for an unedited one. The inversion follows the
+mint. **The read band's copy of that boundary has no inversion pair yet** — see below.
 
 ## What is NOT here yet
+
+- **The read band's rad→deg conversion** (`bakedGltfChannels.clipBandSamplersForAsset`).
+  Since #889 slice 3 this is the conversion that renders EVERY unedited bone — strictly
+  more consequential than the mint's copy the pair above inverts — and no pair aims at it.
 
 The sweep that produced the finding covered **19 gate/inversion pairs** across the sector.
 Four are materialised here — the three that carried a real defect plus the control. The

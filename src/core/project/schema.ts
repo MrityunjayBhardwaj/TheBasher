@@ -42,7 +42,16 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // render geometry without riding the `MeshData` road (an OPFS-persisted buffer reached
 // asynchronously, not a recipe rebuilt from params). See migrations.ts
 // formatMigrations[7].
-export const PROJECT_FORMAT_VERSION = 9;
+// v9 (#609): fold each `ParamDriver`'s `inVec` binding onto its `in` socket — a socket
+// id is a persisted binding key, so it cannot ride the per-node ladder. See
+// migrations.ts formatMigrations[8].
+// v10 (#915): drop the per-bone channels the retired eager bake wrote and nobody
+// authored. They carry no Cycles modifier, so they HOLD past the clip's duration where
+// the clip they copied WRAPS — every project saved before copy-on-write (#889) freezes
+// its whole rig at the end of the first cycle. Only channels bit-identical to a
+// re-derivation from their own bound clip are dropped; anything edited is kept. See
+// migrations.ts formatMigrations[9].
+export const PROJECT_FORMAT_VERSION = 10;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

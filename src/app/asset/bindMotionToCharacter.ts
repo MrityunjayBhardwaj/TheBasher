@@ -6,13 +6,21 @@
 // WHAT WAS ACTUALLY MISSING
 // ─────────────────────────────────────────────────────────────────────────
 // Nothing here is new capability. `mutator.animation.retarget` has bridged rigs
-// since #100 and `mutator.animation.bakeClipOntoRig` has driven the renderer
-// since #803, and neither had a caller anywhere in `src/app`. What was missing
-// was the two decisions a director should never have to make by hand — WHICH
-// character, and WHICH bone-name map — and the composition that turns them into
-// one act. This module is those two decisions and that composition, and it is the
-// same shape as `generateRiggedCharacter`: an app-layer action that composes
-// existing capabilities and reports its own refusals.
+// since #100 and had no caller anywhere in `src/app`. What was missing was the
+// two decisions a director should never have to make by hand — WHICH character,
+// and WHICH bone-name map — and the act that turns them into one gesture. This
+// module is those two decisions, and it is the same shape as
+// `generateRiggedCharacter`: an app-layer action that composes an existing
+// capability and reports its own refusals.
+//
+// 🔑 BINDING CREATES NO CHANNELS, AND THAT IS THE POINT (#889). Until slice 3
+// this dispatched retarget AND `bakeClipOntoRig`, which materialised a
+// `KeyframeChannelVec3` for every bone on the rig — 46 of them for 23 bones on
+// `Robot-Walk.basher`, not one authored by anybody. The read band reaches a
+// bound clip directly (#888), so those channels were a duplicate of what the
+// clip already produced: measured on that project, stripping all 46 leaves the
+// same 23 bones driven and the sampled rotations agree to 6e-14. A bone gets a
+// channel when somebody EDITS it, and not before.
 //
 // ─────────────────────────────────────────────────────────────────────────
 // EVERY REFUSAL SAYS WHICH ONE IT IS
@@ -35,19 +43,19 @@
 //
 // Invariants honoured:
 //   - V8: app-layer, no `src/viewport/` imports.
-//   - K6: ONE atomic dispatch — retarget and bake land as a single Cmd+Z entry
-//     via `dispatchRetargetThenBake`, never as two.
+//   - K6: ONE atomic dispatch — the retarget is a single Cmd+Z entry.
 //   - V22: no Date.now / Math.random; the output clip id is derived from the pair.
 //
-// REF: src/app/animate/dispatchMutator.ts (`dispatchRetargetThenBake`);
+// REF: src/app/animate/dispatchMutator.ts (`dispatchMutatorFromUI`);
+//      src/app/animate/ensureChannelForBone.ts (where a channel comes from now);
 //      src/core/import/chooseBoneNameMap.ts (the bridge decision);
 //      src/app/asset/generateRiggedCharacter.ts (the composition this mirrors);
-//      issues #807, #803, #100.
+//      issues #807, #889, #803, #100.
 
 import { useDagStore } from '../../core/dag/store';
 import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
-import { dispatchRetargetThenBake } from '../animate/dispatchMutator';
+import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
@@ -55,7 +63,7 @@ import type { DagState } from '../../core/dag/state';
 import type { BoneSpec, SkeletonValue } from '../../nodes/types';
 
 /** Bind pose is import-time static, so any frame projects the same rig.
- *  Mirrors `retarget.ts` and `bakeClipOntoRig.ts`, which read it the same way. */
+ *  Mirrors `retarget.ts`, which reads it the same way. */
 const BIND_POSE_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
 
 export type BindMotionRefusal = 'no-character' | 'ambiguous' | 'no-bridge' | 'rejected';
@@ -231,15 +239,20 @@ export function bindMotionToCharacter(source: {
   }
 
   const outputClipId = retargetedClipId(source.clipId, target.skeletonId);
-  const result = dispatchRetargetThenBake({
-    sourceClipId: source.clipId,
-    sourceSkeletonId: source.skeletonId,
-    targetSkeletonId: target.skeletonId,
-    mapPresetId: bridge.presetId,
-    customMap: bridge.customMap,
-    outputClipId,
-    outputName: `${target.label} motion`,
-  });
+  const outputName = `${target.label} motion`;
+  const result = dispatchMutatorFromUI(
+    'mutator.animation.retarget',
+    {
+      sourceClipId: source.clipId,
+      sourceSkeletonId: source.skeletonId,
+      targetSkeletonId: target.skeletonId,
+      ...(bridge.presetId ? { mapPresetId: bridge.presetId } : {}),
+      ...(bridge.customMap ? { customMap: bridge.customMap } : {}),
+      outputClipId,
+      outputName,
+    },
+    `Bind motion to rig: ${outputName}`,
+  );
   if (!result.ok) {
     // A gate refused. That is a fault in the graph, not a choice the director
     // made, so it goes to the surface that PERSISTS until something changes.

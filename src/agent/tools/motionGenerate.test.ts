@@ -119,8 +119,10 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     // clip needing a weaker check would not be the same kind of object.
     expect(clip.kind).toBe('AnimationClip');
     expect(clip.duration).toBeGreaterThan(0);
-    expect(clip.pose.kind).toBe('PosedSkeleton');
-    expect(clip.pose.poses.length).toBeGreaterThan(0);
+    // Optional since #901; an `AnimationClip` node still always answers one.
+    expect(clip.pose).toBeDefined();
+    expect(clip.pose!.kind).toBe('PosedSkeleton');
+    expect(clip.pose!.poses.length).toBeGreaterThan(0);
   });
 
   it('is deterministic — the same prompt and seed produce the same ops', async () => {
@@ -243,18 +245,38 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     return found.sort();
   }
 
-  it('measures the premise: exactly one socket consumes a pose, and it is single', () => {
+  it('measures the premise: no ONE node takes two poses, and none takes a list', () => {
     // Not a restatement of the guard below — its PREMISE, asserted where a
     // reader can see it. This reds the day a pose-folding node lands, which is
     // precisely when the description must be rewritten rather than left to
     // drift back into a promise nobody re-measured.
-    expect(poseConsumingSockets()).toEqual(['LocomotionState.clip: AnimationClip (single)']);
+    //
+    // 🔴 THE PROPERTY IS PER-NODE, AND IT WAS NOT ALWAYS WRITTEN THAT WAY (#901).
+    // This used to assert that exactly ONE socket in the whole registry consumed
+    // a pose. That was a proxy for "no two clips can meet", and #901 falsified
+    // the proxy without touching the property: `RetargetClip` is a second node
+    // that takes a clip, and it still takes exactly ONE. Two clips meet when a
+    // SINGLE node can hold both — two pose-bearing sockets on the same node, or
+    // one that accepts a list. So the census keeps its exact shape and the
+    // derivation moved to where the property actually lives. The guard did not
+    // get weaker: a real fold node reds it either way, and this now also reds on
+    // a list socket that the old count would have read as a single.
+    expect(poseConsumingSockets()).toEqual([
+      'LocomotionState.clip: AnimationClip (single)',
+      'RetargetClip.sourceClip: AnimationClip (single)',
+    ]);
   });
 
   it('does not offer layering while no two clips can meet', async () => {
     const sockets = poseConsumingSockets();
+    const perNode = new Map<string, number>();
+    for (const s of sockets) {
+      const type = s.slice(0, s.indexOf('.'));
+      perNode.set(type, (perNode.get(type) ?? 0) + 1);
+    }
     const canFold =
-      sockets.length > 1 || sockets.some((s) => s.endsWith('(list)') || s.endsWith('(multi)'));
+      [...perNode.values()].some((n) => n > 1) ||
+      sockets.some((s) => s.endsWith('(list)') || s.endsWith('(multi)'));
     expect(canFold).toBe(false);
 
     // BOTH agent-facing surfaces, not just the catalogue entry. The result text

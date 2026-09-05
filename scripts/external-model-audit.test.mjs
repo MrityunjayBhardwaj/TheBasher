@@ -10,6 +10,7 @@ import {
   checkStaleness,
   entryCheckedAt,
   listSourceFiles,
+  gitIgnoredPaths,
   SCAN_ROOTS,
   SCAN_ROOT_FILES,
   buildNotice,
@@ -155,6 +156,32 @@ describe('scan coverage — the roots and their exemptions (#737)', () => {
     expect(files).toContain('vite.config.ts');
     expect(files).toContain('package.json');
     expect(files.some((f) => f.startsWith('node_modules/'))).toBe(false);
+  });
+
+  it('the walk asks git what to ignore rather than restating it (#929)', () => {
+    // The row above used to red on `test-results/.last-run.json` — an artifact
+    // every local Playwright run writes, gitignored at .gitignore:33 but invisible
+    // to the walk's hardcoded `node_modules`/`dist` pair. A hardcoded pair is a
+    // GUESS at the ignore list and this is what its drift looks like: the tier was
+    // red by default for anyone who had run e2e, and three sessions running wrote
+    // "environment, do not chase" into their handoffs rather than fixing it.
+    //
+    // Pinning the mechanism, not the symptom. Adding `test-results` to the pair
+    // would green this and leave the next artifact directory to rediscover it;
+    // asking git cannot drift from what the repo ignores, because it IS that.
+    // If the git consult is ever removed the set goes empty and this reds.
+    const repoRoot = path.resolve(here, '..');
+    const ignored = gitIgnoredPaths(repoRoot);
+    expect(ignored.size).toBeGreaterThan(0);
+    expect(ignored.has(path.resolve(repoRoot, 'node_modules'))).toBe(true);
+
+    // And the behavioural half: nothing the scan returns may sit under an ignored
+    // path. This is the property the row below depends on being true.
+    const files = listSourceFiles(repoRoot);
+    const underIgnored = files.filter((f) =>
+      [...ignored].some((ig) => path.resolve(repoRoot, f).startsWith(ig + path.sep)),
+    );
+    expect(underIgnored).toEqual([]);
   });
 
   it('the NAMED roots are the whole covered set — recursion would add nothing', () => {

@@ -3,36 +3,50 @@
 // preset id (Mixamo↔glTF / Reze / Rigify) or from an explicit
 // Record<string, string>.
 //
-// Emits addNode AnimationClip (the retargeted clip) + connect to the
-// project TimeSource. The new clip has TARGET-bone-named tracks so
-// downstream consumers (Character, AnimationLayer) bind cleanly.
+// ─────────────────────────────────────────────────────────────────────────
+// #901 — IT EMITS THE RELATIONSHIP, NOT A SNAPSHOT OF WHAT IT PRODUCED
+// ─────────────────────────────────────────────────────────────────────────
+// This used to run the retarget math here, at build time, and write the result
+// into a brand-new AnimationClip's params. That is a copy, and it had a copy's
+// failure mode: change the source clip or fix a wrong bone map and nothing
+// re-flowed — the target kept playing the old mapping with nothing on screen
+// saying the two had drifted.
 //
-// Closure: roots = [sourceClipId, sourceSkeletonId, targetSkeletonId,
-// timeId]; followedEdges = []. The new clip id is fresh — V13 allows
-// addNode under fresh-add semantics; the connect-to-time targets a
-// closure root. A GltfSkeleton target's upstream GltfAsset is read via
-// evaluate() in build() (not an op), so it stays out of the op-closure.
+// It now emits a `BoneNameMap` node carrying the resolved map, a `RetargetClip`
+// node, and the three edges between them and the operands. The math runs where
+// the graph is read instead of where it is built.
 //
-// P7.11 Wave G (#100) — a `GltfSkeleton` node is now an accepted source/
-// target. Its bind pose is NOT in `params.bones` (it has none — D-02 makes
-// it a PURE evaluated projection of the upstream GltfAsset's captured skin).
-// So bind data is resolved TYPE-AWARELY: a plain `Skeleton` keeps the cheap
-// `params.bones` read (byte-identical to its evaluate, zero behavior change);
-// a `GltfSkeleton` is EVALUATED (the same `evaluate()` renderSummarizePass
-// uses) at frame 0 — bind pose is time-independent — and we read
-// `value.bones`. Evaluating a GltfSkeleton READS its upstream GltfAsset, so
-// the closure follows 'children' to pull that producer into scope (the gate
-// checks op TARGETS, not reads, but making the read-set explicit keeps the
-// closure honest about what the mutator touches).
+// 🔴 ONE ROAD, NOT TWO. The obvious smaller change was to leave this mutator
+// baking and give the UI drop-a-motion road its own graph-shaped builder. That
+// would have made the agent's verb and the director's gesture produce DIFFERENT
+// graphs for the same act — the divergence this codebase has already paid for
+// at the read band, and the reason `boundClipsForAsset` is one walk. So the verb
+// changed instead of forking.
+//
+// WHAT WENT AWAY WITH THE BAKE: the connect to the project TimeSource, and the
+// precondition that demanded one. `RetargetClip` is deliberately time-free — it
+// is a function of the graph, not of the frame — so a TimeSource is no longer an
+// operand, and requiring one would refuse a retarget that has everything it
+// needs. Its own header says why the time-freedom is the whole cost decision.
+//
+// Closure: roots = [sourceClipId, sourceSkeletonId, targetSkeletonId];
+// followedEdges = []. Both new node ids are fresh — V13 allows addNode under
+// fresh-add semantics — and every connect TARGETS a fresh node.
+//
+// P7.11 Wave G (#100) — a `GltfSkeleton` is an accepted source/target. It used
+// to need type-aware bind-pose resolution HERE, because its rig is not in
+// `params.bones` (D-02: it is a pure evaluated projection of the upstream
+// GltfAsset's captured skin) and the bake needed the bones at build time. #901
+// took the bake out, so this builder reads no bind pose at all — it names the
+// rig with an edge and lets the reader project it. That is why the `evaluate()`
+// call, and the note about keeping it out of the op-closure, are gone rather
+// than merely unused.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
-import type { Node, NodeId, Op } from '../../../core/dag/types';
-import type { AnimationKeyframe, BoneSpec, SkeletonValue } from '../../../nodes/types';
-import { retargetClip } from '../../../core/import/retarget';
-import { evaluate } from '../../../core/dag/evaluator';
+import type { Node, Op } from '../../../core/dag/types';
 import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
 
 /** Node types whose `out` is a `Skeleton` value — accepted as retarget source/target. */
@@ -41,30 +55,6 @@ type SkeletonNodeType = (typeof SKELETON_NODE_TYPES)[number];
 
 function isSkeletonNode(node: Node): node is Node & { type: SkeletonNodeType } {
   return (SKELETON_NODE_TYPES as readonly string[]).includes(node.type);
-}
-
-// Bind pose is import-time STATIC, so any frame works — evaluate a
-// GltfSkeleton at frame 0 (mirrors renderSummarizePass.ts).
-const BIND_POSE_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
-
-/**
- * Resolve a skeleton node's `BoneSpec[]` regardless of which family member
- * produced it. A plain `Skeleton` carries its bones in `params.bones` — read
- * them directly (cheap, and byte-identical to Skeleton.evaluate, so existing
- * retarget behavior is unchanged). A `GltfSkeleton` has NO `params.bones`
- * (D-02: its rig is a pure evaluated projection of the upstream GltfAsset's
- * captured skin), so EVALUATE it — the same evaluator renderSummarizePass
- * uses — and read the projected `value.bones`. Both yield radians-unit
- * `BoneSpec[]` that `retargetClip`/`specToThreeSkeleton` consume identically.
- */
-function resolveSkeletonBones(state: DagState, node: Node): BoneSpec[] {
-  if (node.type === 'GltfSkeleton') {
-    const result = evaluate(state, node.id, { ctx: BIND_POSE_CTX });
-    const value = result.value as SkeletonValue;
-    return value.kind === 'Skeleton' ? [...value.bones] : [];
-  }
-  // Plain `Skeleton` — fast path, preserves pre-Wave-G behavior exactly.
-  return (node.params as { bones?: BoneSpec[] }).bones ?? [];
 }
 
 const RetargetSpec = z.object({
@@ -97,8 +87,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       .map((p) => p.id)
       .join(', ') +
     ') or customMap for arbitrary rigs. ' +
-    'Emits a new AnimationClip with target-bone-named tracks; the ' +
-    'source clip is left untouched.',
+    'Emits a RetargetClip node wired to the source clip, the map and the ' +
+    'target rig, so editing either operand re-poses the target with no ' +
+    're-run; the source clip is left untouched.',
   spec: RetargetSpec,
   specExample: {
     sourceClipId: 'mixamo_clip',
@@ -155,11 +146,28 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         reason: `targetSkeletonId is ${targetSkel.type}; expected Skeleton or GltfSkeleton.`,
       };
     }
-    if (!findTimeSource(state)) {
+    // The output reads its SOURCE rig off the source clip's own `skeleton` edge,
+    // because a keyframe's `bone` is an index and an index means nothing except
+    // against the rig it was authored for. So a spec that names a different rig
+    // than the clip is wired to is a disagreement, not a preference — refuse it
+    // rather than silently preferring one. (There is no TimeSource requirement
+    // any more: the emitted node is time-free, so a clock is not an operand.)
+    const clipRigId = edgeSource(sourceClip, 'skeleton');
+    if (!clipRigId) {
       return {
         ok: false,
         reason:
-          'No TimeSource node in DAG. Default projects seed `n_time`; restore one before retargeting.',
+          `sourceClipId "${spec.sourceClipId}" has no skeleton connected. A clip's ` +
+          'keyframes are bone INDICES, so the rig they were authored against has to ' +
+          'be on the graph before they can be retargeted.',
+      };
+    }
+    if (clipRigId !== spec.sourceSkeletonId) {
+      return {
+        ok: false,
+        reason:
+          `sourceSkeletonId "${spec.sourceSkeletonId}" is not the rig "${spec.sourceClipId}" ` +
+          `is connected to ("${clipRigId}"). The clip's own edge is what the retarget reads.`,
       };
     }
     if (!spec.mapPresetId && !spec.customMap) {
@@ -182,54 +190,46 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     }
     return { ok: true };
   },
-  build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const sourceClip = state.nodes[spec.sourceClipId];
-    const sourceSkel = state.nodes[spec.sourceSkeletonId];
-    const targetSkel = state.nodes[spec.targetSkeletonId];
-    const sourceClipParams = sourceClip.params as {
-      name?: string;
-      duration?: number;
-      keyframes?: AnimationKeyframe[];
-    };
-    // Type-aware bind-pose resolution: plain `Skeleton` → params.bones
-    // (unchanged); `GltfSkeleton` → evaluate the node (reads its upstream
-    // GltfAsset's captured skin). Both yield radians-unit BoneSpec[].
-    const sourceBones = resolveSkeletonBones(state, sourceSkel);
-    const targetBones = resolveSkeletonBones(state, targetSkel);
-
+  // No `state`: the build reads nothing off the graph any more. Every operand it
+  // used to sample is now named by an edge instead, which is the whole change.
+  build(spec, _closure: ClosureSet, _state: DagState): Op[] {
     const nameMap =
       spec.customMap ??
       getBoneNameMapPreset(spec.mapPresetId!)?.map ??
       ({} as Readonly<Record<string, string>>);
 
-    const result = retargetClip({
-      sourceBones,
-      sourceClip: {
-        name: sourceClipParams.name ?? 'imported',
-        duration: sourceClipParams.duration ?? 1,
-        keyframes: sourceClipParams.keyframes ?? [],
-      },
-      targetBones,
-      nameMap,
-      outputName: spec.outputName,
-    });
-
     const outputId = spec.outputClipId ?? `${spec.sourceClipId}_retargeted`;
-    const timeId = findTimeSource(state)!;
+    // Derived from the output id, so two binds of the same clip onto two
+    // characters get their own maps and neither can overwrite the other's.
+    const mapId = `${outputId}_map`;
 
     const ops: Op[] = [
       {
         type: 'addNode',
+        nodeId: mapId,
+        nodeType: 'BoneNameMap',
+        // The RESOLVED map, not the preset id: the node is where the director
+        // fixes a bone-name typo, and a preset id is not editable. Resolving it
+        // once here is also what makes the choice legible after the fact.
+        params: { name: spec.mapPresetId ?? 'custom bone map', map: nameMap },
+      },
+      {
+        type: 'addNode',
         nodeId: outputId,
-        nodeType: 'AnimationClip',
-        params: result.clipParams,
+        nodeType: 'RetargetClip',
+        params: { name: spec.outputName ?? '' },
       },
       {
         type: 'connect',
-        from: { node: timeId, socket: 'out' },
-        to: { node: outputId, socket: 'time' },
+        from: { node: spec.sourceClipId, socket: 'out' },
+        to: { node: outputId, socket: 'sourceClip' },
       },
-      // Wire the retargeted clip to the TARGET skeleton.
+      {
+        type: 'connect',
+        from: { node: mapId, socket: 'out' },
+        to: { node: outputId, socket: 'boneMap' },
+      },
+      // Wire the retarget to the TARGET skeleton.
       {
         type: 'connect',
         from: { node: spec.targetSkeletonId, socket: 'out' },
@@ -241,9 +241,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   },
 };
 
-function findTimeSource(state: DagState): NodeId | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === 'TimeSource') return node.id;
-  }
-  return null;
+/** The node id feeding `node.inputs[socket]`, or null. */
+function edgeSource(node: Node, socket: string): string | null {
+  const c = (node.inputs as Record<string, unknown> | undefined)?.[socket];
+  const one = (Array.isArray(c) ? c[0] : c) as { node?: unknown } | undefined;
+  return typeof one?.node === 'string' ? one.node : null;
 }

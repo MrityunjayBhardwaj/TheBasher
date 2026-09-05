@@ -88,10 +88,34 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('did not move the project format version', () => {
-    // Frozen bytes vs live constant. Equal, not merely "no newer" — the load gate beside
-    // this one already allows the fixture to lag; this one says it does not.
-    expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion);
+  it('has moved the project format version exactly once since the freeze, and #915 is that once', () => {
+    // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
+    //
+    // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
+    // bytes and the live constant were equal. #915 ships one (v9 → v10: dropping the
+    // channels the retired eager bake wrote and nobody authored), so that equality is now
+    // false and SHOULD be: this file's own instruction for a phase that does need a
+    // migration is to write it and update the number in the same commit, never to relax
+    // the comparison.
+    //
+    // So the pin is restated, not loosened. The fixture cannot be regenerated — it is
+    // frozen app output — so the distance between it and live is the thing to pin, and it
+    // is still an exact equality against those frozen bytes. A SECOND unplanned bump reds
+    // this row again, which is the whole point of having it.
+    const MIGRATIONS_SINCE_FREEZE = 1; // #915 only
+    expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
+  });
+
+  it('the frozen project still loads through the new ladder, and #915 finds nothing to drop', () => {
+    // The bump is only safe because the migration is a NO-OP on this fixture: it carries no
+    // glTF rig, so there is no bone channel for the pass to examine, let alone remove. Said
+    // as an assertion rather than left to the geometry row below to imply — a migration that
+    // silently deleted a node here would still resolve the same two meshes.
+    const before = fixture().state.nodes;
+    const channelsInFixture = Object.values(before).filter(
+      (n) => n.type === 'KeyframeChannelVec3',
+    ).length;
+    expect(channelsInFixture).toBe(0);
   });
 
   it('did not move any node’s version', () => {

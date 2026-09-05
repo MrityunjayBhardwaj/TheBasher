@@ -190,17 +190,21 @@ describe('#888 — the band reaches the clip through the skeleton edge', () => {
     expect(band(buildScene({ clipSkeletonId: 'a_otherskel' }))[BONES[0]]).toBeUndefined();
   });
 
-  it('delegates the clip LOOP rather than clamping like the eager bake does', () => {
-    // The bake copies keys with `extend: hold`, so it silently drops looping —
-    // one of the things the copy lost without anyone recording it. Delegating
-    // gets the clip's own folding back: t = 4 is two full periods on, so it
-    // reads the start of the clip again.
+  it('cycles the clip WITH OFFSET on position, rather than clamping or teleporting', () => {
+    // The eager bake copied keys with `extend: hold`, so it silently dropped
+    // looping. Delegating got the fold back — and #924 showed the fold alone was
+    // still wrong: `t % duration` replays identical frames, so a root that
+    // travels snapped home once per period.
+    //
+    // The clip runs [0,0,0] -> [0,4,0] over a span of 2. At t = 4 it is two full
+    // periods on, so it reads the start of the clip again PLUS two periods of
+    // travel: 0 + 2 * 4 = 8.
     const b = band(buildScene())[BONES[0]];
     expect(b!.position!(1)[1]).toBeCloseTo(2, 6);
-    expect(b!.position!(4)[1]).toBeCloseTo(0, 6);
-    // The discriminating half: a HELD channel would still be reading its last
-    // key (4) out here, so this row fails if the fold is ever dropped.
-    expect(b!.position!(4)[1]).not.toBeCloseTo(4, 6);
+    // This single row discriminates all three rules, which is why it is stated as
+    // a value rather than a comparison: a HELD channel reads 4 out here, a
+    // PLAIN-repeat channel reads 0, and only cycle-with-offset reads 8.
+    expect(b!.position!(4)[1]).toBeCloseTo(8, 6);
   });
 
   it('is deterministic when two clips share a rig — first by sorted id wins', () => {
@@ -284,5 +288,48 @@ describe('#888 — the H40 boundary pair: both surfaces see the same band', () =
     expect(ids).toContain('a_asset');
     expect(ids).toContain('a_skel');
     expect(ids).toContain('a_clip');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #924 — WHICH DOMAIN the extend rule runs over. This is a behaviour change the
+// fix carries beyond the seam it was filed for, so it is stated rather than left
+// to be discovered: the domain is the clip's KEY RANGE, not its declared
+// `duration`.
+//
+// It closes a latent divergence rather than opening one. A minted channel has
+// only its keys — its Cycles modifier repeats the KEY range — while the clip band
+// used to fold on `duration`. Whenever the two disagreed, an edited bone and an
+// unedited one rendered different motion, and nothing said so. They now read the
+// same domain by construction.
+//
+// Blender draws the same line: a Cycles F-Modifier repeats the keyframe range,
+// and an action's frame range is separate metadata that "does not make the action
+// cycle on its own".
+// ─────────────────────────────────────────────────────────────────────────
+describe('#924 the extend domain is the key range, not the declared duration', () => {
+  /** Keys spanning [0,3] on a clip that CLAIMS duration 2 — deliberately unequal. */
+  const KEYS = [
+    { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { bone: 0, time: 3, position: [0, 3, 0], rotation: [0, 0, 0] },
+  ];
+
+  it('a non-looping clip holds its LAST KEY, not the value at `duration`', () => {
+    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: false } as never).get(0)!;
+    // Inside the keys but past the declared duration: the authored key wins, so
+    // this reads 2.5. Clamping to `duration` first would truncate the last third
+    // of the authored motion and read 2.
+    expect(s(2.5).position[1]).toBeCloseTo(2.5, 6);
+    // Far outside: hold the last KEY (3), not the value at `duration` (2).
+    expect(s(9).position[1]).toBeCloseTo(3, 6);
+  });
+
+  it('a looping clip cycles over the key range, so one period out is one key span', () => {
+    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: true } as never).get(0)!;
+    // Period 3 (the key span), not 2 (the declared duration). At t = 3.5 the
+    // mapped time is 0.5 and one span of travel has accumulated: 0.5 + 3 = 3.5.
+    // A duration-period would map t = 3.5 to 1.5 and read a different number, so
+    // this row distinguishes the two domains rather than merely showing a cycle.
+    expect(s(3.5).position[1]).toBeCloseTo(3.5, 6);
   });
 });

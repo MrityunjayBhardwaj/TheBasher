@@ -141,12 +141,6 @@ const CONSUMERS: Record<string, Decision> = {
   'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
-  'src/agent/mutators/builders/retarget.ts': authored('fixed-ctx-by-design'),
-  // #803 — same classification as `retarget` above, and for the same reason: it
-  // evaluates a `GltfSkeleton` at a FIXED bind-pose ctx (frame 0), never the
-  // playhead. A skeleton's bind pose is import-time static, so any frame yields
-  // the same projection; it reads the bone NAMES, which do not move.
-  'src/agent/mutators/builders/bakeClipOntoRig.ts': authored('fixed-ctx-by-design'),
   // #807 — the third member of the same family, and it evaluates for the same
   // reason the other two do: it reads a `GltfSkeleton`'s bone NAMES to decide
   // which bone-name map bridges a dropped clip onto a character. Names are
@@ -209,7 +203,17 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // those exist only in the evaluated projection — the node has no `params.bones`
     // by design (D-02). Reading names is what forced the evaluate; a params-only
     // read would have had nothing to map the clip's bone INDEXES onto.
-    expect(evaluatorConsumers()).toHaveLength(39);
+    // 39 → 38 at #889 slice 3, and this is the SHRINK the exact count was written to
+    // catch. `bakeClipOntoRig` evaluated a `GltfSkeleton` for its bone names so it
+    // could bake the whole rig at bind time; binding no longer bakes, so the mutator
+    // is gone and so is its evaluate. The road did not move — it collapsed. A floor
+    // would have gone quietly green here, which is the whole reason this is not one.
+    // 38 → 37 at #901, and it is the SAME shrink for the same reason. The retarget
+    // mutator evaluated a `GltfSkeleton` for its bind pose so it could bake the
+    // retargeted clip at build time; it now emits a `RetargetClip` node that NAMES
+    // the rig with an edge and lets the reader project it. The road collapsed rather
+    // than moved — the evaluate went away with the bake, and the row went with it.
+    expect(evaluatorConsumers()).toHaveLength(37);
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

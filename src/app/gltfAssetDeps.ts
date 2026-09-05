@@ -15,7 +15,9 @@
 //   - bakedChannelSamplersForAsset → `KeyframeChannelVec3` nodes scoped to this
 //     asset by `nodeNameMap` (childName → target agreement, BLOCK-2), AND
 //     (#888) the `GltfAsset` → `GltfSkeleton` → `AnimationClip` chain that
-//     enumerator now walks to reach a retargeted clip
+//     enumerator now walks to reach a retargeted clip, AND (#901) a
+//     `RetargetClip` on that rig TOGETHER WITH ITS OPERANDS — the source clip,
+//     that clip's own `Skeleton`, and the `BoneNameMap`
 //
 // 🔴 THE #888 ADDITION IS NOT OPTIONAL POLISH — IT IS THE H40 PAIR. The
 // enumerator is shared by the renderer (which passes THIS collector's output)
@@ -25,6 +27,16 @@
 // show a bone moving and the viewport would not, which is precisely the
 // displayed-≠-rendered split the shared enumerator exists to prevent — and it
 // would be silent, because both surfaces would still be "working".
+// 🔴 AND #901 IS THE SAME PAIR, MEASURED THE HARD WAY. A `RetargetClip`'s keys
+// are not in its params — they are the relationship, resolved from its operands.
+// The first version of #901 taught the enumerator to resolve it and stopped
+// there, and the warning above came true EXACTLY as written: every unit test
+// passed (they hand in the whole node table), and the rendered rig did not move
+// at all. Observed in a browser on a real Tripo character with a real Kimodo
+// clip — the graph was perfect and the skin was frozen. So the walk goes one
+// hop further here: an operand whose ref cannot flip is an edit the viewport
+// will never see.
+//
 // Subscribed with zustand `shallow`, the returned array is referentially equal
 // across an unrelated edit (the DAG uses structural sharing: ops.ts:278-282 keeps
 // every unchanged node's ref identical), so GltfAssetR does NOT re-render. A
@@ -85,9 +97,35 @@ export function gltfAssetDepNodes(
       }
     }
     if (skeletonIds.size > 0) {
+      // #901 — a RetargetClip's OPERANDS, collected as they are discovered. The
+      // ids are gathered first and resolved after the sweep because an operand
+      // can sit anywhere in the table, including before its consumer.
+      const operandIds = new Set<string>();
       for (const n of Object.values(nodes)) {
-        const boundTo = n.type === 'AnimationClip' ? edgeTo(n, 'skeleton') : null;
-        if (boundTo !== null && skeletonIds.has(boundTo)) out.push(n);
+        const boundTo =
+          n.type === 'AnimationClip' || n.type === 'RetargetClip' ? edgeTo(n, 'skeleton') : null;
+        if (boundTo === null || !skeletonIds.has(boundTo)) continue;
+        out.push(n);
+        if (n.type !== 'RetargetClip') continue;
+        const mapId = edgeTo(n, 'boneMap');
+        if (mapId) operandIds.add(mapId);
+        const sourceId = edgeTo(n, 'sourceClip');
+        if (!sourceId) continue;
+        operandIds.add(sourceId);
+        // …and the SOURCE clip's own rig: its keyframes are indices into that
+        // skeleton, so editing the rig changes what the retarget produces.
+        const sourceNode = nodes[sourceId];
+        const sourceRigId = sourceNode ? edgeTo(sourceNode, 'skeleton') : null;
+        if (sourceRigId) operandIds.add(sourceRigId);
+      }
+      // The source clip normally hangs off a DIFFERENT rig than this asset's, so
+      // the walk above excluded it — but nothing forbids the two coinciding, and
+      // a node listed twice would make `shallow` compare a longer array against a
+      // shorter one on an unrelated edit. Dedupe by identity rather than assume.
+      const already = new Set(out);
+      for (const id of operandIds) {
+        const n = nodes[id];
+        if (n && !already.has(n)) out.push(n);
       }
     }
   }

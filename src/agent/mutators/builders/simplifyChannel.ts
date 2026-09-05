@@ -21,14 +21,24 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
+import {
+  CHANNEL_ADDRESS_DOC,
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  channelViewAfterMint,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
-const SimplifyChannelSpec = z.object({
-  channelId: z.string().min(1),
-  /** Maximum perpendicular distance (in the channel's value space + time)
-   *  a point may have from the simplified path. Higher = more aggressive
-   *  reduction. 0 < tolerance ≤ 1. */
-  tolerance: z.number().positive().max(1),
-});
+const SimplifyChannelSpec = z
+  .object({
+    ...CHANNEL_ADDRESS_FIELDS,
+    /** Maximum perpendicular distance (in the channel's value space + time)
+     *  a point may have from the simplified path. Higher = more aggressive
+     *  reduction. 0 < tolerance ≤ 1. */
+    tolerance: z.number().positive().max(1),
+  })
+  .superRefine(superRefineChannelAddress);
 export type SimplifyChannelSpec = z.infer<typeof SimplifyChannelSpec>;
 
 type Keyframe<V = unknown> = { time: number; value: V; easing: 'linear' | 'cubic' };
@@ -41,7 +51,8 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     "Reduce a KeyframeChannel's keyframe count by Ramer-Douglas-Peucker. " +
     'Preserves curve shape within tolerance ε. Supports Number + Vec3; ' +
     'Quat / Color channels return a no-op (their distance metrics need a ' +
-    'separate implementation pass).',
+    'separate implementation pass).' +
+    CHANNEL_ADDRESS_DOC,
   spec: SimplifyChannelSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -65,43 +76,49 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
-      rootSelectors: [spec.channelId],
+      rootSelectors: channelRootSelectors(spec),
       followedEdges: [],
     };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
-    if (!channel) {
-      return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) {
+      return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
-    if (!isKeyframeChannelNode(channel)) {
+    if (!isKeyframeChannelNode(view)) {
       return {
         ok: false,
-        reason: `channelId "${spec.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; expected a KeyframeChannel*.`,
       };
     }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const channel = state.nodes[spec.channelId];
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     // Quat / Color: return no-op rather than throwing — keeps the agent
     // surface forgiving and the toolbar button click harmless.
-    if (!SIMPLIFIABLE.has(channel.type)) return [];
+    if (!SIMPLIFIABLE.has(view.type)) return [];
 
-    const params = (channel.params ?? {}) as { keyframes?: Keyframe[] };
+    const params = view.params as { keyframes?: Keyframe[] };
     const keyframes = (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time);
     if (keyframes.length <= 2) return []; // nothing to simplify
 
-    const points = toPoints(channel.type, keyframes);
+    const points = toPoints(view.type, keyframes);
     const keepMask = rdp(points, spec.tolerance);
 
     const next: Keyframe[] = keyframes.filter((_, i) => keepMask[i]);
     if (next.length === keyframes.length) return []; // RDP kept everything
 
     return [
+      ...resolved.mintOps,
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'keyframes',
         value: next,
       },

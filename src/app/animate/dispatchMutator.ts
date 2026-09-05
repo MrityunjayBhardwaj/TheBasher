@@ -27,6 +27,7 @@ import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { clipRowMintOps } from './clipRowMint';
 import {
   importComfyGraph,
   parseComfyParamPath,
@@ -304,39 +305,37 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
 
   const base = useDagStore.getState().state;
 
-  const bake = getMutator('mutator.timeline.bakeGltfChannel');
   const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
   const keyframe = getMutator('mutator.timeline.keyframe');
-  if (!bake || !removeKeyframes || !keyframe) {
+  if (!removeKeyframes || !keyframe) {
     return {
       ok: false,
-      reason: 'Timeline Mutators not registered (bakeGltfChannel / removeKeyframes / keyframe).',
+      reason: 'Timeline Mutators not registered (removeKeyframes / keyframe).',
     };
   }
 
-  // 1 — validate the bake against the base DAG.
-  const bParsed = bake.spec.safeParse({ assetRef, childName });
-  if (!bParsed.success) {
-    return { ok: false, reason: `bakeGltfChannel spec invalid: ${bParsed.error.message}` };
-  }
-  const bResult = validatePlan(bake, bParsed.data, base, intent);
-  if (!bResult.ok) {
-    return { ok: false, reason: `bakeGltfChannel rejected: ${bResult.reason}` };
-  }
+  // 1 — mint the bone's channel, by the road the bone is actually on. A
+  //     TransformClip bone bakes whole-bone the way it always has; an
+  //     AnimationClip bone (generated / BVH / retargeted) mints per component,
+  //     seeded from that clip. `bakeGltfChannel` REFUSES on the second road —
+  //     measured, "No active clip track for bone" — which is why this is a
+  //     choice here rather than one mutator for both.
+  const mint = clipRowMintOps(base, assetRef, childName, component);
+  if (!mint.ok) return { ok: false, reason: mint.reason };
 
-  // 2 — fork1 = base + bake ops (the baked channels now exist in the fork).
+  // 2 — fork1 = base + mint ops (the channel now exists in the fork).
   let fork1: DagState;
   try {
-    fork1 = createFork(base, bResult.ops).fork;
+    fork1 = createFork(base, mint.ops as Op[]).fork;
   } catch (err) {
-    return { ok: false, reason: `bake fork failed: ${(err as Error).message}` };
+    return { ok: false, reason: `mint fork failed: ${(err as Error).message}` };
   }
 
-  // 3 — the dragged component's baked channel id (deterministic, D1).
+  // 3 — the dragged component's channel id (deterministic, content-addressed).
   const channelId = gltfChannelDagId(assetRef, childName, component);
   const channel = fork1.nodes[channelId];
   if (!channel) {
-    return { ok: false, reason: `baked channel "${channelId}" missing after bake.` };
+    return { ok: false, reason: `channel "${channelId}" missing after mint.` };
   }
   // Read the sample at fromTime off the FORKED baked channel — its keyframes
   // were seeded from the clip at the clip times, so the dragged key exists.
@@ -351,7 +350,16 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   const easing = sample.easing;
 
   // 4 — validate removeKeyframes({time:fromTime}) against fork1.
-  const rParsed = removeKeyframes.spec.safeParse({ channelId, scope: { time: fromTime } });
+  //
+  // Addressed by the BONE, not by `channelId`, even though the mint above has
+  // already put the channel in `fork1` and the id would resolve. The id form
+  // refuses a bone's channel on purpose (channelAddress.ts): a call site that
+  // holds an id holds a precondition — "this channel exists" — that it cannot
+  // export to the next reader, and this composite's precondition is true only
+  // because of a fork three steps up. The parts carry no precondition, and both
+  // steps below find the minted channel and add nothing.
+  const bone = { assetRef, childName, component };
+  const rParsed = removeKeyframes.spec.safeParse({ bone, scope: { time: fromTime } });
   if (!rParsed.success) {
     return { ok: false, reason: `removeKeyframes spec invalid: ${rParsed.error.message}` };
   }
@@ -369,7 +377,7 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   }
 
   // 6 — validate keyframe({time:toTime,value,easing}) against fork2.
-  const kParsed = keyframe.spec.safeParse({ channelId, time: toTime, value, easing });
+  const kParsed = keyframe.spec.safeParse({ bone, time: toTime, value, easing });
   if (!kParsed.success) {
     return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
   }
@@ -381,143 +389,24 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
   // 7 — propose ALL ops (bake + remove + keyframe) as ONE diff with the COMBINED
   //     closure, then accept → one dispatchAtomic → one Cmd+Z (K6).
   const combinedClosure = unionClosureSpecs(
-    unionClosureSpecs(bResult.closure.spec, rResult.closure.spec),
+    unionClosureSpecs(mint.closure, rResult.closure.spec),
     kResult.closure.spec,
   );
   return proposeAndAccept(
     base,
-    [...bResult.ops, ...rResult.ops, ...kResult.ops],
+    [...mint.ops, ...rResult.ops, ...kResult.ops],
     intent,
     [
-      'user:mutator.timeline.bakeGltfChannel',
+      // The provenance names the road, because the two mints seed from different
+      // clips and a diff that said only "bake" could not tell them apart.
+      mint.source === 'animation-clip'
+        ? 'user:mint.channelForBone'
+        : 'user:mutator.timeline.bakeGltfChannel',
       'user:mutator.timeline.removeKeyframes',
       'user:mutator.timeline.keyframe',
     ],
     combinedClosure,
-    [...bResult.warnings, ...rResult.warnings, ...kResult.warnings],
-  );
-}
-
-export interface RetargetThenBakeArgs {
-  /** The imported clip, in its SOURCE rig's vocabulary. */
-  sourceClipId: string;
-  /** The `Skeleton` that clip arrived with (the motion file's own rig). */
-  sourceSkeletonId: string;
-  /** The `GltfSkeleton` of the character the motion should drive. */
-  targetSkeletonId: string;
-  /** A registered preset id, or `null` when `customMap` carries the bridge. */
-  mapPresetId: string | null;
-  /** An explicit bone-name map, used when no preset was chosen. */
-  customMap: Readonly<Record<string, string>> | null;
-  /** Deterministic id for the retargeted clip, so the bake can name it. */
-  outputClipId: string;
-  /** Display name for the retargeted clip. */
-  outputName: string;
-}
-
-/**
- * Retarget an imported motion clip onto a character's rig AND materialise the
- * result onto the road the renderer reads — as ONE atomic undo entry (#807).
- *
- * WHY THE TWO STEPS CANNOT BE TWO DISPATCHES. Retarget alone produces a clip
- * that poses a `GltfSkeleton` nothing renders — which is exactly the state #803
- * was filed about. Left as two entries, one Cmd+Z lands the project in that
- * state: a character carrying a retargeted clip that visibly does nothing, and no
- * way to tell from the outliner that the motion is half-applied. The two steps
- * are one director-facing act ("put this walk on him"), so they are one entry.
- *
- * Fork-evolve discipline, mirroring `dispatchBakeThenRetime`: the retarget
- * validates against the live base; the bake validates against the FORKED
- * post-retarget state, because the clip it bakes only exists in the fork. The
- * output clip id is passed in rather than defaulted, so the bake can reference it
- * without a DAG round-trip. Any `!ok` at any step aborts and mutates nothing.
- */
-export function dispatchRetargetThenBake(args: RetargetThenBakeArgs): DispatchResult {
-  const intent = `Bind motion to rig: ${args.outputName}`;
-  const base = useDagStore.getState().state;
-
-  const retarget = getMutator('mutator.animation.retarget');
-  const bake = getMutator('mutator.animation.bakeClipOntoRig');
-  if (!retarget || !bake) {
-    return {
-      ok: false,
-      reason: 'Animation Mutators not registered (retarget / bakeClipOntoRig).',
-    };
-  }
-
-  // 1 — validate the retarget against the base DAG.
-  const rParsed = retarget.spec.safeParse({
-    sourceClipId: args.sourceClipId,
-    sourceSkeletonId: args.sourceSkeletonId,
-    targetSkeletonId: args.targetSkeletonId,
-    ...(args.mapPresetId ? { mapPresetId: args.mapPresetId } : {}),
-    ...(args.customMap ? { customMap: args.customMap } : {}),
-    outputClipId: args.outputClipId,
-    outputName: args.outputName,
-  });
-  if (!rParsed.success) {
-    return { ok: false, reason: `retarget spec invalid: ${rParsed.error.message}` };
-  }
-  const rResult = validatePlan(retarget, rParsed.data, base, intent);
-  if (!rResult.ok) {
-    return { ok: false, reason: `retarget rejected: ${rResult.reason}` };
-  }
-
-  // 2 — fork = base + retarget ops. The retargeted clip and its edge to the
-  //     target skeleton exist only here, and the bake reads that edge to find
-  //     the rig (which is why the bake cannot be validated against the base).
-  let fork: DagState;
-  try {
-    fork = createFork(base, rResult.ops).fork;
-  } catch (err) {
-    return { ok: false, reason: `retarget fork failed: ${(err as Error).message}` };
-  }
-
-  // 3 — validate the bake against the FORKED post-retarget state.
-  const bParsed = bake.spec.safeParse({ clipId: args.outputClipId });
-  if (!bParsed.success) {
-    return { ok: false, reason: `bakeClipOntoRig spec invalid: ${bParsed.error.message}` };
-  }
-  const bResult = validatePlan(bake, bParsed.data, fork, intent);
-  if (!bResult.ok) {
-    return { ok: false, reason: `bakeClipOntoRig rejected: ${bResult.reason}` };
-  }
-
-  // 🔑 ZERO OPS IS A REFUSAL, NOT A QUIET SUCCESS.
-  //
-  // A baked channel's id is content-addressed on assetRef + bone + component and
-  // NOT on the clip, and the shared emitter skips a channel that already exists.
-  // That guard is right for the sibling consumer, whose source is the asset's own
-  // embedded clip, where re-baking the same bone genuinely is a no-op. It is not
-  // right here: this consumer's source is a retargeted clip that can carry a
-  // COMPLETELY DIFFERENT motion, so "this bone already has a channel" does not
-  // mean "the values would be the same".
-  //
-  // Measured before this guard existed: dropping a second, different clip on the
-  // same character left the channel count at 46 and the rendered pose
-  // byte-identical at five bones across three times — while the action reported
-  // success. Reporting the truth is the floor; REPLACING the existing motion is a
-  // real decision with a real cost (baked channels are editable, and overwriting
-  // them discards hand edits), so it is filed rather than guessed at here.
-  if (bResult.ops.length === 0) {
-    return {
-      ok: false,
-      reason:
-        'this rig already carries baked motion on those bones, and binding a second ' +
-        'clip would silently change nothing. Use "Clear baked motion" on the character, ' +
-        'then drop the clip again.',
-    };
-  }
-
-  // 4 — propose retarget + bake as ONE diff with the COMBINED closure, then
-  //     accept → one dispatchAtomic → one Cmd+Z reverts the whole binding (K6).
-  return proposeAndAccept(
-    base,
-    [...rResult.ops, ...bResult.ops],
-    intent,
-    ['user:mutator.animation.retarget', 'user:mutator.animation.bakeClipOntoRig'],
-    unionClosureSpecs(rResult.closure.spec, bResult.closure.spec),
-    [...rResult.warnings, ...bResult.warnings],
+    [...mint.warnings, ...rResult.warnings, ...kResult.warnings],
   );
 }
 
@@ -526,6 +415,17 @@ export interface RevertGltfChannelArgs {
   assetRef: string;
   /** The bone's childName. */
   childName: string;
+  /**
+   * ONE component to revert, or omitted for the whole bone.
+   *
+   * The whole-bone form is the original (#121): the per-bone button in the
+   * inspector reverts a bone, because that is the unit a director points at
+   * there. The dopesheet points at a ROW, which is one component, and reverting
+   * all three from a row would take away a position track the director never
+   * touched — removal granularity has to match the granularity of the thing
+   * that created it, and copy-on-write mints per component (#889).
+   */
+  component?: 'position' | 'rotation' | 'scale';
 }
 
 /**
@@ -543,12 +443,16 @@ export interface RevertGltfChannelArgs {
  * ops) when the bone has no baked channels (already on the clip).
  */
 export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): DispatchResult {
-  const { assetRef, childName } = args;
+  const { assetRef, childName, component } = args;
   const base = useDagStore.getState().state;
 
-  // Collect the deterministic baked-channel ids that EXIST for this bone.
-  const targets = (['position', 'rotation', 'scale'] as const)
-    .map((component) => gltfChannelDagId(assetRef, childName, component))
+  // Collect the deterministic baked-channel ids that EXIST for this bone —
+  // narrowed to one component when the caller named one.
+  const components = component
+    ? ([component] as const)
+    : (['position', 'rotation', 'scale'] as const);
+  const targets = components
+    .map((c) => gltfChannelDagId(assetRef, childName, c))
     .filter((id) => base.nodes[id]);
 
   // Nothing baked → already on the clip; revert is a no-op (not an error).
@@ -557,7 +461,7 @@ export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): Dispatch
   return dispatchMutatorFromUI(
     'mutator.deleteNode',
     { targetSelectors: targets },
-    `Revert ${childName} to imported clip`,
+    `Revert ${childName}${component ? `.${component}` : ''} to imported clip`,
   );
 }
 
