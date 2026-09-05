@@ -83,6 +83,64 @@ export function bonesOfSkeletonNode(
 type SourceParams = { name?: string; duration?: number; keyframes?: unknown };
 
 /**
+ * Every operand a `RetargetClip` reads, resolved from the node table.
+ *
+ * Extracted (#921) because a SECOND reader arrived: the inspector's bone-map
+ * editor needs the same source rig, target rig and map node this resolver needs,
+ * and answering "which edges does a retarget read?" in two files is how the two
+ * drift. The walk is stated once; each caller applies its own strictness on top.
+ *
+ * Deliberately NOT strict. This returns what it found and nulls what it did not,
+ * because the two callers disagree about what counts as answerable: a clip with
+ * no keyframes resolves to no clip params, but its map is still editable — indeed
+ * that is exactly when a director most needs to edit it. Folding the strictness in
+ * here would make the editor vanish at the moment it is wanted.
+ */
+export interface RetargetOperands {
+  /** The `AnimationClip` node feeding `sourceClip`, when there is one. */
+  readonly sourceNode: GraphNodeLike | null;
+  readonly sourceParams: SourceParams | null;
+  /** The rig the source clip's keyframe indices address — off the CLIP's own edge. */
+  readonly sourceBones: readonly BoneSpec[] | null;
+  readonly mapNodeId: string | null;
+  readonly map: Readonly<Record<string, string>> | null;
+  readonly targetBones: readonly BoneSpec[] | null;
+}
+
+/** Null when `node` is not a `RetargetClip`; otherwise whatever its edges reach. */
+export function retargetOperandsFromNodes(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  node: GraphNodeLike | undefined,
+): RetargetOperands | null {
+  if (!node || node.type !== 'RetargetClip') return null;
+
+  const sourceId = edgeTarget(node, 'sourceClip');
+  const sourceCandidate = sourceId ? nodes[sourceId] : undefined;
+  const sourceNode =
+    sourceCandidate && sourceCandidate.type === 'AnimationClip' ? sourceCandidate : null;
+
+  // The source rig comes off the SOURCE CLIP's own edge — its keys are indices
+  // into that rig and nothing else. Mirrors the node's `sourceClip.skeleton`.
+  const sourceBones = sourceNode
+    ? bonesOfSkeletonNode(nodes, edgeTarget(sourceNode, 'skeleton'))
+    : null;
+
+  const mapId = edgeTarget(node, 'boneMap');
+  const mapNode = mapId ? nodes[mapId] : undefined;
+  const mapOwned = mapNode && mapNode.type === 'BoneNameMap' ? mapNode : null;
+  const rawMap = (mapOwned?.params as { map?: unknown } | undefined)?.map;
+
+  return {
+    sourceNode,
+    sourceParams: sourceNode ? ((sourceNode.params as SourceParams | undefined) ?? null) : null,
+    sourceBones,
+    mapNodeId: mapOwned ? mapId : null,
+    map: rawMap && typeof rawMap === 'object' ? (rawMap as Readonly<Record<string, string>>) : null,
+    targetBones: bonesOfSkeletonNode(nodes, edgeTarget(node, 'skeleton')),
+  };
+}
+
+/**
  * operand identities → output name → resolved params.
  *
  * Three weak levels so any one operand changing misses, and a fourth keyed on the
@@ -110,26 +168,13 @@ export function retargetClipParamsFromNodes(
   nodes: Readonly<Record<string, GraphNodeLike>>,
   node: GraphNodeLike | undefined,
 ): Partial<AnimationClipParams> | null {
-  if (!node || node.type !== 'RetargetClip') return null;
+  const operands = node ? retargetOperandsFromNodes(nodes, node) : null;
+  if (!node || !operands) return null;
 
-  const sourceId = edgeTarget(node, 'sourceClip');
-  const source = sourceId ? nodes[sourceId] : undefined;
-  if (!source || source.type !== 'AnimationClip') return null;
-  const sourceParams = source.params as SourceParams | undefined;
+  const { sourceParams, sourceBones, map, targetBones } = operands;
   if (!Array.isArray(sourceParams?.keyframes) || sourceParams.keyframes.length === 0) return null;
-
-  // The source rig comes off the SOURCE CLIP's own edge — its keys are indices
-  // into that rig and nothing else. Mirrors the node's `sourceClip.skeleton`.
-  const sourceBones = bonesOfSkeletonNode(nodes, edgeTarget(source, 'skeleton'));
   if (!sourceBones || sourceBones.length === 0) return null;
-
-  const mapId = edgeTarget(node, 'boneMap');
-  const mapNode = mapId ? nodes[mapId] : undefined;
-  if (!mapNode || mapNode.type !== 'BoneNameMap') return null;
-  const map = (mapNode.params as { map?: unknown } | undefined)?.map;
-  if (!map || typeof map !== 'object') return null;
-
-  const targetBones = bonesOfSkeletonNode(nodes, edgeTarget(node, 'skeleton'));
+  if (!map) return null;
   if (!targetBones || targetBones.length === 0) return null;
 
   const outputName = (node.params as { name?: unknown } | undefined)?.name;

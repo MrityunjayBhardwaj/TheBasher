@@ -87,6 +87,7 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { boneMapView, mapWithRow } from './animate/boneMapRows';
 import { useAnimatableField } from './animate/useAnimatableField';
 import { useColorPickerInteraction } from './useColorPickerInteraction';
 import { useDragScrub } from './dragScrub';
@@ -1297,6 +1298,176 @@ const AXIS_LABELS = ['X', 'Y', 'Z'] as const;
  *  effective stack), so a Cycles in a per-axis override drives that axis alone → nothing is
  *  excluded from the per-axis Add menu. Kept as the seam for any future per-axis-inert type. */
 const PER_AXIS_EXCLUDE: readonly string[] = [];
+
+/**
+ * #921 — THE BONE MAP, EDITABLE BY THE PERSON HOLDING THE MOUSE.
+ *
+ * #901 made the map a node, so correcting a bone re-poses the character live. Only
+ * the agent could do it: `map` is a `Record<string,string>` and the generic row
+ * dispatcher has no arm for a record, so it fell through to `(complex — Pro mode)`
+ * and rendered nothing at all — not even read-only.
+ *
+ * WHY THIS LIVES ON THE RETARGET AND NOT ON `BoneNameMap`. A target picker needs the
+ * target rig's joint names, and Blender's own bone field says why that decides the
+ * home: `prop_search(data, property, search_data, search_property)` takes the
+ * collection to search as a REQUIRED argument. `BoneNameMap` declares `inputs: {}`
+ * and can see neither rig; `RetargetClip` holds all three operands. A map may also be
+ * SHARED by several retargets — its own header sells that reuse — so "which rig?" has
+ * no single answer at the map node, and exactly one answer here.
+ *
+ * The possession test the section table could not make (`SectionCtx` carries params,
+ * not edges) is made here: no bone map over an edge, no editor.
+ */
+function BoneMapEditor({ nodeId }: { nodeId: string }) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  const nodes = useDagStore((s) => s.state.nodes);
+  const view = boneMapView(nodes as Parameters<typeof boneMapView>[0], nodeId);
+  if (!view) return null;
+
+  const map = ((nodes[view.mapNodeId]?.params as { map?: Record<string, string> } | undefined)
+    ?.map ?? {}) as Readonly<Record<string, string>>;
+
+  const write = (source: string, target: string | null, label: string) =>
+    dispatch(
+      {
+        type: 'setParam',
+        nodeId: view.mapNodeId,
+        paramPath: 'map',
+        value: mapWithRow(map, source, target),
+      },
+      'user',
+      label,
+    );
+
+  return (
+    <div className="flex flex-col gap-1 px-3 py-2" data-testid="npanel-bone-map">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">bone map</span>
+        {view.proposalLabel ? (
+          <span className="font-mono text-[10px] text-fg/40" data-testid="npanel-bone-map-bridge">
+            {view.proposalLabel}
+          </span>
+        ) : null}
+      </div>
+      {/* The picker hides a prefix every target shares, so say WHICH once, here.
+          Hiding it silently would make the labels shorter and the panel a liar. */}
+      <div className="flex items-center justify-between gap-2">
+        {view.targetPrefix ? (
+          <span className="font-mono text-[10px] text-fg/40" data-testid="npanel-bone-map-prefix">
+            targets are {view.targetPrefix}*
+          </span>
+        ) : null}
+      </div>
+
+      {/* Target coverage, not source coverage: bones the CHARACTER has that nothing
+          drives are the ones that read as a frozen limb. */}
+      <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+        <span
+          className="rounded-full bg-bg-2 px-2 py-0.5 font-mono text-fg/70"
+          data-testid="npanel-bone-map-coverage"
+        >
+          {view.drivenTargets}/{view.targetTotal} target bones driven
+        </span>
+        {view.unmappedCount > 0 ? (
+          <span
+            className="rounded-full bg-bg-2 px-2 py-0.5 font-mono text-warn"
+            data-testid="npanel-bone-map-unmapped"
+          >
+            {view.unmappedCount} unmapped
+          </span>
+        ) : null}
+        {view.danglingCount > 0 ? (
+          <span
+            className="rounded-full bg-bg-2 px-2 py-0.5 font-mono text-warn"
+            data-testid="npanel-bone-map-dangling"
+          >
+            {view.danglingCount} dangling
+          </span>
+        ) : null}
+      </div>
+
+      {/* Blender cannot create this situation — its mapping is duplicated per rig —
+          so a director has no prior for it and it must be said, not assumed. */}
+      {view.sharedWith.length > 0 ? (
+        <div
+          className="rounded border border-border-strong bg-warn/10 px-2 py-1 text-[10px] text-warn"
+          data-testid="npanel-bone-map-shared"
+        >
+          Shared with {view.sharedWith.length} other retarget
+          {view.sharedWith.length === 1 ? '' : 's'} — edits here change {view.sharedWith.join(', ')}
+        </div>
+      ) : null}
+
+      <div className="mt-1 flex max-h-64 flex-col overflow-y-auto">
+        {view.rows.map((row) => (
+          <div
+            key={row.source}
+            className="grid grid-cols-[minmax(0,1fr)_12px_minmax(0,1fr)_66px] items-center gap-1.5 border-b border-border/40 py-1 last:border-b-0"
+            data-testid={`npanel-bone-map-row-${row.source}`}
+            data-row-state={row.state}
+            data-row-origin={row.origin}
+          >
+            {/* The source name is never truncated from the RIGHT: the discriminating
+                half of `mixamorig_LeftUpLeg` is its tail, and the reference addon's
+                list is unreadable at 52 rows for exactly that reason. */}
+            <span
+              className="overflow-hidden text-ellipsis whitespace-nowrap text-left font-mono text-[11px] text-fg/80"
+              dir="rtl"
+              title={row.source}
+            >
+              {row.source}
+            </span>
+            <span
+              className={`text-center font-mono text-[10px] ${
+                row.state === 'mapped' ? 'text-fg/30' : 'text-warn'
+              }`}
+            >
+              →
+            </span>
+            <select
+              value={row.target ?? ''}
+              title={row.target ?? 'no target'}
+              data-testid={`npanel-bone-map-target-${row.source}`}
+              className="min-w-0 rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[11px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) =>
+                write(
+                  row.source,
+                  e.target.value === '' ? null : e.target.value,
+                  e.target.value === ''
+                    ? `unmap ${row.source}`
+                    : `map ${row.source} → ${e.target.value}`,
+                )
+              }
+            >
+              {/* Blender's picker takes `results_are_suggestions: false` by default —
+                  a name the rig does not carry is refused, not accepted. A dropdown of
+                  the rig's own joints is that refusal made structural. */}
+              <option value="">— no target —</option>
+              {/* A dangling entry names a bone the rig lacks. It is listed so the
+                  control shows what is actually stored rather than silently reading
+                  as unmapped, which would hide the correction that is needed. */}
+              {row.state === 'dangling' && row.target !== null ? (
+                <option value={row.target}>{row.target} (not in rig)</option>
+              ) : null}
+              {view.targetBoneNames.map((name) => (
+                <option key={name} value={name} title={name}>
+                  {view.targetPrefix ? name.slice(view.targetPrefix.length) : name}
+                </option>
+              ))}
+            </select>
+            <span
+              className={`text-right font-mono text-[9px] uppercase ${
+                row.state === 'mapped' ? 'text-fg/40' : 'text-warn'
+              }`}
+            >
+              {row.state === 'mapped' ? row.origin : row.state}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 /** #274 (V88 D2) / #280 — the per-channel F-MODIFIER STACK authoring UI: the SHARED stack
  *  (applied to every axis) plus, for vec channels, a PER-AXIS override section (#280). Each
@@ -3451,6 +3622,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
   channelExtend: (ctx) => <ChannelExtendControls nodeId={ctx.paramsNodeId} />,
   channelModifiers: (ctx) => <ChannelModifierControls nodeId={ctx.paramsNodeId} />,
+  boneMap: (ctx) => <BoneMapEditor nodeId={ctx.paramsNodeId} />,
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what

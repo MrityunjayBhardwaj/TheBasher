@@ -33,6 +33,11 @@ export const BoneNameMapNode: NodeDefinition<BoneNameMapParams, BoneNameMapValue
   paramSchema: BoneNameMapParams,
   inputs: {},
   outputs: { out: { type: 'BoneNameMap', cardinality: 'single' } },
+  // #921 deliberately does NOT declare inspectorSections here. The first attempt did,
+  // and `inspectorSectionsRegistry.test.ts` was right to refuse it: this node is on the
+  // raw-fallback list on purpose, so its params are already reachable. The map is
+  // AUTHORED from the retarget that consumes it — the only place both rigs are known —
+  // so a section here would add a second, rig-less home for the same data.
   evaluate(params) {
     return {
       kind: 'BoneNameMap',
