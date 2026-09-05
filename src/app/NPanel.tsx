@@ -1457,7 +1457,14 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
             </select>
             <span
               className={`text-right font-mono text-[9px] uppercase ${
-                row.state === 'mapped' ? 'text-fg/40' : 'text-warn'
+                row.state !== 'mapped'
+                  ? 'text-warn'
+                  : // A person's decision has to out-read the machine's proposal. The UAT
+                    // showed both rendering equally dim, which makes the column decorative:
+                    // scanning 78 rows for "what did I change" was no easier than before it.
+                    row.origin === 'edited'
+                    ? 'text-accent'
+                    : 'text-fg/40'
               }`}
             >
               {row.state === 'mapped' ? row.origin : row.state}
