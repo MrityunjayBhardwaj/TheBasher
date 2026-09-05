@@ -16,6 +16,7 @@ import {
   type ChannelRow,
 } from './clipChannelRows';
 import { collectChannelRows } from './TimelineCanvas';
+import type { Node } from '../core/dag/types';
 
 const ASSET = 'user-imports/dwarf.glb';
 const HIPS = 'mixamorig_Hips';
@@ -240,8 +241,14 @@ function channelCount(nodes: Nodes): number {
 /** EXACTLY the expression `TimelineCanvas.tsx:575` evaluates. */
 function dopesheetRows(nodes: Nodes): ChannelRow[] {
   return appendAnimationClipRows({
-    baseRows: collectChannelRows(nodes as never),
-    nodes: nodes as never,
+    // One cast, and only where it is forced: `collectChannelRows` takes the
+    // store's full `Node`, while this fixture is the structural subset the walk
+    // actually reads. `nodes` goes to the wrapper UNCAST on purpose — casting it
+    // (or using `as never`, which disables checking entirely) would let a change
+    // to the wrapper's own signature pass this file silently, which is the very
+    // class of drift these rows exist to catch.
+    baseRows: collectChannelRows(nodes as unknown as Record<string, Node>),
+    nodes,
   });
 }
 
@@ -308,12 +315,19 @@ describe('the wrapper the dopesheet calls', () => {
   });
 
   it('skips an asset with no usable ref rather than projecting under an empty name', () => {
-    for (const assetRef of [undefined, '', 42]) {
+    const unusable = [undefined, '', 42];
+    let examined = 0;
+    for (const assetRef of unusable) {
       const nodes = withoutChannels(rigged());
       const asset = nodes.n_asset;
       nodes.n_asset = { ...asset, params: { ...(asset.params as object), assetRef } };
       expect(dopesheetRows(nodes)).toHaveLength(0);
+      examined += 1;
     }
+    // Every assertion here lives inside the loop, so an empty list would report
+    // the same green as a complete pass. State the denominator.
+    expect(examined).toBe(unusable.length);
+    expect(examined).toBeGreaterThan(0);
   });
 
   it('walks GltfAsset nodes ONLY — a shared assetRef never projects the rig twice', () => {
