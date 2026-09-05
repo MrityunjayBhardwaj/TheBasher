@@ -26,7 +26,7 @@ import { DEFAULT_CAMERA_POSE, resolveCameraPoseAt } from '../../app/activeCamera
 import { sphereGeometryRef } from '../../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
-import { evaluate } from '../dag/evaluator';
+import { createEvaluatorCache, evaluate } from '../dag/evaluator';
 import { sampleCurve } from '../../nodes/curveMath';
 import type { BakedDataValue, CurveDataValue, InlineMaterialSpec, Vec3 } from '../../nodes/types';
 import {
@@ -2891,7 +2891,10 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     // remove. Showing the same graph freeze without it is what makes the second
     // half a measurement of the subject.
     const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    const before = ProjectSchema.parse({
+      ...raw,
+      formatVersion: PROJECT_FORMAT_VERSION,
+    }) as Project;
     expect(channelsOf(before)).toHaveLength(4);
     for (const bone of BONES) {
       // t = 0.5 is inside the authored range; t = 0.5 + DUR is past its end.
@@ -2932,7 +2935,10 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     // same motion. If the bone fell to its base pose instead, this suite's wrap
     // rows would still pass — a frozen bone and a base-pose bone both "loop".
     const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    const before = ProjectSchema.parse({
+      ...raw,
+      formatVersion: PROJECT_FORMAT_VERSION,
+    }) as Project;
     const after = loadFromBytes(raw);
     for (const bone of BONES)
       // 🔴 NEVER t = DUR. A bound clip WRAPS at its duration and a channel CLAMPS
@@ -3071,5 +3077,118 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
       .nodes;
     nodes[id].params.modifiers = [defaultModifier('cycles')];
     expect(channelsOf(loadFromBytes(current))).toHaveLength(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('AnimationClip v10 → v11: the dead `time` binding is dropped (#920)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  /** A v10 save shaped the way the import chains used to write one: a `TimeSource`
+   *  wired into the clip's retired `time` socket, alongside the `skeleton` edge that
+   *  is still declared. Every project holding a BVH, FBX, glTF or generated motion
+   *  saved before #920 is in this shape. */
+  function buildV10ClipJson(withTimeEdge: boolean): unknown {
+    const inputs: Record<string, { node: string; socket: string }> = {
+      skeleton: { node: 'n_skel', socket: 'out' },
+    };
+    if (withTimeEdge) inputs.time = { node: 'n_time', socket: 'out' };
+    return {
+      formatVersion: 10,
+      id: 'p920-migration',
+      name: 'pre-timefree clip',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { AnimationClip: 1, TimeSource: 1, Skeleton: 1 },
+      state: {
+        nodes: {
+          n_time: { id: 'n_time', type: 'TimeSource', version: 1, params: {}, inputs: {} },
+          n_skel: {
+            id: 'n_skel',
+            type: 'Skeleton',
+            version: 1,
+            params: { bones: [] },
+            inputs: {},
+          },
+          n_clip: {
+            id: 'n_clip',
+            type: 'AnimationClip',
+            version: 1,
+            params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+            inputs,
+          },
+        },
+        outputs: {},
+      },
+    };
+  }
+
+  it('ANTI-VACUITY: the fixture really carries the binding before migrating', () => {
+    // Without this row the whole suite passes on a fixture that never had a `time`
+    // edge — "it is absent afterwards" is trivially true of something never present,
+    // and a friendlier fixture later would silently restore the vacuum.
+    const raw = buildV10ClipJson(true) as {
+      state: { nodes: { n_clip: { inputs: Record<string, unknown> } } };
+    };
+    expect(raw.state.nodes.n_clip.inputs.time).toEqual({ node: 'n_time', socket: 'out' });
+  });
+
+  it('THE DEAD EDGE IS GONE, and the live one is untouched', () => {
+    const migrated = loadFromBytes(buildV10ClipJson(true));
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    expect(migrated.state.nodes.n_clip.inputs.time).toBeUndefined();
+    expect(migrated.state.nodes.n_clip.inputs.skeleton).toEqual({
+      node: 'n_skel',
+      socket: 'out',
+    });
+  });
+
+  it("the shared clock SURVIVES — it is the project's, not the clip's", () => {
+    // `n_time` is read by many other nodes. Dropping the binding must not tempt a
+    // future reader into dropping the node it named.
+    const migrated = loadFromBytes(buildV10ClipJson(true));
+    expect(migrated.state.nodes.n_time).toBeDefined();
+    expect(migrated.state.nodes.n_time.type).toBe('TimeSource');
+  });
+
+  it('a clip that never had the binding is passed through unchanged', () => {
+    const migrated = loadFromBytes(buildV10ClipJson(false));
+    expect(migrated.state.nodes.n_clip.inputs.time).toBeUndefined();
+    expect(migrated.state.nodes.n_clip.inputs.skeleton).toBeDefined();
+  });
+
+  it('THE CONSEQUENCE: the migrated clip evaluates ONCE across frames, the unmigrated one every frame', () => {
+    // This is the row that makes the migration worth a format version rather than
+    // housekeeping. The evaluator resolves a node's OWN saved bindings, not its
+    // definition's declared inputs, so a dead `time` edge is still followed and its
+    // hash still lands in the cache key. Both halves are asserted because a change
+    // that made NEITHER shape re-evaluate would pass a test that only checked the
+    // migrated one.
+    function newCacheEntriesOver10Frames(project: Project): number {
+      const state = {
+        nodes: project.state.nodes,
+        outputs: project.state.outputs,
+      } as unknown as DagState;
+      const cache = createEvaluatorCache();
+      let misses = 0;
+      for (let f = 0; f < 10; f++) {
+        const before = cache.size();
+        evaluate(state, 'n_clip', { cache, ctx: ctxAt(f / 24) as never });
+        if (cache.size() > before) misses++;
+      }
+      return misses;
+    }
+
+    // The unmigrated shape, reconstructed AFTER load so the node types are registered.
+    const stale = loadFromBytes(buildV10ClipJson(true));
+    stale.state.nodes.n_clip.inputs.time = { node: 'n_time', socket: 'out' };
+    expect(newCacheEntriesOver10Frames(stale)).toBe(10);
+
+    const migrated = loadFromBytes(buildV10ClipJson(true));
+    expect(newCacheEntriesOver10Frames(migrated)).toBe(1);
   });
 });
