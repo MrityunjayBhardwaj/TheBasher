@@ -240,3 +240,100 @@ describe('readTerrainSampleAt — glTF terrain (loaded clone)', () => {
     expect(point).toEqual([4, 10, -3]); // the Null's own world position, not [0,0,0]
   });
 });
+
+// ── #725 — A DERIVED STRUCTURE MUST INVALIDATE ON THE TOPOLOGY IT WAS BUILT FROM ─────
+//
+// The BVH is the pick/raycast acceleration this invariant is about, and its cache key has
+// to cover every input `buildMeshBvh` consumes: positions, index AND matrix. It used to
+// cover positions and matrix, which is the shape that produces a QUIET wrong answer — the
+// structure still exists, still answers, and answers about a mesh that is gone.
+//
+// 🔑 THE ORACLE IS THE POINT OF THIS ROW. "The reading did not change" proves nothing on
+// its own: the correct answer might be unchanged too, and a probe that cannot tell those
+// apart is evidence about the probe. So the expected value is derived from a FRESH geometry
+// carrying the same reduced index, and the cached read is compared against THAT.
+//
+// ⚠️ Not reachable in production today — nothing mutates a live geometry's index; every
+// `setIndex` runs on a freshly built one. The rule is stated here rather than relied upon,
+// because the first operator to change a topology in place would inherit the wrong answer
+// silently rather than fail.
+describe('#725 — the BVH cache invalidates on an index change, not only on positions', () => {
+  afterEach(() => __clearGltfCloneRegistryForTests());
+
+  function terrainState(pos: [number, number, number]): DagState {
+    let st = buildDefaultDagState();
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'geo_terrain',
+        nodeType: 'GltfAsset',
+        params: { assetRef: 'asset_topo' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'geo_null',
+        nodeType: 'Null',
+        params: { position: pos, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'geo_null', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'geo_sample',
+        nodeType: 'SampleGeometry',
+        params: { sourceGeometry: { node: 'geo_terrain' }, at: { node: 'geo_null' } },
+      },
+    ];
+    for (const op of ops) st = applyOp(st, op).next;
+    return st;
+  }
+
+  function mountTerrain(geometry: THREE.BufferGeometry): void {
+    const group = new THREE.Group();
+    const box = new THREE.Mesh(geometry);
+    box.position.set(0, 2, 0);
+    group.add(box);
+    group.updateMatrixWorld(true);
+    registerGltfClone('asset_topo', group);
+  }
+
+  it('an index replaced in place is a new topology, and the read follows it', () => {
+    const geo = new THREE.BoxGeometry(20, 1, 20);
+    mountTerrain(geo);
+    const st = terrainState([4, 10, -3]);
+    const ref = geometrySampleRefOf(st.nodes['geo_sample'])!;
+
+    // Prime the cache against the full box — the top face at world y = 2.5.
+    expect(readTerrainSampleAt(st, ref, ctxAt(0)).point[1]).toBeCloseTo(2.5, 3);
+    const positionsBefore = geo.getAttribute('position').array;
+
+    // A discriminating replacement: one triangle of BOTTOM vertices only (local y = -0.5,
+    // world y = 1.5). If the stale structure were reused the answer would still be 2.5.
+    const pos = geo.getAttribute('position');
+    const bottom: number[] = [];
+    for (let i = 0; i < pos.count && bottom.length < 3; i++) {
+      if (Math.abs(pos.getY(i) - -0.5) < 1e-6) bottom.push(i);
+    }
+    expect(bottom).toHaveLength(3);
+
+    // THE ORACLE — the same index on a fresh geometry, so the expectation is measured
+    // rather than asserted from the shape of the box.
+    __clearGltfCloneRegistryForTests();
+    const oracleGeo = geo.clone();
+    oracleGeo.setIndex([...bottom]);
+    mountTerrain(oracleGeo);
+    const oracleY = readTerrainSampleAt(terrainState([4, 10, -3]), ref, ctxAt(0)).point[1];
+    expect(oracleY).toBeCloseTo(1.5, 3);
+
+    // The in-place change, with the position array's identity deliberately preserved.
+    __clearGltfCloneRegistryForTests();
+    mountTerrain(geo);
+    geo.setIndex([...bottom]);
+    expect(geo.getAttribute('position').array).toBe(positionsBefore);
+
+    expect(readTerrainSampleAt(st, ref, ctxAt(0)).point[1]).toBeCloseTo(oracleY, 3);
+  });
+});
