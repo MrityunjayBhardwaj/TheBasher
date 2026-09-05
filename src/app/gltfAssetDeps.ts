@@ -35,6 +35,7 @@
 //      (bakedChannelSamplersForAsset — same node selection), [[H48]] [[B13]] [[H40]].
 
 import type { Node } from '../core/dag/types';
+import { importedChildOf, isImportedChild } from './importedChild';
 
 /**
  * The nodes whose params drive GltfAssetR's per-child TRS/material override
@@ -92,12 +93,16 @@ export function gltfAssetDepNodes(
     }
   }
 
-  for (const node of Object.values(nodes)) {
-    if (node.type === 'GltfChild') {
-      const p = node.params as { assetRef?: unknown };
-      if (p.assetRef === assetRef) out.push(node);
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    // #389 — asked through the one module that knows how an imported child is spelled,
+    // rather than by testing the node type here. Iterating entries rather than values is
+    // what that costs: the question is about a node's IDENTITY in the table, not about
+    // the object in hand, and it stays answerable when the child becomes a pair.
+    if (importedChildOf(nodes, nodeId)?.assetRef === assetRef) {
+      out.push(node);
       continue;
     }
+    if (isImportedChild(nodes, nodeId)) continue;
     if (node.type === 'KeyframeChannelVec3') {
       const p = node.params as { childName?: unknown; target?: unknown; paramPath?: unknown };
       if (
