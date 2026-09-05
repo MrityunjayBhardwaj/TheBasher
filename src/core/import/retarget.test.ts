@@ -1381,3 +1381,58 @@ describe('two rests that correspond as poses are reconciled as a whole (#865)', 
     expect(result.unmappedSourceBones).toEqual([]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// #919 — a retarget changes WHICH RIG a motion plays on, never HOW IT ENDS.
+//
+// `loop` was the one field on the produced clip that did not derive from the
+// source: `name`, `duration` and the keys all did, and `loop` was the literal
+// `true`. So a one-shot motion — a jump, a wave, a fall — silently became a
+// looping one the moment it was retargeted, and nothing in the UI said the time
+// domain had changed underneath it.
+//
+// Load-bearing since #924, which is why this is asserted rather than left as a
+// tidy-up: `loop` now selects the per-side extend rule, so a clip wrongly marked
+// looping does not merely wrap at its end — its root accumulates travel forever.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#919 the retargeted clip carries the source time domain', () => {
+  const args = (loop?: boolean) => ({
+    sourceBones: SOURCE_BONES,
+    sourceClip: {
+      name: 'walk',
+      duration: 1,
+      keyframes: SOURCE_KFS,
+      ...(loop === undefined ? {} : { loop }),
+    },
+    targetBones: TARGET_BONES,
+    nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
+  });
+
+  it('a ONE-SHOT source produces a one-shot clip', () => {
+    expect(retargetClip(args(false)).clipParams.loop).toBe(false);
+  });
+
+  it('a LOOPING source produces a looping clip', () => {
+    // Stated alongside the row above so the pair shows the value is CARRIED and
+    // not merely inverted — a hardcoded `false` would satisfy the first row alone.
+    expect(retargetClip(args(true)).clipParams.loop).toBe(true);
+  });
+
+  it('a caller with no source clip to ask still gets the documented fallback', () => {
+    // The optional field exists for exactly one honest case. Every production
+    // caller has a source clip and passes it; this pins what the absence means so
+    // the fallback cannot quietly become something else.
+    expect(retargetClip(args(undefined)).clipParams.loop).toBe(true);
+  });
+
+  it('nothing ELSE about the clip changes with the time domain', () => {
+    // The domain must ride along without disturbing the motion: same keys, same
+    // duration, same name. Without this the rows above pass on a retarget that
+    // took a different road for a non-looping source.
+    const off = retargetClip(args(false)).clipParams;
+    const on = retargetClip(args(true)).clipParams;
+    expect(off.keyframes).toEqual(on.keyframes);
+    expect(off.duration).toBe(on.duration);
+    expect(off.name).toBe(on.name);
+  });
+});

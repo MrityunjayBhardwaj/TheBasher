@@ -72,7 +72,16 @@ describe('RetargetClip — the operator', () => {
     });
     const expected = retargetClip({
       sourceBones: sourceBones(),
-      sourceClip: { name: 'walk', duration: 1, keyframes: sourceKeys() },
+      // #919 — the domain comes off the SAME generator the subject's operand does,
+      // so the two sides agree by construction rather than by a literal restated
+      // here. The fixture is deliberately `loop: false`, which is what makes the
+      // `value.loop` row below a measurement instead of a coincidence.
+      sourceClip: {
+        name: 'walk',
+        duration: 1,
+        loop: sourceClipValue().loop,
+        keyframes: sourceKeys(),
+      },
       targetBones: targetBones(),
       nameMap: nameMap(),
     });

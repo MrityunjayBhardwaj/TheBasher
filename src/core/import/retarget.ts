@@ -61,6 +61,19 @@ export interface RetargetArgs {
     readonly name: string;
     readonly duration: number;
     readonly keyframes: readonly AnimationKeyframe[];
+    /** The source's own time domain. Retargeting changes WHICH RIG a motion plays
+     *  on, never HOW IT ENDS, so this travels with the keys rather than being
+     *  decided here (#919) — the same "keys and domain are one answer" rule #913
+     *  and #916 applied at their layers.
+     *
+     *  Optional for the one honest reason: a caller that has no source clip to
+     *  ask. Every production caller does have one and passes it. Absent, it falls
+     *  back to the value this function used to invent unconditionally.
+     *
+     *  Load-bearing since #924: `loop` selects the per-side extend rule, so a
+     *  clip wrongly marked looping does not merely wrap — its root accumulates
+     *  travel forever. */
+    readonly loop?: boolean;
   };
   /** Target bone hierarchy (e.g. user's glTF character). */
   readonly targetBones: readonly BoneSpec[];
@@ -678,7 +691,11 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     clipParams: {
       name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
       duration: retargeted.duration > 0 ? retargeted.duration : args.sourceClip.duration,
-      loop: true,
+      // Carried, not invented (#919). Every other field on this object derives
+      // from the source; `loop` alone used to be a literal, so a one-shot motion —
+      // a jump, a wave, a fall — silently became a looping one the moment it was
+      // retargeted, with nothing in the UI saying the time domain had changed.
+      loop: args.sourceClip.loop ?? true,
       keyframes,
     },
     // The RESOLVED map, not the argument — otherwise the report describes a

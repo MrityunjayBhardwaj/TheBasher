@@ -80,7 +80,7 @@ export function bonesOfSkeletonNode(
   return null;
 }
 
-type SourceParams = { name?: string; duration?: number; keyframes?: unknown };
+type SourceParams = { name?: string; duration?: number; keyframes?: unknown; loop?: boolean };
 
 /**
  * Every operand a `RetargetClip` reads, resolved from the node table.
@@ -192,6 +192,8 @@ export function retargetClipParamsFromNodes(
       name: typeof sourceParams.name === 'string' ? sourceParams.name : 'clip',
       duration: typeof sourceParams.duration === 'number' ? sourceParams.duration : 0,
       keyframes: sourceParams.keyframes as AnimationClipParams['keyframes'],
+      // #919 — the source's own time domain travels with its keys.
+      loop: sourceParams.loop !== false,
     },
     targetBones,
     nameMap: map as Readonly<Record<string, string>>,

@@ -9,6 +9,7 @@ import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFrom
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
+import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 
 const ASSET_REF = 'asset://rig.glb';
@@ -100,7 +101,7 @@ describe('retargetClipParamsFromNodes', () => {
     const params = retargetClipParamsFromNodes(graph(), graph().n_retarget);
     const baked = retargetClip({
       sourceBones: sourceBones(),
-      sourceClip: { name: 'walk', duration: 1, keyframes: sourceKeys() },
+      sourceClip: { name: 'walk', duration: 1, loop: false, keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
       nameMap: nameMap(),
     });
@@ -234,7 +235,7 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const viaGraph = boundClipsForAsset(graph(), ASSET_REF)[0];
     const baked = retargetClip({
       sourceBones: sourceBones(),
-      sourceClip: { name: 'walk', duration: 1, keyframes: sourceKeys() },
+      sourceClip: { name: 'walk', duration: 1, loop: false, keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
       nameMap: nameMap(),
     });
@@ -249,7 +250,41 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const viaBake = boundClipsForAsset(materialised, ASSET_REF)[0];
     expect(viaGraph.params.keyframes).toEqual(viaBake.params.keyframes);
     expect(viaGraph.params.duration).toBe(viaBake.params.duration);
+    // #919 — the TIME DOMAIN is part of "agree", not a field outside the
+    // comparison. Two clips with identical keys that end differently do not drive
+    // the rig identically, which is the whole claim this row makes.
+    expect(viaGraph.params.loop).toBe(viaBake.params.loop);
     expect(viaGraph.jointKeys).toEqual(viaBake.jointKeys);
+  });
+
+  it('#919 + #924 COMPOSED: a one-shot source HOLDS past its end, it does not travel', () => {
+    // The two fixes only pay off together, and neither spec sees the composition:
+    // #919 carries `loop` through the retarget, #924 turns `loop` into the extend
+    // rule. Wired up, a motion authored to stop must stop. Sampled through the
+    // band the renderer actually consumes, so this is the consumer's answer.
+    const bound = boundClipsForAsset(graph(), ASSET_REF)[0];
+    const samplers = buildClipBoneSamplers({
+      keyframes: bound.params.keyframes ?? [],
+      duration: bound.params.duration ?? 1,
+      loop: bound.params.loop !== false,
+    });
+    const sampler = [...samplers.values()][0];
+    const atEnd = sampler(1);
+    const wayPast = sampler(9);
+    // Held: nine seconds out reads exactly what the last key reads.
+    expect(wayPast.position).toEqual(atEnd.position);
+    expect(wayPast.rotation).toEqual(atEnd.rotation);
+    // And the clip must genuinely MOVE inside its range, or "held" is satisfied by
+    // a clip that never did anything and this row certifies nothing.
+    expect(sampler(0).rotation).not.toEqual(atEnd.rotation);
+  });
+  it("#919 carries the source clip's ONE-SHOT domain instead of inventing a loop", () => {
+    // This fixture's source clip is `loop: false`. Before the carry, the resolver
+    // handed the band a looping clip built from a one-shot source — and since #924
+    // `loop` selects the extend rule, that is not a cosmetic flag: the root would
+    // accumulate travel forever on a motion authored to stop.
+    const bound = boundClipsForAsset(graph(), ASSET_REF)[0];
+    expect(bound.params.loop).toBe(false);
   });
 
   it('skips a RetargetClip whose graph does not resolve, rather than emitting an empty clip', () => {

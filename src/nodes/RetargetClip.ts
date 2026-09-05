@@ -107,6 +107,9 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
         name: sourceClip.name,
         duration: sourceClip.duration,
         keyframes: sourceClip.keyframes,
+        // #919 — carried, so the node agrees with the params resolver and neither
+        // decides the source's time domain for it.
+        loop: sourceClip.loop,
       },
       targetBones: target.bones,
       nameMap: boneMap.map,
