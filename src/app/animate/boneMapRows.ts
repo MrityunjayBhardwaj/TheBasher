@@ -255,12 +255,10 @@ export function boneMapView(
   const rows: BoneMapRow[] = [...sourceNames, ...orphanKeys].map((source) => {
     const target = Object.prototype.hasOwnProperty.call(map, source) ? map[source] : null;
     // Two entries match when they give the same ANSWER, including when both
-    // decline. `dangling` and `orphan` rows keep comparing raw, because there the
-    // exact string IS the defect being reported.
+    // decline. Comparing the raw values as well would add no case: if they are
+    // equal then their normalisations are equal by construction.
     const origin: BoneMapRowOrigin =
-      declared(proposal.map[source]) === declared(target) || proposal.map[source] === target
-        ? 'preset'
-        : 'edited';
+      declared(proposal.map[source]) === declared(target) ? 'preset' : 'edited';
     if (target === null || target === '') {
       return { source, target: null, state: 'unmapped', origin };
     }
