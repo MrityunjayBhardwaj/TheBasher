@@ -79,8 +79,11 @@ describe('buildBvhImportOps', () => {
     expect(value.kind).toBe('AnimationClip');
     expect(value.name).toBe('wave');
     expect(value.duration).toBeGreaterThan(0);
-    expect(value.pose.kind).toBe('PosedSkeleton');
-    expect(value.pose.poses.length).toBeGreaterThan(0);
+    // `pose` is optional since #901 (a time-free clip producer omits it), but an
+    // `AnimationClip` node always answers one — asserting it is present IS the row.
+    expect(value.pose).toBeDefined();
+    expect(value.pose!.kind).toBe('PosedSkeleton');
+    expect(value.pose!.poses.length).toBeGreaterThan(0);
   });
 
   it('twice-call builds deterministic Op chains for the same spec', () => {

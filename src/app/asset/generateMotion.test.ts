@@ -25,13 +25,14 @@ import {
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { registerAllMutators, __resetMutatorRegistryForTests } from '../../agent/mutators';
-import { gltfSkeletonDagId } from '../../core/import/gltfImportChain';
+import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import { retargetedClipId } from './bindMotionToCharacter';
 import type { GltfSkinMetadata } from '../../nodes/types';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
 import { makeSplitCurve } from '../../test-utils/splitCurve';
 import { useSelectionStore } from '../stores/selectionStore';
+import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 import { assertValidMotionRequest } from '../../core/motiongen/MotionGenerationCapability';
 
 const stub = new StubMotionGenerationCapability();
@@ -203,7 +204,16 @@ function seedCharacter(): void {
       type: 'addNode' as const,
       nodeId: 'n_char_asset',
       nodeType: 'GltfAsset',
-      params: { assetRef: CHAR_ASSET, nodeNameMap: {}, childHierarchy: {}, skins: [skin] },
+      params: {
+        assetRef: CHAR_ASSET,
+        // NOT `{}`. This map is the read band's asset-membership scope
+        // (`clipBandSamplersForAsset` skips any bone not in it), so an empty one
+        // would make "the clip drives the character" unobservable here — the
+        // assertion below would pass against a band that does nothing.
+        nodeNameMap: Object.fromEntries(boneNames.map((n) => [n, gltfChildDagId(CHAR_ASSET, n)])),
+        childHierarchy: {},
+        skins: [skin],
+      },
     },
     {
       type: 'addNode' as const,
@@ -223,7 +233,7 @@ function seedCharacter(): void {
 }
 
 describe('a generated clip reaches the character, exactly as a dropped one does', () => {
-  it('bakes channels onto the character in the scene', async () => {
+  it('drives the character in the scene, and bakes NOTHING to do it', async () => {
     capability = somaCapability();
     seedCharacter();
 
@@ -237,15 +247,34 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
     if (!result.ok) return;
 
     const nodes = useDagStore.getState().state.nodes;
-    // The postcondition a director would state: the character now carries baked
-    // motion. Asserted over the graph the renderer reads, not over the ids the
-    // bind computed — a bind that reported success having emitted nothing is
-    // the failure this is aimed at.
+    // 🔴 INVERTED BY #889 slice 3. This asserted `channels.length > 0` — the
+    // postcondition of an EAGER BAKE, which is the copy that should never have
+    // been made. Under copy-on-write the director-facing postcondition is
+    // unchanged (the character moves) and the graph-facing one is its opposite
+    // (nothing was materialised to make it move).
     const channels = Object.values(nodes).filter((n) => n.type === 'KeyframeChannelVec3');
-    expect(channels.length).toBeGreaterThan(0);
+    expect(channels).toHaveLength(0);
     // And the retargeted clip is derived from the PAIR, so a second generation
     // onto the same character cannot silently overwrite the first.
     expect(nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeDefined();
+
+    // 🔑 THE ZERO ABOVE IS ONLY HALF AN ASSERTION. A bind that emitted nothing
+    // AT ALL — the exact failure the old `> 0` was aimed at — satisfies it too.
+    // So the other half is measured on the band the renderer actually samples:
+    // the bones are driven, and they MOVE.
+    const samplers = bakedChannelSamplersForAsset(
+      nodes,
+      (nodes['n_char_asset'].params as { nodeNameMap: Record<string, string> }).nodeNameMap,
+      CHAR_ASSET,
+    );
+    const driven = Object.keys(samplers);
+    expect(driven.length).toBeGreaterThan(0);
+    const moves = driven.filter((bone) => {
+      const a = sampleBakedChannel(samplers[bone], 0)?.rotation;
+      const b = sampleBakedChannel(samplers[bone], 0.5)?.rotation;
+      return !!a && !!b && a.some((v, i) => Math.abs(v - b[i]) > 1e-6);
+    });
+    expect(moves.length).toBeGreaterThan(0);
     expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
   });
 

@@ -61,6 +61,19 @@ export interface RetargetArgs {
     readonly name: string;
     readonly duration: number;
     readonly keyframes: readonly AnimationKeyframe[];
+    /** The source's own time domain. Retargeting changes WHICH RIG a motion plays
+     *  on, never HOW IT ENDS, so this travels with the keys rather than being
+     *  decided here (#919) — the same "keys and domain are one answer" rule #913
+     *  and #916 applied at their layers.
+     *
+     *  Optional for the one honest reason: a caller that has no source clip to
+     *  ask. Every production caller does have one and passes it. Absent, it falls
+     *  back to the value this function used to invent unconditionally.
+     *
+     *  Load-bearing since #924: `loop` selects the per-side extend rule, so a
+     *  clip wrongly marked looping does not merely wrap — its root accumulates
+     *  travel forever. */
+    readonly loop?: boolean;
   };
   /** Target bone hierarchy (e.g. user's glTF character). */
   readonly targetBones: readonly BoneSpec[];
@@ -104,6 +117,15 @@ export interface RetargetResult {
  * on a real Mixamo export — the shipped Mixamo→glTF preset matched 0 of 22 bones and
  * produced 0 keyframes. Canonicalising both sides is what makes a map portable across
  * the two roads without migrating anyone's stored bone names.
+ *
+ * The SAME key also reconciles the third instance of this divergence, which is not
+ * an import road at all: the live three.js scene against our own asset params
+ * (#922). GLTFLoader runs three's sanitiser over every node name as it loads, so a
+ * rendered bone is spelled `mixamorigHips` while the params call it
+ * `mixamorig_Hips`. Comparing those directly matches 1 of 23 bones on the tracked
+ * stand-in rig; through this key, 23 of 23. Prefer the joint INDEX where one is in
+ * hand — both sides agree on it by construction — and reach for this when only
+ * names are. See `boneNameSpaces.test.ts`.
  */
 export function canonicalBoneKey(name: string): string {
   return name.toLowerCase().replace(/[_:.\-\s]/g, '');
@@ -678,7 +700,11 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     clipParams: {
       name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
       duration: retargeted.duration > 0 ? retargeted.duration : args.sourceClip.duration,
-      loop: true,
+      // Carried, not invented (#919). Every other field on this object derives
+      // from the source; `loop` alone used to be a literal, so a one-shot motion —
+      // a jump, a wave, a fall — silently became a looping one the moment it was
+      // retargeted, with nothing in the UI saying the time domain had changed.
+      loop: args.sourceClip.loop ?? true,
       keyframes,
     },
     // The RESOLVED map, not the argument — otherwise the report describes a

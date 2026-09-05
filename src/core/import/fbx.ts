@@ -72,7 +72,13 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,
-      loop: true,
+      // #927 — an assertion about the file, not a value from it. See the long
+      // note at the same decision in `bvh.ts`: no FBX animation stack states that
+      // its motion returns to its start, the reference systems default to holding
+      // the endpoint, and since #924 an asserted `true` makes a one-shot travel
+      // away from its own end instead of stopping there. The skeleton-only branch
+      // above has always said `false`; these two now agree.
+      loop: false,
       keyframes,
     },
   };

@@ -244,4 +244,99 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     const after = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
     expect(shallow(before, after)).toBe(false);
   });
+
+  // ── #901 — a RetargetClip's OPERANDS are dependencies too ──────────────────
+  //
+  // 🔴 THESE ROWS EXIST BECAUSE THE FIRST VERSION OF #901 SHIPPED WITHOUT THEM
+  // AND THE RIG DID NOT MOVE. Every unit test passed — they hand the enumerator
+  // the whole node table — while the viewport, which is handed THIS subset,
+  // received a RetargetClip with none of the nodes it resolves from and so
+  // resolved nothing. Observed in a browser on a real character: a perfect graph
+  // and a frozen skin. A `RetargetClip`'s keys are not in its params, so an
+  // operand whose ref cannot flip here is an edit the viewport will never see.
+
+  /** rig + source clip + map + a RetargetClip binding them onto this asset. */
+  function withRetarget(state: DagState): DagState {
+    let s = state;
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'rig', nodeType: 'GltfSkeleton', params: { skinIndex: 0 } },
+      {
+        type: 'connect',
+        from: { node: 'gltf', socket: 'out' },
+        to: { node: 'rig', socket: 'asset' },
+      },
+      { type: 'addNode', nodeId: 'srcRig', nodeType: 'Skeleton', params: { bones: [] } },
+      {
+        type: 'addNode',
+        nodeId: 'srcClip',
+        nodeType: 'AnimationClip',
+        params: { name: 'walk', duration: 1, keyframes: [] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'srcRig', socket: 'out' },
+        to: { node: 'srcClip', socket: 'skeleton' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'map',
+        nodeType: 'BoneNameMap',
+        params: { name: 'bridge', map: {} },
+      },
+      { type: 'addNode', nodeId: 'retarget', nodeType: 'RetargetClip', params: { name: '' } },
+      {
+        type: 'connect',
+        from: { node: 'srcClip', socket: 'out' },
+        to: { node: 'retarget', socket: 'sourceClip' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'map', socket: 'out' },
+        to: { node: 'retarget', socket: 'boneMap' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'rig', socket: 'out' },
+        to: { node: 'retarget', socket: 'skeleton' },
+      },
+    ];
+    for (const op of ops) s = applyOp(s, op).next;
+    return s;
+  }
+
+  it('#901 — selects the RetargetClip AND every node it resolves from', () => {
+    const s = withRetarget(buildScene());
+    const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP)
+      .map((n) => n.id)
+      .sort();
+    // The source clip hangs off a DIFFERENT rig than this asset's, so the #888
+    // walk excludes it — it is here only because the retarget reaches it.
+    expect(deps).toEqual(['child1', 'gltf', 'map', 'retarget', 'rig', 'srcClip', 'srcRig']);
+  });
+
+  it('#901 — editing ANY operand flips a ref, so the viewport re-derives', () => {
+    // One row per operand: a single combined assertion would go green while two
+    // of the three were unsubscribed, which is exactly the shape that shipped.
+    const base = withRetarget(buildScene());
+    const before = gltfAssetDepNodes(base.nodes, ASSET, NODE_NAME_MAP);
+    const edits: [string, Op][] = [
+      ['the source clip', { type: 'setParam', nodeId: 'srcClip', paramPath: 'name', value: 'run' }],
+      ['the bone map', { type: 'setParam', nodeId: 'map', paramPath: 'name', value: 'other' }],
+      ['the source rig', { type: 'setParam', nodeId: 'srcRig', paramPath: 'bones', value: [] }],
+    ];
+    for (const [what, op] of edits) {
+      const after = gltfAssetDepNodes(applyOp(base, op).next.nodes, ASSET, NODE_NAME_MAP);
+      expect(shallow(before, after), `editing ${what} must re-render`).toBe(false);
+    }
+    // The control: an edit to a node NOTHING here reads still yields no re-render,
+    // so the rows above are measuring reachability and not a collector that
+    // simply flips on every dispatch.
+    const unrelated = applyOp(base, {
+      type: 'setParam',
+      nodeId: 'box',
+      paramPath: 'position',
+      value: [1, 0, 0],
+    }).next;
+    expect(shallow(before, gltfAssetDepNodes(unrelated.nodes, ASSET, NODE_NAME_MAP))).toBe(true);
+  });
 });

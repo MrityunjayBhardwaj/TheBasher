@@ -58,11 +58,28 @@ describe('parseBvh', () => {
     expect(r.skeletonParams.bones[2].position).toEqual([0.5, 0, 0]);
   });
 
+  it('does not claim the motion loops — nothing in a BVH says so (#927)', () => {
+    // This used to read `true`, asserted by the importer about a format that
+    // carries no such information: a BVH has a hierarchy, a frame count and a
+    // frame time, and says nothing about returning to its start. The value was
+    // an invention, and it was invisible because the only thing pinning it was
+    // one incidental line inside the keyframe-ordering test below.
+    //
+    // It is load-bearing since #924 gave `loop` teeth — a looping clip's root
+    // accumulates travel every period rather than merely wrapping, so an
+    // asserted `true` walks a one-shot motion away from its own end. Holding is
+    // what Blender and Houdini default to, and what this repo's other clip
+    // carrier already did (`TransformClip.loop` defaults to `'clamp'`).
+    //
+    // A director who wants cycling says so: `loop` is a schema'd boolean and
+    // the Inspector has rendered a checkbox for it since #136.
+    expect(parseBvh(SYNTHETIC_BVH, 'wave').clipParams.loop).toBe(false);
+  });
+
   it('emits keyframes for animated bones, sorted by (time, bone)', () => {
     const r = parseBvh(SYNTHETIC_BVH, 'wave');
     expect(r.clipParams.name).toBe('wave');
     expect(r.clipParams.duration).toBeGreaterThan(0);
-    expect(r.clipParams.loop).toBe(true);
     // Times monotonic.
     for (let i = 1; i < r.clipParams.keyframes.length; i++) {
       expect(r.clipParams.keyframes[i].time).toBeGreaterThanOrEqual(

@@ -67,6 +67,8 @@ import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { getActiveCurvePoint } from './curvePointSelection';
 import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curvePointCommands';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
+import { resolveRowChannelForWrite } from './animate/clipRowMint';
+import { buildVec3Sampler, KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 
 interface KeyframeSample {
   time: number;
@@ -98,55 +100,99 @@ function nextKeyframesAfterInsert(
 /** Build the setParam Op that K dispatches. Returns null when the
  *  insert is impossible (no active channel, channel not in DAG, target
  *  param not readable, etc) — caller treats as no-op. */
-function buildKeyframeInsertOp(): Op | null {
-  const channelId = useTimelineSelection.getState().activeChannelId;
-  if (!channelId) return null;
+function buildKeyframeInsertOp(): Op[] | null {
+  const rowChannelId = useTimelineSelection.getState().activeChannelId;
+  if (!rowChannelId) return null;
   const dagState = useDagStore.getState().state;
-  const channel = dagState.nodes[channelId];
-  if (!channel || !isKeyframeChannelNode(channel)) return null;
-
-  const cParams = (channel.params ?? {}) as {
-    target?: string;
-    paramPath?: string;
-    keyframes?: KeyframeSample[];
-  };
-  if (!cParams.target || !cParams.paramPath) return null;
-  const target = dagState.nodes[cParams.target];
-  if (!target) return null;
-  const targetParams = (target.params ?? {}) as Record<string, unknown>;
-  const value = targetParams[cParams.paramPath];
-  if (value === undefined) return null;
+  // The active row may be a synthetic `clip:<bone>:<component>` id with no DAG
+  // node behind it. Reading `state.nodes[id]` and bailing was right while an
+  // eager bake meant every bone had a channel; under copy-on-write it is a
+  // silent no-op on every bone nobody has edited.
+  const resolved = resolveRowChannelForWrite(dagState, rowChannelId);
+  if (!resolved || !isKeyframeChannelNode({ type: resolved.nodeType })) return null;
 
   const time = useTimeStore.getState().seconds;
-  const easing = DEFAULT_EASING_BY_TYPE[channel.type] ?? 'linear';
-  const next = nextKeyframesAfterInsert(cParams.keyframes ?? [], time, value, easing);
-  return {
-    type: 'setParam',
-    nodeId: channelId,
-    paramPath: 'keyframes',
-    value: next,
-  };
+  const easing = DEFAULT_EASING_BY_TYPE[resolved.nodeType] ?? 'linear';
+  const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
+
+  const value =
+    resolved.mintOps.length > 0
+      ? sampleMintedChannel(resolved.nodeType, resolved.params, time)
+      : readTargetParam(dagState, resolved.params);
+  if (value === undefined) return null;
+
+  const next = nextKeyframesAfterInsert(existing, time, value, easing);
+  return [
+    ...resolved.mintOps,
+    { type: 'setParam', nodeId: resolved.channelId, paramPath: 'keyframes', value: next },
+  ];
+}
+
+/** The channel's target param — what an ordinary node currently holds. */
+function readTargetParam(
+  dagState: { nodes: Record<string, { params?: unknown }> },
+  params: Record<string, unknown>,
+): unknown {
+  const target = typeof params.target === 'string' ? dagState.nodes[params.target] : undefined;
+  const paramPath = typeof params.paramPath === 'string' ? params.paramPath : null;
+  if (!target || !paramPath) return undefined;
+  return ((target.params ?? {}) as Record<string, unknown>)[paramPath];
+}
+
+/**
+ * The value a FRESHLY MINTED channel shows at `seconds` — sampled, not read off
+ * the bone's params.
+ *
+ * A bone's `position` / `rotation` params are its BASE pose; the clip is what
+ * drives it. Keying the base pose here would drop a key metres away from what
+ * the director is looking at — visible as a pop on a bone that had been moving
+ * correctly. The mint's keys are the clip's own, so sampling them gives exactly
+ * the rendered pose. Parsed through the node's schema first so extrapolation and
+ * modifier defaults are present rather than undefined.
+ */
+function sampleMintedChannel(
+  nodeType: string,
+  params: Record<string, unknown>,
+  seconds: number,
+): unknown {
+  if (nodeType !== 'KeyframeChannelVec3') return undefined;
+  const parsed = KeyframeChannelVec3Params.safeParse(params);
+  if (!parsed.success) return undefined;
+  return buildVec3Sampler(parsed.data)(seconds);
 }
 
 /** Build the setParam Op that Delete dispatches when activeKeyframeId is
  *  set. Returns null when the ref is dangling (keyframe deleted elsewhere
  *  since the activeKeyframeId was set). */
-function buildKeyframeDeleteOp(): Op | null {
+function buildKeyframeDeleteOp(): Op[] | null {
   const ref = useTimelineSelection.getState().activeKeyframeId;
   if (!ref) return null;
   const dagState = useDagStore.getState().state;
-  const channel = dagState.nodes[ref.channelId];
-  if (!channel || !isKeyframeChannelNode(channel)) return null;
-  const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
-  const existing = cParams.keyframes ?? [];
+  // A read-only clip row's key CAN be the active keyframe — TimelineCanvas sets
+  // it with the `clip:` id on pointer-down — so Delete is reachable there and
+  // used to do nothing at all.
+  //
+  // This is the one subtractive path that DOES mint, and it does not contradict
+  // `removeKeyframes` refusing to. That refusal is about clearing a channel
+  // wholesale, where minting produces an empty channel that snaps the bone to
+  // the origin. Here the director is deleting ONE key they can see, out of a
+  // track that stays: "this walk, minus that pop" is an edit, and it needs
+  // somewhere to land like any other.
+  const resolved = resolveRowChannelForWrite(dagState, ref.channelId);
+  if (!resolved || !isKeyframeChannelNode({ type: resolved.nodeType })) return null;
+  const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
   const next = existing.filter((k) => k.time !== ref.time);
   if (next.length === existing.length) return null; // ref was dangling
-  return {
-    type: 'setParam',
-    nodeId: ref.channelId,
-    paramPath: 'keyframes',
-    value: next,
-  };
+  if (next.length === 0) return null;
+  // Never leave the channel empty: an empty channel is a claim, not silence —
+  // the band collects it and the sampler answers [0,0,0] at every time. Deleting
+  // the last key means "stop overriding", which is a channel REMOVAL, and that
+  // belongs with clearBakedMotion rather than here.
+
+  return [
+    ...resolved.mintOps,
+    { type: 'setParam', nodeId: resolved.channelId, paramPath: 'keyframes', value: next },
+  ];
 }
 
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe
@@ -476,9 +522,9 @@ export function KeyboardShortcuts() {
         if (e.key === 'k' || e.key === 'K' || e.key === 'i' || e.key === 'I') {
           const activeChannel = useTimelineSelection.getState().activeChannelId;
           if (activeChannel) {
-            const op = buildKeyframeInsertOp();
-            if (op) {
-              useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+            const ops = buildKeyframeInsertOp();
+            if (ops) {
+              useDagStore.getState().dispatchAtomic(ops, 'user', 'insert keyframe');
             }
             return;
           }
@@ -553,9 +599,9 @@ export function KeyboardShortcuts() {
           // through to node-delete only when no keyframe is selected. v0.6 #4:
           // gated on the timeline being open (was the `animate` mode).
           if (timelineDrawerOpen) {
-            const kfOp = buildKeyframeDeleteOp();
-            if (kfOp) {
-              useDagStore.getState().dispatchAtomic([kfOp], 'user', 'delete keyframe');
+            const kfOps = buildKeyframeDeleteOp();
+            if (kfOps) {
+              useDagStore.getState().dispatchAtomic(kfOps, 'user', 'delete keyframe');
               useTimelineSelection.getState().setActiveKeyframe(null);
               e.preventDefault();
               return;

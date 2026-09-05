@@ -88,7 +88,25 @@ export function parseBvh(
     clipParams: {
       name,
       duration: parsed.clip.duration > 0 ? parsed.clip.duration : 1,
-      loop: true,
+      // #927 — NOT read from the file, because a BVH does not say. The format
+      // carries a joint hierarchy, a frame count and a frame time; nothing in it
+      // states that the motion returns to where it started. `true` here was an
+      // assertion ABOUT the file dressed as a value FROM it.
+      //
+      // `false` is the reference answer, and this repo's own sibling carrier
+      // already gives it: `TransformClip.loop` is an enum defaulting to `'clamp'`
+      // (TransformClip.ts:47) while this one defaulted to `true` — the
+      // disagreement `clipChannelRows.ts` flags. Blender's `FCurve.extrapolation`
+      // defaults to CONSTANT and its Cycles modifier to no cycling at all;
+      // Houdini's per-channel extend conditions draw the same line. Cycling is
+      // something a director asks for, never something an importer assumes.
+      //
+      // It matters more since #924, which gave `loop` teeth: a looping clip's
+      // root now accumulates travel every period rather than merely wrapping, so
+      // an asserted `true` walks a one-shot jump or wave away from its own end.
+      // Turning it back on is one checkbox — `loop` is a schema'd boolean and
+      // `NPanel`'s BooleanField has rendered it since #136.
+      loop: false,
       keyframes: scaleKeyframePositions(keyframes, unitScale),
     },
   };

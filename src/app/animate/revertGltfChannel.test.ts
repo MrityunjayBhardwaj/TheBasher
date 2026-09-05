@@ -160,6 +160,66 @@ describe('dispatchRevertGltfChannel (D3 — presence-based fallback)', () => {
     expect(rendererResolvePosition(restored.nodes)).toEqual(BAKED_POS);
   });
 
+  it('component-scoped revert takes ONE channel and leaves the bone\u2019s others (#909)', () => {
+    // The dopesheet's Clear points at a ROW, which is one component. Reverting
+    // the whole bone from a row would take away a track the director never
+    // touched — removal granularity has to match the granularity of the thing
+    // that created it, and copy-on-write mints per component.
+    let s = buildBakedState();
+    const rotId = gltfChannelDagId(ASSET, CHILD, 'rotation');
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: rotId,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'baked rotation',
+        target: CHILD_ID,
+        childName: CHILD,
+        assetRef: ASSET,
+        paramPath: 'rotation',
+        keyframes: [{ time: 0, value: [10, 20, 30], easing: 'linear' }],
+      },
+    }).next;
+    useDagStore.getState().hydrate(s);
+
+    const posId = gltfChannelDagId(ASSET, CHILD, 'position');
+    expect(
+      dispatchRevertGltfChannel({ assetRef: ASSET, childName: CHILD, component: 'rotation' }),
+    ).toEqual({
+      ok: true,
+    });
+
+    const nodes = useDagStore.getState().state.nodes;
+    expect(rotId in nodes).toBe(false);
+    // The half that carries the claim: naming a component must not be a
+    // decoration on a call that still takes everything.
+    expect(posId in nodes).toBe(true);
+  });
+
+  it('omitting the component still takes the whole bone — the original caller is unchanged', () => {
+    let s = buildBakedState();
+    const rotId = gltfChannelDagId(ASSET, CHILD, 'rotation');
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: rotId,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'baked rotation',
+        target: CHILD_ID,
+        childName: CHILD,
+        assetRef: ASSET,
+        paramPath: 'rotation',
+        keyframes: [{ time: 0, value: [10, 20, 30], easing: 'linear' }],
+      },
+    }).next;
+    useDagStore.getState().hydrate(s);
+
+    expect(dispatchRevertGltfChannel({ assetRef: ASSET, childName: CHILD })).toEqual({ ok: true });
+    const nodes = useDagStore.getState().state.nodes;
+    expect(rotId in nodes).toBe(false);
+    expect(gltfChannelDagId(ASSET, CHILD, 'position') in nodes).toBe(false);
+  });
+
   it('revert on a bone with NO baked channel is a no-op (ok, nothing applied)', () => {
     // A scene with the child but no baked channel.
     let s = buildDefaultDagState();

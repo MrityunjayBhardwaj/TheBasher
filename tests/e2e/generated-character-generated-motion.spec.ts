@@ -19,10 +19,13 @@
 // ─────────────────────────────────────────────────────────────────────────
 // THE REGRESSION IT GUARDS
 // ─────────────────────────────────────────────────────────────────────────
-// `bakeClipOntoRig` wrote the clip's RADIANS into the GltfChild rotation band,
-// which is DEGREES, so every bone rotation rendered at π/180 of its size (#843).
-// The clip was right, the channels were minted, the bones resolved — and a 40°
-// leg swing rendered as 0.7°. The only assertion that could have caught it is
+// The bind road wrote the clip's RADIANS into the GltfChild rotation band, which
+// is DEGREES, so every bone rotation rendered at π/180 of its size (#843). The
+// clip was right, the channels were minted, the bones resolved — and a 40° leg
+// swing rendered as 0.7°. (The conversion lived in `bakeClipOntoRig` then; #889
+// deleted that eager bake, and the same boundary is now crossed in two places —
+// the read band for an unedited bone, the mint for an edited one — so this
+// assertion covers strictly more than it did.) The only assertion that could have caught it is
 // the one below: a rendered bone must rotate by an amount a person could SEE.
 // `MIN_VISIBLE_DEG` is far above the ~0.4° the defect produced and far below the
 // ~34° a real walk produces, so it cannot be satisfied by accident.
@@ -44,7 +47,8 @@
 // rather than failing. That means it does not gate CI today; giving it a small
 // generated stand-in rig is tracked separately.
 //
-// REF: src/agent/mutators/builders/bakeClipOntoRig.ts (the units boundary);
+// REF: src/app/bakedGltfChannels.ts + src/app/animate/ensureChannelForBone.ts
+//        (the two sides of the units boundary);
 //      src/app/asset/bindMotionToCharacter.ts (the bind decisions);
 //      src/viewport/SceneFromDAG.tsx (the TRS useFrame — the read site);
 //      issues #843, #844, #807, #820.
@@ -260,12 +264,24 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
     const added = Object.keys(after).filter((id) => !before.includes(id));
     return {
       retargetedClips: added.filter((id) => id.includes('_on_')).length,
-      // The bake materialises the clip onto the road the renderer reads (#803).
+      // #901 — the bind emits the RELATIONSHIP: a RetargetClip wired to the
+      // source clip, a minted BoneNameMap and the target rig.
+      retargetNodes: added.filter((id) => after[id].type === 'RetargetClip').length,
+      boneMaps: added.filter((id) => after[id].type === 'BoneNameMap').length,
+      // …and NOTHING is baked. This assertion used to read `> 0`: the eager bake
+      // materialised the clip onto every bone at bind time. #889 deleted that and
+      // #901 removed the copy above it, so the same number carries the same
+      // meaning inverted — a channel here now means something re-introduced a
+      // bake, not that the bind worked. It stayed stale this long only because
+      // this spec SKIPS in CI for want of its fixtures, which is exactly the
+      // shape a skipped gate hides.
       bakedChannels: added.filter((id) => after[id].type === 'KeyframeChannelVec3').length,
     };
   }, BVH_URL);
   expect(bind.retargetedClips, 'the bind must produce a retargeted clip').toBeGreaterThan(0);
-  expect(bind.bakedChannels, 'the bake must mint baked channels (#803)').toBeGreaterThan(0);
+  expect(bind.retargetNodes, 'the bind must emit a RetargetClip (#901)').toBe(1);
+  expect(bind.boneMaps, 'the bind must mint the bone map it chose (#901)').toBe(1);
+  expect(bind.bakedChannels, 'binding must bake NOTHING (#889, #901)').toBe(0);
 
   // ---- 3. PLAYBACK — the assertion the whole spec exists for --------------
   const played = await page.evaluate(async (sampleTimes: readonly number[]) => {

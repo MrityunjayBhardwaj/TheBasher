@@ -1,13 +1,12 @@
-diff --git a/src/agent/mutators/builders/bakeClipOntoRig.ts b/src/agent/mutators/builders/bakeClipOntoRig.ts
-index 287b248..b956960 100644
---- a/src/agent/mutators/builders/bakeClipOntoRig.ts
-+++ b/src/agent/mutators/builders/bakeClipOntoRig.ts
-@@ -239,7 +239,7 @@ export const bakeClipOntoRigMutator: MutatorDefinition<BakeClipOntoRigSpec> = {
-       // in units, and this is the one that has to say so.
-       const rotation: BakedKey[] = sorted.map((k) => ({
-         time: k.time,
--        value: radVec3ToDeg(k.rotation),
-+        value: k.rotation,
-       }));
- 
-       ops.push(
+diff --git a/src/app/animate/ensureChannelForBone.ts b/src/app/animate/ensureChannelForBone.ts
+--- a/src/app/animate/ensureChannelForBone.ts
++++ b/src/app/animate/ensureChannelForBone.ts
+@@ -157,7 +157,7 @@
+     const sorted = mine.slice().sort((a, b) => a.time - b.time);
+     return sorted.map((k) => ({
+       time: k.time,
+-      value: component === 'rotation' ? radVec3ToDeg(k.rotation) : k.position,
++      value: component === 'rotation' ? k.rotation : k.position,
+     }));
+   }
+   return [];

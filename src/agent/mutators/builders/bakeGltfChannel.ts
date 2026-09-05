@@ -48,9 +48,11 @@
 //
 // REF: PLAN 7.12 Wave D (D1, R4-bridge / BLOCK-2 / R5 / V22 / H36);
 //      src/core/import/gltfImportChain.ts (gltfChildDagId/gltfChannelDagId);
-//      src/timeline/clipChannelRows.ts (activeClipKeyframesForAsset, the clip
-//        walk); src/app/bakedGltfChannels.ts (the resolver enumeration that
-//        consumes the baked channels); vyapti V20/V22/H36 (single writer).
+//      src/timeline/clipChannelRows.ts (activeClipForAsset, the clip walk —
+//        keys AND time domain as one answer, #916); src/app/bakedGltfChannels.ts
+//        (the resolver enumeration that consumes the baked channels);
+//        src/app/animate/ensureChannelForBone.ts (the sibling road, whose
+//        `seedKeysFromClip` this mirrors); vyapti V20/V22/H36 (single writer).
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
@@ -60,7 +62,7 @@ import type { Op } from '../../../core/dag/types';
 import { gltfChildDagId } from '../../../core/import/gltfImportChain';
 import { bakeChannelOpsForBone } from './bakeChannelOps';
 import type { Vec3 } from '../../../nodes/types';
-import { activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
+import { activeClipForAsset, activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
 
 const BakeGltfChannelSpec = z.object({
   /** The owning GltfAsset's assetRef. */
@@ -127,7 +129,11 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
     const { assetRef, childName } = spec;
 
     // R5: filter the active clip's keyframes to THIS bone by NAME, sort by time.
-    const forChild = activeClipKeyframesForAsset(state.nodes, assetRef)
+    // The clip is taken as ONE answer — keys AND time domain — because taking
+    // the first without the second is exactly how this road minted a copy that
+    // stopped where its source wrapped (#916).
+    const active = activeClipForAsset(state.nodes, assetRef);
+    const forChild = (active?.keyframes ?? [])
       .filter((k) => k.targetNodeId === childName)
       .slice()
       .sort((a, b) => a.time - b.time);
@@ -145,6 +151,14 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
         scale: forChild.map((k) => ({ time: k.time, value: k.scale as Vec3 })),
       },
       state,
+      // #916 — the SOURCE's time domain, the half #913 taught the sibling road to
+      // carry and this one did not. A `TransformClip` set to 'loop' wraps at its
+      // duration; a channel minted from it holds, so the bone freezes at the end
+      // of the first cycle while the clip it came from keeps going. The default
+      // is 'clamp' here (against the AnimationClip road's `true`), which is why
+      // this road never showed the defect and why passing the value through
+      // leaves the whole default population byte-identical.
+      cyclic: active?.cyclic ?? false,
     });
 
     // R4: NO connect ops. The baked channels are edge-less satellites that

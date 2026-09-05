@@ -33,6 +33,14 @@ import { useDagStore } from '../core/dag/store';
 import { useTimelineSelection } from './timelineSelection';
 import { buildKeyframeInsertOp, buildKeyframeDeleteOp } from '../app/KeyboardShortcuts';
 import { removeKeyframesMutator, validatePlan } from '../agent/mutators';
+// Narrow paths, not the barrel: `agent/mutators/index` re-exports every builder
+// and reaches the tool registry, which imports back into `src/app` — importing
+// it drags the importer into the app↔agent cycle cluster the enumeration gate
+// watches. (This file already pays for that on the line above; adding to it
+// rather than widening it.)
+import { boneKeyOf } from '../agent/mutators/builders/channelAddress';
+import { dispatchRevertGltfChannel } from '../app/animate/dispatchMutator';
+import { useNotificationStore } from '../app/stores/notificationStore';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
 import { CurveEditor } from './CurveEditor';
@@ -252,16 +260,18 @@ function DockToolbar() {
   const [simplifyOpen, setSimplifyOpen] = useState(false);
 
   function onKey() {
-    const op = buildKeyframeInsertOp();
-    if (op) {
-      useDagStore.getState().dispatchAtomic([op], 'user', 'insert keyframe');
+    // Op LIST, not one op: on a bone that has no channel yet the insert is
+    // preceded by the mint that gives it one, and both land as one undo entry.
+    const ops = buildKeyframeInsertOp();
+    if (ops) {
+      useDagStore.getState().dispatchAtomic(ops, 'user', 'insert keyframe');
     }
   }
 
   function onDelete() {
-    const op = buildKeyframeDeleteOp();
-    if (op) {
-      useDagStore.getState().dispatchAtomic([op], 'user', 'delete keyframe');
+    const ops = buildKeyframeDeleteOp();
+    if (ops) {
+      useDagStore.getState().dispatchAtomic(ops, 'user', 'delete keyframe');
       useTimelineSelection.getState().setActiveKeyframe(null);
     }
   }
@@ -297,13 +307,55 @@ function DockToolbar() {
   function onClear() {
     if (!activeChannelId) return;
     const state = useDagStore.getState().state;
+    const notify = useNotificationStore.getState().notify;
+
+    const node = state.nodes[activeChannelId];
+    if (!node) {
+      // A synthetic `clip:<bone>:<component>` row — read-only, no DAG node, so
+      // there is no authored edit to clear. It used to fall through to
+      // `validatePlan`, get "not in DAG", and return in silence; a director
+      // pressing Clear on a row they can see is owed an answer, and "there is
+      // nothing of yours here" is a different answer from "that failed".
+      notify({
+        severity: 'info',
+        message: 'This row follows the clip — there are no edits of yours to clear.',
+      });
+      return;
+    }
+
+    // 🔑 ON A BONE, CLEAR IS A CHANNEL REMOVAL, NOT AN EMPTYING (#909).
+    //
+    // The band picks on PRESENCE, per component. Emptying a bone's channel in
+    // place leaves it claiming its component at [0,0,0], so the bone collapses
+    // to the origin while its neighbours keep walking — which reads as "Clear
+    // deleted my animation" rather than as "Clear undid my edit". Deleting the
+    // node returns the bone to the clip losslessly, because the clip was never
+    // touched. That is the act `dispatchRevertGltfChannel` has performed per
+    // bone since #121; the row points at ONE component, so it is asked for one.
+    const bone = boneKeyOf(node);
+    if (bone) {
+      const reverted = dispatchRevertGltfChannel(bone);
+      if (!reverted.ok) {
+        notify({ severity: 'warn', message: `Could not clear: ${reverted.reason}` });
+        return;
+      }
+      useTimelineSelection.getState().setActiveKeyframe(null);
+      return;
+    }
+
     const plan = validatePlan(
       removeKeyframesMutator,
       { channelId: activeChannelId, scope: 'all' as const },
       state,
       'clear channel',
     );
-    if (!plan.ok) return;
+    if (!plan.ok) {
+      // No longer silent. A refusal a director cannot see is indistinguishable
+      // from a button that does nothing, which is how the bone road above went
+      // unnoticed.
+      notify({ severity: 'warn', message: `Could not clear: ${plan.reason}` });
+      return;
+    }
     if (plan.ops.length === 0) return; // already empty
     useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'clear channel');
     useTimelineSelection.getState().setActiveKeyframe(null);

@@ -35,15 +35,25 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { isKeyframeChannelNode } from '../../../app/animate/paramAnimationState';
+import {
+  boneKeyOf,
+  CHANNEL_ADDRESS_DOC_NO_MINT,
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
-const RemoveKeyframesSpec = z.object({
-  channelId: z.string().min(1),
-  /**
-   * 'all' wipes every sample. `{ time }` removes the single sample at that
-   * time. Either is a silent no-op when there is nothing to remove.
-   */
-  scope: z.union([z.literal('all'), z.object({ time: z.number().nonnegative() })]),
-});
+const RemoveKeyframesSpec = z
+  .object({
+    ...CHANNEL_ADDRESS_FIELDS,
+    /**
+     * 'all' wipes every sample. `{ time }` removes the single sample at that
+     * time. Either is a silent no-op when there is nothing to remove.
+     */
+    scope: z.union([z.literal('all'), z.object({ time: z.number().nonnegative() })]),
+  })
+  .superRefine(superRefineChannelAddress);
 export type RemoveKeyframesSpec = z.infer<typeof RemoveKeyframesSpec>;
 
 export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
@@ -54,7 +64,12 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     'sample at that time (Blender Alt-I delete-at-playhead). Silent no-op ' +
     'when there is nothing to remove. The channel node and its wiring ' +
     '(target / paramPath / TimeSource / AnimationLayer) are preserved ' +
-    'either way; only the keyframes array changes.',
+    'either way; only the keyframes array changes. On a glTF BONE a removal ' +
+    'that would leave the channel with NO keyframes is REFUSED: an empty ' +
+    'channel is not a cleared edit, it claims the component and renders the ' +
+    'bone at the origin. Delete the channel node instead (mutator.deleteNode) ' +
+    'to return the bone to its clip. ' +
+    CHANNEL_ADDRESS_DOC_NO_MINT,
   spec: RemoveKeyframesSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -86,29 +101,88 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
-      rootSelectors: [spec.channelId],
+      rootSelectors: channelRootSelectors(spec),
       followedEdges: [],
     };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
+    // `mint: false`, and it is the one mutator that passes it. Removal is
+    // subtractive: a bone with no channel has no edit to remove, and minting
+    // one in order to empty it would be a copy created solely to be emptied —
+    // worse, an EMPTY channel is a claim rather than silence (the band collects
+    // it and the sampler answers [0,0,0] at every time), so the bone would snap
+    // to the origin instead of returning to the clip. The rule stays "an op
+    // mints when it needs somewhere for a value to LAND"; this one needs
+    // something already there, which is a precondition, not a mint.
+    const resolved = resolveChannelAddress(state, spec, { mint: false });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const channel = state.nodes[resolved.channelId];
     if (!channel) {
-      return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
+      return { ok: false, reason: `channelId "${resolved.channelId}" not in DAG.` };
     }
     if (!isKeyframeChannelNode(channel)) {
       return {
         ok: false,
-        reason: `channelId "${spec.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
+        reason: `channelId "${resolved.channelId}" is ${channel.type}; expected a KeyframeChannel*.`,
       };
     }
     // Deliberately NOT failing here when scope:{time} has no matching
     // sample. Blender's Alt-I on a non-keyed frame is a silent no-op, not
     // an error. Same for 'all' on an already-empty channel. The no-op is
     // handled in build().
+
+    // 🔴 ON A BONE, THE RULE IS ABOUT THE END STATE, NOT ABOUT THE SCOPE.
+    //
+    // The band reads PRESENCE, per component. A bone's channel emptied in
+    // place still claims its component, `buildVec3Sampler` answers [0,0,0] at
+    // every time, and the resolver hands that zero to the renderer in
+    // preference to the clip underneath — so "clear my edits on this bone"
+    // renders as the bone collapsing to the origin while its neighbours keep
+    // walking. Measured: a cleared bone reads [0,0,0] at 1s where its untouched
+    // neighbour reads [0,45,0] from the clip.
+    //
+    // Gating on `scope: 'all'` would not close it. Removing the keys ONE AT A
+    // TIME by `{time}` reaches the identical end state, and measured, it did:
+    // a channel minted with two keys, both removed by time, left the node
+    // present with `keyframes: []`. The condition is "this removal would empty
+    // a bone's channel", whichever road asked for it.
+    //
+    // Refused rather than absorbed. "Stop overriding this bone" is a channel
+    // REMOVAL — the act `dispatchRevertGltfChannel` has performed since #121 —
+    // and a mutator named removeKeyframes that sometimes deletes its own node
+    // would be lying about what it does to every caller reading its name. The
+    // keyboard road already refuses to remove a bone's last key for exactly
+    // this reason; this makes the mutator road agree with it, which it did not.
+    const bone = boneKeyOf(channel);
+    if (bone) {
+      const existing = (((channel.params ?? {}) as { keyframes?: unknown[] }).keyframes ?? []) as {
+        time: number;
+      }[];
+      // Hoisted for the same reason `build()` hoists it: property narrowing on
+      // `spec.scope` does not survive into the `.filter` arrow callback.
+      const scope = spec.scope;
+      const remaining = scope === 'all' ? 0 : existing.filter((k) => k.time !== scope.time).length;
+      // `existing.length > 0` keeps the no-op honest: 'all' on an ALREADY empty
+      // channel removes nothing, so it is not this removal that emptied it and
+      // refusing would report a fault where there is none.
+      if (existing.length > 0 && remaining === 0) {
+        return {
+          ok: false,
+          reason:
+            `removing this would leave bone "${bone.childName}"'s ${bone.component} channel with no ` +
+            'keyframes, and an empty channel is not a cleared edit — it claims the component and ' +
+            'renders the bone at the origin. Delete the channel node instead to return the bone ' +
+            'to its clip.',
+        };
+      }
+    }
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const channel = state.nodes[spec.channelId];
+    const resolved = resolveChannelAddress(state, spec, { mint: false });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const channelId = resolved.channelId;
+    const channel = state.nodes[channelId];
     const params = (channel.params ?? {}) as {
       keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
     };
@@ -116,7 +190,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
 
     if (spec.scope === 'all') {
       if (existing.length === 0) return []; // already empty → no-op
-      return [{ type: 'setParam', nodeId: spec.channelId, paramPath: 'keyframes', value: [] }];
+      return [{ type: 'setParam', nodeId: channelId, paramPath: 'keyframes', value: [] }];
     }
 
     // scope: { time }
@@ -129,7 +203,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     return [
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: channelId,
         paramPath: 'keyframes',
         value: filtered,
       },

@@ -4,8 +4,10 @@
 // Extracted when the second consumer arrived (the "2nd consumer justifies the
 // module" retrofit this codebase already applies at D-06). Consumer 1 is
 // `bakeGltfChannel`, whose source is the asset's OWN embedded TransformClip.
-// Consumer 2 is `bakeClipOntoRig`, whose source is a retargeted `AnimationClip`
-// that arrived from somewhere else entirely.
+// Consumer 2 is `ensureChannelForBone`, whose source is a bound `AnimationClip`
+// that arrived from somewhere else entirely — a BVH, an FBX, a retarget, or a
+// generator. (Consumer 2 was `bakeClipOntoRig` until #889: same source, but it
+// emitted for every bone at bind time instead of for one bone at edit time.)
 //
 // 🔑 THE SOURCE DIFFERS; EVERYTHING DOWNSTREAM OF IT MUST NOT. Both consumers
 // must emit the same node type, under the same content-addressed ids, carrying
@@ -32,10 +34,37 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import type { Vec3 } from '../../../nodes/types';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
+import type { FChannelModifier } from '../../../nodes/channelModifiers';
 
 /** The TRS components a bone can carry, in stable emission order. */
 export const BAKED_COMPONENTS = ['position', 'rotation', 'scale'] as const;
 export type BakedComponent = (typeof BAKED_COMPONENTS)[number];
+
+/**
+ * The Cycles modifier a minted channel carries, per component (#924).
+ *
+ * POSITION repeats WITH OFFSET; rotation and scale repeat plain. Offset adds
+ * `(last - first)` once per period, which is what makes a root that travels keep
+ * travelling instead of teleporting back to its start once per cycle. It is
+ * self-limiting: for a bone whose track is constant — every bone but the root,
+ * since a retarget writes bind position for the rest — `last === first`, so the
+ * offset is exactly zero and this is byte-identical to a plain repeat.
+ *
+ * Rotation and scale are bounded and return to their start; offsetting them
+ * would compound a residual each cycle without bound.
+ *
+ * This MUST match `buildClipBoneSamplers`' rule in AnimationClip.ts. The two are
+ * the edited and unedited halves of one band, and `ensureChannelForBone`'s own
+ * spec asserts they agree past the duration — a mint that cycles differently from
+ * the clip it copied is the freeze defect #913 fixed, wearing the other face.
+ *
+ * REF: Blender `FModifierCycles.mode_after` REPEAT_OFFSET, "offset based on
+ * gradient between start and end values".
+ */
+function cycleModifierFor(component: BakedComponent): FChannelModifier {
+  const mode = component === 'position' ? 'repeat-offset' : 'repeat';
+  return { type: 'cycles', beforeMode: mode, afterMode: mode, beforeCycles: 0, afterCycles: 0 };
+}
 
 /** One keyframe as the channel stores it. Rotation is DEGREES throughout — the
  *  clip stores degrees and `KeyframeChannelVec3` reads degrees, so there is no
@@ -60,8 +89,21 @@ export function bakeChannelOpsForBone(args: {
   readonly childName: string;
   readonly byComponent: Partial<Record<BakedComponent, readonly BakedKey[]>>;
   readonly state: DagState;
+  /** #913 — does the SOURCE these keys were copied from repeat past its end?
+   *
+   *  Same producer-vs-consumer distinction as the `easing` field below, on the
+   *  time axis instead of the value axis. A channel's schema default is `hold`,
+   *  which is right for a curve a director drew from nothing and wrong for a
+   *  frame-by-frame copy of a LOOPING clip: the clip wraps at its duration and
+   *  the copy would stop dead, so the bone freezes after one cycle while its
+   *  neighbours keep going. Stating the source's time domain is what keeps the
+   *  copy indistinguishable from what it copied.
+   *
+   *  Optional and default-false, so the road that does not know its source's
+   *  time domain emits exactly the params it emitted before. */
+  readonly cyclic?: boolean;
 }): Op[] {
-  const { assetRef, childName, byComponent, state } = args;
+  const { assetRef, childName, byComponent, state, cyclic = false } = args;
   const target = gltfChildDagId(assetRef, childName);
   const ops: Op[] = [];
 
@@ -95,9 +137,10 @@ export function bakeChannelOpsForBone(args: {
           // 'cubic', so omitting this field would silently restore smoothstep.
           //
           // These keys are not hand-authored — they are a per-frame RESTATEMENT
-          // of a clip whose sampler is raw `lerpVec3` (AnimationClip.ts:89-90,
-          // TransformClip.ts:116-118) and whose keyframes cannot express easing
-          // at all. Stamping the authored-curve default onto baked data made the
+          // of a clip whose sampler interpolates LINEARLY (TransformClip.ts:116-118
+          // raw `lerpVec3`; AnimationClip's `buildClipBoneSamplers` states
+          // `easing: 'linear'` for this same reason) and whose keyframes cannot
+          // express easing at all. Stamping the authored-curve default onto baked data made the
           // bake disagree with its own source between keyframes: identical at
           // every key, but up to |smoothstep(u) - u| = 1/(6*sqrt(3)) ~ 9.6% of
           // each interval away from it in between (8.5357 deg on a real clip).
@@ -106,6 +149,17 @@ export function bakeChannelOpsForBone(args: {
           // a curve a director drew, and wrong for a frame-by-frame copy.
           easing: 'linear' as const,
         })),
+        // #913 — the source's time domain, expressed the way this project
+        // decided to express cycling (#275 moved the repeat family out of the
+        // extend enum and into a Cycles F-Modifier). `repeat` cycles the
+        // channel's key range, which equals the clip's `[0, duration)` fold
+        // whenever the seeded keys span the clip — true for every generated,
+        // imported and retargeted clip, because they carry a key per frame.
+        // Measured on Robot-Walk.basher: 78 of 78 bones span it exactly.
+        //
+        // The key is OMITTED rather than set to `[]` when the source does not
+        // cycle, so a non-looping mint stays byte-identical to pre-#913.
+        ...(cyclic ? { modifiers: [cycleModifierFor(component)] } : {}),
       },
     });
   }

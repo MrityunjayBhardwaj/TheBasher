@@ -32,6 +32,14 @@ import {
   FModifierSchema,
   type FChannelModifier,
 } from '../../../nodes/channelModifiers';
+import {
+  CHANNEL_ADDRESS_DOC,
+  CHANNEL_ADDRESS_FIELDS,
+  channelRootSelectors,
+  channelViewAfterMint,
+  resolveChannelAddress,
+  superRefineChannelAddress,
+} from './channelAddress';
 
 /** The KeyframeChannel node types that carry a `modifiers` stack (Number/Vec2/Vec3).
  *  Quat/Color/Text/Image channels have no F-Modifier stack (they were left legacy by
@@ -42,26 +50,27 @@ const MODIFIER_CHANNEL_TYPES = new Set([
   'KeyframeChannelVec3',
 ]);
 
-const AddChannelModifierSpec = z.object({
-  /** The KeyframeChannel{Number,Vec2,Vec3} to add the modifier to. */
-  channelId: z.string().min(1),
-  /** Which F-Modifier to add — the same authoring vocabulary as the UI's Add menu. */
-  modifierType: z.enum(FMODIFIER_TYPES),
-  /**
-   * Optional field overrides, shallow-merged onto `defaultModifier(modifierType)`
-   * and re-validated through FModifierSchema. Lets the agent author a tuned
-   * modifier in ONE call (e.g. { strength: 3, offset: 10 } on a noise) instead of
-   * add-then-setParam. Fields that don't belong to the chosen type are ignored
-   * (zod strips them); the merged modifier must still parse (checked in
-   * preconditions), so a bad value (e.g. depth: 99) is rejected, not silently clamped.
-   */
-  overrides: z.record(z.unknown()).optional(),
-  /**
-   * Insertion index into the existing stack (0 = top/front). Omitted → append to
-   * the end. Order matters: modifiers run in array order, each feeding the next.
-   */
-  index: z.number().int().nonnegative().optional(),
-});
+const AddChannelModifierSpec = z
+  .object({
+    ...CHANNEL_ADDRESS_FIELDS,
+    /** Which F-Modifier to add — the same authoring vocabulary as the UI's Add menu. */
+    modifierType: z.enum(FMODIFIER_TYPES),
+    /**
+     * Optional field overrides, shallow-merged onto `defaultModifier(modifierType)`
+     * and re-validated through FModifierSchema. Lets the agent author a tuned
+     * modifier in ONE call (e.g. { strength: 3, offset: 10 } on a noise) instead of
+     * add-then-setParam. Fields that don't belong to the chosen type are ignored
+     * (zod strips them); the merged modifier must still parse (checked in
+     * preconditions), so a bad value (e.g. depth: 99) is rejected, not silently clamped.
+     */
+    overrides: z.record(z.unknown()).optional(),
+    /**
+     * Insertion index into the existing stack (0 = top/front). Omitted → append to
+     * the end. Order matters: modifiers run in array order, each feeding the next.
+     */
+    index: z.number().int().nonnegative().optional(),
+  })
+  .superRefine(superRefineChannelAddress);
 export type AddChannelModifierSpec = z.infer<typeof AddChannelModifierSpec>;
 
 /** Merge overrides onto the type's default modifier and validate. `type` is forced
@@ -79,9 +88,12 @@ function buildModifier(
   return { ok: true, modifier: parsed.data as FChannelModifier };
 }
 
-function existingModifiers(state: DagState, channelId: string): FChannelModifier[] {
-  const params = (state.nodes[channelId]?.params ?? {}) as { modifiers?: FChannelModifier[] };
-  return Array.isArray(params.modifiers) ? params.modifiers : [];
+/** The stack the channel WILL have — read through the mint so adding a modifier
+ *  to a bone's first-ever channel starts from that channel's own stack rather
+ *  than from an array that does not exist yet. */
+function existingModifiers(view: { params: Record<string, unknown> }): FChannelModifier[] {
+  const modifiers = view.params.modifiers;
+  return Array.isArray(modifiers) ? (modifiers as FChannelModifier[]) : [];
 }
 
 export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec> = {
@@ -96,7 +108,8 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
     "director-friendly defaults (same as the UI's + Add button); pass `overrides` " +
     'to tune fields in one call (e.g. { strength: 3, offset: 10 } for a noise, or ' +
     '{ coefficients: [0, 2] } for a generator). Appends to the stack unless ' +
-    '`index` is given. Tune further later with dag.exec setParam on `modifiers`.',
+    '`index` is given. Tune further later with dag.exec setParam on `modifiers`.' +
+    CHANNEL_ADDRESS_DOC,
   spec: AddChannelModifierSpec,
   specExample: {
     channelId: 'cube_position_channel',
@@ -115,21 +128,25 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
     preserves: ['position', 'rotation', 'scale', 'material', 'children', 'keyframe-density'],
   },
   buildClosureSpec(spec): ClosureSpec {
-    return { rootSelectors: [spec.channelId], followedEdges: [] };
+    return { rootSelectors: channelRootSelectors(spec), followedEdges: [] };
   },
   preconditions(spec, _closure, state) {
-    const channel = state.nodes[spec.channelId];
-    if (!channel) return { ok: false, reason: `channelId "${spec.channelId}" not in DAG.` };
-    if (!MODIFIER_CHANNEL_TYPES.has(channel.type)) {
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) return { ok: false, reason: resolved.reason };
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) {
+      return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
+    }
+    if (!MODIFIER_CHANNEL_TYPES.has(view.type)) {
       return {
         ok: false,
-        reason: `channel "${spec.channelId}" is ${channel.type}; F-Modifiers apply only to KeyframeChannel{Number,Vec2,Vec3}.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; F-Modifiers apply only to KeyframeChannel{Number,Vec2,Vec3}.`,
       };
     }
     const built = buildModifier(spec);
     if (!built.ok) return { ok: false, reason: built.reason };
     if (spec.index !== undefined) {
-      const len = existingModifiers(state, spec.channelId).length;
+      const len = existingModifiers(view).length;
       if (spec.index > len) {
         return {
           ok: false,
@@ -146,13 +163,18 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
         `addChannelModifier.build: ${built.reason} (preconditions should have caught).`,
       );
     }
-    const existing = existingModifiers(state, spec.channelId);
+    const resolved = resolveChannelAddress(state, spec, { mint: true });
+    if (!resolved.ok) throw new Error(resolved.reason);
+    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
+    const existing = existingModifiers(view);
     const at = spec.index ?? existing.length;
     const next = [...existing.slice(0, at), built.modifier, ...existing.slice(at)];
     return [
+      ...resolved.mintOps,
       {
         type: 'setParam',
-        nodeId: spec.channelId,
+        nodeId: resolved.channelId,
         paramPath: 'modifiers',
         value: next,
       },

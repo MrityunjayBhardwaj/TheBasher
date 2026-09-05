@@ -95,7 +95,11 @@ import {
   DOPESHEET_DIAMOND_INSET_PX,
   DOPESHEET_GUTTER_GLYPH_BOX_PX,
 } from './timelineSettings';
-import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
+import {
+  appendAnimationClipRows,
+  appendSelectionClipRows,
+  type ChannelRow,
+} from './clipChannelRows';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
@@ -563,7 +567,12 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   const rows = useMemo(
     () =>
       appendSelectionClipRows({
-        baseRows: collectChannelRows(nodes),
+        // #903 — the AnimationClip road's read-only rows, appended BEFORE the
+        // selection-scoped TransformClip ones so a rig with a generated or
+        // retargeted motion is visible in the dopesheet without a bake. Both
+        // suppress a (bone, component) that already has a real channel, so the
+        // one-row-set invariant holds across both clip kinds.
+        baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
         nodes,
         selectedNodeId: primaryNodeId,
       }),

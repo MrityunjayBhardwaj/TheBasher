@@ -14,6 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 
 export const VERDICTS = new Set(['ALLOWED', 'ALLOWED_WITH_CONDITIONS', 'BLOCKED']);
 
@@ -198,15 +199,58 @@ function listFilesFlat(dir, exts) {
     .map((e) => path.join(dir, e.name));
 }
 
-function walkDir(dir, exts, out) {
+/**
+ * Absolute paths git ignores, asked of git rather than restated here (#929).
+ *
+ * The recursive walk used to skip a hardcoded `node_modules` / `dist` pair. That
+ * pair is a GUESS at the ignore list, and it drifted: `test-results/` is written
+ * by every local Playwright run and is gitignored (.gitignore:33), so the
+ * coverage check below found it, reported a directory outside every named root,
+ * and redded. The tier was therefore red by default for anyone who had run the
+ * e2e suite — a standing red that three sessions in a row triaged by hand and
+ * wrote "environment, do not chase" into their handoffs. A red everyone is
+ * trained to ignore is the state in which a REAL failure of that check is also
+ * waved through, which is the whole value of the check gone.
+ *
+ * Asking git closes the drift permanently: the exemption cannot disagree with
+ * what the repo actually ignores, because it IS what the repo ignores. It also
+ * subsumes both hardcoded names and picks up `.anvi`, `playwright-report/` and
+ * anything a future tool drops in.
+ *
+ * Returns an empty set if git is unavailable or this is not a work tree — the
+ * walk then behaves as it did before, which is the safe direction: scanning too
+ * much makes the gate noisy, never silently permissive.
+ */
+let ignoredCache = null;
+export function gitIgnoredPaths(repoRoot) {
+  if (ignoredCache && ignoredCache.root === repoRoot) return ignoredCache.set;
+  const set = new Set();
+  try {
+    const out = execFileSync(
+      'git',
+      ['ls-files', '--others', '--ignored', '--exclude-standard', '--directory'],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    for (const line of out.split('\n')) {
+      const rel = line.trim().replace(/\/$/, '');
+      if (rel) set.add(path.resolve(repoRoot, rel));
+    }
+  } catch {
+    // No git, or not a work tree. Fall through with an empty set.
+  }
+  ignoredCache = { root: repoRoot, set };
+  return set;
+}
+
+function walkDir(dir, exts, out, ignored = new Set()) {
   if (!fs.existsSync(dir)) return out;
   for (const entry of fs
     .readdirSync(dir, { withFileTypes: true })
     .sort((a, b) => a.name.localeCompare(b.name))) {
     const p = path.join(dir, entry.name);
+    if (ignored.has(path.resolve(p))) continue;
     if (entry.isDirectory()) {
-      if (entry.name === 'node_modules' || entry.name === 'dist') continue;
-      walkDir(p, exts, out);
+      walkDir(p, exts, out, ignored);
     } else if (exts.includes(path.extname(entry.name))) {
       out.push(p);
     }
@@ -239,8 +283,9 @@ export function listSourceFiles(
     seen.add(rel);
     out.push(rel);
   };
+  const ignored = gitIgnoredPaths(repoRoot);
   for (const root of roots) {
-    for (const abs of walkDir(path.join(repoRoot, root), exts, [])) add(abs);
+    for (const abs of walkDir(path.join(repoRoot, root), exts, [], ignored)) add(abs);
   }
   for (const root of flatRoots) {
     for (const abs of listFilesFlat(path.join(repoRoot, root), exts)) add(abs);

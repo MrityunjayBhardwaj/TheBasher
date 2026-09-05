@@ -12,6 +12,15 @@
 
 import { getNodeType } from '../dag/registry';
 import { normalizeRetiredParams } from './retiredLadders';
+// The ONE edge walk from clip to rig, and the ONE radians→degrees helper the
+// mint uses. Imported rather than re-implemented: a second copy of either would
+// compare unequal for reasons that have nothing to do with authoring, and the
+// walk's own header forbids a second answer to "which clip drives this bone".
+// `core/project` → `app` is the direction `retiredLadders` already takes.
+import { boundClipsForAsset, boneIndexOf } from '../../app/animate/boundClipsForAsset';
+import type { GraphNodeLike } from '../../app/animate/boundClipsForAsset';
+import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
+import { radVec3ToDeg } from '../../viewport/rotation';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
 
@@ -54,6 +63,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // pass, so its driver would keep a binding on a socket that no longer exists — the
   // edge would simply vanish on load and the param would silently stop being driven.
   8: migrateDriverInVecToIn,
+  // v9 → v10 (#915): drop the eager bake's unauthored per-bone channels. Its OWN
+  // format version for the same reason as every step above: a project saved at v9
+  // would never re-run an earlier pass, so its rig would stay frozen at the end of
+  // its first cycle forever.
+  9: migrateDropUnauthoredEagerChannels,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1028,4 +1042,222 @@ function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string
     out[node.type] = Math.max(out[node.type] ?? 0, node.version);
   }
   return out;
+}
+
+// ── v9 → v10: drop the eager bake's unauthored channels (#915) ─────────────
+// `bakeClipOntoRig` gave EVERY bone a `KeyframeChannelVec3` at bind time — 46 of
+// them for 23 bones in `Robot-Walk.basher`, not one authored by anybody. #889
+// deleted that bake and made a channel appear only when something is authored
+// into it; #913 then taught the mint to carry the source clip's TIME DOMAIN as a
+// Cycles modifier. Neither reaches a channel that is ALREADY in a saved file.
+//
+// Those channels carry no modifier, so they HOLD past the clip's duration where
+// the clip they were copied from WRAPS. Measured on `Robot-Walk.basher`: 46
+// channels, 0 with modifiers, and `t = 1.98` ≠ `t = 1.98 + duration` on every
+// bone — the whole rig plays its walk once and then stands still for the rest of
+// the timeline. It was invisible for the life of the feature because it was
+// UNIFORM: a rig that stops as a unit reads as "the clip ended", and only #889
+// making the population mixed (one edited bone freezing beside 22 walking ones)
+// put a control group in the frame.
+//
+// This is #889's own rule applied retroactively rather than a new mechanism: a
+// channel nobody authored should not exist, and a bone without one is served by
+// the clip band, where looping is already correct. Measured over all 23 bones at
+// 4 out-of-range times, DELETING the 46 and adding Cycles to the 46 agree to
+// 5.7e-14 — behaviourally the same fix. Deleting is chosen because it leaves no
+// duplicate behind to go stale against its source, which is the defect #889
+// exists to remove.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// 🔴 WHAT MAKES THIS SAFE IS THE PREDICATE, NOT THE VERSION BUMP
+// ─────────────────────────────────────────────────────────────────────────
+// "Which of my channels were authored" is the question a pre-#889 file was
+// thought to be unable to answer about itself. It can — by CONTENT rather than
+// by a flag it does not carry. Re-derive the channel from the clip that drives
+// its bone (the same one walk the mint and the read band use) and keep any
+// channel that differs from that derivation in ANY field:
+//
+//   - a hand-edited bone keeps its edit, because its keys no longer match;
+//   - a bone whose extend / blend / order / mute / weight / modifier stack was
+//     touched keeps it, because those no longer match the bake's defaults;
+//   - a key carrying a bézier handle keeps it, because the bake wrote exactly
+//     `{time, value, easing}` and nothing else.
+//
+// Every comparison is EXACT — measured, a 1e-9 difference on one key of one
+// channel is enough to keep that channel.
+//
+// AND IT FAILS TOWARD KEEPING. Anything unrecognised, unparseable, scale-domain,
+// or without a bound clip is left alone. The cost of keeping a frozen channel is
+// the bug this fixes and it stays visible; the cost of dropping an authored one
+// is a director's work, silently. Every channel kept for a reason other than
+// "somebody edited its keys" is counted and reported (V38, no silent loss), so a
+// project this does not fully migrate says so rather than looking done.
+//
+// REF: src/app/animate/boundClipsForAsset.ts (the ONE edge walk — imported
+//        rather than re-implemented, because a second copy of it is two answers
+//        to "which clip drives this bone" that diverge silently);
+//      src/app/animate/ensureChannelForBone.ts (`seedKeysFromClip`, the
+//        derivation this mirrors key-for-key, including the radians→degrees
+//        boundary, which must use the SAME helper or nothing compares equal);
+//      src/agent/mutators/builders/bakeChannelOps.ts (the node shape + the
+//        `easing: 'linear'` the bake stamps); issues #915, #913, #889, #877.
+
+/** The eager bake's value for every non-keyframe field. A channel deviating in
+ *  any of them was touched by somebody. `undefined` counts as a match: an absent
+ *  field and a field at its schema default parse to the same channel. */
+const EAGER_CHANNEL_FIELDS: Readonly<Record<string, unknown>> = {
+  mute: false,
+  solo: false,
+  weight: 1,
+  blendMode: 'replace',
+  order: 0,
+  extendBefore: 'hold',
+  extendAfter: 'hold',
+};
+
+/** Exactly the keys `bakeChannelOpsForBone` writes on one keyframe. A key with
+ *  more than these carries authoring the bake cannot have produced. */
+const EAGER_KEY_FIELDS = ['easing', 'time', 'value'] as const;
+
+/** The `KeyframeChannelVec3` version whose param shape the predicate below
+ *  compares against.
+ *
+ *  🔴 THIS PASS RUNS ON RAW JSON, BEFORE `migrateNodes`, so it sees params in
+ *  whatever shape the file was SAVED in — not the shape the registry describes.
+ *  A v1 channel is a different vocabulary: it carries `cyclesBefore` /
+ *  `cyclesAfter`, which the node ladder later folds into a Cycles modifier. The
+ *  predicate does not read those keys, so a v1 channel with a director's cycling
+ *  set up would look untouched and be dropped, discarding it.
+ *
+ *  So anything not at this exact version is KEPT. The literal (rather than a
+ *  registry lookup) keeps this pass registry-free like every format migration
+ *  above it, and `migrations.test.ts` pins it to the registered version so a
+ *  future node bump reds instead of silently widening what gets deleted. */
+const EAGER_CHANNEL_NODE_VERSION = 2;
+
+function isDefaultedEmpty(v: unknown): boolean {
+  return v === undefined || (Array.isArray(v) && v.length === 0);
+}
+
+/** Why a channel was kept — reported so a partly-migrated project says so. */
+type KeepReason = 'edited-keys' | 'edited-channel' | 'no-bound-clip' | 'not-baked-shape';
+
+/**
+ * Is this channel bit-identical to what the eager bake wrote, and nothing more?
+ *
+ * Returns null when it is (⇒ safe to drop), or the reason it was kept.
+ */
+function eagerChannelKeepReason(
+  node: RawNode,
+  nodeId: string,
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+): KeepReason | null {
+  const p = node.params;
+  if (!p) return 'not-baked-shape';
+  // Saved in a param vocabulary this predicate does not read — see the constant.
+  if (node.version !== EAGER_CHANNEL_NODE_VERSION) return 'not-baked-shape';
+  const { assetRef, childName, paramPath } = p as Record<string, unknown>;
+  if (typeof assetRef !== 'string' || typeof childName !== 'string') return 'not-baked-shape';
+  // Scale was never eager-baked: `AnimationClipParams.keyframes` carries none.
+  if (paramPath !== 'position' && paramPath !== 'rotation') return 'not-baked-shape';
+  // The bake's ids are content-addressed one way. A channel sitting under a
+  // different id, or aimed at a different bone node, came from somewhere else.
+  if (nodeId !== gltfChannelDagId(assetRef, childName, paramPath)) return 'not-baked-shape';
+  if (p.target !== gltfChildDagId(assetRef, childName)) return 'not-baked-shape';
+  if (node.inputs && Object.keys(node.inputs).length > 0) return 'not-baked-shape';
+  // The emitter's own deterministic label. No surface renames a channel today,
+  // so this closes the hole rather than catching a known case — but a rename IS
+  // authoring, and a predicate that ignored the field would delete it if one
+  // ever ships.
+  if (p.name !== `${childName} — ${paramPath}`) return 'edited-channel';
+
+  for (const [field, expected] of Object.entries(EAGER_CHANNEL_FIELDS)) {
+    const actual = p[field];
+    if (actual !== undefined && actual !== expected) return 'edited-channel';
+  }
+  // A modifier stack, a per-axis override, or a per-axis extend is authoring by
+  // definition — and an existing Cycles modifier means this channel is ALREADY
+  // correct and must not be removed for being so.
+  if (!isDefaultedEmpty(p.modifiers)) return 'edited-channel';
+  if (!isDefaultedEmpty(p.axisModifiers)) return 'edited-channel';
+  if (!isDefaultedEmpty(p.axisExtend)) return 'edited-channel';
+
+  const saved = p.keyframes;
+  if (!Array.isArray(saved)) return 'not-baked-shape';
+
+  // The derivation, key for key. Same walk, same order, same unit conversion as
+  // the mint — a second implementation of any of the three would compare unequal
+  // for reasons that have nothing to do with authoring.
+  for (const clip of boundClipsForAsset(nodes, assetRef)) {
+    const index = boneIndexOf(clip, childName);
+    if (index === null) continue;
+    const mine = (clip.params.keyframes ?? []).filter((k) => k.bone === index);
+    if (mine.length === 0) continue;
+    const sorted = mine.slice().sort((a, b) => a.time - b.time);
+    if (saved.length !== sorted.length) return 'edited-keys';
+    for (let i = 0; i < sorted.length; i++) {
+      const key = saved[i] as Record<string, unknown> | undefined;
+      if (!key || typeof key !== 'object') return 'not-baked-shape';
+      const present = Object.keys(key).sort();
+      if (present.length !== EAGER_KEY_FIELDS.length) return 'edited-keys';
+      if (present.some((k, j) => k !== EAGER_KEY_FIELDS[j])) return 'edited-keys';
+      // #877 — the bake stamps 'linear' explicitly. A key without it parses to
+      // the schema's 'cubic', which is a different curve and not this bake's.
+      if (key.easing !== 'linear') return 'edited-keys';
+      if (key.time !== sorted[i].time) return 'edited-keys';
+      const want = paramPath === 'rotation' ? radVec3ToDeg(sorted[i].rotation) : sorted[i].position;
+      const got = key.value;
+      if (!Array.isArray(got) || got.length !== 3) return 'edited-keys';
+      for (let a = 0; a < 3; a++) if (got[a] !== want[a]) return 'edited-keys';
+    }
+    return null;
+  }
+  // No clip drives this bone, so this channel cannot be a copy of one. It is
+  // either `bakeGltfChannel`'s edit-time output or a base-pose seed — authored
+  // either way, and removing it would delete motion with no source to fall to.
+  return 'no-bound-clip';
+}
+
+export function migrateDropUnauthoredEagerChannels(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 10 };
+
+  const graph = nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+  const dropped: string[] = [];
+  const kept: Record<KeepReason, number> = {
+    'edited-keys': 0,
+    'edited-channel': 0,
+    'no-bound-clip': 0,
+    'not-baked-shape': 0,
+  };
+  let examined = 0;
+
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'KeyframeChannelVec3') continue;
+    examined++;
+    const reason = eagerChannelKeepReason(node, id, graph);
+    if (reason === null) dropped.push(id);
+    else kept[reason]++;
+  }
+
+  for (const id of dropped) delete nodes[id];
+
+  if (dropped.length > 0 || kept['edited-keys'] > 0 || kept['edited-channel'] > 0) {
+    const keptTotal = examined - dropped.length;
+    console.warn(
+      `[migrateDropUnauthoredEagerChannels] examined ${examined} bone channels: dropped ` +
+        `${dropped.length} that were bit-identical copies of the clip driving them (#915 — ` +
+        `they held past the clip's end instead of looping; those bones are now served by the ` +
+        `clip band, which loops). Kept ${keptTotal}: ` +
+        `${kept['edited-keys']} with edited keys, ${kept['edited-channel']} with an edited ` +
+        `channel setting, ${kept['no-bound-clip']} with no clip driving the bone, ` +
+        `${kept['not-baked-shape']} not in the bake's shape.`,
+    );
+  }
+
+  return { ...proj, formatVersion: 10 };
 }

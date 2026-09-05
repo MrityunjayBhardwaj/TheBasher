@@ -25,6 +25,7 @@ import { useDagStore } from '../core/dag/store';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
+import { boneComponentAddress, paramAnimationDisplayState } from './animate/clipRowMint';
 import { useTimeStore } from './stores/timeStore';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
 
@@ -47,14 +48,34 @@ export function ParamDiamond({
   const nodes = useDagStore((s) => s.state.nodes);
   const dagState = useDagStore((s) => s.state);
 
-  const animState = paramAnimationState(dagState, nodeId, paramPath, frame);
+  // TWO STATES, and the split is load-bearing (#908).
+  //
+  // `authoredState` — is there a KeyframeChannel* of this bone's OWN? It gates
+  // the DELETE path below, which addresses a channel and cannot act without
+  // one.
+  //
+  // `animState` — does anything animate this param, INCLUDING a bound clip. It
+  // is what the director reads. Under copy-on-write a bone nobody has edited
+  // has no channel and follows the clip, which is the normal healthy state of
+  // almost every bone on an animated character: measured at 23 of 23 on
+  // `Robot-Walk.basher`, every one of them rendered gray "not animated" while
+  // visibly walking.
+  //
+  // They were one value while an eager bake gave every bone a channel. Keeping
+  // them one now would either lie in the colour or arm a delete on a track the
+  // director never authored — see `paramAnimationDisplayState`'s header.
+  const authoredState = paramAnimationState(dagState, nodeId, paramPath, frame);
+  const animState = paramAnimationDisplayState(dagState, nodeId, paramPath, frame);
   // #149 F1 — the 4th color (orange). SUBSCRIBED selector (not a getState
   // snapshot) so the diamond re-renders the moment the transient is set/cleared
-  // (B12). A transient only exists on an ANIMATED param (routeAnimatedGrab
-  // returns false for un-animated), so it always coincides with animState !==
-  // 'none' — but orange wins display regardless (the unsaved edit is the most
-  // urgent signal, the Blender contract). This is FLAG-A's replacement safety
-  // net: orange = "held but not persisted" (supersedes the removed reject alert).
+  // (B12). A transient only exists where `routeAnimatedGrab` returned true, and
+  // that gate reads `paramAnimationState` — so it coincides with
+  // `authoredState !== 'none'`, NOT with the widened `animState` (#908: a
+  // clip-driven bone is green and holds no transient, because its grab takes
+  // the manual-override road). Orange wins display regardless (the unsaved edit
+  // is the most urgent signal, the Blender contract). This is FLAG-A's
+  // replacement safety net: orange = "held but not persisted" (supersedes the
+  // removed reject alert).
   const isTransient = useTransientEditStore((s) => s.edits.has(keyOf(nodeId, paramPath)));
 
   const glyph = animState === 'none' && !isTransient ? '◇' : '◆';
@@ -69,7 +90,7 @@ export function ParamDiamond({
   const onActivate = (alt: boolean) => {
     // DELETE path (unchanged): an on-key click OR Alt-click on an animated param
     // removes the on-key sample (Blender's toggle). Off-key Alt is a silent no-op.
-    if (animState !== 'none' && (animState === 'on-key' || alt)) {
+    if (authoredState !== 'none' && (authoredState === 'on-key' || alt)) {
       const resolved = resolveChannel(nodes, nodeId, paramPath, frame);
       if (!resolved) {
         window.alert?.('Channel not found for animated param.');
@@ -77,9 +98,18 @@ export function ParamDiamond({
       }
       const t = resolved.onKeySeconds ?? null;
       if (t === null) return; // Alt off-key → silent no-op
+      // A bone is addressed by its PARTS, never by the channel's id. The id
+      // works here only because `authoredState !== 'none'` already proved a channel
+      // exists — a precondition this call site happens to hold and cannot
+      // export. The parts hold in both worlds, and when the bone has no
+      // authored channel the refusal says so ("it follows the clip; there is
+      // nothing to remove") instead of "not in DAG", which reads as corruption.
+      // `removeKeyframes` addresses without minting: clearing an edit must not
+      // create one.
+      const bone = boneComponentAddress(useDagStore.getState().state, nodeId, paramPath);
       const del = dispatchMutatorFromUI(
         'mutator.timeline.removeKeyframes',
-        { channelId: resolved.channelId, scope: { time: t } },
+        bone ? { bone, scope: { time: t } } : { channelId: resolved.channelId, scope: { time: t } },
         `Delete key ${nodeId}.${paramPath}`,
       );
       if (!del.ok) {

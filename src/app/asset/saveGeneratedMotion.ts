@@ -7,12 +7,22 @@
 //
 // 🔑 IT WRITES THE BYTES AND NOTHING ELSE. It deliberately does NOT call
 // `routeImportByExtension`, which is what a dropped file takes: that would parse
-// the same motion a SECOND time, add a second Skeleton + AnimationClip to the
-// graph, and attempt a second bind on a character that already carries this
-// motion — which #807 correctly refuses. Saving is a storage act, not an import,
-// and the clip it saves is already in the scene. This distinction is the whole
-// file; if it ever calls the import road, the button silently duplicates the
-// user's clip.
+// the same motion a SECOND time and add a second Skeleton + AnimationClip to the
+// graph, for a clip that is already in the scene. Saving is a storage act, not an
+// import. This distinction is the whole file; if it ever calls the import road,
+// the button silently duplicates the user's clip.
+//
+// 🔴 AND NOTHING DOWNSTREAM WOULD CATCH IT (#918). This note used to add "and
+// attempt a second bind on a character that already carries this motion — which
+// #807 correctly refuses". There is no such refusal: `BindMotionRefusal` is
+// exactly `'no-character' | 'ambiguous' | 'no-bridge' | 'rejected'`
+// (`bindMotionToCharacter.ts:69`). The claim was probably true once and dissolved
+// on purpose when #889 removed the eager bake; the sentence stayed, promising a
+// safety net a later change could lean on and get silence from. A second bind is
+// ACCEPTED, and the clip that ends up driving a bone is the id-sorted-FIRST one
+// (`boundClipsForAsset.ts:86`), not the one bound most recently — so a duplicate
+// import would not merely add a node, it could leave the wrong motion playing.
+// Pinned by `src/app/animate/secondBind.test.ts` rather than re-described here.
 //
 // What lands is an ORDINARY `.bvh` under `user-imports/`, indistinguishable from
 // one a director dropped — same folder convention, same collision suffixing, same

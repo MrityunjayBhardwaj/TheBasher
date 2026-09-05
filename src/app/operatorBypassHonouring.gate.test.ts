@@ -244,7 +244,7 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   it('THE INSTRUMENT CONTROL: the registry and the corpus both answered', () => {
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this step's own thesis — the most expensive kind of agreement.
-    expect(listNodeTypes()).toHaveLength(82);
+    expect(listNodeTypes()).toHaveLength(83); // 82 -> 83 at #901 (RetargetClip);
     expect(operators()).toHaveLength(9);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

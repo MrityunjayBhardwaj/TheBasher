@@ -13,6 +13,7 @@ import { ArrayModifierNode } from './ArrayModifier';
 import { BakedDataNode } from './BakedData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
+import { RetargetClipNode } from './RetargetClip';
 import { BoxDataNode } from './BoxData';
 import { MaterialNode } from './Material';
 import { SphereDataNode } from './SphereData';
@@ -216,6 +217,7 @@ const ALL: NodeDefinition[] = [
   ColorCorrectNode as unknown as NodeDefinition,
   MediaClipNode as unknown as NodeDefinition,
   BoneNameMapNode as unknown as NodeDefinition,
+  RetargetClipNode as unknown as NodeDefinition,
   // P4 — Render graph (THESIS §43)
   BeautyPassNode as unknown as NodeDefinition,
   IDPassNode as unknown as NodeDefinition,

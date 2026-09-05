@@ -74,6 +74,17 @@ export type SectionCtx = {
    *  would hide the slot selector until a slot was chosen, which is the control
    *  you choose it with. */
   ownsParam: (key: string) => boolean;
+  /** "Does this node declare an INPUT SOCKET under `key`?" — the edge-side twin of
+   *  `ownsParam`, read off the node type's declared `inputs` (#921).
+   *
+   *  Added because a control can be owned by what a node TAKES rather than by what it
+   *  stores: the bone-map editor belongs to a node that accepts a bone map over an
+   *  edge, and that node's own params are just a name. Without this the only way to
+   *  ask was `whenDeclared`, which hands the control to every node declaring the
+   *  section — the channels included — and `sectionRendersCustomControl` correctly
+   *  refuses that. Still possession, never identity: it asks the DECLARATION, so it
+   *  stays true through a rename and false for a node that merely resembles one. */
+  ownsInput: (key: string) => boolean;
   /** Whether Apply-Transform would accept `objectNodeId`. Resolved by the
    *  caller through the shared `canApplyTransform` predicate so the control is
    *  offered exactly when the dispatcher would accept it. */
@@ -96,6 +107,7 @@ export type ControlKey =
   | 'curvePoints'
   | 'channelExtend'
   | 'channelModifiers'
+  | 'boneMap'
   | 'applyTransform'
   | 'setOrigin'
   | 'objectSlots';
@@ -205,6 +217,18 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       placement: 'before',
       omitRowKeys: ['modifiers'],
     },
+    // #921 — the bone-map editor, for a node that takes a bone map over an EDGE.
+    //
+    // The first version said `whenDeclared` and left possession to the component, on
+    // the precedent `materialStack` sets above. `inspectorSectionBody.test.ts` refused
+    // it, and was right to: `sectionRendersCustomControl` is also the registry guard,
+    // so a control claiming a section it will not draw makes that guard lie for every
+    // channel kind that declares `animate` and owns no map. The gap was in the CONTEXT,
+    // not in the rule — possession by declared INPUT was simply not askable. It is now.
+    //
+    // 'before': it answers the question the rows underneath depend on — which bones of
+    // the source rig reach this character at all.
+    { key: 'boneMap', applies: (c) => c.ownsInput('boneMap'), placement: 'before' },
   ],
   channel: [],
   // #312 / #316 — the constraint and driver stacks (OperatorStackRows over
@@ -375,8 +399,18 @@ export function makeSectionCtx(
     objectNodeId,
     params,
     ownsParam: (key) => nodeOwnsParam(node?.type, params, key),
+    ownsInput: (key) => declaredInputKeys(node?.type).includes(key),
     canApplyTransform,
   };
+}
+
+/** The input socket names a node TYPE declares. The edge-side of `declaredParamKeys`,
+ *  and read the same way: off the registry, so it describes the KIND and not one
+ *  instance's current wiring. A socket that exists but is unwired still belongs to
+ *  the node — the editor for it should appear and say the edge is missing, not vanish. */
+export function declaredInputKeys(nodeType: string | undefined): readonly string[] {
+  if (!nodeType) return [];
+  return Object.keys(getNodeType(nodeType)?.inputs ?? {});
 }
 
 /** Ownership of a param: declared by the node type's schema, or present on the
