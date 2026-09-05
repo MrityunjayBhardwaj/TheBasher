@@ -24,14 +24,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type {
-  AnimationClipValue,
-  AnimationKeyframe,
-  BonePose,
-  SkeletonValue,
-  TimeValue,
-  Vec3,
-} from './types';
+import type { AnimationClipValue, AnimationKeyframe, SkeletonValue, Vec3 } from './types';
 import { sampleVec3KeyframesExtended, type ChannelExtend, type Vec3Key } from './keyframeInterp';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
@@ -140,7 +133,14 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * the read band.
  */
 export function buildClipBoneSamplers(
-  params: Pick<AnimationClipParams, 'keyframes' | 'duration' | 'loop'>,
+  // Widened to READONLY keys (#920) so the same factory serves both a node's
+  // params and an `AnimationClipValue`, which is where the sampling now happens.
+  // It only ever reads them — `groupByBone` already declared readonly.
+  params: {
+    readonly keyframes: readonly AnimationKeyframe[];
+    readonly duration: number;
+    readonly loop: boolean;
+  },
 ): Map<number, ClipBoneSampler> {
   const { duration, loop } = params;
   const { position: posRule, rotation: rotRule } = clipExtendRules(loop);
@@ -188,57 +188,39 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
   pure: true,
   cost: 'cheap',
   paramSchema: AnimationClipParams,
+  // TIME-FREE, like `RetargetClip` (#920). A node named for a CLIP evaluated to a
+  // POSE — a function of the current frame — which is the shape the
+  // per-frame-re-render invariant exists to forbid. The clip is a description;
+  // sampling it at an instant is the consumer's job, and only a consumer with a
+  // `Time` input can do it honestly.
   inputs: {
     skeleton: { type: 'Skeleton', cardinality: 'single' },
-    time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
   inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs) {
     const skeleton = inputs.skeleton as SkeletonValue | undefined;
-    const time = inputs.time as TimeValue | undefined;
-    const tSeconds = time?.seconds ?? 0;
 
     if (!skeleton) {
-      const empty: SkeletonValue = { kind: 'Skeleton', bones: [] };
       return {
         kind: 'AnimationClip',
         name: params.name,
         duration: params.duration,
         loop: params.loop,
         keyframes: params.keyframes,
-        skeleton: empty,
-        pose: { kind: 'PosedSkeleton', skeleton: empty, poses: [] },
+        skeleton: { kind: 'Skeleton', bones: [] },
       };
     }
 
-    // The SAME per-bone samplers the baked band delegates to (#888), so a bone
-    // posed here and the same bone resolved through the band cannot disagree.
-    const samplers = buildClipBoneSamplers(params);
-    const poses: BonePose[] = [];
-    for (let i = 0; i < skeleton.bones.length; i++) {
-      const sampler = samplers.get(i);
-      if (!sampler) {
-        poses.push({
-          bone: i,
-          position: skeleton.bones[i].position,
-          rotation: skeleton.bones[i].rotation,
-        });
-        continue;
-      }
-      const { position, rotation } = sampler(tSeconds);
-      poses.push({ bone: i, position, rotation });
-    }
     return {
       kind: 'AnimationClip',
       name: params.name,
       duration: params.duration,
       loop: params.loop,
       keyframes: params.keyframes,
-      // The rig the keys are indexed against — the SAME one this pose was
-      // sampled on, so a consumer cannot pair the two from different sources.
+      // The rig the keys are indexed against, travelling WITH them so a consumer
+      // cannot pair one source's indices with another's spine (#901).
       skeleton,
-      pose: { kind: 'PosedSkeleton', skeleton, poses },
     };
   },
 };

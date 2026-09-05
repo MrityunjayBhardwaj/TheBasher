@@ -67,10 +67,7 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const bytes = await storage.read(path);
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
-    const { ops, skeletonId, clipId } = buildBvhImportOps(
-      { text, name: nameFromPath(path) },
-      dag.state,
-    );
+    const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name: nameFromPath(path) });
     dag.dispatchAtomic(ops, 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
@@ -99,10 +96,10 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     const dag = useDagStore.getState();
-    const { ops, skeletonId, clipId } = buildFbxImportOps(
-      { data: copy.buffer, name: nameFromPath(path) },
-      dag.state,
-    );
+    const { ops, skeletonId, clipId } = buildFbxImportOps({
+      data: copy.buffer,
+      name: nameFromPath(path),
+    });
     dag.dispatchAtomic(ops, 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, clipId };

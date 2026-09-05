@@ -62,11 +62,6 @@ function buildBaselineCharacter(): DagState {
   }).next;
   state = applyOp(state, {
     type: 'connect',
-    from: { node: 'time', socket: 'out' },
-    to: { node: 'clip', socket: 'time' },
-  }).next;
-  state = applyOp(state, {
-    type: 'connect',
     from: { node: 'clip', socket: 'out' },
     to: { node: 'loco', socket: 'clip' },
   }).next;
@@ -327,11 +322,6 @@ describe('Wave D — walkTo over multiple characters preserves isolation', () =>
         type: 'connect',
         from: { node: 'sk', socket: 'out' },
         to: { node: `clip_${id}`, socket: 'skeleton' },
-      }).next;
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: 'time', socket: 'out' },
-        to: { node: `clip_${id}`, socket: 'time' },
       }).next;
       state = applyOp(state, {
         type: 'connect',

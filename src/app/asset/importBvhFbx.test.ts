@@ -96,17 +96,36 @@ describe('importBvhFromOpfs', () => {
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
   });
 
-  it('reports to the banner and skips dispatch when no TimeSource exists', async () => {
+  // The OLD trigger for this guard — "no TimeSource in the DAG" — is gone (#920):
+  // AnimationClip is time-free, so an empty DAG is a valid import target. That
+  // retires the TRIGGER, not the GUARD, and these are two rows for that reason.
+  it('imports into an EMPTY DAG — the TimeSource precondition is retired', async () => {
     useDagStore.getState().hydrate({ nodes: {}, outputs: {} });
     const path = `${USER_IMPORTS_ROOT}/notime/x.bvh`;
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
 
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    await importBvhFromOpfs(path);
+    const result = await importBvhFromOpfs(path);
 
+    expect(result).not.toBeNull();
+    expect(dispatchSpy).toHaveBeenCalled();
+    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+  });
+
+  // 🔴 THE GUARD ITSELF, kept with a trigger that still exists. This was the only
+  // row exercising this function's catch, so retiring it with its precondition
+  // would have left a swallowed-failure path with nothing watching it — a
+  // silent no-op is exactly what it was written to forbid.
+  it('reports to the banner and skips dispatch when the file will not parse', async () => {
+    const path = `${USER_IMPORTS_ROOT}/broken/x.bvh`;
+    await currentStorage.write(path, new TextEncoder().encode('this is not a BVH file'));
+
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    const result = await importBvhFromOpfs(path);
+
+    expect(result).toBeNull();
     expect(dispatchSpy).not.toHaveBeenCalled();
-    expect(useImportRefreshStore.getState().tick).toBe(0);
-    expect(useAssetErrorStore.getState().errors[path]).toMatch(/TimeSource/);
+    expect(useAssetErrorStore.getState().errors[path]).toBeDefined();
   });
 });
 

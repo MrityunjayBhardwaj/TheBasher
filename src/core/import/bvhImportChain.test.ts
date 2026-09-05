@@ -1,5 +1,9 @@
 // BVH import chain tests — verify the Op[] shape and that applying it
-// builds a working Skeleton + AnimationClip + Time wiring.
+// builds a working Skeleton + AnimationClip.
+//
+// NO TIME WIRING (#920). `AnimationClip` is time-free, so the chain neither
+// looks for a TimeSource nor connects one, and an empty DAG is a valid input.
+// This mirrors what P7.10 (#114) did for the sibling carrier `TransformClip`.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
@@ -42,13 +46,13 @@ function buildStateWithTime() {
 }
 
 describe('buildBvhImportOps', () => {
-  it('emits addNode Skeleton + addNode AnimationClip + 2 connects', () => {
-    const state = buildStateWithTime();
-    const { ops, skeletonId, clipId } = buildBvhImportOps(
-      { text: SYNTHETIC_BVH, name: 'wave', ids: { skeleton: 'sk', clip: 'clip' } },
-      state,
-    );
-    expect(ops).toHaveLength(4);
+  it('emits addNode Skeleton + addNode AnimationClip + ONE connect', () => {
+    const { ops, skeletonId, clipId } = buildBvhImportOps({
+      text: SYNTHETIC_BVH,
+      name: 'wave',
+      ids: { skeleton: 'sk', clip: 'clip' },
+    });
+    expect(ops).toHaveLength(3);
     expect(ops[0]).toMatchObject({ type: 'addNode', nodeId: 'sk', nodeType: 'Skeleton' });
     expect(ops[1]).toMatchObject({ type: 'addNode', nodeId: 'clip', nodeType: 'AnimationClip' });
     expect(ops[2]).toMatchObject({
@@ -56,21 +60,17 @@ describe('buildBvhImportOps', () => {
       from: { node: 'sk', socket: 'out' },
       to: { node: 'clip', socket: 'skeleton' },
     });
-    expect(ops[3]).toMatchObject({
-      type: 'connect',
-      from: { node: 'time', socket: 'out' },
-      to: { node: 'clip', socket: 'time' },
-    });
     expect(skeletonId).toBe('sk');
     expect(clipId).toBe('clip');
   });
 
   it('applying the chain yields a working AnimationClip evaluator', () => {
     let state = buildStateWithTime();
-    const { ops, clipId } = buildBvhImportOps(
-      { text: SYNTHETIC_BVH, name: 'wave', ids: { skeleton: 'sk', clip: 'clip' } },
-      state,
-    );
+    const { ops, clipId } = buildBvhImportOps({
+      text: SYNTHETIC_BVH,
+      name: 'wave',
+      ids: { skeleton: 'sk', clip: 'clip' },
+    });
     for (const op of ops) state = applyOp(state, op).next;
     const result = evaluate(state, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
@@ -79,52 +79,44 @@ describe('buildBvhImportOps', () => {
     expect(value.kind).toBe('AnimationClip');
     expect(value.name).toBe('wave');
     expect(value.duration).toBeGreaterThan(0);
-    // `pose` is optional since #901 (a time-free clip producer omits it), but an
-    // `AnimationClip` node always answers one — asserting it is present IS the row.
-    expect(value.pose).toBeDefined();
-    expect(value.pose!.kind).toBe('PosedSkeleton');
-    expect(value.pose!.poses.length).toBeGreaterThan(0);
+    // The clip is a DESCRIPTION, not a sample (#920): it carries its keys and the
+    // rig they are indexed against, and no pose. A consumer holding a Time samples
+    // it. Asserting the keys and the rig travel together IS the row — a clip whose
+    // indices arrived without their skeleton would name the wrong bones.
+    expect(value.keyframes.length).toBeGreaterThan(0);
+    expect(value.skeleton.bones.length).toBeGreaterThan(0);
+    expect(Math.max(...value.keyframes.map((k) => k.bone))).toBeLessThan(
+      value.skeleton.bones.length,
+    );
   });
 
   it('twice-call builds deterministic Op chains for the same spec', () => {
-    const state = buildStateWithTime();
-    const a = buildBvhImportOps(
-      { text: SYNTHETIC_BVH, name: 'wave', ids: { skeleton: 'sk', clip: 'clip' } },
-      state,
-    );
-    const b = buildBvhImportOps(
-      { text: SYNTHETIC_BVH, name: 'wave', ids: { skeleton: 'sk', clip: 'clip' } },
-      state,
-    );
+    const a = buildBvhImportOps({
+      text: SYNTHETIC_BVH,
+      name: 'wave',
+      ids: { skeleton: 'sk', clip: 'clip' },
+    });
+    const b = buildBvhImportOps({
+      text: SYNTHETIC_BVH,
+      name: 'wave',
+      ids: { skeleton: 'sk', clip: 'clip' },
+    });
     expect(a.ops).toEqual(b.ops);
   });
 
-  it('throws when no TimeSource exists in the project', () => {
-    const state = emptyDagState();
-    expect(() =>
-      buildBvhImportOps({ text: SYNTHETIC_BVH, ids: { skeleton: 'sk', clip: 'clip' } }, state),
-    ).toThrow(/TimeSource/);
-  });
-
-  it('honors an explicit timeSourceId override', () => {
-    let state = buildStateWithTime();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'time2',
-      nodeType: 'TimeSource',
-      params: {},
-    }).next;
-    const { ops } = buildBvhImportOps(
-      {
-        text: SYNTHETIC_BVH,
-        timeSourceId: 'time2',
-        ids: { skeleton: 'sk', clip: 'clip' },
-      },
-      state,
-    );
-    expect(ops[3]).toMatchObject({
-      type: 'connect',
-      from: { node: 'time2', socket: 'out' },
-    });
+  // The OLD invariant — "a TimeSource MUST exist before importing animation" —
+  // is GONE (#920), the same way P7.10 retired it for glTF. This inverts the old
+  // assertion rather than deleting it: importing into an empty DAG must NOT
+  // throw, and no emitted Op may mention TimeSource or a `time` socket.
+  it('succeeds with no TimeSource in the DAG, and wires none', () => {
+    const ops = buildBvhImportOps({
+      text: SYNTHETIC_BVH,
+      ids: { skeleton: 'sk', clip: 'clip' },
+    }).ops;
+    expect(ops.length).toBeGreaterThan(0);
+    for (const op of ops) {
+      if (op.type === 'addNode') expect(op.nodeType).not.toBe('TimeSource');
+      if (op.type === 'connect') expect(op.to.socket).not.toBe('time');
+    }
   });
 });
