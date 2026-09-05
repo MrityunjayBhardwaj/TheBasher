@@ -94,6 +94,9 @@ export interface BoneMapView {
   readonly drivenTargets: number;
   readonly targetTotal: number;
   readonly unmappedCount: number;
+  /** Unmapped bones the PROPOSAL could map — the actionable subset of
+   *  `unmappedCount`, and the only one worth alarming a director with (#923). */
+  readonly gapCount: number;
   readonly danglingCount: number;
   /** What the auto-map proposes for these two rigs, for the header and the button. */
   readonly proposalLabel: string | null;
@@ -240,9 +243,24 @@ export function boneMapView(
   const seen = new Set(sourceNames);
   const orphanKeys = Object.keys(map).filter((k) => !seen.has(k));
 
+  // "No target" has four spellings — an absent key, `null`, `''`, and a name the
+  // target rig does not carry — and they all mean the same thing to a director.
+  // Collapsing them is what lets DECLINING be compared like any other answer
+  // (#923). Without it, `undefined === null` is false, so a bone the preset
+  // deliberately skips read as EDITED: the panel accused a director of removing a
+  // mapping that was never offered, on every one of SOMA's fingers, jaw and eyes.
+  const declared = (v: string | null | undefined): string | null =>
+    typeof v === 'string' && v !== '' && targetSet.has(v) ? v : null;
+
   const rows: BoneMapRow[] = [...sourceNames, ...orphanKeys].map((source) => {
     const target = Object.prototype.hasOwnProperty.call(map, source) ? map[source] : null;
-    const origin: BoneMapRowOrigin = proposal.map[source] === target ? 'preset' : 'edited';
+    // Two entries match when they give the same ANSWER, including when both
+    // decline. `dangling` and `orphan` rows keep comparing raw, because there the
+    // exact string IS the defect being reported.
+    const origin: BoneMapRowOrigin =
+      declared(proposal.map[source]) === declared(target) || proposal.map[source] === target
+        ? 'preset'
+        : 'edited';
     if (target === null || target === '') {
       return { source, target: null, state: 'unmapped', origin };
     }
@@ -277,6 +295,14 @@ export function boneMapView(
     drivenTargets: driven.size,
     targetTotal: targetNames.length,
     unmappedCount: rows.filter((r) => r.state === 'unmapped').length,
+    // #923 — the number that is allowed to SHOUT. An unmapped bone the proposal
+    // also declines is the preset working as designed (SOMA's fingers, jaw, eyes
+    // and end-effectors have no counterpart, `boneNameMaps.ts`); an unmapped bone
+    // the proposal CAN map is a real gap someone should look at. A healthy bind
+    // read 56 unmapped, which taught a director to ignore the one widget that has
+    // to shout when a bone really is missing. The full list is unchanged — only
+    // the headline is narrowed.
+    gapCount: rows.filter((r) => r.state === 'unmapped' && r.origin === 'edited').length,
     danglingCount: rows.filter((r) => r.state === 'dangling').length,
     proposalLabel: proposal.label,
     sharedWith: Object.keys(nodes)

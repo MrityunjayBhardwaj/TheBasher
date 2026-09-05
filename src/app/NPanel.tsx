@@ -1368,12 +1368,27 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
         >
           {view.drivenTargets}/{view.targetTotal} target bones driven
         </span>
-        {view.unmappedCount > 0 ? (
+        {/* #923 — the ALARM counts only bones the preset could map and this map does
+            not. A healthy SOMA -> Tripo bind leaves 56 source bones unmapped
+            because SOMA's fingers, jaw, eyes and end-effectors have no counterpart,
+            and a chip that is red on a healthy scene teaches a director to ignore
+            the one widget that has to shout when a bone really is missing. */}
+        {view.gapCount > 0 ? (
           <span
             className="rounded-full bg-bg-2 px-2 py-0.5 font-mono text-warn"
             data-testid="npanel-bone-map-unmapped"
           >
-            {view.unmappedCount} unmapped
+            {view.gapCount} unmapped
+          </span>
+        ) : null}
+        {/* The deliberate omissions are still SAID, just not shouted — losing them
+            entirely would hide why the row list is longer than the counts. */}
+        {view.unmappedCount - view.gapCount > 0 ? (
+          <span
+            className="rounded-full bg-bg-2 px-2 py-0.5 font-mono text-fg/40"
+            data-testid="npanel-bone-map-preset-skips"
+          >
+            {view.unmappedCount - view.gapCount} the preset skips
           </span>
         ) : null}
         {view.danglingCount > 0 ? (

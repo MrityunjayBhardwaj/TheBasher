@@ -306,3 +306,59 @@ describe('mapWithRow — the write is the whole record', () => {
     expect(mapWithRow({}, 'spine.001', 'spine.001')).toEqual({ 'spine.001': 'spine.001' });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// #923 — the headline count has to mean "look here".
+//
+// A healthy SOMA → Tripo bind reported 56 unmapped out of 78 rows beside 22/23
+// target bones driven. Both numbers were true and the alarming one drowned the
+// one that mattered: SOMA's fingers, jaw, eyes and end-effectors have no
+// counterpart in the target vocabularies and `boneNameMaps.ts` leaves them out
+// deliberately. A count that is large and red on a healthy scene teaches a
+// director to ignore the same widget that has to shout when a bone really is
+// missing — and a signal that is always on is not a signal.
+//
+// The fix reuses provenance rather than adding a state: an unmapped bone the
+// PROPOSAL also declines agrees with the preset; one the proposal could map does
+// not. Which turned out to fix a second thing — see the origin row below.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#923 the alarming count counts only actionable gaps', () => {
+  it('a HEALTHY map raises no alarm, though bones remain unmapped', () => {
+    const v = boneMapView(graph(CORRECT_MAP), 'rt')!;
+    // `Neck2` has no counterpart on the target rig, so it stays in the list…
+    expect(v.unmappedCount).toBe(1);
+    // …and out of the headline. This is the whole issue in two numbers.
+    expect(v.gapCount).toBe(0);
+    // The map is genuinely healthy, or "no gaps" would be true of a broken map too.
+    expect(v.drivenTargets).toBe(v.targetTotal);
+  });
+
+  it('REMOVING a mapping the preset offers is a gap, and it is counted', () => {
+    const missing = { ...CORRECT_MAP };
+    delete missing.LeftShin;
+    const v = boneMapView(graph(missing), 'rt')!;
+    expect(v.gapCount).toBe(1);
+    // The full list still grows, so nothing is hidden — only the headline narrows.
+    expect(v.unmappedCount).toBe(2);
+    const gaps = v.rows.filter((r) => r.state === 'unmapped' && r.origin === 'edited');
+    expect(gaps.map((r) => r.source)).toEqual(['LeftShin']);
+  });
+
+  it('a bone the preset DECLINES reads as preset, not as an edit nobody made', () => {
+    // The second defect, same root. Provenance compares each entry against the
+    // proposal, and "no target" has four spellings — absent key, null, '', and a
+    // name the target rig lacks. Comparing them raw made `undefined === null`
+    // false, so every deliberately-skipped bone was labelled `edited`: the panel
+    // accused a director of removing mappings that were never offered.
+    const v = boneMapView(graph(CORRECT_MAP), 'rt')!;
+    const neck = v.rows.find((r) => r.source === 'Neck2')!;
+    expect(neck.state).toBe('unmapped');
+    expect(neck.origin).toBe('preset');
+  });
+
+  it('still calls a real edit an edit', () => {
+    // The row above must not be bought by labelling everything `preset`.
+    const v = boneMapView(graph({ ...CORRECT_MAP, LeftLeg: 'shin.L' }), 'rt')!;
+    expect(v.rows.find((r) => r.source === 'LeftLeg')!.origin).toBe('edited');
+  });
+});
