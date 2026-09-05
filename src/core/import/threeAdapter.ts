@@ -37,6 +37,25 @@ import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
  *
  * Round-trip cost: importing then re-exporting a Mixamo FBX would lose
  * the original namespace separator. Acceptable for v0.5; export is P7.
+ *
+ * 🔴 THIS IS NOT THREE'S OWN RULE, AND THE TWO DO NOT COMPOSE (#922).
+ * `PropertyBinding.sanitizeNodeName` (PropertyBinding.js:144) REMOVES the same
+ * characters and turns whitespace into `_`; this REPLACES them and leaves
+ * whitespace alone. Both are defensible and neither is wrong, but they are
+ * different strings, and GLTFLoader runs three's version on every node name as
+ * it loads (GLTFLoader.js:3655) — so the live scene and our params spell the
+ * same bone differently for the whole life of the asset.
+ *
+ * There is no repair function. `:` → `_` and `:` → `` are two lossy maps and
+ * neither composes into the other, and this one is not injective either: a rig
+ * that genuinely ships `mixamorig_Hips` is indistinguishable after import from
+ * one that shipped `mixamorig:Hips`. Sharing one sanitiser is a stored-name
+ * format migration, not a code change.
+ *
+ * So do not compare a name from here against one from the live scene. Compare
+ * by JOINT INDEX, which both sides agree on by construction
+ * (`projectGltfSkeleton.ts` INDEX DISCIPLINE), or put both through
+ * `canonicalBoneKey` (`retarget.ts`). `boneNameSpaces.test.ts` pins all of it.
  */
 export function sanitizeBoneName(name: string): string {
   return name.replace(/[[\].:/]/g, '_');
