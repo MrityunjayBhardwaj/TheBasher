@@ -308,3 +308,34 @@ export function resolveRowChannelForWrite(
     nodeType: live.type,
   };
 }
+
+/** What a diamond activation should DO — see {@link diamondActivation}. */
+export type DiamondAction = 'delete' | 'refuse-nothing-authored' | 'key';
+
+/**
+ * Decide what clicking a parameter diamond means (#912).
+ *
+ * WHY THIS IS A FUNCTION AND NOT THREE LINES INSIDE THE COMPONENT. The bug it
+ * fixes lived in a conditional inside `ParamDiamond.onActivate`, where no unit
+ * gate could reach it: the only way to observe an Alt-click doing the opposite
+ * of its tooltip was to drive a browser. A decision worth getting right is worth
+ * being able to test, so the decision moves out and the component renders it.
+ *
+ * THE RULE. `alt` is the DELETE gesture and must never key. It used to be gated
+ * on an authored channel existing, so on a clip-driven bone — `'none'`, which is
+ * the normal state of nearly every bone since copy-on-write — it fell past the
+ * delete branch onto the keying path and CREATED a key.
+ *
+ * A clip key is not the director's to delete: the clip is read-only and shared,
+ * which is why the diamond never lights yellow from it. So there is no delete to
+ * perform and the honest answer is a visible refusal — not a silent no-op, which
+ * on a green control reads as a broken button, and not a key, which is the
+ * opposite of what was asked for.
+ */
+export function diamondActivation(
+  alt: boolean,
+  authoredState: 'none' | 'animated' | 'on-key',
+): DiamondAction {
+  if (alt) return authoredState === 'none' ? 'refuse-nothing-authored' : 'delete';
+  return authoredState === 'on-key' ? 'delete' : 'key';
+}
