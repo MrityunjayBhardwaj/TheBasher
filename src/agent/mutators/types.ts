@@ -124,6 +124,20 @@ export interface MutatorDefinition<Spec = unknown> {
    * surface as gate-5 failures.
    */
   build(spec: Spec, closure: ClosureSet, state: DagState): Op[];
+  /**
+   * Non-fatal, SPEC-DEPENDENT caveats about THIS plan, appended to `MutatorPlan.warnings`
+   * beside the static ones `contract.lossy` produces (#917).
+   *
+   * The distinction is the point. `contract.lossy` says what this Mutator ALWAYS costs, so
+   * it is identical for every spec and reads as boilerplate once seen twice. This says what
+   * THIS spec costs — the thing a caller could not have known before choosing its arguments.
+   *
+   * ⚠️ NOT A GATE. Anything that should stop the plan belongs in `preconditions`. This runs
+   * only on the success path, after every gate has passed, and its output can never turn an
+   * accepted plan into a rejected one. Use it for a state that is legal, reachable on
+   * purpose, and easy to reach by accident.
+   */
+  advisories?(spec: Spec, closure: ClosureSet, state: DagState): string[];
 }
 
 /**

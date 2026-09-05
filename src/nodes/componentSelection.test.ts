@@ -461,6 +461,16 @@ describe('#607 the query has exactly one reader', () => {
     expect({ examined: files.length, readers }).toEqual({
       examined: files.length,
       readers: [
+        // #667 — the AUTHORING road, and the first entry here that is not a node. It names
+        // the shared constant twice: once to WRITE it (`paramPath: SCOPE_PARAM` in the op it
+        // emits) and once to ask the declaring schema whether a candidate query is accepted.
+        // Neither is a second reader of the query. It never parses — `parseScopeQuery` is
+        // unexported and the refusal it reports is the SCHEMA'S OWN message, so the sentence
+        // an agent gets and the sentence a director gets cannot drift. The row below still
+        // examines it, and would red if it ever reached for `params[SCOPE_PARAM]` to read a
+        // scope back out instead of setting one.
+        'src/agent/mutators/builders/setComponentScope.ts',
+        //
         // ns-2 step 12 — the FIRST node to declare a scope param, and it appears here
         // because it names the shared constant in its `paramSchema`. That is a DECLARATION,
         // the opposite of the drift this row exists to catch: the operator says "I have a
@@ -531,7 +541,14 @@ describe('#607 the query has exactly one reader', () => {
 
     // A count is reported so a green cannot come from an empty population — the failure mode
     // that made a sibling gate vacuous from birth one step ago (#678).
+    // #667 — the population this row derives is "every file that NAMES the constant", and
+    // that is now wider than "every declaring node": the authoring mutator is a WRITER, not
+    // a node. It is examined here on purpose rather than filtered out, because the question
+    // this row asks is exactly the one worth asking of a writer — does it reach past the
+    // name to the query behind it? A mutator that read the existing scope back out of params
+    // to merge or rewrite it would be the same drift, arriving by a new road.
     expect(declarers).toEqual([
+      'src/agent/mutators/builders/setComponentScope.ts',
       'src/nodes/ArrayModifier.ts',
       // #827 — the sixth. Its scope names edges rather than faces, and this row is blind to
       // that by design: it asks only whether a declaring node ever reaches past the NAME to the
@@ -637,6 +654,14 @@ describe('#607 the query has exactly one reader', () => {
       // never terms, so neither lets a caller re-read the language a second way.
       'scopeSelectedCount',
       'scopeSelection',
+      // #917 — one more BOOLEAN, and it is here for the same reason `isParsableScopeQuery`
+      // is: it answers a yes/no ABOUT a query and hands back nothing a caller could act on.
+      // "Does this select nothing at every length?" cannot be used to apply a scope, only to
+      // warn about one. It is deliberately not a refusal — `'^0'` is the canonical empty
+      // selection (#862) and is minted on purpose — so the answer travels to an advisory,
+      // never to a gate. And it delegates to `scopeSelection` rather than re-walking terms,
+      // so it cannot become a second reading of the language by drifting.
+      'selectsNothingAtEveryLength',
     ]);
   });
 });

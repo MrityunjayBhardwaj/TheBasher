@@ -144,7 +144,7 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.)
-    expect(mutators).toHaveLength(28);
+    expect(mutators).toHaveLength(29);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       // #803 — makes a retargeted clip actually drive the rendered rig.
@@ -164,6 +164,7 @@ describe('mutator catalog', () => {
       'mutator.render.addStitch',
       'mutator.rotate',
       'mutator.scale',
+      'mutator.setComponentScope',
       'mutator.setMaterialColor',
       'mutator.setObjectSlotMaterial',
       'mutator.shot.create',
@@ -2227,7 +2228,7 @@ describe('agent.listMutators tool', () => {
     const r = listMutatorsTool.handler({}, { dagState: emptyDagState() });
     expect(r.ops).toEqual([]);
     const parsed = JSON.parse(r.text!) as { mutators: { name: string }[] };
-    expect(parsed.mutators).toHaveLength(28);
+    expect(parsed.mutators).toHaveLength(29);
   });
 });
 
@@ -3864,6 +3865,7 @@ import {
   setStripTimingMutator as _setStripTimingM,
   setStripBlendMutator as _setStripBlendM,
   setTrackStateMutator as _setTrackStateM,
+  setComponentScopeMutator as _setComponentScopeM,
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
@@ -4109,6 +4111,18 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // node ids (adapted from each Mutator's specExample). A probe spec that
   // gate-rejects is a broken probe → the test fails loudly with the
   // rejection reason; it is never skipped.
+  // #667 — setComponentScope needs a node that ALREADY declares a `scope` param.
+  // ArrayModifier is the cheapest one; the mutator's eligibility check reads the schema,
+  // so any of the six would do and none of them is named in the production code.
+  function buildSceneWithScopedOperator(): DagState {
+    return applyOp(buildSplitScene().state, {
+      type: 'addNode',
+      nodeId: 'arr',
+      nodeType: 'ArrayModifier',
+      params: {},
+    }).next;
+  }
+
   interface ProbeEntry {
     mutator: MutatorDefinition<unknown>;
     build: () => DagState;
@@ -4336,6 +4350,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setTrackStateM as MutatorDefinition<unknown>,
       build: buildSceneForNla,
       spec: { trackId: 'nla_trk', order: 1, mute: true, solo: false },
+    },
+    // #667 — emits setParam('scope') on the operator itself: a paramPath no other
+    // Mutator writes, so the op-shape signature is distinct by construction.
+    'mutator.setComponentScope': {
+      mutator: _setComponentScopeM as MutatorDefinition<unknown>,
+      build: buildSceneWithScopedOperator,
+      spec: { nodeId: 'arr', scope: '0-5' },
     },
   };
 

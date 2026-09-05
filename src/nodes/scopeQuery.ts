@@ -354,6 +354,65 @@ export function scopeSelection(query: string, length: number): ScopeMask {
 }
 
 /**
+ * The largest length this module will probe when deciding {@link selectsNothingAtEveryLength}.
+ *
+ * Populations here are 12-960 elements. The cap exists so a pathological literal like
+ * `^0-999999999` cannot turn a cheap authoring check into a long loop; past it the answer is
+ * "cannot prove", never "empty". Proving-or-abstaining is the safe direction: the caller
+ * uses this to ADVISE, and a missed advisory is a smaller cost than a wrong one.
+ */
+const EMPTINESS_PROBE_CAP = 65536;
+
+/**
+ * Does this query select NOTHING, at every possible element count? (#917)
+ *
+ * ⚠️ THIS IS NOT A REFUSAL, AND MUST NOT BECOME ONE. `'^0'` is the project's canonical
+ * spelling for the empty set ({@link EMPTY_SELECTION_QUERY}, #862) — a derived selection can
+ * legitimately name nothing, and an angle limit above every angle a mesh has produces exactly
+ * that by scrubbing. So the empty selection is a value the system MINTS, not a mistake to
+ * refuse at the door. This predicate exists so an authoring surface can SAY SO, which is the
+ * gap: the state is representable on purpose and was reachable in silence.
+ *
+ * ── WHY EACH ARM ANSWERS THE WAY IT DOES ─────────────────────────────────────────────
+ *
+ * A blank query is `false`, and that is the arm most worth reading twice. Blank parses to
+ * ZERO terms, so `scopeSelection('', n)` counts 0 at every length and a naive reading would
+ * call it universally empty — but blank is the authoring state "none written", which every
+ * generator reads as EVERYTHING. Reporting it as "selects nothing" would advise the exact
+ * inversion this module exists to prevent, on by far the most common value.
+ *
+ * A query carrying a COMPLEMENT term is `false` without evaluation. For any index past every
+ * term's end, `inTerm` is false and the complement arm sets it — so such a query is non-empty
+ * at a large enough length, whatever it does at a small one. `'!0-11'` selects nothing at 12
+ * and all 12 of the next 12 at 24; that is the LENGTH-DEPENDENT case, which needs the element
+ * count and is not this question.
+ *
+ * Otherwise the mask is evaluated once at a length that exceeds every term's reach. That is
+ * sufficient because a mask entry is a function of its INDEX and the terms alone — `length`
+ * only truncates the walk — so an index that is unset at the probe length is unset at every
+ * length that contains it.
+ *
+ * 🔑 It delegates to {@link scopeSelection} rather than re-walking the terms. A second
+ * spelling of this set arithmetic that agrees today is exactly the hazard the one-implementation
+ * rule above exists to prevent, and an advisory that disagrees with the build it describes
+ * would be worse than no advisory.
+ */
+export function selectsNothingAtEveryLength(query: string): boolean {
+  let terms: ScopeTerm[];
+  try {
+    terms = parseScopeQuery(query);
+  } catch {
+    // Unparsable — a different failure, already refused at the authoring door. Not empty.
+    return false;
+  }
+  if (terms.length === 0) return false;
+  if (terms.some((t) => t.op === 'complement')) return false;
+  const maxEnd = terms.reduce((m, t) => Math.max(m, t.end), 0);
+  if (maxEnd + 1 > EMPTINESS_PROBE_CAP) return false;
+  return scopeSelection(query, maxEnd + 1).count === 0;
+}
+
+/**
  * How many of `length` elements a query selects.
  *
  * The count half of {@link scopeSelection}, named separately because that is the whole of
