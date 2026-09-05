@@ -103,16 +103,24 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
   paramSchema: GltfDataParams,
   inputs: {},
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
-  // Data owns what the child IS, never where it sits: no 'transform'/'constraint'
-  // section. `overridden` is homed to 'mesh' rather than a section of its own because
-  // it is not author-facing — the gizmo write path sets it alongside the value.
+  // Data owns what the child IS, never where it sits: no 'transform'/'constraint' section.
   inspectorSections: ['mesh', 'material'],
+  // ⚠️ ONLY `material` is homed, and the omissions are deliberate rather than unfinished.
+  //
+  // A home names the section that RENDERS a param. `material` renders, exactly as it does
+  // on every other data node. The other four do not: `assetRef` and `childName` are the
+  // child's ADDRESS (the fused kind homes neither, for the same reason), `materialSlots` is
+  // a captured readout, and `overridden` is an internal dirty flag the gizmo write path
+  // sets alongside a value — homing it would put three checkboxes in front of a director
+  // for a signal they never author.
+  //
+  // Routing them "for completeness" is the specific trap this split has already paid for
+  // once: a declaration written so a field would not look empty, believed afterwards by
+  // machinery that reads fields and not the comment beside them. The param-reach gate asks
+  // for a CLASSIFICATION of who reads each param, which is a different question from where
+  // one renders, and it gets answered at registration where the gate can check the answer.
   home: {
-    assetRef: 'mesh',
-    childName: 'mesh',
-    overridden: 'mesh',
     material: 'material',
-    materialSlots: 'material',
   },
   evaluate(params): MeshDataValue {
     // The SAME key `resolveEvaluatedMesh:176` already mints for a glTF child. Spelled
