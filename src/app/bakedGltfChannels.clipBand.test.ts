@@ -190,17 +190,21 @@ describe('#888 — the band reaches the clip through the skeleton edge', () => {
     expect(band(buildScene({ clipSkeletonId: 'a_otherskel' }))[BONES[0]]).toBeUndefined();
   });
 
-  it('delegates the clip LOOP rather than clamping like the eager bake does', () => {
-    // The bake copies keys with `extend: hold`, so it silently drops looping —
-    // one of the things the copy lost without anyone recording it. Delegating
-    // gets the clip's own folding back: t = 4 is two full periods on, so it
-    // reads the start of the clip again.
+  it('cycles the clip WITH OFFSET on position, rather than clamping or teleporting', () => {
+    // The eager bake copied keys with `extend: hold`, so it silently dropped
+    // looping. Delegating got the fold back — and #924 showed the fold alone was
+    // still wrong: `t % duration` replays identical frames, so a root that
+    // travels snapped home once per period.
+    //
+    // The clip runs [0,0,0] -> [0,4,0] over a span of 2. At t = 4 it is two full
+    // periods on, so it reads the start of the clip again PLUS two periods of
+    // travel: 0 + 2 * 4 = 8.
     const b = band(buildScene())[BONES[0]];
     expect(b!.position!(1)[1]).toBeCloseTo(2, 6);
-    expect(b!.position!(4)[1]).toBeCloseTo(0, 6);
-    // The discriminating half: a HELD channel would still be reading its last
-    // key (4) out here, so this row fails if the fold is ever dropped.
-    expect(b!.position!(4)[1]).not.toBeCloseTo(4, 6);
+    // This single row discriminates all three rules, which is why it is stated as
+    // a value rather than a comparison: a HELD channel reads 4 out here, a
+    // PLAIN-repeat channel reads 0, and only cycle-with-offset reads 8.
+    expect(b!.position!(4)[1]).toBeCloseTo(8, 6);
   });
 
   it('is deterministic when two clips share a rig — first by sorted id wins', () => {

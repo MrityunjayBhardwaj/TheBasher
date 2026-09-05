@@ -2884,7 +2884,7 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     return [...(v?.position ?? []), ...(v?.rotation ?? [])];
   }
 
-  it('THE DEFECT: before the migration the rig HOLDS past the clip, after it it WRAPS', () => {
+  it('THE DEFECT: before the migration the rig HOLDS past the clip, after it it CYCLES', () => {
     // The pre-state is asserted first on purpose. A gate that only shows the
     // migrated project looping proves the clip band loops — which was never in
     // doubt — and says nothing about the channels this migration exists to
@@ -2905,9 +2905,25 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     const after = loadFromBytes(raw);
     expect(after.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(channelsOf(after)).toHaveLength(0);
+    // INVERTED, NOT RELAXED (#924). These two rows used to assert that the whole
+    // band returns to its earlier value one period on — plain repeat. Position now
+    // cycles WITH OFFSET, so only the bounded half returns; the travelling half
+    // advances by the same amount every period. Asserting the increment is
+    // CONSTANT states that rule without hardcoding this fixture's travel, and it
+    // still fails if the band ever freezes (increment 0 is caught below).
+    const rot = (v: number[]) => v.slice(3);
+    const pos = (v: number[]) => v.slice(0, 3);
     for (const bone of BONES) {
-      expect(bandAt(after, bone, 0.5 + DUR)).toEqual(bandAt(after, bone, 0.5));
-      expect(bandAt(after, bone, 0.5 + 3 * DUR)).toEqual(bandAt(after, bone, 0.5));
+      const p0 = pos(bandAt(after, bone, 0.5));
+      const p1 = pos(bandAt(after, bone, 0.5 + DUR));
+      const p2 = pos(bandAt(after, bone, 0.5 + 2 * DUR));
+      expect(rot(bandAt(after, bone, 0.5 + DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
+      expect(rot(bandAt(after, bone, 0.5 + 3 * DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
+      const step = p1.map((v, i) => v - p0[i]);
+      expect(p2.map((v, i) => v - p1[i])).toEqual(step);
+      // A frozen band gives step 0 and would satisfy every row above, so the
+      // fixture is required to actually travel.
+      expect(step.some((v) => Math.abs(v) > 1e-9)).toBe(true);
     }
   });
 

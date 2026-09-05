@@ -203,12 +203,30 @@ describe('#913 the mint carries the clip time domain', () => {
     return add!.params;
   }
 
-  it('a bone minted from a LOOPING clip repeats instead of freezing', () => {
-    const sample = buildVec3Sampler(mintedParams(riggedState(), 'position'));
-    // The defect, stated as the director sees it: one duration later the bone
-    // is where it was, not stuck where it stopped.
-    expect(sample(D + 0.25)).toEqual(sample(0.25));
-    expect(sample(2 * D + 0.25)).toEqual(sample(0.25));
+  it('a bone minted from a LOOPING clip travels instead of freezing OR teleporting', () => {
+    const params = mintedParams(riggedState(), 'position');
+    const sample = buildVec3Sampler(params);
+    // The defect, stated as the director sees it: one duration later the bone is
+    // moving on, not stuck where it stopped (#913) and not snapped back to where
+    // it started (#924).
+    //
+    // INVERTED, NOT RELAXED: this row used to assert `sample(D + 0.25)` EQUALS
+    // `sample(0.25)`, which is plain repeat. Position now cycles with offset, so
+    // the correct statement is that it differs by exactly one period of travel.
+    // The travel is read off the channel's own endpoints rather than written as a
+    // literal, so the row states the RULE and not this fixture's arithmetic.
+    const keys = params.keyframes;
+    const travel = keys[keys.length - 1].value.map((v, i) => v - keys[0].value[i]) as unknown as [
+      number,
+      number,
+      number,
+    ];
+    const base = sample(0.25);
+    expect(sample(D + 0.25)).toEqual(base.map((v, i) => v + travel[i]));
+    expect(sample(2 * D + 0.25)).toEqual(base.map((v, i) => v + 2 * travel[i]));
+    // The fixture must actually travel, or every row above is satisfied by zero
+    // and this spec would pass on a plain repeat.
+    expect(travel.some((v) => Math.abs(v) > 1e-9)).toBe(true);
     // And it is genuinely moving out there, not holding a constant that happens
     // to match — without this the row passes on a frozen channel.
     expect(sample(D + 0.25)).not.toEqual(sample(D + 0.75));

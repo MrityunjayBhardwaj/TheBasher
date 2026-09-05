@@ -34,11 +34,37 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import type { Vec3 } from '../../../nodes/types';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
-import { defaultModifier } from '../../../nodes/channelModifiers';
+import type { FChannelModifier } from '../../../nodes/channelModifiers';
 
 /** The TRS components a bone can carry, in stable emission order. */
 export const BAKED_COMPONENTS = ['position', 'rotation', 'scale'] as const;
 export type BakedComponent = (typeof BAKED_COMPONENTS)[number];
+
+/**
+ * The Cycles modifier a minted channel carries, per component (#924).
+ *
+ * POSITION repeats WITH OFFSET; rotation and scale repeat plain. Offset adds
+ * `(last - first)` once per period, which is what makes a root that travels keep
+ * travelling instead of teleporting back to its start once per cycle. It is
+ * self-limiting: for a bone whose track is constant — every bone but the root,
+ * since a retarget writes bind position for the rest — `last === first`, so the
+ * offset is exactly zero and this is byte-identical to a plain repeat.
+ *
+ * Rotation and scale are bounded and return to their start; offsetting them
+ * would compound a residual each cycle without bound.
+ *
+ * This MUST match `buildClipBoneSamplers`' rule in AnimationClip.ts. The two are
+ * the edited and unedited halves of one band, and `ensureChannelForBone`'s own
+ * spec asserts they agree past the duration — a mint that cycles differently from
+ * the clip it copied is the freeze defect #913 fixed, wearing the other face.
+ *
+ * REF: Blender `FModifierCycles.mode_after` REPEAT_OFFSET, "offset based on
+ * gradient between start and end values".
+ */
+function cycleModifierFor(component: BakedComponent): FChannelModifier {
+  const mode = component === 'position' ? 'repeat-offset' : 'repeat';
+  return { type: 'cycles', beforeMode: mode, afterMode: mode, beforeCycles: 0, afterCycles: 0 };
+}
 
 /** One keyframe as the channel stores it. Rotation is DEGREES throughout — the
  *  clip stores degrees and `KeyframeChannelVec3` reads degrees, so there is no
@@ -111,9 +137,10 @@ export function bakeChannelOpsForBone(args: {
           // 'cubic', so omitting this field would silently restore smoothstep.
           //
           // These keys are not hand-authored — they are a per-frame RESTATEMENT
-          // of a clip whose sampler is raw `lerpVec3` (AnimationClip.ts:89-90,
-          // TransformClip.ts:116-118) and whose keyframes cannot express easing
-          // at all. Stamping the authored-curve default onto baked data made the
+          // of a clip whose sampler interpolates LINEARLY (TransformClip.ts:116-118
+          // raw `lerpVec3`; AnimationClip's `buildClipBoneSamplers` states
+          // `easing: 'linear'` for this same reason) and whose keyframes cannot
+          // express easing at all. Stamping the authored-curve default onto baked data made the
           // bake disagree with its own source between keyframes: identical at
           // every key, but up to |smoothstep(u) - u| = 1/(6*sqrt(3)) ~ 9.6% of
           // each interval away from it in between (8.5357 deg on a real clip).
@@ -132,7 +159,7 @@ export function bakeChannelOpsForBone(args: {
         //
         // The key is OMITTED rather than set to `[]` when the source does not
         // cycle, so a non-looping mint stays byte-identical to pre-#913.
-        ...(cyclic ? { modifiers: [defaultModifier('cycles')] } : {}),
+        ...(cyclic ? { modifiers: [cycleModifierFor(component)] } : {}),
       },
     });
   }

@@ -417,12 +417,29 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
     expect(params).toHaveLength(3);
     for (const p of params) {
       const sample = buildVec3Sampler(p);
-      // duration is 1.5 and the keys span [0, 1.5], so one full cycle out must
-      // return the same pose — sampled OFF the fold boundary, which is the one
-      // time a holder and a wrapper agree by accident.
-      expect(sample(0.5 + 1.5)).toEqual(sample(0.5));
-      expect(sample(0.5 + 3 * 1.5)).toEqual(sample(0.5));
+      // duration is 1.5 and the keys span [0, 1.5], so one full cycle out is
+      // sampled OFF the fold boundary — the one time a holder and a wrapper agree
+      // by accident.
+      //
+      // PER-COMPONENT SINCE #924: rotation and scale return to where they were,
+      // because they are bounded and offsetting them would compound a residual
+      // every cycle. POSITION carries its travel forward, because a root that
+      // covers ground must keep covering it rather than snap home. This loop is
+      // now the gate on that split, not just on "it repeats".
+      const keys = p.keyframes;
+      const travel = keys[keys.length - 1].value.map((v, i) => v - keys[0].value[i]);
+      const cycles = p.paramPath === 'position' ? 1 : 0;
+      const base = sample(0.5);
+      expect(sample(0.5 + 1.5)).toEqual(base.map((v, i) => v + cycles * travel[i]));
+      expect(sample(0.5 + 3 * 1.5)).toEqual(base.map((v, i) => v + 3 * cycles * travel[i]));
     }
+    // The position fixture must actually travel, or the split above is asserted
+    // against a zero offset and a plain repeat would satisfy every row.
+    const pos = params.find((p) => p.paramPath === 'position')!;
+    const posTravel = pos.keyframes[pos.keyframes.length - 1].value.map(
+      (v, i) => v - pos.keyframes[0].value[i],
+    );
+    expect(posTravel.some((v) => Math.abs(v) > 1e-9)).toBe(true);
   });
 
   it("a clip set to 'clamp' still HOLDS, and mints byte-identical params to before", () => {
