@@ -117,6 +117,15 @@ export interface RetargetResult {
  * on a real Mixamo export — the shipped Mixamo→glTF preset matched 0 of 22 bones and
  * produced 0 keyframes. Canonicalising both sides is what makes a map portable across
  * the two roads without migrating anyone's stored bone names.
+ *
+ * The SAME key also reconciles the third instance of this divergence, which is not
+ * an import road at all: the live three.js scene against our own asset params
+ * (#922). GLTFLoader runs three's sanitiser over every node name as it loads, so a
+ * rendered bone is spelled `mixamorigHips` while the params call it
+ * `mixamorig_Hips`. Comparing those directly matches 1 of 23 bones on the tracked
+ * stand-in rig; through this key, 23 of 23. Prefer the joint INDEX where one is in
+ * hand — both sides agree on it by construction — and reach for this when only
+ * names are. See `boneNameSpaces.test.ts`.
  */
 export function canonicalBoneKey(name: string): string {
   return name.toLowerCase().replace(/[_:.\-\s]/g, '');

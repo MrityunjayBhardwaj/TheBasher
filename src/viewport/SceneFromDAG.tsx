@@ -3697,7 +3697,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // REPLACES those characters). Measured on the tracked stand-in rig: direct
       // comparison against the projected names matches 1 of 23 bones — only
       // `Root`, the one joint with nothing to sanitise. Comparing them looks
-      // exactly like a broken bone map and has cost two debugging cycles.
+      // exactly like a broken bone map, and cost a debugging cycle in #921.
       //
       // To compare NAMES across this seam, put both sides through
       // `canonicalBoneKey` (`core/import/retarget.ts`), which collapses

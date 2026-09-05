@@ -19,7 +19,7 @@
 // The cost is borne entirely by INSTRUMENTS. A probe that narrows "rows whose
 // target the live skin also carries" matches nothing, which reads exactly like a
 // broken bone map rather than like two spellings of a healthy one. That has cost
-// a debugging cycle at least twice (#921, and the observation written for #922).
+// a debugging cycle once already, while writing the #921 observation (#922).
 //
 // A comment saying so already existed in three places and did not prevent either
 // cycle — so this is a test instead. It reds if either sanitiser's rule moves, if
