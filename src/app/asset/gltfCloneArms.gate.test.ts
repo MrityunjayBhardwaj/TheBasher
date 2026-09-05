@@ -4,10 +4,18 @@
 //
 // `getGltfClone(assetRef)` hands back the live three.js Group the renderer is currently
 // showing. Four production modules call it, and each does so for the same underlying
-// reason: it needs geometry data that an imported glTF has and the geometry model has
-// nowhere to put. There is no `GeometryDescriptor` member that carries an imported
-// mesh's buffers, so a consumer that needs them has to go around the model and ask the
-// RENDERER for the object it is drawing.
+// reason: it needs geometry data that an imported glTF has and the geometry model would
+// not hand over, so it goes around the model and asks the RENDERER for the object it is
+// drawing.
+//
+// ⚠️ THIS PARAGRAPH USED TO SAY "there is no `GeometryDescriptor` member that carries an
+// imported mesh's buffers". That is true and it is not the reason — no descriptor carries
+// buffers for ANY kind; `GeometryDescriptor`'s own doc says "NEVER the buffers themselves",
+// and the `{ kind: 'gltf', assetRef, childName }` member has been there since the file's
+// first commit, six weeks before #367 was filed. The operative fact was narrower: `get`
+// returned null for a gltf ref BEFORE the cache lookup, so a handle that existed could not
+// be resolved. Stated precisely because the imprecise version implies the fix is to add
+// something to the model, when the fix was to make the model honour what it already had.
 //
 // That is a symptom, not a design. Each arm is a place where the read path branches on
 // "did this come from glTF?", which is exactly what the geometry data model exists to
@@ -55,6 +63,26 @@
 // So the module set is PARTITIONED by which binding a file names, and the partition is
 // required to be exhaustive: readers + producer must account for every module importer,
 // with no remainder.
+//
+// ── THE THIRD CLASS: THE MODEL ITSELF (#367) ──────────────────────────────────────────
+//
+// `geometryRegistry` now calls `getGltfClone` too, and it is neither an arm nor a producer.
+// An ARM is a consumer reaching AROUND the geometry model into the renderer, because the
+// model would not answer. The registry IS the geometry model — it is the one place that
+// should know where a kind's buffers live, and delegating there is the consolidation the
+// arms are waiting on, not another dispersion of the knowledge.
+//
+// Counting it as an arm would have made this gate block the only reduction available to it.
+// That is worth saying plainly, because "the ratchet forbids the fix" is exactly the shape
+// an unexamined ratchet takes, and the honest response is to re-partition it rather than to
+// bump the number. The cap is what keeps it a ratchet: the model class is asserted BY PATH
+// and capped at ONE member, so a second module claiming to be "the model" reds, and a
+// genuine fifth ARM is not in the model set and reds in the arms row exactly as before.
+//
+// Measured honestly, delegation lets ONE of the four arms drop, not all four —
+// `geometrySampleSource`, which takes only `geometry.getAttribute('position')`. The other
+// three read resolved materials or a base-colour texture, which the registry cannot serve
+// until materials get a model of their own (#605). This gate is not the reason they stay.
 //
 // Be precise about what each half does, because the obvious summary is wrong and was
 // measured wrong here. The halves classify on the NAME appearing anywhere in the
@@ -113,6 +141,17 @@ const EXPECTED_ARMS = [
  */
 const EXPECTED_PRODUCERS = ['src/viewport/SceneFromDAG.tsx'] as const;
 
+/**
+ * The geometry model itself (#367). CAPPED AT ONE, and that cap is the whole reason this
+ * class can exist without dissolving the ratchet: "it's the model, not an arm" is an
+ * argument any reader could make about itself, so exactly one module is allowed to make it,
+ * it is named by PATH, and everything else naming `getGltfClone` is an arm by construction.
+ *
+ * If this ever needs a second member, that is not a line to add here — it means the
+ * knowledge has dispersed again, which is the thing the ratchet exists to catch.
+ */
+const EXPECTED_MODEL = ['src/app/geometryRegistry.ts'] as const;
+
 /** Every production module that imports the clone registry, however it phrases it. */
 function moduleImporters(): { path: string; src: string }[] {
   const specifier = new RegExp(`from\\s*['"][^'"]*${CLONE_REGISTRY_MODULE}['"]`);
@@ -123,11 +162,25 @@ function moduleImporters(): { path: string; src: string }[] {
     .sort((a, b) => a.path.localeCompare(b.path));
 }
 
-/** Reaches IN for a live clone — an arm. */
+/** Reaches IN for a live clone — an arm. The MODEL is excluded by path, and only by path. */
 function armsInProduction(): string[] {
+  return readersInProduction().filter(
+    (path) => !(EXPECTED_MODEL as readonly string[]).includes(path),
+  );
+}
+
+/** Every module that names the reader, whatever class it lands in. */
+function readersInProduction(): string[] {
   return moduleImporters()
     .filter(({ src }) => /\bgetGltfClone\b/.test(src))
     .map(({ path }) => path);
+}
+
+/** The geometry model, reading through to where a kind's buffers live — not an arm. */
+function modelInProduction(): string[] {
+  return readersInProduction().filter((path) =>
+    (EXPECTED_MODEL as readonly string[]).includes(path),
+  );
 }
 
 /** Puts clones IN — the registry's filler, not a consumer of the geometry model. */
@@ -166,6 +219,31 @@ describe('#629 — the clone-reaching arms are pinned and may only go down', () 
     ).toBeLessThanOrEqual(EXPECTED_ARMS.length);
   });
 
+  it('the model class holds exactly one member, and it is the registry', () => {
+    // Two claims, deliberately together: the member, and the CAP. Without the cap this class
+    // is an unbounded escape hatch and the arms ratchet means nothing — any new reader could
+    // be declared "the model". With it, the second module to try reds this row.
+    expect(EXPECTED_MODEL.length, 'the model class is capped at one member').toBe(1);
+    expect(
+      modelInProduction(),
+      'The geometry model itself reaches the clone registry, and exactly one module may. ' +
+        'If `geometryRegistry` stopped delegating, empty this list — that is the ratchet ' +
+        'turning the right way. If a SECOND module is here, the knowledge has dispersed and ' +
+        'the fix is not to widen this.',
+    ).toEqual([...EXPECTED_MODEL]);
+  });
+
+  it('a module that is not the declared model counts as an ARM, however it describes itself', () => {
+    // THE ROW THAT KEEPS THE THIRD CLASS FROM BEING AN ESCAPE HATCH. The partition is by
+    // PATH, so a hypothetical new reader cannot land in the model class by arguing about its
+    // own role — it lands in the arms and reds the ratchet. Asserted against a synthetic
+    // path so it stays true whether or not such a module exists today.
+    const pretender = 'src/app/someNewReader.ts';
+    expect((EXPECTED_MODEL as readonly string[]).includes(pretender)).toBe(false);
+    // And the real set is disjoint: nothing is both an arm and the model.
+    expect(armsInProduction().filter((p) => modelInProduction().includes(p))).toEqual([]);
+  });
+
   it('the renderer is the only producer', () => {
     expect(
       producersInProduction(),
@@ -176,7 +254,11 @@ describe('#629 — the clone-reaching arms are pinned and may only go down', () 
 
   it('every module importer is classified — no unclassified remainder', () => {
     const all = moduleImporters().map(({ path }) => path);
-    const classified = new Set([...armsInProduction(), ...producersInProduction()]);
+    const classified = new Set([
+      ...armsInProduction(),
+      ...modelInProduction(),
+      ...producersInProduction(),
+    ]);
     const remainder = all.filter((p) => !classified.has(p));
 
     // THE ASSERTION THAT CLOSES THE NAMESPACE HOLE. A namespace importer names the module,

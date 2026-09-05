@@ -174,6 +174,24 @@ describe('#638 the count is a leaf', () => {
       './builtRims',
       './arrayCopies',
       './polygonInterpolation',
+      // #367 — where a glTF child's buffers live. A LEAF by the strictest measure in this
+      // file: one TYPE import of `three` and no value imports at all, the bar `copyTransform`
+      // and `pointIdentity` met and the two #814 additions openly did not. Asserted in the
+      // row below rather than claimed here.
+      //
+      // Why the registry needs it: `get` returned null for a `gltf` ref unconditionally,
+      // before the cache lookup, so a recipe over an imported mesh — an array, a mirror, a
+      // bevel — could never build. The handle existed the whole time; the registry declined
+      // it. Delegating to the mounted clone is what lets the geometry model answer for a kind
+      // whose buffers it does not own, and it is the only import here that reaches the
+      // RENDERER's side of the world, which is why it also answers to the arms ratchet in
+      // `asset/gltfCloneArms.gate.test.ts` rather than only to this row.
+      './asset/gltfCloneRegistry',
+      // #367 — WHICH mesh a glTF child is, shared with `resolveMeshUVSpace` rather than
+      // written twice. The duplicate copies could not disagree loudly: the chain would build
+      // from one mesh and the UV editor draw another, each correct alone. A leaf by the
+      // strictest bar in this file, asserted in the row below.
+      './firstMeshGeometry',
     ]);
   });
 
@@ -204,6 +222,16 @@ describe('#638 the count is a leaf', () => {
       './arrayCopies',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
+    // #367 — the claim made in the widening note above, checked. `gltfCloneRegistry` is the
+    // registry's one reach toward the renderer, so it is the addition with the most room to
+    // grow a graph back through this door. One TYPE import and nothing else: the day it
+    // reaches for the geometry model, a node type or a store, it stops being safe to import
+    // from inside the geometry model, and nothing else would say so.
+    expect(importsOf('src/app/asset/gltfCloneRegistry.ts')).toEqual(['three']);
+    // #367 — the other half of that reach. One TYPE import of `three` and nothing else, which
+    // is the bar that lets the geometry model import it at all; the day it reaches for a
+    // registry, a node type or a store, this row is what says so.
+    expect(importsOf('src/app/firstMeshGeometry.ts')).toEqual(['three']);
     // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
     // one type import, no value imports at all.
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
