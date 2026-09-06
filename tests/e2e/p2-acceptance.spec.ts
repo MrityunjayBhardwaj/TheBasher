@@ -86,6 +86,11 @@ test.beforeEach(async ({ page }) => {
  * Build the canonical P2 character chain — TimeSource, Skeleton, Clip,
  * Navmesh, Locomotion, Character. Returns when state has been dispatched.
  *
+ * THE CLIP'S `loop` IS A WORD, NOT A FLAG (#930). It spells `'cycle-offset'`
+ * because that is what the old `loop: true` meant — cycle carrying the root's
+ * travel across the seam — and this seed is asserting bit-exactness, so it
+ * pins the state it always had rather than taking the schema's new default.
+ *
  * The chain mirrors what walkTo + Wave A nodes exercise in unit tests.
  * Reused across multiple acceptance tests below.
  */
@@ -103,7 +108,7 @@ async function seedCharacter(page: import('@playwright/test').Page, opts?: { obs
             type: 'addNode',
             nodeId: 'p2_clip',
             nodeType: 'AnimationClip',
-            params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+            params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
           },
           {
             type: 'addNode',
@@ -345,7 +350,7 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
           type: 'addNode',
           nodeId: `clip_${id}`,
           nodeType: 'AnimationClip',
-          params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+          params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
         },
         {
           type: 'addNode',
