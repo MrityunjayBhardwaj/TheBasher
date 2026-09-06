@@ -160,8 +160,11 @@ describe('bakeGeneratedClipOps (#935)', () => {
 
   it('a pending producer writes NOTHING and leaves the last motion playing (lock/freeze)', () => {
     const s = graph();
+    // Stale and NOT baked: the params are behind the request (nothing has been
+    // written yet), and there is no previous result to keep. Those are separate
+    // facts and the row carries both.
     expect(clipBakeStates(s)).toEqual([
-      { clipId: 'clip', producerId: 'gen', status: 'pending', stale: false },
+      { clipId: 'clip', producerId: 'gen', status: 'pending', stale: true, baked: false },
     ]);
     expect(bakeGeneratedClipOps(s)).toEqual([]);
     expect((s.nodes.clip.params as { name: string }).name).toBe('placeholder');
@@ -173,7 +176,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
     const first = bakeGeneratedClipOps(s);
     expect(first.length).toBeGreaterThan(0);
     s = apply(s, first);
-    expect(clipBakeStates(s)[0]).toMatchObject({ status: 'ready', stale: false });
+    expect(clipBakeStates(s)[0]).toMatchObject({ status: 'ready', stale: false, baked: true });
     expect(bakeGeneratedClipOps(s)).toEqual([]);
   });
 
@@ -232,7 +235,9 @@ describe('bakeGeneratedClipOps (#935)', () => {
     // The director edits the request — the same move a control-point drag makes.
     s = applyOp(s, { type: 'setParam', nodeId: 'gen', paramPath: 'seed', value: 99 } as Op).next;
 
-    expect(clipBakeStates(s)[0]).toMatchObject({ status: 'pending' });
+    // The drag: stale because the request moved, baked because there is a real
+    // result still playing. This pair is what the affordance reads.
+    expect(clipBakeStates(s)[0]).toMatchObject({ status: 'pending', stale: true, baked: true });
     // The motion is UNCHANGED. This is the row that says a drag does not blank it.
     expect((s.nodes.clip.params as { keyframes: unknown[] }).keyframes.length).toBe(baked);
     expect(bakeGeneratedClipOps(s)).toEqual([]);

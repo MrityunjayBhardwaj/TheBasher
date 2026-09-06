@@ -43,7 +43,11 @@ const capability: MotionGenerationCapability = {
 vi.mock('../boot', () => ({ getMotionCapability: async () => capability }));
 
 // Imported AFTER vi.mock so the module picks up the mocked boot.
-import { cookMotionGenerations, hasStaleGenerations } from './cookMotionGenerations';
+import {
+  cookMotionGenerations,
+  hasStaleGenerations,
+  motionCookOffer,
+} from './cookMotionGenerations';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
 
 function seed(): void {
@@ -155,5 +159,83 @@ describe('cookMotionGenerations (#935)', () => {
 
   it('hasStaleGenerations is false in a project with no producers at all', () => {
     expect(hasStaleGenerations()).toBe(false);
+  });
+
+  describe('motionCookOffer — the inspector affordance (#935)', () => {
+    const offerFor = (clipId: string) => {
+      const st = useDagStore.getState().state;
+      return motionCookOffer(st, edgeTarget(st.nodes[clipId], 'source')!);
+    };
+
+    it('offers Generate on a pending producer', () => {
+      const { clipId } = mint();
+      // `stale: true` and the label is still the plain "Generate": the params are
+      // behind the request, but nothing has been baked, so there is no previous
+      // result the director would be trading away.
+      expect(offerFor(clipId)).toEqual({
+        label: 'Generate',
+        disabled: false,
+        status: 'pending',
+        stale: true,
+      });
+    });
+
+    it('says Up to date after a cook, and DISABLES itself', async () => {
+      const { clipId } = mint();
+      await cookMotionGenerations();
+      expect(offerFor(clipId)).toMatchObject({ label: 'Up to date', disabled: true, stale: false });
+    });
+
+    it('offers a re-cook once the inputs move, and says the clip still plays', async () => {
+      const { clipId } = mint();
+      await cookMotionGenerations();
+      const producerId = edgeTarget(useDagStore.getState().state.nodes[clipId], 'source')!;
+      useDagStore
+        .getState()
+        .dispatchAtomic(
+          [{ type: 'setParam', nodeId: producerId, paramPath: 'seed', value: 99 }] as Op[],
+          'user',
+          'drag',
+        );
+      expect(offerFor(clipId)).toMatchObject({
+        label: 'Re-cook (inputs changed)',
+        disabled: false,
+        stale: true,
+      });
+    });
+
+    it('offers a retry after a refusal rather than going quiet', async () => {
+      const { clipId } = mint();
+      failWith = 'motion server unreachable';
+      await cookMotionGenerations();
+      expect(offerFor(clipId)).toMatchObject({
+        label: 'Retry generation',
+        disabled: false,
+        status: 'failed',
+      });
+    });
+
+    it('refuses a producer with no clip wired, rather than showing a button that does nothing', () => {
+      const { clipId } = mint();
+      const st = useDagStore.getState().state;
+      const producerId = edgeTarget(st.nodes[clipId], 'source')!;
+      useDagStore.getState().dispatchAtomic(
+        [
+          {
+            type: 'disconnect',
+            from: { node: producerId, socket: 'out' },
+            to: { node: clipId, socket: 'source' },
+          },
+        ] as Op[],
+        'user',
+        'unwire',
+      );
+      expect(motionCookOffer(useDagStore.getState().state, producerId)).toEqual({
+        label: 'No clip wired',
+        disabled: true,
+        status: null,
+        stale: false,
+      });
+    });
   });
 });

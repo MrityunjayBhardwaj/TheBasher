@@ -73,8 +73,25 @@ export interface ClipBakeState {
   /** `ready` | `pending` | `failed`, or `null` when the producer evaluated to no
    *  generation state at all — which a plain `AnimationClip` upstream would. */
   readonly status: string | null;
-  /** True when the producer is `ready` and the sink's params are behind it. */
+  /**
+   * True when the sink's params are behind the producer's CURRENT request —
+   * independent of whether that request has been answered yet.
+   *
+   * 🔴 IT IS NOT GATED ON `ready`, AND A TEST CAUGHT THAT IT MUST NOT BE. The
+   * case that matters most is a director dragging a control point: the request
+   * hash moves, so the producer goes back to `pending`, and a staleness that
+   * required `ready` would read that as "nothing to see" at the exact moment the
+   * clip is most out of date. Staleness is a fact about the PARAMS lagging the
+   * request; whether the answer has arrived is `status`, and they are different
+   * questions.
+   *
+   * A never-baked clip is therefore stale too, which is correct: its empty hash
+   * is behind any real request. `baked` is what separates "never cooked" from
+   * "cooked, then the inputs moved".
+   */
   readonly stale: boolean;
+  /** True once this clip has been baked at least once — it has keys to keep. */
+  readonly baked: boolean;
 }
 
 /** The producer feeding this clip, when it is a node that generates one. */
@@ -98,7 +115,8 @@ export function clipBakeStates(state: DagState): ClipBakeState[] {
       clipId,
       producerId,
       status: generation?.status ?? null,
-      stale: generation?.status === 'ready' && bakedHash !== generation.requestHash,
+      stale: generation !== undefined && bakedHash !== generation.requestHash,
+      baked: typeof bakedHash === 'string' && bakedHash !== '',
     });
   }
   return out;
@@ -113,8 +131,12 @@ export function clipBakeStates(state: DagState): ClipBakeState[] {
  */
 export function bakeGeneratedClipOps(state: DagState): Op[] {
   const ops: Op[] = [];
-  for (const { clipId, producerId, stale } of clipBakeStates(state)) {
-    if (!stale) continue;
+  for (const { clipId, producerId, stale, status } of clipBakeStates(state)) {
+    // BOTH conditions. `stale` says the params are behind the request; `ready`
+    // says there is an answer to write. A pending producer is stale and has
+    // nothing to bake, and writing its empty result is exactly the blanking that
+    // lock/freeze exists to prevent.
+    if (!stale || status !== 'ready') continue;
     const value = evaluate(state, producerId).value as AnimationClipValue;
 
     // The rig FIRST. A keyframe's `bone` is an index into the skeleton the keys
