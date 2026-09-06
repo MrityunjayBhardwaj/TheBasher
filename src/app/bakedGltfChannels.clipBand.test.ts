@@ -90,7 +90,7 @@ function buildScene(opts: SceneOpts = {}): DagState {
     type: 'addNode',
     nodeId: 'a_clip',
     nodeType: 'AnimationClip',
-    params: { name: 'retargeted', duration: 2, loop: true, keyframes: CLIP_KEYS },
+    params: { name: 'retargeted', duration: 2, loop: 'cycle-offset', keyframes: CLIP_KEYS },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -106,7 +106,7 @@ function buildScene(opts: SceneOpts = {}): DagState {
       params: {
         name: 'second',
         duration: 2,
-        loop: true,
+        loop: 'cycle-offset',
         keyframes: [
           { bone: 0, time: 0, position: [0, 100, 0], rotation: [0, 0, 0] },
           { bone: 0, time: 2, position: [0, 100, 0], rotation: [0, 0, 0] },
@@ -243,7 +243,7 @@ describe('#888 — the band reads params nothing re-validated, so it must surviv
     for (const duration of [0, -1, Number.NaN]) {
       const sampler = buildClipBoneSamplers({
         duration,
-        loop: true,
+        loop: 'cycle-offset',
         keyframes: [
           { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
           { bone: 0, time: 1, position: [0, 9, 0], rotation: [0, 0, 0] },
@@ -311,7 +311,9 @@ describe('#924 the extend domain is the key range, not the declared duration', (
   ];
 
   it('a non-looping clip holds its LAST KEY, not the value at `duration`', () => {
-    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: false } as never).get(0)!;
+    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: 'hold' } as never).get(
+      0,
+    )!;
     // Inside the keys but past the declared duration: the authored key wins, so
     // this reads 2.5. Clamping to `duration` first would truncate the last third
     // of the authored motion and read 2.
@@ -321,7 +323,11 @@ describe('#924 the extend domain is the key range, not the declared duration', (
   });
 
   it('a looping clip cycles over the key range, so one period out is one key span', () => {
-    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: true } as never).get(0)!;
+    const s = buildClipBoneSamplers({
+      keyframes: KEYS,
+      duration: 2,
+      loop: 'cycle-offset',
+    } as never).get(0)!;
     // Period 3 (the key span), not 2 (the declared duration). At t = 3.5 the
     // mapped time is 0.5 and one span of travel has accumulated: 0.5 + 3 = 3.5.
     // A duration-period would map t = 3.5 to 1.5 and read a different number, so

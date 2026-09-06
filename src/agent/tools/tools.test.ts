@@ -113,7 +113,7 @@ function buildBaselineCharacter(): DagState {
     type: 'addNode',
     nodeId: 'clip',
     nodeType: 'AnimationClip',
-    params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+    params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
   }).next;
   state = applyOp(state, {
     type: 'addNode',

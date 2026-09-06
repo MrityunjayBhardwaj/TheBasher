@@ -59,14 +59,14 @@ const CLIP_KEYFRAMES = [
 /** A real DagState: GltfAsset → ClipSelect → TransformClip + GltfChild(bone_1).
  *  Built via applyOp so applyAddNode zod-parses every node's params (the same
  *  path the live DAG uses — proves the baked params survive parsing). */
-function buildState(loop?: 'loop' | 'clamp'): DagState {
+function buildState(loop?: 'cycle' | 'hold'): DagState {
   let s = emptyDagState();
   s = applyOp(s, {
     type: 'addNode',
     nodeId: 'n_clip_0',
     nodeType: 'TransformClip',
     // `loop` is OMITTED by default so every existing row keeps exercising the
-    // schema default ('clamp'), which is the whole shipped population.
+    // schema default ('hold'), which is the whole shipped population.
     params: { name: 'walk', duration: 1.5, keyframes: CLIP_KEYFRAMES, ...(loop ? { loop } : {}) },
   }).next;
   s = applyOp(s, {
@@ -397,11 +397,11 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
       .map((o) => (o as { params: unknown }).params as KeyframeChannelVec3Params);
   }
 
-  it("a clip set to 'loop' mints channels that REPEAT instead of holding", () => {
+  it('a cycling clip mints channels that REPEAT instead of holding', () => {
     // The defect, stated behaviourally rather than as the presence of a field: a
     // bone edited on a looping glTF animation used to freeze at the end of the
     // first cycle while the clip it was copied from kept going.
-    const params = bakedParams(buildState('loop'));
+    const params = bakedParams(buildState('cycle'));
     expect(params).toHaveLength(3);
     for (const p of params) {
       const sample = buildVec3Sampler(p);
@@ -430,11 +430,11 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
     expect(posTravel.some((v) => Math.abs(v) > 1e-9)).toBe(true);
   });
 
-  it("a clip set to 'clamp' still HOLDS, and mints byte-identical params to before", () => {
+  it('a holding clip still HOLDS, and mints byte-identical params to before', () => {
     // The default population. #913's contract is that the key is OMITTED rather
     // than set to `[]` when the source does not repeat, so this road stays
     // byte-identical for every project that never set `loop`.
-    for (const state of [buildState('clamp'), buildState()]) {
+    for (const state of [buildState('hold'), buildState()]) {
       const params = bakedParams(state);
       expect(params).toHaveLength(3);
       for (const p of params) {
@@ -451,9 +451,9 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
     // is a boolean defaulting to true. A call site reading either one directly
     // would be reading the wrong default half the time. Only the exact string
     // 'loop' repeats.
-    expect(bakedParams(buildState('loop'))[0]).toHaveProperty('modifiers');
+    expect(bakedParams(buildState('cycle'))[0]).toHaveProperty('modifiers');
     expect(
-      (bakedParams(buildState('clamp'))[0] as { modifiers?: unknown }).modifiers,
+      (bakedParams(buildState('hold'))[0] as { modifiers?: unknown }).modifiers,
     ).toBeUndefined();
   });
 });

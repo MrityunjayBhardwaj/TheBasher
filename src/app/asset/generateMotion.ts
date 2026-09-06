@@ -124,7 +124,6 @@ export async function generateMotionIntoScene(
         // refusal instead of silently leaving a character at the origin.
         appliesWorldOffset: true,
       },
-      dag.state,
     );
 
     dag.dispatchAtomic(ops, 'user', `generate motion: ${subject}`);

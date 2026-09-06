@@ -1,17 +1,22 @@
-// AnimationClip — sample a keyframed clip at a given Time and produce a
-// PosedSkeleton.
+// AnimationClip — DESCRIBE a keyframed clip over a Skeleton. The node does not
+// sample: it evaluates to an `AnimationClip` value carrying the clip's name,
+// duration, loop rule and keyframes, plus the rig those key indices are counted
+// against. The consumer that holds a `Time` does the sampling (#920).
 //
 // Inputs:
 //   - skeleton (Skeleton, single)
-//   - time (Time, single)
 //
-// Pure: same (params, inputs.skeleton, inputs.time) → same pose. The clip
-// keyframes live in params; the time-sample is taken from the input Time
-// value, not from `ctx.time`. This is the V3 first-use that flips the
-// invariant from NOT YET IMPLEMENTED → ALIGNED.
+// Output:
+//   - out (AnimationClip, single)
 //
-// Sampling: piecewise-linear interpolation between adjacent keyframes per
-// bone. Outside the authored key range the per-side EXTEND rule decides, per
+// Pure: same (params, inputs.skeleton) → same clip. The clip keyframes live in
+// params, and nothing here reads `ctx.time`. This is the V3 first-use that
+// flips the invariant from NOT YET IMPLEMENTED → ALIGNED.
+//
+// Sampling: `buildClipBoneSamplers` below exposes the clip's own `sample(t)` so
+// a caller can invoke it at its own cadence. It is piecewise-linear between
+// adjacent keyframes per bone. Outside the authored key range the per-side
+// EXTEND rule decides, per
 // component: a looping clip cycles its rotation and cycles its position WITH
 // OFFSET, so a root that travels keeps travelling instead of teleporting home
 // once per period (#924); a non-looping clip holds both endpoints. Bones
@@ -24,23 +29,19 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type {
-  AnimationClipValue,
-  AnimationKeyframe,
-  BonePose,
-  SkeletonValue,
-  TimeValue,
-  Vec3,
-} from './types';
-import { sampleVec3KeyframesExtended, type ChannelExtend, type Vec3Key } from './keyframeInterp';
+import type { AnimationClipValue, AnimationKeyframe, SkeletonValue, Vec3 } from './types';
+import { sampleVec3KeyframesExtended, type Vec3Key } from './keyframeInterp';
+import { ClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 export const AnimationClipParams = z.object({
   name: z.string().default('clip'),
   duration: z.number().positive().default(2),
-  /** When true, time is folded into [0, duration); else clamped to range. */
-  loop: z.boolean().default(true),
+  /** What the clip does past its authored range — see `clipLoop.ts`. Was a
+   *  boolean whose `true` meant cycle-WITH-OFFSET, which made cycle-in-place
+   *  unreachable and disagreed with TransformClip's opposite default (#930). */
+  loop: ClipLoopSchema,
   keyframes: z
     .array(
       z.object({
@@ -66,43 +67,18 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
   return map;
 }
 
-/**
- * The per-side extend rule each component takes, derived from the clip's `loop`
- * flag. THE one rule: `evaluate` and the exported per-bone samplers both go
- * through it, so a clip sampled by the band and the same clip sampled by the node
- * cannot disagree about what happens outside the authored range.
- *
- * `loop` is TRANSPORT INTENT and is deliberately not a sampling rule. It used to
- * be one — time was folded with `t % duration` — and a range loop cannot express
- * travel, because it replays identical frames: a root that covers ground snapped
- * back to its start once per period (#924).
- *
- * POSITION cycles WITH OFFSET; rotation cycles plain. Offset adds
- * `(last - first)` once per period, so travel carries across the seam. It is
- * self-limiting: for a bone whose track is constant — every bone but the root,
- * since a retarget writes bind position for the rest — `last === first` and the
- * offset is exactly zero. Rotation is bounded and returns to its start;
- * offsetting it would compound a residual every cycle without bound.
- *
- * This MUST match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
- * which makes the same split for a channel minted from a clip. They are the
- * unedited and edited halves of one band, and `ensureChannelForBone`'s spec
- * asserts they agree past the duration — it reds if either side moves alone.
- *
- * REF: Blender `FModifierCycles.mode_after` REPEAT vs REPEAT_OFFSET ("offset
- * based on gradient between start and end values") layered over
- * `FCurve.extrapolation` (default CONSTANT/hold); Houdini's per-channel extend
- * conditions, where cycle-with-offset against plain cycle is the difference
- * between a seamless walk and a teleport every loop.
- */
-function clipExtendRules(loop: boolean): {
-  position: ChannelExtend;
-  rotation: ChannelExtend;
-} {
-  return loop
-    ? { position: 'cycle-offset', rotation: 'cycle' }
-    : { position: 'hold', rotation: 'hold' };
-}
+// `clipExtendRules` MOVED to `./clipLoop.ts` at #930, unchanged in behaviour for
+// the two states a boolean could reach and extended with the third it could not.
+// It is shared because it is now the ONE mapping from transport intent to
+// per-component extend, and both clip carriers must agree about it — the whole
+// defect #930 records is two carriers disagreeing about this concept.
+//
+// THE one rule still: `evaluate` and the exported per-bone samplers both go
+// through it, so a clip sampled by the band and the same clip sampled by the
+// node cannot disagree about what happens outside the authored range. It MUST
+// still match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
+// which makes the same split for a channel minted from a clip;
+// `ensureChannelForBone`'s spec asserts they agree past the duration.
 
 /** A bone's pose as a function of wall-clock time — the clip's own sampling. */
 export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: Vec3 };
@@ -140,7 +116,18 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * the read band.
  */
 export function buildClipBoneSamplers(
-  params: Pick<AnimationClipParams, 'keyframes' | 'duration' | 'loop'>,
+  // Widened to READONLY keys (#920) so the same factory serves both a node's
+  // params and an `AnimationClipValue`, which is where the sampling now happens.
+  // It only ever reads them — `groupByBone` already declared readonly.
+  //
+  // `loop` is a `ClipLoop`, not a boolean (#930): the two carriers spelled one
+  // concept two ways, and this factory is the shared road both of them sample
+  // through, so it takes the shared vocabulary.
+  params: {
+    readonly keyframes: readonly AnimationKeyframe[];
+    readonly duration: number;
+    readonly loop: ClipLoop;
+  },
 ): Map<number, ClipBoneSampler> {
   const { duration, loop } = params;
   const { position: posRule, rotation: rotRule } = clipExtendRules(loop);
@@ -188,57 +175,39 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
   pure: true,
   cost: 'cheap',
   paramSchema: AnimationClipParams,
+  // TIME-FREE, like `RetargetClip` (#920). A node named for a CLIP evaluated to a
+  // POSE — a function of the current frame — which is the shape the
+  // per-frame-re-render invariant exists to forbid. The clip is a description;
+  // sampling it at an instant is the consumer's job, and only a consumer with a
+  // `Time` input can do it honestly.
   inputs: {
     skeleton: { type: 'Skeleton', cardinality: 'single' },
-    time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
   inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs) {
     const skeleton = inputs.skeleton as SkeletonValue | undefined;
-    const time = inputs.time as TimeValue | undefined;
-    const tSeconds = time?.seconds ?? 0;
 
     if (!skeleton) {
-      const empty: SkeletonValue = { kind: 'Skeleton', bones: [] };
       return {
         kind: 'AnimationClip',
         name: params.name,
         duration: params.duration,
         loop: params.loop,
         keyframes: params.keyframes,
-        skeleton: empty,
-        pose: { kind: 'PosedSkeleton', skeleton: empty, poses: [] },
+        skeleton: { kind: 'Skeleton', bones: [] },
       };
     }
 
-    // The SAME per-bone samplers the baked band delegates to (#888), so a bone
-    // posed here and the same bone resolved through the band cannot disagree.
-    const samplers = buildClipBoneSamplers(params);
-    const poses: BonePose[] = [];
-    for (let i = 0; i < skeleton.bones.length; i++) {
-      const sampler = samplers.get(i);
-      if (!sampler) {
-        poses.push({
-          bone: i,
-          position: skeleton.bones[i].position,
-          rotation: skeleton.bones[i].rotation,
-        });
-        continue;
-      }
-      const { position, rotation } = sampler(tSeconds);
-      poses.push({ bone: i, position, rotation });
-    }
     return {
       kind: 'AnimationClip',
       name: params.name,
       duration: params.duration,
       loop: params.loop,
       keyframes: params.keyframes,
-      // The rig the keys are indexed against — the SAME one this pose was
-      // sampled on, so a consumer cannot pair the two from different sources.
+      // The rig the keys are indexed against, travelling WITH them so a consumer
+      // cannot pair one source's indices with another's spine (#901).
       skeleton,
-      pose: { kind: 'PosedSkeleton', skeleton, poses },
     };
   },
 };

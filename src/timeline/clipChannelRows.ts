@@ -163,22 +163,26 @@ function refNodeIds(binding: unknown): string[] {
  *  that defect was made of. */
 export interface ActiveClip {
   readonly keyframes: ClipKeyframe[];
-  /** Does the source REPEAT past its duration?
+  /** How the source extends past its duration (#930).
    *
-   *  🔴 TWO CARRIERS, TWO SPELLINGS, OPPOSITE DEFAULTS. `TransformClip.loop` is
-   *  an ENUM defaulting to `'clamp'` (TransformClip.ts:47) where
-   *  `AnimationClip.loop` is a BOOLEAN defaulting to `true`. Same concept, and
-   *  the opposite default is exactly why this road's missing time domain never
-   *  bit while the other one bit immediately. Normalised to the boolean the
-   *  shared emitter takes, so the disagreement is resolved HERE rather than at
-   *  the call site.
+   *  ✅ ONE VOCABULARY NOW. This field used to carry a red note that the two
+   *  clip carriers spelled one concept two ways with opposite defaults —
+   *  `TransformClip.loop` an enum defaulting to `'clamp'`, `AnimationClip.loop`
+   *  a boolean defaulting to `true` — and normalised them HERE so the
+   *  disagreement did not reach the call site. Both now take `ClipLoop` and
+   *  both default to `hold`, so there is nothing left to reconcile and this is
+   *  a plain read rather than a translation.
+   *
+   *  `cycle-offset` cannot arrive from this carrier: a TransformClip folds TIME,
+   *  which has no way to add a per-period offset, so its schema does not offer
+   *  the value.
    *
    *  The precondition is the same one #913 measured and it holds for the same
    *  reason: a Cycles modifier repeats the CHANNEL'S key range, while the clip
    *  folds at `duration`, so the two agree only when the keys span the clip.
    *  A glTF import derives `duration` as `max(keyTime)` itself
    *  (gltfImportChain.ts:593), so the span is exact by construction. */
-  readonly cyclic: boolean;
+  readonly loop: ClipLoop;
 }
 
 /**
@@ -219,10 +223,10 @@ export function activeClipForAsset(
     const kfs = cp?.keyframes;
     return {
       keyframes: Array.isArray(kfs) ? (kfs as ClipKeyframe[]) : [],
-      // `'loop'` and nothing else. An absent value is the schema's `'clamp'`, so
-      // reading it positively keeps an unset clip on the holding road it is on
-      // today rather than inventing a repeat for it.
-      cyclic: cp?.loop === 'loop',
+      // Through the one normaliser, which agrees with the schema's `'hold'` for
+      // an absent value — so an unset clip stays on the holding road rather
+      // than having a repeat invented for it.
+      loop: clipLoopOf(cp?.loop),
     };
   }
   return null;
@@ -385,6 +389,7 @@ export function componentIndex(component: Component): number {
 import { boundClipsForAsset, type GraphNodeLike } from '../app/animate/boundClipsForAsset';
 import { findImportedChild, importedChildOf } from '../app/importedChild';
 import type { AnimationClipParams } from '../nodes/AnimationClip';
+import { clipLoopOf, type ClipLoop } from '../nodes/clipLoop';
 
 /** The components an `AnimationClip` can carry. Scale is absent from the schema,
  *  so it is absent here — a row for it would be a claim with nothing behind it. */

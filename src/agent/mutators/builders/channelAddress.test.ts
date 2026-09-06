@@ -60,7 +60,7 @@ function riggedState(extraNodes?: Record<string, unknown>): DagState {
       type: 'AnimationClip',
       params: {
         duration: 1,
-        loop: true,
+        loop: 'cycle-offset',
         keyframes: [
           { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
           { bone: 1, time: 1, position: [0, 2, 0], rotation: [Math.PI / 2, 0, 0] },

@@ -80,8 +80,9 @@ test('a director types a prompt and gets the pair a .bvh import would have lande
   // Exactly the import road's pair, and nothing else.
   expect(added.sort()).toEqual(['AnimationClip', 'Skeleton']);
 
-  // The clip is wired to the skeleton and to time — the connects the import
-  // chain makes, not a pair of orphans.
+  // The clip is wired to the skeleton — the connect the import chain makes, not
+  // a pair of orphans. It is NOT wired to time and has no socket for one: a clip
+  // is time-free (#920), and the consumer that samples it holds the clock.
   const wired = await page.evaluate(() => {
     const nodes = Object.values(
       (
@@ -103,11 +104,10 @@ test('a director types a prompt and gets the pair a .bvh import would have lande
     const skeletonIds = nodes.filter((n) => n.type === 'Skeleton').map((n) => n.type);
     return {
       hasSkeletonInput: Boolean(clip?.inputs?.skeleton),
-      hasTimeInput: Boolean(clip?.inputs?.time),
       skeletons: skeletonIds.length,
     };
   });
-  expect(wired).toEqual({ hasSkeletonInput: true, hasTimeInput: true, skeletons: 1 });
+  expect(wired).toEqual({ hasSkeletonInput: true, skeletons: 1 });
 
   // Back to idle, prompt consumed, and the failure surface stayed quiet.
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');

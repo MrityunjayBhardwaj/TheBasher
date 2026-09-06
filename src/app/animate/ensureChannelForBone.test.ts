@@ -14,6 +14,7 @@ import type { DagState } from '../../core/dag/state';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import { buildClipBoneSamplers, type AnimationClipParams } from '../../nodes/AnimationClip';
 import { importedChildNodes } from '../../test-utils/importedChildFixture';
+import type { ClipLoop } from '../../nodes/clipLoop';
 
 const ASSET = 'user-imports/dwarf.glb';
 const BONE = 'mixamorig_LeftArm';
@@ -29,7 +30,7 @@ beforeEach(() => {
 function riggedState(opts?: {
   withClip?: boolean;
   /** #913 — the clip's own time domain. Defaults to the schema default. */
-  loop?: boolean;
+  loop?: ClipLoop;
   extraNodes?: Record<string, unknown>;
 }): DagState {
   const jointKeys = [OTHER, BONE];
@@ -62,7 +63,10 @@ function riggedState(opts?: {
       type: 'AnimationClip',
       params: {
         duration: 1,
-        loop: opts?.loop ?? true,
+        // 'cycle-offset' is what the old `true` meant: cycle WITH travel on
+        // position. Plain 'cycle' would repeat in place and the travel rows below
+        // would red — which is the distinction #930 made spellable.
+        loop: opts?.loop ?? 'cycle-offset',
         keyframes: [
           // Bone 1 is BONE. Rotations are RADIANS in a clip.
           { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
@@ -235,7 +239,7 @@ describe('#913 the mint carries the clip time domain', () => {
     const clipSamplers = buildClipBoneSamplers({
       keyframes: (state.nodes.n_clip as { params: AnimationClipParams }).params.keyframes,
       duration: D,
-      loop: true,
+      loop: 'cycle-offset',
     });
     const fromClip = clipSamplers.get(1)!;
     for (const t of [D + 0.01, D * 1.5, D * 2 + 0.01]) {
@@ -246,7 +250,7 @@ describe('#913 the mint carries the clip time domain', () => {
   });
 
   it('a bone minted from a NON-looping clip still holds — the fix must not make everything cycle', () => {
-    const params = mintedParams(riggedState({ loop: false }), 'position');
+    const params = mintedParams(riggedState({ loop: 'hold' }), 'position');
     expect(params.modifiers ?? []).toEqual([]);
     const sample = buildVec3Sampler(params);
     // Held at the last key, forever.
@@ -256,7 +260,7 @@ describe('#913 the mint carries the clip time domain', () => {
 
   it('inside the authored range the minted values are unchanged by the fix', () => {
     const looping = buildVec3Sampler(mintedParams(riggedState(), 'position'));
-    const held = buildVec3Sampler(mintedParams(riggedState({ loop: false }), 'position'));
+    const held = buildVec3Sampler(mintedParams(riggedState({ loop: 'hold' }), 'position'));
     // The time domain is about OUTSIDE the range. Inside it the two must be
     // identical, or the fix changed something it had no business changing.
     for (const t of [0, 0.25, 0.5, 0.75, D]) expect(looping(t)).toEqual(held(t));

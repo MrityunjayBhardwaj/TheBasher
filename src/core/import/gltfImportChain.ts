@@ -136,7 +136,6 @@ export interface GltfImportChainArgs {
   readonly buffer: ArrayBuffer;
   readonly assetRef: string;
   readonly sceneNodeId: string;
-  readonly timeSourceId?: string;
   readonly position?: Vec3;
   /**
    * Resolves an external buffer URI (relative `.bin`) to its bytes (#90).
@@ -944,7 +943,7 @@ export async function buildGltfImportOps(
       type: 'addNode',
       nodeId: transformClipIds[i],
       nodeType: 'TransformClip',
-      params: { name, duration, loop: 'clamp', keyframes },
+      params: { name, duration, loop: 'hold', keyframes },
     });
   }
 

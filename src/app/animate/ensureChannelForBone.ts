@@ -82,6 +82,7 @@ import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
 // units, and this road is the one that has to say so — the other place is the
 // read band's `clipBandSamplersForAsset`, which converts for the same reason.
 import { radVec3ToDeg } from '../../viewport/rotation';
+import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
 
 /** What minting decided. `ops` is empty when the channel already existed — the
  *  caller appends it either way and never branches on which happened. */
@@ -143,7 +144,9 @@ function seedKeysFromBase(state: DagState, boneId: string, component: BakedCompo
  *  second is a caller that can mint a copy which stops where its source wraps. */
 interface ClipSeed {
   readonly keys: BakedKey[];
-  readonly cyclic: boolean;
+  /** How the source clip extends (#930) — carried, not collapsed to a boolean,
+   *  so a clip cycling IN PLACE mints a channel that also cycles in place. */
+  readonly loop: ClipLoop;
 }
 
 function seedKeysFromClip(
@@ -156,7 +159,7 @@ function seedKeysFromClip(
   // the read band omits it for the same reason. Claiming the component would
   // SUPPRESS the asset's own scale track underneath it, because the resolver
   // reads presence rather than value.
-  if (component === 'scale') return { keys: [], cyclic: false };
+  if (component === 'scale') return { keys: [], loop: 'hold' };
 
   for (const clip of boundClipsForAsset(state.nodes, assetRef)) {
     const index = boneIndexOf(clip, childName);
@@ -172,13 +175,13 @@ function seedKeysFromClip(
         time: k.time,
         value: component === 'rotation' ? radVec3ToDeg(k.rotation) : k.position,
       })),
-      // `loop` defaults to true in the schema, and the band reads it the same
-      // way (`params.loop !== false`) — so the mint and the read side agree on
-      // what an unset value means rather than each picking a default.
-      cyclic: (clip.params as Partial<AnimationClipParams>).loop !== false,
+      // Normalised through the ONE helper rather than with a local fallback:
+      // five readers each spelling their own default, all disagreeing with the
+      // schema, is the defect #930 records.
+      loop: clipLoopOf((clip.params as Partial<AnimationClipParams>).loop),
     };
   }
-  return { keys: [], cyclic: false };
+  return { keys: [], loop: 'hold' };
 }
 
 /**
@@ -227,7 +230,7 @@ export function ensureChannelForBone(
   // Only a clip seed carries a time domain. The base-pose fallback is a single
   // key standing for a bone that was never animated — cycling one key repeats a
   // constant, which is the same constant, so claiming it would be noise.
-  const cyclic = fromClip.keys.length > 0 && fromClip.cyclic;
+  const loop: ClipLoop = fromClip.keys.length > 0 ? fromClip.loop : 'hold';
   // `bakeChannelOpsForBone` owns the node shape — the dual `target`/`childName`
   // key, the param names, and the same skip-if-present guard. Going through it
   // rather than emitting an addNode here means a minted channel and a baked one
@@ -238,7 +241,7 @@ export function ensureChannelForBone(
     childName,
     byComponent: { [component]: keys } as Partial<Record<BakedComponent, readonly BakedKey[]>>,
     state,
-    cyclic,
+    loop,
   });
   return { channelId, ops };
 }

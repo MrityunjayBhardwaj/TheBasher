@@ -167,13 +167,27 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
       },
       state,
       // #916 — the SOURCE's time domain, the half #913 taught the sibling road to
-      // carry and this one did not. A `TransformClip` set to 'loop' wraps at its
-      // duration; a channel minted from it holds, so the bone freezes at the end
-      // of the first cycle while the clip it came from keeps going. The default
-      // is 'clamp' here (against the AnimationClip road's `true`), which is why
-      // this road never showed the defect and why passing the value through
-      // leaves the whole default population byte-identical.
-      cyclic: active?.cyclic ?? false,
+      // carry and this one did not. A cycling `TransformClip` wraps at its
+      // duration; a channel minted from it used to hold, so the bone froze at
+      // the end of the first cycle while the clip it came from kept going.
+      //
+      // 🔴 A DIVERGENCE PRESERVED ON PURPOSE (#930), NOT AN OVERSIGHT.
+      // A cycling TransformClip mints a channel that TRAVELS (`cycle-offset`),
+      // while the clip itself folds TIME — which replays identical frames and so
+      // cycles IN PLACE. The two have therefore never agreed on this road, and
+      // #930 deliberately did not resolve it: the tri-state vocabulary made the
+      // mismatch *visible* (before, both were spelled by one boolean and neither
+      // could say which it meant), but flipping the mint to match the clip would
+      // silently change what every existing looping glTF import does at
+      // playback. `bakeGltfChannel.test.ts` pins the shipped behaviour with a
+      // stated rationale — "a root that covers ground must keep covering it" —
+      // and that claim deserves to be re-decided in the open rather than
+      // reversed as a side effect of a rename.
+      //
+      // So the mapping is explicit here rather than inherited: this carrier's
+      // `cycle` means "wrap the time", and the channel minted from it keeps the
+      // travelling extend it has always had.
+      loop: active?.loop === 'cycle' ? 'cycle-offset' : 'hold',
     });
 
     // R4: NO connect ops. The baked channels are edge-less satellites that
