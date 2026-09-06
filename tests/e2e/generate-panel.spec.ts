@@ -8,12 +8,18 @@
 // the JSX does — the kind toggle, the disabled affordance, the busy state, the
 // clear-on-success — has e2e as its only witness.
 //
-// 🔑 IT ASSERTS THE SHAPE, NOT THE COUNT. A generated clip is supposed to be
-// indistinguishable from an imported one, and `buildGeneratedMotionOps` delivers
-// that by calling `buildBvhImportOps` outright — so the pair this press lands
-// must be exactly the pair a dropped .bvh lands: a `Skeleton` and an
-// `AnimationClip`, the clip wired to the skeleton. "Two more nodes appeared"
-// would pass for two nodes of any type at all.
+// 🔑 IT ASSERTS THE SHAPE, NOT THE COUNT. "Three more nodes appeared" would pass
+// for three nodes of any type at all, so this names them.
+//
+// THE SHAPE MOVED TO THE NODE ROAD (#948). The press used to land exactly the
+// pair a dropped .bvh lands, because the generator called `buildBvhImportOps`
+// outright and then threw itself away. It now MINTS the generator: the director
+// keeps a `MotionGenerate` node they can re-cook after moving a control point,
+// and it feeds an ordinary `AnimationClip` — the same clip an import would have
+// landed, on the same `Skeleton`, reached through the same read band. So the
+// claim is no longer "indistinguishable from an import"; it is "an import-shaped
+// pair with the producer still attached", and the `source` edge is what makes
+// that a fact rather than a coincidence of node types.
 //
 // The MOTION road is chosen deliberately over the model road: it is pure DAG
 // ops with no OPFS write, and OPFS is this suite's known flake source (#591,
@@ -36,7 +42,7 @@ const nodeTypes = () =>
     (n) => n.type,
   );
 
-test('a director types a prompt and gets the pair a .bvh import would have landed (#764)', async ({
+test('a director types a prompt and gets a re-cookable generator feeding an import-shaped pair (#764)', async ({
   page,
 }) => {
   await page.goto('/');
@@ -77,13 +83,17 @@ test('a director types a prompt and gets the pair a .bvh import would have lande
   const after = await page.evaluate(nodeTypes);
   const added = [...after];
   for (const t of before) added.splice(added.indexOf(t), 1);
-  // Exactly the import road's pair, and nothing else.
-  expect(added.sort()).toEqual(['AnimationClip', 'Skeleton']);
+  // The import road's pair, plus the producer that can re-cook it — and nothing
+  // else. The producer is the whole point of the node road; a press that landed
+  // only the pair would have thrown the director's request away.
+  expect(added.sort()).toEqual(['AnimationClip', 'MotionGenerate', 'Skeleton']);
 
-  // The clip is wired to the skeleton and to time — the connects the import
-  // chain makes, not a pair of orphans.
+  // The clip is wired to the skeleton and to time — the connects the import chain
+  // makes — AND its `source` resolves to the minted producer BY ID, not merely to
+  // "some node". Matching on the id is what separates a fed clip from a clip and
+  // a generator that happen to have landed in the same graph.
   const wired = await page.evaluate(() => {
-    const nodes = Object.values(
+    const entries = Object.entries(
       (
         window as unknown as {
           __basher_dag?: {
@@ -99,15 +109,21 @@ test('a director types a prompt and gets the pair a .bvh import would have lande
         }
       ).__basher_dag?.getState().state.nodes ?? {},
     );
-    const clip = nodes.find((n) => n.type === 'AnimationClip');
-    const skeletonIds = nodes.filter((n) => n.type === 'Skeleton').map((n) => n.type);
+    const clip = entries.find(([, n]) => n.type === 'AnimationClip')?.[1];
+    const producerId = entries.find(([, n]) => n.type === 'MotionGenerate')?.[0];
     return {
       hasSkeletonInput: Boolean(clip?.inputs?.skeleton),
       hasTimeInput: Boolean(clip?.inputs?.time),
-      skeletons: skeletonIds.length,
+      clipSourceIsTheProducer: Boolean(producerId) && clip?.inputs?.source?.node === producerId,
+      skeletons: entries.filter(([, n]) => n.type === 'Skeleton').length,
     };
   });
-  expect(wired).toEqual({ hasSkeletonInput: true, hasTimeInput: true, skeletons: 1 });
+  expect(wired).toEqual({
+    hasSkeletonInput: true,
+    hasTimeInput: true,
+    clipSourceIsTheProducer: true,
+    skeletons: 1,
+  });
 
   // Back to idle, prompt consumed, and the failure surface stayed quiet.
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');
