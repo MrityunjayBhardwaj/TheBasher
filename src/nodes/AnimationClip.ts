@@ -1,17 +1,22 @@
-// AnimationClip — sample a keyframed clip at a given Time and produce a
-// PosedSkeleton.
+// AnimationClip — DESCRIBE a keyframed clip over a Skeleton. The node does not
+// sample: it evaluates to an `AnimationClip` value carrying the clip's name,
+// duration, loop rule and keyframes, plus the rig those key indices are counted
+// against. The consumer that holds a `Time` does the sampling (#920).
 //
 // Inputs:
 //   - skeleton (Skeleton, single)
-//   - time (Time, single)
 //
-// Pure: same (params, inputs.skeleton, inputs.time) → same pose. The clip
-// keyframes live in params; the time-sample is taken from the input Time
-// value, not from `ctx.time`. This is the V3 first-use that flips the
-// invariant from NOT YET IMPLEMENTED → ALIGNED.
+// Output:
+//   - out (AnimationClip, single)
 //
-// Sampling: piecewise-linear interpolation between adjacent keyframes per
-// bone. Outside the authored key range the per-side EXTEND rule decides, per
+// Pure: same (params, inputs.skeleton) → same clip. The clip keyframes live in
+// params, and nothing here reads `ctx.time`. This is the V3 first-use that
+// flips the invariant from NOT YET IMPLEMENTED → ALIGNED.
+//
+// Sampling: `buildClipBoneSamplers` below exposes the clip's own `sample(t)` so
+// a caller can invoke it at its own cadence. It is piecewise-linear between
+// adjacent keyframes per bone. Outside the authored key range the per-side
+// EXTEND rule decides, per
 // component: a looping clip cycles its rotation and cycles its position WITH
 // OFFSET, so a root that travels keeps travelling instead of teleporting home
 // once per period (#924); a non-looping clip holds both endpoints. Bones
