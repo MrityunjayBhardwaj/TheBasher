@@ -88,7 +88,7 @@ test('P7.7 D-05 — many-bone rig: node count + save-size + outliner perf (obser
     () => {
       const w = window as unknown as BasherWindow;
       return Object.values(w.__basher_dag.getState().state.nodes).some(
-        (n) => n.type === 'GltfChild',
+        (n) => n.type === 'GltfData',
       );
     },
     { timeout: 20_000 },
@@ -97,7 +97,10 @@ test('P7.7 D-05 — many-bone rig: node count + save-size + outliner perf (obser
   const after = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag.getState().state.nodes;
-    const children = Object.values(nodes).filter((n) => n.type === 'GltfChild');
+    // #389 — one `GltfData` per scene child, so this is still json.nodes exactly.
+    // The pair's `Object` half is deliberately NOT counted here: it shares a type
+    // with every other object in the scene.
+    const children = Object.values(nodes).filter((n) => n.type === 'GltfData');
     return {
       nodeCount: Object.keys(nodes).length,
       bytes: JSON.stringify(nodes).length,

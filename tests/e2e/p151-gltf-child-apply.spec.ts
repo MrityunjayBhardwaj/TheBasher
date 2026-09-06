@@ -1,6 +1,6 @@
 // p151 (Apply-Transform) Wave 4 — the glTF-child boundary-pair gate (issue #151).
 //
-// THE PHASE PRE-MORTEM ZONE. A GltfChild is the R-1 edge-less satellite whose
+// THE PHASE PRE-MORTEM ZONE. An imported child is the R-1 edge-less satellite whose
 // geometry + textured PBR material live BY NAME inside the GltfAsset's
 // SkeletonUtils clone. Baking it converges H40 (band-in-resolver), H45 (clone
 // shared geom), H58/H59 (capture post-override), double-render suppression, and
@@ -13,7 +13,7 @@
 //       color matches the source resolved material. With a PRE-EXISTING override.
 // SC-7  single render: the baked child renders exactly ONCE (source suppressed).
 // SC-7  H45 isolation: a second asset instance's child is byte-unchanged.
-// SC-5  undo: Apply → Cmd+Z → GltfChild restored + child visible + BakedMesh gone.
+// SC-5  undo: Apply → Cmd+Z → the imported child restored + visible + BakedMesh gone.
 // M8    self-contained: bake → delete source asset → reload → baked still textured.
 // SC-8  animated guard: a clip/keyframe-driven child → Apply rejected.
 //
@@ -21,6 +21,7 @@
 //      p7.13 (textured fixture + tint-lands pattern), p150 (H40 boundary-pair).
 
 import { test, expect } from './_fixtures';
+import { importedChildren } from './_importedChild';
 
 interface MeshSummary {
   name: string;
@@ -103,18 +104,12 @@ async function waitTextured(page: import('@playwright/test').Page): Promise<Mesh
   throw new Error(`waitTextured timed out; last: ${JSON.stringify(last)}`);
 }
 
-function gltfChildId(page: import('@playwright/test').Page, assetRefSubstr: string) {
-  return page.evaluate((sub) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const entry = Object.entries(nodes).find(
-      ([, n]) =>
-        n.type === 'GltfChild' &&
-        n.params.childName === 'Box' &&
-        String(n.params.assetRef).includes(sub),
-    );
-    return entry ? entry[0] : null;
-  }, assetRefSubstr);
+async function gltfChildId(page: import('@playwright/test').Page, assetRefSubstr: string) {
+  // #389 — the OBJECT half's id. It inherits the fused node's id, so Apply, the
+  // gizmo, every clip target and the selection all still address the child by it.
+  const all = await importedChildren(page);
+  const hit = all.find((c) => c.childName === 'Box' && c.assetRef.includes(assetRefSubstr));
+  return hit?.objectId ?? null;
 }
 
 /** The baked PAIR the child bake mints: the `Object` half plus the `BakedData` it poses.
@@ -314,7 +309,7 @@ test('SC-7 isolation (H45): baking one asset instance leaves a second instance u
   expect(matches).toBe(true);
 });
 
-test('SC-5 undo: Apply → Cmd+Z → GltfChild restored + source child visible + BakedMesh gone', async ({
+test('SC-5 undo: Apply → Cmd+Z → the imported child restored + source child visible + BakedMesh gone', async ({
   page,
 }) => {
   await ingest(page, 'p151-undo');
@@ -404,7 +399,10 @@ test('M8 self-contained: bake → delete source asset → reload → baked still
   const sourceNodesGone = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag!.getState().state.nodes;
-    return !Object.values(nodes).some((n) => n.type === 'GltfAsset' || n.type === 'GltfChild');
+    // #389 — the child's DATA half is what the delete has to take with it. `Object` is
+    // deliberately not named: it is also the type of the baked result this test expects
+    // to SURVIVE, so asserting on it would make the row fail for the opposite reason.
+    return !Object.values(nodes).some((n) => n.type === 'GltfAsset' || n.type === 'GltfData');
   });
   expect(sourceNodesGone).toBe(true);
 

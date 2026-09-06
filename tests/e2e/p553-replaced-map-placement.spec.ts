@@ -34,6 +34,8 @@
 //      issues #553, #550, #178.
 
 import { test, expect, type Page } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
+import { openInspectorSection } from './_inspectorSections';
 
 /** A 1×1 red PNG — the replacement, chosen so its DIMENSIONS identify it. */
 const RED_PNG_1PX =
@@ -84,17 +86,21 @@ function drawn(page: Page) {
   });
 }
 
-/** The imported child carrying a captured material, plus its IR placement fields. */
-function materialChild(page: Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
-    if (!c) return null;
-    const m0 = (c.params.materials as Record<string, unknown>[])[0];
-    return { id: c.id, maps: m0.maps as Record<string, unknown>, perMap: m0.mapUvTransforms };
-  });
+/** The imported child carrying a captured material, plus its IR placement fields.
+ *  #389 — `id` is the DATA half's, which is where a material write is now addressed. */
+async function materialChild(page: Page) {
+  const child = await firstMaterialChild(page);
+  if (!child) return null;
+  const m0 = child.slots[0] as Record<string, unknown>;
+  // #389 — BOTH ids. The fused child was one node used for two different jobs; the split
+  // makes them two, and collapsing them back into one variable is how a converted spec
+  // ends up selecting a node the inspector will not render rows for.
+  return {
+    id: child.dataId, // param paths + inspector testids live on the DATA half
+    objectId: child.objectId, // selection addresses the OBJECT
+    maps: m0.maps as Record<string, unknown>,
+    perMap: m0.mapUvTransforms,
+  };
 }
 
 async function importAndSelect(page: Page, mutate: boolean, folder: string) {
@@ -127,7 +133,7 @@ async function importAndSelect(page: Page, mutate: boolean, folder: string) {
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
   }, child.id);
-  await page.getByTestId('inspector-section-toggle-material').click();
+  await openInspectorSection(page, 'material');
   // Wait for the FIXTURE's own texture to have reached the render before any premise is
   // read. Without this the `before` snapshot races the import: the DAG node exists well
   // ahead of the decoded image, so the premise assertions sampled a half-built material
@@ -139,7 +145,9 @@ async function importAndSelect(page: Page, mutate: boolean, folder: string) {
 
 /** Replace a slot's texture through the production pick → bake → apply road. */
 async function replaceAlbedo(page: Page, childId: string) {
-  await page.getByTestId(`inspector-gltfmap-file-${childId}-0-albedo`).setInputFiles({
+  // #389 — the bespoke glTF map row is gone; imported materials render through the same
+  // generic `MapRow` a box uses, keyed on the DATA node and the map slot alone.
+  await page.getByTestId(`inspector-map-file-${childId}-albedo`).setInputFiles({
     name: 'red.png',
     mimeType: 'image/png',
     buffer: Buffer.from(RED_PNG_1PX, 'base64'),

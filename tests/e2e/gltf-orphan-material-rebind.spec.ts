@@ -11,6 +11,7 @@
 // side=FrontSide.
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 const DOUBLE_SIDE = 2; // THREE.DoubleSide
 
@@ -50,16 +51,10 @@ async function ingest(page: import('@playwright/test').Page, file: string, folde
   );
 }
 
-/** The captured-material name of the first GltfChild that carries materials. */
-function capturedMaterialName(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
-    if (!c) return null;
-    return (c.params.materials as { name?: string }[])[0]?.name ?? null;
-  });
+/** The captured-material name of the first imported child that carries one (#389). */
+async function capturedMaterialName(page: import('@playwright/test').Page) {
+  const child = await firstMaterialChild(page);
+  return (child?.slots[0] as { name?: string } | undefined)?.name ?? null;
 }
 
 const firstMesh = (page: import('@playwright/test').Page) =>

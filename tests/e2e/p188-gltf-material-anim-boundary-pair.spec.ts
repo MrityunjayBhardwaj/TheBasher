@@ -1,12 +1,12 @@
 // #188 (v0.7 Phase 3) — glTF material-scalar ANIMATION boundary-pair.
 //
 // THE PROOF (the V56/p197 method — inject a free-floating channel, observe the
-// EVALUATED render): import cube-draco → inject a `materials.0.base.metalness`
+// EVALUATED render): import cube-draco → inject a `material.base.metalness`
 // KeyframeChannelNumber targeting the cube's GltfChild dagId DIRECTLY (no
 // AnimationLayer — the glTF direct-channel road, V57) → scrub the playhead → the
 // RENDERED clone's metalness (read back through `__basher_gltf_meshes`, the same
 // live-three.js seam S3/S4 use) RAMPS with time. A KeyframeChannelColor on
-// `materials.0.base.color` likewise drives the rendered colour.
+// `material.base.color` likewise drives the rendered colour.
 //
 // This is side A == "the channel actually animates the rendered material". The
 // resolver side (overlayChannels) is unit-locked (overlayChannels.test.ts); here we
@@ -15,6 +15,7 @@
 // channel-overlaid value, metalness would freeze at its captured base.
 
 import { test, expect } from './_fixtures';
+import { importedChild } from './_importedChild';
 
 interface BasherWindow {
   __basher_dag: {
@@ -47,14 +48,12 @@ async function ingestCube(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
-function cubeChildId(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && n.params.childName === 'cube',
-    );
-    return c?.id ?? null;
-  });
+// #389 — the DATA half's id. A material channel, a diamond and a transient all address
+// the node that OWNS the param, and after the split that is `GltfData`. Aiming any of
+// them at the Object would resolve to a node that exists and a param that does not:
+// visible in the dopesheet, driving nothing, with nothing failing anywhere.
+async function cubeChildId(page: import('@playwright/test').Page) {
+  return (await importedChild(page, 'cube'))?.dataId ?? null;
 }
 
 async function setTime(page: import('@playwright/test').Page, seconds: number) {
@@ -92,7 +91,7 @@ test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () 
     await ready(page);
     const childId = await cubeChildId(page);
 
-    // Free-floating channel — target the GltfChild dagId DIRECTLY, no layer (V57).
+    // Free-floating channel — target the GltfData node id DIRECTLY, no layer (V57).
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_dag.getState().dispatch(
         {
@@ -102,7 +101,7 @@ test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () 
           params: {
             name: 'metalness',
             target: id,
-            paramPath: 'materials.0.base.metalness',
+            paramPath: 'material.base.metalness',
             keyframes: [
               { time: 0, value: 0, easing: 'linear' },
               { time: 1, value: 1, easing: 'linear' },
@@ -137,7 +136,7 @@ test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () 
           params: {
             name: 'base color',
             target: id,
-            paramPath: 'materials.0.base.color',
+            paramPath: 'material.base.color',
             keyframes: [
               { time: 0, value: '#ff0000', easing: 'linear' },
               { time: 2, value: '#0000ff', easing: 'linear' },

@@ -10,6 +10,8 @@
 // loop: bake → setParam → overlay async-loads → render.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { importedChild } from './_importedChild';
 
 interface W {
   __basher_dag: {
@@ -46,20 +48,17 @@ async function ingestCube(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
-function cubeChild(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as W;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && n.params.childName === 'cube',
-    );
+async function cubeChild(page: import('@playwright/test').Page) {
+  {
+    const c = await importedChild(page, 'cube');
     return c
       ? {
-          id: c.id,
-          albedo: (c.params.materials as { maps: { albedo: unknown } }[] | undefined)?.[0].maps
-            .albedo,
+          id: c.dataId,
+          objectId: c.objectId,
+          albedo: (c.slots[0] as { maps: { albedo: unknown } }).maps.albedo,
         }
       : null;
-  });
+  }
 }
 
 const cubeHasMap = (page: import('@playwright/test').Page) =>
@@ -88,17 +87,17 @@ test.describe('#178 S5 — editable glTF map rows', () => {
     await page.evaluate((id) => {
       (window as unknown as W).__basher_selection.getState().select(id);
     }, child!.id);
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
     // The Maps section shows the albedo slot as "— none": cube-draco has NO
     // base-colour texture, so nothing is captured/inherited (the texture-maps
     // milestone distinguishes an empty slot from an "● imported" captured one).
-    const stateTag = page.getByTestId(`inspector-gltfmap-state-${child!.id}-0-albedo`);
+    const stateTag = page.getByTestId(`inspector-map-state-${child!.id}-albedo`);
     await expect(stateTag).toHaveText('— none');
 
     // Pick a file → bake → the IR ref is set + the clone repaints with a map.
     await page
-      .getByTestId(`inspector-gltfmap-file-${child!.id}-0-albedo`)
+      .getByTestId(`inspector-map-file-${child!.id}-albedo`)
       .setInputFiles({ name: 'red.png', mimeType: 'image/png', buffer: pngBuffer() });
 
     // Side A: the DAG map ref is a real (non-null, non-empty) BakedTextureRef.
@@ -124,19 +123,19 @@ test.describe('#178 S5 — editable glTF map rows', () => {
     await page.evaluate((id) => {
       (window as unknown as W).__basher_selection.getState().select(id);
     }, child!.id);
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
     // Clear → the IR slot becomes the empty-hash sentinel.
-    await page.getByTestId(`inspector-gltfmap-clear-${child!.id}-0-albedo`).click();
+    await page.getByTestId(`inspector-map-clear-${child!.id}-albedo`).click();
     await expect
       .poll(async () => (await cubeChild(page))?.albedo as { hash?: string } | null)
       .toEqual(expect.objectContaining({ hash: '' }));
-    await expect(page.getByTestId(`inspector-gltfmap-state-${child!.id}-0-albedo`)).toHaveText(
+    await expect(page.getByTestId(`inspector-map-state-${child!.id}-albedo`)).toHaveText(
       '— cleared',
     );
 
     // Revert → back to null (inherit imported).
-    await page.getByTestId(`inspector-gltfmap-revert-${child!.id}-0-albedo`).click();
+    await page.getByTestId(`inspector-map-revert-${child!.id}-albedo`).click();
     await expect.poll(async () => (await cubeChild(page))?.albedo ?? 'NULL').toBe('NULL');
   });
 });
