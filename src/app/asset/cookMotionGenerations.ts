@@ -51,7 +51,22 @@ export interface CookOutcome {
   readonly reason?: string;
 }
 
-/** Whether anything in the graph is waiting to be cooked — the affordance's enabled state. */
+/**
+ * Whether anything in the graph is waiting to be cooked — the affordance's
+ * enabled state.
+ *
+ * 🔴 DO NOT CALL THIS ON A RENDER PATH WITHOUT MEMOIZING. Answering "is anything
+ * stale" means comparing each producer's CURRENT request hash against the hash
+ * its clip was baked from, and computing that hash means resolving the producer's
+ * inputs — which walks the curve. `evaluate` with no `cache` gets a fresh
+ * per-call memo, so nothing is shared between calls.
+ *
+ * Measured: 4 producers on a 64-point curve cost 2.2ms per call — 13% of a 60fps
+ * frame, on every pointer move of a drag, and the drag is exactly when it changes.
+ * The same shape `retargetFromNodes` memoizes on operand identity for the same
+ * reason. Nothing calls this yet, so it is documented rather than solved; the
+ * surface that wires it should memoize or pass a shared cache.
+ */
 export function hasStaleGenerations(): boolean {
   const { state } = useDagStore.getState();
   return clipBakeStates(state).some((c) => c.stale || c.status === 'pending');
