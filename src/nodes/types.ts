@@ -13,6 +13,7 @@
 
 import type { OverriddenSet } from '../core/override/overrideSet';
 import type { ScopeDomain } from './attributes';
+import type { ClipLoop } from './clipLoop';
 
 export type Vec2 = readonly [number, number];
 
@@ -1242,8 +1243,10 @@ export interface AnimationClipValue {
   readonly kind: 'AnimationClip';
   readonly name: string;
   readonly duration: number;
-  /** When true, time folds into [0, duration); else it clamps at the ends. */
-  readonly loop: boolean;
+  /** What the clip does past its authored range (#930). Was a boolean whose
+   *  `true` meant cycle-WITH-OFFSET — so cycle-in-place had no spelling, and the
+   *  sibling carrier defaulted the opposite way. */
+  readonly loop: ClipLoop;
   /** The clip's keys. `bone` indexes {@link AnimationClipValue.skeleton}. */
   readonly keyframes: readonly AnimationKeyframe[];
   /** The rig the keyframe indices are authored against. */

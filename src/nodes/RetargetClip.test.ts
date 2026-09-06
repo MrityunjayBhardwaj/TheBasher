@@ -44,7 +44,7 @@ function sourceClipValue(over: Partial<AnimationClipValue> = {}): AnimationClipV
     kind: 'AnimationClip',
     name: 'walk',
     duration: 1,
-    loop: false,
+    loop: 'hold',
     keyframes: sourceKeys(),
     skeleton: { kind: 'Skeleton', bones: sourceBones() },
     ...over,
@@ -74,7 +74,7 @@ describe('RetargetClip — the operator', () => {
       sourceBones: sourceBones(),
       // #919 — the domain comes off the SAME generator the subject's operand does,
       // so the two sides agree by construction rather than by a literal restated
-      // here. The fixture is deliberately `loop: false`, which is what makes the
+      // here. The fixture is deliberately `loop: 'hold'`, which is what makes the
       // `value.loop` row below a measurement instead of a coincidence.
       sourceClip: {
         name: 'walk',

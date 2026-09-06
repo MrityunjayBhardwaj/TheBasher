@@ -88,7 +88,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly once since the freeze, and #915 is that once', () => {
+  it('has moved the project format version exactly twice since the freeze — #915, then #930', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -102,7 +102,11 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // frozen app output — so the distance between it and live is the thing to pin, and it
     // is still an exact equality against those frozen bytes. A SECOND unplanned bump reds
     // this row again, which is the whole point of having it.
-    const MIGRATIONS_SINCE_FREEZE = 1; // #915 only
+    // #930 is the second, and it is planned in the same way #915 was: the two clip
+    // carriers spelled one concept two ways with opposite defaults, so the schema
+    // default could not change without a pass that writes every stored clip's value
+    // explicitly. Written and numbered in the same commit, as this file instructs.
+    const MIGRATIONS_SINCE_FREEZE = 2; // #915, then #930
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

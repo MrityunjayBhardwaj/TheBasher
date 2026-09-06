@@ -2853,7 +2853,7 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
         id: 'n_clip',
         type: 'AnimationClip',
         version: 1,
-        params: { name: 'walk', duration: DUR, loop: true, keyframes: clipKeys() },
+        params: { name: 'walk', duration: DUR, loop: 'cycle-offset', keyframes: clipKeys() },
         inputs: { skeleton: { node: 'n_skel', socket: 'out' } },
       },
     };
@@ -2891,7 +2891,10 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     // remove. Showing the same graph freeze without it is what makes the second
     // half a measurement of the subject.
     const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    const before = ProjectSchema.parse({
+      ...raw,
+      formatVersion: PROJECT_FORMAT_VERSION,
+    }) as Project;
     expect(channelsOf(before)).toHaveLength(4);
     for (const bone of BONES) {
       // t = 0.5 is inside the authored range; t = 0.5 + DUR is past its end.
@@ -2932,7 +2935,10 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
     // same motion. If the bone fell to its base pose instead, this suite's wrap
     // rows would still pass — a frozen bone and a base-pose bone both "loop".
     const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({ ...raw, formatVersion: 10 }) as Project;
+    const before = ProjectSchema.parse({
+      ...raw,
+      formatVersion: PROJECT_FORMAT_VERSION,
+    }) as Project;
     const after = loadFromBytes(raw);
     for (const bone of BONES)
       // 🔴 NEVER t = DUR. A bound clip WRAPS at its duration and a channel CLAMPS

@@ -885,7 +885,7 @@ export async function buildGltfImportOps(
       type: 'addNode',
       nodeId: transformClipIds[i],
       nodeType: 'TransformClip',
-      params: { name, duration, loop: 'clamp', keyframes },
+      params: { name, duration, loop: 'hold', keyframes },
     });
   }
 
