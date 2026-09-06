@@ -299,11 +299,8 @@ export function appendSelectionClipRows(args: {
 }): ChannelRow[] {
   const { baseRows, nodes, selectedNodeId } = args;
   if (!selectedNodeId) return baseRows;
-  const selected = nodes[selectedNodeId];
-  if (!selected || selected.type !== 'GltfChild') return baseRows;
-
-  const cp = selected.params as { assetRef?: unknown; childName?: unknown } | undefined;
-  if (typeof cp?.assetRef !== 'string' || typeof cp?.childName !== 'string') return baseRows;
+  const cp = importedChildOf(nodes, selectedNodeId);
+  if (!cp) return baseRows;
 
   // FLAG-3: if this bone is already baked, its editable rows are in baseRows
   // (the orphan-channel path) — do NOT also append clip rows.
@@ -330,19 +327,13 @@ export function resolveClipRow(
   const childName = channelId.slice('clip:'.length, lastColon);
   if (!childName || !COMPONENTS.includes(component as Component)) return null;
 
-  // Find the GltfChild for this childName to recover its assetRef, then the
-  // active clip. (childName is unique within an asset; if two assets share a
-  // bone name the first match wins — acceptable for the display read.)
-  let assetRef: string | undefined;
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'GltfChild') continue;
-    const p = node.params as { childName?: unknown; assetRef?: unknown } | undefined;
-    if (p?.childName === childName && typeof p?.assetRef === 'string') {
-      assetRef = p.assetRef;
-      break;
-    }
-  }
-  if (!assetRef) return null;
+  // Find the imported child for this childName to recover its assetRef, then the
+  // active clip. (childName is unique within an asset; if two assets share a bone name
+  // the FIRST match wins — acceptable for a display read, and the seam documents that
+  // ambiguity in one place rather than each caller rediscovering it.)
+  const found = findImportedChild(nodes, childName);
+  if (!found) return null;
+  const assetRef = found[1].assetRef;
 
   const all = activeClipKeyframesForAsset(nodes, assetRef);
   const keyframes = all
@@ -392,6 +383,7 @@ export function componentIndex(component: Component): number {
 //      src/nodes/AnimationClip.ts:45-48 (the schema); issues #903, #889, #877.
 
 import { boundClipsForAsset, type GraphNodeLike } from '../app/animate/boundClipsForAsset';
+import { findImportedChild, importedChildOf } from '../app/importedChild';
 import type { AnimationClipParams } from '../nodes/AnimationClip';
 
 /** The components an `AnimationClip` can carry. Scale is absent from the schema,

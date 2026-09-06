@@ -68,6 +68,12 @@ const formatMigrations: Record<number, FormatMigration> = {
   // would never re-run an earlier pass, so its rig would stay frozen at the end of
   // its first cycle forever.
   9: migrateDropUnauthoredEagerChannels,
+  // v10 → v11 (#389 Stage C · C6): split each fused GltfChild into Object + GltfData.
+  // Its OWN format version for the same reason as every split above: a project saved at
+  // v10 carrying a fused imported child would never re-run an earlier pass, so its child
+  // would never split — and unlike the earlier kinds there is no fused fallback left to
+  // render it, because `GltfChild` retires in the same change.
+  10: migrateFusedGltfChildToSplit,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -935,6 +941,176 @@ export function migrateFusedBakedMeshToSplit(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 8 };
+}
+
+// ── v10 → v11: the imported glTF child splits (#389 Stage C · C6) ──────────────
+//
+// The LAST fused kind, and the only one whose predecessor does not survive the change:
+// `GltfChild` is retired here rather than left coexisting, because the conformance
+// machinery now requires a registered kind to name a migration that has already shipped
+// (splitKinds.roads R9) — there is no honest descriptor for a split that migrated
+// nothing. See src/nodes/GltfData.ts for the full argument.
+//
+// The Object INHERITS the child's id, so `nodeNameMap`, every clip track, every baked
+// per-bone channel `target`, every constraint target and every saved selection still
+// resolves with no re-pointing pass. That inheritance is load-bearing for this kind in a
+// way it was not for the others: an imported child is addressed BY NAME through
+// `GltfAsset.nodeNameMap`, which is a param on a different node this pass does not touch.
+//
+// THREE THINGS THIS KIND DOES THAT NO EARLIER PASS HAD TO:
+//
+//   1. THE MATERIAL SHAPE CHANGES, not just its home. The fused kind carried
+//      `materials: InlineMaterialSpec[]` — one per primitive, absent for a bone. The data
+//      half carries `MeshDataValue`'s shape instead: `material` (slot 0, NULLABLE) plus an
+//      optional `materialSlots` table for a genuinely multi-primitive child. This is not a
+//      preference: the conformance road requires a data param that survives to the
+//      evaluated value under an UNCHANGED path, and `materials.0.base.color` survives to
+//      nothing — the value has no `materials`.
+//
+//   2. AND SO THE MATERIAL CHANNELS MUST BE REWRITTEN, not merely re-targeted. A
+//      `materials.<slot>.<lobe>.<field>` channel aimed at the fused child becomes a
+//      `material.<lobe>.<field>` (or `materialSlots.<slot>.…`) channel aimed at the DATA
+//      node. Re-targeting alone would leave every animated glTF material addressing a
+//      param that does not exist — a channel that shows in the dopesheet and drives
+//      nothing, which is the exact failure mode #708 catalogued. `isDataParamPath` cannot
+//      express this, because it answers WHICH HALF and this also needs WHICH PATH.
+//
+//   3. `overridden` IS CARRIED SPARSELY. The fused schema defaulted it to three explicit
+//      `false`s, so every saved child has the key; the Object's is `.optional()` and
+//      sparse (mirroring `slotOverrides`). Copying it across verbatim would write a dead
+//      record into every migrated Object — a format change dressed as a migration — so
+//      only the components actually flagged survive, and a child nobody ever posed comes
+//      out carrying no key at all. All-false and absent mean the same thing to
+//      `resolveGltfChildTransform`, which reads presence per component.
+//
+// The POSE is hydrated with `?? default`, the light/baked idiom, and it is right here for
+// the same reason it was right there: identity is a MEANINGFUL base for a glTF node whose
+// own TRS was identity (`defaultTRS`), not a failure sentinel like the camera's fov 45.
+//
+// REF: src/nodes/GltfData.ts; src/nodes/ObjectNode.ts (`overridden`);
+//      src/app/importedChild.ts (the seam every reader goes through);
+//      src/core/import/gltfImportChain.ts (the producer that now emits this shape);
+//      docs/OBJECT-DATA-SPLIT-DESIGN.md §5; issue #389.
+
+/** `materials.<slot>.<rest>` → the data half's path for that slot, or null if not one. */
+function gltfMaterialPath(paramPath: unknown, slotCount: number): string | null {
+  if (typeof paramPath !== 'string') return null;
+  const m = /^materials\.(\d+)(?:\.(.*))?$/.exec(paramPath);
+  if (!m) return null;
+  const slot = Number(m[1]);
+  const rest = m[2];
+  // A multi-primitive child keeps the full table, and `dataSlotsOnly` reads
+  // `materialSlots ?? [material]` — so when the table exists it is what renders, and
+  // slot 0 must address it rather than the sibling `material`. When it does not exist
+  // there is only slot 0, and it is `material`.
+  const head = slotCount > 1 ? `materialSlots.${slot}` : 'material';
+  // A bare `materials.0` channel (the whole slot as one value) has no counterpart worth
+  // inventing: the shapes differ. Dropped rather than mis-pointed — and it cannot occur,
+  // since the only producer keys `<lobe>.<field>` (NPanel `fieldPath`).
+  if (rest === undefined || rest === '') return null;
+  // Out of range for the table we are actually writing: the channel addressed a slot the
+  // child does not have. Leave it alone rather than fabricate a home for it.
+  if (slotCount > 1 && slot >= slotCount) return null;
+  if (slotCount <= 1 && slot !== 0) return null;
+  return `${head}.${rest}`;
+}
+
+export function migrateFusedGltfChildToSplit(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 11 };
+
+  const objectVersion = getNodeType('Object')?.version ?? 1;
+  const gltfDataVersion = getNodeType('GltfData')?.version ?? 1;
+
+  // childId → { dataId, slotCount }. The slot count decides how a material channel's
+  // path is rewritten, so it has to be remembered from the mint and not re-derived.
+  const splitByChild = new Map<string, { dataId: string; slotCount: number }>();
+
+  for (const child of Object.values(nodes)) {
+    // Every non-GltfChild node is skipped — it never enters the loop. An ALREADY-split
+    // child is an `Object`, so it is skipped too: that is what makes this idempotent.
+    if (child?.type !== 'GltfChild' || !child.id) continue;
+
+    // Normalize through the retired ladder first (reuse, not a parallel copy). GltfChild
+    // is v1 with no steps, but keep the pattern: splitting raw params before normalising
+    // is the silent look-shift for old saves.
+    const params = normalizeRetiredParams('GltfChild', child.version, {
+      ...(child.params ?? {}),
+    });
+
+    const dataId = freshDataId(nodes, child.id);
+    const materials = Array.isArray(params.materials) ? (params.materials as unknown[]) : undefined;
+    const slotCount = materials?.length ?? 0;
+    splitByChild.set(child.id, { dataId, slotCount });
+
+    // The DATA half — the address plus the captured materials, no pose, no inputs.
+    nodes[dataId] = {
+      id: dataId,
+      type: 'GltfData',
+      version: gltfDataVersion,
+      params: {
+        assetRef: params.assetRef,
+        childName: params.childName,
+        // NOTHING IS INVENTED. A bone or an empty genuinely has no captured material and
+        // said so by omitting the array; the data half says so with an explicit `null`.
+        // Fabricating a grey here is the `BakedData` failure mode arrived at from the
+        // other side — it would render as the missing-material fallback and look edited.
+        material: materials?.[0] ?? null,
+        ...(slotCount > 1 ? { materialSlots: materials } : {}),
+      },
+      inputs: {},
+    };
+
+    // The OBJECT half — the child converted IN PLACE (inherits the id). Owns the pose and
+    // the override flags; points at the data node through `data`. Any pre-existing inputs
+    // are kept (a fused child has none today, but a constraint or rig edge added later is
+    // keyed on the inherited id and must survive).
+    const overridden = (params.overridden ?? {}) as Record<string, unknown>;
+    const flagged = Object.fromEntries(
+      (['position', 'rotation', 'scale'] as const)
+        .filter((f) => overridden[f] === true)
+        .map((f) => [f, true]),
+    );
+    child.type = 'Object';
+    child.version = objectVersion;
+    child.params = {
+      position: params.position ?? [0, 0, 0],
+      rotation: params.rotation ?? [0, 0, 0],
+      scale: params.scale ?? [1, 1, 1],
+      // Sparse: a child nobody posed comes out with no key at all. See note 3 above.
+      ...(Object.keys(flagged).length > 0 ? { overridden: flagged } : {}),
+    };
+    child.inputs = { ...(child.inputs ?? {}), data: { node: dataId, socket: 'out' } };
+  }
+
+  // Re-address the channels that named the DATA half. A channel names its subject by
+  // `params.target` (a node-id STRING) + `params.paramPath`; position/rotation/scale
+  // channels keep target = the child's id (now the Object) and are not touched here.
+  //
+  // ⚠️ This does NOT go through `isDataParamPath` like the five passes above it. That
+  // predicate answers "which half owns this param", and a glTF material channel needs
+  // its PATH rewritten as well — see note 2. Adding a `materials` arm to the shared
+  // predicate would re-target the path without rewriting it, which is worse than
+  // leaving it: the channel would resolve to a node that exists and a param that does
+  // not, and nothing would say so.
+  if (splitByChild.size > 0) {
+    for (const n of Object.values(nodes)) {
+      const target = n.params?.target;
+      if (typeof target !== 'string') continue;
+      const split = splitByChild.get(target);
+      if (!split || !n.params) continue;
+      const rewritten = gltfMaterialPath(n.params.paramPath, split.slotCount);
+      if (rewritten === null) continue;
+      n.params.target = split.dataId;
+      n.params.paramPath = rewritten;
+    }
+  }
+
+  return { ...proj, formatVersion: 11 };
 }
 
 export function registerFormatMigration(fromVersion: number, fn: FormatMigration): void {

@@ -213,18 +213,22 @@ describe('buildGltfImportOps', () => {
     expect(result.clipSelectId).not.toBeNull();
     expect(result.nodeNameMap.Cube).toBeDefined();
     // Op order (#222 — the import root is ONE transformable Group, no separate
-    // Transform; P7.7 #91 — one GltfChild addNode per scene child right after the
-    // GltfAsset addNode):
-    // GltfAsset, GltfChild×N (here 1: 'Cube'), Group, connect(gltf→grp),
-    // connect(grp→scene), TransformClip[0], ClipSelect, connect(clip[0]→sel),
-    // connect(sel→gltf.transformClip).
+    // Transform; P7.7 #91 — the scene children come right after the GltfAsset addNode).
+    //
+    // #389 — each child is now a PAIR plus the edge between them, so one child costs
+    // three ops where it used to cost one: GltfData, Object, connect(data→object). The
+    // data node comes FIRST because `addNode`/`connect` are order-dependent — an edge
+    // cannot be drawn to a node that does not exist yet — and that ordering is the thing
+    // this row is here to pin.
     //
     // P7.10 (#114): the connect(time→clip[0]) wire is GONE. #222 dropped the
-    // Transform addNode + its gltf→tx connect (2 fewer ops); total = 9.
+    // Transform addNode + its gltf→tx connect; total = 11.
     const types = result.ops.map((o: Op) => o.type);
     expect(types).toEqual([
       'addNode', // GltfAsset
-      'addNode', // GltfChild (Cube)
+      'addNode', // GltfData (Cube — the data half)
+      'addNode', // Object (Cube — the pose, inheriting the child dagId)
+      'connect', // data → object.data
       'addNode', // Group (transformable import root)
       'connect', // gltf → group.children
       'connect', // group → scene.children
@@ -233,18 +237,19 @@ describe('buildGltfImportOps', () => {
       'connect', // clip[0] → ClipSelect.clips
       'connect', // ClipSelect.out → GltfAsset.transformClip
     ]);
-    // The first GltfChild addNode sits at index 1 (between GltfAsset and Group).
-    const gcOp = result.ops[1];
+    // The child's OBJECT half sits at index 2 and inherits the nodeNameMap id — which is
+    // what keeps every clip target, channel target and saved selection resolving.
+    const gcOp = result.ops[2];
     expect(gcOp.type).toBe('addNode');
     if (gcOp.type === 'addNode') {
-      expect(gcOp.nodeType).toBe('GltfChild');
+      expect(gcOp.nodeType).toBe('Object');
       expect(gcOp.nodeId).toBe(result.nodeNameMap.Cube);
     }
-    // The Group is at index 2 and carries the transform params.
-    const grpOp = result.ops[2];
+    // The Group is at index 4 and carries the transform params.
+    const grpOp = result.ops[4];
     expect(grpOp.type).toBe('addNode');
     if (grpOp.type === 'addNode') expect(grpOp.nodeType).toBe('Group');
-    const tcOp = result.ops[5];
+    const tcOp = result.ops[7];
     expect(tcOp.type).toBe('addNode');
     if (tcOp.type === 'addNode') expect(tcOp.nodeType).toBe('TransformClip');
   });
@@ -668,9 +673,9 @@ describe('buildGltfImportOps', () => {
   });
 });
 
-// P7.7 (#91) Wave A2 — one GltfChild addNode per scene child, deterministic.
-describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
-  it('emits exactly one GltfChild addNode per json.nodes entry, index-ordered', async () => {
+// P7.7 (#91) Wave A2 / #389 — one Object+GltfData PAIR per scene child, deterministic.
+describe('buildGltfImportOps — imported-child emission (#91 A2, #389)', () => {
+  it('emits exactly one data addNode per json.nodes entry, index-ordered', async () => {
     // Two distinct nodes, no animations (degenerate static path).
     const json: GltfJson = { nodes: [{ name: 'Root' }, { name: 'Leaf' }] };
     const buf = makeGlb(json);
@@ -679,7 +684,7 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
       stateWithTimeSource(),
     );
     const childOps = result.ops.filter(
-      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfData',
     );
     expect(childOps).toHaveLength(2);
     // Index order: childName Root (index 0) then Leaf (index 1).
@@ -689,7 +694,7 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
     }
   });
 
-  it('GltfChild ids equal hashId(gltfChild, assetRef, key) — the nodeNameMap id', async () => {
+  it('the child OBJECT id equals hashId(gltfChild, assetRef, key) — the nodeNameMap id', async () => {
     const json: GltfJson = { nodes: [{ name: 'Root' }, { name: 'Leaf' }] };
     const buf = makeGlb(json);
     const result = await buildGltfImportOps(
@@ -697,18 +702,26 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
       stateWithTimeSource(),
     );
     const childOps = result.ops.filter(
-      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfData',
     );
     for (const op of childOps) {
       if (op.type !== 'addNode') continue;
       const key = (op.params as { childName: string }).childName;
-      // The emission MUST reuse the renderer's lookup id (the deduped key's
-      // hashId), not the raw name — otherwise the rendered name lookup misses.
-      expect(op.nodeId).toBe(result.nodeNameMap[key]);
+      // #389 — the id under test is the OBJECT's, not the data node's, and the difference
+      // is the whole point: the Object INHERITS the fused kind's id so the renderer's
+      // by-name lookup, every clip target and every saved selection still resolve. The
+      // data node's id is new and deliberately in its own namespace.
+      const objectOp = result.ops.find(
+        (o: Op) =>
+          o.type === 'addNode' && o.nodeType === 'Object' && o.nodeId === result.nodeNameMap[key],
+      );
+      expect(objectOp, `no Object half for child "${key}"`).toBeDefined();
+      // And the data half it points at is a DIFFERENT node.
+      expect(op.nodeId).not.toBe(result.nodeNameMap[key]);
     }
   });
 
-  it('seeds the child base TRS + overridden all-false', async () => {
+  it('seeds the child base TRS on the Object, with NO overridden key', async () => {
     const json: GltfJson = {
       nodes: [{ name: 'Mover', translation: [1, 2, 3], scale: [2, 2, 2] }],
     };
@@ -717,26 +730,30 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
       { buffer: buf, assetRef: 'asset/m.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
-    const childOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild');
-    if (childOp?.type !== 'addNode') throw new Error('expected GltfChild addNode');
+    const childOp = result.ops.find((o: Op) => o.type === 'addNode' && o.nodeType === 'Object');
+    if (childOp?.type !== 'addNode') throw new Error('expected the child Object addNode');
     const p = childOp.params as {
       position: number[];
       scale: number[];
-      overridden: { position: boolean; rotation: boolean; scale: boolean };
+      overridden?: unknown;
     };
     expect(p.position).toEqual([1, 2, 3]);
     expect(p.scale).toEqual([2, 2, 2]);
-    expect(p.overridden).toEqual({ position: false, rotation: false, scale: false });
+    // #389 — ABSENT, not three `false`s. The Object's `overridden` is optional and sparse
+    // (mirroring `slotOverrides`), so a freshly imported child carries only its base pose
+    // and the gizmo write path mints the flags on first edit. Writing the triple here
+    // would put a dead record into every saved Object — a format change dressed as a seed.
+    expect(p.overridden).toBeUndefined();
   });
 
-  it('GltfChild addNodes precede the TransformClip block in the atomic chain', async () => {
+  it('the child addNodes precede the TransformClip block in the atomic chain', async () => {
     const buf = singleTranslationClipGlb();
     const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'asset/cube.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
     const firstChild = result.ops.findIndex(
-      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfData',
     );
     const firstClip = result.ops.findIndex(
       (o: Op) => o.type === 'addNode' && o.nodeType === 'TransformClip',
@@ -745,14 +762,14 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
     expect(firstClip).toBeGreaterThan(firstChild);
   });
 
-  it('skinned-bar.glb fixture: one GltfChild per scene child (3 nodes)', async () => {
+  it('skinned-bar.glb fixture: one imported-child pair per scene child (3 nodes)', async () => {
     const buf = skinnedBarBuffer();
     const result = await buildGltfImportOps(
       { buffer: buf, assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
     const childOps = result.ops.filter(
-      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfChild',
+      (o: Op) => o.type === 'addNode' && o.nodeType === 'GltfData',
     );
     // skinned-bar.glb has 3 json.nodes: Bone1, Bone0, SkinnedBar.
     expect(childOps).toHaveLength(3);
@@ -772,7 +789,7 @@ describe('buildGltfImportOps — GltfChild emission (#91 A2)', () => {
       { buffer: skinnedBarBuffer(), assetRef: 'assets/skinned-bar.glb', sceneNodeId: 'n_scene' },
       stateWithTimeSource(),
     );
-    // The whole ops array — including the GltfChild addNodes — must be
+    // The whole ops array — including the imported-child pairs — must be
     // byte-identical. This is the V22 gate: deterministic ids + locked order.
     expect(JSON.stringify(a.ops)).toBe(JSON.stringify(b.ops));
   });
@@ -807,10 +824,25 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
       };
       emitted.push(op.nodeId);
     }
+    // #389 — the CONNECT ops have to land too, and this fixture used to drop them. It got
+    // away with it because every id the collector needed was findable from params alone.
+    // That stopped being true when an imported child became a pair: the Object carries no
+    // `assetRef`, so it is reachable ONLY through the `data` edge — and a fixture that
+    // discards edges cannot exhibit the property this row asserts. It would have reported
+    // a missing Object as a collector bug rather than as its own blindness.
+    for (const op of result.ops) {
+      if (op.type !== 'connect') continue;
+      const target = nodes[op.to.node];
+      if (target)
+        (target.inputs as Record<string, unknown>)[op.to.socket] = {
+          node: op.from.node,
+          socket: op.from.socket,
+        };
+    }
     return { state: { nodes, outputs: {} } as unknown as DagState, emitted };
   }
 
-  it('selects every emitted import node (GltfAsset + GltfChild + Group + TransformClip + ClipSelect)', async () => {
+  it('selects every emitted import node (GltfAsset + child pair + Group + TransformClip + ClipSelect)', async () => {
     // #222 — the import no longer emits a separate Transform (the Group is the
     // transformable root). importGroupNodeIds still includes the legacy `tx` id
     // so pre-#222 saves' delete-cascade stays intact; it just matches no node here.
@@ -819,7 +851,7 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
     for (const id of emitted) expect(group.has(id)).toBe(true);
     const types = new Set([...group].map((id) => state.nodes[id]?.type).filter(Boolean));
     expect(types).toEqual(
-      new Set(['GltfAsset', 'GltfChild', 'Group', 'TransformClip', 'ClipSelect']),
+      new Set(['GltfAsset', 'GltfData', 'Object', 'Group', 'TransformClip', 'ClipSelect']),
     );
   });
 

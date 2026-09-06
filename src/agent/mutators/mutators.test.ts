@@ -3877,6 +3877,7 @@ import {
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
 import { gltfChildDagId } from '../../core/import/gltfImportChain';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
@@ -3995,19 +3996,12 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       from: { node: 'bake_sel', socket: 'out' },
       to: { node: 'bake_asset', socket: 'transformClip' },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(BAKE_ASSET, 'bone_1'),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: BAKE_ASSET,
-        childName: 'bone_1',
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(gltfChildDagId(BAKE_ASSET, 'bone_1'), {
+      assetRef: BAKE_ASSET,
+      childName: 'bone_1',
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
     return s;
   }
 

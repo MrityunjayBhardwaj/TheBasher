@@ -18,6 +18,7 @@ import { useDiffStore } from '../../agent/diff/store';
 import { dispatchBakeThenRetime } from './dispatchMutator';
 import { parseClipRowId, hasBakedChannel, assetRefForChild } from './bakeOnEdit';
 import { gltfChildDagId, gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'asset-d2';
 const CHILD = 'bone_1';
@@ -72,19 +73,12 @@ function buildScene(): DagState {
     from: { node: 'n_sel', socket: 'out' },
     to: { node: 'n_gltf', socket: 'transformClip' },
   }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: gltfChildDagId(ASSET, CHILD),
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET,
-      childName: CHILD,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      overridden: { position: false, rotation: false, scale: false },
-    },
-  }).next;
+  for (const op of importedChildOps(gltfChildDagId(ASSET, CHILD), {
+    assetRef: ASSET,
+    childName: CHILD,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   return s;
 }
 
@@ -175,19 +169,12 @@ describe('dispatchBakeThenRetime (D2 — copy-on-write, one undo)', () => {
   it('rejects (mutates nothing) when there is no clip track for the bone', () => {
     // A scene with the GltfChild but no clip.
     let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(ASSET, CHILD),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: CHILD,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(gltfChildDagId(ASSET, CHILD), {
+      assetRef: ASSET,
+      childName: CHILD,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
     useDagStore.getState().hydrate(s);
 
     const res = dispatchBakeThenRetime({

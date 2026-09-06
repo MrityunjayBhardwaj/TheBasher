@@ -10,6 +10,7 @@ import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../core/import/gltfImportChain';
 import { animationClipRowsForAsset, bakedChannelKeysForAsset } from './clipChannelRows';
+import { importedChildNodes } from '../test-utils/importedChildFixture';
 
 const ASSET = 'user-imports/dwarf.glb';
 const HIPS = 'mixamorig_Hips';
@@ -34,28 +35,8 @@ function rigged(extra?: Nodes): Nodes {
       params: { skinIndex: 0 },
       inputs: { asset: { node: 'n_asset', socket: 'out' } },
     },
-    [gltfChildDagId(ASSET, HIPS)]: {
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: HIPS,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
-    [gltfChildDagId(ASSET, ARM)]: {
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: ARM,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
+    ...importedChildNodes(gltfChildDagId(ASSET, HIPS), { assetRef: ASSET, childName: HIPS }),
+    ...importedChildNodes(gltfChildDagId(ASSET, ARM), { assetRef: ASSET, childName: ARM }),
     n_clip: {
       type: 'AnimationClip',
       params: {

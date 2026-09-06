@@ -95,7 +95,6 @@ export type SectionCtx = {
  *  so the union is what makes "declared but never wired" a compile error. */
 export type ControlKey =
   | 'slotSelector'
-  | 'gltfMaterialEditor'
   | 'gltfMaterialReadout'
   | 'sceneEnvironment'
   | 'cameraLens'
@@ -133,13 +132,13 @@ export type SectionControl = {
 /** A section whose control renders whenever the section is declared. */
 const whenDeclared = () => true;
 
-/** #178 S4 — a GltfChild that captured OpenPBR materials at import gets the
- *  EDITABLE lobe editor; one with none (a pre-#178 save, an empty bone) and the
- *  whole-asset GltfAsset keep the read-only readout. */
-function hasCapturedMaterials(ctx: SectionCtx): boolean {
-  const m = (ctx.params as { materials?: unknown }).materials;
-  return Array.isArray(m) && m.length > 0;
-}
+// #389 — `hasCapturedMaterials` lived here, selecting the EDITABLE glTF lobe editor for a
+// fused child that captured OpenPBR materials at import. It read `params.materials`, a
+// param the split retired: an imported child's captured material is now an ordinary
+// `material` on its `GltfData`, edited by the SAME `MaterialRows` every other data kind
+// uses, through the same dotted `material.<lobe>.<field>` path. So there is no glTF-shaped
+// material editor any more, which is the point — the bespoke surface existed only because
+// the fused kind stored an array the generic rows could not address.
 
 /**
  * Every section's custom controls, in render order.
@@ -176,10 +175,16 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       // raw row in the unrouted bucket beside the selector that renders it.
       omitRowKeys: ['slotIndex'],
     },
-    { key: 'gltfMaterialEditor', applies: hasCapturedMaterials, placement: 'before' },
     {
       key: 'gltfMaterialReadout',
-      applies: (c) => c.ownsParam('assetRef') && !hasCapturedMaterials(c),
+      // The WHOLE-ASSET node only (#389). The gate used to be "owns assetRef and captured
+      // no materials", which selected the fused child as well — correct then, wrong now:
+      // `GltfData` also owns `assetRef`, and it owns a real editable `material` besides, so
+      // the old gate would put a read-only readout in front of a material the director can
+      // actually edit. Worse, it would read EMPTY: the readout filters the clone's slots by
+      // the stamped child id, which is the OBJECT's, and the params node here is the data
+      // half. `childName` is the possession that separates the two.
+      applies: (c) => c.ownsParam('assetRef') && !c.ownsParam('childName'),
       placement: 'before',
     },
     // #394 S3d — the material operator stack, the fourth OperatorStackRows caller.
@@ -189,7 +194,7 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
     // evaluating it (`resolveDataKind`), and `SectionCtx` deliberately carries no store
     // and no evaluator — it is a pure, allocation-free predicate over params. Five other
     // node types declare 'material' without being on the lane (`Material` itself, the
-    // scene-band `MaterialOverride`, `GltfChild`, `GltfAsset`, `ScatterNode`), so the
+    // scene-band `MaterialOverride`, `GltfData`, `GltfAsset`, `ScatterNode`), so the
     // control renders NOTHING for them, decided inside `MaterialStackControls` where the
     // question can actually be asked. Stated here so the split does not read as an
     // oversight: the table gates on declaration, the component gates on the lane.

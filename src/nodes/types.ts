@@ -1042,49 +1042,11 @@ export interface GltfAssetValue {
   readonly transformClip: TransformClipValue | null;
 }
 
-/**
- * P7.7 — an addressable proxy for ONE glTF scene child (issue #91).
- *
- * Emitted as a real DAG node per scene child at import (gltfImportChain A2),
- * it owns ONLY the child's local TRS override; three.js owns the geometry +
- * skeleton (#88 / H45 / B12). The renderer applies this TRS back onto the
- * named three.js object by name lookup — it is NEVER walked as a scene object.
- *
- * NOT a member of the `SceneChild` union, deliberately: it is not a scene
- * producer (R-1), so it must not be rendered as a scene object (the #88
- * double-render guard). The resolver (Wave C) reads it by id from the DAG;
- * the renderer (Wave B) reads it by assetRef filter.
- *
- * `overridden` is the explicit dirty signal (R-4): the layering primitive
- * branches on these flags, never on value-equality against the base TRS.
- * Rotation is degrees Euler XYZ (the codebase convention).
- */
-export interface GltfChildValue {
-  readonly kind: 'GltfChild';
-  readonly childName: string;
-  readonly assetRef: string;
-  readonly position: Vec3;
-  readonly rotation: Vec3;
-  readonly scale: Vec3;
-  readonly overridden: {
-    readonly position: boolean;
-    readonly rotation: boolean;
-    readonly scale: boolean;
-  };
-  /**
-   * #188 (v0.7 Phase 3) — the OpenPBR material(s) captured at import, ONE per
-   * mesh primitive (slot) in primitive order, surfaced from `params.materials`
-   * so the renderer reads the EVALUATED (channel-overlaid) value, not raw params
-   * (the [[H40]] evaluated-read rule, now extended to glTF materials). A material
-   * channel (`paramPath = materials.<slot>.<lobe>.<field>`, target = this child's
-   * dagId) overlays onto THIS array via the ONE `overlayChannels` primitive (V57),
-   * exactly as a transform channel overlays `position`/`rotation`/`scale`. OPTIONAL:
-   * absent = a pre-#178 save OR a node with no mesh (empty/bone) → the renderer
-   * falls back to the clone's embedded material (V10/H14 backward-compat).
-   */
-  readonly materials?: readonly InlineMaterialSpec[];
-}
-
+// #389 — `GltfChildValue` lived here: the fused imported child's evaluated value (its TRS,
+// its address, its `overridden` triple and its captured `materials` array). It is gone with
+// the node that produced it. The split's halves already had values: the pose is an ordinary
+// `ObjectValue`, and what the child IS is a `MeshDataValue` minted by `GltfData` — which is
+// what let an imported mesh join the operator chain at all (#367).
 export interface TransformValue {
   readonly kind: 'Transform';
   readonly position: Vec3;

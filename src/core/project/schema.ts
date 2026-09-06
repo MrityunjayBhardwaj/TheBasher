@@ -51,7 +51,7 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // its whole rig at the end of the first cycle. Only channels bit-identical to a
 // re-derivation from their own bound clip are dropped; anything edited is kept. See
 // migrations.ts formatMigrations[9].
-export const PROJECT_FORMAT_VERSION = 10;
+export const PROJECT_FORMAT_VERSION = 11;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

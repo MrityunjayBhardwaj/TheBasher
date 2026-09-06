@@ -79,7 +79,18 @@ export const GltfDataParams = z.object({
   /** The sanitised name key — the SAME key `nodeNameMap` and every clip track use. */
   childName: z.string(),
   /**
-   * The child's PRIMARY (lowest-slot) material, captured from the glTF at import.
+   * The child's PRIMARY (lowest-slot) material, captured from the glTF at import, or
+   * `null` when the child has none.
+   *
+   * NULLABLE AND NOT OPTIONAL, and the difference is the whole point. A bone, an empty
+   * and a pre-#178 save all genuinely have no captured material — the fused `GltfChild`
+   * said so by OMITTING its `materials` array, and the renderer read that omission as
+   * "keep the clone's embedded material" (V10/H14). That answer has to survive the
+   * split, and `MeshDataValue.material` is already typed `InlineMaterialSpec | null` to
+   * carry it. Making the key required and its value nullable is what keeps the absence
+   * LOUD: a migration that failed to carry a material writes nothing and fails to parse,
+   * where an optional key would let it pass as "no material" and render the fallback
+   * grey — the `BakedData` failure mode, arrived at from the other side.
    *
    * A single spec rather than the array, because that is what `MeshDataValue.material`
    * carries and what the conformance roads compare against under an unchanged path. The
@@ -89,7 +100,7 @@ export const GltfDataParams = z.object({
    * `materialSlots ?? [material]`, so slot 0 appearing in both places is the
    * established shape, not a duplication introduced here.
    */
-  material: openpbrMaterialSchema(),
+  material: openpbrMaterialSchema().nullable(),
   /**
    * The FULL captured slot table, in glTF primitive order — present only for a child
    * with more than one primitive. Absent means "one slot, and it is `material`", which
@@ -113,7 +124,16 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
   inputs: {},
   outputs: { out: { type: 'ObjectData', cardinality: 'single' } },
   // Data owns what the child IS, never where it sits: no 'transform'/'constraint' section.
-  inspectorSections: ['mesh', 'material'],
+  //
+  // 'material' ALONE, and 'mesh' is deliberately absent — the same list `BakedData`
+  // declares, for the same reason. A section is a promise that something renders in it,
+  // and the reachability gate asks the inspector's own table whether anything does. The
+  // box and the sphere lead with 'mesh' because their geometry is AUTHORED there (`size`,
+  // `radius`). A glTF child's geometry is not authored at all: it is whatever the asset
+  // contains, and its two identifying params are an ADDRESS rather than a control. So a
+  // declared 'mesh' here would be a titled, permanently empty card — the #458 defect,
+  // which is exactly what the gate reds on.
+  inspectorSections: ['material'],
   // ⚠️ ONLY `material` is homed, and the omissions are deliberate rather than unfinished.
   //
   // A home names the section that RENDERS a param. `material` renders, exactly as it does
@@ -144,8 +164,12 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
       geometry,
       material: params.material,
       // #536 — minted here for the same reason every other producer mints it after its
-      // fold: identity follows the resolved material, not the authored param.
-      materialKey: materialKeyOf(params.material),
+      // fold: identity follows the resolved material, not the authored param. NULL
+      // EXACTLY WHEN `material` IS, which the value's own doc states as an invariant:
+      // `materialKeyOf(null)` answers the string `'n'`, a perfectly good key for a
+      // material that does not exist, and two materialless children sharing it would
+      // read as "these draw one material" to every downstream identity consumer.
+      materialKey: params.material === null ? null : materialKeyOf(params.material),
       ...(params.materialSlots === undefined ? {} : { materialSlots: params.materialSlots }),
       // #633 — null, and NOT "not yet". A glTF child's buffers live in a loaded asset
       // clone this value never sees, so there is no attribute set to derive an identity

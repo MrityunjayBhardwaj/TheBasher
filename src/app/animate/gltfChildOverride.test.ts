@@ -29,6 +29,7 @@ import { routeAnimatedGrab } from './autoKeyCommit';
 import { useDagStore } from '../../core/dag/store';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTimeStore } from '../stores/timeStore';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET_REF = 'assets/skinned-bar.glb';
 const CHILD_ID = 'n_gltf_child';
@@ -46,19 +47,13 @@ function buildChildState(): DagState {
       nodeType: 'GltfAsset',
       params: { assetRef: ASSET_REF, nodeNameMap: { [CHILD_NAME]: CHILD_ID } },
     },
-    {
-      type: 'addNode',
-      nodeId: CHILD_ID,
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET_REF,
-        childName: CHILD_NAME,
-        position: BASE,
-        rotation: ID3,
-        scale: SCALE1,
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    },
+    ...(importedChildOps(CHILD_ID, {
+      assetRef: ASSET_REF,
+      childName: CHILD_NAME,
+      position: BASE,
+      rotation: ID3,
+      scale: SCALE1,
+    }) as Op[]),
   ];
   for (const op of ops) state = applyOp(state, op).next;
   return state;
@@ -95,12 +90,18 @@ describe('GltfChild manual-override write (P7.7 C2)', () => {
 
     const p = s.nodes[CHILD_ID].params as {
       position: [number, number, number];
-      overridden: { position: boolean; rotation: boolean; scale: boolean };
+      overridden: { position?: boolean; rotation?: boolean; scale?: boolean };
     };
     expect(p.position).toEqual(newPos); // value written
     expect(p.overridden.position).toBe(true); // matching flag flipped
-    expect(p.overridden.rotation).toBe(false); // others untouched
-    expect(p.overridden.scale).toBe(false);
+    // #389 — SPARSE, and the assertion says so rather than saying `false`. The flags moved
+    // onto `Object` as an optional record with optional keys (mirroring `slotOverrides`),
+    // so an untouched component has NO KEY at all. That is the same answer as `false` to
+    // every reader — `resolveGltfChildTransform` branches on truthiness and
+    // `importedChildOf` normalises with `=== true` — but writing `toBe(false)` here would
+    // pin a dead record into every saved Object, which is the shape the schema refused.
+    expect(p.overridden.rotation).toBeUndefined(); // others untouched — and unwritten
+    expect(p.overridden.scale).toBeUndefined();
   });
 
   // 3. The dotted nested path is honored by applySetParam (the C2 mechanism):
@@ -116,6 +117,7 @@ describe('GltfChild manual-override write (P7.7 C2)', () => {
     const p = s.nodes[CHILD_ID].params as {
       overridden: { position: boolean; rotation: boolean; scale: boolean };
     };
-    expect(p.overridden).toEqual({ position: false, rotation: false, scale: true });
+    // Sparse (#389): the write creates the record with only the flagged component in it.
+    expect(p.overridden).toEqual({ scale: true });
   });
 });

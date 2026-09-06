@@ -33,6 +33,7 @@ import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -899,19 +900,14 @@ function gltfChildState() {
     from: { node: 'n_gltf', socket: 'out' },
     to: { node: sceneId, socket: 'children' },
   }).next;
-  state = applyOp(state, {
-    type: 'addNode',
-    nodeId: 'n_child',
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET_REF,
-      childName: CHILD_NAME,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [2, 2, 2],
-      overridden: { position: false, rotation: false, scale: true },
-    },
-  }).next;
+  for (const op of importedChildOps('n_child', {
+    assetRef: ASSET_REF,
+    childName: CHILD_NAME,
+    scale: [2, 2, 2],
+    overridden: { scale: true },
+  })) {
+    state = applyOp(state, op as Op).next;
+  }
   return state;
 }
 

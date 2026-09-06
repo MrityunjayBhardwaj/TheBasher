@@ -261,12 +261,17 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':
       'the inspector’s read/write rule — glTF editor only, ORIGIN road, values unconverted',
-    // NPanel names the field ONLY in the aria path it gives each per-map row
-    // (`materials.<n>.mapUvTransforms.<slot>.tiling.x`), which mirrors the param path
-    // on purpose — an addressable value whose path does not match its param is how a
-    // surface animates in the panel and freezes on screen. The read/write RULE is not
-    // here; the panel holds no per-map logic beyond rendering a row per returned slot.
-    'src/app/NPanel.tsx': 'glTF material editor — per-map rows, ORIGIN road, aria path only',
+    // 🔴 #389 REMOVED `src/app/NPanel.tsx` FROM THIS LIST, and the removal is the honest
+    // direction for this census rather than a loosening of it. The panel named the field in
+    // exactly one place: the aria path it gave each per-map row of the glTF material editor
+    // (`materials.<n>.mapUvTransforms.<slot>.tiling.x`). That editor is gone — the split
+    // retired the `materials` ARRAY it existed to address, and an imported child's material
+    // now renders through the same `MaterialRows` every other kind uses. With no glTF-shaped
+    // editor there is no glTF-shaped aria path, so the panel names nothing here.
+    //
+    // The row is asserted in BOTH directions below, which is what makes this safe to shrink:
+    // a module that stopped naming the field is REPORTED rather than quietly kept, so this
+    // entry could not have been left behind as a stale permission.
   };
 
   /**

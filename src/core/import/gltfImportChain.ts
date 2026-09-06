@@ -40,6 +40,10 @@ import {
 } from './glb';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
+// #389 — the ONE reader of "is this node an imported child, and what is it?". Imported
+// rather than re-spelled here for the reason its own header gives: the fused kind's
+// spelling used to live in fifteen places, and this module was one of them.
+import { importedChildDataId, importedChildrenOf } from '../../app/importedChild';
 
 export interface GltfImportChainResult {
   readonly ops: Op[];
@@ -181,6 +185,25 @@ export function gltfChildDagId(assetRef: string, childName: string): string {
 }
 
 /**
+ * The content-addressed DAG id of an imported child's DATA half (#389).
+ *
+ * The OBJECT half keeps {@link gltfChildDagId} — it inherits the fused node's id, so every
+ * clip target, channel `target`, constraint target, saved selection and `nodeNameMap` entry
+ * that named the child still resolves with nothing re-pointed. Only the data node is new,
+ * and it gets its own namespace so it can never collide with the child's id nor a baked
+ * channel's.
+ *
+ * ⚠️ The MIGRATION does not use this, and that is not an oversight. A saved project may
+ * already hold a node at any id, so the ladder mints through `freshDataId` and probes for
+ * a collision — the same thing every split pass before this one does. The two derivations
+ * name the same thing in different projects and never have to agree; what must be
+ * deterministic is THIS one, so re-importing an asset is byte-identical (V22).
+ */
+export function gltfChildDataDagId(assetRef: string, childName: string): string {
+  return hashId('gltfChildData', assetRef, childName);
+}
+
+/**
  * The content-addressed DAG id of a P7.12 baked KeyframeChannel for one bone's
  * TRS component (position/rotation/scale). Deterministic (V22): re-baking the
  * same bone yields the SAME ids, so the bake is idempotent (D1 guards on
@@ -249,15 +272,26 @@ export function importGroupNodeIds(assetRef: string, state: DagState): string[] 
   for (let i = 0; state.nodes[gltfSkeletonDagId(assetRef, i)]; i++) {
     ids.add(gltfSkeletonDagId(assetRef, i));
   }
-  // assetRef-carrying nodes (GltfAsset + GltfChild satellites) — find by params,
-  // the authoritative source (independent of the hashId derivation + nameMap).
+  // assetRef-carrying nodes (the GltfAsset itself) — find by params, the authoritative
+  // source (independent of the hashId derivation + nameMap).
   for (const node of Object.values(state.nodes)) {
     if (
-      (node.type === 'GltfAsset' || node.type === 'GltfChild') &&
+      node.type === 'GltfAsset' &&
       (node.params as { assetRef?: string } | undefined)?.assetRef === assetRef
     ) {
       ids.add(node.id);
     }
+  }
+  // #389 — the imported children, BOTH HALVES. A param scan alone no longer finds them:
+  // after the split the `assetRef` lives on the DATA node and the OBJECT carries only a
+  // pose, so the old `type === 'GltfChild' && params.assetRef === …` test would collect
+  // every data node and leave every Object behind — a deleted asset would strand one
+  // poseless, dataless node per bone in the outliner. The seam answers the membership
+  // question and hands back the pair.
+  for (const [objectId] of importedChildrenOf(state.nodes, assetRef)) {
+    ids.add(objectId);
+    const dataId = importedChildDataId(state.nodes, objectId);
+    if (dataId) ids.add(dataId);
   }
   return [...ids].filter((id) => state.nodes[id] !== undefined);
 }
@@ -802,39 +836,64 @@ export async function buildGltfImportOps(
       to: { node: skeletonId, socket: 'asset' },
     });
   }
-  // P7.7 (#91) — one GltfChild addNode per scene child, in json.nodes
+  // P7.7 (#91) / #389 — one Object + GltfData PAIR per scene child, in json.nodes
   // INTEGER-INDEX order (NOT Object.keys — that order is incidental today
   // and a future map-build change would silently reorder the Op stream,
-  // breaking V22). The dagId is the SAME content-addressed id already
+  // breaking V22). The OBJECT's dagId is the SAME content-addressed id already
   // computed by buildNodeNameMap (hashId('gltfChild', assetRef, key)), so
-  // re-import is byte-identical and the renderer's name lookup matches.
-  // Seeded with the child's captured base TRS (defaultTRS) and overridden
-  // all-false — the manual dirty flags are set later by the gizmo (Wave C).
-  // These are inputless addressing satellites (R-1): NOT connected to
-  // anything. Emitted in the SAME atomic ops array (K6 — one Cmd+Z),
-  // BEFORE the TransformClip/ClipSelect block so the chain order is locked.
+  // re-import is byte-identical and the renderer's name lookup matches — the
+  // split moved what a child IS onto a second node and left WHERE IT IS, and
+  // therefore its id, exactly where every consumer already looks for it.
+  //
+  // The Object is seeded with the child's captured base TRS (defaultTRS) and NO
+  // `overridden` key at all — sparse, so a freshly imported child carries only its
+  // base and the gizmo write path mints the flags on first edit (Wave C). Writing
+  // three explicit `false`s would be a format difference dressed as a default.
+  //
+  // These pairs are still inputless as far as the SCENE is concerned (R-1): the
+  // Object takes the data edge and nothing else, and reaches no scene parent, so
+  // it is drawn by the asset clone rather than by itself (`drawnByAssetClone`).
+  // Emitted in the SAME atomic ops array (K6 — one Cmd+Z), BEFORE the
+  // TransformClip/ClipSelect block so the chain order is locked.
   const childNodes = json.nodes ?? [];
   for (let i = 0; i < childNodes.length; i++) {
     const key = keyByGltfNodeIndex[i];
     const dagId = nodeNameMap[key];
+    const dataId = gltfChildDataDagId(args.assetRef, key);
     const base = defaultTRS(childNodes[i]);
     // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR so
-    // the renderer/inspector treat them like native materials. Omitted (undefined)
-    // for an empty/bone node → renderer keeps the clone's embedded material.
+    // the renderer/inspector treat them like native materials. `null` material for
+    // an empty/bone node → renderer keeps the clone's embedded material.
     const materials = captureChildMaterials(childNodes[i], json);
     ops.push({
       type: 'addNode',
-      nodeId: dagId,
-      nodeType: 'GltfChild',
+      nodeId: dataId,
+      nodeType: 'GltfData',
       params: {
         assetRef: args.assetRef,
         childName: key,
+        // Slot 0 and the full table, the split every MeshData producer already uses.
+        // The table is written ONLY for a genuinely multi-primitive child: a one-entry
+        // array and an absent one are the same answer written two ways, and
+        // `dataSlotsOnly` derives the former from `material` (see GltfData.ts).
+        material: materials?.[0] ?? null,
+        ...(materials && materials.length > 1 ? { materialSlots: materials } : {}),
+      },
+    });
+    ops.push({
+      type: 'addNode',
+      nodeId: dagId,
+      nodeType: 'Object',
+      params: {
         position: base.position,
         rotation: base.rotation,
         scale: base.scale,
-        overridden: { position: false, rotation: false, scale: false },
-        ...(materials ? { materials } : {}),
       },
+    });
+    ops.push({
+      type: 'connect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: dagId, socket: 'data' },
     });
   }
   // #222 — the import root is ONE transformable Group (Blender's parent/Empty),

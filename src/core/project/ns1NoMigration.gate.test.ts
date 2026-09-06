@@ -44,6 +44,7 @@ import { loadProject, projectPath } from './io';
 import { PROJECT_FORMAT_VERSION } from './schema';
 import { readPreNs1FixtureBytes } from '../../../tools/gates/preNs1Fixture';
 import type { EvalCtx } from '../dag/types';
+import { RETIRED_LADDERS } from './retiredLadders';
 
 interface FixtureShape {
   readonly id: string;
@@ -88,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly once since the freeze, and #915 is that once', () => {
+  it('has moved the project format version exactly twice since the freeze, and both are named', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -102,7 +103,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // frozen app output — so the distance between it and live is the thing to pin, and it
     // is still an exact equality against those frozen bytes. A SECOND unplanned bump reds
     // this row again, which is the whole point of having it.
-    const MIGRATIONS_SINCE_FREEZE = 1; // #915 only
+    const MIGRATIONS_SINCE_FREEZE = 2; // #915 (v9 → v10), then #389 (v10 → v11)
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 
@@ -125,12 +126,29 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     }
     expect(recorded.size).toBeGreaterThan(0); // a loop that never ran reports clean
 
+    // 🔴 #389 — RETIRED types are skipped, and the exclusion is derived rather than listed.
+    // A type the split retired has NO live registry entry, so `getNodeType` answers
+    // `undefined` and the comparison below would report it as a version move — which is a
+    // different fact with a different fix. Its params are not stranded: `RETIRED_LADDERS`
+    // is exactly the record that says how they normalise, and the format migration is what
+    // reads it. Deriving the skip from that map rather than naming `GltfChild` here means
+    // the next retirement enrols itself, and a type that is neither live NOR retired still
+    // reds — which is the case this row actually protects against.
     const moved: string[] = [];
+    const retired: string[] = [];
     for (const [type, version] of recorded) {
+      if (RETIRED_LADDERS[type]) {
+        retired.push(type);
+        continue;
+      }
       const live = getNodeType(type)?.version;
       if (live !== version) moved.push(`${type}: fixture ${version} → registry ${live}`);
     }
     expect(moved).toEqual([]);
+    // ANTI-VACUITY for the skip: the fixture really does carry a retired kind, so the
+    // branch above is exercised rather than merely present. Without this the exclusion
+    // could go stale into a no-op and nothing would say so.
+    expect(retired).toContain('GltfChild');
   });
 
   it('loads and resolves to the SAME geometry as before the phase', async () => {

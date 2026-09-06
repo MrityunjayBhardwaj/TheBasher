@@ -52,6 +52,7 @@
 //      issues #889, #888, #877, #843.
 
 import type { DagState } from '../../core/dag/state';
+import { importedChildOf } from '../importedChild';
 import type { Op } from '../../core/dag/types';
 import {
   bakeChannelOpsForBone,
@@ -89,19 +90,20 @@ export interface EnsuredChannel {
   readonly ops: readonly Op[];
 }
 
-/** The `assetRef` + `childName` a bone node carries, or null when `boneId` is
- *  not a `GltfChild`. Both are written at import (`gltfImportChain`), so a bone
- *  that exists always has them. */
+/** The `assetRef` + `childName` a bone carries, or null when `boneId` is not an imported
+ *  child. Both are written at import (`gltfImportChain`), so a bone that exists always has
+ *  them — #389 moved them onto the child's data half, which the seam hops to. */
 function boneAddress(
   state: DagState,
   boneId: string,
 ): { assetRef: string; childName: string } | null {
-  const node = state.nodes[boneId];
-  if (!node || node.type !== 'GltfChild') return null;
-  const p = node.params as { assetRef?: unknown; childName?: unknown } | undefined;
-  if (typeof p?.assetRef !== 'string' || p.assetRef.length === 0) return null;
-  if (typeof p?.childName !== 'string' || p.childName.length === 0) return null;
-  return { assetRef: p.assetRef, childName: p.childName };
+  const child = importedChildOf(state.nodes, boneId);
+  if (!child) return null;
+  // The seam admits an empty `childName` (a name is a name), and this road cannot: the
+  // channels it mints are ADDRESSED by that name, so an empty one would mint a channel
+  // the renderer's enumerator can never match back to a bone.
+  if (child.assetRef.length === 0 || child.childName.length === 0) return null;
+  return { assetRef: child.assetRef, childName: child.childName };
 }
 
 /**

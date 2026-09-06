@@ -1,9 +1,10 @@
 // importedChild — the one answer to "is this an imported glTF child?" (#389).
 //
-// These pin the FUSED reading, deliberately. The seam lands before the split so that the
-// flip is a change to one file; that is only true if these specs describe the ANSWER
-// rather than the spelling, so they are written against the node table and the facts, and
-// the flip should leave every one of them passing unchanged.
+// These were written against the FUSED reading, deliberately, so that the flip would be a
+// change to one production file. That held: #389 rewrote `importedChildOf`'s body and not
+// one ASSERTION below moved — only the fixture did, from one node to the pair it became.
+// That is the split the seam exists to make: the specs describe the ANSWER, the fixture
+// describes the spelling, and only the spelling changed.
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -14,17 +15,40 @@ import {
   type NodeLike,
 } from './importedChild';
 
-const child = (assetRef: string, childName: string, overridden?: unknown): NodeLike => ({
-  type: 'GltfChild',
-  params: { assetRef, childName, position: [0, 0, 0], ...(overridden ? { overridden } : {}) },
+/**
+ * One imported child, as the two nodes it now is.
+ *
+ * `overridden` goes on the OBJECT and the address on the DATA half — which is the whole
+ * reason the reader takes a hop AND reads back, and why a fixture that put both on one
+ * node would let a broken reader pass.
+ */
+const child = (
+  id: string,
+  assetRef: string,
+  childName: string,
+  overridden?: unknown,
+): Record<string, NodeLike> => ({
+  [`${id}__data`]: { type: 'GltfData', params: { assetRef, childName, material: null } },
+  [id]: {
+    type: 'Object',
+    params: { position: [0, 0, 0], ...(overridden ? { overridden } : {}) },
+    inputs: { data: { node: `${id}__data`, socket: 'out' } },
+  },
 });
 
 const nodes: Record<string, NodeLike> = {
-  c1: child('asset-a', 'Cube'),
-  c2: child('asset-a', 'Bone1', { position: true, rotation: false, scale: false }),
-  c3: child('asset-b', 'Cube'),
+  ...child('c1', 'asset-a', 'Cube'),
+  ...child('c2', 'asset-a', 'Bone1', { position: true, rotation: false, scale: false }),
+  ...child('c3', 'asset-b', 'Cube'),
   box: { type: 'BoxData', params: { size: [1, 1, 1] } },
-  obj: { type: 'Object', params: { position: [0, 0, 0] }, inputs: { data: { node: 'box' } } },
+  // An Object over a NON-glTF data node — the impostor that differs in the tested
+  // property alone, and the reason the reader checks the data half's TYPE rather than
+  // merely that a `data` edge exists.
+  obj: {
+    type: 'Object',
+    params: { position: [0, 0, 0] },
+    inputs: { data: { node: 'box', socket: 'out' } },
+  },
 };
 
 describe('importedChildOf', () => {
@@ -66,11 +90,27 @@ describe('importedChildOf', () => {
   it('is null — not partial — when either string is missing', () => {
     // A half answer is worse than none: `assetRef` without `childName` addresses the
     // whole asset, so a caller that took it would act on the wrong subject.
+    const half = (id: string, params: unknown): Record<string, NodeLike> => ({
+      [`${id}__data`]: { type: 'GltfData', params },
+      [id]: {
+        type: 'Object',
+        params: { position: [0, 0, 0] },
+        inputs: { data: { node: `${id}__data`, socket: 'out' } },
+      },
+    });
     const broken: Record<string, NodeLike> = {
-      x: { type: 'GltfChild', params: { assetRef: 'asset-a' } },
-      y: { type: 'GltfChild', params: { childName: 'Cube' } },
-      z: { type: 'GltfChild', params: undefined },
+      ...half('x', { assetRef: 'asset-a' }),
+      ...half('y', { childName: 'Cube' }),
+      ...half('z', undefined),
+      // And the shape only the split can produce: an Object whose `data` edge points at
+      // nothing at all. The fused kind had no way to be half-present.
+      dangling: {
+        type: 'Object',
+        params: { position: [0, 0, 0] },
+        inputs: { data: { node: 'gone', socket: 'out' } },
+      },
     };
+    expect(importedChildOf(broken, 'dangling')).toBeNull();
     expect(importedChildOf(broken, 'x')).toBeNull();
     expect(importedChildOf(broken, 'y')).toBeNull();
     expect(importedChildOf(broken, 'z')).toBeNull();

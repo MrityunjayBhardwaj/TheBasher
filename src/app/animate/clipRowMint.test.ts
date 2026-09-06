@@ -24,6 +24,7 @@ import {
 } from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 import { paramAnimationState } from './paramAnimationState';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const ASSET = 'asset-generated';
 const BONE = 'mixamorig_LeftArm';
@@ -89,18 +90,12 @@ function generatedScene(): DagState {
     from: { node: 'n_rig', socket: 'out' },
     to: { node: 'n_clip', socket: 'skeleton' },
   }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: gltfChildDagId(ASSET, BONE),
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET,
-      childName: BONE,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-    },
-  }).next;
+  for (const op of importedChildOps(gltfChildDagId(ASSET, BONE), {
+    assetRef: ASSET,
+    childName: BONE,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   return s;
 }
 
@@ -293,21 +288,15 @@ describe('the diamond / auto-key chokepoint on a bone', () => {
 // schemas accepted rather than an object literal cast into shape.
 // ─────────────────────────────────────────────────────────────────────────
 
-/** `generatedScene()` plus a GltfChild for OTHER and one ordinary node. */
+/** `generatedScene()` plus an imported child for OTHER and one ordinary node. */
 function sceneWithNeighbours(): DagState {
   let s = generatedScene();
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: gltfChildDagId(ASSET, OTHER),
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET,
-      childName: OTHER,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-    },
-  }).next;
+  for (const op of importedChildOps(gltfChildDagId(ASSET, OTHER), {
+    assetRef: ASSET,
+    childName: OTHER,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   s = applyOp(s, { type: 'addNode', nodeId: 'n_plain', nodeType: 'Transform', params: {} }).next;
   return s;
 }
@@ -382,14 +371,15 @@ describe('boneComponentAddress — the address four write paths depend on (#389 
   // chokepoints (`autoKeyCommit.ts:168` and `:223`), and `resolveRowChannelForWrite`
   // below. It was only ever exercised indirectly, through `clipRowMintOps`.
   //
-  // Its kind test — `node.type !== 'GltfChild'` — is one of the dispatch sites #389 C3
-  // rewrites when the fused kind retires and a bone becomes an ordinary `Object` pointing
-  // at a `GltfData`. If that conversion is missed, this function returns null for EVERY
-  // bone. Nothing throws, nothing conflicts, and a diff of the split looks entirely
-  // reasonable.
+  // Its kind test WAS `node.type !== 'GltfChild'`, and #389 C3 rewrote it: the fused kind
+  // retired, a bone became an ordinary `Object` pointing at a `GltfData`, and the test
+  // became a hop through `importedChildOf`. These rows were written BEFORE that flip, on
+  // purpose — they passed on the fused kind and they pass now, which is what makes them a
+  // characterisation of the FUNCTION rather than of either spelling.
   //
-  // What that actually costs, measured caller by caller rather than asserted in a group —
-  // an earlier draft of this comment said "all four go quiet", and one of them does not:
+  // What a missed conversion would have cost, measured caller by caller rather than
+  // asserted in a group — an earlier draft of this comment said "all four go quiet", and
+  // one of them does not:
   //   · `autoKeyCommit.ts:168` / `:223`  — both auto-key chokepoints lose the address.
   //   · `clipRowMint.ts:237`             — `paramAnimationDisplayState` falls through to
   //     the address, gets null, and answers 'none' where it answers 'animated' today, so
@@ -417,11 +407,20 @@ describe('boneComponentAddress — the address four write paths depend on (#389 
     // Without this, the rows below would keep passing against a scene whose bone node
     // was never there — "returns an address" is not a claim about anything if the id
     // resolves to nothing.
+    //
+    // #389 — the address moved to the DATA half, so this checks BOTH nodes and the edge
+    // between them. Checking only the Object would have kept passing against a pair whose
+    // data node was missing, which is precisely the fixture the flip could have produced.
     const state = generatedScene();
-    const node = state.nodes[gltfChildDagId(ASSET, BONE)];
+    const object = state.nodes[gltfChildDagId(ASSET, BONE)];
 
-    expect(node).toBeDefined();
-    expect(node.params).toMatchObject({ assetRef: ASSET, childName: BONE });
+    expect(object).toBeDefined();
+    expect(object.type).toBe('Object');
+    const dataRef = (object.inputs as { data?: { node?: string } }).data;
+    expect(dataRef?.node).toBeDefined();
+    const data = state.nodes[dataRef!.node!];
+    expect(data.type).toBe('GltfData');
+    expect(data.params).toMatchObject({ assetRef: ASSET, childName: BONE });
   });
 
   for (const paramPath of bonePaths) {
@@ -443,23 +442,41 @@ describe('boneComponentAddress — the address four write paths depend on (#389 
   });
 
   it('answers null for a node that carries the SAME params but is not an imported child', () => {
-    // The discriminator has to differ from the bone in KIND ALONE. An arbitrary other
-    // node is not one: it fails the `assetRef`/`childName` guards further down, so the
-    // row stays green even with the kind test deleted — measured, and it is how this row
-    // was first written. Cloning the bone and changing only its `type` leaves the kind
-    // test as the only thing that can reject it.
-    const state = generatedScene();
+    // The discriminator has to differ from the bone in the TESTED PROPERTY ALONE. An
+    // arbitrary other node is not one: it fails the `assetRef`/`childName` guards further
+    // down, so the row stays green even with the kind test deleted — measured, and it is
+    // how this row was first written.
+    //
+    // #389 MOVED WHERE THAT PROPERTY LIVES, and the row moved with it rather than being
+    // deleted. Before the split, cloning the bone and setting `type: 'Object'` was the
+    // impostor. After it, `Object` is what a bone IS — that clone is a REAL imported
+    // child, and this row would assert the opposite of the truth while reading exactly as
+    // it always did. The kind test is now a hop: Object → `data` → is it a `GltfData`?
+    // So the impostor is an Object whose `data` points at a BoxData instead: same params,
+    // same type, same edge, and the ONE difference is what the guard actually asks.
+    let state = generatedScene();
     const boneId = gltfChildDagId(ASSET, BONE);
     const impostorId = 'n_impostor';
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'n_impostor_data',
+      nodeType: 'BoxData',
+      params: { size: [1, 1, 1] },
+    }).next;
     const impostor: DagState = {
       ...state,
       nodes: {
         ...state.nodes,
-        [impostorId]: { ...state.nodes[boneId], id: impostorId, type: 'Object' },
+        [impostorId]: {
+          ...state.nodes[boneId],
+          id: impostorId,
+          inputs: { data: { node: 'n_impostor_data', socket: 'out' } },
+        },
       },
     };
 
     expect(impostor.nodes[impostorId].params).toEqual(state.nodes[boneId].params);
+    expect(impostor.nodes[impostorId].type).toBe(state.nodes[boneId].type);
     expect(boneComponentAddress(impostor, impostorId, 'rotation')).toBeNull();
   });
 

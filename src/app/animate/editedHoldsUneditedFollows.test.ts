@@ -45,6 +45,7 @@ import {
 import { ensureChannelForBone } from './ensureChannelForBone';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 import type { GltfSkinMetadata } from '../../nodes/types';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'asset-copy-on-write';
 const HELD = 'bone_held'; // index 0 — the bone a director edits
@@ -116,19 +117,12 @@ function build(endDeg: number): DagState {
     to: { node: CLIP, socket: 'skeleton' },
   }).next;
   for (const name of BONES) {
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(ASSET, name),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: name,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(gltfChildDagId(ASSET, name), {
+      assetRef: ASSET,
+      childName: name,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
   }
   return s;
 }
