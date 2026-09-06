@@ -61,10 +61,17 @@ function kfs(deg: number) {
   ]);
 }
 
-/** A rig with two clips bound to it. `n_out_z` is bound FIRST and sorts LAST,
- *  so bind order and id order disagree — which is the only way to tell which of
- *  the two actually decides. */
-function twoClipsBound(): DagState {
+/** A rig with two clips bound to it, in BIND order: `n_out_z` first, then
+ *  `n_out_a`. Their ids sort the other way round, so bind order and id order
+ *  disagree — which is the only way to tell which of the two actually decides.
+ *
+ *  `activeId` marks the clip a bind would have stood up (#907). Omitted, the
+ *  graph is exactly what a project saved before #907 looks like: no clip is
+ *  active, so the walk must fall back to the id order it always used. */
+function twoClipsBound(
+  activeId?: string,
+  order: readonly string[] = ['n_out_z', 'n_out_a'],
+): DagState {
   let s: DagState = emptyDagState();
   s = applyOp(s, {
     type: 'addNode',
@@ -99,15 +106,18 @@ function twoClipsBound(): DagState {
     from: { node: 'n_asset', socket: 'out' },
     to: { node: SKEL, socket: 'asset' },
   }).next;
-  for (const [id, deg] of [
-    ['n_out_z', 90],
-    ['n_out_a', -140],
-  ] as const) {
+  const DEG: Record<string, number> = { n_out_z: 90, n_out_a: -140 };
+  for (const id of order) {
     s = applyOp(s, {
       type: 'addNode',
       nodeId: id,
       nodeType: 'AnimationClip',
-      params: { name: id, duration: 2, keyframes: kfs(deg) },
+      params: {
+        name: id,
+        duration: 2,
+        keyframes: kfs(DEG[id]),
+        ...(activeId === id ? { active: true } : {}),
+      },
     }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -130,18 +140,51 @@ describe('a second bind on an already-bound character (#918)', () => {
     expect(bound.map((b) => b.clipId).sort()).toEqual(['n_out_a', 'n_out_z']);
   });
 
-  it('lets the id-sorted-FIRST clip drive the bone, not the one bound last', () => {
-    // `n_out_z` was bound first and carries +90° at t=2, so it reads +45 at t=1.
-    // `n_out_a` was bound second and carries -140°, reading -70. The bone reads
-    // -70: the later bind wins here only because its id sorts first, and a rename
-    // would silently swap which motion the rig performs.
+  it('with NO active clip, the id order still decides — a saved project is unchanged', () => {
+    // Every project saved before #907 looks like this. The active flag refines
+    // the sort rather than replacing it, so with nothing active the answer is
+    // byte-identical to what it has always been. Without this row the fix could
+    // silently change what existing work does.
     const s = twoClipsBound();
     const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
-    const y = sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1];
-    expect(y).toBeCloseTo(-70, 6);
+    expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(-70, 6);
+    expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
+  });
 
-    // Stated as the rule rather than the number, so this reds if the sort goes.
-    const bound = boundClipsForAsset(s.nodes, ASSET);
-    expect(bound[0].clipId).toBe('n_out_a');
+  // ── #907: THE PAIR THAT CARRIES THE CLAIM ────────────────────────────────
+  // Either row ALONE passes against the old id-sort by accident, for opposite
+  // reasons. Only together do they say "the LAST BIND decides", independent of
+  // what the files happen to be called.
+  describe('#907 — the last bind wins, whatever the ids sort like', () => {
+    it('when the last-bound clip also sorts FIRST', () => {
+      // Bound second AND sorts first. The old id-sort agreed here by luck.
+      const s = twoClipsBound('n_out_a');
+      const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
+      expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(-70, 6);
+      expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
+    });
+
+    it('when the last-bound clip sorts LAST — the case the id order got wrong', () => {
+      // Bind order reversed: `n_out_a` first, then `n_out_z`. The active clip
+      // now sorts SECOND, so the old behaviour would hand the bone to
+      // `n_out_a` (-70). It must read +45.
+      const s = twoClipsBound('n_out_z', ['n_out_a', 'n_out_z']);
+      const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
+      expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(45, 6);
+      expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_z');
+    });
+
+    it('the predecessor is DEACTIVATED, not destroyed — it is still there to go back to', () => {
+      // The reference stashes the previous action onto a muted track rather than
+      // discarding it: "unmute it again or delete it". A director may well want
+      // two clips on a rig; what they could not do was say which one plays.
+      const s = twoClipsBound('n_out_z', ['n_out_a', 'n_out_z']);
+      const bound = boundClipsForAsset(s.nodes, ASSET);
+      expect(bound).toHaveLength(2);
+      expect(bound.map((b) => b.clipId)).toEqual(['n_out_z', 'n_out_a']);
+      // ...and the stood-down clip keeps every one of its keys.
+      expect(s.nodes['n_out_a'].params).toHaveProperty('keyframes');
+      expect((s.nodes['n_out_a'].params as { keyframes: unknown[] }).keyframes).toHaveLength(4);
+    });
   });
 });

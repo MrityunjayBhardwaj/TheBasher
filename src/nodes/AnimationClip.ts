@@ -42,6 +42,33 @@ export const AnimationClipParams = z.object({
    *  boolean whose `true` meant cycle-WITH-OFFSET, which made cycle-in-place
    *  unreachable and disagreed with TransformClip's opposite default (#930). */
   loop: ClipLoopSchema,
+  /**
+   * Is this the clip the director most recently bound to its rig? (#907)
+   *
+   * ── WHY A FLAG AND NOT AN UNBIND ──────────────────────────────────────
+   * Binding a second motion used to leave BOTH clips bound, and
+   * `boundClipsForAsset` sorts by clip id — so which motion played was decided
+   * by the alphabetical order of the two source filenames. Deterministic, and
+   * arbitrary from where the director stands.
+   *
+   * The reference's answer is that an animated data-block has ONE active action,
+   * and assigning a new one auto-stashes the previous onto a MUTED track: "unmute
+   * it again or delete it". So the predecessor is DEACTIVATED, not destroyed —
+   * a director may well want two clips on a rig once there is a way to say which
+   * one is playing, and unbinding would throw that away to fix an ordering bug.
+   *
+   * ── WHY THE DEFAULT IS `false` AND WHY THAT NEEDS NO MIGRATION ─────────
+   * A stored project has no active clip, so every clip compares equal and the
+   * walk falls back to the id order it has always used — byte-identical
+   * behaviour for every project that exists today. The flag only starts
+   * deciding once a bind sets one, which is exactly when the ambiguity appears.
+   * Nothing here changes what a project already does, so there is no format
+   * version to move.
+   *
+   * Edits survive a rebind untouched: an authored channel outranks the clip, so
+   * the case that looks like it needs a confirmation prompt cannot lose work.
+   */
+  active: z.boolean().default(false),
   keyframes: z
     .array(
       z.object({
