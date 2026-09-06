@@ -86,11 +86,9 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     // also produce, that op IS the provenance branch A1 exists to avoid, and this
     // reds the moment it appears.
     const state = stateWithTime();
-    const direct = await buildGeneratedMotionOps(
-      new StubMotionGenerationCapability(),
-      { request: { prompt: 'a figure walks forward', model: DEFAULT_MOTIONGEN_MODEL } },
-      state,
-    );
+    const direct = await buildGeneratedMotionOps(new StubMotionGenerationCapability(), {
+      request: { prompt: 'a figure walks forward', model: DEFAULT_MOTIONGEN_MODEL },
+    });
     const viaTool = await motionGenerateTool.handler(
       { prompt: 'a figure walks forward' },
       ctx({ dagState: state }),
@@ -120,9 +118,10 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(clip.kind).toBe('AnimationClip');
     expect(clip.duration).toBeGreaterThan(0);
     // Optional since #901; an `AnimationClip` node still always answers one.
-    expect(clip.pose).toBeDefined();
-    expect(clip.pose!.kind).toBe('PosedSkeleton');
-    expect(clip.pose!.poses.length).toBeGreaterThan(0);
+    // No pose (#920) — the clip describes the motion; a consumer with a Time
+    // samples it. Keys and the rig they are indexed against travel together.
+    expect(clip.keyframes.length).toBeGreaterThan(0);
+    expect(clip.skeleton.bones.length).toBeGreaterThan(0);
   });
 
   it('is deterministic — the same prompt and seed produce the same ops', async () => {
