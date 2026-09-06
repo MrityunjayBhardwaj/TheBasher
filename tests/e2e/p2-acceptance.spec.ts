@@ -86,7 +86,12 @@ test.beforeEach(async ({ page }) => {
  * Build the canonical P2 character chain — TimeSource, Skeleton, Clip,
  * Navmesh, Locomotion, Character. Returns when state has been dispatched.
  *
- * THE CLIP'S `loop` IS A WORD, NOT A FLAG (#930). It spells `'cycle-offset'`
+ * THE CLIP TAKES NO CLOCK (#920). `AnimationClip` is time-free: it describes a
+ * clip, it does not sample one, so it has no `time` input to wire. The clock
+ * reaches this chain at `p2_loco`, the consumer that holds a `Time` and does the
+ * sampling — which is why the chain still animates with one less connect.
+ *
+ * AND ITS `loop` IS A WORD, NOT A FLAG (#930). It spells `'cycle-offset'`
  * because that is what the old `loop: true` meant — cycle carrying the root's
  * travel across the seam — and this seed is asserting bit-exactness, so it
  * pins the state it always had rather than taking the schema's new default.
@@ -132,11 +137,6 @@ async function seedCharacter(page: import('@playwright/test').Page, opts?: { obs
             type: 'connect',
             from: { node: 'p2_sk', socket: 'out' },
             to: { node: 'p2_clip', socket: 'skeleton' },
-          },
-          {
-            type: 'connect',
-            from: { node: 'p2_time', socket: 'out' },
-            to: { node: 'p2_clip', socket: 'time' },
           },
           {
             type: 'connect',
@@ -379,11 +379,6 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
           type: 'connect',
           from: { node: 'p2_sk', socket: 'out' },
           to: { node: `clip_${id}`, socket: 'skeleton' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p2_time', socket: 'out' },
-          to: { node: `clip_${id}`, socket: 'time' },
         },
         {
           type: 'connect',

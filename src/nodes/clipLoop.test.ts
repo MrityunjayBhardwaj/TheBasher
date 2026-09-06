@@ -110,9 +110,9 @@ describe('#930 — the clip loop vocabulary', () => {
   });
 });
 
-describe('#930 — the v10 → v11 migration keeps stored work behaving the same', () => {
+describe('#930 — the v11 → v12 migration keeps stored work behaving the same', () => {
   const run = (nodes: Record<string, unknown>) =>
-    migrateClipLoopToTriState({ formatVersion: 10, state: { nodes } }) as {
+    migrateClipLoopToTriState({ formatVersion: 11, state: { nodes } }) as {
       formatVersion: number;
       state: { nodes: Record<string, { params: { loop: unknown } }> };
     };
@@ -152,9 +152,9 @@ describe('#930 — the v10 → v11 migration keeps stored work behaving the same
     expect(out.state.nodes.c.params.loop).toBe('hold');
   });
 
-  it('stamps v11 and leaves other node types alone', () => {
+  it('stamps v12 and leaves other node types alone', () => {
     const out = run({ n: clip('Object', { position: [1, 2, 3] }) });
-    expect(out.formatVersion).toBe(11);
+    expect(out.formatVersion).toBe(12);
     expect(out.state.nodes.n.params).toEqual({ position: [1, 2, 3] });
   });
 

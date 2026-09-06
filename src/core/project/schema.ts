@@ -51,7 +51,22 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // its whole rig at the end of the first cycle. Only channels bit-identical to a
 // re-derivation from their own bound clip are dropped; anything edited is kept. See
 // migrations.ts formatMigrations[9].
-export const PROJECT_FORMAT_VERSION = 11;
+// v11 (#920): drop the `TimeSource -> AnimationClip.time` binding the import chains used
+// to write. The node no longer declares a `time` input — a clip is a description, not a
+// sample at an instant — but the evaluator resolves a node's OWN saved bindings rather
+// than its definition's declared inputs, so the dead edge is still followed and its hash
+// still lands in the cache key. Measured over ten frames: with the edge, ten distinct
+// cache entries; without it, one. Left in place the clip re-evaluates every frame and the
+// cache grows without bound, which is the cost #920 exists to remove. See migrations.ts
+// formatMigrations[10].
+// v12 (#930): one vocabulary for what a clip does past its last key. `loop` was a BOOLEAN
+// on `AnimationClip` whose `true` meant cycle-WITH-OFFSET, and `'loop' | 'clamp'` on
+// `TransformClip` — two spellings with OPPOSITE defaults, and cycle-in-place had no
+// spelling at all. The value is persisted, so the pass writes every stored clip's
+// behaviour EXPLICITLY; that is what makes changing the schema default safe, and it is
+// why `true` maps to `cycle-offset` rather than `cycle` — plain `cycle` would take the
+// travel out of every stored walk. See migrations.ts formatMigrations[11].
+export const PROJECT_FORMAT_VERSION = 12;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

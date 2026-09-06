@@ -158,14 +158,13 @@ describe('the licence gate refuses at run time (#739)', () => {
 describe("the identical road — the phase's discriminating observation", () => {
   it('produces Ops deep-equal to what an imported BVH of the same text produces', async () => {
     const cap = new StubMotionGenerationCapability();
-    const state = stateWithTime();
-    const generated = await buildGeneratedMotionOps(
-      cap,
-      { request: { prompt: 'a slow walk', model: ALLOWED_MODEL }, name: 'clip', ids: IDS },
-      state,
-    );
+    const generated = await buildGeneratedMotionOps(cap, {
+      request: { prompt: 'a slow walk', model: ALLOWED_MODEL },
+      name: 'clip',
+      ids: IDS,
+    });
     const bvh = synthesiseBvh({ prompt: 'a slow walk', model: ALLOWED_MODEL });
-    const imported = buildBvhImportOps({ text: bvh, name: 'clip', ids: IDS }, state);
+    const imported = buildBvhImportOps({ text: bvh, name: 'clip', ids: IDS });
 
     // Not "similar". Equal. The generated path calls the imported path.
     expect(generated.ops).toEqual(imported.ops);
@@ -175,12 +174,10 @@ describe("the identical road — the phase's discriminating observation", () => 
 
   it('yields no node type, param or socket an import does not also yield', async () => {
     const cap = new StubMotionGenerationCapability();
-    const state = stateWithTime();
-    const { ops } = await buildGeneratedMotionOps(
-      cap,
-      { request: { prompt: 'walk', model: ALLOWED_MODEL }, ids: IDS },
-      state,
-    );
+    const { ops } = await buildGeneratedMotionOps(cap, {
+      request: { prompt: 'walk', model: ALLOWED_MODEL },
+      ids: IDS,
+    });
     const nodeTypes = ops.filter((o) => o.type === 'addNode').map((o) => o.nodeType);
     expect(nodeTypes.sort()).toEqual(['AnimationClip', 'Skeleton']);
     // Nothing records provenance in the graph, because nothing may branch on it.
@@ -190,11 +187,10 @@ describe("the identical road — the phase's discriminating observation", () => 
   it('evaluates to a working AnimationClip', async () => {
     const cap = new StubMotionGenerationCapability();
     let state = stateWithTime();
-    const { ops, clipId } = await buildGeneratedMotionOps(
-      cap,
-      { request: { prompt: 'walk', model: ALLOWED_MODEL }, ids: IDS, timeSourceId: 'time' },
-      state,
-    );
+    const { ops, clipId } = await buildGeneratedMotionOps(cap, {
+      request: { prompt: 'walk', model: ALLOWED_MODEL },
+      ids: IDS,
+    });
     state = applyAll(state, ops);
     const clip = evaluate(state, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
@@ -203,10 +199,10 @@ describe("the identical road — the phase's discriminating observation", () => 
     // if a generated clip needed a weaker check, it would not be the same object.
     expect(clip.kind).toBe('AnimationClip');
     expect(clip.duration).toBeGreaterThan(0);
-    // Optional since #901; an `AnimationClip` node still always answers one.
-    expect(clip.pose).toBeDefined();
-    expect(clip.pose!.kind).toBe('PosedSkeleton');
-    expect(clip.pose!.poses.length).toBeGreaterThan(0);
+    // No pose (#920): a clip is a description, and the consumer holding a Time is
+    // what samples it. The keys and the rig they index MUST travel together.
+    expect(clip.keyframes.length).toBeGreaterThan(0);
+    expect(clip.skeleton.bones.length).toBeGreaterThan(0);
   });
 
   it('retargets onto a different skeleton like any other clip', async () => {
@@ -377,11 +373,7 @@ describe('#826 — an unplaceable world offset stops the import', () => {
 
   it('refuses, naming the offset it cannot apply', async () => {
     await expect(
-      buildGeneratedMotionOps(
-        offsetCapability([3, 1]),
-        { request: REQUEST, ids: IDS },
-        stateWithTime(),
-      ),
+      buildGeneratedMotionOps(offsetCapability([3, 1]), { request: REQUEST, ids: IDS }),
     ).rejects.toThrow(/\[3, 1\]/);
   });
 
@@ -390,11 +382,7 @@ describe('#826 — an unplaceable world offset stops the import', () => {
     // it means "a world path was asked for and starts here", which is a claim,
     // not silence. Only `null` says nobody asked.
     await expect(
-      buildGeneratedMotionOps(
-        offsetCapability([0, 0]),
-        { request: REQUEST, ids: IDS },
-        stateWithTime(),
-      ),
+      buildGeneratedMotionOps(offsetCapability([0, 0]), { request: REQUEST, ids: IDS }),
     ).rejects.toThrow(/cannot place it/);
   });
 
@@ -403,11 +391,11 @@ describe('#826 — an unplaceable world offset stops the import', () => {
   // a gate at all — so the SAME offset is run past it twice, differing in nothing
   // but the caller's declaration.
   it('lets a caller that can place through, and hands it the offset to apply', async () => {
-    const { worldOffsetXZ, ops } = await buildGeneratedMotionOps(
-      offsetCapability([3, 1]),
-      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
-      stateWithTime(),
-    );
+    const { worldOffsetXZ, ops } = await buildGeneratedMotionOps(offsetCapability([3, 1]), {
+      request: REQUEST,
+      ids: IDS,
+      appliesWorldOffset: true,
+    });
     expect(worldOffsetXZ).toEqual([3, 1]);
     // The ops are the ordinary import ops and nothing more: the placement is the
     // CALLER's to dispatch, so nothing here may quietly encode a position.
@@ -415,11 +403,11 @@ describe('#826 — an unplaceable world offset stops the import', () => {
   });
 
   it('keeps null distinct from [0,0] on the way out, not just on the way in', async () => {
-    const { worldOffsetXZ } = await buildGeneratedMotionOps(
-      offsetCapability(null),
-      { request: REQUEST, ids: IDS, appliesWorldOffset: true },
-      stateWithTime(),
-    );
+    const { worldOffsetXZ } = await buildGeneratedMotionOps(offsetCapability(null), {
+      request: REQUEST,
+      ids: IDS,
+      appliesWorldOffset: true,
+    });
     // `[0,0]` would mean "a path was asked for and it starts at the origin".
     // Collapsing the two is what makes a character that was never given a path
     // indistinguishable from one that was.
@@ -427,11 +415,10 @@ describe('#826 — an unplaceable world offset stops the import', () => {
   });
 
   it('proceeds normally when no world path was requested', async () => {
-    const { ops } = await buildGeneratedMotionOps(
-      offsetCapability(null),
-      { request: REQUEST, ids: IDS },
-      stateWithTime(),
-    );
+    const { ops } = await buildGeneratedMotionOps(offsetCapability(null), {
+      request: REQUEST,
+      ids: IDS,
+    });
     expect(ops.length).toBeGreaterThan(0);
   });
 });

@@ -68,12 +68,18 @@ const formatMigrations: Record<number, FormatMigration> = {
   // would never re-run an earlier pass, so its rig would stay frozen at the end of
   // its first cycle forever.
   9: migrateDropUnauthoredEagerChannels,
-  // v10 → v11 (#930): one vocabulary for what a clip does past its last key.
+  // v10 → v11 (#920): drop the dead `time` binding on every saved `AnimationClip`.
+  // Its OWN format version for the same reason as every step above: a project saved
+  // at v10 would never re-run an earlier pass, so its clip would keep a binding on a
+  // socket that no longer exists — and unlike a vanished edge, this one is still
+  // FOLLOWED, re-evaluating the clip on every frame forever.
+  10: migrateDropAnimationClipTimeEdge,
+  // v11 → v12 (#930): one vocabulary for what a clip does past its last key.
   // The two carriers spelled it two ways with OPPOSITE defaults, so this pass
   // writes every stored clip's value EXPLICITLY — which is what makes changing
   // the schema default safe. Without it, every project omitting the key would
   // silently change behaviour on load.
-  10: migrateClipLoopToTriState,
+  11: migrateClipLoopToTriState,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1268,8 +1274,59 @@ export function migrateDropUnauthoredEagerChannels(raw: unknown): unknown {
   return { ...proj, formatVersion: 10 };
 }
 
+// ── v10 → v11: drop the dead `time` binding on a saved AnimationClip (#920) ──
+// `AnimationClipNode` used to declare a `Time` input and return a snapshot POSE at
+// that instant, and the three import chains plus the motion generator each wired a
+// `TimeSource` into it. #920 made the node time-free: it returns the clip, and
+// sampling belongs to the consumer, which is the only party holding a `Time`.
+//
+// 🔴 A DEAD BINDING HERE IS NOT AN INERT ONE, WHICH IS WHAT MAKES THIS A MIGRATION
+// RATHER THAN HOUSEKEEPING. The v8 → v9 driver step above exists because a binding on
+// a retired socket VANISHES on load. This one does the opposite: the evaluator
+// resolves `Object.entries(node.inputs)` — the node's own saved bindings — not the
+// definition's declared inputs. So the edge is still walked, the `TimeSource` is still
+// evaluated, and its hash still lands in the node's cache key. `AnimationClip` is
+// `pure`, so nothing else in the key moves per frame; the stale edge is the only thing
+// that does.
+//
+// Measured on a two-node graph over ten frames, with the edge and without:
+//
+//   stale edge -> 10 new cache entries    (a fresh evaluation every frame)
+//   clean      ->  1 new cache entry      (evaluated once, then cached)
+//
+// So a project saved before #920 gets none of its benefit and pays an unbounded cache
+// instead — strictly worse than the pose it used to compute. Dropping the binding is
+// the whole fix: nothing else on the node changes, and the `TimeSource` itself is the
+// project's shared clock (`n_time`), read by many other nodes, so it is left alone.
+export function migrateDropAnimationClipTimeEdge(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 11 };
+
+  let dropped = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'AnimationClip' || !node.inputs) continue;
+    if (node.inputs['time'] === undefined) continue;
+    delete node.inputs['time'];
+    dropped++;
+  }
+
+  if (dropped > 0) {
+    console.warn(
+      `[migrateDropAnimationClipTimeEdge] dropped ${dropped} dead \`time\` binding(s) from ` +
+        `saved AnimationClip nodes (#920 — the node no longer samples, and the evaluator ` +
+        `follows a node's own bindings, so each one was re-evaluating the clip every frame).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 11 };
+}
+
 /**
- * v10 → v11 (#930) — the clip `loop` becomes one tri-state vocabulary.
+ * v11 → v12 (#930) — the clip `loop` becomes one tri-state vocabulary.
  *
  * ── WHY A MIGRATION AND NOT JUST A NEW DEFAULT ────────────────────────────
  * `loop` is persisted, so changing the SCHEMA DEFAULT is not safe by
@@ -1301,7 +1358,7 @@ export function migrateClipLoopToTriState(raw: unknown): unknown {
     state?: { nodes?: Record<string, RawNode> };
   };
   const nodes = proj.state?.nodes;
-  if (!nodes) return { ...proj, formatVersion: 11 };
+  if (!nodes) return { ...proj, formatVersion: 12 };
 
   let animationClips = 0;
   let transformClips = 0;
@@ -1336,5 +1393,5 @@ export function migrateClipLoopToTriState(raw: unknown): unknown {
     );
   }
 
-  return { ...proj, formatVersion: 11 };
+  return { ...proj, formatVersion: 12 };
 }
