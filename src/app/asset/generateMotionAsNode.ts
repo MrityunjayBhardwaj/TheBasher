@@ -1,12 +1,14 @@
 // The director's road to a re-cookable generated motion (#935, closing #902).
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHY THIS REPLACES THE ONE-SHOT ROAD RATHER THAN SITTING BESIDE IT
+// WHY THIS REPLACED THE ONE-SHOT ROAD, WHICH IS NOW DELETED (#948)
 // ─────────────────────────────────────────────────────────────────────────────
-// `generateMotionIntoScene` calls the generator, bakes the clip, and discards the
-// prompt, the seed and the waypoints that produced it. The clip is correct and it
-// has no producer, so editing the curve cannot re-cook it — the promise #730 made
-// and could not keep, for a structural reason: a call has no input edge.
+// `generateMotionIntoScene` called the generator, baked the clip, and discarded
+// the prompt, the seed and the waypoints that produced it. The clip was correct
+// and it had no producer, so editing the curve could not re-cook it — the promise
+// #730 made and could not keep, for a structural reason: a call has no input
+// edge. It survived #935 only because the parity claim was still written against
+// it; #948 moved that claim here and retired the road.
 //
 // This road mints the producer instead. Everything downstream is unchanged,
 // because the cook writes its keys into an ordinary `AnimationClip` node's params
