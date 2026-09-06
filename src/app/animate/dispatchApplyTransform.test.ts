@@ -1045,7 +1045,7 @@ describe('dispatchApplyTransform (glTF child)', () => {
       params: {
         name: 'walk',
         duration: 2,
-        loop: 'clamp',
+        loop: 'hold',
         keyframes: [
           { targetNodeId: CHILD_NAME, time: 0, position: [0, 0, 0] },
           { targetNodeId: CHILD_NAME, time: 2, position: [5, 0, 0] },

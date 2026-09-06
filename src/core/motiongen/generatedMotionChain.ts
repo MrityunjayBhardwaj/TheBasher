@@ -12,7 +12,6 @@
 // REF: src/core/import/bvhImportChain.ts; ref/architecture/ai-track.md phase A1.
 
 import { buildBvhImportOps, type BvhImportChainResult } from '../import/bvhImportChain';
-import type { DagState } from '../dag/state';
 import type {
   MotionGenerationCapability,
   MotionGenerationRequest,
@@ -22,7 +21,6 @@ export interface GeneratedMotionArgs {
   readonly request: MotionGenerationRequest;
   readonly name?: string;
   readonly ids?: { skeleton: string; clip: string };
-  readonly timeSourceId?: string;
   /**
    * The caller declares that it will place the character at `worldOffsetXZ`.
    *
@@ -82,7 +80,6 @@ export interface GeneratedMotionResult extends BvhImportChainResult {
 export async function buildGeneratedMotionOps(
   capability: MotionGenerationCapability,
   args: GeneratedMotionArgs,
-  state: DagState,
 ): Promise<GeneratedMotionResult> {
   const generated = await capability.generate(args.request);
   // 🔴 A WORLD OFFSET WE CANNOT PLACE IS A REFUSAL, NOT A DEFAULT (#826).
@@ -115,21 +112,17 @@ export async function buildGeneratedMotionOps(
         `would land at the origin rather than where the path was drawn.`,
     );
   }
-  const chain = buildBvhImportOps(
-    {
-      text: generated.bvh,
-      name: args.name ?? args.request.prompt,
-      ids: args.ids,
-      timeSourceId: args.timeSourceId,
-      // The one thing the generator knows that the clip does not say. Passed as
-      // an ARGUMENT to the shared import function rather than handled here, so
-      // this file still adds no step a file import does not also take — a
-      // generated clip and a dropped one differ in what fills this parameter and
-      // in nothing else.
-      unitScale: generated.unitScale,
-    },
-    state,
-  );
+  const chain = buildBvhImportOps({
+    text: generated.bvh,
+    name: args.name ?? args.request.prompt,
+    ids: args.ids,
+    // The one thing the generator knows that the clip does not say. Passed as
+    // an ARGUMENT to the shared import function rather than handled here, so
+    // this file still adds no step a file import does not also take — a
+    // generated clip and a dropped one differ in what fills this parameter and
+    // in nothing else.
+    unitScale: generated.unitScale,
+  });
   return {
     ...chain,
     model: generated.model,

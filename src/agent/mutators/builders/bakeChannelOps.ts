@@ -33,6 +33,7 @@
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import type { Vec3 } from '../../../nodes/types';
+import { isCycling, type ClipLoop } from '../../../nodes/clipLoop';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
 import type { FChannelModifier } from '../../../nodes/channelModifiers';
 
@@ -61,8 +62,14 @@ export type BakedComponent = (typeof BAKED_COMPONENTS)[number];
  * REF: Blender `FModifierCycles.mode_after` REPEAT_OFFSET, "offset based on
  * gradient between start and end values".
  */
-function cycleModifierFor(component: BakedComponent): FChannelModifier {
-  const mode = component === 'position' ? 'repeat-offset' : 'repeat';
+function cycleModifierFor(component: BakedComponent, loop: ClipLoop): FChannelModifier {
+  // POSITION is the only component that distinguishes the two cycling modes, and
+  // rotation never offsets under either — it is bounded and returns to its start,
+  // so a per-period residual would compound without bound. Exactly the split
+  // `clipExtendRules` makes, because a minted channel must extend the way the
+  // clip it was minted FROM extends; their spec asserts they agree past the
+  // duration and reds if either moves alone.
+  const mode = component === 'position' && loop === 'cycle-offset' ? 'repeat-offset' : 'repeat';
   return { type: 'cycles', beforeMode: mode, afterMode: mode, beforeCycles: 0, afterCycles: 0 };
 }
 
@@ -101,9 +108,14 @@ export function bakeChannelOpsForBone(args: {
    *
    *  Optional and default-false, so the road that does not know its source's
    *  time domain emits exactly the params it emitted before. */
-  readonly cyclic?: boolean;
+  /**
+   * How the clip this bone was minted from extends (#930). Was `cyclic?: boolean`,
+   * which could only spell hold-vs-cycle-with-offset — so a channel minted from a
+   * clip cycling IN PLACE silently gained travel it was never asked for.
+   */
+  readonly loop?: ClipLoop;
 }): Op[] {
-  const { assetRef, childName, byComponent, state, cyclic = false } = args;
+  const { assetRef, childName, byComponent, state, loop = 'hold' } = args;
   const target = gltfChildDagId(assetRef, childName);
   const ops: Op[] = [];
 
@@ -159,7 +171,7 @@ export function bakeChannelOpsForBone(args: {
         //
         // The key is OMITTED rather than set to `[]` when the source does not
         // cycle, so a non-looping mint stays byte-identical to pre-#913.
-        ...(cyclic ? { modifiers: [cycleModifierFor(component)] } : {}),
+        ...(isCycling(loop) ? { modifiers: [cycleModifierFor(component, loop)] } : {}),
       },
     });
   }
