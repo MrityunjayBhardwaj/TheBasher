@@ -63,6 +63,19 @@ export interface MintMotionGenerateResult {
   readonly skeletonId: string;
 }
 
+/**
+ * A seed a caller did not supply but the node will always carry.
+ *
+ * It lives HERE, beside the mint, because both roads to a producer need one and
+ * two independent choosers would be two answers to "what seed did this clip use"
+ * — the exact question `MotionGenerate` refuses to leave unanswered by giving
+ * `seed` no default. Positive and 32-bit so it round-trips through JSON and reads
+ * as a number rather than an artefact.
+ */
+export function chooseSeed(): number {
+  return Math.floor(Math.random() * 0x7fffffff);
+}
+
 let mintCounter = 0;
 function mintId(prefix: string): string {
   mintCounter += 1;

@@ -45,6 +45,7 @@ vi.mock('../boot', () => ({
 
 // Imported AFTER vi.mock so the module picks up the mocked boot.
 import { generateMotionIntoScene } from './generateMotion';
+import { generateMotionAsNode } from './generateMotionAsNode';
 import { motionGenerateTool } from '../../agent/tools/motionGenerate';
 
 function seedTime(): void {
@@ -354,9 +355,17 @@ describe('UI == agent — the two routes produce the same graph', () => {
     // Compared at the OUTPUT — the resulting graph — rather than at the call.
     // Equal op arrays would be the weaker claim anyway: what has to match is
     // what a director and an agent each END UP WITH.
+    // The DIRECTOR'S ROAD is `generateMotionAsNode` (#935). Comparing the agent
+    // against `generateMotionIntoScene` was comparing it against a road no
+    // director takes — the claim stayed green while the two surfaces genuinely
+    // diverged, which is the whole of #948.
+    //
+    // The seed is FIXED on both arms. Each road picks one when the caller does
+    // not, and it is written into the producer's params, so two unseeded calls
+    // differ in exactly the field that exists to make a clip reproducible.
     const stateBefore = useDagStore.getState().state;
     const viaAgent = await motionGenerateTool.handler(
-      { prompt: 'a figure walks forward' },
+      { prompt: 'a figure walks forward', seed: 7 },
       {
         dagState: stateBefore,
         motionCapability: capability,
@@ -366,9 +375,13 @@ describe('UI == agent — the two routes produce the same graph', () => {
     let agentState = stateBefore;
     for (const op of viaAgent.ops) agentState = applyOp(agentState, op).next;
 
-    await generateMotionIntoScene('a figure walks forward');
+    await generateMotionAsNode('a figure walks forward', { seed: 7 });
     const uiState = useDagStore.getState().state;
 
+    // The population, beside the verdict: two empty graphs normalise equal.
+    expect(Object.keys(nodesOf(uiState)).length).toBeGreaterThan(
+      Object.keys(nodesOf(stateBefore)).length,
+    );
     expect(normalise(nodesOf(agentState))).toEqual(normalise(nodesOf(uiState)));
   });
 });

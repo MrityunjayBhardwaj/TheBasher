@@ -48,7 +48,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { bindImportedMotion } from './importBvhFbx';
 import { cookMotionGenerations, placeCookedMotion } from './cookMotionGenerations';
-import { mintMotionGenerateOps } from './mintMotionGenerate';
+import { chooseSeed, mintMotionGenerateOps } from './mintMotionGenerate';
 import { waypointsFromCurve } from './motionPathFromCurve';
 
 export interface GenerateMotionNodeOptions {
@@ -63,12 +63,6 @@ export interface GenerateMotionNodeOptions {
 export type GenerateMotionNodeResult =
   | { readonly ok: true; readonly producerId: string; readonly clipId: string }
   | { readonly ok: false; readonly reason: string };
-
-/** A seed a director did not type but the node will always carry. Positive and
- *  32-bit so it round-trips through JSON and reads as a number, not an artefact. */
-function chooseSeed(): number {
-  return Math.floor(Math.random() * 0x7fffffff);
-}
 
 /**
  * The curve to walk, or undefined.
