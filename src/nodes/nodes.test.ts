@@ -116,6 +116,9 @@ const ALL_TYPES = [
   'MediaClip',
   'MirrorModifier',
   'Mix',
+  // #902 — text-to-motion as a node, so a generated clip has a producer the
+  // graph can re-cook instead of a call whose arguments were discarded.
+  'MotionGenerate',
   'Navmesh',
   'Noise',
   'NormalPass',

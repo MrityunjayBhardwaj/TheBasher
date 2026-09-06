@@ -172,6 +172,11 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
   MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
   Mix: '[] factor=(unrouted)',
+  // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
+  // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
+  // draws these yet, and a home would claim a section renders them when none does.
+  MotionGenerate:
+    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) name=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
@@ -257,4 +262,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // the derived half of the claim that nothing existing was re-homed to make room for it.
 // The row is one cell because the node's output is a function of its three INPUTS; there
 // is nothing else about it to author as a param, which is the point of the node.
-export const GOLDEN_TOTALS = { types: 83, routed: 135, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 223 } as const;

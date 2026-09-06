@@ -1250,6 +1250,38 @@ export interface AnimationClipValue {
   readonly skeleton: SkeletonValue;
   /** Sampled pose at the input `Time` — absent from a time-free producer. */
   readonly pose?: PosedSkeletonValue;
+  /**
+   * Present only on a clip produced by {@link MotionGenerateNode} (#902).
+   *
+   * OPTIONAL, so every existing producer of an AnimationClipValue is unchanged
+   * and no consumer has to learn about generation to keep working — which is the
+   * generation phase's refusal of provenance honoured rather than reopened. It
+   * is not a "this was generated" flag: it reports whether the PRODUCER has
+   * finished, and a clip that has finished is byte-identical in every field a
+   * consumer reads to one that arrived from a file.
+   *
+   * Why it exists at all: a generation that has not returned yet must not be
+   * expressible as an empty clip. An empty clip is a well-formed answer meaning
+   * "this produced no motion", so a pending one that borrowed that shape would
+   * be a silent failure by construction — the class this track keeps finding.
+   */
+  readonly generation?: MotionGenerationState;
+}
+
+/**
+ * Where a generated clip's producer has got to. A WAIT state, not a dead end —
+ * the same shape the import lane uses for an asset that is still mounting.
+ *
+ * `failed` is TERMINAL and carries its reason: without it a refusal is
+ * indistinguishable from a request that has not started, so the node would sit
+ * at `pending` forever while the resolver retried on every cook.
+ */
+export interface MotionGenerationState {
+  readonly status: 'pending' | 'ready' | 'failed';
+  /** Content address of the request that produces this clip. */
+  readonly requestHash: string;
+  /** Why it failed. Present only when `status` is `'failed'`. */
+  readonly reason?: string;
 }
 
 /**
