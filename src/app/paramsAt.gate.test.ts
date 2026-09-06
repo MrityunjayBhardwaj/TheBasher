@@ -147,6 +147,13 @@ const CONSUMERS: Record<string, Decision> = {
   // import-time static and the ctx is the same fixed bind pose (frame 0), so the
   // playhead cannot change the answer. It never reads a value that moves.
   'src/app/asset/bindMotionToCharacter.ts': authored('fixed-ctx-by-design'),
+  // #902 — the motion resolver. It reads the generator's params AUTHORED and
+  // evaluates at the default ctx, and both halves are the same claim: a
+  // generation request must be time-invariant. If the playhead could change the
+  // prompt, the seed or the path, then scrubbing would silently make a
+  // different request, and the content hash — which is the clip's identity —
+  // would move under a graph nobody edited.
+  'src/app/asset/resolveMotionGenerate.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -213,7 +220,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // retargeted clip at build time; it now emits a `RetargetClip` node that NAMES
     // the rig with an edge and lets the reader project it. The road collapsed rather
     // than moved — the evaluate went away with the bake, and the row went with it.
-    expect(evaluatorConsumers()).toHaveLength(37);
+    expect(evaluatorConsumers()).toHaveLength(38); // 37 -> 38 at #902 (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

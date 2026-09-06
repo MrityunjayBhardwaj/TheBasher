@@ -1282,6 +1282,15 @@ export interface MotionGenerationState {
   readonly requestHash: string;
   /** Why it failed. Present only when `status` is `'failed'`. */
   readonly reason?: string;
+  /**
+   * Offset in metres from the origin to where the path actually is, or null when
+   * the clip follows no path. Present only when `status` is `'ready'`.
+   *
+   * Surfaced so a placement step can move the bound character by it. The clip
+   * itself is generated about the origin, so a consumer that never reads this
+   * puts the character in the wrong place while every frame looks correct.
+   */
+  readonly worldOffsetXZ?: readonly [number, number] | null;
 }
 
 /**

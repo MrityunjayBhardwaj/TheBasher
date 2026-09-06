@@ -207,7 +207,7 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         loop: false,
         keyframes: clip.keyframes,
         skeleton: clip.skeleton,
-        generation: { status: 'ready', requestHash },
+        generation: { status: 'ready', requestHash, worldOffsetXZ: clip.worldOffsetXZ },
       };
     }
 

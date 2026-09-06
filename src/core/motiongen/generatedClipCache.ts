@@ -44,6 +44,20 @@ export interface GeneratedClip {
   readonly skeleton: SkeletonValue;
   /** Echoed from the capability result — the checkpoint that actually ran. */
   readonly model: string;
+  /**
+   * Where the clip was generated FROM, as `[x, z]` metres, or null when no world
+   * path was asked for.
+   *
+   * Carried rather than discarded even though nothing here applies it. The
+   * generator canonicalises frame 0 to the origin, so a clip asked to follow a
+   * curve comes back correct in every frame and standing in the wrong place;
+   * dropping the offset is the silent half of that, since the motion then looks
+   * entirely right in a screenshot while being metres from the path drawn.
+   *
+   * `null` is not `[0, 0]`: null means nobody asked for a world path, while
+   * `[0, 0]` means one was asked for and happened to start at the origin.
+   */
+  readonly worldOffsetXZ: readonly [number, number] | null;
 }
 
 /**

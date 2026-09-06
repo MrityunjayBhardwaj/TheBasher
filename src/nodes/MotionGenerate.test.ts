@@ -151,12 +151,28 @@ describe('MotionGenerate (#902)', () => {
       keyframes: [{ bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] }],
       skeleton: RIG,
       model: 'kimodo-base',
+      worldOffsetXZ: [4, -2],
     });
     const clip = clipOf(s);
     expect(clip.generation?.status).toBe('ready');
     expect(clip.duration).toBe(2.5);
     expect(clip.keyframes).toHaveLength(1);
     expect(clip.skeleton.bones).toHaveLength(1);
+  });
+
+  it('the world offset reaches the clip — a path-following clip is generated about the origin', () => {
+    const s = buildGraph();
+    const hash = clipOf(s).generation!.requestHash;
+    recordGeneratedClip(hash, {
+      duration: 1,
+      keyframes: [],
+      skeleton: RIG,
+      model: 'm',
+      worldOffsetXZ: [4, -2],
+    });
+    // Without this the motion arrives right in shape and metres from the curve,
+    // which looks entirely correct in a screenshot.
+    expect(clipOf(s).generation?.worldOffsetXZ).toEqual([4, -2]);
   });
 
   it('a failure is TERMINAL and carries its reason', () => {
@@ -171,8 +187,20 @@ describe('MotionGenerate (#902)', () => {
   it('first write wins — a second result never changes a clip the graph has seen', () => {
     const s = buildGraph();
     const hash = clipOf(s).generation!.requestHash;
-    recordGeneratedClip(hash, { duration: 1, keyframes: [], skeleton: RIG, model: 'm' });
-    recordGeneratedClip(hash, { duration: 99, keyframes: [], skeleton: RIG, model: 'm' });
+    recordGeneratedClip(hash, {
+      duration: 1,
+      keyframes: [],
+      skeleton: RIG,
+      model: 'm',
+      worldOffsetXZ: null,
+    });
+    recordGeneratedClip(hash, {
+      duration: 99,
+      keyframes: [],
+      skeleton: RIG,
+      model: 'm',
+      worldOffsetXZ: null,
+    });
     expect(clipOf(s).duration).toBe(1);
   });
 
