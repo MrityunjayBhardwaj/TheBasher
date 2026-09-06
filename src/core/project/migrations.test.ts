@@ -3340,6 +3340,7 @@ describe('AnimationClip v10 → v11: the dead `time` binding is dropped (#920)',
     registerAllNodes();
   });
 
+  /** A v10 save shaped the way the import chains used to write one: a `TimeSource`
    *  wired into the clip's retired `time` socket, alongside the `skeleton` edge that
    *  is still declared. Every project holding a BVH, FBX, glTF or generated motion
    *  saved before #920 is in this shape. */

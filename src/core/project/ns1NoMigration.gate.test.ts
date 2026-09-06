@@ -120,17 +120,26 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 
-  it('the frozen project still loads through the new ladder, and NEITHER step finds anything to do', () => {
-    // The bump is only safe because each migration is a NO-OP on this fixture: it carries no
-    // glTF rig, so there is no bone channel for #915 to examine, and no `AnimationClip` for
-    // #920's pass to find a dead `time` binding on. Said
-    // as an assertion rather than left to the geometry row below to imply — a migration that
-    // silently deleted a node here would still resolve the same two meshes.
-    const before = fixture().state.nodes;
-    const channelsInFixture = Object.values(before).filter(
-      (n) => n.type === 'KeyframeChannelVec3',
-    ).length;
-    expect(channelsInFixture).toBe(0);
+  it('the frozen project still loads through the new ladder: three steps are no-ops, and #389 is the one that acts', () => {
+    // The bump is only safe because each migration's precondition is checked against THIS
+    // fixture rather than assumed. Three are genuinely no-ops: it carries no bone channel
+    // for #915 to examine, and no clip node, so #920 finds no dead `time` binding and #930
+    // no `loop` to respell.
+    //
+    // 🔴 #389 IS NOT A NO-OP HERE, and saying so is the point of this row. The fixture holds
+    // a fused `GltfChild`, so the split pass DOES rewrite it — which is exactly why the
+    // geometry row below matters: the frozen project must resolve to the same two meshes
+    // THROUGH that rewrite, not because nothing touched it. An earlier wording of this row
+    // claimed every step found nothing to do; it was measured false the moment it was
+    // asserted rather than described.
+    const before = Object.values(fixture().state.nodes);
+    expect(before.length).toBeGreaterThan(0); // a filter over an empty table reports clean
+    expect(before.filter((n) => n.type === 'KeyframeChannelVec3').length).toBe(0);
+    expect(before.filter((n) => n.type === 'AnimationClip').length).toBe(0);
+    expect(before.filter((n) => n.type === 'TransformClip').length).toBe(0);
+    // The one the split will act on. Pinned so that a fixture losing it would red here
+    // rather than quietly making the geometry row below prove less than it claims.
+    expect(before.filter((n) => n.type === 'GltfChild').length).toBe(1);
   });
 
   it('did not move any node’s version', () => {
