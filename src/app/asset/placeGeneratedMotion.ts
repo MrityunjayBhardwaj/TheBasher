@@ -45,6 +45,10 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
+import { edgeTarget } from '../animate/graphNodes';
+import { clipBakeStates } from './bakeGeneratedClip';
+import { evaluate } from '../../core/dag/evaluator';
+import type { AnimationClipValue } from '../../nodes/types';
 
 /** What placing a character did, or why it could not. A void return would be the
  *  same trap the bind path was fixed for: four situations collapsing into one
@@ -159,4 +163,63 @@ export function placeCharacterAtPathStart(
     from: [position[0] - pivot[0], position[2] - pivot[2]],
     to: [x, z],
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE NODE ROAD'S HALF (#935)
+// ─────────────────────────────────────────────────────────────────────────────
+// The imperative road places once, at the moment it generates. The node road has
+// no such moment: a cook can happen at any time, and the path it was asked to
+// walk may have moved since the last one. So placement is DERIVED from the graph
+// on every cook rather than remembered from a generation.
+//
+// That is safe to repeat because `placeCharacterAtPathStart` computes an ABSOLUTE
+// target (`pivot + offset`) rather than a delta. Cooking twice puts the character
+// in the same place twice; a delta would walk it down the path one offset per
+// cook, which is the shape of bug that looks like drift and reads like physics.
+
+export interface CookedPlacement {
+  readonly ops: Op[];
+  /** One per clip that asked to be placed and could not. Never swallowed: the
+   *  motion plays correctly and only its POSITION is wrong, which is exactly the
+   *  failure that looks like success in a screenshot. */
+  readonly refusals: { readonly clipId: string; readonly reason: string }[];
+}
+
+/**
+ * Place every character whose generated clip came back with a world offset.
+ *
+ * A `worldOffsetXZ` of `null` means no world path was requested, and those clips
+ * are skipped rather than placed at the origin — the distinction the generator
+ * chain refuses to collapse, kept here for the same reason.
+ */
+export function placeCookedMotionOps(state: DagState): CookedPlacement {
+  const ops: Op[] = [];
+  const refusals: { clipId: string; reason: string }[] = [];
+
+  for (const { clipId, producerId, status } of clipBakeStates(state)) {
+    if (status !== 'ready') continue;
+    const value = evaluate(state, producerId).value as AnimationClipValue;
+    const offset = value.generation?.worldOffsetXZ;
+    if (!offset) continue;
+
+    // The rig the clip drives IS the character to place — the same edge the read
+    // band matches on, so the thing that moves is the thing that animates.
+    const skeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
+    if (!skeletonId || state.nodes[skeletonId]?.type !== 'GltfSkeleton') {
+      refusals.push({
+        clipId,
+        reason:
+          'the motion was generated along a world path, but the clip is not bound to a ' +
+          'character rig, so there is nothing to place — it will play at the origin.',
+      });
+      continue;
+    }
+
+    const placed = placeCharacterAtPathStart(state, skeletonId, offset);
+    if (placed.ok) ops.push(...(placed.ops as Op[]));
+    else refusals.push({ clipId, reason: placed.reason });
+  }
+
+  return { ops, refusals };
 }

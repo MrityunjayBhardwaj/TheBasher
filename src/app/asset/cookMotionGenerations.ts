@@ -35,6 +35,7 @@ import { useDagStore } from '../../core/dag/store';
 import { getMotionCapability } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
+import { placeCookedMotionOps } from './placeGeneratedMotion';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 
 export interface CookOutcome {
@@ -44,6 +45,8 @@ export interface CookOutcome {
   readonly failed: number;
   /** How many sink clips had their params refreshed. */
   readonly baked: number;
+  /** How many characters were moved to the start of the path they walk. */
+  readonly placed: number;
   /** Set only when the pass could not START — no capability, no settings. */
   readonly reason?: string;
 }
@@ -69,7 +72,7 @@ export async function cookMotionGenerations(): Promise<CookOutcome> {
   } catch (err) {
     const reason = formatAssetError(err);
     useAssetErrorStore.getState().report('motion generation', reason);
-    return { generated: 0, failed: 0, baked: 0, reason };
+    return { generated: 0, failed: 0, baked: 0, placed: 0, reason };
   }
 
   // Read the state fresh at each step rather than once: the resolver awaits, and
@@ -88,6 +91,21 @@ export async function cookMotionGenerations(): Promise<CookOutcome> {
       .dispatchAtomic(ops, 'user', `cook motion: ${baked} clip${baked === 1 ? '' : 's'}`);
   }
 
+  // The path's other half, and a SECOND dispatch rather than a bigger first one.
+  // The bake writes keys to a clip; this moves a character. Two undo entries each
+  // named for what they did beats one entry that does two unrelated things to two
+  // different nodes — the same split the imperative road took for the same reason.
+  //
+  // Derived from the state AFTER the bake, because a clip that just landed is one
+  // of the clips that may need placing.
+  const placement = placeCookedMotionOps(useDagStore.getState().state);
+  if (placement.ops.length > 0) {
+    useDagStore.getState().dispatchAtomic(placement.ops, 'user', 'place motion on path');
+  }
+  for (const r of placement.refusals) {
+    useAssetErrorStore.getState().report('motion placement', r.reason);
+  }
+
   for (const r of resolutions) {
     if (r.outcome === 'failed' && r.reason) {
       useAssetErrorStore.getState().report('motion generation', r.reason);
@@ -98,5 +116,6 @@ export async function cookMotionGenerations(): Promise<CookOutcome> {
     generated: resolutions.filter((r) => r.outcome === 'generated').length,
     failed: resolutions.filter((r) => r.outcome === 'failed').length,
     baked,
+    placed: placement.ops.length,
   };
 }
