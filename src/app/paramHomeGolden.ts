@@ -103,7 +103,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
   AnimationClip:
-    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
+    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
@@ -262,4 +262,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // the derived half of the claim that nothing existing was re-homed to make room for it.
 // The row is one cell because the node's output is a function of its three INPUTS; there
 // is nothing else about it to author as a param, which is the point of the node.
-export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 223 } as const;
+export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 224 } as const;
