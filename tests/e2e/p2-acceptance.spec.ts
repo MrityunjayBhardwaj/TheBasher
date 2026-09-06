@@ -86,6 +86,11 @@ test.beforeEach(async ({ page }) => {
  * Build the canonical P2 character chain — TimeSource, Skeleton, Clip,
  * Navmesh, Locomotion, Character. Returns when state has been dispatched.
  *
+ * THE CLIP TAKES NO CLOCK (#920). `AnimationClip` is time-free: it describes a
+ * clip, it does not sample one, so it has no `time` input to wire. The clock
+ * reaches this chain at `p2_loco`, the consumer that holds a `Time` and does the
+ * sampling — which is why the chain still animates with one less connect.
+ *
  * The chain mirrors what walkTo + Wave A nodes exercise in unit tests.
  * Reused across multiple acceptance tests below.
  */
@@ -127,11 +132,6 @@ async function seedCharacter(page: import('@playwright/test').Page, opts?: { obs
             type: 'connect',
             from: { node: 'p2_sk', socket: 'out' },
             to: { node: 'p2_clip', socket: 'skeleton' },
-          },
-          {
-            type: 'connect',
-            from: { node: 'p2_time', socket: 'out' },
-            to: { node: 'p2_clip', socket: 'time' },
           },
           {
             type: 'connect',
@@ -374,11 +374,6 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
           type: 'connect',
           from: { node: 'p2_sk', socket: 'out' },
           to: { node: `clip_${id}`, socket: 'skeleton' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p2_time', socket: 'out' },
-          to: { node: `clip_${id}`, socket: 'time' },
         },
         {
           type: 'connect',
