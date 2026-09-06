@@ -18,6 +18,7 @@ import { useTimelineSelection } from '../../timeline/timelineSelection';
 import { useTimeStore } from '../stores/timeStore';
 import {
   animationClipCarriesBone,
+  boneComponentAddress,
   clipRowMintOps,
   paramAnimationDisplayState,
 } from './clipRowMint';
@@ -368,5 +369,101 @@ describe('#908 — what the diamond shows for a clip-driven bone', () => {
   it('an ordinary node is untouched — the widening reaches glTF bones only', () => {
     const s = sceneWithNeighbours();
     expect(paramAnimationDisplayState(s, 'n_plain', 'position', 30)).toBe('none');
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('boneComponentAddress — the address four write paths depend on (#389 C3 tripwire)', () => {
+  // WHY THIS EXISTS, and why it is here rather than beside the split.
+  //
+  // `boneComponentAddress` had NO tracked test naming it, and four production callers
+  // reach it: the parameter diamond's Alt-click path (`ParamDiamond.tsx`), BOTH Auto-Key
+  // chokepoints (`autoKeyCommit.ts:168` and `:223`), and `resolveRowChannelForWrite`
+  // below. It was only ever exercised indirectly, through `clipRowMintOps`.
+  //
+  // Its kind test — `node.type !== 'GltfChild'` — is one of the dispatch sites #389 C3
+  // rewrites when the fused kind retires and a bone becomes an ordinary `Object` pointing
+  // at a `GltfData`. If that conversion is missed, this function returns null for EVERY
+  // bone. Nothing throws, nothing conflicts, and a diff of the split looks entirely
+  // reasonable.
+  //
+  // What that actually costs, measured caller by caller rather than asserted in a group —
+  // an earlier draft of this comment said "all four go quiet", and one of them does not:
+  //   · `autoKeyCommit.ts:168` / `:223`  — both auto-key chokepoints lose the address.
+  //   · `clipRowMint.ts:237`             — `paramAnimationDisplayState` falls through to
+  //     the address, gets null, and answers 'none' where it answers 'animated' today, so
+  //     a clip-driven bone's diamond goes gray. That is #908 regressing wholesale, and it
+  //     is guarded by the #908 rows above, which red under exactly this condition.
+  //   · `ParamDiamond.tsx`               — SURVIVES. Its Alt-click gate is fed by the
+  //     NARROW reader (`paramAnimationState`, which never reaches this function), so the
+  //     branch it takes does not move; the refusal falls to a literal fallback and still
+  //     refuses. Only the sentence degrades, from the mutator's own to a generic one.
+  //     The narrow-versus-wide split is load-bearing here and easy to conflate — see
+  //     `ParamDiamond.tsx`'s own header, and the #908 row that pins the two readers
+  //     disagreeing for the same bone.
+  //
+  // So this is a characterisation row, deliberately written BEFORE the flip: it passes on
+  // the fused kind today and must still pass after it. It is the assertion that turns a
+  // silent behaviour change into a red.
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bonePaths = ['position', 'rotation', 'scale'] as const;
+
+  it('ANTI-VACUITY: the fixture bone really is the kind under test', () => {
+    // Without this, the rows below would keep passing against a scene whose bone node
+    // was never there — "returns an address" is not a claim about anything if the id
+    // resolves to nothing.
+    const state = generatedScene();
+    const node = state.nodes[gltfChildDagId(ASSET, BONE)];
+
+    expect(node).toBeDefined();
+    expect(node.params).toMatchObject({ assetRef: ASSET, childName: BONE });
+  });
+
+  for (const paramPath of bonePaths) {
+    it(`returns the bone's address for a plain glTF bone — ${paramPath}`, () => {
+      const address = boneComponentAddress(
+        generatedScene(),
+        gltfChildDagId(ASSET, BONE),
+        paramPath,
+      );
+
+      expect(address).toEqual({ assetRef: ASSET, childName: BONE, component: paramPath });
+    });
+  }
+
+  it('answers null for a param that is not a TRS component', () => {
+    // The negative half matters as much as the positive one: a conversion that made this
+    // function answer for EVERYTHING would pass a test that only checked the bone rows.
+    expect(boneComponentAddress(generatedScene(), gltfChildDagId(ASSET, BONE), 'name')).toBeNull();
+  });
+
+  it('answers null for a node that carries the SAME params but is not an imported child', () => {
+    // The discriminator has to differ from the bone in KIND ALONE. An arbitrary other
+    // node is not one: it fails the `assetRef`/`childName` guards further down, so the
+    // row stays green even with the kind test deleted — measured, and it is how this row
+    // was first written. Cloning the bone and changing only its `type` leaves the kind
+    // test as the only thing that can reject it.
+    const state = generatedScene();
+    const boneId = gltfChildDagId(ASSET, BONE);
+    const impostorId = 'n_impostor';
+    const impostor: DagState = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [impostorId]: { ...state.nodes[boneId], id: impostorId, type: 'Object' },
+      },
+    };
+
+    expect(impostor.nodes[impostorId].params).toEqual(state.nodes[boneId].params);
+    expect(boneComponentAddress(impostor, impostorId, 'rotation')).toBeNull();
+  });
+
+  it('answers null for an id that is in no graph at all', () => {
+    expect(boneComponentAddress(generatedScene(), 'n_does_not_exist', 'rotation')).toBeNull();
   });
 });
