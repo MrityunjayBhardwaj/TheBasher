@@ -88,7 +88,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly twice since the freeze — #915 and #920', () => {
+  it('has moved the project format version exactly three times since the freeze — #915, #920, then #930', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -102,12 +102,16 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // frozen app output — so the distance between it and live is the thing to pin, and it
     // is still an exact equality against those frozen bytes. A SECOND unplanned bump reds
     // this row again, which is the whole point of having it.
-    // #920 is the SECOND, and it is restated here for the same reason and in the same
-    // way: it drops the dead `TimeSource -> AnimationClip.time` binding that saved
-    // projects still carry, now that a clip node no longer samples at an instant. Left
-    // in place the evaluator still follows it — it resolves a node's OWN bindings, not
-    // its definition's declared inputs — so the clip re-evaluates every frame forever.
-    const MIGRATIONS_SINCE_FREEZE = 2; // #915, then #920
+    // #920 is the SECOND: it drops the dead `TimeSource -> AnimationClip.time` binding
+    // that saved projects still carry, now that a clip node no longer samples at an
+    // instant. Left in place the evaluator still follows it — it resolves a node's OWN
+    // bindings, not its definition's declared inputs — so the clip re-evaluates every
+    // frame forever.
+    // #930 is the THIRD, planned the same way: the two clip carriers spelled one concept
+    // two ways with opposite defaults, so the schema default could not change without a
+    // pass that writes every stored clip's value explicitly. Written and numbered in the
+    // same commit, as this file instructs.
+    const MIGRATIONS_SINCE_FREEZE = 3; // #915, #920, then #930
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

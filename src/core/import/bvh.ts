@@ -14,6 +14,7 @@ import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes } from './threeAdapter';
 import { readPosedJoints } from './bvhProfile';
+import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface BvhSkeletonParams {
   readonly bones: readonly BoneSpec[];
@@ -22,7 +23,7 @@ export interface BvhSkeletonParams {
 export interface BvhClipParams {
   readonly name: string;
   readonly duration: number;
-  readonly loop: boolean;
+  readonly loop: ClipLoop;
   readonly keyframes: readonly AnimationKeyframe[];
 }
 
@@ -106,7 +107,7 @@ export function parseBvh(
       // an asserted `true` walks a one-shot jump or wave away from its own end.
       // Turning it back on is one checkbox — `loop` is a schema'd boolean and
       // `NPanel`'s BooleanField has rendered it since #136.
-      loop: false,
+      loop: 'hold',
       keyframes: scaleKeyframePositions(keyframes, unitScale),
     },
   };

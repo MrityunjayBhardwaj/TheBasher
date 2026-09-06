@@ -2853,7 +2853,7 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
         id: 'n_clip',
         type: 'AnimationClip',
         version: 1,
-        params: { name: 'walk', duration: DUR, loop: true, keyframes: clipKeys() },
+        params: { name: 'walk', duration: DUR, loop: 'cycle-offset', keyframes: clipKeys() },
         inputs: { skeleton: { node: 'n_skel', socket: 'out' } },
       },
     };

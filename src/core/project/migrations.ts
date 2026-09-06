@@ -74,6 +74,12 @@ const formatMigrations: Record<number, FormatMigration> = {
   // socket that no longer exists — and unlike a vanished edge, this one is still
   // FOLLOWED, re-evaluating the clip on every frame forever.
   10: migrateDropAnimationClipTimeEdge,
+  // v11 → v12 (#930): one vocabulary for what a clip does past its last key.
+  // The two carriers spelled it two ways with OPPOSITE defaults, so this pass
+  // writes every stored clip's value EXPLICITLY — which is what makes changing
+  // the schema default safe. Without it, every project omitting the key would
+  // silently change behaviour on load.
+  11: migrateClipLoopToTriState,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1317,4 +1323,75 @@ export function migrateDropAnimationClipTimeEdge(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 11 };
+}
+
+/**
+ * v11 → v12 (#930) — the clip `loop` becomes one tri-state vocabulary.
+ *
+ * ── WHY A MIGRATION AND NOT JUST A NEW DEFAULT ────────────────────────────
+ * `loop` is persisted, so changing the SCHEMA DEFAULT is not safe by
+ * construction the way changing what an importer writes is: any stored project
+ * whose params omit the key currently loads as cycling on one carrier and
+ * holding on the other, and would silently begin doing something else. This
+ * pass writes the value every stored clip is ALREADY behaving as, so the new
+ * default only ever decides what a newly created clip does.
+ *
+ * ── THE TWO MAPPINGS, AND WHY THEY DIFFER ─────────────────────────────────
+ * `AnimationClip.loop` was a BOOLEAN whose `true` selected cycle-WITH-OFFSET on
+ * position (`clipExtendRules`), so `true` becomes `cycle-offset` and not
+ * `cycle`. Mapping it to plain `cycle` would quietly take the travel out of
+ * every stored walk — the character would moonwalk on the spot.
+ *
+ * An ABSENT value on this carrier maps to `cycle-offset` too, because the old
+ * schema default was `true` and every reader agreed with it (`?? true`,
+ * `!== false`). Mapping absent to the NEW default would be the silent change
+ * this migration exists to prevent.
+ *
+ * `TransformClip.loop` was `'loop' | 'clamp'`, and folding time replays
+ * identical frames — that IS cycle-in-place — so `'loop'` becomes `cycle` and
+ * `'clamp'` becomes `hold`, with absent following its old default of `'clamp'`.
+ * No behaviour moves on that carrier at all; it is a rename.
+ */
+export function migrateClipLoopToTriState(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 12 };
+
+  let animationClips = 0;
+  let transformClips = 0;
+
+  for (const node of Object.values(nodes)) {
+    const params = node?.params as Record<string, unknown> | undefined;
+    if (!params) continue;
+
+    if (node.type === 'AnimationClip') {
+      // `!== false` and not `=== true`: absent must follow the OLD default,
+      // which was `true`. Reading it positively would flip every project that
+      // never wrote the key.
+      params.loop = params.loop !== false ? 'cycle-offset' : 'hold';
+      animationClips++;
+    } else if (node.type === 'TransformClip') {
+      // `=== 'loop'` and not `!== 'clamp'`: absent must follow THIS carrier's
+      // old default, which was `'clamp'`. The two carriers defaulted opposite
+      // ways, so the two reads are deliberately opposite too — writing them the
+      // same way is the mistake that looks tidiest.
+      params.loop = params.loop === 'loop' ? 'cycle' : 'hold';
+      transformClips++;
+    }
+  }
+
+  if (animationClips > 0 || transformClips > 0) {
+    console.warn(
+      `[migrateClipLoopToTriState] wrote an explicit loop mode on ${animationClips} ` +
+        `AnimationClip and ${transformClips} TransformClip nodes (#930). Each keeps the ` +
+        `behaviour it had: a looping AnimationClip becomes 'cycle-offset' (it travelled, ` +
+        `and plain 'cycle' would take the travel away), a looping TransformClip becomes ` +
+        `'cycle' (folding time already replayed identical frames).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 12 };
 }

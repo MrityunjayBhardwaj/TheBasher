@@ -34,7 +34,7 @@ function buildBaselineCharacter(): DagState {
     type: 'addNode',
     nodeId: 'clip',
     nodeType: 'AnimationClip',
-    params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+    params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
   }).next;
   state = applyOp(state, {
     type: 'addNode',
@@ -304,7 +304,7 @@ describe('Wave D — walkTo over multiple characters preserves isolation', () =>
         type: 'addNode',
         nodeId: `clip_${id}`,
         nodeType: 'AnimationClip',
-        params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+        params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
       }).next;
       state = applyOp(state, {
         type: 'addNode',

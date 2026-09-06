@@ -59,7 +59,14 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // cache entries; without it, one. Left in place the clip re-evaluates every frame and the
 // cache grows without bound, which is the cost #920 exists to remove. See migrations.ts
 // formatMigrations[10].
-export const PROJECT_FORMAT_VERSION = 11;
+// v12 (#930): one vocabulary for what a clip does past its last key. `loop` was a BOOLEAN
+// on `AnimationClip` whose `true` meant cycle-WITH-OFFSET, and `'loop' | 'clamp'` on
+// `TransformClip` — two spellings with OPPOSITE defaults, and cycle-in-place had no
+// spelling at all. The value is persisted, so the pass writes every stored clip's
+// behaviour EXPLICITLY; that is what makes changing the schema default safe, and it is
+// why `true` maps to `cycle-offset` rather than `cycle` — plain `cycle` would take the
+// travel out of every stored walk. See migrations.ts formatMigrations[11].
+export const PROJECT_FORMAT_VERSION = 12;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

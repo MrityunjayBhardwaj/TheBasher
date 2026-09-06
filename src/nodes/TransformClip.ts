@@ -36,15 +36,27 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TransformClipValue, Vec3 } from './types';
+import { TimeFoldLoopSchema } from './clipLoop';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 export const TransformClipParams = z.object({
   name: z.string().default('clip'),
   duration: z.number().positive().default(2),
-  /** When 'loop', time folds into [0, duration). When 'clamp', time
-   *  pre-/post-keyframes pin to the endpoints. */
-  loop: z.enum(['loop', 'clamp']).default('clamp'),
+  /**
+   * What the clip does past its authored range (#930). `hold` pins
+   * pre-/post-keyframes to the endpoints; `cycle` folds time into [0, duration).
+   *
+   * Was `['loop','clamp'].default('clamp')` — the SAME two behaviours under
+   * different names, so this is a rename and not a behaviour change: folding
+   * time replays identical frames, which is precisely cycle-in-place.
+   *
+   * `cycle-offset` is deliberately absent rather than accepted-and-degraded.
+   * This carrier folds TIME, so it has no way to add a per-period offset, and
+   * offering the value would silently give plain cycling instead. Unreachable
+   * beats degraded; a real offset here is its own slice.
+   */
+  loop: TimeFoldLoopSchema,
   /**
    * Scene-node-indexed keyframes. Each row targets one scene child by
    * `targetNodeId` (built deterministically by the importer from
@@ -146,9 +158,9 @@ export const TransformClipNode: NodeDefinition<TransformClipParams, TransformCli
 
     const sample = (seconds: number): Record<string, TRS> => {
       if (!hasKeyframes) return {};
-      // loop / clamp folding — byte-faithful to AnimationClip.ts:113-115.
+      // hold / cycle folding — byte-faithful to AnimationClip's own fold.
       let t = seconds;
-      if (loop === 'loop') {
+      if (loop === 'cycle') {
         t = ((t % duration) + duration) % duration;
       } else {
         t = Math.max(0, Math.min(duration, t));

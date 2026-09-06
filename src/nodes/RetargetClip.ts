@@ -57,6 +57,7 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import { retargetClip } from '../core/import/retarget';
 import type { AnimationClipValue, BoneNameMapValue, SkeletonValue } from './types';
+import { clipLoopOf } from './clipLoop';
 
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
@@ -95,7 +96,7 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
         kind: 'AnimationClip',
         name: params.name || (sourceClip?.name ?? 'clip'),
         duration: sourceClip?.duration ?? 0,
-        loop: sourceClip?.loop ?? true,
+        loop: clipLoopOf(sourceClip?.loop),
         keyframes: [],
         skeleton: target ?? EMPTY_SKELETON,
       };

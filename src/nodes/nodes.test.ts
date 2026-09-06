@@ -691,7 +691,7 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
       params: {
         name: 'walk',
         duration: 2,
-        loop: true,
+        loop: 'cycle-offset',
         keyframes: [
           { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
           { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
@@ -841,7 +841,7 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
       type: 'addNode',
       nodeId: 'clip',
       nodeType: 'AnimationClip',
-      params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+      params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -962,7 +962,7 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
         type: 'addNode',
         nodeId: `clip_${id}`,
         nodeType: 'AnimationClip',
-        params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+        params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
       }).next;
       state = applyOp(state, {
         type: 'addNode',
