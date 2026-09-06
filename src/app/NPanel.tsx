@@ -43,9 +43,16 @@ import {
   MATERIAL_MAP_SLOTS,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
+import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
+import {
+  perMapPlacementRows,
+  withSlotPlacement,
+  type IrMapSlot,
+  type PerMapPlacementHost,
+} from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import type { BakedTextureRef } from '../nodes/types';
+import type { BakedTextureRef, UvPlacement } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { importedChildOf } from './importedChild';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
@@ -1811,67 +1818,129 @@ function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> 
   );
 }
 
-// v0.6 #2 (#178, W5) — one texture-map slot row: pick (file → attachMapFromFile →
-// OPFS → setParam the ref) or clear (setParam null). Maps are NON-animated (D-04)
-// → no ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the
-// MERGED feedback surface), never a silent drop.
+// v0.6 #2 (#178, W5) — one texture-map slot row. Maps are NON-animated (D-04) → no
+// ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the MERGED
+// feedback surface), never a silent drop.
+//
+// ── THE EDIT LAYER HAS THREE STATES, AND THE ROW NEEDS A CONTROL FOR EACH (#937) ──────
+//
+// `null` = inherit whatever the source supplies (for an imported mesh, the clone's own
+// texture; for a native material, nothing). `CLEARED_MAP` = REMOVE it. A real
+// `BakedTextureRef` = replace it. The two sentinels both carry `hash: ''` and are told
+// apart by `gltfTexture` — see `gltfMapOverlay.ts`, which is where that rule lives.
+//
+// This row used to offer one button writing `null`, which collapsed "remove" and "revert"
+// into the same action and left `CLEARED_MAP` unreachable from anywhere in the app: #389
+// moved imported materials onto these generic rows, and the bespoke glTF row that owned
+// the third state went with the move. The renderer and the bundle both still honour the
+// sentinel, so the state remained legal, writable by a migration, and impossible to enter
+// or leave by hand.
+//
+// Every state is derived from the VALUE alone — no store lookup and nothing glTF-shaped —
+// which is why this belongs on the generic row rather than on a kind-specific branch. A
+// native material simply never reaches the `imported` arm, so it sees exactly the one
+// button it saw before, and no native behaviour moves.
 function MapRow({
   nodeId,
   slot,
   mapRef,
+  onSet,
 }: {
   nodeId: string;
   slot: MaterialMapSlot;
   mapRef: BakedTextureRef | null;
+  /** #938 — the row states WHAT it wants written; the editor owns HOW, because a
+   *  multi-slot material has to be committed as a whole-array replace. */
+  onSet: (value: BakedTextureRef | null, what: string) => void;
 }) {
-  const dispatch = useDagStore((s) => s.dispatch);
   const inputRef = useRef<HTMLInputElement>(null);
-  const paramPath = `material.maps.${slot}`;
+  // #937 — the three states, from the value alone. `imported` must be tested BEFORE
+  // `cleared`: both sentinels carry `hash: ''`, and only `gltfTexture` separates
+  // "inherit the clone's texture" from "remove it".
+  const importedTex = isImportedMap(mapRef);
+  const cleared = isClearedMap(mapRef);
+  const replaced = mapRef != null && !cleared && !importedTex;
+  const stateLabel = replaced
+    ? 'replaced'
+    : cleared
+      ? 'cleared'
+      : importedTex
+        ? 'imported'
+        : 'none';
+  const setMap = (value: BakedTextureRef | null, what: string) => onSet(value, what);
   const onPick = async (file: File) => {
     try {
       const storage = await getStorage();
       const ref = await attachMapFromFile(storage, file, slot);
-      // The setParam recording the ref runs ONLY after the async persist resolves.
-      dispatch({ type: 'setParam', nodeId, paramPath, value: ref }, 'user', `attach ${slot} map`);
+      // The write recording the ref runs ONLY after the async persist resolves.
+      onSet(ref, 'attach');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       useAssetErrorStore.getState().report(`${nodeId}:${slot}`, `${slot} map failed: ${msg}`);
     }
   };
   return (
-    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+    // #937 — a `role=group`, NOT a `<label>`. A label wraps a single labelable control,
+    // and this row holds several buttons plus a hidden file input, so the label associates
+    // with the FILE INPUT: clicking the slot name or the state text spuriously opens the OS
+    // file chooser. That is a live defect and not only an a11y one, and it predates the
+    // split — the generic row has always been a label; it simply had no imported material
+    // in front of it until #389 routed one here. The group's aria-label names the slot so
+    // the otherwise-generic pick/clear/revert buttons read in context, and each button
+    // ALSO carries its own slot-specific label so it is unambiguous alone (six map slots
+    // would otherwise read identically).
+    <div
+      role="group"
+      aria-label={`${slot} map (${stateLabel})`}
+      className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
+    >
       <span className="font-mono text-fg/60">{slot}</span>
       <span className="flex items-center gap-1">
         <span
           className="font-mono text-[10px] text-fg/40"
           data-testid={`inspector-map-state-${nodeId}-${slot}`}
         >
-          {mapRef ? '● set' : '— none'}
+          {replaced ? '● replaced' : cleared ? '— cleared' : importedTex ? '● imported' : '— none'}
         </span>
         <button
           type="button"
+          aria-label={`${replaced ? 'Replace' : 'Pick'} ${slot} map`}
           data-testid={`inspector-map-pick-${nodeId}-${slot}`}
           onClick={() => inputRef.current?.click()}
           className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          {mapRef ? 'replace' : 'pick'}
+          {replaced ? 'replace' : 'pick'}
         </button>
-        {mapRef ? (
+        {/* #937 — the two actions the edit layer needs, and the branch is on whether an
+            EDIT exists rather than on whether an imported texture does. An unedited slot
+            offers "clear" (write the sentinel: explicitly no texture); an edited one —
+            replaced or cleared — offers "revert" (drop the edit, back to inheriting).
+            That is the branch the bespoke glTF row used, restored verbatim rather than
+            narrowed: gating "clear" on a genuine imported descriptor reads as tighter but
+            silently removes the ability to state "this slot has no texture" for a slot
+            that merely happens to be empty, which is a different claim from inheriting
+            and is the one the bundle round-trip persists. */}
+        {!replaced && !cleared ? (
           <button
             type="button"
+            aria-label={`Clear ${slot} map`}
             data-testid={`inspector-map-clear-${nodeId}-${slot}`}
-            onClick={() =>
-              dispatch(
-                { type: 'setParam', nodeId, paramPath, value: null },
-                'user',
-                `clear ${slot} map`,
-              )
-            }
+            onClick={() => setMap(CLEARED_MAP, 'clear')}
             className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
             clear
           </button>
-        ) : null}
+        ) : (
+          <button
+            type="button"
+            aria-label={`Revert ${slot} map to imported`}
+            data-testid={`inspector-map-revert-${nodeId}-${slot}`}
+            onClick={() => setMap(null, 'revert')}
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            revert
+          </button>
+        )}
         <input
           ref={inputRef}
           type="file"
@@ -1886,7 +1955,7 @@ function MapRow({
           }}
         />
       </span>
-    </label>
+    </div>
   );
 }
 
@@ -2338,6 +2407,52 @@ function MaterialNumberRow({
 // One shared OpenPBR colour row: swatch + hex input, ParamDiamond, Auto-Key
 // routing, and the H40 read-side (mirrors MaterialNumberRow for strings). The
 // draft tracks the EFFECTIVE value so a scrubbed/animated colour shows through.
+// #220 / #937 — a material's `name` (a label, not appearance). Buffered like
+// MaterialColorRow's hex input — commit on blur/Enter, not per-keystroke — so a rename
+// is ONE undo entry, not one per character. The name mirrors back to the submesh
+// slot-button label (`m.name || index`). Non-animatable (no ParamDiamond).
+//
+// #389 moved imported materials onto the generic rows and this control did not come
+// with them, which left `material.name` writable by a migration and by an agent but by
+// no one using the app. It lives on the generic editor rather than on a glTF branch for
+// the same reason the per-map placement rows do: the field is on the material, and a
+// native material that acquires a name gets the editor for free.
+function MaterialNameRow({
+  name,
+  testid,
+  onCommit,
+}: {
+  name: string;
+  testid: string;
+  onCommit: (next: string) => void;
+}) {
+  const [draft, setDraft] = useState(name);
+  // Resync when the name changes outside this field (undo, slot switch, agent edit).
+  useEffect(() => setDraft(name), [name]);
+  const commit = (next: string) => {
+    const trimmed = next.trim();
+    if (trimmed === name) return;
+    onCommit(trimmed);
+  };
+  return (
+    <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">name</span>
+      <input
+        type="text"
+        aria-label="material name"
+        value={draft}
+        data-testid={testid}
+        className="w-40 rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={(e) => commit(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        }}
+      />
+    </label>
+  );
+}
+
 function MaterialColorRow({
   nodeId,
   paramPath,
@@ -2426,26 +2541,182 @@ function MaterialColorRow({
   );
 }
 
+/**
+ * A copy of `obj` with `path` (dot-separated, OBJECT keys only) set to `value`.
+ *
+ * #938 — this exists because `setParam` CANNOT address an array index. `ops.setAtPath`
+ * clones each step with `{ ...existing }` only when the step is a non-array object, and
+ * replaces an array with `{}` otherwise — so `materialSlots.1.base.color` turns the slot
+ * TABLE into an object and the write is then rejected by the schema:
+ *
+ *   OpError: setParam: params failed schema for GltfData:
+ *     expected "array", received "object", path ["materialSlots"]
+ *
+ * Measured, not inferred. So a multi-slot edit has to replace the WHOLE `materialSlots`
+ * array with the edited slot substituted, which is the same whole-array replace the
+ * bespoke glTF editor used — its reason, unstated there, was this.
+ *
+ * ⚠️ READ paths are unaffected and deliberately still spell `materialSlots.<i>.…`: a
+ * channel target, a diamond and the mask lookup all resolve through the param-reach
+ * reader, not through `setAtPath`, and the migration points migrated channels at exactly
+ * that spelling. Write and read differ here on purpose.
+ */
+function withAtPath<T>(obj: T, path: string, value: unknown): T {
+  if (path === '') return value as T;
+  const [head, ...rest] = path.split('.');
+  const src = (obj ?? {}) as Record<string, unknown>;
+  return {
+    ...src,
+    [head]: rest.length === 0 ? value : withAtPath(src[head] ?? {}, rest.join('.'), value),
+  } as T;
+}
+
 function MaterialEditor({
   nodeId,
-  material,
+  material: slotZeroMaterial,
   maskedBy,
   suppliedBy,
 }: {
   nodeId: string;
+  /** Slot 0, as `ParamRow` found it. On a multi-slot mesh the authoritative copy is
+   *  `materialSlots[0]`; see the slot table below for why this one is not simply used. */
   material: unknown;
   maskedBy?: Readonly<Record<string, MaskSource>>;
   /** #394 S3d (#525) — a connected `material` socket supersedes this param wholesale. */
   suppliedBy?: MaskSource;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
-  if (!isMaterialIR(material)) return null;
+  // #938 — the node's FULL captured slot table, when it has one. A multi-primitive mesh
+  // stores every slot in `materialSlots` and duplicates slot 0 into `material`; a
+  // single-primitive one stores `material` alone. That is exactly `dataSlotsOnly`'s
+  // `materialSlots ?? [material]`, and the read side is authoritative: when the table
+  // exists the renderer reads it and IGNORES `material`, so an edit aimed at `material`
+  // on a multi-slot mesh would change a value nothing draws.
+  const slotTable = useDagStore((s) => {
+    const params = s.state.nodes[nodeId]?.params as { materialSlots?: unknown } | undefined;
+    return Array.isArray(params?.materialSlots) ? (params.materialSlots as unknown[]) : null;
+  });
+  const [activeSlot, setActiveSlot] = useState(0);
+  const multi = slotTable !== null && slotTable.length > 1;
+  // Clamp rather than trust: the table's length is data, and a project can be loaded or
+  // undone underneath a selection that is now out of range.
+  const slot = multi ? Math.min(activeSlot, slotTable.length - 1) : 0;
+  const editing = multi ? slotTable[slot] : slotZeroMaterial;
+  // Every write below is addressed through this prefix, so the slot choice is made once.
+  //
+  // 🔑 THE SAME RULE THE MIGRATION USES, and the agreement is load-bearing rather than a
+  // coincidence: `gltfMaterialPath` computes `slotCount > 1 ? \`materialSlots.${slot}\` :
+  // 'material'` for exactly this reason ("when the table exists it is what renders, and
+  // slot 0 must address it rather than the sibling `material`"). So a channel migrated
+  // onto slot 0 of a multi-primitive child and an edit made here land on the same param.
+  // Spelling it differently in either place would put a channel and the inspector on two
+  // different values that both look right in isolation.
+  //
+  // ⚠️ AND THEREFORE `material` IS DELIBERATELY NOT MIRRORED when the table exists. It
+  // stays at its imported value, unread: `dataSlotsOnly` is `materialSlots ?? [material]`,
+  // so the sibling is the one-slot FALLBACK and not a cache of slot 0. Writing both would
+  // make two writers for one rendered value and hand the next reader a choice it should
+  // never have to make.
+  const base = multi ? `materialSlots.${slot}` : 'material';
+  /**
+   * Commit one field of the ACTIVE slot. Single-slot writes address `material.<suffix>`
+   * directly; multi-slot writes replace the whole table, because `setParam` cannot index
+   * an array (see `withAtPath`). Every write in this editor goes through here so the two
+   * mechanisms are chosen in one place rather than remembered at seven call sites.
+   */
+  const commitField = (suffix: string, value: unknown, label: string) => {
+    if (!multi) {
+      dispatch(
+        {
+          type: 'setParam',
+          nodeId,
+          paramPath: suffix === '' ? 'material' : `material.${suffix}`,
+          value,
+        },
+        'user',
+        label,
+      );
+      return;
+    }
+    const nextSlot = withAtPath(material as Record<string, unknown>, suffix, value);
+    dispatch(
+      {
+        type: 'setParam',
+        nodeId,
+        paramPath: 'materialSlots',
+        value: slotTable!.map((m, i) => (i === slot ? nextSlot : m)),
+      },
+      'user',
+      label,
+    );
+  };
+  if (!isMaterialIR(editing)) return null;
+  const material = editing;
   const maps = (material.maps ?? {}) as Record<string, BakedTextureRef | null>;
   const uvt = material.uvTransform as
     | { tiling: [number, number]; offset: [number, number]; rotation: number }
     | undefined;
+  // #550 / #936 — the maps carrying their OWN placement. This road used to be reachable
+  // only through the bespoke glTF editor; #389 moved imported materials onto these
+  // generic rows and the per-map surface did not come with them, which left the importer
+  // capturing placements and the renderer applying them with nothing able to edit or
+  // reset one. The bag lives on the material either way, so the rows belong here rather
+  // than on a kind-specific branch — a native material that acquires a per-map placement
+  // gets the same editor for free.
+  const perMapRows = perMapPlacementRows(material as PerMapPlacementHost);
+  // Write ONE map slot's placement, or clear it back to the shared one with `null`.
+  // The bag's SHAPE — which slots it lists, and whether the field exists at all — is
+  // decided by `withSlotPlacement` and never here: an empty-but-present bag renders
+  // identically to an absent one while re-keying the material, so the two must not be
+  // spelled at the call site. Whole-`material` replace, matching how every other write
+  // in this editor that changes more than one leaf is committed.
+  const commitSlotPlacement = (mapSlot: IrMapSlot, placement: UvPlacement | null) => {
+    commitField(
+      '',
+      withSlotPlacement(material as PerMapPlacementHost, mapSlot, placement),
+      placement ? `edit material ${mapSlot} placement` : `reset material ${mapSlot} placement`,
+    );
+  };
   return (
     <div data-testid={`inspector-material-editor-${nodeId}`} className="flex flex-col">
+      {/* #938 — WHICH captured material this editor is editing. A multi-primitive imported
+          mesh carries one per primitive, and before this the editor rendered `material`
+          alone, so every slot above the first was uneditable while still being rendered.
+          Absent for a single-slot mesh: one radio is a label, not a choice. */}
+      {multi ? (
+        <div className="flex flex-col gap-1 px-3 py-1.5">
+          <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
+          <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
+            {slotTable!.map((m, i) => {
+              const active = i === slot;
+              const label = (m as { name?: unknown })?.name;
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  data-testid={`inspector-material-slot-${nodeId}-${i}`}
+                  onClick={() => setActiveSlot(i)}
+                  className={`rounded border px-2 py-0.5 font-mono text-[10px] ${
+                    active
+                      ? 'border-accent bg-accent/15 text-accent'
+                      : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
+                  }`}
+                >
+                  {typeof label === 'string' && label ? label : String(i)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {/* #220 / #937 — rename the material (a label; updates the slot button too). */}
+      <MaterialNameRow
+        name={typeof material.name === 'string' ? material.name : ''}
+        testid={`inspector-material-name-${nodeId}`}
+        onCommit={(value) => commitField('name', value, 'rename material')}
+      />
       {/* v0.7 Phase 4 (#198) — the SHARED lobe rows (the same MaterialRows the glTF
           editor renders). The primitive owns its material → a direct dotted
           setParam (D-07); no override decorator on material fields (native material
@@ -2454,7 +2725,7 @@ function MaterialEditor({
         nodeId={nodeId}
         maskedBy={maskedBy}
         suppliedBy={suppliedBy}
-        fieldPath={(lobe, key) => `material.${lobe}.${key}`}
+        fieldPath={(lobe, key) => `${base}.${lobe}.${key}`}
         readValue={(lobe, key, kind) => {
           const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
           if (kind === 'color')
@@ -2462,14 +2733,10 @@ function MaterialEditor({
           return typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
         }}
         commitSource={(lobe, key, value) =>
-          dispatch(
-            { type: 'setParam', nodeId, paramPath: `material.${lobe}.${key}`, value },
-            'user',
-            `edit material.${lobe}.${key}`,
-          )
+          commitField(`${lobe}.${key}`, value, `edit ${base}.${lobe}.${key}`)
         }
         testids={(lobe, key) => {
-          const p = `material.${lobe}.${key}`;
+          const p = `${base}.${lobe}.${key}`;
           return {
             num: `inspector-input-${nodeId}-${p}`,
             scrub: `inspector-scrub-${nodeId}-${p}`,
@@ -2482,24 +2749,56 @@ function MaterialEditor({
         <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
           Maps
         </div>
-        {MATERIAL_MAP_SLOTS.map((slot) => (
-          <MapRow key={slot} nodeId={nodeId} slot={slot} mapRef={maps[slot] ?? null} />
+        {MATERIAL_MAP_SLOTS.map((s) => (
+          <MapRow
+            key={s}
+            nodeId={nodeId}
+            slot={s}
+            mapRef={maps[s] ?? null}
+            onSet={(value, what) => commitField(`maps.${s}`, value, `${what} ${s} map`)}
+          />
         ))}
       </div>
       {uvt ? (
         <UvTransformSection
           uvTransform={uvt}
           testidBase={nodeId}
-          ariaBase="material"
+          ariaBase={base}
+          // #550 — once some map carries its own placement this one no longer governs
+          // every map, and saying so is the whole point: a per-map import leaves this
+          // value at IDENTITY by design, so an unlabelled "Texture Placement" reading
+          // [1,1] over a quad drawn at [2,3] is the panel disagreeing with the screen.
+          title={perMapRows.length > 0 ? 'Texture Placement · shared' : 'Texture Placement'}
           onSet={(field, value) =>
-            dispatch(
-              { type: 'setParam', nodeId, paramPath: `material.uvTransform.${field}`, value },
-              'user',
-              `set material.uvTransform.${field}`,
-            )
+            commitField(`uvTransform.${field}`, value, `set ${base}.uvTransform.${field}`)
           }
         />
       ) : null}
+      {/* #550 — REPLACEMENT, not a delta: a listed slot ignores the shared value
+          entirely, so each row is an absolute placement. Rows come from the IR's closed
+          slot table rather than the bag's own key order, and each keeps a reset back to
+          shared so a captured placement can always be undone. Values pass through
+          unconverted — this editor places about the UV origin, the convention they were
+          captured in (#551). */}
+      {perMapRows.map(({ slot: mapSlot, placement }) => (
+        <UvTransformSection
+          key={mapSlot}
+          uvTransform={
+            placement as unknown as {
+              tiling: [number, number];
+              offset: [number, number];
+              rotation: number;
+            }
+          }
+          testidBase={`${nodeId}-${mapSlot}`}
+          ariaBase={`${base}.mapUvTransforms.${mapSlot}`}
+          title={`Texture Placement · ${mapSlot}`}
+          onSet={(field, value) =>
+            commitSlotPlacement(mapSlot, { ...placement, [field]: value } as UvPlacement)
+          }
+          onReset={() => commitSlotPlacement(mapSlot, null)}
+        />
+      ))}
       <MaterialRenderOptions
         geometry={
           (material.geometry ?? {}) as {
@@ -2509,13 +2808,7 @@ function MaterialEditor({
           }
         }
         testidBase={nodeId}
-        onSet={(key, value) =>
-          dispatch(
-            { type: 'setParam', nodeId, paramPath: `material.geometry.${key}`, value },
-            'user',
-            `set material.geometry.${key}`,
-          )
-        }
+        onSet={(key, value) => commitField(`geometry.${key}`, value, `set ${base}.geometry.${key}`)}
       />
     </div>
   );

@@ -261,17 +261,22 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':
       'the inspector’s read/write rule — glTF editor only, ORIGIN road, values unconverted',
-    // 🔴 #389 REMOVED `src/app/NPanel.tsx` FROM THIS LIST, and the removal is the honest
-    // direction for this census rather than a loosening of it. The panel named the field in
-    // exactly one place: the aria path it gave each per-map row of the glTF material editor
-    // (`materials.<n>.mapUvTransforms.<slot>.tiling.x`). That editor is gone — the split
-    // retired the `materials` ARRAY it existed to address, and an imported child's material
-    // now renders through the same `MaterialRows` every other kind uses. With no glTF-shaped
-    // editor there is no glTF-shaped aria path, so the panel names nothing here.
+    // #389 → #936 — `src/app/NPanel.tsx` is BACK, and the round trip is worth recording
+    // because this row is the clearest evidence of what went wrong.
     //
-    // The row is asserted in BOTH directions below, which is what makes this safe to shrink:
-    // a module that stopped naming the field is REPORTED rather than quietly kept, so this
-    // entry could not have been left behind as a stale permission.
+    // C3 removed this entry and argued the removal was the honest direction: the bespoke
+    // glTF material editor was gone, so the panel named nothing here. Every word of that
+    // was true, and the conclusion was still wrong — the editor had not been REPLACED for
+    // this field, it had been dropped. Losing the reader was the capability loss (#936),
+    // and this row going green was that loss being ratified rather than caught. A census
+    // that is exact in both directions still cannot tell "nothing needs to read this" from
+    // "the thing that read it is gone", because both spell the same absence.
+    //
+    // The per-map placement rows now live on the GENERIC material editor, so the panel
+    // names the field again — one aria path per row, `<base>.mapUvTransforms.<slot>`, where
+    // `<base>` is `material` or `materialSlots.<i>` depending on the mesh's slot count.
+    'src/app/NPanel.tsx':
+      'the inspector’s per-map placement rows — ORIGIN road, values passed through unconverted',
   };
 
   /**
