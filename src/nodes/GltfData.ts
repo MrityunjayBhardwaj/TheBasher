@@ -3,21 +3,22 @@
 // inside it, and the materials captured at import — and deliberately no pose. An
 // `Object` supplies that, exactly as it does for every other kind.
 //
-// ── NOT YET REGISTERED, AND THAT IS THE WHOLE SHAPE OF THIS ISSUE ────────────────────
+// ── WHY THIS ARRIVED FULLY SPLIT, IN ONE CHANGE ──────────────────────────────────────
 //
-// This file lands ahead of its registration on purpose. The moment `GltfData` enters
-// the node registry, `splitKinds.registry.gate` requires a conformance descriptor for
-// it, and `splitKinds.roads` R9 requires that descriptor's `migratesFromVersion` to be
-// BELOW `PROJECT_FORMAT_VERSION` — i.e. a migration that has already shipped. There is
-// no honest value for a kind whose split has migrated nothing, so the coexisting
-// slice-1 ladder every earlier kind walked (`SphereData`: "nothing migrates in
-// C1-Slice-1") is no longer expressible. The conformance machinery hardened after those
-// kinds went in, and it now requires a kind to arrive FULLY SPLIT: node + format bump +
-// migration + producer flip + the retirement of `GltfChild`, in one change.
+// This file first landed AHEAD of its registration, and the reason is worth keeping
+// because it shaped the whole issue. The moment `GltfData` enters the node registry,
+// `splitKinds.registry.gate` requires a conformance descriptor for it, and
+// `splitKinds.roads` R9 requires that descriptor's `migratesFromVersion` to be BELOW
+// `PROJECT_FORMAT_VERSION` — i.e. a migration that has already shipped. There is no
+// honest value for a kind whose split has migrated nothing, so the coexisting slice-1
+// ladder every earlier kind walked (`SphereData`: "nothing migrates in C1-Slice-1") was
+// not expressible here. The conformance machinery hardened after those kinds went in,
+// and it now requires a kind to arrive FULLY SPLIT: node + format bump + migration +
+// producer flip + the retirement of `GltfChild`, together.
 //
-// So this is the foundation commit: the node and the draw rule, inert and green, with
-// the flip behind them. Registering it early would not be a smaller step — it would be
-// the same step with a dishonest descriptor in front of it.
+// It is now registered and live: it produces the value an imported child renders from,
+// and `GltfChild` is deleted. The paragraph above is kept as the reason the commit has
+// the shape it does, NOT as a description of this file's current state.
 //
 // ── WHY `MeshData` IS THE RIGHT CONTRACT ─────────────────────────────────────────────
 //
