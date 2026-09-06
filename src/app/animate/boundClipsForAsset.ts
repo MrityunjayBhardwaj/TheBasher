@@ -83,7 +83,23 @@ export function boundClipsForAsset(
   if (!Array.isArray(skins)) return [];
 
   skeletonIds.sort();
-  clipIds.sort();
+  // ACTIVE FIRST, then by id (#907).
+  //
+  // The id order alone made "which motion plays" depend on the alphabetical
+  // order of the two source filenames, because a retargeted clip's id is derived
+  // from the pair. Deterministic — which is why the sort is here at all — but
+  // arbitrary from where the director stands, and invisible either way.
+  //
+  // The tie-break stays the id, so this is a REFINEMENT of the old order rather
+  // than a replacement: with no active clip (every project saved before this)
+  // every entry compares equal on the first key and the result is byte-identical
+  // to what it has always been. That is what makes the flag safe with no
+  // migration.
+  clipIds.sort((a, b) => {
+    const rank = (id: string) =>
+      (nodes[id].params as { active?: unknown }).active === true ? 0 : 1;
+    return rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0);
+  });
 
   const out: BoundClip[] = [];
   for (const skeletonId of skeletonIds) {
