@@ -202,9 +202,10 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         name,
         duration: clip.duration,
         // Generated motion is a finite performance, not a cycle. A clip that
-        // claimed to loop would extend a walk past its last key by repeating it,
-        // which is a claim about the motion that nothing measured.
-        loop: false,
+        // claimed to cycle would extend a walk past its last key by repeating it,
+        // which is a claim about the motion that nothing measured. `'hold'` is
+        // what the old `false` meant, in the vocabulary #930 gave the concept.
+        loop: 'hold',
         keyframes: clip.keyframes,
         skeleton: clip.skeleton,
         generation: { status: 'ready', requestHash, worldOffsetXZ: clip.worldOffsetXZ },
@@ -219,7 +220,7 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
       // duration borrowed from the request would let a pending clip report a
       // length it does not have to every consumer that reads one.
       duration: 0,
-      loop: false,
+      loop: 'hold',
       keyframes: [],
       skeleton: EMPTY_SKELETON,
       generation:

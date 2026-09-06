@@ -36,7 +36,7 @@ describe('TransformClip evaluator', () => {
   });
 
   it('returns empty sample map for empty keyframes', () => {
-    const v = evalClip({ duration: 1, loop: 'clamp', keyframes: [] });
+    const v = evalClip({ duration: 1, loop: 'hold', keyframes: [] });
     expect(v.kind).toBe('TransformClip');
     expect(v.sample(0)).toEqual({});
     expect(v.sample(0.5)).toEqual({});
@@ -45,7 +45,7 @@ describe('TransformClip evaluator', () => {
   it('single keyframe at t=0 returns that keyframe at any sample time', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -65,7 +65,7 @@ describe('TransformClip evaluator', () => {
   it('two keyframes interpolate piecewise-linearly between them', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -92,7 +92,7 @@ describe('TransformClip evaluator', () => {
   it('loop mode folds time into [0, duration)', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'loop',
+      loop: 'cycle',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -117,7 +117,7 @@ describe('TransformClip evaluator', () => {
   it('clamp mode pins post-end time to the last keyframe', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -141,7 +141,7 @@ describe('TransformClip evaluator', () => {
   it('multi-target: keyframed target appears, un-keyframed target is absent', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -165,7 +165,7 @@ describe('TransformClip evaluator', () => {
   it('rotation is stored + interpolated in DEGREES (B3 CHECKPOINT)', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -192,7 +192,7 @@ describe('TransformClip evaluator', () => {
   it('deterministic: identical (params, sample-time) → byte-identical tracks', () => {
     const params = {
       duration: 1,
-      loop: 'clamp' as const,
+      loop: 'hold' as const,
       keyframes: [
         {
           targetNodeId: 'cube',
@@ -225,7 +225,7 @@ describe('TransformClip evaluator', () => {
   it('same closure samples different times → corresponding interpolated tracks', () => {
     const v = evalClip({
       duration: 1,
-      loop: 'clamp',
+      loop: 'hold',
       keyframes: [
         {
           targetNodeId: 'cube',

@@ -53,7 +53,7 @@ function graph(over: Record<string, GraphNodeLike> = {}): Record<string, GraphNo
     n_srcSkel: { type: 'Skeleton', params: { bones: sourceBones() }, inputs: {} },
     n_src: {
       type: 'AnimationClip',
-      params: { name: 'walk', duration: 1, loop: false, keyframes: sourceKeys() },
+      params: { name: 'walk', duration: 1, loop: 'hold', keyframes: sourceKeys() },
       inputs: { skeleton: { node: 'n_srcSkel', socket: 'out' } },
     },
     n_map: { type: 'BoneNameMap', params: { name: 'bridge', map: nameMap() }, inputs: {} },
@@ -101,7 +101,7 @@ describe('retargetClipParamsFromNodes', () => {
     const params = retargetClipParamsFromNodes(graph(), graph().n_retarget);
     const baked = retargetClip({
       sourceBones: sourceBones(),
-      sourceClip: { name: 'walk', duration: 1, loop: false, keyframes: sourceKeys() },
+      sourceClip: { name: 'walk', duration: 1, loop: 'hold', keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
       nameMap: nameMap(),
     });
@@ -122,7 +122,7 @@ describe('retargetClipParamsFromNodes', () => {
           kind: 'AnimationClip',
           name: 'walk',
           duration: 1,
-          loop: false,
+          loop: 'hold',
           keyframes: sourceKeys(),
           skeleton: { kind: 'Skeleton', bones: sourceBones() },
         },
@@ -235,7 +235,7 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const viaGraph = boundClipsForAsset(graph(), ASSET_REF)[0];
     const baked = retargetClip({
       sourceBones: sourceBones(),
-      sourceClip: { name: 'walk', duration: 1, loop: false, keyframes: sourceKeys() },
+      sourceClip: { name: 'walk', duration: 1, loop: 'hold', keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
       nameMap: nameMap(),
     });
@@ -279,12 +279,12 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     expect(sampler(0).rotation).not.toEqual(atEnd.rotation);
   });
   it("#919 carries the source clip's ONE-SHOT domain instead of inventing a loop", () => {
-    // This fixture's source clip is `loop: false`. Before the carry, the resolver
+    // This fixture's source clip is `loop: 'hold'`. Before the carry, the resolver
     // handed the band a looping clip built from a one-shot source — and since #924
     // `loop` selects the extend rule, that is not a cosmetic flag: the root would
     // accumulate travel forever on a motion authored to stop.
     const bound = boundClipsForAsset(graph(), ASSET_REF)[0];
-    expect(bound.params.loop).toBe(false);
+    expect(bound.params.loop).toBe('hold');
   });
 
   it('skips a RetargetClip whose graph does not resolve, rather than emitting an empty clip', () => {

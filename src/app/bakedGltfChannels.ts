@@ -37,6 +37,7 @@ import type { BakedChannel } from './resolveGltfChildTransform';
 // conversion sites are two chances to drift, which is why they name each other.
 import { radVec3ToDeg } from '../viewport/rotation';
 import { boundClipsForAsset, type GraphNodeLike } from './animate/boundClipsForAsset';
+import { clipLoopOf } from '../nodes/clipLoop';
 
 type ChannelSampler = (seconds: number) => Vec3;
 
@@ -205,7 +206,7 @@ function clipBandSamplersForAsset(
     const boneSamplers = buildClipBoneSamplers({
       keyframes: params.keyframes ?? [],
       duration: typeof params.duration === 'number' ? params.duration : 1,
-      loop: params.loop !== false,
+      loop: clipLoopOf(params.loop),
     });
 
     for (const [boneIndex, sample] of boneSamplers) {

@@ -17,6 +17,7 @@ import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
+import type { ClipLoop } from '../../nodes/clipLoop';
 
 const SOURCE_BONES: BoneSpec[] = [
   { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
@@ -1396,7 +1397,7 @@ describe('two rests that correspond as poses are reconciled as a whole (#865)', 
 // looping does not merely wrap at its end — its root accumulates travel forever.
 // ─────────────────────────────────────────────────────────────────────────
 describe('#919 the retargeted clip carries the source time domain', () => {
-  const args = (loop?: boolean) => ({
+  const args = (loop?: ClipLoop) => ({
     sourceBones: SOURCE_BONES,
     sourceClip: {
       name: 'walk',
@@ -1409,28 +1410,41 @@ describe('#919 the retargeted clip carries the source time domain', () => {
   });
 
   it('a ONE-SHOT source produces a one-shot clip', () => {
-    expect(retargetClip(args(false)).clipParams.loop).toBe(false);
+    expect(retargetClip(args('hold')).clipParams.loop).toBe('hold');
   });
 
-  it('a LOOPING source produces a looping clip', () => {
+  it('a LOOPING source produces a looping clip, offset and all', () => {
     // Stated alongside the row above so the pair shows the value is CARRIED and
-    // not merely inverted — a hardcoded `false` would satisfy the first row alone.
-    expect(retargetClip(args(true)).clipParams.loop).toBe(true);
+    // not merely inverted — a hardcoded `hold` would satisfy the first row alone.
+    expect(retargetClip(args('cycle-offset')).clipParams.loop).toBe('cycle-offset');
+  });
+
+  it('carries CYCLE-IN-PLACE distinctly from cycle-with-offset', () => {
+    // The third state a boolean could not spell (#930). Without this row the two
+    // cycling modes could collapse into one on this road and both rows above
+    // would still pass, because neither can tell them apart.
+    expect(retargetClip(args('cycle')).clipParams.loop).toBe('cycle');
   });
 
   it('a caller with no source clip to ask still gets the documented fallback', () => {
     // The optional field exists for exactly one honest case. Every production
     // caller has a source clip and passes it; this pins what the absence means so
     // the fallback cannot quietly become something else.
-    expect(retargetClip(args(undefined)).clipParams.loop).toBe(true);
+    //
+    // #930 MOVED this fallback from looping to HOLDING, deliberately. The old
+    // `?? true` was the outlier the issue is about: the reference defaults to
+    // holding, the sibling carrier already did, and an invented loop is the more
+    // damaging guess since a wrongly-looping clip's root accumulates travel
+    // forever rather than merely wrapping.
+    expect(retargetClip(args(undefined)).clipParams.loop).toBe('hold');
   });
 
   it('nothing ELSE about the clip changes with the time domain', () => {
     // The domain must ride along without disturbing the motion: same keys, same
     // duration, same name. Without this the rows above pass on a retarget that
     // took a different road for a non-looping source.
-    const off = retargetClip(args(false)).clipParams;
-    const on = retargetClip(args(true)).clipParams;
+    const off = retargetClip(args('hold')).clipParams;
+    const on = retargetClip(args('cycle-offset')).clipParams;
     expect(off.keyframes).toEqual(on.keyframes);
     expect(off.duration).toBe(on.duration);
     expect(off.name).toBe(on.name);

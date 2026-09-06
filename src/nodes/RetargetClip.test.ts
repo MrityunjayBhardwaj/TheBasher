@@ -44,7 +44,7 @@ function sourceClipValue(over: Partial<AnimationClipValue> = {}): AnimationClipV
     kind: 'AnimationClip',
     name: 'walk',
     duration: 1,
-    loop: false,
+    loop: 'hold',
     keyframes: sourceKeys(),
     skeleton: { kind: 'Skeleton', bones: sourceBones() },
     ...over,
@@ -74,7 +74,7 @@ describe('RetargetClip — the operator', () => {
       sourceBones: sourceBones(),
       // #919 — the domain comes off the SAME generator the subject's operand does,
       // so the two sides agree by construction rather than by a literal restated
-      // here. The fixture is deliberately `loop: false`, which is what makes the
+      // here. The fixture is deliberately `loop: 'hold'`, which is what makes the
       // `value.loop` row below a measurement instead of a coincidence.
       sourceClip: {
         name: 'walk',
@@ -106,13 +106,22 @@ describe('RetargetClip — the operator', () => {
     expect('time' in (RetargetClipNode.inputs ?? {})).toBe(false);
   });
 
-  it('omits `pose` rather than inventing an answer at t=0', () => {
+  it('carries no `pose` — a clip describes motion, it does not sample it', () => {
+    // This used to read `expect(value.pose).toBeUndefined()`, guarding a field
+    // that was OPTIONAL: RetargetClip omitted it while AnimationClip answered
+    // one. #920 made both producers time-free and removed the field, so the
+    // claim climbed from a value nobody happens to set to one the TYPE forbids.
+    //
+    // It stays as a RUNTIME row rather than becoming a type-level assertion,
+    // and the reason is measurable: `npm run typecheck` cannot see `*.test.*`,
+    // so a `@ts-expect-error` here would be a gate CI never runs. `in` is
+    // checked when the suite executes, which CI does.
     const value = evaluate({
       sourceClip: sourceClipValue(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
-    expect(value.pose).toBeUndefined();
+    expect('pose' in value).toBe(false);
     // …while still answering everything a clip IS asked for.
     expect(value.kind).toBe('AnimationClip');
     expect(value.keyframes.length).toBeGreaterThan(0);

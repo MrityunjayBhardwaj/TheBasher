@@ -52,6 +52,7 @@ import {
   specToThreeSkeleton,
 } from './threeAdapter';
 import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
+import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
 
 export interface RetargetArgs {
   /** Source bone hierarchy (e.g. Mixamo). */
@@ -73,7 +74,7 @@ export interface RetargetArgs {
      *  Load-bearing since #924: `loop` selects the per-side extend rule, so a
      *  clip wrongly marked looping does not merely wrap — its root accumulates
      *  travel forever. */
-    readonly loop?: boolean;
+    readonly loop?: ClipLoop;
   };
   /** Target bone hierarchy (e.g. user's glTF character). */
   readonly targetBones: readonly BoneSpec[];
@@ -87,7 +88,7 @@ export interface RetargetResult {
   readonly clipParams: {
     readonly name: string;
     readonly duration: number;
-    readonly loop: boolean;
+    readonly loop: ClipLoop;
     readonly keyframes: readonly AnimationKeyframe[];
   };
   /** Source bones with no entry in nameMap and no match in the target — surface to UI. */
@@ -704,7 +705,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
       // from the source; `loop` alone used to be a literal, so a one-shot motion —
       // a jump, a wave, a fall — silently became a looping one the moment it was
       // retargeted, with nothing in the UI saying the time domain had changed.
-      loop: args.sourceClip.loop ?? true,
+      loop: clipLoopOf(args.sourceClip.loop),
       keyframes,
     },
     // The RESOLVED map, not the argument — otherwise the report describes a

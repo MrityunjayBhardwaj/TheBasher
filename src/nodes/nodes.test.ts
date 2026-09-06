@@ -10,6 +10,7 @@ import {
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { registerAllNodes } from './registerAll';
+import { buildClipBoneSamplers } from './AnimationClip';
 import { SCATTER_MAX } from './ScatterNode';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -671,7 +672,7 @@ describe('P2 — PosedSkeleton (pure, time-aware)', () => {
   });
 });
 
-describe('P2 — AnimationClip (pure, time-aware)', () => {
+describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   function buildClip() {
     let state = emptyDagState();
     state = applyOp(state, {
@@ -693,7 +694,7 @@ describe('P2 — AnimationClip (pure, time-aware)', () => {
       params: {
         name: 'walk',
         duration: 2,
-        loop: true,
+        loop: 'cycle-offset',
         keyframes: [
           { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
           { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
@@ -706,11 +707,6 @@ describe('P2 — AnimationClip (pure, time-aware)', () => {
       from: { node: 'sk', socket: 'out' },
       to: { node: 'clip', socket: 'skeleton' },
     }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'time', socket: 'out' },
-      to: { node: 'clip', socket: 'time' },
-    }).next;
     return state;
   }
 
@@ -721,18 +717,34 @@ describe('P2 — AnimationClip (pure, time-aware)', () => {
     expect(a).toEqual(b);
   });
 
-  it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
+  // 🔴 THE #920 GATE. The node used to declare a `time` input and evaluate to a
+  // POSE at that instant, which made a CLIP a function of the current frame —
+  // the shape the per-frame-re-render invariant forbids. Twice-eval at ONE time
+  // could never have caught it: that holds for a per-frame value too. Only
+  // comparing ACROSS times does. Re-add the input and this reddens.
+  it.each(TIME_SAMPLES)('is TIME-FREE — the value at t=%d equals the value at t=0', (t) => {
     const state = buildClip();
-    const v = evalAt<AnimationClipValue>(state, 'clip', 0.5);
-    const torsoRot = v.pose!.poses[1].rotation;
-    expect(torsoRot[1]).toBeCloseTo(0.25, 5);
+    expect(evalAt<AnimationClipValue>(state, 'clip', t)).toEqual(
+      evalAt<AnimationClipValue>(state, 'clip', 0),
+    );
+  });
+
+  // Sampling still has to be right; it is just not the NODE's job now. Both
+  // claims below moved to the factory that owns them — the same one the baked
+  // render band and `LocomotionState` call, so there is one answer to "where is
+  // this bone at t" rather than two that can drift.
+  it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
+    const torso = buildClipBoneSamplers(clip).get(1);
+    expect(torso).toBeDefined();
+    expect(torso!(0.5).rotation[1]).toBeCloseTo(0.25, 5);
   });
 
   it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
-    const state = buildClip();
-    const v0 = evalAt<AnimationClipValue>(state, 'clip', 0);
-    const vWrap = evalAt<AnimationClipValue>(state, 'clip', 2.0);
-    expect(vWrap.pose!.poses[1].rotation).toEqual(v0.pose!.poses[1].rotation);
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
+    const torso = buildClipBoneSamplers(clip).get(1);
+    expect(torso).toBeDefined();
+    expect(torso!(2.0).rotation).toEqual(torso!(0).rotation);
   });
 });
 
@@ -832,7 +844,7 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
       type: 'addNode',
       nodeId: 'clip',
       nodeType: 'AnimationClip',
-      params: { name: 'walk', duration: 1, loop: true, keyframes: [] },
+      params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -863,11 +875,6 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
       type: 'connect',
       from: { node: 'sk', socket: 'out' },
       to: { node: 'clip', socket: 'skeleton' },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'time', socket: 'out' },
-      to: { node: 'clip', socket: 'time' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
@@ -958,7 +965,7 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
         type: 'addNode',
         nodeId: `clip_${id}`,
         nodeType: 'AnimationClip',
-        params: { name: `walk_${id}`, duration: 1, loop: true, keyframes: [] },
+        params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
       }).next;
       state = applyOp(state, {
         type: 'addNode',
@@ -982,11 +989,6 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
         type: 'connect',
         from: { node: 'sk', socket: 'out' },
         to: { node: `clip_${id}`, socket: 'skeleton' },
-      }).next;
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: 'time', socket: 'out' },
-        to: { node: `clip_${id}`, socket: 'time' },
       }).next;
       state = applyOp(state, {
         type: 'connect',

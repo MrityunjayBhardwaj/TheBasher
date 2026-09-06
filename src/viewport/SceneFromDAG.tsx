@@ -3705,6 +3705,21 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // function from one spelling to the other — see boneNameSpaces.test.ts,
       // which pins all of this and reds if either sanitiser's rule moves.
       boneName: (i: number): string | null => mesh.skeleton?.bones[i]?.name ?? null,
+      // #808 — the correspondence the H40 pair should actually assert. The
+      // stamped `basherGltfChildId` is the ONE key both sides own: the import
+      // derives it from the glTF node INDEX (`nodeNameMap[key]`), and the stamp
+      // effect above writes it onto the clone object by that same index. So
+      // `boneChildId(i) === nodeNameMap[projected[i].name]` says "the rig the
+      // evaluator projects and the rig that renders are the same objects, bone
+      // for bone" WITHOUT comparing a name — which is the only honest way to say
+      // it, since the two sides spell bones differently and cannot be bridged
+      // (see boneNameSpaces.test.ts). Read at CALL time, like the readers above,
+      // so it does not depend on this effect running after the stamping one.
+      boneChildId: (i: number): string | null => {
+        const b = mesh.skeleton?.bones[i];
+        const id = (b?.userData as { basherGltfChildId?: unknown } | undefined)?.basherGltfChildId;
+        return typeof id === 'string' && id ? id : null;
+      },
       // Bone local rotation (radians, XYZ Euler) at CALL time — drives the
       // H46 rotation-delta proof (limbs rotate under playback; position is a
       // constant bind offset → exact-zero false-negative if sampled instead).

@@ -116,11 +116,6 @@ function buildScene(clipId: string, rotationAtEnd: number): DagState {
     from: { node: 'n_src_skel', socket: 'out' },
     to: { node: clipId, socket: 'skeleton' },
   }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_time', socket: 'out' },
-    to: { node: clipId, socket: 'time' },
-  }).next;
   return s;
 }
 
@@ -224,11 +219,6 @@ describe('binding a motion to a character', () => {
       type: 'connect',
       from: { node: 'n_src_skel', socket: 'out' },
       to: { node: 'n_clip_b', socket: 'skeleton' },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'n_time', socket: 'out' },
-      to: { node: 'n_clip_b', socket: 'time' },
     }).next;
     useDagStore.getState().hydrate(s);
 

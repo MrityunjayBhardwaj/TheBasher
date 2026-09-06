@@ -60,7 +60,7 @@ function clipParams() {
   return TransformClipParams.parse({
     name: 'clip-877',
     duration: KEY_TIMES[KEY_TIMES.length - 1],
-    loop: 'clamp',
+    loop: 'hold',
     keyframes: KEY_TIMES.map((time, i) => ({
       targetNodeId: CHILD,
       time,

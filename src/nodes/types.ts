@@ -13,6 +13,7 @@
 
 import type { OverriddenSet } from '../core/override/overrideSet';
 import type { ScopeDomain } from './attributes';
+import type { ClipLoop } from './clipLoop';
 
 export type Vec2 = readonly [number, number];
 
@@ -1232,24 +1233,26 @@ export interface AnimationKeyframe {
  * a consumer able to take the keys without the domain is a consumer able to make
  * a copy that stops where its source wraps.
  *
- * WHY `pose` IS OPTIONAL. It is a sample at ONE instant, so only a producer with
- * a `Time` input can answer it. `RetargetClip` is deliberately time-free (it is
- * a function of the graph, not of the frame), and it omits the field rather than
- * inventing an answer at t=0. `LocomotionState`, the only declared consumer,
- * already falls back when it is absent.
+ * WHY THERE IS NO POSE ON IT (#920). A pose is a sample at ONE instant, so a
+ * clip that carried one was a function of the current frame — the shape the
+ * per-frame-re-render invariant exists to forbid. Both producers are now
+ * time-free: `RetargetClip` always was, and `AnimationClip` joined it. Sampling
+ * belongs to the consumer, which is the only party holding a `Time` to sample
+ * AT; `LocomotionState` does it with `buildClipBoneSamplers`, the same factory
+ * the baked render band uses, so a bone posed through either cannot disagree.
  */
 export interface AnimationClipValue {
   readonly kind: 'AnimationClip';
   readonly name: string;
   readonly duration: number;
-  /** When true, time folds into [0, duration); else it clamps at the ends. */
-  readonly loop: boolean;
+  /** What the clip does past its authored range (#930). Was a boolean whose
+   *  `true` meant cycle-WITH-OFFSET — so cycle-in-place had no spelling, and the
+   *  sibling carrier defaulted the opposite way. */
+  readonly loop: ClipLoop;
   /** The clip's keys. `bone` indexes {@link AnimationClipValue.skeleton}. */
   readonly keyframes: readonly AnimationKeyframe[];
   /** The rig the keyframe indices are authored against. */
   readonly skeleton: SkeletonValue;
-  /** Sampled pose at the input `Time` — absent from a time-free producer. */
-  readonly pose?: PosedSkeletonValue;
   /**
    * Present only on a clip produced by {@link MotionGenerateNode} (#902).
    *

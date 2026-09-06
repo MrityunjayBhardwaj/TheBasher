@@ -98,21 +98,15 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
 
     let result;
     try {
-      result = await buildGeneratedMotionOps(
-        ctx.motionCapability,
-        {
-          request: {
-            prompt: args.prompt,
-            model: ctx.motionModel,
-            ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
-            ...(args.seed !== undefined ? { seed: args.seed } : {}),
-          },
-          ...(args.name !== undefined ? { name: args.name } : {}),
+      result = await buildGeneratedMotionOps(ctx.motionCapability, {
+        request: {
+          prompt: args.prompt,
+          model: ctx.motionModel,
+          ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
+          ...(args.seed !== undefined ? { seed: args.seed } : {}),
         },
-        // V7 — the FORKED state, never the live store. The tool returns ops for
-        // the Diff; the user accepts before anything real changes.
-        ctx.dagState,
-      );
+        ...(args.name !== undefined ? { name: args.name } : {}),
+      });
     } catch (err) {
       // A licence refusal and a transport failure both land here, and both are
       // things the model can act on — a blocked checkpoint is a settings change,
