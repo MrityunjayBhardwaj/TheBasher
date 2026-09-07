@@ -49,6 +49,7 @@ import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { assetRefForChild, parseClipRowId } from './bakeOnEdit';
 import { paramAnimationState, type ParamAnimationState } from './paramAnimationState';
 import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
+import { activeClipKeyframesForAsset } from '../../timeline/clipChannelRows';
 import { ensureChannelForBone } from './ensureChannelForBone';
 import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
 
@@ -84,6 +85,46 @@ export function animationClipCarriesBone(
     if (keyframes.some((k) => k.bone === index)) return true;
   }
   return false;
+}
+
+/**
+ * Does the asset's OWN embedded animation drive this child? (#911)
+ *
+ * 🔑 THE SECOND CLIP ROAD. `resolveGltfChildTransform`'s precedence is
+ * manual → baked → CLIP → base, and the clip layer has two suppliers: an
+ * `AnimationClip` bound to the rig (BVH / FBX / retargeted / generated), and a
+ * `TransformClip` carrying a glTF file's own embedded animation. #908 taught the
+ * diamond the first. This is the second, and without it importing a `.glb` that
+ * animates itself gave exactly the indicator #908 removed: the bone moves, the
+ * diamond says "not animated".
+ *
+ * IT NEEDS NO EVALUATED VALUE, which is the thing worth stating. The issue
+ * expected to have to thread a `GltfAssetValue` in, because `transformClip` is
+ * read off an evaluated asset on the render path — and that would have cost this
+ * function its purity. But the clip is reachable from the NODE TABLE alone:
+ * `activeClipForAsset` walks GltfAsset → `transformClip` edge → `ClipSelect` →
+ * the `TransformClip` whose name matches the selection. So the reader stays pure
+ * over `DagState` and testable without an evaluator.
+ *
+ * Using that walk rather than a second one of our own is also what keeps this
+ * honest: it is the SAME function `bakeGltfChannel` uses to decide what to mint,
+ * so the diamond cannot say "animated" about a bone the mint would then refuse,
+ * or stay gray on one it would happily bake.
+ *
+ * ALL THREE COMPONENTS, unlike the sibling road. A `TransformClip` keyframe
+ * carries full TRS (`ClipKeyframe` — position, rotation AND scale), where an
+ * `AnimationClip` keyframe has no scale at all. So scale is honestly animated
+ * here and honestly not animated there; one shared component filter would have
+ * to be wrong on one of the two roads.
+ */
+export function transformClipCarriesChild(
+  state: DagState,
+  assetRef: string,
+  childName: string,
+): boolean {
+  return activeClipKeyframesForAsset(state.nodes, assetRef).some(
+    (k) => k.targetNodeId === childName,
+  );
 }
 
 /**
@@ -235,10 +276,27 @@ export function paramAnimationDisplayState(
   if (authored !== 'none') return authored;
 
   const bone = boneComponentAddress(state, nodeId, paramPath);
-  if (!bone || !CLIP_DRIVEN_COMPONENTS.has(bone.component)) return 'none';
-  // Deliberately never 'on-key': a clip key is not the director's to remove —
-  // the clip is read-only and shared, and yellow reads as "click to unkey".
-  return animationClipCarriesBone(state, bone.assetRef, bone.childName) ? 'animated' : 'none';
+  if (!bone) return 'none';
+
+  // Deliberately never 'on-key' from either road: a clip key is not the
+  // director's to remove — the clip is read-only and shared, and yellow reads as
+  // "click to unkey".
+  //
+  // ROAD 1 — an AnimationClip bound to the rig. `position`/`rotation` only,
+  // because its keyframes carry no scale.
+  if (
+    CLIP_DRIVEN_COMPONENTS.has(bone.component) &&
+    animationClipCarriesBone(state, bone.assetRef, bone.childName)
+  ) {
+    return 'animated';
+  }
+
+  // ROAD 2 — the asset's OWN embedded animation (#911). NOT filtered by
+  // `CLIP_DRIVEN_COMPONENTS`: a TransformClip key carries full TRS, so scale is
+  // genuinely animated on this road where it genuinely is not on the other.
+  if (transformClipCarriesChild(state, bone.assetRef, bone.childName)) return 'animated';
+
+  return 'none';
 }
 
 /** A channel a keyboard edit is about to write to, and what it will hold. */
