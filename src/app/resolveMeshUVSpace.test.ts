@@ -27,6 +27,7 @@ import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerGltfClone, __clearGltfCloneRegistryForTests } from './asset/gltfCloneRegistry';
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from 'three';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -186,19 +187,12 @@ describe('resolveMeshUVSpace — a glTF mesh keeps BOTH facets once its clone mo
 
   function gltfChildState(): DagState {
     let s = buildDefaultDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'gltf_child',
-      nodeType: 'GltfChild',
-      params: {
-        childName: 'Mesh0',
-        assetRef: 'asset-1',
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    } as never).next;
+    for (const op of importedChildOps('gltf_child', {
+      assetRef: 'asset-1',
+      childName: 'Mesh0',
+    })) {
+      s = applyOp(s, op as never).next;
+    }
     return s;
   }
 

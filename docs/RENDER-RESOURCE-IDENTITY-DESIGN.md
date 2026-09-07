@@ -226,9 +226,9 @@ renderer-side reimplementation of identity the evaluator should be handing down.
 
 The invariant above is stated over the whole `ObjectData` union. It is **enforced on one
 member of it.** `materialKey` exists on `MeshDataValue` and nowhere else, minted at exactly
-two producers (`BoxData`, `SphereData`), while two other kinds carry a material with no key
-at all. Read the invariant on its own and you would reasonably conclude that every evaluated
-material carries identity; it does not, and this is where that is written down.
+three producers (`BoxData`, `SphereData`, `GltfData`), while two other kinds carry a material
+with no key at all. Read the invariant on its own and you would reasonably conclude that every
+evaluated material carries identity; it does not, and this is where that is written down.
 
 | kind                   | carries a material | carries a minted key | what keeps it non-divergent                                                                       |
 | ---------------------- | ------------------ | -------------------- | ------------------------------------------------------------------------------------------------- |
@@ -237,9 +237,17 @@ material carries identity; it does not, and this is where that is written down.
 | `ModifiedData`         | yes                | no                   | **shares, and re-derives.** See below — this is the interesting one                               |
 | curve / light / camera | no                 | n/a                  | nothing to key. Not missing                                                                       |
 
-The glTF road is not a kind at all (a `GltfChild` is still fused) and belongs in the same
+The glTF road is not a kind at all YET (a `GltfChild` is still fused) and belongs in the same
 census: it writes onto **per-clone** `THREE.Material` instances and never touches the
 registry, so it is `BakedData`'s answer — safe by not sharing.
+
+🔴 **AND THAT IS NOW HALF TRUE, WHICH IS WHY THE MINT COUNT ABOVE SAYS THREE (#389).**
+`GltfData` exists and mints, but is not yet registered: the conformance machinery requires a
+split kind to arrive with its format migration already shipped, so the node lands ahead of
+its registration rather than coexisting with the fused kind the way every earlier kind did.
+Until the flip, nothing in a production graph produces one, so the sentence above still
+describes what renders. What it stops describing is what the census counts — and the census
+is the thing that goes red, so it is stated here rather than discovered there.
 
 **`ModifiedData` is the one whose safety argument is easy to state wrongly.** It is not safe
 by not sharing: `ModifiedMeshR` calls the same `usePrimitiveMaterial` seam the keyed road

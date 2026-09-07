@@ -13,6 +13,7 @@ import { ensureChannelForBone } from './ensureChannelForBone';
 import type { DagState } from '../../core/dag/state';
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import { buildClipBoneSamplers, type AnimationClipParams } from '../../nodes/AnimationClip';
+import { importedChildNodes } from '../../test-utils/importedChildFixture';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 const ASSET = 'user-imports/dwarf.glb';
@@ -46,19 +47,15 @@ function riggedState(opts?: {
       params: { skinIndex: 0 },
       inputs: { asset: { node: 'n_asset', socket: 'out' } },
     },
-    [gltfChildDagId(ASSET, BONE)]: {
-      id: gltfChildDagId(ASSET, BONE),
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: BONE,
-        // The base pose the import writes — rotation already in DEGREES.
-        position: [1, 2, 3],
-        rotation: [10, 20, 30],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
+    // The base pose the import writes — rotation already in DEGREES — on the OBJECT half,
+    // which is what owns a pose after #389; the address rides on its `GltfData`.
+    ...importedChildNodes(gltfChildDagId(ASSET, BONE), {
+      assetRef: ASSET,
+      childName: BONE,
+      position: [1, 2, 3],
+      rotation: [10, 20, 30],
+      scale: [1, 1, 1],
+    }),
   };
   if (opts?.withClip !== false) {
     nodes.n_clip = {

@@ -10,6 +10,7 @@
 // proven on the SAME render — the capture must not change what renders.
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 interface MeshSummary {
   name: string;
@@ -50,16 +51,15 @@ const firstMesh = (page: import('@playwright/test').Page) =>
     return (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0] ?? null;
   });
 
-const childMaterial = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-    const child = nodes.find((n) => n.type === 'GltfChild' && Array.isArray(n.params.materials));
-    const mats = child?.params.materials as
-      | { geometry?: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean } }[]
-      | undefined;
-    return mats?.[0]?.geometry ?? null;
-  });
+// #389 — the captured table moved to the `GltfData` half as `material` + `materialSlots`;
+// `firstMaterialChild` keeps the "skip bones and empties" half of the old predicate.
+const childMaterial = async (page: import('@playwright/test').Page) => {
+  const child = await firstMaterialChild(page);
+  const slot = child?.slots[0] as
+    | { geometry?: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean } }
+    | undefined;
+  return slot?.geometry ?? null;
+};
 
 test.describe('glTF alphaMode + vertex-color — clone renders it + IR captures it', () => {
   test('alphaMode:MASK → clone carries alphaTest; IR captures alphaCutoff', async ({ page }) => {

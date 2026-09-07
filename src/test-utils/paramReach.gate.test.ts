@@ -227,7 +227,13 @@ describe('param-reach gate (#492)', () => {
         if (isUnverified(reader)) unverified++;
       }
     }
-    expect(total).toBe(35);
+    // 35 → 39 at #389: `GltfData`'s four params (`assetRef`, `childName`, `material`,
+    // `materialSlots`) join the table, and all four are TRACED rather than unverified —
+    // the renderer reads every one of them by name (the child-override filter, the clone's
+    // by-name mesh match, and the per-slot material overlay). So `total` moves by four and
+    // the `unverified` ceiling below does not move at all, which is the derived half of the
+    // claim that this kind arrived with its readers already known.
+    expect(total).toBe(39);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

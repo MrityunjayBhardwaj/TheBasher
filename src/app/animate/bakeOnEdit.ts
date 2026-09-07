@@ -36,6 +36,7 @@
 //      src/app/animate/paramAnimationState.ts:74 (the p.target===dagId key).
 
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
+import { findImportedChild } from '../importedChild';
 
 /** The three TRS components a clip row / baked channel can address. */
 const COMPONENTS = ['position', 'rotation', 'scale'] as const;
@@ -73,21 +74,19 @@ export function parseClipRowId(
 }
 
 /**
- * Resolve a bone's `assetRef` from its `childName` by finding the GltfChild that
- * carries it (childName is unique within an asset; first match wins across
- * assets, acceptable for the edit intercept). Returns null when no GltfChild
- * carries this childName.
+ * Resolve a bone's `assetRef` from its `childName` (childName is unique within an
+ * asset; first match wins across assets, acceptable for the edit intercept).
+ * Returns null when no imported child carries this childName.
+ *
+ * #389 — the lookup moved to `importedChild`, the one module that knows how a glTF
+ * child is spelled. This function stays because its NAME is the question the callers
+ * ask; what left is the second copy of the answer.
  */
 export function assetRefForChild(
   nodes: Record<string, NodeLike>,
   childName: string,
 ): string | null {
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'GltfChild') continue;
-    const p = node.params as { childName?: unknown; assetRef?: unknown } | undefined;
-    if (p?.childName === childName && typeof p?.assetRef === 'string') return p.assetRef;
-  }
-  return null;
+  return findImportedChild(nodes, childName)?.[1].assetRef ?? null;
 }
 
 /**

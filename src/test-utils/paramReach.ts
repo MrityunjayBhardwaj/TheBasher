@@ -180,4 +180,19 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     geometry: { by: BAKED_RECOMPOSE },
     material: { by: BAKED_RECOMPOSE },
   },
+  gltf: {
+    // Both are read by the renderer, and not only folded: `childOverridesForAsset` filters
+    // the children of ONE asset by `assetRef`, and the clone's meshes are matched to a
+    // child BY NAME through `nodeNameMap`. They also fold into the GeometryRef, which is
+    // what makes them unusable as the conformance observable — but that is a statement
+    // about the road, not about whether anything reads them.
+    assetRef: { by: SCENE },
+    childName: { by: SCENE },
+    // The captured material, overlaid onto the loaded clone's own material per slot
+    // (`overlayDagMaterial`), then re-overlaid per frame when a channel drives it.
+    material: { by: SCENE },
+    // The multi-primitive table, indexed slot-by-slot against the clone's meshes in
+    // primitive order by the same effect that reads `material`.
+    materialSlots: { by: SCENE },
+  },
 };

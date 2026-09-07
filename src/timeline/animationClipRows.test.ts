@@ -17,6 +17,7 @@ import {
 } from './clipChannelRows';
 import { collectChannelRows } from './TimelineCanvas';
 import type { Node } from '../core/dag/types';
+import { importedChildNodes } from '../test-utils/importedChildFixture';
 
 const ASSET = 'user-imports/dwarf.glb';
 const HIPS = 'mixamorig_Hips';
@@ -44,28 +45,8 @@ function rigged(extra?: Nodes): Nodes {
       params: { skinIndex: 0 },
       inputs: { asset: { node: 'n_asset', socket: 'out' } },
     },
-    [gltfChildDagId(ASSET, HIPS)]: {
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: HIPS,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
-    [gltfChildDagId(ASSET, ARM)]: {
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: ARM,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
+    ...importedChildNodes(gltfChildDagId(ASSET, HIPS), { assetRef: ASSET, childName: HIPS }),
+    ...importedChildNodes(gltfChildDagId(ASSET, ARM), { assetRef: ASSET, childName: ARM }),
     n_clip: {
       type: 'AnimationClip',
       params: {
@@ -337,7 +318,16 @@ describe('the wrapper the dopesheet calls', () => {
     // the same ref — the rig's own bones already do — where dropping the filter
     // multiplies the dopesheet instead of emptying it.
     const nodes = withoutChannels(rigged());
-    nodes.n_impostor = { type: 'GltfChild', params: { assetRef: ASSET }, inputs: {} };
+    // The impostor is a `GltfData` (#389): after the split it is the data half that
+    // carries `assetRef` verbatim, so it is the node that genuinely shares the ref with
+    // the asset. The retired `GltfChild` would still pass here — nothing matches it —
+    // but it is a shape the product can no longer produce, and a fixture that cannot
+    // occur cannot discriminate.
+    nodes.n_impostor = {
+      type: 'GltfData',
+      params: { assetRef: ASSET, childName: 'Cube' },
+      inputs: {},
+    };
     expect(dopesheetRows(nodes)).toHaveLength(4);
   });
 });

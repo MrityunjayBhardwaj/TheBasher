@@ -24,6 +24,7 @@ import { dispatchClearBakedMotion } from './dispatchMutator';
 import { discardLabel, discardTitle, discardedMessage } from './ClearBakedMotionConnector';
 import { bakedChannelSamplersForAsset, bakedChannelIdsForAssetRef } from '../bakedGltfChannels';
 import { gltfChildDagId, gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'char-a';
 const OTHER = 'char-b';
@@ -53,19 +54,9 @@ function addCharacter(s: DagState, assetRef: string, assetNodeId: string): DagSt
   }).next;
   for (const bone of BONES) {
     const childId = gltfChildDagId(assetRef, bone);
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: childId,
-      nodeType: 'GltfChild',
-      params: {
-        assetRef,
-        childName: bone,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(childId, { assetRef, childName: bone })) {
+      s = applyOp(s, op as Op).next;
+    }
     for (const component of ['position', 'rotation'] as const) {
       s = applyOp(s, {
         type: 'addNode',

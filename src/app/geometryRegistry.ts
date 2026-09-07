@@ -450,6 +450,41 @@ function composedOverSource(source: GeometryAvailability): GeometryAvailability 
 }
 
 /**
+ * Is this geometry ALREADY BEING DRAWN by something other than an Object? (#389)
+ *
+ * ── WHY THE RENDERER NEEDS TO ASK, AND WHY IT ASKS *HERE* ────────────────────────────
+ *
+ * `getForAttach` used to answer null for a `gltf` ref, so "can I draw this?" and "is this
+ * mine to draw?" were the same question by accident. #367 separated them: the registry now
+ * resolves a glTF child's buffers, and those buffers belong to the clone `GltfAssetR` is
+ * already drawing. An Object over an unmodified glTF child would therefore draw a SECOND
+ * mesh from one geometry — measured before this existed, on both a plain and a skinned
+ * asset: mesh count 8 → 9 with the distinct-geometry count unchanged, and on the skinned
+ * one the second draw was an ordinary `Mesh` wearing a `SkinnedMesh`'s geometry, i.e. the
+ * undeformed bind pose.
+ *
+ * ── WHY IT IS THE AVAILABILITY CLASS AND NOT A KIND TEST ─────────────────────────────
+ *
+ * A `descriptor.kind === 'gltf'` test would select the same set TODAY and be a naming tier
+ * — the mistake this module has already catalogued twice. The real property is the one
+ * {@link availabilityOf} names: `'clone'` means "these buffers live in a loaded asset clone,
+ * never in the registry", which is exactly the set something else is drawing.
+ *
+ * And it is the class that makes the composed case fall out correctly rather than needing
+ * its own rule. A recipe OVER a glTF source is `'mounting'`, not `'clone'` — the registry
+ * builds those buffers itself, nothing else is drawing them, and the Object must draw them.
+ * Measured: an Array over an imported cube draws 72 positions (3 × 24) in its own material,
+ * alongside the clone's original, with no shared-geometry double draw. One rule, both cases.
+ *
+ * Defined in terms of {@link availabilityOf} rather than beside it, for the reason
+ * `getForRead` is defined in terms of `readGeometry`: one implementation, one rule. A second
+ * predicate agreeing with this one today would diverge the first time a kind was added.
+ */
+export function drawnByAssetClone(descriptor: GeometryDescriptor): boolean {
+  return availabilityOf(descriptor) === 'clone';
+}
+
+/**
  * The result of a read: either the geometry, or the reason there isn't one.
  *
  * Discriminated on `status` so a consumer cannot read a geometry off an empty result, and

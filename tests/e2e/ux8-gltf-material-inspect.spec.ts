@@ -20,6 +20,8 @@
 //      src/viewport/SceneFromDAG.tsx (publish); src/app/NPanel.tsx (readout).
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { importedChildren } from './_importedChild';
 
 const ASSET_REF = 'assets/two-material-textured-quad.gltf';
 const FIXTURE_URL = '/assets/two-material-textured-quad.gltf';
@@ -73,7 +75,7 @@ test('a GltfAsset inspector shows every embedded material slot with its base col
 }) => {
   await selectType(page, 'GltfAsset');
   // MATERIAL is not the primary section for an asset → default-collapsed; expand.
-  await page.getByTestId('inspector-section-toggle-material').click();
+  await openInspectorSection(page, 'material');
   await expect(page.getByTestId('gltf-material-readout')).toBeVisible();
 
   // Two slots: slot 0 = RedMat (no maps), slot 1 = BlueMat (roughness+metalness maps).
@@ -94,9 +96,23 @@ test('a GltfChild inspector shows the EDITABLE material editor (S4 superseded th
   // that captured OpenPBR materials (S2) EDITABLE — it now renders the lobe
   // editor, not the readout (the editable case is gated by ux-gltf-material-edit;
   // the readout is still exercised by the whole-asset GltfAsset test above).
-  const childId = await selectType(page, 'GltfChild');
+  // #389 — select the OBJECT (what a director clicks); the editor is keyed on the DATA
+  // half, which reaches the panel through the Object's linked-data block.
+  const child = (await importedChildren(page))[0]!;
+  await page.evaluate(
+    (i) =>
+      (
+        window as unknown as {
+          __basher_selection: { getState: () => { select: (s: string) => void } };
+        }
+      ).__basher_selection
+        .getState()
+        .select(i),
+    child.objectId,
+  );
+  const childId = child.dataId;
   expect(childId).not.toBeNull();
-  await page.getByTestId('inspector-section-toggle-material').click();
-  await expect(page.getByTestId(`inspector-gltf-material-editor-${childId}`)).toBeVisible();
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId(`inspector-material-editor-${childId}`)).toBeVisible();
   await expect(page.getByTestId('gltf-material-readout')).toHaveCount(0);
 });
