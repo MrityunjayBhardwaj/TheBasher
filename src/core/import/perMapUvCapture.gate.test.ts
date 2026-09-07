@@ -261,12 +261,22 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':
       'the inspector’s read/write rule — glTF editor only, ORIGIN road, values unconverted',
-    // NPanel names the field ONLY in the aria path it gives each per-map row
-    // (`materials.<n>.mapUvTransforms.<slot>.tiling.x`), which mirrors the param path
-    // on purpose — an addressable value whose path does not match its param is how a
-    // surface animates in the panel and freezes on screen. The read/write RULE is not
-    // here; the panel holds no per-map logic beyond rendering a row per returned slot.
-    'src/app/NPanel.tsx': 'glTF material editor — per-map rows, ORIGIN road, aria path only',
+    // #389 → #936 — `src/app/NPanel.tsx` is BACK, and the round trip is worth recording
+    // because this row is the clearest evidence of what went wrong.
+    //
+    // C3 removed this entry and argued the removal was the honest direction: the bespoke
+    // glTF material editor was gone, so the panel named nothing here. Every word of that
+    // was true, and the conclusion was still wrong — the editor had not been REPLACED for
+    // this field, it had been dropped. Losing the reader was the capability loss (#936),
+    // and this row going green was that loss being ratified rather than caught. A census
+    // that is exact in both directions still cannot tell "nothing needs to read this" from
+    // "the thing that read it is gone", because both spell the same absence.
+    //
+    // The per-map placement rows now live on the GENERIC material editor, so the panel
+    // names the field again — one aria path per row, `<base>.mapUvTransforms.<slot>`, where
+    // `<base>` is `material` or `materialSlots.<i>` depending on the mesh's slot count.
+    'src/app/NPanel.tsx':
+      'the inspector’s per-map placement rows — ORIGIN road, values passed through unconverted',
   };
 
   /**

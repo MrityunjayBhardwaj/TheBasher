@@ -47,6 +47,7 @@
 //      (bakedChannelSamplersForAsset — same node selection), [[H48]] [[B13]] [[H40]].
 
 import type { Node } from '../core/dag/types';
+import { importedChildDataId, importedChildOf, isImportedChildMaterialPath } from './importedChild';
 
 /**
  * The nodes whose params drive GltfAssetR's per-child TRS/material override
@@ -63,10 +64,20 @@ export function gltfAssetDepNodes(
   assetRef: string,
   nodeNameMap: Readonly<Record<string, string>>,
 ): Node[] {
-  // The set of THIS asset's GltfChild dagIds — the membership scope for material
-  // channels (#188), which target a child dagId DIRECTLY (no childName, unlike the
+  // The set of THIS asset's child dagIds — the membership scope for material
+  // channels (#188), which target a node id DIRECTLY (no childName, unlike the
   // transform channels above whose asset scope is nodeNameMap[childName]===target).
+  //
+  // #389 — BOTH HALVES, and the data half is the one that actually matters here. A
+  // material channel authored through the split road targets the node that OWNS the
+  // param, which is the `GltfData`; the Object ids from `nodeNameMap` no longer match a
+  // single material channel. Keeping them is not redundancy — a transform channel still
+  // names the Object, and a superset is the contract of this collector.
   const childIds = new Set(Object.values(nodeNameMap));
+  for (const objectId of Object.values(nodeNameMap)) {
+    const dataId = importedChildDataId(nodes, objectId);
+    if (dataId) childIds.add(dataId);
+  }
   const out: Node[] = [];
 
   // #888 — the clip-band chain: GltfAsset → GltfSkeleton → AnimationClip.
@@ -130,10 +141,24 @@ export function gltfAssetDepNodes(
     }
   }
 
-  for (const node of Object.values(nodes)) {
-    if (node.type === 'GltfChild') {
-      const p = node.params as { assetRef?: unknown };
-      if (p.assetRef === assetRef) out.push(node);
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    // #389 — asked through the one module that knows how an imported child is spelled,
+    // rather than by testing the node type here. Iterating entries rather than values is
+    // what that costs: the question is about a node's IDENTITY in the table, not about
+    // the object in hand, and it stays answerable when the child becomes a pair.
+    const child = importedChildOf(nodes, nodeId);
+    if (child) {
+      if (child.assetRef === assetRef) {
+        out.push(node);
+        // #389 — and its DATA half, which is where the captured materials now live. Without
+        // this the collector subscribes the pose and not the material: recolouring an
+        // imported mesh would flip no ref this asset watches, so `GltfAssetR` would not
+        // re-render and the clone would keep painting the old colour until something else
+        // happened to re-render it. That is the H40 freeze this collector exists to prevent,
+        // arrived at through the half that did not exist when it was written.
+        const dataId = importedChildDataId(nodes, nodeId);
+        if (dataId && nodes[dataId]) out.push(nodes[dataId]);
+      }
       continue;
     }
     if (node.type === 'KeyframeChannelVec3') {
@@ -148,9 +173,10 @@ export function gltfAssetDepNodes(
       }
       continue;
     }
-    // #188 (v0.7 Phase 3) — material channels. A `materials.<slot>.<lobe>.<field>`
-    // channel (KeyframeChannelNumber for scalars, KeyframeChannelColor for hex
-    // colours) targets a GltfChild dagId directly. Subscribe it so editing the
+    // #188 (v0.7 Phase 3) — material channels. A `material.<lobe>.<field>` or
+    // `materialSlots.<slot>.<lobe>.<field>` channel (KeyframeChannelNumber for scalars,
+    // KeyframeChannelColor for hex colours) targets the child's data node directly
+    // (#389 — it was `materials.<slot>.…` on the fused node). Subscribe it so editing the
     // channel re-renders this asset (the H40 freeze-guard) and the per-frame
     // overlay sees it. A SUPERSET is safe — `directChannelNodesForTarget` re-filters
     // with the H105 layer-wired guard downstream; here we only need the ref-flip.
@@ -159,8 +185,7 @@ export function gltfAssetDepNodes(
       if (
         typeof p.target === 'string' &&
         childIds.has(p.target) &&
-        typeof p.paramPath === 'string' &&
-        p.paramPath.startsWith('materials.')
+        isImportedChildMaterialPath(p.paramPath)
       ) {
         out.push(node);
       }

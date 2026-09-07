@@ -217,12 +217,17 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
 
   // 🔑 THE SHAPE, NOT THE COUNT — the same discipline the motion road uses. A
   // rigged character arrives as the trio a dropped .glb produces, and its
-  // SKELETON shows up as GltfChild nodes. "More nodes appeared" would pass for
-  // an unrigged mesh, which is the one failure this road exists to avoid.
+  // SKELETON shows up as one pair per scene child. "More nodes appeared" would
+  // pass for an unrigged mesh, which is the one failure this road exists to avoid.
+  //
+  // #389 — counted on `GltfData` rather than the retired `GltfChild`. The DATA half
+  // is the right census subject: every child mints exactly one, whereas `Object` is
+  // the type a box, a light and a camera also carry, so counting those would fold
+  // the default project's own nodes into the delta.
   expect(after).toContain('GltfAsset');
   expect(after).toContain('Group');
-  expect(after.filter((t) => t === 'GltfChild').length).toBeGreaterThan(
-    before.filter((t) => t === 'GltfChild').length + 5,
+  expect(after.filter((t) => t === 'GltfData').length).toBeGreaterThan(
+    before.filter((t) => t === 'GltfData').length + 5,
   );
 
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');

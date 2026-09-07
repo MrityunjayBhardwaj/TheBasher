@@ -134,8 +134,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
-  GltfChild:
-    '[transform,constraint,driver,material] position=transform rotation=transform scale=transform overridden=(unrouted) assetRef=(unrouted) childName=(unrouted) materials=(unrouted)',
+  GltfData:
+    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
     '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
@@ -185,7 +185,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -264,4 +264,27 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // the derived half of the claim that nothing existing was re-homed to make room for it.
 // The row is one cell because the node's output is a function of its three INPUTS; there
 // is nothing else about it to author as a param, which is the point of the node.
-export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 226 } as const;
+// #389 — A ROW IS REPLACED, WHICH IS A FOURTH SHAPE AND IT GETS ITS OWN NOTE.
+// `GltfChild` (3 routed / 4 unrouted) is DELETED under the deletion-only rule — the split
+// retired the kind, and the row being removed is itself the frozen record of what it routed.
+// `GltfData` (1 routed / 3 unrouted) is ADDED as a wholly new node type, the fifth arm.
+// Doing both in one commit is what makes this look like a rewrite, so the arithmetic is
+// spelled out rather than left to be re-derived. The base is main's AFTER the motion
+// generator landed (84 / 135 / 226), not the 83 / 135 / 219 this branch was cut against:
+//   types    84 - 1 + 1     = 84   (unchanged — one kind out, one in)
+//   routed  135 - 3 + 1     = 133  (the fused kind routed its three TRS params to
+//                                   'transform'; the data half routes only `material`,
+//                                   because the pose it used to route moved to `Object`,
+//                                   whose row already had position/rotation/scale)
+//   unrouted 226 - 4 + 3 + 1 = 226 (`assetRef`/`childName`/`materialSlots` stay unrouted on
+//                                   the data half, as the address and a captured readout
+//                                   rather than authored rows; the +1 is `Object` GAINING
+//                                   `overridden=(unrouted)`, which left the fused kind with
+//                                   the pose. That term is the one an earlier draft of this
+//                                   note stated in prose and then left out of the sum — it
+//                                   is why the total does not move at all, and the gate is
+//                                   what caught the omission rather than the reasoning.)
+// The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
+// not reappear anywhere, because `Object` already routed position/rotation/scale before
+// this change. A re-home would have moved `routed` by a different number than 2.
+export const GOLDEN_TOTALS = { types: 84, routed: 133, unrouted: 226 } as const;

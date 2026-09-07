@@ -5,6 +5,7 @@ import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
 import type { DagState, Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 const ASSET = 'assets/cicada.glb';
 const NODE_NAME_MAP = { Body: 'child1' };
@@ -18,18 +19,7 @@ function buildScene(): DagState {
       nodeType: 'GltfAsset',
       params: { assetRef: ASSET, nodeNameMap: NODE_NAME_MAP },
     },
-    {
-      type: 'addNode',
-      nodeId: 'child1',
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: 'Body',
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      },
-    },
+    ...importedChildOps('child1', { assetRef: ASSET, childName: 'Body' }),
     // An unrelated node the asset selector must ignore, and whose `position` the second
     // case edits — so it has to be the half that OWNS a transform, not the geometry half.
     { type: 'addNode', nodeId: 'box', nodeType: 'Object', params: { position: [0, 0, 0] } },
@@ -41,10 +31,13 @@ function buildScene(): DagState {
 describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ / B13)', () => {
   beforeEach(() => registerAllNodes());
 
-  it('selects this asset’s GltfChild nodes (and only them)', () => {
+  it('selects this asset’s imported children — BOTH halves — and only them', () => {
     const s = buildScene();
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
+    // #389 — the data half is in scope too, and that is the load-bearing half here:
+    // a recolour writes `material` on it, and if it were not subscribed the asset would
+    // not re-render and the clone would keep painting the old colour (the H40 freeze).
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'child1__data', 'gltf']);
   });
 
   it('is shallow-EQUAL across an UNRELATED edit (structural sharing → no re-render)', () => {
@@ -154,8 +147,8 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     );
   });
 
-  // #188 (v0.7 Phase 3) — material channels target a GltfChild dagId DIRECTLY
-  // (`target === childDagId`, `paramPath` starts `materials.`). They MUST be in the
+  // #188 (v0.7 Phase 3) — material channels target the child's DATA node directly
+  // (`target === dataId`, `paramPath` starts `material.` — #389 moved both). They MUST be in the
   // subscription scope or editing one would not re-render the asset (H40 freeze) and
   // the per-frame overlay would never see it.
   function withMaterialChannel(s: DagState): DagState {
@@ -165,8 +158,8 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       nodeType: 'KeyframeChannelNumber',
       params: {
         name: 'metalness',
-        target: 'child1', // the GltfChild dagId, directly
-        paramPath: 'materials.0.base.metalness',
+        target: 'child1__data', // the child's DATA node id, directly (#389)
+        paramPath: 'material.base.metalness',
         keyframes: [
           { time: 0, value: 0 },
           { time: 1, value: 1 },
@@ -178,7 +171,7 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
   it('#188 — selects a material channel (Number) targeting this asset’s child dagId', () => {
     const s = withMaterialChannel(buildScene());
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf', 'matChan']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'child1__data', 'gltf', 'matChan']);
   });
 
   it('#188 — selects a material channel (Color) targeting this asset’s child dagId', () => {
@@ -189,13 +182,13 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       nodeType: 'KeyframeChannelColor',
       params: {
         name: 'base color',
-        target: 'child1',
-        paramPath: 'materials.0.base.color',
+        target: 'child1__data',
+        paramPath: 'material.base.color',
         keyframes: [{ time: 0, value: '#ff0000' }],
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'colChan', 'gltf']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'child1__data', 'colChan', 'gltf']);
   });
 
   it('#188 — EXCLUDES a material channel targeting a DIFFERENT asset’s child', () => {
@@ -207,12 +200,12 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       params: {
         name: 'metalness',
         target: 'someOtherChild', // not in this asset's nodeNameMap values
-        paramPath: 'materials.0.base.metalness',
+        paramPath: 'material.base.metalness',
         keyframes: [{ time: 0, value: 0 }],
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'child1__data', 'gltf']);
   });
 
   it('#188 — EXCLUDES a non-material channel (a plain scalar channel on the child) from the material path', () => {
@@ -223,13 +216,13 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       nodeType: 'KeyframeChannelNumber',
       params: {
         name: 'foo',
-        target: 'child1',
-        paramPath: 'foo.bar', // not a materials.* path
+        target: 'child1__data',
+        paramPath: 'foo.bar', // not a material path
         keyframes: [{ time: 0, value: 0 }],
       },
     }).next;
     const deps = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP);
-    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'gltf']);
+    expect(deps.map((n) => n.id).sort()).toEqual(['child1', 'child1__data', 'gltf']);
   });
 
   it('#188 — editing a material channel flips its ref → re-render fires (H40 freeze guard)', () => {
@@ -311,7 +304,16 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       .sort();
     // The source clip hangs off a DIFFERENT rig than this asset's, so the #888
     // walk excludes it — it is here only because the retarget reaches it.
-    expect(deps).toEqual(['child1', 'gltf', 'map', 'retarget', 'rig', 'srcClip', 'srcRig']);
+    expect(deps).toEqual([
+      'child1',
+      'child1__data',
+      'gltf',
+      'map',
+      'retarget',
+      'rig',
+      'srcClip',
+      'srcRig',
+    ]);
   });
 
   it('#901 — editing ANY operand flips a ref, so the viewport re-derives', () => {

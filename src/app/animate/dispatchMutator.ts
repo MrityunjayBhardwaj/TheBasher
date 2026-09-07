@@ -586,12 +586,13 @@ function inferValueType(value: unknown): 'number' | 'vec2' | 'vec3' | 'quat' | '
  *  route a camera's first key into the addLayer composite, wrapping it in a Mesh-typed
  *  layer and breaking selectActiveCameraNode. */
 
-/** GltfChild (#188). NOT a scene producer (no `out` socket, no scene edge), so it
- *  CANNOT be wrapped in an AnimationLayer — its material channels target the child
- *  dagId directly, exactly like a camera (the glTF direct-channel road, V57). */
-function isGltfChildNodeType(type: string | undefined): boolean {
-  return type === 'GltfChild';
-}
+// #389 — `isGltfChildNodeType` lived here, routing an imported child's material first-key
+// down the direct-channel road because a fused GltfChild could not be wrapped in an
+// AnimationLayer. Both halves of that reasoning are gone: the material now lives on a
+// `GltfData`, and a param write named on the Object is routed to the half that owns it by
+// `resolveDataParamOwner` — the same road every other split kind's material takes. So the
+// branch below became unreachable rather than merely unnecessary, and a predicate nothing
+// calls is the kind of relic that gets copied into the next dispatch.
 
 /** The KeyframeChannel* node type + default easing for a value type. */
 function channelNodeFor(valueType: 'number' | 'vec2' | 'vec3' | 'color' | 'quat'): {
@@ -876,14 +877,6 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // <field>) target the child dagId directly — the SAME free-floating direct-channel
   // road as the camera (V57). number = a scalar lobe (metalness/roughness/…), color
   // = a hex lobe (base.color/emission.color).
-  if (isGltfChildNodeType(base.nodes[targetId]?.type)) {
-    return dispatchDirectFirstKey(args, base, {
-      allowed: ['number', 'color'],
-      intentTag: 'user:gltfMaterial.firstKey',
-      surface: 'glTF material',
-    });
-  }
-
   // Native target. #199 (Phase 5) — a native mesh first-key mints a FREE-FLOATING
   // direct channel targeting the node's dagId (V57), the SAME road as the camera
   // (#190) and glTF material (#188). No AnimationLayer wrapper exists any more

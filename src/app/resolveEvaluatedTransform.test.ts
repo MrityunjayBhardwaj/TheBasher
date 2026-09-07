@@ -14,6 +14,7 @@ import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { BoxMeshValue } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 const BOX_ID = 'n_box';
 const CHAN_ID = 'n_pos_channel';
@@ -250,19 +251,16 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
           nodeNameMap: { [CHILD_NAME]: CHILD_ID },
         },
       },
-      {
-        type: 'addNode',
-        nodeId: CHILD_ID,
-        nodeType: 'GltfChild',
-        params: {
-          assetRef: ASSET_REF,
-          childName: CHILD_NAME,
-          position: opts.overridePos ?? BASE_POS,
-          rotation: BASE_ROT,
-          scale: BASE_SCALE,
-          overridden: opts.overridden ?? { position: false, rotation: false, scale: false },
-        },
-      },
+      ...importedChildOps(CHILD_ID, {
+        assetRef: ASSET_REF,
+        childName: CHILD_NAME,
+        position: opts.overridePos ?? BASE_POS,
+        rotation: BASE_ROT,
+        scale: BASE_SCALE,
+        // Sparse (#389): omitted when nothing is flagged, mirroring the live Object
+        // schema, so the default fixture carries no key rather than three `false`s.
+        overridden: opts.overridden,
+      }),
     ];
     for (const op of ops) state = applyOp(state, op).next;
 

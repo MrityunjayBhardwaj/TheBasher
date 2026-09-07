@@ -1,7 +1,14 @@
 import { BoxGeometry } from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
-import { clear, getForAttach, getForRead, prime, size } from './geometryRegistry';
+import {
+  clear,
+  drawnByAssetClone,
+  getForAttach,
+  getForRead,
+  prime,
+  size,
+} from './geometryRegistry';
 
 afterEach(() => clear());
 
@@ -220,5 +227,31 @@ describe('geometryRegistry', () => {
       descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
     };
     expect(getForRead(mirrorRef(gltfSrc, 'x'))).toBeNull();
+  });
+});
+
+describe('drawnByAssetClone — is something else already drawing these buffers? (#389)', () => {
+  // The predicate the renderer's draw rule keys on. Asserted over the CLASS boundary in
+  // both directions, because the whole argument for it is that a `kind === 'gltf'` test
+  // would select the same set today and stop being right the moment a kind moved.
+
+  it('is true for a glTF child — its buffers live in the clone GltfAssetR already draws', () => {
+    expect(drawnByAssetClone({ kind: 'gltf', assetRef: 'a', childName: 'Cube' })).toBe(true);
+  });
+
+  it('is FALSE for a recipe over a glTF source — the registry builds those, nothing else draws them', () => {
+    // This is the case that makes the rule one rule instead of two. An Array over an
+    // imported cube must draw: measured in the browser at 72 added positions (3 × 24),
+    // in its own material, alongside the clone's original and with no double draw.
+    const source = {
+      key: 'gltf|a|Cube',
+      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'Cube' },
+    } as const;
+    expect(drawnByAssetClone({ kind: 'array', source, count: 3, offset: [1, 0, 0] })).toBe(false);
+  });
+
+  it('is false for every kind the registry itself builds or holds', () => {
+    expect(drawnByAssetClone({ kind: 'box', size: [1, 1, 1] })).toBe(false);
+    expect(drawnByAssetClone({ kind: 'baked', hash: 'h', vertexCount: 8 })).toBe(false);
   });
 });

@@ -78,7 +78,13 @@ describe('ns-1 pre-phase fixture', () => {
     const kinds = new Set(Object.values(project.state.nodes).map((n) => n.type));
     expect(kinds.has('BoxData')).toBe(true);
     expect(kinds.has('BakedData')).toBe(true);
-    expect(kinds.has('GltfChild')).toBe(true);
+    // #389 — `GltfData` here and `GltfChild` in the RAW row above, and the pair of rows is
+    // now stronger than either was alone: the fixture's bytes still hold the fused kind
+    // (they are frozen and cannot be regenerated), and loading them through the real seam
+    // must produce the split. So this line is the migration's own end-to-end assertion —
+    // it reds both if the v10 → v11 pass stops running and if it stops splitting.
+    expect(kinds.has('GltfData'), 'the fused child migrated to its data half').toBe(true);
+    expect(kinds.has('GltfChild'), 'no fused child survives the ladder').toBe(false);
   });
 
   it('resolves the material each producer carries, so a later phase cannot drop one silently', async () => {
@@ -91,13 +97,18 @@ describe('ns-1 pre-phase fixture', () => {
     const nodes = Object.values(project.state.nodes);
     const box = nodes.find((n) => n.type === 'BoxData');
     const baked = nodes.find((n) => n.type === 'BakedData');
-    const gltfChild = nodes.find((n) => n.type === 'GltfChild');
+    const gltfChild = nodes.find((n) => n.type === 'GltfData');
 
     // This is the assertion that has to survive #636. Today each producer carries its
     // material in its own param shape; the phase's whole point is that they stop doing
     // so independently. When that lands, this test tells you which producer lost it.
     expect(box?.params.material, 'BoxData.material').toBeDefined();
     expect(baked?.params.material, 'BakedData.material').toBeDefined();
-    expect(gltfChild?.params.materials, 'GltfChild.materials').toBeDefined();
+    // #389 — `material` (slot 0, nullable) where it was `materials` (the array). The
+    // migration carries the captured table across, so this row still says what it always
+    // said: the imported producer did not lose its material on the way through the ladder.
+    // `toBeDefined` rather than a truthiness check, deliberately: `null` is a REAL answer
+    // for a bone, and a check that rejected it would fail on the honest case.
+    expect(gltfChild?.params.material, 'GltfData.material').toBeDefined();
   });
 });

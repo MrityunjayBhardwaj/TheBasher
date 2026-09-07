@@ -4,6 +4,7 @@ import type { Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -76,7 +77,7 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
     expect(rows[2].parent).toEqual({ nodeId: 'tx', socket: 'target', index: 0 });
   });
 
-  it('expands a GltfAsset into nested GltfChild rows (Option A, #91 Wave D)', () => {
+  it('expands a GltfAsset into nested imported-child rows (Option A, #91 Wave D)', () => {
     // Asset with two children: a parent "bone0" and its child "bone1".
     // nodeNameMap: childKey → GltfChild node id; childHierarchy: parent → children.
     let state = buildSceneOnly();
@@ -91,30 +92,15 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
           childHierarchy: { bone0: ['bone1'] },
         },
       },
-      {
-        type: 'addNode',
-        nodeId: 'child_b0',
-        nodeType: 'GltfChild',
-        params: {
-          assetRef: 'assets/skinned-bar.glb',
-          childName: 'bone0',
-          position: [0, 0, 0],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-        },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'child_b1',
-        nodeType: 'GltfChild',
-        params: {
-          assetRef: 'assets/skinned-bar.glb',
-          childName: 'bone1',
-          position: [0, 1, 0],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-        },
-      },
+      ...importedChildOps('child_b0', {
+        assetRef: 'assets/skinned-bar.glb',
+        childName: 'bone0',
+      }),
+      ...importedChildOps('child_b1', {
+        assetRef: 'assets/skinned-bar.glb',
+        childName: 'bone1',
+        position: [0, 1, 0],
+      }),
       {
         type: 'connect',
         from: { node: 'gltf', socket: 'out' },
@@ -123,7 +109,11 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
     ]);
     const rows = buildSceneTreeRows(state);
     // Scene → GltfAsset → bone0 (depth 2) → bone1 (depth 3).
-    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'GltfAsset', 'GltfChild', 'GltfChild']);
+    // #389 — the child rows say `Object`, because that is what an imported child now IS.
+    // The outliner icons them through the `data` edge (`iconKindForNode`) like every other
+    // split pair, and the DATA nodes are deliberately absent from the tree: a data node has
+    // no pose and is not a scene child, so it has no row of its own here.
+    expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'GltfAsset', 'Object', 'Object']);
     const gltfRow = rows[1];
     const bone0Row = rows[2];
     const bone1Row = rows[3];

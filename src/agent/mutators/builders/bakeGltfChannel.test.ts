@@ -25,6 +25,7 @@ import { gltfChildDagId, gltfChannelDagId } from '../../../core/import/gltfImpor
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../../../nodes/KeyframeChannelVec3';
 import { TransformClipNode, TransformClipParams } from '../../../nodes/TransformClip';
 import type { TransformClipValue } from '../../../nodes/types';
+import { importedChildOps } from '../../../test-utils/importedChildFixture';
 
 const ASSET_REF = 'asset-bake';
 const CHILD = 'bone_1';
@@ -58,7 +59,7 @@ const CLIP_KEYFRAMES = [
 /** A real DagState: GltfAsset → ClipSelect → TransformClip + GltfChild(bone_1).
  *  Built via applyOp so applyAddNode zod-parses every node's params (the same
  *  path the live DAG uses — proves the baked params survive parsing). */
-function buildState(loop?: 'cycle' | 'hold'): DagState {
+function buildState(loop?: 'cycle' | 'cycle-offset' | 'hold'): DagState {
   let s = emptyDagState();
   s = applyOp(s, {
     type: 'addNode',
@@ -90,20 +91,14 @@ function buildState(loop?: 'cycle' | 'hold'): DagState {
     from: { node: 'n_sel_0', socket: 'out' },
     to: { node: 'n_gltf_0', socket: 'transformClip' },
   }).next;
-  // The GltfChild for bone_1 — its dagId IS gltfChildDagId(ASSET_REF, CHILD).
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: gltfChildDagId(ASSET_REF, CHILD),
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET_REF,
-      childName: CHILD,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      overridden: { position: false, rotation: false, scale: false },
-    },
-  }).next;
+  // The imported child for bone_1 — its OBJECT half's dagId IS
+  // gltfChildDagId(ASSET_REF, CHILD), which is what the mutator roots its closure on.
+  for (const op of importedChildOps(gltfChildDagId(ASSET_REF, CHILD), {
+    assetRef: ASSET_REF,
+    childName: CHILD,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   return s;
 }
 
@@ -370,19 +365,12 @@ describe('mutator.timeline.bakeGltfChannel (D1)', () => {
 
   it('rejects when no clip track exists for the bone (nothing to bake)', () => {
     let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(ASSET_REF, CHILD),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET_REF,
-        childName: CHILD,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(gltfChildDagId(ASSET_REF, CHILD), {
+      assetRef: ASSET_REF,
+      childName: CHILD,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
     const r = validatePlan(
       bakeGltfChannelMutator,
       { assetRef: ASSET_REF, childName: CHILD },
@@ -409,23 +397,47 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
       .map((o) => (o as { params: unknown }).params as KeyframeChannelVec3Params);
   }
 
-  it('a cycling clip mints channels that REPEAT instead of holding', () => {
-    // The defect, stated behaviourally rather than as the presence of a field: a
-    // bone edited on a looping glTF animation used to freeze at the end of the
-    // first cycle while the clip it was copied from kept going.
+  /** The position travel across one authored period — non-zero for this fixture,
+   *  which is what stops the in-place row below from passing against a zero. */
+  function positionTravelOf(params: KeyframeChannelVec3Params[]): number[] {
+    const pos = params.find((p) => p.paramPath === 'position')!;
+    return pos.keyframes[pos.keyframes.length - 1].value.map(
+      (v, i) => v - pos.keyframes[0].value[i],
+    );
+  }
+
+  it('a cycling clip mints channels that REPEAT IN PLACE', () => {
+    // CHANGED AT #934, and this is the behaviour change that issue decided. This
+    // seam used to translate `cycle` into `cycle-offset`, so a cycling clip minted
+    // a channel that TRAVELLED while the clip itself folded time and cycled in
+    // place. `cycle` now means the same thing on both sides.
     const params = bakedParams(buildState('cycle'));
+    expect(params).toHaveLength(3);
+    // duration is 1.5 and the keys span [0, 1.5], so one full cycle out is
+    // sampled OFF the fold boundary — the one time a holder and a wrapper agree
+    // by accident.
+    for (const p of params) {
+      const sample = buildVec3Sampler(p);
+      const base = sample(0.5);
+      expect(sample(0.5 + 1.5)).toEqual(base);
+      expect(sample(0.5 + 3 * 1.5)).toEqual(base);
+    }
+    // THE POPULATION, beside the verdict: the fixture must actually travel, or
+    // "returns to base" is asserted against a zero offset and travel would
+    // satisfy it too.
+    expect(positionTravelOf(params).some((v) => Math.abs(v) > 1e-9)).toBe(true);
+  });
+
+  it('a cycle-offset clip mints channels that TRAVEL — position only', () => {
+    // The behaviour the old `cycle` used to get by translation, now reached by
+    // asking for it. PER-COMPONENT: rotation and scale return to where they were,
+    // because they are bounded and offsetting them would compound a residual
+    // every cycle; POSITION carries its travel forward, because a root that
+    // covers ground must keep covering it rather than snap home.
+    const params = bakedParams(buildState('cycle-offset'));
     expect(params).toHaveLength(3);
     for (const p of params) {
       const sample = buildVec3Sampler(p);
-      // duration is 1.5 and the keys span [0, 1.5], so one full cycle out is
-      // sampled OFF the fold boundary — the one time a holder and a wrapper agree
-      // by accident.
-      //
-      // PER-COMPONENT SINCE #924: rotation and scale return to where they were,
-      // because they are bounded and offsetting them would compound a residual
-      // every cycle. POSITION carries its travel forward, because a root that
-      // covers ground must keep covering it rather than snap home. This loop is
-      // now the gate on that split, not just on "it repeats".
       const keys = p.keyframes;
       const travel = keys[keys.length - 1].value.map((v, i) => v - keys[0].value[i]);
       const cycles = p.paramPath === 'position' ? 1 : 0;
@@ -433,13 +445,82 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
       expect(sample(0.5 + 1.5)).toEqual(base.map((v, i) => v + cycles * travel[i]));
       expect(sample(0.5 + 3 * 1.5)).toEqual(base.map((v, i) => v + 3 * cycles * travel[i]));
     }
-    // The position fixture must actually travel, or the split above is asserted
-    // against a zero offset and a plain repeat would satisfy every row.
-    const pos = params.find((p) => p.paramPath === 'position')!;
-    const posTravel = pos.keyframes[pos.keyframes.length - 1].value.map(
-      (v, i) => v - pos.keyframes[0].value[i],
-    );
-    expect(posTravel.some((v) => Math.abs(v) > 1e-9)).toBe(true);
+    expect(positionTravelOf(params).some((v) => Math.abs(v) > 1e-9)).toBe(true);
+  });
+
+  it('the minted channel agrees with the CLIP past the duration — the gate this carrier never had', () => {
+    // 🔑 THE ROW #934 EXISTS FOR. The sibling carrier has had this since #924
+    // (ensureChannelForBone: "the minted channel agrees with the CLIP past the
+    // duration, which is the point"). This carrier never did — so the clip and
+    // the channel minted from it disagreed about what `cycle` meant, for two
+    // issues, and every row on either side stayed green because no row ever put
+    // the two in the same room.
+    //
+    // Sampled PAST the authored range on purpose: inside it the two agree no
+    // matter what the extend rule is, which is exactly why an in-range probe
+    // could never have caught this.
+    for (const loop of ['hold', 'cycle', 'cycle-offset'] as const) {
+      const clip = TransformClipNode.evaluate(
+        TransformClipParams.parse({
+          name: 'walk',
+          duration: 1.5,
+          loop,
+          keyframes: CLIP_KEYFRAMES,
+        }),
+        {},
+      ) as TransformClipValue;
+      const params = bakedParams(buildState(loop));
+      for (const p of params) {
+        const sampleChannel = buildVec3Sampler(p);
+        // OFF THE PERIOD SEAM on purpose. At exactly t = k·duration the two
+        // conventions differ by a whole travel — the clip folds to the START of
+        // the next period, the channel is still AT its last key — which is #952,
+        // pinned by its own row below rather than hidden by this exclusion.
+        // 99 would be a seam here (99 = 66 × 1.5), so it is 100.25.
+        for (const t of [0.5, 1.0, 0.5 + 1.5, 0.5 + 3 * 1.5, 100.25]) {
+          const fromClip = clip.sample(t)[CHILD];
+          const component = p.paramPath as 'position' | 'rotation' | 'scale';
+          const expected = fromClip[component] as unknown as number[];
+          sampleChannel(t).forEach((v, i) => expect(v).toBeCloseTo(expected[i], 6));
+        }
+      }
+    }
+  });
+
+  it('KNOWN (#952): at exactly the period seam the two carriers still differ', () => {
+    // Recorded, not hidden. The row above samples off-seam because of this, and a
+    // silent exclusion would be the same shape as the divergence #934 removed:
+    // a difference nothing states and nothing reds on.
+    //
+    // The clip folds into [0, duration), so t = duration is the START of the next
+    // period; the channel treats its range as closed, so it is still at its LAST
+    // key. On a fixture that teleports at the seam — which `cycle` does by
+    // definition unless first == last — that is a whole travel apart.
+    //
+    // WHEN #952 IS FIXED THIS ROW REDS, which is the point: whoever picks the
+    // convention updates it deliberately instead of discovering the drift later.
+    const clip = TransformClipNode.evaluate(
+      TransformClipParams.parse({
+        name: 'walk',
+        duration: 1.5,
+        loop: 'cycle',
+        keyframes: CLIP_KEYFRAMES,
+      }),
+      {},
+    ) as TransformClipValue;
+    const pos = bakedParams(buildState('cycle')).find((p) => p.paramPath === 'position')!;
+    const fromChannel = buildVec3Sampler(pos)(1.5);
+    const fromClip = clip.sample(1.5)[CHILD].position;
+
+    expect(fromClip[1]).toBeCloseTo(0, 6); // start of the next period
+    expect(fromChannel[1]).toBeCloseTo(2, 6); // still at the last key
+    // …and they agree one frame either side, so this is a seam instant and not a
+    // general disagreement that the off-seam row is failing to notice.
+    for (const t of [1.49, 1.51]) {
+      buildVec3Sampler(pos)(t).forEach((v, i) =>
+        expect(v).toBeCloseTo((clip.sample(t)[CHILD].position as unknown as number[])[i], 6),
+      );
+    }
   });
 
   it('a holding clip still HOLDS, and mints byte-identical params to before', () => {

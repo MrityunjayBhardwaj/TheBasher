@@ -1,4 +1,4 @@
-// #178 (S4) — the inspector MATERIAL section for a GltfChild is EDITABLE: the
+// #178 (S4) — the inspector MATERIAL section for an imported child is EDITABLE: the
 // native OpenPBR lobe editor, wired to the child's DAG-captured `materials[]`.
 //
 // THE PROOF (falsifiable, [[H97]]): import cube-draco → select its GltfChild →
@@ -9,6 +9,8 @@
 // `materials` the renderer reads, the clone colour would never change.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { importedChild, importedChildren } from './_importedChild';
 
 interface BasherWindow {
   __basher_dag: {
@@ -36,15 +38,18 @@ async function ingestCube(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
-function cubeChild(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-    const c = nodes.find((n) => n.type === 'GltfChild' && n.params.childName === 'cube');
-    return c
-      ? { id: c.id, materials: c.params.materials as { base: { color: string } }[] | undefined }
-      : null;
-  });
+// #389 — `id` is the DATA half's (where the material lives and what the controls are
+// keyed on); `objectId` is what a director selects. `materials` is the flattened slot
+// table, which is what `materials[]` used to be.
+async function cubeChild(page: import('@playwright/test').Page) {
+  const c = await importedChild(page, 'cube');
+  return c
+    ? {
+        id: c.dataId,
+        objectId: c.objectId,
+        materials: c.slots as { base: { color: string } }[],
+      }
+    : null;
 }
 
 const renderedCubeColor = (page: import('@playwright/test').Page) =>
@@ -75,15 +80,15 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
       (window as unknown as BasherWindow).__basher_selection.getState().select(id);
     }, child!.id);
     // The MATERIAL section is default-collapsed — expand it.
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
     // The EDITABLE editor renders (not the read-only readout).
-    const editor = page.getByTestId(`inspector-gltf-material-editor-${child!.id}`);
+    const editor = page.getByTestId(`inspector-material-editor-${child!.id}`);
     await expect(editor).toBeVisible();
     await expect(page.getByTestId('gltf-material-readout')).toHaveCount(0);
 
     // Type a new base colour into the hex field → commit on Enter.
-    const hex = page.getByTestId(`inspector-gltfmat-colorhex-${child!.id}-0-base-color`);
+    const hex = page.getByTestId(`inspector-colorhex-${child!.id}-material.base.color`);
     await hex.fill('#ff0000');
     await hex.press('Enter');
 
@@ -108,21 +113,17 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_selection.getState().select(id);
     }, child!.id);
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
-    const num = page.getByTestId(`inspector-gltfmat-num-${child!.id}-0-base-metalness`);
+    const num = page.getByTestId(`inspector-input-${child!.id}-material.base.metalness`);
     await expect(num).toBeVisible();
     await num.fill('0.7');
 
     await expect
-      .poll(() =>
-        page.evaluate(() => {
-          const w = window as unknown as BasherWindow;
-          const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-          const c = nodes.find((n) => n.type === 'GltfChild' && n.params.childName === 'cube');
-          return (c?.params.materials as { base: { metalness: number } }[])?.[0].base.metalness;
-        }),
-      )
+      .poll(async () => {
+        const c = await cubeChild(page);
+        return (c?.materials as unknown as { base: { metalness: number } }[])?.[0].base.metalness;
+      })
       .toBe(0.7);
   });
 
@@ -146,29 +147,24 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
       await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
       await w.__basher_importGltf(buf, ref);
     });
-    const twoSlotChild = () =>
-      page.evaluate(() => {
-        const w = window as unknown as BasherWindow;
-        const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-          (n) =>
-            n.type === 'GltfChild' &&
-            Array.isArray(n.params.materials) &&
-            (n.params.materials as unknown[]).length === 2,
-        );
-        return c?.id ?? null;
-      });
-    await expect.poll(twoSlotChild).not.toBeNull();
-    const childId = await twoSlotChild();
+    // #389 — the two-slot child, found by ARITY on the flattened table (`materialSlots ??
+    // [material]`), which is what the retired `materials[].length === 2` asked.
+    const twoSlotChild = async () =>
+      (await importedChildren(page)).find((c) => c.slots.length === 2) ?? null;
+    await expect.poll(async () => (await twoSlotChild()) !== null).toBe(true);
+    const two = (await twoSlotChild())!;
+    const childId = two.dataId;
 
+    // Select the OBJECT; the editor is keyed on the DATA half.
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_selection.getState().select(id);
-    }, childId);
-    await page.getByTestId('inspector-section-toggle-material').click();
+    }, two.objectId);
+    await openInspectorSection(page, 'material');
 
     // Two slot buttons; switch to slot 1, then edit its base colour.
-    await expect(page.getByTestId(`inspector-gltfmat-slot-${childId}-0`)).toBeVisible();
-    await page.getByTestId(`inspector-gltfmat-slot-${childId}-1`).click();
-    const hex = page.getByTestId(`inspector-gltfmat-colorhex-${childId}-1-base-color`);
+    await expect(page.getByTestId(`inspector-material-slot-${childId}-0`)).toBeVisible();
+    await page.getByTestId(`inspector-material-slot-${childId}-1`).click();
+    const hex = page.getByTestId(`inspector-colorhex-${childId}-materialSlots.1.base.color`);
     await hex.fill('#00ff00');
     await hex.press('Enter');
 
@@ -179,7 +175,11 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
         page.evaluate((id) => {
           const w = window as unknown as BasherWindow;
           const c = w.__basher_dag.getState().state.nodes[id as string];
-          const mats = c.params.materials as { base: { color: string } }[];
+          // #389 — the full table lives in `materialSlots` for a multi-primitive child,
+          // and it is what `dataSlotsOnly` renders from. The sibling `material` is the
+          // ONE-SLOT fallback, deliberately left at its imported value here, so reading
+          // it would report slot 0 as unchanged after an edit that did land.
+          const mats = c.params.materialSlots as { base: { color: string } }[];
           return [mats[0].base.color, mats[1].base.color];
         }, childId),
       )

@@ -60,8 +60,10 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { gltfChildDagId } from '../../../core/import/gltfImportChain';
+import { isImportedChild } from '../../../app/importedChild';
 import { bakeChannelOpsForBone } from './bakeChannelOps';
 import type { Vec3 } from '../../../nodes/types';
+import { clipLoopOf } from '../../../nodes/clipLoop';
 import { activeClipForAsset, activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
 
 const BakeGltfChannelSpec = z.object({
@@ -87,18 +89,29 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
   contract: {
     // The bake emits ONLY fresh addNode ops (no edges). No edge kinds to walk.
     requiredEdges: [],
-    // The bone (a GltfChild) must be in scope — see buildClosureSpec.
-    requiredNodeTypes: ['GltfChild'],
+    // The bone must be in scope — see buildClosureSpec. #389 split the fused kind, so
+    // the DISCRIMINATING type is the data half: after the split the bone's own node is an
+    // ordinary `Object`, which every box, light and camera also is, and requiring that
+    // would make this contract match anything posable. `GltfData` is what says "imported
+    // child", and the closure follows `data` to reach it.
+    requiredNodeTypes: ['GltfData'],
     // The clip is untouched (D-02 coexist); the bake CREATES editable curves.
     preserves: ['animation'],
   },
   buildClosureSpec(spec): ClosureSpec {
-    // Root on the bone's own dagId (a real node in the DAG). The baked channels
-    // themselves are fresh addNodes (gate-3 isFreshAddNode), so they need no
-    // closure membership. No edges to follow — the GltfChild is edge-less (R-1).
+    // Root on the bone's own dagId (a real node in the DAG — the Object half inherits
+    // it). The baked channels themselves are fresh addNodes (gate-3 isFreshAddNode), so
+    // they need no closure membership.
+    //
+    // #389 — `followedEdges` was EMPTY, on the reasoning that a fused GltfChild is
+    // edge-less (R-1). The bone is still edge-less as far as the SCENE goes, but it now
+    // has exactly one edge: `data`, to the half that says which child it is. Gate 4 walks
+    // the closure for `requiredNodeTypes`, so without this the mutator would reject
+    // itself on every bone — with a message about a missing GltfData rather than about
+    // the edge that was not followed.
     return {
       rootSelectors: [gltfChildDagId(spec.assetRef, spec.childName)],
-      followedEdges: [],
+      followedEdges: ['data'],
     };
   },
   preconditions(spec, _closure, state) {
@@ -110,8 +123,11 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
         reason: `No GltfChild for assetRef="${spec.assetRef}" childName="${spec.childName}".`,
       };
     }
-    if (child.type !== 'GltfChild') {
-      return { ok: false, reason: `Node "${childId}" is ${child.type}; expected GltfChild.` };
+    if (!isImportedChild(state.nodes, childId)) {
+      return {
+        ok: false,
+        reason: `Node "${childId}" is ${child.type}; expected an imported glTF child.`,
+      };
     }
     // A clip track must exist for this bone — otherwise there is nothing to bake.
     const keyframes = activeClipKeyframesForAsset(state.nodes, spec.assetRef).filter(
@@ -156,23 +172,20 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
       // duration; a channel minted from it used to hold, so the bone froze at
       // the end of the first cycle while the clip it came from kept going.
       //
-      // 🔴 A DIVERGENCE PRESERVED ON PURPOSE (#930), NOT AN OVERSIGHT.
-      // A cycling TransformClip mints a channel that TRAVELS (`cycle-offset`),
-      // while the clip itself folds TIME — which replays identical frames and so
-      // cycles IN PLACE. The two have therefore never agreed on this road, and
-      // #930 deliberately did not resolve it: the tri-state vocabulary made the
-      // mismatch *visible* (before, both were spelled by one boolean and neither
-      // could say which it meant), but flipping the mint to match the clip would
-      // silently change what every existing looping glTF import does at
-      // playback. `bakeGltfChannel.test.ts` pins the shipped behaviour with a
-      // stated rationale — "a root that covers ground must keep covering it" —
-      // and that claim deserves to be re-decided in the open rather than
-      // reversed as a side effect of a rename.
+      // 🔑 THE CHANNEL TAKES THE CLIP'S OWN INTENT — no translation (#934).
+      // This seam used to map `cycle` to `cycle-offset`, so a cycling
+      // TransformClip minted a channel that TRAVELLED while the clip itself
+      // folded time and cycled IN PLACE. That divergence was deliberate at #930
+      // and could not be resolved there: the carrier had no way to express an
+      // offset, so SOMETHING had to be translated. #934 gave it a real one, and
+      // the translation is what it costs to keep.
       //
-      // So the mapping is explicit here rather than inherited: this carrier's
-      // `cycle` means "wrap the time", and the channel minted from it keeps the
-      // travelling extend it has always had.
-      loop: active?.loop === 'cycle' ? 'cycle-offset' : 'hold',
+      // Now `cycle` means in-place on both sides and `cycle-offset` means travel
+      // on both, so a director who edits one bone of a looping clip gets a
+      // channel that does what the clip they are looking at does. A clip that
+      // used to be spelled `cycle` and expected travel is spelled `cycle-offset`
+      // instead — the value that says so.
+      loop: clipLoopOf(active?.loop),
     });
 
     // R4: NO connect ops. The baked channels are edge-less satellites that

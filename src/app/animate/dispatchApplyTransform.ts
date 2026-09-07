@@ -48,6 +48,7 @@ import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
+import { importedChildDataId, importedChildOf, isImportedChild } from '../importedChild';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import { getGltfClone } from '../asset/gltfCloneRegistry';
@@ -347,7 +348,7 @@ export async function dispatchApplyTransform(
   // The glTF-child path (the R-1 edge-less satellite) is materially different —
   // source geometry/material live inside the live render clone, and the asset
   // must suppress the child by name. It has its own dispatcher below.
-  if (node.type === 'GltfChild') {
+  if (isImportedChild(state.nodes, selectedId)) {
     return dispatchApplyGltfChild(
       selectedId,
       mask,
@@ -578,13 +579,14 @@ async function dispatchApplyGltfChild(
   deps: Partial<ApplyDeps> | undefined,
   liveDispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown,
 ): Promise<DispatchResult> {
-  const node = state.nodes[selectedId];
-  const p = node.params as { assetRef?: unknown; childName?: unknown };
-  if (typeof p.assetRef !== 'string' || typeof p.childName !== 'string') {
-    return { ok: false, reason: `Apply: GltfChild "${selectedId}" missing assetRef/childName.` };
+  const imported = importedChildOf(state.nodes, selectedId);
+  if (!imported) {
+    return {
+      ok: false,
+      reason: `Apply: imported child "${selectedId}" missing assetRef/childName.`,
+    };
   }
-  const assetRef = p.assetRef;
-  const childName = p.childName;
+  const { assetRef, childName } = imported;
   const seconds = currentFrame / 60;
 
   // Animated guard (D-04) — keyframe channels on the child node OR a clip track
@@ -658,6 +660,7 @@ async function dispatchApplyGltfChild(
     ? ((asset.params as { suppressedChildren: string[] }).suppressedChildren as string[])
     : [];
 
+  const dataId = importedChildDataId(state.nodes, selectedId);
   const bakedId = nextBakedId(state);
   // #388 C5 — mints the PAIR, like the primitive road above and like the load migration.
   // Unlike that road there is no id to inherit: a glTF child is not a scene node, so the
@@ -688,6 +691,12 @@ async function dispatchApplyGltfChild(
       to: { node: sceneRef.node, socket: 'children' },
     },
     { type: 'removeNode', nodeId: selectedId },
+    // #389 — the DATA half goes too. The apply collapses the imported child into a fresh
+    // baked pair, so leaving `GltfData` behind would strand an inputless node describing a
+    // child that has been suppressed on its own asset: invisible in the outliner (nothing
+    // walks a bare data node), still resolving a geometry ref into a clone, and impossible
+    // to select or delete. The fused kind was ONE node, so this line had no counterpart.
+    ...(dataId ? [{ type: 'removeNode' as const, nodeId: dataId }] : []),
     {
       type: 'setParam',
       nodeId: asset.id,

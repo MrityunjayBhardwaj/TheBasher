@@ -194,9 +194,16 @@ describe('#645 — the slot table is derived once, through the Object', () => {
   // Counts are LITERALS. A bound like "at most one hatch use" would absorb exactly the
   // event it exists to detect.
   it('B. every production road resolves through the Object, with one named exception', () => {
+    // 5 → 6 at #389, and the new caller is the point of the change rather than a side
+    // effect of it. `GltfAssetR`'s per-frame material band paints an imported child's
+    // material onto the loaded clone; while the child was FUSED it had no Object, so it
+    // could not honour a per-slot override and did not try. After the split it is an
+    // Object like any other, so it resolves through the same derivation — which is #645's
+    // rule finally reaching the last kind.
     const road = invocationsOf('objectSlotsOf', PRODUCTION_ROADS);
-    expect(road).toHaveLength(5);
+    expect(road).toHaveLength(6);
     expect(road.map((c) => c.fn).sort()).toEqual([
+      'GltfAssetR',
       'ObjectMeshR',
       'ObjectR',
       'ObjectR',

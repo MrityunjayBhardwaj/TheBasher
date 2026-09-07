@@ -34,15 +34,20 @@
 // seamless loop and a teleport every period.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// WHY THE TWO CARRIERS TAKE DIFFERENT SUBSETS
+// BOTH CARRIERS NOW TAKE ALL THREE (#934)
 // ─────────────────────────────────────────────────────────────────────────
-// `AnimationClip` takes all three. `TransformClip` takes `hold | cycle` only,
-// because it folds TIME (`t % duration`) rather than extending per-component
-// values — folding replays identical frames, which IS cycle-in-place, and it
-// has no way to add a per-period offset. Offering `cycle-offset` there would
-// have to silently degrade to `cycle`, which is the quiet-wrong-answer shape
-// this codebase keeps finding. Unreachable beats degraded: giving TransformClip
-// a real offset is its own slice, and until then it has no constructor.
+// They did not always. `TransformClip` took `hold | cycle` only, because it
+// folds TIME (`t % duration`) rather than extending per-component values, and
+// offering `cycle-offset` there would have silently degraded to plain cycling —
+// the quiet-wrong-answer shape this codebase keeps finding. The note here said
+// "unreachable beats degraded: giving TransformClip a real offset is its own
+// slice", and #934 is that slice: it keeps the fold and ADDS the per-period
+// position delta, so the value is real rather than accepted-and-ignored.
+//
+// The subset split is therefore gone, and with it the translation that used to
+// sit at the mint seam, where a `cycle` TransformClip minted a channel that
+// TRAVELLED while the clip itself cycled in place. One concept, one spelling,
+// the same meaning on both carriers and on the channels minted from them.
 //
 // REF: src/nodes/keyframeInterp.ts (ChannelExtend — the superset this draws
 //      from); src/nodes/AnimationClip.ts (clipExtendRules); src/nodes/
@@ -66,9 +71,6 @@ export type ClipLoop = 'hold' | 'cycle' | 'cycle-offset';
  * default now only decides what a NEWLY created clip does.
  */
 export const ClipLoopSchema = z.enum(['hold', 'cycle', 'cycle-offset']).default('hold');
-
-/** TransformClip's narrower set — see the header on why offset is absent here. */
-export const TimeFoldLoopSchema = z.enum(['hold', 'cycle']).default('hold');
 
 /**
  * The per-component extend rule a clip's transport intent implies.

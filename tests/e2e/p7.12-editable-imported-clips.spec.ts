@@ -60,6 +60,7 @@
 // Harness reused from tests/e2e/p7.10-edit-while-playing.spec.ts.
 
 import { expect, test } from './_fixtures';
+import { importedChild } from './_importedChild';
 
 const ASSET_REF = 'assets/skinned-bar.glb';
 const FIXTURE_URL = '/assets/skinned-bar.glb';
@@ -147,20 +148,16 @@ async function stageSkinnedBar(page: import('@playwright/test').Page): Promise<v
   );
 }
 
-/** The GltfChild dagId for the animated bone (hashId('gltfChild', assetRef,
- *  childName)) — found by walking the DAG for the GltfChild carrying childName,
- *  so the test does not re-implement hashId. */
+/** The dagId for the animated bone — found by walking the DAG for the child carrying
+ *  childName, so the test does not re-implement hashId.
+ *
+ *  #389 — the OBJECT half. A clip track names its subject by `childName` and the
+ *  importer writes the Object's id as the track target, so this is unchanged by the
+ *  split: the Object inherited the fused node's id. */
 async function animatedChildDagId(page: import('@playwright/test').Page): Promise<string> {
-  return page.evaluate((childName) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag.getState().state.nodes;
-    for (const [id, n] of Object.entries(nodes)) {
-      if (n.type === 'GltfChild' && (n.params as { childName?: string }).childName === childName) {
-        return id;
-      }
-    }
-    throw new Error(`no GltfChild for childName "${childName}"`);
-  }, ANIMATED_CHILD);
+  const child = await importedChild(page, ANIMATED_CHILD);
+  if (!child) throw new Error(`no imported child for childName "${ANIMATED_CHILD}"`);
+  return child.objectId;
 }
 
 /** Select the imported bone (viewport/NPanel selection) so the dopesheet
@@ -729,8 +726,16 @@ test('P7.12 (e) PERF GUARD — bake + edit several bones, commits===0 across 5s 
     const childDagId = await page.evaluate((cn) => {
       const w = window as unknown as BasherWindow;
       const nodes = w.__basher_dag.getState().state.nodes;
+      // #389 — an imported child is an `Object` whose `data` input is a `GltfData`.
       for (const [id, n] of Object.entries(nodes)) {
-        if (n.type === 'GltfChild' && (n.params as { childName?: string }).childName === cn) {
+        const dataId = (n.inputs as Record<string, { node: string } | undefined> | undefined)?.data
+          ?.node;
+        const data = dataId ? nodes[dataId] : undefined;
+        if (
+          n.type === 'Object' &&
+          data?.type === 'GltfData' &&
+          (data.params as { childName?: string }).childName === cn
+        ) {
           return id;
         }
       }

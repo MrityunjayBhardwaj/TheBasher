@@ -11,6 +11,8 @@
 // could never change from the inspector.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { firstMaterialChild } from './_importedChild';
 
 const FRONT_SIDE = 0;
 const DOUBLE_SIDE = 2; // THREE.FrontSide / THREE.DoubleSide
@@ -52,17 +54,14 @@ async function ingest(page: import('@playwright/test').Page, file: string, folde
   );
 }
 
-/** The first GltfChild that captured materials, + its active-slot geometry/uv/name. */
-function materialChild(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
-    if (!c) return null;
-    const m0 = (c.params.materials as Record<string, unknown>[])[0];
-    return { id: c.id, geometry: m0.geometry, uvTransform: m0.uvTransform, name: m0.name };
-  });
+/** The first imported child that captured a material, + slot 0's geometry/uv/name.
+ *  #389 — `id` is the DATA half's: that is where the material lives and what every
+ *  inspector control below is keyed on. */
+async function materialChild(page: import('@playwright/test').Page) {
+  const c = await firstMaterialChild(page);
+  if (!c) return null;
+  const m0 = c.slots[0] as Record<string, unknown>;
+  return { id: c.dataId, geometry: m0.geometry, uvTransform: m0.uvTransform, name: m0.name };
 }
 
 const firstMesh = (page: import('@playwright/test').Page) =>
@@ -75,8 +74,8 @@ async function selectAndOpen(page: import('@playwright/test').Page, id: string) 
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
   }, id);
-  await page.getByTestId('inspector-section-toggle-material').click();
-  await expect(page.getByTestId(`inspector-gltf-material-editor-${id}`)).toBeVisible();
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId(`inspector-material-editor-${id}`)).toBeVisible();
 }
 
 test.describe('#217 — glTF material render-options + UV inspector controls', () => {
@@ -89,7 +88,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
     // Pre-edit the clone is front-only.
     await expect.poll(async () => (await firstMesh(page))?.side).toBe(FRONT_SIDE);
 
-    await page.getByTestId(`inspector-doublesided-${child!.id}-0`).check();
+    await page.getByTestId(`inspector-doublesided-${child!.id}`).check();
 
     // Side A — DAG material flag set; Side B — the clone renders double-sided.
     await expect
@@ -109,7 +108,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
 
     await expect.poll(async () => (await firstMesh(page))?.alphaTest).toBe(0); // off by default
 
-    const input = page.getByTestId(`inspector-alphacutoff-${child!.id}-0`);
+    const input = page.getByTestId(`inspector-alphacutoff-${child!.id}`);
     await input.fill('0.5');
     await input.blur();
 
@@ -130,7 +129,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
     const child = await materialChild(page);
     await selectAndOpen(page, child!.id);
 
-    const input = page.getByTestId(`inspector-gltfmat-name-${child!.id}-0`);
+    const input = page.getByTestId(`inspector-material-name-${child!.id}`);
     await expect(input).toBeVisible();
     await input.fill('brushed steel');
     await input.blur();
@@ -149,7 +148,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
     await selectAndOpen(page, child!.id);
 
     // The Texture Placement section now renders for glTF (was native-only).
-    const tilingX = page.getByTestId(`inspector-uvtransform-tilingX-${child!.id}-0`);
+    const tilingX = page.getByTestId(`inspector-uvtransform-tilingX-${child!.id}`);
     await expect(tilingX).toBeVisible();
     await tilingX.fill('4');
     await tilingX.blur();

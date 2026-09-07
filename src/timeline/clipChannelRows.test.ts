@@ -16,6 +16,7 @@ import {
   type ClipKeyframe,
   type ChannelRow,
 } from './clipChannelRows';
+import { importedChildNodes } from '../test-utils/importedChildFixture';
 
 // A 2-key TRS clip for a single bone named `bone_1`, mirroring the shape
 // gltfImportChain.buildClipKeyframes produces (targetNodeId = the NAME key).
@@ -123,11 +124,7 @@ const dagNodes = (): Record<string, { type: string; params?: unknown; inputs?: u
     params: { name: 'walk', duration: 1.5, keyframes: fixture },
     inputs: {},
   },
-  n_gltfChild_bone1: {
-    type: 'GltfChild',
-    params: { assetRef: ASSET_REF, childName: 'bone_1' },
-    inputs: {},
-  },
+  ...importedChildNodes('n_gltfChild_bone1', { assetRef: ASSET_REF, childName: 'bone_1' }),
 });
 
 describe('activeClipKeyframesForAsset', () => {

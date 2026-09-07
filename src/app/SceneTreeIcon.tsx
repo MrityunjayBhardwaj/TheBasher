@@ -102,7 +102,11 @@ function kindForNodeType(nodeType: string): IconKind {
   // splits every saved one, and `endsWith('Mesh')` already matched it anyway. The pair is
   // iconed by its halves — the Object by its data node, and `BakedData` through the
   // `Data`-suffix branch above (stem `Baked` is a mesh stem).
-  if (nodeType === 'GltfAsset' || nodeType === 'GltfChild' || nodeType.endsWith('Mesh')) {
+  // #389 — `nodeType === 'GltfChild'` was in this list and is gone with the kind, exactly
+  // as `'BakedMesh'` went above. The pair is iconed by its halves: the Object through its
+  // `data` edge (`iconKindForNode`), and `GltfData` through the `Data`-suffix branch — its
+  // stem `Gltf` is already a mesh stem, which is why nothing had to be added there.
+  if (nodeType === 'GltfAsset' || nodeType.endsWith('Mesh')) {
     return 'mesh';
   }
   return 'dot';
