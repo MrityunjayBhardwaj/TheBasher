@@ -63,6 +63,7 @@ import { gltfChildDagId } from '../../../core/import/gltfImportChain';
 import { isImportedChild } from '../../../app/importedChild';
 import { bakeChannelOpsForBone } from './bakeChannelOps';
 import type { Vec3 } from '../../../nodes/types';
+import { clipLoopOf } from '../../../nodes/clipLoop';
 import { activeClipForAsset, activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
 
 const BakeGltfChannelSpec = z.object({
@@ -171,23 +172,20 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
       // duration; a channel minted from it used to hold, so the bone froze at
       // the end of the first cycle while the clip it came from kept going.
       //
-      // 🔴 A DIVERGENCE PRESERVED ON PURPOSE (#930), NOT AN OVERSIGHT.
-      // A cycling TransformClip mints a channel that TRAVELS (`cycle-offset`),
-      // while the clip itself folds TIME — which replays identical frames and so
-      // cycles IN PLACE. The two have therefore never agreed on this road, and
-      // #930 deliberately did not resolve it: the tri-state vocabulary made the
-      // mismatch *visible* (before, both were spelled by one boolean and neither
-      // could say which it meant), but flipping the mint to match the clip would
-      // silently change what every existing looping glTF import does at
-      // playback. `bakeGltfChannel.test.ts` pins the shipped behaviour with a
-      // stated rationale — "a root that covers ground must keep covering it" —
-      // and that claim deserves to be re-decided in the open rather than
-      // reversed as a side effect of a rename.
+      // 🔑 THE CHANNEL TAKES THE CLIP'S OWN INTENT — no translation (#934).
+      // This seam used to map `cycle` to `cycle-offset`, so a cycling
+      // TransformClip minted a channel that TRAVELLED while the clip itself
+      // folded time and cycled IN PLACE. That divergence was deliberate at #930
+      // and could not be resolved there: the carrier had no way to express an
+      // offset, so SOMETHING had to be translated. #934 gave it a real one, and
+      // the translation is what it costs to keep.
       //
-      // So the mapping is explicit here rather than inherited: this carrier's
-      // `cycle` means "wrap the time", and the channel minted from it keeps the
-      // travelling extend it has always had.
-      loop: active?.loop === 'cycle' ? 'cycle-offset' : 'hold',
+      // Now `cycle` means in-place on both sides and `cycle-offset` means travel
+      // on both, so a director who edits one bone of a looping clip gets a
+      // channel that does what the clip they are looking at does. A clip that
+      // used to be spelled `cycle` and expected travel is spelled `cycle-offset`
+      // instead — the value that says so.
+      loop: clipLoopOf(active?.loop),
     });
 
     // R4: NO connect ops. The baked channels are edge-less satellites that
