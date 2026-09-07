@@ -284,6 +284,32 @@ describe('a refused rig still lands the mesh (#835)', () => {
     expect(said).toContain('in your scene');
   });
 
+  it('a salvage that FAILS keeps the refusal — it is the actionable half (#963)', async () => {
+    // Reachable only by injecting the failure: the stub cannot fail to collect.
+    // Made straightforward by `collectGlb` being a method on the returned task —
+    // there is something to replace.
+    vi.spyOn(generation, 'generateTaskOnly').mockImplementation(async () => ({
+      taskId: 'stub_x',
+      modelVersion: 'v1',
+      collectGlb: async () => {
+        throw new Error('the asset host is unreachable');
+      },
+    }));
+
+    const result = await generateRiggedCharacter(TEXT, { name: 'dwarf' });
+    expect(result.outcome).toBe('failed');
+    if (result.outcome !== 'failed') return;
+
+    // BOTH facts, and the refusal first. Reporting only the fetch error tells a
+    // director to retry something that will fail identically, while the refusal
+    // tells them what to change — so losing it to keep the incidental one is the
+    // wrong trade at the moment things are already going badly.
+    expect(result.reason).toContain('others');
+    expect(result.reason).toContain('single full-body character');
+    expect(result.reason).toContain('unreachable');
+    expect(useAssetErrorStore.getState().errors.dwarf).toContain('others');
+  });
+
   it('🔑 collects the mesh WITHOUT running a second generation task', async () => {
     // The bug this must not become. Re-running to recover an output already
     // produced would bill the director twice — worse than the discard it fixes —

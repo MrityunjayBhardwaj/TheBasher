@@ -165,14 +165,32 @@ export async function generateRiggedCharacter(
       // download-when-it-has-a-use that #833 asked for. `collectGlb` fetches the
       // output of the task already run — never a second one, which would bill
       // twice and be a worse bug than the one being fixed.
-      report({ phase: 'importing', percent: 0 });
-      const glb = await task.collectGlb();
-      const unriggedPath = await ingestSingleFile(
-        { relativePath: 'model.glb', bytes: new Uint8Array(glb) },
-        subject,
-      );
-      await importGltfFromOpfs(unriggedPath);
-      report({ phase: 'importing', percent: 100 });
+      //
+      // 🔴 THE SALVAGE GETS ITS OWN CATCH (#963). Letting it fall to the outer
+      // one reported the salvage's error and DISCARDED the refusal, which is the
+      // useful half: "it saw an `others`, try a single full-body character" tells
+      // a director what to do differently, while "failed to fetch" tells them to
+      // retry something that will fail identically. It also read as the wrong
+      // failure — generation did not break, it succeeded and was billed.
+      let unriggedPath: string;
+      try {
+        report({ phase: 'importing', percent: 0 });
+        const glb = await task.collectGlb();
+        unriggedPath = await ingestSingleFile(
+          { relativePath: 'model.glb', bytes: new Uint8Array(glb) },
+          subject,
+        );
+        await importGltfFromOpfs(unriggedPath);
+        report({ phase: 'importing', percent: 100 });
+      } catch (salvage) {
+        // Both facts, refusal first — it is the one that can be acted on, and it
+        // was in hand before the salvage began, so keeping it costs nothing.
+        const both =
+          `${reason} The generated model could not be retrieved either: ` +
+          `${formatAssetError(salvage)}`;
+        useAssetErrorStore.getState().report(subject, `rigged generation failed: ${both}`);
+        return { outcome: 'failed', reason: both };
+      }
 
       // Reported, never silent: the director asked for a character and has a
       // model, and the difference is invisible in the viewport until they try to
