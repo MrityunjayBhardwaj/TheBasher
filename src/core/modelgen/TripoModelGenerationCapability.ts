@@ -71,7 +71,7 @@ import {
   type ModelGenerationProgress,
   type ModelGenerationRequest,
   type ModelGenerationResult,
-  type ModelTaskResult,
+  type CompletedModelTask,
   type SourceImage,
 } from './ModelGenerationCapability';
 import {
@@ -525,9 +525,18 @@ export class TripoModelGenerationCapability
   async generateTaskOnly(
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<ModelTaskResult> {
-    const { taskId, modelVersion } = await this.runTask(request, onProgress);
-    return { taskId, modelVersion };
+  ): Promise<CompletedModelTask> {
+    const { taskId, modelVersion, output, deadline } = await this.runTask(request, onProgress);
+    // The output is ALREADY IN HAND here — `runTask` polled the task to
+    // completion to learn that it finished. Binding only the id threw it away,
+    // and the caller that later wanted the mesh had no way back to it short of
+    // running a second task and billing the director twice (#835).
+    //
+    // So the output is kept in a closure rather than fetched. Nothing is
+    // downloaded unless `collectGlb` is called, which preserves exactly what
+    // #833 bought: the narrow road stays narrow, and only the branch with a use
+    // for the bytes pays for them.
+    return { taskId, modelVersion, collectGlb: () => this.glbOf(taskId, output, deadline) };
   }
 
   async generate(
@@ -535,6 +544,21 @@ export class TripoModelGenerationCapability
     onProgress?: (p: ModelGenerationProgress) => void,
   ): Promise<ModelGenerationResult> {
     const { taskId, modelVersion, output, deadline } = await this.runTask(request, onProgress);
+    const glb = await this.glbOf(taskId, output, deadline);
+    return { taskId, glb, modelVersion };
+  }
+
+  /**
+   * The bytes of a finished task's output. The ONE definition of "collect the
+   * mesh", so the wide road and the deferred collector cannot drift on which
+   * field holds the URL or on what an absent one means — the same discipline
+   * `runTask` applies to what running a task means.
+   */
+  private async glbOf(
+    taskId: string,
+    output: TripoTaskOutput,
+    deadline: number,
+  ): Promise<ArrayBuffer> {
     // WHICH field holds the URL is version-specific — v3 renamed it — so the
     // dialect answers rather than this method guessing across both vocabularies.
     const url = this.dialect.modelUrlOf(output);
@@ -545,9 +569,7 @@ export class TripoModelGenerationCapability
           `${this.dialect.version === 'v2' ? 'pbr_model, model or base_model' : 'model_url or model_urls'}).`,
       );
     }
-
-    const glb = await this.download('Downloading the generated model', url, deadline);
-    return { taskId, glb, modelVersion };
+    return this.download('Downloading the generated model', url, deadline);
   }
 
   /**

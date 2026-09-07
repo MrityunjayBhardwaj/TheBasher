@@ -26,7 +26,7 @@ import {
   describeRequest,
   type ModelGenerationCapability,
   type ModelGenerationProgress,
-  type ModelTaskResult,
+  type CompletedModelTask,
   type ModelGenerationRequest,
   type ModelGenerationResult,
 } from './ModelGenerationCapability';
@@ -222,12 +222,20 @@ export class StubModelGenerationCapability implements ModelGenerationCapability 
   async generateTaskOnly(
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<ModelTaskResult> {
+  ): Promise<CompletedModelTask> {
     assertValidModelRequest(request);
     const taskId = `stub_${fnv1a32(canonicalise(request)).toString(16)}`;
     onProgress?.({ taskId, status: 'running', progress: 0 });
     onProgress?.({ taskId, status: 'success', progress: 100 });
-    return { taskId, modelVersion: request.modelVersion ?? DEFAULT_MODEL_VERSION };
+    return {
+      taskId,
+      modelVersion: request.modelVersion ?? DEFAULT_MODEL_VERSION,
+      // Synthesised HERE rather than above, which keeps the paragraph above true:
+      // the narrow road still produces no bytes, and a spy on `generate` still
+      // tells a wide call from a narrow one. Calling this is the caller stating
+      // it wants the mesh, which is the only thing that should make one exist.
+      collectGlb: async () => synthesiseGlb(request),
+    };
   }
 
   async cancel(): Promise<void> {

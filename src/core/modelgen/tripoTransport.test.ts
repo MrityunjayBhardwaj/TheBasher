@@ -621,9 +621,42 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
     const seen: string[] = [];
     const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
 
-    expect(result).toEqual({ taskId: 't1', modelVersion: 'unspecified' });
+    expect(result.taskId).toBe('t1');
+    expect(result.modelVersion).toBe('unspecified');
     expect(seen).toEqual(['POST /__tripo/v2/task', 'GET /__tripo/v2/task/t1']);
     expect(seen.some((c) => c.includes('tripo-asset') || c.includes(ASSET))).toBe(false);
+  });
+
+  // ── #835 — THE OUTPUT IS COLLECTABLE LATER, WITHOUT A SECOND TASK ─────────
+  // A refused rig leaves a real, billed mesh on the service. Binding only the id
+  // threw the output away, so the only route back to those bytes was running a
+  // second task — billing the director twice to recover something they had
+  // already paid for. These two rows are a pair: the collector must download,
+  // and it must not re-run.
+
+  it('collects the mesh of the task it already ran, on demand', async () => {
+    const seen: string[] = [];
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    const before = seen.length;
+
+    const glb = await task.collectGlb();
+
+    expect(glb.byteLength).toBeGreaterThan(0);
+    // Exactly ONE new call, and it is the asset fetch.
+    expect(seen.length).toBe(before + 1);
+    expect(seen[seen.length - 1]).toContain('/__tripo-asset?url=');
+  });
+
+  it('🔑 collecting does NOT create a second task — it would bill twice', async () => {
+    const seen: string[] = [];
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    await task.collectGlb();
+
+    // The thing that costs money is `POST /task`. It happens once, for the whole
+    // run-then-collect sequence. Asserting on the POST count rather than on the
+    // returned bytes is what makes a re-run visible: a second task would return a
+    // perfectly good mesh and look identical from the caller's side.
+    expect(seen.filter((c) => c === 'POST /__tripo/v2/task')).toHaveLength(1);
   });
 
   it('FALSIFICATION: `generate` on the same script DOES download', async () => {
