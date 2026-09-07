@@ -675,13 +675,25 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // 165 k-point walk. Builds are memoised on `ref.key` at the door above and the weld on the
   // geometry, so either way it is once per geometry, not once per read.
   //
-  // 🔴 AND NOTHING CONSTRUCTS ITS FAILURE TODAY, which is said here rather than left implied.
-  // The registry builds the geometry FROM the descriptor, so the two agree by construction;
-  // this fires only when the arithmetic and three.js's tessellation drift apart — a version
-  // bump, or an edit to one of the two spellings. A guard whose subject never arrives reads
-  // as "no objection" forever, so `pointIdentity.gate.test.ts` exercises the refusal directly
-  // by pairing a box descriptor with a sphere's geometry. Same treatment `zeroIndexRefusal`
-  // above already gets, for the same reason.
+  // 🔴 A SCENE CAN CONSTRUCT ITS FAILURE, AND THE SENTENCE THAT USED TO SIT HERE SAID IT
+  // COULD NOT. It read: *"AND NOTHING CONSTRUCTS ITS FAILURE TODAY... this fires only when
+  // the arithmetic and three.js's tessellation drift apart — a version bump, or an edit to
+  // one of the two spellings."* That was measured false (#745). The registry does build the
+  // geometry FROM the descriptor, but the two spellings answer in different UNITS: the
+  // arithmetic is topological and scale-free, while the weld quantises positions to 1e-4
+  // (`pointIdentity.ts`). Below a scale, distinct corners round into one key and the weld
+  // under-counts a perfectly correct build:
+  //
+  //     box    size 1.0e-4  welds 1 of 8      | size >= 1.1e-4  exact
+  //     sphere r = 1.0e-3   welds 434 of 482  | r >= 3.0e-3     exact (32x16)
+  //                r = 2.0e-3   welds 466 of 482
+  //
+  // So this warns on small geometry, which is authored, not drifted. The LARGE end is clean
+  // far past where it was assumed not to be — exact at r = 1e9 even at 256x128, because
+  // coarse float32 spacing snaps coincident positions onto the SAME value rather than apart;
+  // the first over-count is r = 1e12, where `coord * 1e4` leaves float64's exact-integer
+  // range. `pointIdentity.gate.test.ts` also exercises the refusal directly by pairing a box
+  // descriptor with a sphere's geometry, so the guard is covered from both directions.
   const pointDisagreement = pointCountMismatch(ref.descriptor, built, () =>
     sourceWeldFor(ref.descriptor),
   );
