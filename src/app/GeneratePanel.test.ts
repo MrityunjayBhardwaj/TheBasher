@@ -21,9 +21,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // `vi.hoisted` because `vi.mock`'s factory is lifted above every import, so a
 // spy declared as a plain top-level const is still in its temporal dead zone
 // when the factory runs.
-const { generateMotionIntoScene, generateModelIntoScene, generateRiggedCharacter } = vi.hoisted(
+const { generateMotionAsNode, generateModelIntoScene, generateRiggedCharacter } = vi.hoisted(
   () => ({
-    generateMotionIntoScene: vi.fn(async (_prompt: string) => ({
+    generateMotionAsNode: vi.fn(async (_prompt: string) => ({
       ok: true as const,
       clipId: 'n_clip',
       skeletonId: 'n_skel',
@@ -42,7 +42,9 @@ const { generateMotionIntoScene, generateModelIntoScene, generateRiggedCharacter
   }),
 );
 
-vi.mock('./asset/generateMotion', () => ({ generateMotionIntoScene }));
+// #935 — the panel's motion road is the NODE road now: it mints a producer and
+// cooks it, so the clip it leaves behind can be re-cooked when the curve moves.
+vi.mock('./asset/generateMotionAsNode', () => ({ generateMotionAsNode }));
 vi.mock('./asset/generateModel', () => ({ generateModelIntoScene }));
 vi.mock('./asset/generateRiggedCharacter', () => ({ generateRiggedCharacter }));
 
@@ -61,7 +63,7 @@ import { savedMotionName } from './asset/saveGeneratedMotion';
 /** The app-layer surfaces, named here rather than derived from the module under
  *  test — an expectation derived from its producer cannot fail. */
 const SURFACES = {
-  motion: generateMotionIntoScene,
+  motion: generateMotionAsNode,
   model: generateModelIntoScene,
   character: generateRiggedCharacter,
 };
@@ -119,7 +121,7 @@ describe('acceptsImage', () => {
 describe('runGeneration', () => {
   it('sends the TRIMMED prompt, so the callee sees what a scripted caller would send', async () => {
     await runGeneration('motion', '  a figure walks forward  ');
-    expect(generateMotionIntoScene).toHaveBeenCalledWith('a figure walks forward');
+    expect(generateMotionAsNode).toHaveBeenCalledWith('a figure walks forward');
   });
 
   it('every kind the panel offers has a road of its own', async () => {

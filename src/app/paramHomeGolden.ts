@@ -102,8 +102,10 @@
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
+  // APPENDED at #907 — `active` says which clip a rebind stood up. Unrouted like
+  // its neighbours on this node: no inspector card draws it yet.
   AnimationClip:
-    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
+    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
@@ -172,6 +174,11 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
   MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
   Mix: '[] factor=(unrouted)',
+  // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
+  // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
+  // draws these yet, and a home would claim a section renders them when none does.
+  MotionGenerate:
+    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) name=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
@@ -189,7 +196,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
-  RetargetClip: '[animate] name=(unrouted)',
+  RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -262,15 +269,22 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // retired the kind, and the row being removed is itself the frozen record of what it routed.
 // `GltfData` (1 routed / 3 unrouted) is ADDED as a wholly new node type, the fifth arm.
 // Doing both in one commit is what makes this look like a rewrite, so the arithmetic is
-// spelled out rather than left to be re-derived:
-//   types    83 - 1 + 1 = 83   (unchanged — one kind out, one in)
-//   routed  135 - 3 + 1 = 133  (the fused kind routed its three TRS params to 'transform';
-//                               the data half routes only `material`, because the pose it
-//                               used to route moved to `Object`, whose row already had it)
-//   unrouted 219 - 4 + 3 = 218 (`overridden` left with the pose; `assetRef`/`childName`/
-//                               `materialSlots` stay unrouted, as the address and a
-//                               captured readout rather than authored rows)
+// spelled out rather than left to be re-derived. The base is main's AFTER the motion
+// generator landed (84 / 135 / 226), not the 83 / 135 / 219 this branch was cut against:
+//   types    84 - 1 + 1     = 84   (unchanged — one kind out, one in)
+//   routed  135 - 3 + 1     = 133  (the fused kind routed its three TRS params to
+//                                   'transform'; the data half routes only `material`,
+//                                   because the pose it used to route moved to `Object`,
+//                                   whose row already had position/rotation/scale)
+//   unrouted 226 - 4 + 3 + 1 = 226 (`assetRef`/`childName`/`materialSlots` stay unrouted on
+//                                   the data half, as the address and a captured readout
+//                                   rather than authored rows; the +1 is `Object` GAINING
+//                                   `overridden=(unrouted)`, which left the fused kind with
+//                                   the pose. That term is the one an earlier draft of this
+//                                   note stated in prose and then left out of the sum — it
+//                                   is why the total does not move at all, and the gate is
+//                                   what caught the omission rather than the reasoning.)
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-export const GOLDEN_TOTALS = { types: 83, routed: 133, unrouted: 218 } as const;
+export const GOLDEN_TOTALS = { types: 84, routed: 133, unrouted: 226 } as const;

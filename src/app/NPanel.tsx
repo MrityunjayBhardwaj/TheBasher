@@ -106,6 +106,7 @@ import {
   type SectionControlRenderers,
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
+import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { ClearBakedMotionConnector } from './animate/ClearBakedMotionConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
@@ -3997,6 +3998,12 @@ export function NPanel() {
           <SolverControls nodeId={node.id} />
           {node.type === 'ComfyUIWorkflow' ? (
             <CostPreviewConnector workflowNodeId={node.id} />
+          ) : null}
+          {/* #935 — the cook affordance for the other expensive generative node.
+              Same gate, same place, for the same reason: the control that pins an
+              expensive result belongs on the node that produced it. */}
+          {node.type === 'MotionGenerate' ? (
+            <MotionGenerateCookConnector producerId={node.id} />
           ) : null}
           {(() => {
             const gp = importedChildOf(dagState.nodes, node.id);

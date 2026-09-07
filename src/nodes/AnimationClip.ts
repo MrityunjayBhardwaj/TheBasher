@@ -42,6 +42,33 @@ export const AnimationClipParams = z.object({
    *  boolean whose `true` meant cycle-WITH-OFFSET, which made cycle-in-place
    *  unreachable and disagreed with TransformClip's opposite default (#930). */
   loop: ClipLoopSchema,
+  /**
+   * Is this the clip the director most recently bound to its rig? (#907)
+   *
+   * ── WHY A FLAG AND NOT AN UNBIND ──────────────────────────────────────
+   * Binding a second motion used to leave BOTH clips bound, and
+   * `boundClipsForAsset` sorts by clip id — so which motion played was decided
+   * by the alphabetical order of the two source filenames. Deterministic, and
+   * arbitrary from where the director stands.
+   *
+   * The reference's answer is that an animated data-block has ONE active action,
+   * and assigning a new one auto-stashes the previous onto a MUTED track: "unmute
+   * it again or delete it". So the predecessor is DEACTIVATED, not destroyed —
+   * a director may well want two clips on a rig once there is a way to say which
+   * one is playing, and unbinding would throw that away to fix an ordering bug.
+   *
+   * ── WHY THE DEFAULT IS `false` AND WHY THAT NEEDS NO MIGRATION ─────────
+   * A stored project has no active clip, so every clip compares equal and the
+   * walk falls back to the id order it has always used — byte-identical
+   * behaviour for every project that exists today. The flag only starts
+   * deciding once a bind sets one, which is exactly when the ambiguity appears.
+   * Nothing here changes what a project already does, so there is no format
+   * version to move.
+   *
+   * Edits survive a rebind untouched: an authored channel outranks the clip, so
+   * the case that looks like it needs a confirmation prompt cannot lose work.
+   */
+  active: z.boolean().default(false),
   keyframes: z
     .array(
       z.object({
@@ -52,6 +79,21 @@ export const AnimationClipParams = z.object({
       }),
     )
     .default([]),
+  /**
+   * Which producer request these params were baked from, or `''` when nothing
+   * produced them (every clip that arrived as a file).
+   *
+   * It is a PARAM and not a derived value because it is the only thing that can
+   * tell a baked clip from a stale one after a reload: the producer's request
+   * hash moves when its inputs move, and comparing the two is what makes a
+   * dragged control point read as "stale" rather than as "gone". Deriving it
+   * would mean re-deriving the generation, which is the paid call.
+   *
+   * NOT part of any behaviour. Nothing samples it, and a clip with a stale hash
+   * plays exactly as it did before the producer's inputs moved -- that is the
+   * lock/freeze policy, and it is why a drag does not blank the motion.
+   */
+  sourceHash: z.string().default(''),
 });
 export type AnimationClipParams = z.infer<typeof AnimationClipParams>;
 
@@ -182,6 +224,36 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
   // `Time` input can do it honestly.
   inputs: {
     skeleton: { type: 'Skeleton', cardinality: 'single' },
+    /**
+     * The node that PRODUCED this clip's keys, when one did (#935).
+     *
+     * ─────────────────────────────────────────────────────────────────────
+     * WHY THIS EDGE EXISTS AND WHY `evaluate` DOES NOT READ IT
+     * ─────────────────────────────────────────────────────────────────────
+     * Every reader that drives pixels goes through `boundClipsForAsset`, which
+     * is deliberately pure over PARAMS -- no evaluator, because the format
+     * migration calls it on raw saved JSON long before one exists. So a
+     * producer whose motion lives in an evaluated VALUE is invisible to the
+     * render band, the channel mint, the dopesheet and the migration alike.
+     * Measured: the same graph with a `MotionGenerate` in the source slot
+     * instead of an `AnimationClip` gives the band `boundClips=0`.
+     *
+     * The cook therefore writes the produced keys into THESE params, and this
+     * socket is what it walks to find where to write. Downstream reads params
+     * and cannot tell the result from a dropped `.bvh`, because there is no
+     * difference -- the same shape ComfyUIWorkflow uses one domain over, where
+     * the node describes the request and a separate pass lands the artefact.
+     *
+     * `evaluate` ignoring it is therefore not a socket that lies: the params
+     * ARE the producer's landed output, kept current by the cook. What the
+     * edge buys is that the relation is visible in the graph, survives a save,
+     * and undoes with the ops that made it.
+     *
+     * REF: src/app/asset/bakeGeneratedClip.ts (the cook that walks this edge);
+     *      src/app/animate/boundClipsForAsset.ts (the params-only read band);
+     *      src/nodes/MotionGenerate.ts; issues #935, #902.
+     */
+    source: { type: 'AnimationClip', cardinality: 'single' },
   },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
   inspectorSections: ['animate'],

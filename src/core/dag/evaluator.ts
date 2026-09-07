@@ -45,11 +45,77 @@ export interface EvaluatorCache {
   size(): number;
 }
 
+/**
+ * Global generation counter for content that an evaluator can READ but cannot
+ * PRODUCE — today only generated motion (#902).
+ *
+ * ── WHY A CENTRAL EPOCH AND NOT AN `invalidate` CALL ──────────────────────
+ *
+ * A node like `MotionGenerate` is a pure function of (params, inputs, store),
+ * where the store is filled asynchronously by a resolver. When a result lands,
+ * the node's params and inputs have NOT changed, so its cache key has not
+ * changed either — and every evaluator cache in the app is a per-component
+ * `useMemo(() => createEvaluatorCache(), [])` that lives as long as its
+ * component. Measured: nothing in production calls `invalidate` or `clear` on
+ * one, and all eight render-side caches have empty dependency arrays. So a
+ * landed generation would sit behind a cached `pending` value forever, and the
+ * clip would never reach the screen.
+ *
+ * Invalidating from the outside would mean either a registry of every live
+ * cache or editing eight call sites in the render root. Putting the check HERE
+ * means every cache — present and future, including ones a later phase adds —
+ * is correct by construction, which is the same reason the operator bypass is
+ * honoured by the machinery that runs operators rather than re-decided in each
+ * one.
+ *
+ * WHOLE-CACHE, NOT PER-KEY, and that is a deliberate trade rather than
+ * laziness: a generation is a rare, director-initiated, several-second event,
+ * so rebuilding a cache costs nothing measurable, while per-key invalidation
+ * would need the caller to know which keys transitively contain the node —
+ * exactly the reasoning that is wrong in the failure this prevents.
+ *
+ * It is NOT a back door into the cache key. A pure node's key still contains no
+ * context term, so two different requests can never collide on one entry; the
+ * epoch only decides WHEN a cache is dropped, never what a node evaluates to.
+ */
+let contentEpoch = 0;
+
+/**
+ * Announce that asynchronously-resolved content changed, so caches holding a
+ * pre-resolution value are dropped on next use. Called by the resolver that
+ * fills the store, never by a node.
+ */
+export function bumpEvaluatorContentEpoch(): void {
+  contentEpoch++;
+}
+
+/** The current epoch. Exported for tests that need to pin the mechanism. */
+export function evaluatorContentEpoch(): number {
+  return contentEpoch;
+}
+
 export function createEvaluatorCache(): EvaluatorCache {
   const map = new Map<string, EvalResult>();
+  // The epoch this cache's contents were computed under. Checked on read rather
+  // than on write: a stale entry is only wrong at the moment somebody relies on
+  // it, and checking there means a cache nobody touches costs nothing.
+  let builtAt = contentEpoch;
+  const dropIfStale = (): void => {
+    if (builtAt !== contentEpoch) {
+      map.clear();
+      builtAt = contentEpoch;
+    }
+  };
   return {
-    get: (k) => map.get(k),
+    get: (k) => {
+      dropIfStale();
+      return map.get(k);
+    },
     set: (k, v) => {
+      // Also here, not only on read: a value computed AFTER a bump is correct,
+      // and without this the next read would drop it along with the stale ones
+      // — discarding fresh work rather than merely stale work.
+      dropIfStale();
       map.set(k, v);
     },
     invalidate: (pred) => {

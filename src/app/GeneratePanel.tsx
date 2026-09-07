@@ -1,6 +1,13 @@
 // GeneratePanel — the DIRECTOR's way into the generators, and the third leg of
 // UI == agent == render for phases A1 and A4.
 //
+// 🔴 THE MOTION ROAD IS THE NODE ROAD NOW (#935). It calls `generateMotionAsNode`,
+// which mints a `MotionGenerate` producer and cooks it, so the clip a director
+// gets has a producer the graph can re-cook when the curve moves.
+// `generateMotionIntoScene` — the one-shot road named below — has NO production
+// caller left; it is kept for now because the UI==agent parity claim is written
+// against it, and moving that claim is its own change. Filed.
+//
 // Before this, `generateMotionIntoScene` and `generateModelIntoScene` were
 // written, tested, wired to settings and to the licence gate, and reachable
 // only from their own test files. The agent could generate (`motion.generate`,
@@ -47,7 +54,7 @@ import {
   useGeneratedMotionStore,
   type PendingGeneratedMotion,
 } from './stores/generatedMotionStore';
-import { generateMotionIntoScene } from './asset/generateMotion';
+import { generateMotionAsNode } from './asset/generateMotionAsNode';
 import { generateModelIntoScene } from './asset/generateModel';
 import { generateRiggedCharacter } from './asset/generateRiggedCharacter';
 import type { SourceImage } from '../core/modelgen';
@@ -135,7 +142,12 @@ export async function runGeneration(
   const text = prompt.trim();
 
   if (kind === 'motion') {
-    const result = await generateMotionIntoScene(text);
+    // #935 — the NODE road. Identical from here (a sentence in, a bound clip on a
+    // character out) and different in the graph it leaves behind: the clip has a
+    // producer, so editing the curve re-cooks it. The one-shot road it replaces
+    // discarded the prompt, the seed and the waypoints, which is why #730's
+    // "editing the curve re-cooks the motion" could not be built on it.
+    const result = await generateMotionAsNode(text);
     return result.ok ? { ok: true } : { ok: false, reason: result.reason };
   }
 

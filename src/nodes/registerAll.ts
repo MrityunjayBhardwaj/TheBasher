@@ -68,6 +68,7 @@ import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
+import { MotionGenerateNode } from './MotionGenerate';
 import { SceneNode } from './Scene';
 import { ShotNode } from './Shot';
 import { GltfSkeletonNode } from './GltfSkeleton';
@@ -140,6 +141,7 @@ const ALL: NodeDefinition[] = [
   GroupNode as unknown as NodeDefinition,
   MaterialOverrideNode as unknown as NodeDefinition,
   ScatterNode as unknown as NodeDefinition,
+  MotionGenerateNode as unknown as NodeDefinition,
   // P2 — Character + Move
   SkeletonNode as unknown as NodeDefinition,
   // P7.11 — pure read-only projection of a glTF asset's captured skin bind data

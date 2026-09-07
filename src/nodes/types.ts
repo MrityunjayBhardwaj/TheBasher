@@ -1215,6 +1215,47 @@ export interface AnimationClipValue {
   readonly keyframes: readonly AnimationKeyframe[];
   /** The rig the keyframe indices are authored against. */
   readonly skeleton: SkeletonValue;
+  /**
+   * Present only on a clip produced by {@link MotionGenerateNode} (#902).
+   *
+   * OPTIONAL, so every existing producer of an AnimationClipValue is unchanged
+   * and no consumer has to learn about generation to keep working — which is the
+   * generation phase's refusal of provenance honoured rather than reopened. It
+   * is not a "this was generated" flag: it reports whether the PRODUCER has
+   * finished, and a clip that has finished is byte-identical in every field a
+   * consumer reads to one that arrived from a file.
+   *
+   * Why it exists at all: a generation that has not returned yet must not be
+   * expressible as an empty clip. An empty clip is a well-formed answer meaning
+   * "this produced no motion", so a pending one that borrowed that shape would
+   * be a silent failure by construction — the class this track keeps finding.
+   */
+  readonly generation?: MotionGenerationState;
+}
+
+/**
+ * Where a generated clip's producer has got to. A WAIT state, not a dead end —
+ * the same shape the import lane uses for an asset that is still mounting.
+ *
+ * `failed` is TERMINAL and carries its reason: without it a refusal is
+ * indistinguishable from a request that has not started, so the node would sit
+ * at `pending` forever while the resolver retried on every cook.
+ */
+export interface MotionGenerationState {
+  readonly status: 'pending' | 'ready' | 'failed';
+  /** Content address of the request that produces this clip. */
+  readonly requestHash: string;
+  /** Why it failed. Present only when `status` is `'failed'`. */
+  readonly reason?: string;
+  /**
+   * Offset in metres from the origin to where the path actually is, or null when
+   * the clip follows no path. Present only when `status` is `'ready'`.
+   *
+   * Surfaced so a placement step can move the bound character by it. The clip
+   * itself is generated about the origin, so a consumer that never reads this
+   * puts the character in the wrong place while every frame looks correct.
+   */
+  readonly worldOffsetXZ?: readonly [number, number] | null;
 }
 
 /**

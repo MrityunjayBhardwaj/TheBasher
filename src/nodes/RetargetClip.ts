@@ -62,6 +62,10 @@ import { clipLoopOf } from './clipLoop';
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
   name: z.string().default(''),
+  /** Is this the clip the director most recently bound? (#907) Mirrors
+   *  `AnimationClip.active` — both are clip carriers in the one walk, so a flag
+   *  on only one of them would leave the other's binds ordered by id. */
+  active: z.boolean().default(false),
 });
 export type RetargetClipParams = z.infer<typeof RetargetClipParams>;
 
