@@ -146,13 +146,31 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
     { files: FIXTURE, name: 'p233-gltf' },
   );
 
-  // Wait for the asset + its imported child to exist and the camera seam to land.
+  // #781 — WAIT ON THE IMPORTED MESH, NOT ON A CAMERA.
+  //
+  // The previous condition was `hasChild && camera != null`. Both halves are satisfied
+  // before the thing this spec measures exists: the DAG node appears as soon as the import
+  // writes it, and `camera != null` is true the instant the canvas mounts, because R3F
+  // supplies a DEFAULT camera. So the wait was satisfied by the wrong object, and under
+  // load the spec projected a mesh that had not mounted (`pt === null`) or one still at the
+  // origin (the projected point landing on exactly the canvas centre). Measured at 2
+  // failures in 5 runs before this.
+  //
+  // The object under test is the mesh, so that is what is waited on. Keeping the node and
+  // camera checks costs nothing and keeps the failure message specific about which half is
+  // missing when it times out.
   await page.waitForFunction(
     () => {
       const w = window as unknown as BasherWindow;
       const nodes = w.__basher_dag?.getState().state.nodes ?? {};
       const hasChild = Object.values(nodes).some((n) => n.type === 'GltfData');
-      return hasChild && w.__basher_three?.getState().camera != null;
+      const three = w.__basher_three?.getState();
+      if (!hasChild || three?.scene == null || three.camera == null) return false;
+      let mounted = false;
+      three.scene.traverse((o) => {
+        if (!mounted && o.name === 'Box' && (o as import('three').Mesh).isMesh) mounted = true;
+      });
+      return mounted;
     },
     undefined,
     { timeout: 20_000 },
@@ -160,7 +178,13 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
 
   // Project the imported model's actual "Box" mesh (in the live scene clone) to
   // canvas pixels — the distractors are moved far aside, so this point hits only
-  // the model. Poll: the clone may still be settling right after import.
+  // the model.
+  //
+  // ⚠️ The sentence removed here read "Poll: the clone may still be settling right after
+  // import." There was no poll — this is a single `evaluate`, and it always was. The
+  // comment described the defence the spec needed and did not have, which is exactly how
+  // it read as covered. The settling it worried about is now handled where it belongs, in
+  // the wait above.
   const pt = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const cam = w.__basher_three!.getState().camera!;

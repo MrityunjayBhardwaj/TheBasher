@@ -801,7 +801,22 @@ async function buildRow(page: Page, kind: SplitKindName) {
       dag.dispatchAtomic(
         [
           ...(rowOps as unknown[]),
-          { type: 'connect', from: { node: obj, socket: 'out' }, to: { node: sceneId, socket } },
+          {
+            type: 'connect',
+            from: { node: obj, socket: 'out' },
+            to: { node: sceneId, socket },
+            // #789 — DECLARED, because it genuinely displaces. `scene.camera` is
+            // single-cardinality, so mounting the camera row's Object there drops the seed
+            // camera's edge; the comment on the band table above already calls that
+            // deliberate. Without `replace: true` it is an ANONYMOUS displacement, and a
+            // full-suite census counted five of them here — the only undeclared ones in the
+            // tier that were not a real defect. Declaring it keeps the badge a signal
+            // instead of noise every deliberate rewire has to be read past.
+            //
+            // Harmless on the list bands: the displacement rule only fires for a single
+            // socket with a prior edge, so 'children' and 'lights' are unaffected either way.
+            replace: true,
+          },
         ],
         'e2e',
         'conformance row',

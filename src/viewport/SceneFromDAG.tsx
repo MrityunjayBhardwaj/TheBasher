@@ -2311,7 +2311,12 @@ function ModifiedMeshR({
     }
     store.report(
       ref,
-      'modifier geometry could not be built (source not sync-buildable — glTF/baked-sourced modifiers are a follow-up)',
+      'this modifier cannot load its source (glTF/baked-sourced modifiers are a follow-up)',
+      // #711 — NOT "asset failed:". The registry classifies this exact state as still
+      // loading (`composedOverSource` maps a primed source through to primed), so the
+      // default label would have the banner contradict the registry about the same
+      // condition. The asset is fine; nothing on this road ever asks for it.
+      'modifier blocked:',
     );
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);

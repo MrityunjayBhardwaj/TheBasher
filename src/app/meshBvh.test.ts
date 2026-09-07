@@ -62,7 +62,7 @@ function expectSameHit(
     // pick either. So assert the bvh normal is a real oriented surface normal (unit length,
     // facing the query) rather than bit-matching an arbitrary tie-break. The bvh-vs-brute
     // normal EQUALITY is proven by the ray cases below, where every hit is a unique interior
-    // triangle (and the faceIndex→vertex recovery is the same code path).
+    // triangle (and the triangleIndex→vertex recovery is the same code path).
     const len = Math.hypot(h.normal[0], h.normal[1], h.normal[2]);
     expect(len, `${label}: normal is unit`).toBeCloseTo(1, 6);
     const toQuery = dot3(

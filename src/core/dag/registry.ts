@@ -11,6 +11,7 @@ import type {
   OperatorSection,
   SocketTypeName,
 } from './types';
+import { z } from 'zod';
 import { operatorLaneOf } from './operatorLane';
 import { acceptedTypes } from './socketMembership';
 
@@ -188,8 +189,8 @@ function assertChainDeclaration(def: NodeDefinition): void {
 
   if (chain.bypass.kind !== 'passthrough') return;
   const param = chain.bypass.param;
-  const shape = (def.paramSchema as unknown as { shape?: Record<string, unknown> }).shape;
-  if (!shape || typeof shape !== 'object') {
+  const shape = paramFieldsOf(def);
+  if (shape === null) {
     throw new Error(
       `registerNodeType(${def.type}): chain.bypass names param '${param}', but this node's ` +
         `paramSchema is not an object schema, so nothing can carry it.`,
@@ -222,6 +223,48 @@ function assertChainDeclaration(def: NodeDefinition): void {
         `non-boolean param would register cleanly and never bypass, silently.`,
     );
   }
+}
+
+/**
+ * A node definition's declared parameter FIELDS, or `null` when the schema cannot carry any.
+ *
+ * ── WHY THIS EXISTS, AND WHY `null` IS NOT `{}` ───────────────────────────────────────
+ *
+ * This used to be spelled inline, as `(def.paramSchema as unknown as { shape?: ... }).shape`,
+ * at eight sites — one in production and seven in gates. The cast never fails. Handed a
+ * schema that is not an object schema it yields `undefined`, and a gate that reads that as
+ * an empty field map reports a clean answer having examined NOTHING. Seven copies is seven
+ * places for that vacuity to appear, and it had already grown by one since it was counted.
+ *
+ * So the two answers are separated here, once:
+ *
+ *     `{}`   — readable, and it declares no fields.
+ *     `null` — NOT READABLE. The caller must not treat this as "no fields".
+ *
+ * ── WHAT COUNTS AS READABLE, MEASURED ────────────────────────────────────────────────
+ *
+ * `instanceof z.ZodObject` rather than a duck-typed `.shape`, and the difference is the
+ * whole point. Measured on this repo's zod:
+ *
+ *     z.object({...})                  instanceof ✓   — the ordinary case
+ *     z.object({...}).passthrough()    instanceof ✓   — `Group` and `Scene` take this road
+ *     z.object({...}).refine(...)      instanceof ✗   — and `.shape` is `undefined`
+ *     z.object({...}).transform(...)   instanceof ✗   — likewise
+ *     z.union([...])                   instanceof ✗   — likewise
+ *
+ * The bottom three are exactly the schemas the old cast answered `undefined` for. They are
+ * not hypothetical shapes: an object-wide refinement is the natural way to express a
+ * cross-field constraint, so the first node that needs one would have silently emptied
+ * every gate that reads it.
+ *
+ * The same `instanceof` test was already the correct spelling at `src/app/promoteParam.ts`;
+ * this is that answer moved somewhere the gates can share it rather than a new one.
+ */
+export function paramFieldsOf(
+  def: Pick<NodeDefinition, 'paramSchema'>,
+): Record<string, unknown> | null {
+  const schema: unknown = def.paramSchema;
+  return schema instanceof z.ZodObject ? (schema.shape as Record<string, unknown>) : null;
 }
 
 export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {

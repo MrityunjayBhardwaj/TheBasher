@@ -56,7 +56,12 @@
 //      tools/gates/sourceFiles.ts (the shared enumeration); issues #607, #660, #673.
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
+import {
+  __resetRegistryForTests,
+  getNodeType,
+  listNodeTypes,
+  paramFieldsOf,
+} from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { stripComments } from '../test-utils/sourceScan';
 import { operatorTypesInSection } from './operatorChain';
@@ -91,10 +96,8 @@ function zodDeclarations(field: string): [string, number][] {
 function registeredDeclaring(field: string): string[] {
   return listNodeTypes()
     .filter((type) => {
-      const shape = (
-        getNodeType(type)?.paramSchema as unknown as { shape?: Record<string, unknown> }
-      )?.shape;
-      return !!shape && Object.prototype.hasOwnProperty.call(shape, field);
+      const shape = paramFieldsOf(getNodeType(type));
+      return shape !== null && Object.prototype.hasOwnProperty.call(shape, field);
     })
     .sort();
 }
@@ -102,10 +105,7 @@ function registeredDeclaring(field: string): string[] {
 /** Registered types whose schema could not be read at all — must be empty before any count. */
 function unreadableSchemas(): string[] {
   return listNodeTypes()
-    .filter(
-      (type) =>
-        !(getNodeType(type)?.paramSchema as unknown as { shape?: Record<string, unknown> })?.shape,
-    )
+    .filter((type) => paramFieldsOf(getNodeType(type)) === null)
     .sort();
 }
 

@@ -130,6 +130,91 @@ export interface AddProfileResult {
  *    hidden once the panel scopes to the active profile.
  * Returns null when the scene aggregator is missing (a corrupt project).
  */
+/** The BARE `LightRig` wired straight into `Scene.lightRig`, or null. */
+function bareRigOnScene(state: DagState, sceneId: string): string | null {
+  const binding = state.nodes[sceneId]?.inputs.lightRig;
+  if (!binding || Array.isArray(binding)) return null;
+  const wired = state.nodes[binding.node];
+  return wired?.type === 'LightRig' ? wired.id : null;
+}
+
+/**
+ * Ops that guarantee a `LightProfileSelect` feeds `Scene.lightRig` — ADOPTING a bare rig
+ * that is wired there rather than displacing it (#789).
+ *
+ * ── THE DEFECT THIS CLOSES ───────────────────────────────────────────────────────────
+ *
+ * A bare `LightRig` on `Scene.lightRig` is a legitimate state, and this file already knew
+ * it: the delete path branches on detaching the rig "or directly from the scene". Only the
+ * two MINT paths ignored it. `activeProfileSelect` answers `null` for a bare rig — correctly,
+ * since there is no select — and both callers read that `null` as "no select exists", minted
+ * one, and connected it onto the ALREADY-OCCUPIED `lightRig` socket. A single socket carries
+ * one edge, so the authored edge was dropped with no `disconnect` and no `replace: true`.
+ *
+ * What the director lost was worse than one edge. The rig survives as a `LightRig`, so
+ * `enumerateProfiles` keeps listing it — measured before the fix, "+ Profile" over an
+ * authored rig gives `[Authored inactive, Key active]`, and re-selecting "Authored" leaves
+ * `resolveActiveRigNode` answering **null**. A profile that is listed, looks selectable, and
+ * selects to nothing.
+ *
+ * ── WHY ONE HELPER AND NOT TWO FIXES ─────────────────────────────────────────────────
+ *
+ * The `if (!selId)` block was duplicated verbatim across `buildAddProfileOps` and
+ * `buildImportProfilesOps`. That duplication IS the defect's span — it is why one bug had two
+ * sites — so the repair is one statement both callers share, and a third mint path cannot
+ * reintroduce the gap by copying the old shape.
+ *
+ * ── ORDER IS LOAD-BEARING ────────────────────────────────────────────────────────────
+ *
+ * The detach comes FIRST. Connecting the select onto an occupied socket is precisely the
+ * displacement being removed, so doing it before the disconnect would fix nothing and still
+ * emit the `displaced-edge` badge.
+ *
+ * The adopted rig is not made active: "+ Profile" activates the profile it just added, which
+ * is the behaviour that already held whenever a select existed. Adoption is about the rig
+ * staying REACHABLE, not about which one is live.
+ */
+export function ensureProfileSelectOps(
+  state: DagState,
+  sceneId: string,
+  selectedProfile: string,
+): { selId: string; ops: Op[]; adoptedRigId: string | null } {
+  const existing = activeProfileSelect(state);
+  if (existing !== null) return { selId: existing, ops: [], adoptedRigId: null };
+
+  const selId = newId('profsel');
+  const adoptedRigId = bareRigOnScene(state, sceneId);
+  const ops: Op[] = [];
+  if (adoptedRigId !== null) {
+    ops.push({
+      type: 'disconnect',
+      from: { node: adoptedRigId, socket: 'out' },
+      to: { node: sceneId, socket: 'lightRig' },
+    });
+  }
+  ops.push(
+    {
+      type: 'addNode',
+      nodeId: selId,
+      nodeType: 'LightProfileSelect',
+      params: { selectedProfile },
+    },
+    {
+      type: 'connect',
+      from: { node: selId, socket: 'out' },
+      to: { node: sceneId, socket: 'lightRig' },
+    },
+  );
+  if (adoptedRigId !== null) {
+    ops.push({
+      type: 'connect',
+      from: { node: adoptedRigId, socket: 'out' },
+      to: { node: selId, socket: 'rigs' },
+    });
+  }
+  return { selId, ops, adoptedRigId };
+}
+
 export function buildAddProfileOps(
   state: DagState,
   name: string,
@@ -155,24 +240,11 @@ export function buildAddProfileOps(
     },
   ];
 
-  // Ensure the select exists and feeds the scene.
-  let selId = activeProfileSelect(state);
-  if (!selId) {
-    selId = newId('profsel');
-    ops.push(
-      {
-        type: 'addNode',
-        nodeId: selId,
-        nodeType: 'LightProfileSelect',
-        params: { selectedProfile: name },
-      },
-      {
-        type: 'connect',
-        from: { node: selId, socket: 'out' },
-        to: { node: sceneId, socket: 'lightRig' },
-      },
-    );
-  }
+  // Ensure the select exists and feeds the scene — adopting a bare rig rather than
+  // displacing it (#789).
+  const ensured = ensureProfileSelectOps(state, sceneId, name);
+  const selId = ensured.selId;
+  ops.push(...ensured.ops);
   ops.push({
     type: 'connect',
     from: { node: rigId, socket: 'out' },

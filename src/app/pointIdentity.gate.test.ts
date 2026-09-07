@@ -373,3 +373,51 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     expect(pointCountMismatch(gltf, built(box), () => null)).toBeNull();
   });
 });
+
+describe('#745 — the weld tolerance is ABSOLUTE, so it has a scale envelope', () => {
+  // The rows above compare the arithmetic to the weld at radius 1 and box sizes 0.001..1000,
+  // and pass. That range is not the envelope — it is the middle of it. `WELD_QUANTISATION`
+  // rounds positions to 1e-4 (`pointIdentity.ts`), which is scale-free arithmetic applied to
+  // a scaled quantity, so a perfectly correct build under-counts once its features are small
+  // enough to round together. These rows state where, so the constant cannot be read as a
+  // value that was checked across its range.
+  //
+  // 🔑 THEY ALSO MAKE CHANGING THE TOLERANCE SELF-ANNOUNCING, which is the point. #716's
+  // reduction and cost figures were measured at 1e-4; a different constant moves every number
+  // below, so this reds and says the figures need re-measuring rather than letting them go
+  // quietly stale.
+
+  it('states the SMALL-scale floor — where a correct build stops welding correctly', () => {
+    // A box's corners are written exactly, so it holds until the coordinate itself rounds
+    // away: half-extent 5e-5 x 1e4 = 0.5, the rounding boundary, and all eight collapse.
+    expect(weldByPosition(new BoxGeometry(1.1e-4, 1.1e-4, 1.1e-4)).points).toBe(8);
+    expect(weldByPosition(new BoxGeometry(1.0e-4, 1.0e-4, 1.0e-4)).points).toBe(1);
+
+    // A sphere departs three orders of magnitude EARLIER than the box, because its points are
+    // separated by a fraction of the radius rather than by the whole of it. It degrades
+    // progressively rather than collapsing, which is the quieter failure of the two.
+    const sphereAt = (r: number) => weldByPosition(new SphereGeometry(r, 32, 16)).points;
+    expect(pointCountOf(sphereDescriptor(3e-3, 32, 16))).toEqual(counted(482));
+    expect(sphereAt(3e-3)).toBe(482); // exact
+    expect(sphereAt(2e-3)).toBe(466); // 16 points short, and nothing errors
+    expect(sphereAt(1e-3)).toBe(434);
+  });
+
+  it('the LARGE end is clean far past where float32 spacing suggested it would not be', () => {
+    // The premise worth killing: float32 spacing at 1e6 is ~0.06, far coarser than the 1e-4
+    // tolerance, which reads like the tolerance must stop meaning anything. It does not — and
+    // the direction is the reason. Coarse spacing snaps coincident positions onto the SAME
+    // representable value, so it HELPS the weld; it would take spacing coarse enough to merge
+    // DISTINCT points to hurt, and a sphere's neighbours stay astronomically farther apart
+    // than that. Measured at the segment count where neighbours are closest, not just the
+    // default one.
+    expect(weldByPosition(new SphereGeometry(1e9, 32, 16)).points).toBe(482);
+    expect(weldByPosition(new SphereGeometry(1e9, 256, 128)).points).toBe(256 * 127 + 2);
+
+    // The real ceiling is arithmetic, not float32: at 1e12 the quantised product `coord * 1e4`
+    // leaves float64's exact-integer range, and the weld OVER-counts — positions that should
+    // share a key stop doing so. Opposite direction from the small end, and far outside any
+    // plausible scene.
+    expect(weldByPosition(new SphereGeometry(1e12, 32, 16)).points).toBe(502);
+  });
+});
