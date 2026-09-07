@@ -20,7 +20,7 @@
 import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { activeProfileSelect, enumerateProfiles, uniqueProfileName } from './studioProfiles';
+import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 import { nextConstraintOrder } from './nodeConstraints';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
 
@@ -162,24 +162,12 @@ export function buildImportProfilesOps(
   // de-dupe against each other (not just against existing ones).
   const mintedNames = new Set<string>();
 
-  // Ensure a select exists + feeds the scene.
-  let selId = activeProfileSelect(state);
-  if (!selId) {
-    selId = newId('profsel');
-    ops.push(
-      {
-        type: 'addNode',
-        nodeId: selId,
-        nodeType: 'LightProfileSelect',
-        params: { selectedProfile: '' },
-      },
-      {
-        type: 'connect',
-        from: { node: selId, socket: 'out' },
-        to: { node: sceneId, socket: 'lightRig' },
-      },
-    );
-  }
+  // Ensure a select exists + feeds the scene — the SAME statement the "+ Profile" path
+  // uses, so a bare authored rig is adopted rather than displaced (#789). The duplication
+  // that used to sit here is what gave one defect two sites.
+  const ensured = ensureProfileSelectOps(state, sceneId, '');
+  const selId = ensured.selId;
+  ops.push(...ensured.ops);
 
   let activatedName: string | null = null;
   for (const profile of file.profiles) {

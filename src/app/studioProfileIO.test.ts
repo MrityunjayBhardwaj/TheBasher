@@ -138,4 +138,42 @@ describe('studioProfileIO (#208)', () => {
     expect(() => parseProfilesFile({ nope: true })).toThrow();
     expect(() => parseProfilesFile({ format: PROFILES_FORMAT, version: 1 })).toThrow();
   });
+
+  // ── #789 — the import site shares the defect, and now shares the repair ───────────────
+  //
+  // The `if (!selId)` block was duplicated verbatim between this builder and
+  // `buildAddProfileOps`. That duplication IS the defect's span: one bug, two sites. Both now
+  // call `ensureProfileSelectOps`, so a bare authored rig is adopted here too — and a third
+  // mint path cannot reintroduce the gap by copying the old shape.
+  it('#789 importing over a bare authored rig ADOPTS it instead of dropping the edge', () => {
+    const source = sceneWithKeyProfile();
+    const file = parseProfilesFile(JSON.parse(JSON.stringify(composeProfilesFile(source))));
+
+    let state = buildDefaultDagState();
+    const sceneId = state.outputs.scene!.node;
+    state = apply(state, [
+      {
+        type: 'addNode',
+        nodeId: 'rt_rig',
+        nodeType: 'LightRig',
+        params: { name: 'Authored', center: [0, 0, 0], radius: 6 },
+      },
+      {
+        type: 'connect',
+        from: { node: 'rt_rig', socket: 'out' },
+        to: { node: sceneId, socket: 'lightRig' },
+      },
+    ] as Op[]);
+    expect(resolveActiveRigNode(state)).toBe('rt_rig');
+
+    const next = apply(state, buildImportProfilesOps(state, file).ops);
+
+    // 🔴 The authored rig is still REACHABLE — selecting it resolves to it, where before the
+    // fix it resolved to null because the edge had been silently displaced.
+    const sel = Object.values(next.nodes).find((n) => n.type === 'LightProfileSelect')!;
+    const reselected = apply(next, [
+      { type: 'setParam', nodeId: sel.id, paramPath: 'selectedProfile', value: 'Authored' },
+    ] as Op[]);
+    expect(resolveActiveRigNode(reselected)).toBe('rt_rig');
+  });
 });
