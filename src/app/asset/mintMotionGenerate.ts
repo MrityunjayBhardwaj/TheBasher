@@ -13,8 +13,12 @@
 // USEFUL thing to mint is the whole chain:
 //
 //   [curve Object] --path--> MotionGenerate --source--> AnimationClip
-//                                                        |   |
-//                                            Skeleton ---+   +--- TimeSource
+//                                                        |
+//                                            Skeleton ---+
+//
+// No clock on the clip: it is time-free (#920). Sampling belongs to the consumer
+// that holds a `Time`, so there is no `time` socket to wire and no `TimeSource`
+// to require — the same removal the BVH import chain took for the same reason.
 //
 // Minting only the producer would leave a node whose output reaches nobody,
 // which is the exact defect this issue exists to close — one layer down.
@@ -82,25 +86,23 @@ function mintId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${mintCounter}`;
 }
 
-function findFirstNodeOfType(state: DagState, nodeType: string): string | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === nodeType) return node.id;
-  }
-  return null;
-}
-
 /**
  * Ops that add a motion generator and the clip it will fill.
  *
  * Returns ops rather than dispatching, the same contract every import road uses,
  * so the whole chain lands as ONE undo entry.
  *
- * Throws when there is no `TimeSource` and none can be named, for the reason the
- * BVH chain throws: a clip with no clock is a clip that never advances, and
- * discovering that by watching a character stand still is worse than a message.
+ * It requires no `TimeSource`. It used to throw without one — a clip with no
+ * clock never advances — but a clip stopped carrying a clock at #920, so the
+ * condition can no longer arise here. The BVH chain dropped the same lookup for
+ * the same reason.
  */
 export function mintMotionGenerateOps(
-  state: DagState,
+  // Unread since the clock lookup went (#920), and KEPT: every op-builder on
+  // this road takes the state it builds against, and a mint that needs to
+  // consult the graph again — to reuse an existing skeleton, say — should not
+  // have to change its signature at every call site to do it.
+  _state: DagState,
   args: MintMotionGenerateArgs,
 ): MintMotionGenerateResult {
   const ids = args.ids ?? {
@@ -108,14 +110,6 @@ export function mintMotionGenerateOps(
     clip: mintId('motionclip'),
     skeleton: mintId('motionskel'),
   };
-
-  const timeId = findFirstNodeOfType(state, 'TimeSource');
-  if (!timeId) {
-    throw new Error(
-      'No TimeSource node in DAG. Default projects seed `n_time`; this project ' +
-        'has been mutated to remove it. Add a TimeSource before generating motion.',
-    );
-  }
 
   const name = (args.name ?? args.prompt).trim() || args.prompt;
 
@@ -142,17 +136,15 @@ export function mintMotionGenerateOps(
       // first cook is not mistaken for a no-op. `duration` is left to the schema
       // default: nothing has been produced, so any number here would be a length
       // this clip does not have, and the cook overwrites it with the real one.
-      params: { name, loop: false, keyframes: [], sourceHash: '' },
+      // `'hold'` is what the old boolean `false` meant (#930): the clip is a
+      // placeholder until the cook lands keys, and a placeholder that claimed to
+      // cycle would extend nothing past a range it does not have yet.
+      params: { name, loop: 'hold', keyframes: [], sourceHash: '' },
     },
     {
       type: 'connect',
       from: { node: ids.skeleton, socket: 'out' },
       to: { node: ids.clip, socket: 'skeleton' },
-    },
-    {
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: ids.clip, socket: 'time' },
     },
     // The edge that makes the clip a produced one rather than an imported one.
     {

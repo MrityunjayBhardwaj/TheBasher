@@ -116,11 +116,6 @@ function buildScene(clipId: string, rotationAtEnd: number): DagState {
     from: { node: 'n_src_skel', socket: 'out' },
     to: { node: clipId, socket: 'skeleton' },
   }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_time', socket: 'out' },
-    to: { node: clipId, socket: 'time' },
-  }).next;
   return s;
 }
 
@@ -225,11 +220,6 @@ describe('binding a motion to a character', () => {
       from: { node: 'n_src_skel', socket: 'out' },
       to: { node: 'n_clip_b', socket: 'skeleton' },
     }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'n_time', socket: 'out' },
-      to: { node: 'n_clip_b', socket: 'time' },
-    }).next;
     useDagStore.getState().hydrate(s);
 
     expect(bind('n_clip_b', 'n_out_b')).toEqual({ ok: true });
@@ -242,5 +232,66 @@ describe('binding a motion to a character', () => {
     expect(edgeOf('n_out_a', 'boneMap')).toBe('n_out_a_map');
     expect(edgeOf('n_out_b', 'boneMap')).toBe('n_out_b_map');
     expect(channelIds()).toEqual([]);
+  });
+
+  // ── #907 — the last bind wins, and the predecessor stands down ───────────
+  it('stands the PREVIOUS bind down and makes the new one active', () => {
+    // Both binds target the SAME rig, which is the case #907 is about — the
+    // second-motion drop, not two characters.
+    let s = buildScene('n_clip_a', 90);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_clip_b',
+      nodeType: 'AnimationClip',
+      params: { name: 'b', duration: 2, keyframes: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_src_skel', socket: 'out' },
+      to: { node: 'n_clip_b', socket: 'skeleton' },
+    }).next;
+    useDagStore.getState().hydrate(s);
+
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    const afterFirst = useDagStore.getState().state.nodes;
+    expect((afterFirst['n_out_a'].params as { active?: boolean }).active).toBe(true);
+
+    expect(bind('n_clip_b', 'n_out_b')).toEqual({ ok: true });
+    const nodes = useDagStore.getState().state.nodes;
+
+    // The new clip plays; the old one is deactivated, NOT removed. Asserted as a
+    // pair: either half alone is satisfied by a bind that simply destroyed the
+    // predecessor, which is the outcome the reference explicitly does not take.
+    expect((nodes['n_out_b'].params as { active?: boolean }).active).toBe(true);
+    expect((nodes['n_out_a'].params as { active?: boolean }).active).toBe(false);
+    expect(nodes['n_out_a']?.type).toBe('RetargetClip');
+    expect(edgeOf('n_out_a', 'skeleton')).toBe(SKEL);
+  });
+
+  it('a rebind is ONE undo entry — the stand-down cannot be undone on its own', () => {
+    // The deactivation rides in the bind's own op batch. Split across two
+    // entries, one undo would leave TWO active clips on one rig, which is the
+    // state the flag exists to make unrepresentable.
+    let s = buildScene('n_clip_a', 90);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_clip_b',
+      nodeType: 'AnimationClip',
+      params: { name: 'b', duration: 2, keyframes: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_src_skel', socket: 'out' },
+      to: { node: 'n_clip_b', socket: 'skeleton' },
+    }).next;
+    useDagStore.getState().hydrate(s);
+    bind('n_clip_a', 'n_out_a');
+    bind('n_clip_b', 'n_out_b');
+
+    useDagStore.getState().undo();
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodes['n_out_b']).toBeUndefined();
+    // The first bind is active again, so the rig is driving exactly one clip.
+    expect((nodes['n_out_a'].params as { active?: boolean }).active).toBe(true);
   });
 });

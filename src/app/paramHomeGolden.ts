@@ -102,8 +102,10 @@
 export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Action: '[layout] name=layout channels=(unrouted)',
   AmbientLight: '[driver] intensity=(unrouted) color=(unrouted)',
+  // APPENDED at #907 — `active` says which clip a rebind stood up. Unrouted like
+  // its neighbours on this node: no inspector card draws it yet.
   AnimationClip:
-    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
+    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
@@ -194,7 +196,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
-  RetargetClip: '[animate] name=(unrouted)',
+  RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -262,4 +264,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // the derived half of the claim that nothing existing was re-homed to make room for it.
 // The row is one cell because the node's output is a function of its three INPUTS; there
 // is nothing else about it to author as a param, which is the point of the node.
-export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 224 } as const;
+export const GOLDEN_TOTALS = { types: 84, routed: 135, unrouted: 226 } as const;

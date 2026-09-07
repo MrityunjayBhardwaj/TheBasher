@@ -151,7 +151,8 @@ describe('mintMotionGenerateOps (#935)', () => {
     });
     const next = apply(s, ops);
     expect(edgeTarget(next.nodes[clipId], 'skeleton')).toBe(skeletonId);
-    expect(edgeTarget(next.nodes[clipId], 'time')).toBe('n_time');
+    // No clock: a clip is time-free (#920) and has no `time` socket to wire.
+    expect(edgeTarget(next.nodes[clipId], 'time')).toBeNull();
     expect(edgeTarget(next.nodes[clipId], 'source')).toBe(producerId);
     expect(edgeTarget(next.nodes[producerId], 'path')).toBe('pathObj');
     expect(next.nodes[producerId].params).toMatchObject({
@@ -184,11 +185,18 @@ describe('mintMotionGenerateOps (#935)', () => {
     expect(bakeGeneratedClipOps(s).length).toBeGreaterThan(0);
   });
 
-  it('refuses a project with no clock rather than minting a clip that cannot advance', () => {
+  it('mints in a project with no clock — a clip does not need one', () => {
+    // It used to refuse here. A clip carried a `time` input until #920, so a
+    // project without a TimeSource would have minted a clip that never advanced.
+    // The clip is time-free now and the consumer holds the clock, so the refusal
+    // guarded a condition that can no longer arise.
     const s = apply(emptyDagState(), [
       { type: 'addNode', nodeId: 'x', nodeType: 'Object', params: {} },
     ] as Op[]);
-    expect(() => mintMotionGenerateOps(s, ARGS)).toThrow(/TimeSource/);
+    const { ops, clipId } = mintMotionGenerateOps(s, ARGS);
+    const next = apply(s, ops);
+    expect(next.nodes[clipId].type).toBe('AnimationClip');
+    expect(edgeTarget(next.nodes[clipId], 'time')).toBeNull();
   });
 
   it('two mints in one project do not collide', () => {

@@ -88,7 +88,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly once since the freeze, and #915 is that once', () => {
+  it('has moved the project format version exactly three times since the freeze — #915, #920, then #930', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -102,13 +102,23 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // frozen app output — so the distance between it and live is the thing to pin, and it
     // is still an exact equality against those frozen bytes. A SECOND unplanned bump reds
     // this row again, which is the whole point of having it.
-    const MIGRATIONS_SINCE_FREEZE = 1; // #915 only
+    // #920 is the SECOND: it drops the dead `TimeSource -> AnimationClip.time` binding
+    // that saved projects still carry, now that a clip node no longer samples at an
+    // instant. Left in place the evaluator still follows it — it resolves a node's OWN
+    // bindings, not its definition's declared inputs — so the clip re-evaluates every
+    // frame forever.
+    // #930 is the THIRD, planned the same way: the two clip carriers spelled one concept
+    // two ways with opposite defaults, so the schema default could not change without a
+    // pass that writes every stored clip's value explicitly. Written and numbered in the
+    // same commit, as this file instructs.
+    const MIGRATIONS_SINCE_FREEZE = 3; // #915, #920, then #930
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 
-  it('the frozen project still loads through the new ladder, and #915 finds nothing to drop', () => {
-    // The bump is only safe because the migration is a NO-OP on this fixture: it carries no
-    // glTF rig, so there is no bone channel for the pass to examine, let alone remove. Said
+  it('the frozen project still loads through the new ladder, and NEITHER step finds anything to do', () => {
+    // The bump is only safe because each migration is a NO-OP on this fixture: it carries no
+    // glTF rig, so there is no bone channel for #915 to examine, and no `AnimationClip` for
+    // #920's pass to find a dead `time` binding on. Said
     // as an assertion rather than left to the geometry row below to imply — a migration that
     // silently deleted a node here would still resolve the same two meshes.
     const before = fixture().state.nodes;

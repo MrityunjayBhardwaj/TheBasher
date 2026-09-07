@@ -19,6 +19,7 @@ import { useTimeStore } from '../stores/timeStore';
 import {
   animationClipCarriesBone,
   clipRowMintOps,
+  diamondActivation,
   paramAnimationDisplayState,
 } from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
@@ -76,7 +77,7 @@ function generatedScene(): DagState {
     nodeType: 'AnimationClip',
     params: {
       duration: 1,
-      loop: true,
+      loop: 'cycle-offset',
       keyframes: [
         { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
         { bone: 1, time: 1, position: [0, 2, 0], rotation: [0, 0, 0] },
@@ -368,5 +369,45 @@ describe('#908 — what the diamond shows for a clip-driven bone', () => {
   it('an ordinary node is untouched — the widening reaches glTF bones only', () => {
     const s = sceneWithNeighbours();
     expect(paramAnimationDisplayState(s, 'n_plain', 'position', 30)).toBe('none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #912 — Alt-click promised a delete and performed a create
+// ─────────────────────────────────────────────────────────────────────────
+// The defect was a conditional inside `ParamDiamond.onActivate`, and the reason
+// it survived is that nothing could reach it: observing an Alt-click do the
+// opposite of its tooltip needed a browser. The decision is a pure function now,
+// so these four rows ARE the issue's test plan.
+describe('#912 — what a diamond activation means', () => {
+  it('ALT on a clip-driven bone REFUSES — it must never fall through and key', () => {
+    // The whole bug in one row. `'none'` is the normal state of nearly every
+    // bone since copy-on-write, and the old gate sent exactly this case to the
+    // keying path.
+    expect(diamondActivation(true, 'none')).toBe('refuse-nothing-authored');
+    expect(diamondActivation(true, 'none')).not.toBe('key');
+  });
+
+  it('ALT on a bone that HAS an authored channel still deletes — no regression', () => {
+    expect(diamondActivation(true, 'on-key')).toBe('delete');
+    expect(diamondActivation(true, 'animated')).toBe('delete');
+  });
+
+  it('a plain click on a clip-driven bone still mints and keys — that road is correct', () => {
+    expect(diamondActivation(false, 'none')).toBe('key');
+    expect(diamondActivation(false, 'animated')).toBe('key');
+  });
+
+  it("a plain click ON a key still deletes it — Blender's toggle", () => {
+    expect(diamondActivation(false, 'on-key')).toBe('delete');
+  });
+
+  it('ALT never keys, for ANY authored state — the property, not three examples', () => {
+    // The three rows above are instances; this is the rule they are instances
+    // of. A future state added to the enum has to satisfy it too, which is the
+    // half that a table of examples cannot express.
+    for (const st of ['none', 'animated', 'on-key'] as const) {
+      expect(diamondActivation(true, st)).not.toBe('key');
+    }
   });
 });

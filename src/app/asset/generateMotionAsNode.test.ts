@@ -361,31 +361,52 @@ describe('the bytes survive the call, so the clip can be kept (#819)', () => {
   });
 });
 
-describe('UI == agent — the two routes produce the same graph', () => {
-  it('a director and the agent end up with structurally identical graphs', async () => {
-    // The phase's claim, checked across the two surfaces rather than asserted.
-    // Node ids are minted fresh per call by design, so they are normalised; what
-    // must match is everything else.
-    const normalise = (ops: readonly unknown[]): unknown => {
-      const seen = new Map<string, string>();
-      const rename = (id: string) => {
-        if (!seen.has(id)) seen.set(id, `id_${seen.size}`);
-        return seen.get(id)!;
-      };
-      const walk = (v: unknown): unknown => {
-        if (Array.isArray(v)) return v.map(walk);
-        if (v && typeof v === 'object') {
-          return Object.fromEntries(
-            Object.entries(v as Record<string, unknown>).map(([k, val]) => [
-              k,
-              k === 'nodeId' || k === 'node' || k === 'id' ? rename(String(val)) : walk(val),
-            ]),
-          );
-        }
-        return v;
-      };
-      return walk(ops);
+// #824 — THE CLAIM NOW STATES ITS OWN SCOPE.
+//
+// This block used to say "the two routes produce the same graph" and assert it
+// over a scene seeded with a TimeSource and nothing else. Since #820 the
+// director's road also BINDS when there is a character to bind to, so the wide
+// sentence was true of the scene it ran in and false in general — and nothing
+// said which. A future edit that seeded a character would have redded it with
+// no clue that the difference is deliberate.
+//
+// So: the narrow claim is what A1 actually needs (the two roads LAND the same
+// clip), and the divergence after it lands is asserted rather than left to be
+// discovered. A test whose sentence is wider than its assertion survives every
+// run precisely because nothing can reach the part that is wrong.
+describe('UI == agent — the two routes land the same clip', () => {
+  // Node ids are minted fresh per call by design, so they are normalised; what
+  // must match is everything else. Shared by both rows below.
+  const normalise = (ops: readonly unknown[]): unknown => {
+    const seen = new Map<string, string>();
+    const rename = (id: string) => {
+      if (!seen.has(id)) seen.set(id, `id_${seen.size}`);
+      return seen.get(id)!;
     };
+    const walk = (v: unknown): unknown => {
+      if (Array.isArray(v)) return v.map(walk);
+      if (v && typeof v === 'object') {
+        return Object.fromEntries(
+          Object.entries(v as Record<string, unknown>).map(([k, val]) => [
+            k,
+            k === 'nodeId' || k === 'node' || k === 'id' ? rename(String(val)) : walk(val),
+          ]),
+        );
+      }
+      return v;
+    };
+    return walk(ops);
+  };
+
+  it('a director and the agent end up with identical graphs — WITH NOTHING TO BIND TO', async () => {
+    // 🔴 THE SCOPE, ASSERTED. This row is true only while the scene holds no
+    // character; `beforeEach` seeds a Scene and a TimeSource and no rig. Stating
+    // that as an assertion rather than a comment means someone who later seeds a
+    // character here gets a failure that names the reason, instead of an equality
+    // that mysteriously stops holding.
+    expect(Object.values(useDagStore.getState().state.nodes).map((n) => n.type)).not.toContain(
+      'GltfSkeleton',
+    );
 
     // Compared at the OUTPUT — the resulting graph — rather than at the call.
     // Equal op arrays would be the weaker claim anyway: what has to match is
@@ -418,6 +439,57 @@ describe('UI == agent — the two routes produce the same graph', () => {
       Object.keys(nodesOf(stateBefore)).length,
     );
     expect(normalise(nodesOf(agentState))).toEqual(normalise(nodesOf(uiState)));
+  });
+
+  it('and they DIVERGE once a character is present — by design, not by accident', async () => {
+    // The other half of the scope, and the row that makes the one above honest.
+    // Parity says the agent must be ABLE to do what a director can, not that one
+    // call must do it in one go: the agent has explicit retarget and bake
+    // mutators and binds deliberately, while the UI has no such control, so the
+    // automatic bind is the UI's affordance for the agent's extra step.
+    //
+    // Note what the divergence IS, because it has changed twice. Under #889 it
+    // stopped being a pile of baked channels — copy-on-write means neither road
+    // bakes any. Under #948 it stopped being the producer too: both roads mint
+    // one now. What is left is exactly the retargeted clip the UI road derives
+    // from the (clip, rig) pair, which is the bind and nothing else.
+    capability = somaCapability();
+    seedCharacter();
+
+    // Seed fixed on both arms, so the divergence this row NAMES is the bind and
+    // cannot be two different random seeds wearing its clothes.
+    const stateBefore = useDagStore.getState().state;
+    const viaAgent = await motionGenerateTool.handler(
+      { prompt: 'a figure walks forward', seed: 7 },
+      {
+        dagState: stateBefore,
+        motionCapability: capability,
+        motionModel: DEFAULT_MOTIONGEN_MODEL,
+      },
+    );
+    let agentState = stateBefore;
+    for (const op of viaAgent.ops) agentState = applyOp(agentState, op).next;
+
+    const result = await generateMotionAsNode('a figure walks forward', { seed: 7 });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const uiState = useDagStore.getState().state;
+
+    // The wide claim is FALSE here — which is exactly what the old sentence
+    // asserted without ever running in a scene that could show it.
+    expect(normalise(nodesOf(agentState))).not.toEqual(normalise(nodesOf(uiState)));
+
+    // …and named, so "they differ" cannot quietly become "they differ for some
+    // other reason". The UI road binds; the agent road leaves that to a mutator.
+    expect(uiState.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeDefined();
+    expect(agentState.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeUndefined();
+
+    // Neither road bakes — the divergence is the bind, not a copy.
+    for (const st of [agentState, uiState]) {
+      expect(Object.values(st.nodes).filter((n) => n.type === 'KeyframeChannelVec3')).toHaveLength(
+        0,
+      );
+    }
   });
 });
 
