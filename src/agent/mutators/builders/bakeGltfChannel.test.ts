@@ -484,12 +484,12 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
       const params = bakedParams(buildState(loop));
       for (const p of params) {
         const sampleChannel = buildVec3Sampler(p);
-        // OFF THE PERIOD SEAM on purpose. At exactly t = k·duration the two
-        // conventions differ by a whole travel — the clip folds to the START of
-        // the next period, the channel is still AT its last key — which is #952,
-        // pinned by its own row below rather than hidden by this exclusion.
-        // 99 would be a seam here (99 = 66 × 1.5), so it is 100.25.
-        for (const t of [0.5, 1.0, 0.5 + 1.5, 0.5 + 3 * 1.5, 100.25]) {
+        // INCLUDING THE PERIOD SEAMS since #952. This list used to exclude
+        // t = k·duration because the two conventions differed by a whole travel
+        // there — the clip folded to the START of the next period while the
+        // channel was still AT its last key. 99 IS a seam (99 = 66 × 1.5) and it
+        // is back in the list on purpose; the row below states why it now holds.
+        for (const t of [0.5, 1.0, 1.5, 3.0, 0.5 + 1.5, 0.5 + 3 * 1.5, 99, 100.25]) {
           const fromClip = clip.sample(t)[CHILD];
           const component = p.paramPath as 'position' | 'rotation' | 'scale';
           const expected = fromClip[component] as unknown as number[];
@@ -499,18 +499,21 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
     }
   });
 
-  it('KNOWN (#952): at exactly the period seam the two carriers still differ', () => {
-    // Recorded, not hidden. The row above samples off-seam because of this, and a
-    // silent exclusion would be the same shape as the divergence #934 removed:
-    // a difference nothing states and nothing reds on.
+  it('#952 — at the period seam the channel folds too, and every seam reads alike', () => {
+    // This row replaces the KNOWN-divergence pin #934 left here. The channel's
+    // range is now half-open at the upper end, matching the clip's own
+    // [0, duration) contract and the reference's cycle modifier, which repeats
+    // the authored range rather than re-including its endpoint.
     //
-    // The clip folds into [0, duration), so t = duration is the START of the next
-    // period; the channel treats its range as closed, so it is still at its LAST
-    // key. On a fixture that teleports at the seam — which `cycle` does by
-    // definition unless first == last — that is a whole travel apart.
+    // The decisive measurement was not clip-vs-channel at all — it was the
+    // channel against ITSELF. `planExtend` returned `in` for t == lastKey.time,
+    // so the FIRST seam re-read the last key while every LATER seam folded:
     //
-    // WHEN #952 IS FIXED THIS ROW REDS, which is the point: whoever picks the
-    // convention updates it deliberately instead of discovering the drift later.
+    //     cycle, keys 0@0 → 2@1.5     t=1.5 -> 2.0     t=3.0 -> 0.0
+    //
+    // Two starts-of-period, two answers. Half-open makes the first seam behave
+    // like all the others, and the clip agreement below follows from that rather
+    // than being arranged for.
     const clip = TransformClipNode.evaluate(
       TransformClipParams.parse({
         name: 'walk',
@@ -521,15 +524,21 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
       {},
     ) as TransformClipValue;
     const pos = bakedParams(buildState('cycle')).find((p) => p.paramPath === 'position')!;
-    const fromChannel = buildVec3Sampler(pos)(1.5);
-    const fromClip = clip.sample(1.5)[CHILD].position;
+    const sample = buildVec3Sampler(pos);
 
-    expect(fromClip[1]).toBeCloseTo(0, 6); // start of the next period
-    expect(fromChannel[1]).toBeCloseTo(2, 6); // still at the last key
-    // …and they agree one frame either side, so this is a seam instant and not a
-    // general disagreement that the off-seam row is failing to notice.
+    // The seam itself: both carriers at the start of the next period.
+    expect(clip.sample(1.5)[CHILD].position[1]).toBeCloseTo(0, 6);
+    expect(sample(1.5)[1]).toBeCloseTo(0, 6);
+
+    // Every seam alike — the self-consistency the old behaviour broke.
+    for (const k of [1, 2, 3, 66]) {
+      expect(sample(k * 1.5)[1]).toBeCloseTo(sample(0)[1], 6);
+    }
+
+    // And still continuous with its neighbours, so this is a convention rather
+    // than a hole punched at one instant.
     for (const t of [1.49, 1.51]) {
-      buildVec3Sampler(pos)(t).forEach((v, i) =>
+      sample(t).forEach((v, i) =>
         expect(v).toBeCloseTo((clip.sample(t)[CHILD].position as unknown as number[])[i], 6),
       );
     }
