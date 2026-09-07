@@ -206,6 +206,30 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     }
   });
 
+  it('#921 — the bone-map editor reaches the retarget, and no other animate-declaring node', () => {
+    // The editor's REACHABILITY had no committed witness. It is gated on
+    // `ownsInput('boneMap')` rather than on a declared section id, so grepping the
+    // nodes for a `boneMap` section answers "nobody" and reads as dead code — the
+    // control is in the table, in the renderer map, and drawn for exactly one node
+    // type, and nothing said so. This row says it.
+    //
+    // Possession by declared INPUT, not by params: a RetargetClip mid-construction
+    // has no bone map wired yet, and that is precisely when a director needs to see
+    // which bones reach the character.
+    expect(ctxFor('RetargetClip').ownsInput('boneMap')).toBe(true);
+    expect(sectionRendersCustomControl('animate', ctxFor('RetargetClip'))).toBe(true);
+
+    // ...and not to the map node itself. `BoneNameMap` is on the raw-fallback list
+    // on purpose — the map is authored where BOTH rigs are known, so a second home
+    // on the rig-less node would be a second answer to one question.
+    expect(ctxFor('BoneNameMap').ownsInput('boneMap')).toBe(false);
+
+    // ...nor to the other clip carriers, which declare `animate` and take no map.
+    for (const type of ['AnimationClip', 'TransformClip'] as const) {
+      expect(ctxFor(type).ownsInput('boneMap')).toBe(false);
+    }
+  });
+
   it('picks the glTF editor over the readout only when materials were captured', () => {
     const withMaterials = ctxFor('GltfChild', {
       assetRef: 'a',
