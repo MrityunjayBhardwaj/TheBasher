@@ -36,7 +36,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TransformClipValue, Vec3 } from './types';
-import { TimeFoldLoopSchema } from './clipLoop';
+import { ClipLoopSchema } from './clipLoop';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -44,19 +44,19 @@ export const TransformClipParams = z.object({
   name: z.string().default('clip'),
   duration: z.number().positive().default(2),
   /**
-   * What the clip does past its authored range (#930). `hold` pins
-   * pre-/post-keyframes to the endpoints; `cycle` folds time into [0, duration).
+   * What the clip does past its authored range. The FULL tri-state since #934 —
+   * this carrier used to take `hold | cycle` only, because folding time has no
+   * way to add a per-period offset and accepting the value would have given
+   * plain cycling instead. It now adds a real one, so the value is constructible
+   * rather than unreachable, and the two clip carriers finally spell one concept
+   * one way.
    *
-   * Was `['loop','clamp'].default('clamp')` — the SAME two behaviours under
-   * different names, so this is a rename and not a behaviour change: folding
-   * time replays identical frames, which is precisely cycle-in-place.
-   *
-   * `cycle-offset` is deliberately absent rather than accepted-and-degraded.
-   * This carrier folds TIME, so it has no way to add a per-period offset, and
-   * offering the value would silently give plain cycling instead. Unreachable
-   * beats degraded; a real offset here is its own slice.
+   * `hold` pins pre-/post-keyframes to the endpoints; `cycle` folds time into
+   * [0, duration), replaying identical frames — cycle-in-place; `cycle-offset`
+   * folds the same way and adds the per-period POSITION delta, so a walk covers
+   * ground instead of snapping home.
    */
-  loop: TimeFoldLoopSchema,
+  loop: ClipLoopSchema,
   /**
    * Scene-node-indexed keyframes. Each row targets one scene child by
    * `targetNodeId` (built deterministically by the importer from
@@ -156,11 +156,44 @@ export const TransformClipNode: NodeDefinition<TransformClipParams, TransformCli
     const loop = params.loop;
     const hasKeyframes = params.keyframes.length > 0;
 
+    // Per-target POSITION travel per period (#934), computed ONCE here beside the
+    // grouping rather than per `sample` call — the hot path stays interpolation
+    // only, which is the discipline the grouping above already states.
+    //
+    // WHY IT IS MEASURED OVER THE CLIP'S DURATION AND NOT THE TARGET'S KEY RANGE.
+    // The importer sets `duration` to the max key time across ALL channels
+    // (gltfImportChain), so a target whose own track ends earlier still belongs
+    // to the clip's period. Taking each target's own key range would give it a
+    // different period from its siblings and desynchronise the animation. Reading
+    // through `sampleTarget` gets this right for free: a track that ends early
+    // clamps, so its delta is its own last − first.
+    //
+    // SELF-LIMITING, which is why it can apply to every target and not only a
+    // root: a target whose position never changes has last === first, so its
+    // delta is exactly zero and cycle-offset is indistinguishable from cycle.
+    const travelPerPeriod = new Map<string, Vec3>();
+    if (loop === 'cycle-offset') {
+      for (const [targetId, group] of groupedTracks) {
+        if (group.length === 0) continue;
+        const first = sampleTarget(group, 0).position;
+        const last = sampleTarget(group, duration).position;
+        travelPerPeriod.set(targetId, [last[0] - first[0], last[1] - first[1], last[2] - first[2]]);
+      }
+    }
+
     const sample = (seconds: number): Record<string, TRS> => {
       if (!hasKeyframes) return {};
-      // hold / cycle folding — byte-faithful to AnimationClip's own fold.
+      // hold / cycle folding — byte-faithful to AnimationClip's own fold. The
+      // fold expression is UNCHANGED from before #934 on purpose: `cycle` must
+      // sample identically to what it always did, so the offset is additive
+      // rather than a re-derivation of the wrap.
       let t = seconds;
-      if (loop === 'cycle') {
+      let period = 0;
+      if (loop === 'cycle' || loop === 'cycle-offset') {
+        // The period index the offset multiplies. `floor` is correct on both
+        // sides of zero: t = -0.5 over a 1s clip is period -1, folding to 0.5,
+        // which is one period BACK rather than forward.
+        period = Math.floor(seconds / duration);
         t = ((t % duration) + duration) % duration;
       } else {
         t = Math.max(0, Math.min(duration, t));
@@ -168,7 +201,26 @@ export const TransformClipNode: NodeDefinition<TransformClipParams, TransformCli
       const tracks: Record<string, TRS> = {};
       for (const [targetId, group] of groupedTracks) {
         if (group.length === 0) continue;
-        tracks[targetId] = sampleTarget(group, t);
+        const trs = sampleTarget(group, t);
+        const travel = period !== 0 ? travelPerPeriod.get(targetId) : undefined;
+        if (!travel) {
+          tracks[targetId] = trs;
+          continue;
+        }
+        // POSITION only. Rotation is bounded and returns to its start, so a
+        // per-period residual would compound without bound — the reason
+        // `clipExtendRules` gives rotation plain `cycle` under this mode. Scale
+        // is excluded on the same argument; it has no case there because the
+        // bone-indexed carrier has no scale to state one for.
+        tracks[targetId] = {
+          position: [
+            trs.position[0] + period * travel[0],
+            trs.position[1] + period * travel[1],
+            trs.position[2] + period * travel[2],
+          ],
+          rotation: trs.rotation,
+          scale: trs.scale,
+        };
       }
       return tracks;
     };

@@ -6,13 +6,7 @@
 // that default safe for stored work.
 
 import { describe, expect, it } from 'vitest';
-import {
-  ClipLoopSchema,
-  TimeFoldLoopSchema,
-  clipExtendRules,
-  clipLoopOf,
-  isCycling,
-} from './clipLoop';
+import { ClipLoopSchema, clipExtendRules, clipLoopOf, isCycling } from './clipLoop';
 import { AnimationClipParams, buildClipBoneSamplers } from './AnimationClip';
 import { TransformClipParams } from './TransformClip';
 import { migrateClipLoopToTriState } from '../core/project/migrations';
@@ -83,15 +77,22 @@ describe('#930 — the clip loop vocabulary', () => {
     expect(TransformClipParams.parse({}).loop).toBe('hold');
   });
 
-  it('a TransformClip cannot express cycle-offset — unreachable beats degraded', () => {
-    // It folds TIME, so it has no way to add a per-period offset. Accepting the
-    // value would silently give plain cycling instead.
-    expect(TimeFoldLoopSchema.safeParse('cycle-offset').success).toBe(false);
-    expect(ClipLoopSchema.safeParse('cycle-offset').success).toBe(true);
-    // ...and the two it DOES take still parse, so the row above is a refusal of
-    // that value rather than of the schema.
-    expect(TimeFoldLoopSchema.safeParse('cycle').success).toBe(true);
-    expect(TimeFoldLoopSchema.safeParse('hold').success).toBe(true);
+  it('BOTH carriers take all three — one concept, one spelling (#934)', () => {
+    // This row used to say the opposite: a TransformClip could not express
+    // cycle-offset, because it folds TIME and had no way to add a per-period
+    // offset, so accepting the value would have degraded it to plain cycling.
+    // "Unreachable beats degraded" was the right call while that was true. #934
+    // gave the carrier a real offset, so the narrow schema is gone and the subset
+    // split with it.
+    //
+    // Asserted through the NODES' own schemas rather than only through
+    // ClipLoopSchema: the claim is that the two CARRIERS agree, and reading the
+    // shared schema twice would prove only that it equals itself.
+    for (const value of ['hold', 'cycle', 'cycle-offset']) {
+      expect(ClipLoopSchema.safeParse(value).success).toBe(true);
+      expect(AnimationClipParams.shape.loop.safeParse(value).success).toBe(true);
+      expect(TransformClipParams.shape.loop.safeParse(value).success).toBe(true);
+    }
   });
 
   it('the old spellings are refused rather than silently accepted', () => {
