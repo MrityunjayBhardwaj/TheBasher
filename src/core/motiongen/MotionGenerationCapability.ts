@@ -40,6 +40,24 @@ export interface MotionConstraints {
    * object across as-is is the defect #826 records.
    */
   readonly waypoints?: readonly { readonly x: number; readonly z: number }[];
+  /**
+   * Facing per waypoint, as a ground direction in the SAME frame and units as
+   * `waypoints`. One per waypoint, or omitted entirely.
+   *
+   * Omitted is not "face along the path" — it is "say nothing", and the server's
+   * answer to saying nothing is to keep the canonical frame-0 heading for the
+   * whole clip, which makes the character travel a non-canonical path SIDEWAYS
+   * (#897, measured: a +Z path holds yaw at -1.4° while walking to z=2.07). So
+   * `HttpMotionGenerationCapability` derives tangents when a caller supplies
+   * waypoints and no headings; this field is for a caller that wants a facing
+   * the path does not imply — walking backwards, or watching something while
+   * moving past it.
+   *
+   * The wire shape is `[cos, sin]` per the server's own wording, which measures
+   * as (x, z) in this frame — see `pathHeadings.ts`, where the mapping was
+   * established against the live service rather than read off the names.
+   */
+  readonly headings?: readonly { readonly x: number; readonly z: number }[];
 }
 
 export interface MotionGenerationRequest {
@@ -191,6 +209,7 @@ export const MotionGenerationRequestSchema = z
     constraints: z
       .object({
         waypoints: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).optional(),
+        headings: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).optional(),
       })
       .optional(),
   })

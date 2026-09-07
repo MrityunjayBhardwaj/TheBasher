@@ -12,6 +12,7 @@
 // REF: src/core/comfy/HttpComfyUICapability.ts; docs/EXTERNAL-MODEL-LICENCES.md.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
+import { tangentHeadings } from './pathHeadings';
 import { assertValidMotionRequest, assertValidMotionResult } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
@@ -59,6 +60,14 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const waypoints = request.constraints?.waypoints;
+    // An explicit facing wins; otherwise the path's own tangents. `tangentHeadings`
+    // returns null for a path that expresses no direction, and null means the
+    // field is not sent at all rather than sent empty.
+    const headings =
+      waypoints && waypoints.length > 0
+        ? (request.constraints?.headings ?? tangentHeadings(waypoints))
+        : null;
     try {
       // `?format=json` ASKS for the envelope this client parses, rather than
       // assuming it. A generator may reasonably default to returning the clip as
@@ -97,9 +106,25 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
           model: request.model,
           seconds: request.seconds ?? 2,
           seed: request.seed ?? 0,
-          ...(request.constraints?.waypoints?.length
-            ? { waypoints: request.constraints.waypoints.map((w) => [w.x, w.z]) }
-            : {}),
+          ...(waypoints?.length ? { waypoints: waypoints.map((w) => [w.x, w.z]) } : {}),
+          // 🔴 A PATH WITHOUT A FACING IS WALKED SIDEWAYS (#897).
+          //
+          // `root_path` constrains position only. With no `headings` the server
+          // keeps the canonical frame-0 heading for the whole clip, so a path
+          // that does not run along the canonical direction produces a character
+          // strafing down it. Measured on the live service, reading Hips yaw:
+          //
+          //   +X path, no headings    yaw mean  -2.5°   ends (1.91,  0.01)
+          //   +Z path, no headings    yaw mean  -1.4°   ends (0.01,  2.07)  <- strafe
+          //   +Z path, with headings  yaw mean  59.7°   ends (-0.01, 2.02)
+          //
+          // The +X case is why this went unnoticed: facing +X IS the canonical
+          // heading, so the one direction anybody tested looked correct.
+          //
+          // Derived rather than required, because every existing caller supplies
+          // a path and means "walk along it"; a caller wanting something else
+          // passes `constraints.headings`, which this defers to.
+          ...(headings?.length ? { headings: headings.map((h) => [h.x, h.z]) } : {}),
           format: 'bvh',
         }),
         signal: controller.signal,

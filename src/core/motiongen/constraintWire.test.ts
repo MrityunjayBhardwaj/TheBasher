@@ -58,6 +58,84 @@ const REQ = {
   seconds: 2,
 } as const;
 
+describe('#897 — the FACING on the wire', () => {
+  // A path constrains position only. With no `headings` the server keeps the
+  // canonical frame-0 heading for the whole clip, so a path that does not run
+  // along that direction is walked SIDEWAYS. Measured live: a +Z path held yaw
+  // at -1.4° while travelling to z=2.07. These rows hold the request shape that
+  // fixes it, so a refactor cannot quietly drop the key again.
+
+  it('derives a facing from the path when the caller supplies none', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    await cap.generate({
+      ...REQ,
+      constraints: {
+        waypoints: [
+          { x: 0, z: 0 },
+          { x: 0, z: 2 },
+        ],
+      },
+    });
+    // A +Z path: the axis mapping matters, and a swap would read [1, 0] here.
+    expect(body(sent).headings).toEqual([
+      [0, 1],
+      [0, 1],
+    ]);
+  });
+
+  it('defers to an explicit facing rather than overriding it with the tangent', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    await cap.generate({
+      ...REQ,
+      constraints: {
+        // Walking backwards: the path runs +X, the character faces -X.
+        waypoints: [
+          { x: 0, z: 0 },
+          { x: 2, z: 0 },
+        ],
+        headings: [
+          { x: -1, z: 0 },
+          { x: -1, z: 0 },
+        ],
+      },
+    });
+    expect(body(sent).headings).toEqual([
+      [-1, 0],
+      [-1, 0],
+    ]);
+  });
+
+  it('sends NO facing for a path that expresses none', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    await cap.generate({
+      ...REQ,
+      constraints: {
+        waypoints: [
+          { x: 4, z: 4 },
+          { x: 4, z: 4 },
+        ],
+      },
+    });
+    // Sending a zero vector would be a heading the server honours. Absent is the
+    // honest answer for a path that stands still.
+    expect('headings' in body(sent)).toBe(false);
+    expect(body(sent).waypoints).toEqual([
+      [4, 4],
+      [4, 4],
+    ]);
+  });
+
+  it('sends no facing when there is no path at all', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    await cap.generate(REQ);
+    expect('headings' in body(sent)).toBe(false);
+  });
+});
+
 describe('#826 — what actually goes on the wire', () => {
   it('sends waypoints at the TOP LEVEL, as [x, z] pairs', async () => {
     const { sent, impl } = capturingFetch();
