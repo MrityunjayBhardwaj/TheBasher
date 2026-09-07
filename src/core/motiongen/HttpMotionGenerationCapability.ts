@@ -137,7 +137,23 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
         body: JSON.stringify({
           prompt: request.prompt,
           model: request.model,
+          // 🔴 BOTH NAMES, DELIBERATELY (#894). `seconds` is this repo's name for
+          // the field; `duration` is the server's own. A Kimodo build that reads
+          // only `duration` silently defaults to 4 s in the half of itself that
+          // lays out the waypoint path, while generating the 2 s that were asked
+          // for — and then indexes frame 119 of a 60-frame clip and returns a
+          // 500. Measured: `{seconds: 2, waypoints: […]}` → HTTP 500,
+          // `{duration: 2, …}` → HTTP 200.
+          //
+          // The local server has since been patched to honour both, and that is
+          // exactly why this is here: the patch lives in a vendored checkout and
+          // NOT upstream, so a fresh install brings the defect back and the
+          // failure lands on the waypoint road — the one road where the request
+          // and the constraint have to agree about length. Sending both names
+          // costs a key and removes the dependency on somebody else's local fix.
           seconds: request.seconds ?? 2,
+          duration: request.seconds ?? 2,
+
           seed: request.seed ?? 0,
           ...(sent?.length ? { waypoints: sent.map((w) => [w.x, w.z]) } : {}),
           // 🔴 A PATH WITHOUT A FACING IS WALKED SIDEWAYS (#897).

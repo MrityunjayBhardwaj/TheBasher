@@ -58,6 +58,34 @@ const REQ = {
   seconds: 2,
 } as const;
 
+// #894 — the clip's LENGTH goes out under both names.
+//
+// A Kimodo build that reads only `duration` defaults to 4 s in the half of
+// itself that lays out the waypoint path while generating the 2 s asked for,
+// then indexes frame 119 of a 60-frame clip and 500s. The local server is
+// patched; the patch is in a vendored checkout and not upstream, so a fresh
+// install brings it back — on the waypoint road specifically, which is the one
+// place the request and the constraint must agree about length.
+it('sends the clip length under BOTH names (#894)', async () => {
+  const { sent, impl } = capturingFetch();
+  const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+  await cap.generate({ ...REQ, seconds: 2 });
+  const wire = body(sent) as { seconds: number; duration: number };
+  expect(wire.seconds).toBe(2);
+  expect(wire.duration).toBe(2);
+});
+
+it('the two length names never disagree — one source, two keys (#894)', async () => {
+  // The failure this guards is not a missing key but a DIVERGENT one: a server
+  // reading `duration` while we meant `seconds` is the same silent wrong-length
+  // bug wearing our name instead of theirs.
+  const { sent, impl } = capturingFetch();
+  const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+  await cap.generate({ ...REQ, seconds: 7 });
+  const wire = body(sent) as { seconds: number; duration: number };
+  expect(wire.duration).toBe(wire.seconds);
+});
+
 describe('#897 — the FACING on the wire', () => {
   // A path constrains position only. With no `headings` the server keeps the
   // canonical frame-0 heading for the whole clip, so a path that does not run
