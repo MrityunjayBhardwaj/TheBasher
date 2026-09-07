@@ -1,8 +1,15 @@
 // The human ingestion surface for generated motion — A1's third leg.
 //
-// Shaped after importBvhFbx.test.ts because generateMotion is shaped after
+// Shaped after importBvhFbx.test.ts, because this road is shaped after
 // importBvhFromOpfs: same store seeding, same assertions about the SURFACE
 // (dispatch, banner, refresh bump) rather than about the generator internals.
+//
+// 🔑 THESE ROWS MOVED HERE FROM THE ONE-SHOT ROAD (#948). They were written
+// against `generateMotionIntoScene` and kept passing after a director stopped
+// taking it, which made them a description of nothing. Retargeting them found
+// two things the node road did differently and one thing it did WRONG — #949,
+// where placement asked the clip for its rig instead of asking the bind, so a
+// cooked walk never started where the path was drawn.
 //
 // The test that carries the phase's claim is the last one: the ops a director
 // gets and the ops the agent gets are the same ops. If those two ever diverge,
@@ -44,7 +51,7 @@ vi.mock('../boot', () => ({
 }));
 
 // Imported AFTER vi.mock so the module picks up the mocked boot.
-import { generateMotionIntoScene } from './generateMotion';
+import { generateMotionAsNode } from './generateMotionAsNode';
 import { motionGenerateTool } from '../../agent/tools/motionGenerate';
 
 function seedTime(): void {
@@ -76,7 +83,7 @@ beforeEach(() => {
 
 describe('a director generating motion gets an ordinary clip in the scene', () => {
   it('dispatches the clip and bumps the refresh signal', async () => {
-    const result = await generateMotionIntoScene('a figure walks forward');
+    const result = await generateMotionAsNode('a figure walks forward');
     expect(result.ok).toBe(true);
 
     const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
@@ -86,40 +93,64 @@ describe('a director generating motion gets an ordinary clip in the scene', () =
     expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
   });
 
-  it('lands as ONE undo entry, the way an import does (K6)', async () => {
-    // A generation that undid in four steps would be a worse object than an
-    // import, which is exactly the difference the phase says does not exist.
+  it('lands every ACT atomically — no act in halves (K6)', async () => {
     const before = useDagStore.getState().undoStack.length;
-    await generateMotionIntoScene('a figure waves');
-    const after = useDagStore.getState().undoStack;
-    expect(after.length).toBe(before + 1);
-    // …and it really is the ATOMIC kind, not one entry that happens to be last.
-    expect((after.at(-1) as { __atomic?: true }).__atomic).toBe(true);
+    await generateMotionAsNode('a figure waves');
+    const pushed = useDagStore.getState().undoStack.slice(before);
+
+    // MORE THAN ONE ENTRY, and that is the design rather than a regression. K6
+    // protects "no single act lands in halves", not "a generation is one act" —
+    // the mint, the cook, the bind and the placement are separate acts, and a
+    // director who follows a curve and then wants the character elsewhere should
+    // be able to undo the placement without also undoing the clip. The one-shot
+    // road could claim a single entry only because it did the whole thing in one
+    // call and kept nothing a director could return to.
+    expect(pushed.length).toBeGreaterThan(1);
+    // Each one is the ATOMIC kind, which is the half of K6 that still binds:
+    // no entry here leaves a generator without its clip, or a clip without keys.
+    for (const entry of pushed) {
+      expect((entry as { __atomic?: true }).__atomic).toBe(true);
+    }
   });
 
-  it('adds no node type an import does not also add', async () => {
-    await generateMotionIntoScene('a figure walks');
+  it('adds the import pair PLUS the producer, and nothing else', async () => {
+    await generateMotionAsNode('a figure walks');
     const types = new Set(Object.values(useDagStore.getState().state.nodes).map((n) => n.type));
-    // Seeded plus exactly what a .bvh import produces. A new type here would be
-    // the provenance branch A1 exists to avoid.
-    expect([...types].sort()).toEqual(['AnimationClip', 'Scene', 'Skeleton', 'TimeSource']);
+    // Seeded, plus exactly what a .bvh import produces, plus the generator that
+    // can re-cook it. `MotionGenerate` is the ONE addition, and it is the point:
+    // it holds the prompt, the seed and the path so the request survives the
+    // clip. The clip itself is still an ordinary `AnimationClip` carrying no
+    // provenance flag, which is what "indistinguishable downstream" now means.
+    expect([...types].sort()).toEqual([
+      'AnimationClip',
+      'MotionGenerate',
+      'Scene',
+      'Skeleton',
+      'TimeSource',
+    ]);
   });
 });
 
 describe('a failure surfaces in the banner, never only in the console', () => {
-  it('reports a licence refusal and dispatches nothing', async () => {
+  it('reports a licence refusal and KEEPS the generator to re-cook', async () => {
     useSettingsStore.setState({ motionGenModel: aBlockedRecord().id });
     const before = Object.keys(useDagStore.getState().state.nodes).length;
 
-    const result = await generateMotionIntoScene('a figure walks');
+    const result = await generateMotionAsNode('a figure walks');
 
     expect(result.ok).toBe(false);
     const errors = useAssetErrorStore.getState().errors;
     expect(Object.keys(errors)).toHaveLength(1);
     expect(Object.values(errors)[0]!).toMatch(/BLOCKED/);
-    // Nothing landed, and the refresh signal did NOT move — a bump on failure
-    // would re-enumerate the list for work that never happened.
-    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before);
+
+    // The generator, its skeleton and its empty clip DID land, and that is
+    // deliberate: this road mints before it cooks, so a blocked checkpoint
+    // leaves a director a node carrying the prompt and the seed, re-cookable the
+    // moment Settings changes. Rolling it back would make a refusal cost them
+    // the request — which is what the one-shot road did, having nothing to keep.
+    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before + 3);
+    // The refresh signal did NOT move: a bump on failure would re-enumerate the
+    // list for work that never happened.
     expect(useImportRefreshStore.getState().tick).toBe(0);
   });
 
@@ -128,14 +159,14 @@ describe('a failure surfaces in the banner, never only in the console', () => {
     // — the generator decides the rate. What is under test is unchanged: a
     // degenerate number reaches the banner instead of becoming a clip full of
     // nonsense that nothing complains about.
-    const result = await generateMotionIntoScene('a figure walks', { seconds: 0 });
+    const result = await generateMotionAsNode('a figure walks', { seconds: 0 });
     expect(result.ok).toBe(false);
     expect(Object.values(useAssetErrorStore.getState().errors)[0]!).toMatch(/seconds/);
   });
 
   it('never throws — the caller can always return to idle', async () => {
     useSettingsStore.setState({ motionGenModel: aBlockedRecord().id });
-    await expect(generateMotionIntoScene('x')).resolves.toMatchObject({ ok: false });
+    await expect(generateMotionAsNode('x')).resolves.toMatchObject({ ok: false });
   });
 });
 
@@ -242,7 +273,7 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
     ).length;
     expect(before).toBe(0);
 
-    const result = await generateMotionIntoScene('a figure walks forward');
+    const result = await generateMotionAsNode('a figure walks forward');
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
@@ -284,7 +315,7 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
     // reported failure here would throw away a clip that exists.
     capability = somaCapability();
 
-    const result = await generateMotionIntoScene('a figure walks forward');
+    const result = await generateMotionAsNode('a figure walks forward');
     expect(result.ok).toBe(true);
 
     const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
@@ -296,7 +327,11 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
 
 describe('the bytes survive the call, so the clip can be kept (#819)', () => {
   it('records the BVH the generator returned, verbatim', async () => {
-    const result = await generateMotionIntoScene('a figure walks forward');
+    // The seed is FIXED so the reference generation below is the SAME request.
+    // Without it the road picks its own seed, the stub answers deterministically
+    // per seed, and the two differ in every MOTION row — which reads as "the
+    // bytes were mangled" when nothing was mangled at all.
+    const result = await generateMotionAsNode('a figure walks forward', { seed: 7 });
     expect(result.ok).toBe(true);
 
     const pending = useGeneratedMotionStore.getState().pending;
@@ -308,6 +343,7 @@ describe('the bytes survive the call, so the clip can be kept (#819)', () => {
         await capability.generate({
           prompt: 'a figure walks forward',
           model: DEFAULT_MOTIONGEN_MODEL,
+          seed: 7,
         })
       ).bvh,
     );
@@ -317,7 +353,7 @@ describe('the bytes survive the call, so the clip can be kept (#819)', () => {
 
   it('records nothing when the generation fails', async () => {
     useSettingsStore.setState({ motionGenModel: aBlockedRecord().id });
-    const result = await generateMotionIntoScene('a figure walks forward');
+    const result = await generateMotionAsNode('a figure walks forward');
     expect(result.ok).toBe(false);
     // An offer to save a clip that is not in the scene is a button that lies
     // about what it would keep.
@@ -375,9 +411,17 @@ describe('UI == agent — the two routes land the same clip', () => {
     // Compared at the OUTPUT — the resulting graph — rather than at the call.
     // Equal op arrays would be the weaker claim anyway: what has to match is
     // what a director and an agent each END UP WITH.
+    // The DIRECTOR'S ROAD is `generateMotionAsNode` (#935). Comparing the agent
+    // against `generateMotionIntoScene` was comparing it against a road no
+    // director takes — the claim stayed green while the two surfaces genuinely
+    // diverged, which is the whole of #948.
+    //
+    // The seed is FIXED on both arms. Each road picks one when the caller does
+    // not, and it is written into the producer's params, so two unseeded calls
+    // differ in exactly the field that exists to make a clip reproducible.
     const stateBefore = useDagStore.getState().state;
     const viaAgent = await motionGenerateTool.handler(
-      { prompt: 'a figure walks forward' },
+      { prompt: 'a figure walks forward', seed: 7 },
       {
         dagState: stateBefore,
         motionCapability: capability,
@@ -387,9 +431,13 @@ describe('UI == agent — the two routes land the same clip', () => {
     let agentState = stateBefore;
     for (const op of viaAgent.ops) agentState = applyOp(agentState, op).next;
 
-    await generateMotionIntoScene('a figure walks forward');
+    await generateMotionAsNode('a figure walks forward', { seed: 7 });
     const uiState = useDagStore.getState().state;
 
+    // The population, beside the verdict: two empty graphs normalise equal.
+    expect(Object.keys(nodesOf(uiState)).length).toBeGreaterThan(
+      Object.keys(nodesOf(stateBefore)).length,
+    );
     expect(normalise(nodesOf(agentState))).toEqual(normalise(nodesOf(uiState)));
   });
 
@@ -400,15 +448,19 @@ describe('UI == agent — the two routes land the same clip', () => {
     // mutators and binds deliberately, while the UI has no such control, so the
     // automatic bind is the UI's affordance for the agent's extra step.
     //
-    // Note what the divergence IS, because it changed under #889: it is not a
-    // pile of baked channels — copy-on-write means neither road bakes any — it
-    // is the retargeted clip the UI road derives from the (clip, rig) pair.
+    // Note what the divergence IS, because it has changed twice. Under #889 it
+    // stopped being a pile of baked channels — copy-on-write means neither road
+    // bakes any. Under #948 it stopped being the producer too: both roads mint
+    // one now. What is left is exactly the retargeted clip the UI road derives
+    // from the (clip, rig) pair, which is the bind and nothing else.
     capability = somaCapability();
     seedCharacter();
 
+    // Seed fixed on both arms, so the divergence this row NAMES is the bind and
+    // cannot be two different random seeds wearing its clothes.
     const stateBefore = useDagStore.getState().state;
     const viaAgent = await motionGenerateTool.handler(
-      { prompt: 'a figure walks forward' },
+      { prompt: 'a figure walks forward', seed: 7 },
       {
         dagState: stateBefore,
         motionCapability: capability,
@@ -418,7 +470,7 @@ describe('UI == agent — the two routes land the same clip', () => {
     let agentState = stateBefore;
     for (const op of viaAgent.ops) agentState = applyOp(agentState, op).next;
 
-    const result = await generateMotionIntoScene('a figure walks forward');
+    const result = await generateMotionAsNode('a figure walks forward', { seed: 7 });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const uiState = useDagStore.getState().state;
@@ -534,7 +586,7 @@ describe('#730 — an authored curve steers the generation', () => {
     const curveId = seedCurve();
     useSelectionStore.setState({ selectedNodeId: curveId });
 
-    await generateMotionIntoScene('a figure walks');
+    await generateMotionAsNode('a figure walks');
 
     expect(seen).toHaveLength(1);
     // `constraints.waypoints` is the API shape. Asserting the top-level key here
@@ -556,7 +608,7 @@ describe('#730 — an authored curve steers the generation', () => {
     seedCurve();
     useSelectionStore.setState({ selectedNodeId: null });
 
-    await generateMotionIntoScene('a figure walks');
+    await generateMotionAsNode('a figure walks');
 
     expect(seen[0].constraints).toBeUndefined();
   });
@@ -568,7 +620,7 @@ describe('#730 — an authored curve steers the generation', () => {
     const curveId = seedCurve();
     useSelectionStore.setState({ selectedNodeId: curveId });
 
-    const result = await generateMotionIntoScene('a figure walks');
+    const result = await generateMotionAsNode('a figure walks');
     expect(result.ok).toBe(true);
 
     const group = useDagStore.getState().state.nodes.n_char_group;
@@ -583,7 +635,7 @@ describe('#730 — an authored curve steers the generation', () => {
     capability = cap;
     seedCharacterWithGroup([4, 0, 4]);
 
-    await generateMotionIntoScene('a figure walks');
+    await generateMotionAsNode('a figure walks');
 
     const group = useDagStore.getState().state.nodes.n_char_group;
     expect((group.params as { position: [number, number, number] }).position).toEqual([4, 0, 4]);
@@ -599,7 +651,7 @@ describe('#730 — an authored curve steers the generation', () => {
     const curveId = seedCurve();
     useSelectionStore.setState({ selectedNodeId: curveId });
 
-    await generateMotionIntoScene('a figure walks');
+    await generateMotionAsNode('a figure walks');
 
     const reported = JSON.stringify(useAssetErrorStore.getState().errors);
     expect(reported).toMatch(/origin rather than along the path/);
