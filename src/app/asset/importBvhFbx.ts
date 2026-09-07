@@ -32,7 +32,11 @@ import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { importGltfFromOpfs } from './importGltf';
-import { bindMotionToCharacter, type BindMotionOutcome } from './bindMotionToCharacter';
+import {
+  bindMotionToCharacter,
+  type BindMotionOutcome,
+  type MotionArrival,
+} from './bindMotionToCharacter';
 
 /**
  * What a motion import produced, so a caller can act on it (#807).
@@ -122,9 +126,9 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
   if (lower.endsWith('.gltf') || lower.endsWith('.glb')) {
     await importGltfFromOpfs(entryPath);
   } else if (lower.endsWith('.bvh')) {
-    bindImportedMotion(await importBvhFromOpfs(entryPath));
+    bindImportedMotion(await importBvhFromOpfs(entryPath), 'imported');
   } else if (lower.endsWith('.fbx')) {
-    bindImportedMotion(await importFbxFromOpfs(entryPath));
+    bindImportedMotion(await importFbxFromOpfs(entryPath), 'imported');
   } else {
     useAssetErrorStore
       .getState()
@@ -159,7 +163,10 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
  * `null` means no bind was attempted at all, which is a different answer from a
  * bind that was attempted and refused.
  */
-export function bindImportedMotion(imported: MotionImportResult | null): BindMotionOutcome | null {
+export function bindImportedMotion(
+  imported: MotionImportResult | null,
+  arrival: MotionArrival,
+): BindMotionOutcome | null {
   if (!imported) return null;
-  return bindMotionToCharacter(imported);
+  return bindMotionToCharacter(imported, arrival);
 }

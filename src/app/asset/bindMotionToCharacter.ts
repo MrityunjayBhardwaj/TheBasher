@@ -68,6 +68,33 @@ const BIND_POSE_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const
 
 export type BindMotionRefusal = 'no-character' | 'ambiguous' | 'no-bridge' | 'rejected';
 
+/**
+ * How the clip got here (#823). REQUIRED, not defaulted.
+ *
+ * The refusals below were written for the drop road and said so. Since #820 a
+ * generated clip takes the same continuation, and three of them became reachable
+ * from a road where the wording is wrong — one telling a director who had typed
+ * a sentence to "drop it again", an instruction with no gesture behind it.
+ *
+ * 🔑 THE SMALLEST THING THAT VARIES, AND NOT A SENTENCE. Letting each caller
+ * supply its own phrasing recreates exactly the divergence a shared bind exists
+ * to prevent, and the third road would arrive with a third wording. What varies
+ * between roads is a verb and a retry gesture; the refusal still composes its own
+ * message, so every road keeps one voice and there is one place to change it.
+ *
+ * Required rather than defaulted for the same reason: a new road that forgets to
+ * say how its clip arrived should not silently inherit "Imported".
+ */
+export type MotionArrival = 'imported' | 'generated';
+
+const ARRIVAL: Record<MotionArrival, { readonly verb: string; readonly retry: string }> = {
+  imported: { verb: 'Imported', retry: 'drop it again' },
+  // "generate again" is a gesture that exists: the director typed a sentence to
+  // get here and can select a character and type it again. Naming a gesture that
+  // does not exist is the defect this fixes, so the replacement has to be real.
+  generated: { verb: 'Generated', retry: 'generate again' },
+};
+
 export type BindMotionOutcome =
   | {
       readonly ok: true;
@@ -172,13 +199,15 @@ export function selectedAssetRefs(state: DagState, selectedNodeId: string | null
 export function chooseMotionTarget(
   state: DagState,
   selectedNodeId: string | null,
+  arrival: MotionArrival,
 ): { ok: true; target: Candidate } | { ok: false; refusal: BindMotionRefusal; reason: string } {
+  const { verb, retry } = ARRIVAL[arrival];
   const candidates = motionTargetCandidates(state);
   if (candidates.length === 0) {
     return {
       ok: false,
       refusal: 'no-character',
-      reason: 'Imported the motion — there is no character in the scene for it to drive yet.',
+      reason: `${verb} the motion — there is no character in the scene for it to drive yet.`,
     };
   }
   if (candidates.length === 1) return { ok: true, target: candidates[0] };
@@ -191,7 +220,7 @@ export function chooseMotionTarget(
     ok: false,
     refusal: 'ambiguous',
     reason:
-      'Imported the motion — select the character it should drive, then drop it again. ' +
+      `${verb} the motion — select the character it should drive, then ${retry}. ` +
       `In the scene: ${candidates.map((c) => c.label).join(', ')}.`,
   };
 }
@@ -210,14 +239,17 @@ export function retargetedClipId(sourceClipId: string, targetSkeletonId: string)
  * without a DOM. A fallible action that returned void would be the trap this
  * codebase has already paid for twice.
  */
-export function bindMotionToCharacter(source: {
-  clipId: string;
-  skeletonId: string;
-}): BindMotionOutcome {
+export function bindMotionToCharacter(
+  source: {
+    clipId: string;
+    skeletonId: string;
+  },
+  arrival: MotionArrival,
+): BindMotionOutcome {
   const notify = useNotificationStore.getState().notify;
   const state = useDagStore.getState().state;
 
-  const chosen = chooseMotionTarget(state, useSelectionStore.getState().selectedNodeId);
+  const chosen = chooseMotionTarget(state, useSelectionStore.getState().selectedNodeId, arrival);
   if (!chosen.ok) {
     notify({ severity: 'warn', message: chosen.reason });
     return { ok: false, refusal: chosen.refusal, reason: chosen.reason };
@@ -232,8 +264,8 @@ export function bindMotionToCharacter(source: {
   );
   if (!bridge) {
     const reason =
-      `Imported the motion, but its bones share no naming with ${target.label}'s rig, ` +
-      'so there is no way to map one onto the other.';
+      `${ARRIVAL[arrival].verb} the motion, but its bones share no naming with ` +
+      `${target.label}'s rig, so there is no way to map one onto the other.`;
     notify({ severity: 'warn', message: reason });
     return { ok: false, refusal: 'no-bridge', reason };
   }

@@ -139,7 +139,7 @@ export async function generateMotionIntoScene(
     // The same continuation, not a second one: the bind decisions ("which
     // character", "which bridge") stay in the one place that already makes
     // them, and this road adds no step a file import does not also take.
-    const bound = bindImportedMotion({ skeletonId, clipId });
+    const bound = bindImportedMotion({ skeletonId, clipId }, 'generated');
     // The path's other half. The generator canonicalised frame 0 to the origin —
     // that is the model's behaviour, not a setting — so a motion asked to follow
     // a curve comes back correct in every frame and standing in the wrong place.
