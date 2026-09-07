@@ -96,3 +96,59 @@ export function tangentHeadings(waypoints: readonly GroundVec[]): GroundVec[] | 
   if (!first) return null;
   return out.map((h) => (h.x === 0 && h.z === 0 ? first : h));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OTHER HALF: FRAME 0 IS PINNED, SO A FACING IS REACHED RATHER THAN HELD
+// ─────────────────────────────────────────────────────────────────────────────
+// Supplying `headings` makes the character walk the path instead of strafing it,
+// and it does NOT make the character start out facing the right way. Frame 0 is
+// canonicalised to heading zero — that is the model's contract, not a setting —
+// so a requested facing is somewhere the body TURNS TO. Reading the Hips yaw
+// SERIES on a +Z path with +Z headings, rather than its mean:
+//
+//     yaw @ 0% / 25% / 50% / 75% / 100%  =  -0.6°  3.0°  91.6°  110.4°  94.1°
+//
+// The character faces +X for the first HALF of the clip, swings past its target
+// to 110°, and settles. A MEAN of 59.7° reads as "walks the path"; the series is
+// what says it arrives at the facing rather than holding it.
+//
+// #897 asks the SERVER for the remedy — "rotate the path to a canonical heading
+// on the way in and report the angle it used on the way out". Both halves of
+// that are available HERE, because the canonical heading is a known CONSTANT
+// (+X, angle 0) rather than something only the server can know. Rotate the
+// request into the canonical frame; rotate the result back out. Measured, same
+// walk, same seed:
+//
+//     rotated in (canonical frame)   yaw =  -0.2°  3.5°  0.7°   2.9°  -1.1°
+//     rotated back into world        yaw =  89.8° 93.5° 90.7°  92.9°  88.9°
+//                                    ends at (0.01, 1.93) for a path to (0, 2)
+//
+// 🔴 THE OUTPUT ROTATION ALONE IS NOT THE FIX, and it is the tempting half: it
+// turns the character to face correctly and walks it down a path rotated off the
+// one that was drawn. The pair is what works, and neither half is meaningful
+// without the other — which is why the angle is returned as ONE value that the
+// same node applies alongside the position offset.
+
+/**
+ * The world angle of a ground direction, in radians, with **+X = 0** and
+ * **+Z = +π/2** — the frame the waypoints themselves are in.
+ *
+ * Deliberately NOT "yaw": yaw names a rotation about an axis and carries a
+ * handedness with it, and the two conventions differ by a sign. This is an angle
+ * in the XZ plane, defined by the waypoints and nothing else. Converting it to a
+ * rotation is the placement's job, where the target's convention is known and
+ * measured.
+ */
+export function headingAngle(h: GroundVec): number {
+  return Math.atan2(h.z, h.x);
+}
+
+/**
+ * Rotate a ground vector by `radians` about the origin, in the same frame
+ * `headingAngle` reads: `(1, 0)` at `+π/2` becomes `(0, 1)`.
+ */
+export function rotateGround(v: GroundVec, radians: number): GroundVec {
+  const c = Math.cos(radians);
+  const s = Math.sin(radians);
+  return { x: v.x * c - v.z * s, z: v.x * s + v.z * c };
+}

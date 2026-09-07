@@ -208,7 +208,18 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         loop: 'hold',
         keyframes: clip.keyframes,
         skeleton: clip.skeleton,
-        generation: { status: 'ready', requestHash, worldOffsetXZ: clip.worldOffsetXZ },
+        // BOTH halves of the placement, always together. `worldRotationRadians`
+        // is optional on the state — a clip cached before the facing half existed
+        // genuinely states none — and optional is exactly what let it be dropped
+        // here without a word from the typechecker. The node road reads this
+        // block and nothing else, so a half written here is a character that
+        // stands in the right place facing the wrong way (#897).
+        generation: {
+          status: 'ready',
+          requestHash,
+          worldOffsetXZ: clip.worldOffsetXZ,
+          worldRotationRadians: clip.worldRotationRadians,
+        },
       };
     }
 

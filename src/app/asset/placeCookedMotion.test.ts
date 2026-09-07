@@ -30,7 +30,7 @@ import { placeCookedMotionOps } from './placeGeneratedMotion';
 /** The offset the generator reports when a world path was requested. */
 const OFFSET: [number, number] = [3, -1];
 
-function capability(withOffset = true) {
+function capability(withOffset = true, rotation: number | null = null) {
   const cap: MotionGenerationCapability = {
     id: 'stub',
     kind: 'stub',
@@ -45,6 +45,7 @@ function capability(withOffset = true) {
         // is stated here rather than derived — this spec is about what placement
         // does with an offset, not about how the server computes one.
         worldOffsetXZ: withOffset ? OFFSET : null,
+        worldRotationRadians: withOffset ? rotation : null,
       };
     },
     cancel: async () => {},
@@ -127,6 +128,7 @@ async function mintAndCook(s: DagState, cap: MotionGenerationCapability) {
 }
 
 const posOf = (s: DagState) => (s.nodes.root.params as { position: number[] }).position;
+const rotOf = (s: DagState) => (s.nodes.root.params as { rotation?: number[] }).rotation;
 
 describe('placeCookedMotionOps (#935)', () => {
   beforeEach(() => {
@@ -143,6 +145,34 @@ describe('placeCookedMotionOps (#935)', () => {
     const placed = apply(state, ops);
     // Y is untouched, so a character dropped at a height stays at that height.
     expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
+  });
+
+  // #897 — THE FACING HALF, ALL THE WAY DOWN THE NODE ROAD.
+  //
+  // This road reads the clip's `generation` block and nothing else, so every hop
+  // between the capability and that block has to carry both halves. The field is
+  // OPTIONAL on `MotionGenerationState` — a clip cached before the facing existed
+  // genuinely states none — and optional means the typechecker says nothing when
+  // a hop drops it. It was in fact dropped at exactly one hop when this was
+  // written, with the tier fully green. So the gate runs the whole road rather
+  // than any single hop: capability -> cache -> node value -> placement.
+  it('carries the FACING down the same road as the offset', async () => {
+    const { state } = await mintAndCook(project(), capability(true, Math.PI / 2));
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    // +Z requested. `Group.rotation` is degrees into a THREE Euler, whose Y runs
+    // the other way, so +pi/2 lands as -90.
+    expect(rotOf(placed)).toEqual([0, -90, 0]);
+    expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
+  });
+
+  it('leaves the facing alone when the clip states none', async () => {
+    const { state } = await mintAndCook(project(), capability(true, null));
+    const placed = apply(state, placeCookedMotionOps(state).ops);
+    // Untouched, not zeroed: a clip that never asked to face anywhere must not
+    // rotate a character the director may have turned by hand.
+    expect(rotOf(placed)).toEqual([0, 0, 0]);
   });
 
   it('IS IDEMPOTENT: the target is absolute, so a second cook does not walk it further', async () => {

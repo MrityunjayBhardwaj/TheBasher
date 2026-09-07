@@ -65,10 +65,24 @@ describe('#897 — the FACING on the wire', () => {
   // at -1.4° while travelling to z=2.07. These rows hold the request shape that
   // fixes it, so a refactor cannot quietly drop the key again.
 
-  it('derives a facing from the path when the caller supplies none', async () => {
+  // ── AND THE REQUEST IS EXPRESSED IN THE CANONICAL FRAME ──────────────────
+  // Sending the facing makes the character walk the path instead of strafing it,
+  // and does NOT make it start out facing the right way: frame 0's heading is
+  // canonicalised to zero, so a requested facing is somewhere the body TURNS TO.
+  // Measured on a +Z path with +Z headings, reading the yaw SERIES rather than
+  // its mean — the mean cannot tell a held facing from a reached one:
+  //
+  //     yaw @ 0/25/50/75/100%  =  -0.6°  3.0°  91.6°  110.4°  94.1°
+  //
+  // So the path AND its headings go out rotated into the canonical frame, and
+  // the angle comes back for the placement to undo. These rows pin BOTH halves:
+  // the wire in the canonical frame, and the angle that turns it out again.
+  // Asserting only one of them is the failure mode the pair exists to prevent —
+  // a rotated request nobody rotates back walks the character down the wrong path.
+  it('derives a facing from the path, and sends it in the CANONICAL frame', async () => {
     const { sent, impl } = capturingFetch();
     const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
-    await cap.generate({
+    const result = await cap.generate({
       ...REQ,
       constraints: {
         waypoints: [
@@ -77,17 +91,22 @@ describe('#897 — the FACING on the wire', () => {
         ],
       },
     });
-    // A +Z path: the axis mapping matters, and a swap would read [1, 0] here.
-    expect(body(sent).headings).toEqual([
-      [0, 1],
-      [0, 1],
-    ]);
+    // A +Z path leaves as a +X one — the canonical direction — because that is
+    // the heading generation pins frame 0 to.
+    const wire = body(sent) as { headings: number[][]; waypoints: number[][] };
+    expect(wire.headings[0][0]).toBeCloseTo(1, 12);
+    expect(wire.headings[0][1]).toBeCloseTo(0, 12);
+    expect(wire.waypoints[1][0]).toBeCloseTo(2, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(0, 12);
+    // And the angle that puts it back. +Z is +pi/2 in the waypoint frame; a swap
+    // or a sign flip here is a character walking backwards down a correct path.
+    expect(result.worldRotationRadians).toBeCloseTo(Math.PI / 2, 12);
   });
 
   it('defers to an explicit facing rather than overriding it with the tangent', async () => {
     const { sent, impl } = capturingFetch();
     const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
-    await cap.generate({
+    const result = await cap.generate({
       ...REQ,
       constraints: {
         // Walking backwards: the path runs +X, the character faces -X.
@@ -101,10 +120,40 @@ describe('#897 — the FACING on the wire', () => {
         ],
       },
     });
-    expect(body(sent).headings).toEqual([
-      [-1, 0],
-      [-1, 0],
-    ]);
+    // Canonicalised like any other facing: -X is pi, so the request leaves facing
+    // +X down a path that now runs -X, and the reported angle turns both back.
+    const wire = body(sent) as { headings: number[][]; waypoints: number[][] };
+    expect(wire.headings[0][0]).toBeCloseTo(1, 12);
+    expect(wire.headings[0][1]).toBeCloseTo(0, 12);
+    expect(wire.waypoints[1][0]).toBeCloseTo(-2, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(0, 12);
+    expect(result.worldRotationRadians).toBeCloseTo(Math.PI, 12);
+  });
+
+  // The rotation centre, which is NOT the world origin. The server rebases a path
+  // by subtracting its first point and hands that point back as the offset; a
+  // rotation about the world origin would move it, and the offset would then need
+  // turning too. Rotating about the first waypoint leaves it fixed, so the two
+  // halves of the placement stay independent of each other.
+  it('rotates about the FIRST WAYPOINT, not the world origin', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    await cap.generate({
+      ...REQ,
+      constraints: {
+        waypoints: [
+          { x: 3, z: 1 },
+          { x: 3, z: 3 },
+        ],
+      },
+    });
+    const wire = body(sent) as { waypoints: number[][] };
+    // Fixed: the point the server will subtract is untouched.
+    expect(wire.waypoints[0][0]).toBeCloseTo(3, 12);
+    expect(wire.waypoints[0][1]).toBeCloseTo(1, 12);
+    // Turned about it: the +Z leg becomes a +X leg starting from the same place.
+    expect(wire.waypoints[1][0]).toBeCloseTo(5, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(1, 12);
   });
 
   it('sends NO facing for a path that expresses none', async () => {

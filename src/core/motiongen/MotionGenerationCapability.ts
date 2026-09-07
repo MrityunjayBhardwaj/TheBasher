@@ -136,6 +136,35 @@ export interface MotionGenerationResult {
    * them cannot tell "nobody asked" from "it belongs here".
    */
   readonly worldOffsetXZ: readonly [number, number] | null;
+
+  /**
+   * The rotation, in radians about the world Y axis in the waypoint frame
+   * (+X = 0, +Z = +π/2), that a caller must apply to the clip to put its FACING
+   * where it was asked for. `null` when no facing was requested.
+   *
+   * The THIRD thing this result declares that the clip cannot say, and the exact
+   * twin of `worldOffsetXZ`: generation canonicalises frame 0's HEADING to zero
+   * as well as its position, so a clip whose character should set off toward +Z
+   * comes back setting off toward +X. Where `worldOffsetXZ` is the translation
+   * that was rebased away, this is the rotation that was.
+   *
+   * It differs from `worldOffsetXZ` in ONE way worth stating: the server neither
+   * performs nor reports it. The canonical heading is a known constant, so the
+   * caller can rotate the request into that frame itself — which is what an
+   * implementation returning a non-null value here has done. The value is
+   * therefore a promise about the REQUEST that was issued, and a consumer that
+   * ignores it gets a character that walks a path rotated off the drawn one.
+   *
+   * The two are ONE placement and must be applied together, to the same node, in
+   * the order rotate-then-translate. Applying only the rotation walks the
+   * character down the wrong path; applying only the translation reproduces the
+   * defect #897 records.
+   *
+   * `null` is NOT `0`, for the same reason `worldOffsetXZ`'s null is not
+   * `[0, 0]`: null means no facing was requested and there is nothing to apply,
+   * while `0` means one was requested and happened to be the canonical direction.
+   */
+  readonly worldRotationRadians: number | null;
 }
 
 export interface MotionGenerationCapability {
@@ -294,6 +323,20 @@ export function assertValidMotionResult(result: MotionGenerationResult): void {
           `${JSON.stringify(offset)}`,
       );
     }
+  }
+  // The facing half, checked with the same firmness and for a sharper reason: a
+  // rotation is the one placement value whose wrongness is INVISIBLE in a still.
+  // A character standing in the right place facing the wrong way reads as a bind
+  // or retarget fault and sends the next person to the wrong sector entirely
+  // (#897). NaN is the specific value to refuse — it is what an un-normalised or
+  // zero-length heading produces, and it would reach a transform as a silent
+  // identity.
+  const rotation = result.worldRotationRadians;
+  if (rotation !== null && !Number.isFinite(rotation)) {
+    issues.push(
+      `worldRotationRadians: must be null (no facing requested) or a finite angle in ` +
+        `radians — got ${JSON.stringify(rotation)}`,
+    );
   }
   // Only worth reading the clip's own rate once the payload is known to be there.
   if (issues.length === 0) {

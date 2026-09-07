@@ -1294,6 +1294,17 @@ export interface MotionGenerationState {
    * puts the character in the wrong place while every frame looks correct.
    */
   readonly worldOffsetXZ?: readonly [number, number] | null;
+  /**
+   * The facing that was canonicalised away, in radians about world Y in the
+   * waypoint frame (+X = 0, +Z = +pi/2), or null when the clip was asked for no
+   * facing. Present only when `status` is `'ready'`.
+   *
+   * The other half of the same placement as `worldOffsetXZ`, and surfaced for a
+   * quieter reason: a consumer that never reads this leaves a character standing
+   * in exactly the right place facing the wrong way, which reads as a rig fault
+   * rather than a placement one (#897).
+   */
+  readonly worldRotationRadians?: number | null;
 }
 
 /**

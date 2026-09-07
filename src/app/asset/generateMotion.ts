@@ -103,9 +103,8 @@ export async function generateMotionIntoScene(
         ? waypointsFromCurve(dag.state, options.curveId)
         : motionPathFromSelection(dag.state, useSelectionStore.getState().selectedNodeId);
 
-    const { ops, clipId, skeletonId, bvh, model, worldOffsetXZ } = await buildGeneratedMotionOps(
-      capability,
-      {
+    const { ops, clipId, skeletonId, bvh, model, worldOffsetXZ, worldRotationRadians } =
+      await buildGeneratedMotionOps(capability, {
         request: {
           prompt,
           model: motionGenModel,
@@ -123,8 +122,7 @@ export async function generateMotionIntoScene(
         // offset. The agent tool cannot say this — it never binds — and keeps the
         // refusal instead of silently leaving a character at the origin.
         appliesWorldOffset: true,
-      },
-    );
+      });
 
     dag.dispatchAtomic(ops, 'user', `generate motion: ${subject}`);
     // Bump AFTER dispatch, for the reason the import path does: a pre-dispatch
@@ -156,6 +154,7 @@ export async function generateMotionIntoScene(
         useDagStore.getState().state,
         bound.targetSkeletonId,
         worldOffsetXZ,
+        worldRotationRadians,
       );
       if (placed.ok) {
         useDagStore

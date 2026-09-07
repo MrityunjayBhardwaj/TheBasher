@@ -179,6 +179,8 @@ function somaCapability(): MotionGenerationCapability {
       // the field would be claiming silence about placement, which
       // `assertValidMotionResult` refuses on purpose.
       worldOffsetXZ: null,
+      // Likewise for the facing (#897): no path means no facing was requested.
+      worldRotationRadians: null,
     }),
     cancel: async () => {},
   };
@@ -454,7 +456,10 @@ describe('UI == agent — the two routes land the same clip', () => {
 // the request is captured rather than only the outcome.
 describe('#730 — an authored curve steers the generation', () => {
   /** Captures what the generator was ASKED for, and reports a world offset back. */
-  function capturingCapability(worldOffsetXZ: readonly [number, number] | null) {
+  function capturingCapability(
+    worldOffsetXZ: readonly [number, number] | null,
+    worldRotationRadians: number | null = null,
+  ) {
     const seen: Record<string, unknown>[] = [];
     const cap: MotionGenerationCapability = {
       id: 'capture',
@@ -476,6 +481,7 @@ describe('#730 — an authored curve steers the generation', () => {
           model: DEFAULT_MOTIONGEN_MODEL,
           unitScale: 0.01,
           worldOffsetXZ,
+          worldRotationRadians,
         };
       },
     };

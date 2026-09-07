@@ -149,6 +149,7 @@ export async function resolvePendingMotionGenerations(
         skeleton: { kind: 'Skeleton', bones: parsed.skeletonParams.bones },
         model: generated.model,
         worldOffsetXZ: generated.worldOffsetXZ,
+        worldRotationRadians: generated.worldRotationRadians,
       });
       landed++;
       results.push({

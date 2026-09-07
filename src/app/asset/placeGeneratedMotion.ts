@@ -41,7 +41,24 @@
 // REF: src/nodes/Group.ts (the transform composition);
 //      src/core/import/gltfImportChain.ts (where the Group is emitted and baked);
 //      src/app/asset/bindMotionToCharacter.ts (chooses the character this places);
-//      issues #730, #826, #897 (the facing half, which nothing here answers).
+//      src/core/motiongen/pathHeadings.ts (where the rotation is derived);
+//      issues #730, #826, #897.
+//
+// ─────────────────────────────────────────────────────────────────────────
+// THE FACING HALF (#897) LANDS ON THE SAME NODE, AND MUST
+// ─────────────────────────────────────────────────────────────────────────
+// Generation canonicalises frame 0's HEADING to zero as well as its position.
+// The capability answers that by expressing the request in the canonical frame
+// and reporting the angle it turned it by (`worldRotationRadians`), so what
+// arrives here is a rotation to undo, exactly parallel to the offset.
+//
+// It goes on this node for the reason the offset does — a place and a facing are
+// both poses the Object owns, not properties of the clip — and it goes on it in
+// the SAME op, because half a placement is worse than none. Rotation without
+// translation puts the character on a path rotated off the drawn one; translation
+// without rotation is the defect #897 reports, and it is the quiet one: a
+// character standing in the right place facing the wrong way reads as a retarget
+// fault rather than a placement one.
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -129,10 +146,17 @@ export function placeCharacterAtPathStart(
   state: DagState,
   skeletonId: string,
   offsetXZ: readonly [number, number],
+  rotationRadians: number | null,
 ): PlacementOutcome {
   const [x, z] = offsetXZ;
   if (!Number.isFinite(x) || !Number.isFinite(z)) {
     return { ok: false, reason: `world offset is not a finite [x, z] pair — got [${x}, ${z}].` };
+  }
+  if (rotationRadians !== null && !Number.isFinite(rotationRadians)) {
+    return {
+      ok: false,
+      reason: `world rotation is not a finite angle in radians — got ${rotationRadians}.`,
+    };
   }
 
   const groupId = placementGroupFor(state, skeletonId);
@@ -150,16 +174,52 @@ export function placeCharacterAtPathStart(
   const params = state.nodes[groupId]?.params;
   const position = vec3Param(params, 'position');
   const pivot = vec3Param(params, 'pivot');
+  const rotation = vec3Param(params, 'rotation');
 
-  // Effective translation is `position - pivot` (see the header). Solving
-  // `next - pivot == offset` for `next` gives `pivot + offset`; Y is untouched so
-  // a character dropped at a height stays at that height.
-  const next: [number, number, number] = [pivot[0] + x, position[1], pivot[2] + z];
+  // 🔴 THE SIGN IS MEASURED, NOT DERIVED. `worldRotationRadians` is an angle in
+  // the waypoint frame (+X = 0, +Z = +pi/2); `Group.rotation` is degrees into a
+  // THREE Euler, whose Y rotation has the OPPOSITE handedness. Observed:
+  //
+  //     euler.y = +90 deg  takes (1, 0, 0) -> (0, 0, -1)   i.e. -Z
+  //     euler.y = -90 deg  takes (1, 0, 0) -> (0, 0, +1)   i.e. +Z
+  //
+  // so a character asked to set off toward +Z (angle +pi/2) needs euler.y =
+  // -90 deg. Guessing this is a coin flip whose wrong face is a character walking
+  // backwards down a correct path — plausible enough to be blamed on the model.
+  const yawDeg = rotationRadians === null ? rotation[1] : -rotationRadians * (180 / Math.PI);
+
+  // Effective translation is `position - pivot` (see the header) only while the
+  // rotation is identity. In general the content's world start is
+  // `position + R·(-pivot)`, so solving for `position` gives `offset + R·pivot`.
+  // With no rotation R is the identity and this reduces to `pivot + offset`,
+  // which is what shipped before the facing half existed.
+  //
+  // (Scale is assumed identity here, as it was before: the glTF import bakes
+  // `position = drop + pivot` and never writes a scale, so S has no author on
+  // this road. A scaled character would need `R·S·pivot`, and nothing produces
+  // one yet.)
+  const c = Math.cos(rotationRadians ?? 0);
+  const sn = Math.sin(rotationRadians ?? 0);
+  const rp: [number, number] = [pivot[0] * c - pivot[2] * sn, pivot[0] * sn + pivot[2] * c];
+  const next: [number, number, number] = [rp[0] + x, position[1], rp[1] + z];
+
+  // Both halves in ONE op list, always. Y-position is untouched so a character
+  // dropped at a height stays there; X and Z of the rotation are untouched for
+  // the same reason — only the ground-plane facing is ours to state.
+  const ops: Op[] = [{ type: 'setParam', nodeId: groupId, paramPath: 'position', value: next }];
+  if (rotationRadians !== null) {
+    ops.push({
+      type: 'setParam',
+      nodeId: groupId,
+      paramPath: 'rotation',
+      value: [rotation[0], yawDeg, rotation[2]] as [number, number, number],
+    });
+  }
 
   return {
     ok: true,
     groupId,
-    ops: [{ type: 'setParam', nodeId: groupId, paramPath: 'position', value: next }],
+    ops,
     from: [position[0] - pivot[0], position[2] - pivot[2]],
     to: [x, z],
   };
@@ -202,6 +262,11 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     const value = evaluate(state, producerId).value as AnimationClipValue;
     const offset = value.generation?.worldOffsetXZ;
     if (!offset) continue;
+    // `?? null` rather than a default of 0: a clip generated before the facing
+    // half existed states no rotation, and turning that silence into "the
+    // canonical direction was requested" would rotate characters nobody asked to
+    // rotate. Absent means leave the facing alone.
+    const rotation = value.generation?.worldRotationRadians ?? null;
 
     // The rig the clip drives IS the character to place — the same edge the read
     // band matches on, so the thing that moves is the thing that animates.
@@ -216,7 +281,7 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
       continue;
     }
 
-    const placed = placeCharacterAtPathStart(state, skeletonId, offset);
+    const placed = placeCharacterAtPathStart(state, skeletonId, offset, rotation);
     if (placed.ok) ops.push(...(placed.ops as Op[]));
     else refusals.push({ clipId, reason: placed.reason });
   }

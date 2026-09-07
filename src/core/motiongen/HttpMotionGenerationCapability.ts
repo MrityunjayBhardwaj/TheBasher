@@ -12,7 +12,7 @@
 // REF: src/core/comfy/HttpComfyUICapability.ts; docs/EXTERNAL-MODEL-LICENCES.md.
 
 import { assertModelAllowed } from '../licensing/allowedModels';
-import { tangentHeadings } from './pathHeadings';
+import { tangentHeadings, headingAngle, rotateGround } from './pathHeadings';
 import { assertValidMotionRequest, assertValidMotionResult } from './MotionGenerationCapability';
 import type {
   MotionGenerationCapability,
@@ -68,6 +68,39 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
       waypoints && waypoints.length > 0
         ? (request.constraints?.headings ?? tangentHeadings(waypoints))
         : null;
+
+    // ── THE ROTATE-IN (#897, the facing half) ───────────────────────────────
+    // Frame 0's HEADING is canonicalised to zero exactly as its position is, so
+    // a requested facing is somewhere the character TURNS TO over the first half
+    // of the clip rather than somewhere it starts. #897 asks the server to
+    // rotate the path to the canonical heading on the way in and report the
+    // angle on the way out; both halves are available here instead, because the
+    // canonical heading is a CONSTANT (+X, angle 0) and not something only the
+    // server can know.
+    //
+    // So the request is expressed in the canonical frame — the path and its
+    // headings turned by -theta about the path's FIRST waypoint — and `theta`
+    // goes back to the caller to turn the result out again.
+    //
+    // 🔴 ABOUT THE FIRST WAYPOINT, NOT ABOUT THE WORLD ORIGIN. The server rebases
+    // the path by subtracting its first point (serve.py:81-93) and returns that
+    // point as `world_offset_xz`. Rotating about it leaves it fixed, so the
+    // offset that comes back is still the one the caller asked for and the two
+    // halves of the placement stay independent. Rotating about the world origin
+    // would move it, and the returned offset would then need turning too — a
+    // coupling with no reason to exist.
+    const rotation = headings?.length ? headingAngle(headings[0]) : null;
+    const origin = waypoints?.length ? waypoints[0] : { x: 0, z: 0 };
+    const sent =
+      rotation === null || !waypoints?.length
+        ? waypoints
+        : waypoints.map((w) => {
+            const r = rotateGround({ x: w.x - origin.x, z: w.z - origin.z }, -rotation);
+            return { x: r.x + origin.x, z: r.z + origin.z };
+          });
+    // Directions rotate about themselves — there is no centre to subtract.
+    const sentHeadings =
+      rotation === null || !headings ? headings : headings.map((h) => rotateGround(h, -rotation));
     try {
       // `?format=json` ASKS for the envelope this client parses, rather than
       // assuming it. A generator may reasonably default to returning the clip as
@@ -106,7 +139,7 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
           model: request.model,
           seconds: request.seconds ?? 2,
           seed: request.seed ?? 0,
-          ...(waypoints?.length ? { waypoints: waypoints.map((w) => [w.x, w.z]) } : {}),
+          ...(sent?.length ? { waypoints: sent.map((w) => [w.x, w.z]) } : {}),
           // 🔴 A PATH WITHOUT A FACING IS WALKED SIDEWAYS (#897).
           //
           // `root_path` constrains position only. With no `headings` the server
@@ -124,7 +157,7 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
           // Derived rather than required, because every existing caller supplies
           // a path and means "walk along it"; a caller wanting something else
           // passes `constraints.headings`, which this defers to.
-          ...(headings?.length ? { headings: headings.map((h) => [h.x, h.z]) } : {}),
+          ...(sentHeadings?.length ? { headings: sentHeadings.map((h) => [h.x, h.z]) } : {}),
           format: 'bvh',
         }),
         signal: controller.signal,
@@ -207,6 +240,10 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
         model: ran,
         unitScale: payload.unitScale,
         worldOffsetXZ,
+        // Ours, not the service's — this is the angle we rotated the request BY,
+        // and the caller undoes it. Null whenever no facing was requested, which
+        // is the same set of cases in which nothing was rotated.
+        worldRotationRadians: rotation,
       };
       assertValidMotionResult(result);
       return result;
