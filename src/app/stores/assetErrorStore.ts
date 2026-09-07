@@ -26,24 +26,64 @@ export interface AssetError {
   message: string;
 }
 
+/**
+ * The banner's leading label for a row, when "asset failed:" would be a lie (#711).
+ *
+ * ── WHY A SECOND MAP AND NOT A WIDER VALUE ────────────────────────────────────────────
+ *
+ * The obvious shape is `errors: Record<string, {message, label}>`. It was measured and
+ * rejected on cost: `errors` is read as a STRING map by a dozen assertions across five
+ * spec files (`errors[path]).toMatch(...)`, `Object.values(...)[0]`), and 46 call sites
+ * report into it. Widening the value churns all of that to move a label.
+ *
+ * Two maps normally invite drift, and that objection is answered by CONTAINMENT rather
+ * than waved away: both are written and deleted only inside this module's own actions,
+ * always in the same statement, so there is no second place that could update one and
+ * miss the other. A caller cannot reach `labels` at all.
+ *
+ * ── WHY IT EXISTS AT ALL ──────────────────────────────────────────────────────────────
+ *
+ * Not every row is an asset that failed, and the banner asserted otherwise for all of
+ * them. Measured on `main`, at least three row kinds are something else: a modifier whose
+ * source is not sync-buildable (#711 — the registry classifies that state as still
+ * loading, so "asset failed" contradicts it), a material-slot refusal, and a generation
+ * that degraded to a stub. The last of those is the strongest evidence, because a call
+ * site already works AROUND the prefix in a comment: "The banner prefixes its own 'asset
+ * failed:', so a message that opened with the consequence read as two clauses". A label
+ * that makes a writer reword a true sentence is a label doing damage.
+ */
 export interface AssetErrorStore {
   /** assetRef → human-readable failure reason. */
   errors: Record<string, string>;
-  report: (assetRef: string, message: string) => void;
+  /** assetRef → the banner's leading label, when the default would misstate the row. */
+  labels: Record<string, string>;
+  report: (assetRef: string, message: string, label?: string) => void;
   clear: (assetRef: string) => void;
   clearAll: () => void;
 }
 
+/** What the banner says when a row carries no label of its own. */
+export const DEFAULT_ERROR_LABEL = 'asset failed:';
+
 export const useAssetErrorStore = create<AssetErrorStore>((set) => ({
   errors: {},
-  report(assetRef, message) {
+  labels: {},
+  report(assetRef, message, label) {
     set((s) => {
       // Idempotent: skip the set when the same assetRef already carries
       // the same message. An error boundary can re-invoke componentDid-
       // Catch on re-render; without this guard each re-render would
       // produce a new object identity and churn every subscriber.
-      if (s.errors[assetRef] === message) return s;
-      return { errors: { ...s.errors, [assetRef]: message } };
+      // The LABEL is part of that identity — a row whose message is
+      // unchanged but whose label is not has still changed on screen.
+      if (s.errors[assetRef] === message && s.labels[assetRef] === label) return s;
+      const labels = { ...s.labels };
+      // Deleted rather than stored as `undefined`: the banner falls back on absence, and
+      // an explicit `undefined` key would make a re-report that DROPS a label look like a
+      // row that never had one to `in`, while still showing up in `Object.keys`.
+      if (label === undefined) delete labels[assetRef];
+      else labels[assetRef] = label;
+      return { errors: { ...s.errors, [assetRef]: message }, labels };
     });
   },
   clear(assetRef) {
@@ -51,11 +91,13 @@ export const useAssetErrorStore = create<AssetErrorStore>((set) => ({
       if (!(assetRef in s.errors)) return s;
       const next = { ...s.errors };
       delete next[assetRef];
-      return { errors: next };
+      const labels = { ...s.labels };
+      delete labels[assetRef];
+      return { errors: next, labels };
     });
   },
   clearAll() {
-    set((s) => (Object.keys(s.errors).length === 0 ? s : { errors: {} }));
+    set((s) => (Object.keys(s.errors).length === 0 ? s : { errors: {}, labels: {} }));
   },
 }));
 
