@@ -80,7 +80,20 @@ export function hasStaleGenerations(): boolean {
  * leave the surface that invoked this with no way back to idle, and the reason
  * would live only in a console.
  */
-export async function cookMotionGenerations(): Promise<CookOutcome> {
+export async function cookMotionGenerations(
+  /**
+   * Cook only this producer. Omit to cook the whole graph.
+   *
+   * 🔴 THE PER-NODE BUTTON MUST PASS IT (#964). The affordance lives on the node
+   * because — as this file's neighbour says — "a global cook-everything button
+   * would make a director's money a property of the scene rather than of the
+   * node they are looking at". The button was on the node and the spend was on
+   * the scene: measured at two paid calls for one press, the second regenerating
+   * a clip that was up to date, non-deterministically, over motion the director
+   * had accepted.
+   */
+  producerId?: string,
+): Promise<CookOutcome> {
   let capability;
   try {
     capability = await getMotionCapability();
@@ -96,6 +109,7 @@ export async function cookMotionGenerations(): Promise<CookOutcome> {
   const resolutions = await resolvePendingMotionGenerations(
     useDagStore.getState().state,
     capability,
+    producerId,
   );
 
   const ops = bakeGeneratedClipOps(useDagStore.getState().state);

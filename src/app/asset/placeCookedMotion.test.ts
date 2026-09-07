@@ -209,3 +209,162 @@ describe('placeCookedMotionOps (#935)', () => {
     expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #964 — ONE BUTTON, ONE PAID CALL
+// ─────────────────────────────────────────────────────────────────────────────
+// Lives in this file because the fixtures above ARE the mint → cook → bake road,
+// and these rows are about what that road spends.
+//
+// The generated-clip store is a module-level `Map` that nothing persists, so
+// `__resetGeneratedClipsForTests()` is a real reload rather than a simulation of
+// one: it clears exactly what a page reload clears, while the project JSON
+// survives. After it, every generated clip in a project evaluated as `pending` —
+// baked, current, playing, and reported as if it had never been made.
+//
+// Measured before the fix: two producers, reopened project, one edited, one press
+// of that one's button — TWO paid calls. And because generation is
+// non-deterministic, the second came back as a DIFFERENT walk and was baked over
+// motion the director had already accepted. Money is the smaller half.
+
+import { motionCookOffer } from './cookMotionGenerations';
+
+/** Counts what the service was actually asked to make. */
+function countingCapability(calls: string[]): MotionGenerationCapability {
+  return {
+    id: 'count',
+    kind: 'stub',
+    isAvailable: async () => true,
+    async generate(request): Promise<MotionGenerationResult> {
+      calls.push(request.prompt);
+      return {
+        jobId: 'j',
+        bvh: synthesiseBvh(request),
+        model: request.model,
+        unitScale: STUB_UNIT_SCALE,
+        worldOffsetXZ: null,
+        worldRotationRadians: null,
+      };
+    },
+    cancel: async () => {},
+  };
+}
+
+/** Two independent producers in one project, each bound to the character rig. */
+async function twoProducers(calls: string[]) {
+  let s = project();
+  const producers: string[] = [];
+  for (const prompt of ['walk A', 'walk B']) {
+    const { ops, clipId } = mintMotionGenerateOps(s, {
+      prompt,
+      seed: 7,
+      model: 'kimodo-base',
+      curveObjectId: 'pathObj',
+    });
+    s = apply(s, ops);
+    s = apply(s, [
+      {
+        type: 'disconnect',
+        from: { node: edgeTarget(s.nodes[clipId], 'skeleton')!, socket: 'out' },
+        to: { node: clipId, socket: 'skeleton' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'gskel', socket: 'out' },
+        to: { node: clipId, socket: 'skeleton' },
+      },
+    ] as Op[]);
+    producers.push(edgeTarget(s.nodes[clipId], 'source') ?? '');
+  }
+  await resolvePendingMotionGenerations(s, countingCapability(calls));
+  s = apply(s, bakeGeneratedClipOps(s));
+  return { state: s, producers };
+}
+
+describe('what a cook costs (#964)', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+  });
+
+  it('a reload does not make a baked, current clip look unmade', async () => {
+    const first: string[] = [];
+    const { state, producers } = await twoProducers(first);
+    expect(first).toHaveLength(2);
+
+    __resetGeneratedClipsForTests(); // the reload
+
+    for (const id of producers) {
+      const offer = motionCookOffer(state, id);
+      // `pending` here is what a director reads on the node's card, beside a
+      // button saying "Up to date" — and it is what `hasStaleGenerations` keys
+      // on, which would report an untouched project as needing work.
+      expect(offer.status).toBe('ready');
+      expect(offer.stale).toBe(false);
+      expect(offer.disabled).toBe(true);
+    }
+  });
+
+  it('🔑 cooking ONE producer does not regenerate the others', async () => {
+    const { state, producers } = await twoProducers([]);
+    __resetGeneratedClipsForTests(); // the reload
+
+    // The director edits one producer — the ordinary re-cook gesture.
+    const edited = apply(state, [
+      { type: 'setParam', nodeId: producers[0], paramPath: 'prompt', value: 'walk A, but faster' },
+    ] as Op[]);
+    expect(motionCookOffer(edited, producers[0]).disabled).toBe(false);
+    expect(motionCookOffer(edited, producers[1]).disabled).toBe(true);
+
+    const calls: string[] = [];
+    await resolvePendingMotionGenerations(edited, countingCapability(calls), producers[0]);
+
+    // Exactly the one that was asked for. The prompt is asserted, not just the
+    // count: a guard that regenerated the WRONG single clip would also read 1.
+    expect(calls).toEqual(['walk A, but faster']);
+  });
+
+  // 🔴 THE ROW ABOVE DOES NOT TEST SCOPING, and falsification is what said so:
+  // deleting the scope filter left it GREEN, because the materialised guard alone
+  // already stops the second call. Both producers there are baked, so scope never
+  // gets a chance to matter.
+  //
+  // This is the case that separates them: NEITHER producer is baked, so both are
+  // genuinely pending, and the only thing that can keep the count at one is the
+  // scope. Without it this reds and the row above does not.
+  it('🔑 scope alone: with NOTHING baked, cooking one still costs one', async () => {
+    let s = project();
+    const producers: string[] = [];
+    for (const prompt of ['walk A', 'walk B']) {
+      const { ops, clipId } = mintMotionGenerateOps(s, {
+        prompt,
+        seed: 7,
+        model: 'kimodo-base',
+        curveObjectId: 'pathObj',
+      });
+      s = apply(s, ops);
+      producers.push(edgeTarget(s.nodes[clipId], 'source') ?? '');
+    }
+    // No cook, no bake — two fresh producers, both genuinely pending.
+    const calls: string[] = [];
+    await resolvePendingMotionGenerations(s, countingCapability(calls), producers[0]);
+    expect(calls).toEqual(['walk A']);
+  });
+
+  it('and an UNSCOPED cook still skips what is already baked and current', async () => {
+    // Defence in depth, and the root of the two. A caller that owns the whole
+    // graph passes no producer; it must still not pay for clips whose keys are
+    // sitting in the graph. Without this the scoping is the only guard, and the
+    // next caller that forgets to scope pays for the whole project.
+    const { state, producers } = await twoProducers([]);
+    __resetGeneratedClipsForTests();
+    const edited = apply(state, [
+      { type: 'setParam', nodeId: producers[0], paramPath: 'prompt', value: 'walk A, but faster' },
+    ] as Op[]);
+
+    const calls: string[] = [];
+    await resolvePendingMotionGenerations(edited, countingCapability(calls));
+
+    expect(calls).toEqual(['walk A, but faster']);
+  });
+});

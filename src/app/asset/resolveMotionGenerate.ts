@@ -42,6 +42,7 @@ import {
 import type { AnimationClipValue } from '../../nodes/types';
 import type { MotionGenerateParams } from '../../nodes/MotionGenerate';
 import { waypointsFromCurve } from './motionPathFromCurve';
+import { clipBakeStates } from './bakeGeneratedClip';
 
 /**
  * Hashes currently being generated.
@@ -72,13 +73,41 @@ export interface MotionResolution {
   readonly model?: string;
 }
 
-/** Every MotionGenerate node in the graph, with its evaluated clip. */
+/**
+ * The MotionGenerate nodes that genuinely need generating, optionally narrowed to
+ * one producer.
+ *
+ * 🔴 `status === 'pending'` IS NOT ENOUGH ON ITS OWN (#964). The generated-clip
+ * store is a module-level `Map` that is never persisted, so it is EMPTY after a
+ * reload and `evaluate()` answers `pending` for every generated clip in the
+ * project — including ones that are baked, current, and playing. Generating
+ * those again costs money and, because generation is non-deterministic, replaces
+ * motion the director had already accepted with a different walk.
+ *
+ * A cold cache means "we no longer hold the bytes", not "it was never produced",
+ * and the graph knows the difference: `clipBakeStates` computes whether the sink
+ * was baked and whether it is behind the producer's current request. Baked AND
+ * current is answered, whatever the cache remembers.
+ *
+ * Measured before the guard: two producers, reopened project, one edited, one
+ * cook — TWO paid calls, the second for a clip nobody touched.
+ */
 function pendingGenerations(
   state: DagState,
+  only?: string,
 ): { nodeId: string; clip: AnimationClipValue; params: MotionGenerateParams }[] {
+  const materialised = new Set(
+    clipBakeStates(state)
+      .filter((c) => c.baked && !c.stale)
+      .map((c) => c.producerId),
+  );
   const out: { nodeId: string; clip: AnimationClipValue; params: MotionGenerateParams }[] = [];
   for (const [nodeId, node] of Object.entries(state.nodes)) {
     if (node.type !== 'MotionGenerate') continue;
+
+    if (only !== undefined && nodeId !== only) continue;
+    if (materialised.has(nodeId)) continue;
+
     const clip = evaluate(state, nodeId).value as AnimationClipValue;
     if (clip.generation?.status !== 'pending') continue;
     out.push({ nodeId, clip, params: node.params as MotionGenerateParams });
@@ -109,11 +138,18 @@ function waypointsFor(state: DagState, nodeId: string) {
 export async function resolvePendingMotionGenerations(
   state: DagState,
   capability: MotionGenerationCapability,
+  /**
+   * Cook only this producer. Omitted means the whole graph, which is right for a
+   * caller that owns the whole graph and wrong for a button on one node (#964) —
+   * the affordance lives on the node precisely so a director's money is a
+   * property of the thing they are looking at.
+   */
+  only?: string,
 ): Promise<MotionResolution[]> {
   const results: MotionResolution[] = [];
   let landed = 0;
 
-  for (const { nodeId, clip, params } of pendingGenerations(state)) {
+  for (const { nodeId, clip, params } of pendingGenerations(state, only)) {
     const requestHash = clip.generation!.requestHash;
 
     if (inFlight.has(requestHash)) {

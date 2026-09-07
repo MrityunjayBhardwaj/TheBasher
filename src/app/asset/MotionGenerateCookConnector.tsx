@@ -32,7 +32,10 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
   async function run() {
     setBusy(true);
     try {
-      await cookMotionGenerations();
+      // SCOPED to this node (#964). Unscoped, one press cooked every producer the
+      // graph reported as pending — which after a reload is all of them, because
+      // the generated-clip cache is module state and does not survive one.
+      await cookMotionGenerations(producerId);
       // A re-cook is on a clip that is already bound, so the character it walks
       // exists and placement can find it. On a first generation this is a no-op,
       // because the road that mints has already placed after its bind.
