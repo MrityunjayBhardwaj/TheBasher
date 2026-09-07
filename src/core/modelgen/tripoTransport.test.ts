@@ -235,6 +235,78 @@ describe('terminal statuses and transport failures are distinguished', () => {
     });
   }
 
+  // ── #799 — a failed task says WHAT failed, not only THAT it failed ──────────
+
+  const failWith = (data: Record<string, unknown>) =>
+    vi.fn(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith('/task') && init?.method === 'POST'
+        ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
+        : new Response(
+            JSON.stringify({ code: 0, data: { status: 'failed', progress: 0, ...data } }),
+            {
+              status: 200,
+            },
+          ),
+    );
+
+  const failureOf = async (data: Record<string, unknown>) => {
+    try {
+      await client(failWith(data)).generate(TEXT);
+    } catch (e) {
+      return e as InstanceType<typeof TripoTaskFailedError>;
+    }
+    throw new Error('expected the task to fail');
+  };
+
+  it('#799 — two different causes of "failed" no longer read as the same sentence', async () => {
+    // The defect. v2 said what went wrong in the STATUS (`banned`, `expired`);
+    // v3 folded both into `failed` plus a code, and the reader declared only
+    // status/progress/output — so moderation and a queue expiry produced one
+    // identical string. One asks the director to rewrite their prompt, the other
+    // to retry unchanged, and one sentence sends half of them to the wrong action.
+    const moderation = await failureOf({ error_code: 2008, error_message: 'moderation' });
+    const expired = await failureOf({ error_code: 2018, error_message: 'queue expired' });
+
+    expect(moderation.message).not.toBe(expired.message);
+    expect(moderation.message).toContain('2008');
+    expect(expired.message).toContain('2018');
+    expect(moderation.detail).toMatchObject({ error_code: '2008', error_message: 'moderation' });
+  });
+
+  it('#799 — repeats what the service said WITHOUT claiming to know what it means', async () => {
+    // Deliberately not interpreting. The field names and the two codes come from
+    // v3 DOCUMENTATION — there is no v3 SDK and the schema is behind auth — so
+    // naming `error_code` in the implementation would assert a fact nobody has
+    // checked against the wire. A field nobody predicted is carried just as well,
+    // which is the property that makes this grounded rather than a guess.
+    const odd = await failureOf({ some_field_we_never_heard_of: 'hello' });
+    expect(odd.message).toContain('some_field_we_never_heard_of=hello');
+    expect(odd.detail).toEqual({ some_field_we_never_heard_of: 'hello' });
+  });
+
+  it('#799 — a failure that says nothing extra reads exactly as it always did', async () => {
+    // The v2 population, and the reason this is safe: every existing failure
+    // message is byte-identical, so nothing that reads these strings has to move.
+    const plain = await failureOf({});
+    expect(plain.message).toBe('Tripo task t1 ended as "failed".');
+    expect(plain.detail).toEqual({});
+  });
+
+  it('#799 — carries scalars only, and budgets them', async () => {
+    // A nested object is the vendor's shape rather than a message, and an
+    // unbounded string in a user-facing banner is a different bug from this one.
+    const noisy = await failureOf({
+      error_code: 2008,
+      nested: { deep: 'structure' },
+      empty: '',
+      long: 'x'.repeat(500),
+    });
+    expect(noisy.detail.nested, 'a nested object is not a message').toBeUndefined();
+    expect(noisy.detail.empty, 'an empty string says nothing').toBeUndefined();
+    expect(noisy.detail.long.length, 'an unbounded string in a banner is its own bug').toBe(200);
+    expect(noisy.detail.error_code).toBe('2008');
+  });
+
   it('surfaces the API message and suggestion on an error response', async () => {
     const fetchImpl = vi.fn(
       async () =>
