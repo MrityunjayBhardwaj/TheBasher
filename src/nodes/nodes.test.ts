@@ -87,7 +87,7 @@ const ALL_TYPES = [
   'Fit',
   'FollowPath',
   'GltfAsset',
-  'GltfChild',
+  'GltfData',
   'GltfSkeleton',
   'Group',
   'IDPass',

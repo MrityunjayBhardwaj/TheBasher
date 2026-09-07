@@ -18,6 +18,7 @@
 // extension would break the loader). The two sides agreeing = render == capture.
 
 import { test, expect } from './_fixtures';
+import { importedChildren } from './_importedChild';
 
 interface CapturedMap {
   hash: string;
@@ -69,17 +70,20 @@ async function ingestSpecGlossQuad(page: import('@playwright/test').Page): Promi
 }
 
 /** Every captured GltfChild material, keyed by material name. */
-const capturedMaterials = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-    const out: Record<string, CapturedMaterial> = {};
-    for (const n of nodes) {
-      if (n.type !== 'GltfChild' || !Array.isArray(n.params.materials)) continue;
-      for (const m of n.params.materials as CapturedMaterial[]) out[m.name] = m;
+// #389 — one `Object` + `GltfData` pair per child, and the captured table is now the
+// `material` + `materialSlots` pair. `slots` is that pair flattened by the one rule, so
+// a multi-primitive child still contributes every material it captured. Null entries are
+// skipped for the same reason the old predicate skipped children with no `materials`
+// array: a bone has no material and would key this map under `undefined`.
+const capturedMaterials = async (page: import('@playwright/test').Page) => {
+  const out: Record<string, CapturedMaterial> = {};
+  for (const child of await importedChildren(page)) {
+    for (const m of child.slots as (CapturedMaterial | null)[]) {
+      if (m) out[m.name] = m;
     }
-    return out;
-  });
+  }
+  return out;
+};
 
 const meshes = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {

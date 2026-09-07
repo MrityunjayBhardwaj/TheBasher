@@ -67,6 +67,11 @@ export interface RetiredLadder {
  * those are different diagnoses. The counts are pinned in `migrations.test.ts`.
  */
 export const RETIRED_LADDERS: Readonly<Record<string, RetiredLadder>> = {
+  // #389 — the eleventh, and the last fused kind. `version: 1` with no steps, like seven
+  // of the ten before it: `GltfChild` never changed its param shape while it was live.
+  // Listed anyway, because the SET is the useful fact — a save naming a type absent from
+  // here is an UNKNOWN node, not a retired one, and those are different diagnoses.
+  GltfChild: { version: 1 },
   // ── The three with real history ──────────────────────────────────────────────────────
   BoxMesh: {
     version: 4,

@@ -6,7 +6,7 @@
 // the override does NOT force metalness — the map defends it, #99/#124 D-06) →
 // wire a MaterialOverride (#ff0000 colour tint) into the chain via the SAME op
 // path the app uses (p7.13, H58 — not a React-prop injection) → inject a
-// `materials.0.base.metalness` channel targeting the GltfChild dagId directly (no
+// `material.base.metalness` channel targeting the GltfData node id directly (no
 // AnimationLayer, V57) → scrub the playhead.
 //
 // COMPOSITION = "channel animates the base IR, tint layers on top":
@@ -25,6 +25,7 @@
 // live three.js material via __basher_gltf_meshes (side A == the rendered surface).
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 interface Op {
   type: string;
@@ -69,14 +70,11 @@ async function ingestMetal(page: import('@playwright/test').Page): Promise<void>
   }, FIXTURE_FILES);
 }
 
-function boxChildId(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild',
-    );
-    return c?.id ?? null;
-  });
+// #389 — the DATA half's id. A material channel targets the node that OWNS the param,
+// and after the split that is `GltfData`; aiming it at the Object would resolve to a
+// node that exists and a param that does not — visible in the dopesheet, driving nothing.
+async function boxChildId(page: import('@playwright/test').Page) {
+  return (await firstMaterialChild(page))?.dataId ?? null;
 }
 
 async function setTime(page: import('@playwright/test').Page, seconds: number) {
@@ -160,7 +158,7 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
     // The tint lands BEFORE any animation (composition starts from a tint).
     await expect.poll(async () => (await boxSlot(page))?.color).toBe('#ff0000');
 
-    // Free-floating metalness channel — target the GltfChild dagId directly (V57).
+    // Free-floating metalness channel — target the GltfData node id directly (V57).
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_dag.getState().dispatch(
         {
@@ -170,7 +168,7 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
           params: {
             name: 'metalness',
             target: id,
-            paramPath: 'materials.0.base.metalness',
+            paramPath: 'material.base.metalness',
             keyframes: [
               { time: 0, value: 0, easing: 'linear' },
               { time: 1, value: 1, easing: 'linear' },

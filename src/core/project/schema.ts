@@ -66,7 +66,13 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // behaviour EXPLICITLY; that is what makes changing the schema default safe, and it is
 // why `true` maps to `cycle-offset` rather than `cycle` — plain `cycle` would take the
 // travel out of every stored walk. See migrations.ts formatMigrations[11].
-export const PROJECT_FORMAT_VERSION = 12;
+// v13 (#389 Stage C · C6): split each fused `GltfChild` into Object + GltfData. Its OWN
+// format version for the same reason as every split above: a project saved at an earlier
+// version carrying a fused imported child would never re-run an earlier pass, so its child
+// would never split — and unlike the earlier kinds there is no fused fallback left to
+// render it, because `GltfChild` retires in the same change. See migrations.ts
+// formatMigrations[12].
+export const PROJECT_FORMAT_VERSION = 13;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

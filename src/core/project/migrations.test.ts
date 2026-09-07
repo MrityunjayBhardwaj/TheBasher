@@ -3080,6 +3080,258 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
   });
 });
 
+// ── v10 → v11: fused GltfChild → Object + GltfData (#389 Stage C · C6) ─────────────────
+//
+// The SEVENTH kind and the last one, and its fixture has to get three things right that
+// no earlier kind's did.
+//
+//   1. THE POSE IS AWAY FROM IDENTITY, for the reason the baked fixture states: identity
+//      is what a completely broken pose carry also produces. An imported child's TRS is
+//      SEEDED from the glTF at import, so a non-identity base is the normal saved state
+//      and the only one that can tell "carried" from "defaulted".
+//
+//   2. `overridden` IS PARTLY TRUE. All-false is the shipped default, so a fixture with
+//      no flags set cannot tell "carried the flags" from "wrote nothing" — both produce
+//      an Object with no key. Exactly one component true separates them, AND it is what
+//      proves the sparse write keeps only what was flagged.
+//
+//   3. TWO PRIMITIVES, so `materialSlots` exists. A one-slot child takes the `material`
+//      path alone and would leave the table arm — and its channel-path arm — unmeasured.
+//
+// THE MATERIAL CHANNELS ARE THE POINT OF THIS SUITE. The fused kind stored `materials`
+// as an ARRAY and its channels addressed `materials.<slot>.<lobe>.<field>`; the data half
+// stores `material` + `materialSlots`, so those channels need their PATH rewritten as
+// well as their target moved. A re-target without a rewrite leaves a channel resolving to
+// a node that exists and a param that does not — it shows in the dopesheet and drives
+// nothing, silently, which is the failure this whole suite exists to catch before it
+// reaches a saved project. Nothing can un-migrate a project, so this is the one road
+// where a green suite is not the same as a second chance.
+//
+// REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §5; src/nodes/GltfData.ts; issue #389.
+
+const GLTF_MIG_ASSET = 'user-imports/p389.glb';
+const GLTF_MIG_CHILD = 'Cube';
+const GLTF_MIG_POSITION: Vec3 = [4, -1, 7];
+const GLTF_MIG_ROTATION: Vec3 = [0, 45, 0];
+const GLTF_MIG_SCALE: Vec3 = [2, 2, 0.5];
+
+/** Two captured slots. Neither colour is a schema default nor the `#808080` grey a
+ *  discarded material renders as, so a fixture cannot agree with a broken road. */
+const GLTF_MIG_MATERIALS = [
+  openpbrMaterialSchema().parse({ base: { color: '#c81e5a' } }),
+  openpbrMaterialSchema().parse({ base: { color: '#1e9ac8' } }),
+];
+
+/**
+ * A v10 project holding one fused `GltfChild` with two captured slots, a partly-flagged
+ * override set, a Scene that names it, and FOUR channels:
+ *   · `position`                        — a pose param, must STAY on the inherited id
+ *   · `materials.0.base.color`          — slot 0, must become `materialSlots.0.base.color`
+ *   · `materials.1.specular.roughness`  — slot 1, must become `materialSlots.1.…`
+ *   · a channel on an UNRELATED node    — must not move at all
+ */
+function buildFusedGltfChildJson() {
+  let s = emptyDagState();
+  const childId = gltfChildDagId(GLTF_MIG_ASSET, GLTF_MIG_CHILD);
+  s = addRetiredNode(s, childId, 'GltfChild', 1, {
+    assetRef: GLTF_MIG_ASSET,
+    childName: GLTF_MIG_CHILD,
+    position: GLTF_MIG_POSITION,
+    rotation: GLTF_MIG_ROTATION,
+    scale: GLTF_MIG_SCALE,
+    // Exactly one flagged — see note 2 in the header.
+    overridden: { position: true, rotation: false, scale: false },
+    materials: GLTF_MIG_MATERIALS,
+  });
+  const chan = (id: string, target: string, paramPath: string, type: string) => {
+    s = addRetiredNode(s, id, type, 1, {
+      name: id,
+      target,
+      paramPath,
+      keyframes: [{ time: 0, value: type === 'KeyframeChannelColor' ? '#ffffff' : 0.5 }],
+    });
+  };
+  chan('n_ch_pos', childId, 'position', 'KeyframeChannelVec3');
+  chan('n_ch_slot0', childId, 'materials.0.base.color', 'KeyframeChannelColor');
+  chan('n_ch_slot1', childId, 'materials.1.specular.roughness', 'KeyframeChannelNumber');
+  s = addRetiredNode(s, 'n_other', 'Transform', 1, {});
+  chan('n_ch_other', 'n_other', 'position', 'KeyframeChannelVec3');
+  // v12: the version immediately BEFORE the glTF split, so the ladder runs exactly this
+  // one pass. The anti-vacuity row below pins it to PROJECT_FORMAT_VERSION - 1, so adding a
+  // later migration reds here rather than silently re-routing the fixture through it.
+  return { json: { formatVersion: 12, state: s }, childId };
+}
+
+type MigratedNodes = Record<
+  string,
+  { type: string; version?: number; params: Record<string, unknown>; inputs?: unknown }
+>;
+
+function migrateFusedGltfChild(): { nodes: MigratedNodes; childId: string; dataId: string } {
+  const { json, childId } = buildFusedGltfChildJson();
+  const out = migrateProjectFormat(JSON.parse(JSON.stringify(json))) as {
+    formatVersion: number;
+    state: { nodes: MigratedNodes };
+  };
+  expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+  const nodes = out.state.nodes;
+  const dataRef = (nodes[childId].inputs as { data?: { node?: string } }).data;
+  expect(dataRef?.node, 'the migrated Object has no data edge').toBeDefined();
+  return { nodes, childId, dataId: dataRef!.node! };
+}
+
+describe('object↔data split v12 → v13: fused GltfChild → Object + GltfData (#389)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  it('ANTI-VACUITY: the fixture really is a v10 project holding a FUSED child', () => {
+    // Without this the rows below could all pass against a fixture that was already split,
+    // or against one the ladder never touched because its version was wrong.
+    const { json, childId } = buildFusedGltfChildJson();
+    expect(json.formatVersion).toBe(PROJECT_FORMAT_VERSION - 1);
+    expect(json.state.nodes[childId].type).toBe('GltfChild');
+    expect((json.state.nodes[childId].params as { materials: unknown[] }).materials).toHaveLength(
+      2,
+    );
+  });
+
+  it('converts the child IN PLACE — the Object inherits the id, the data node is new', () => {
+    // The inheritance is the whole reason nothing else in the project needs re-pointing:
+    // `nodeNameMap`, clip targets and saved selections all name this id.
+    const { nodes, childId, dataId } = migrateFusedGltfChild();
+    expect(nodes[childId].type).toBe('Object');
+    expect(nodes[dataId].type).toBe('GltfData');
+    expect(dataId).not.toBe(childId);
+  });
+
+  it('carries the pose onto the Object, unchanged', () => {
+    const { nodes, childId } = migrateFusedGltfChild();
+    expect(nodes[childId].params.position).toEqual(GLTF_MIG_POSITION);
+    expect(nodes[childId].params.rotation).toEqual(GLTF_MIG_ROTATION);
+    expect(nodes[childId].params.scale).toEqual(GLTF_MIG_SCALE);
+  });
+
+  it('carries only the FLAGGED override components, sparsely', () => {
+    // The fused schema defaulted all three to `false`, so a verbatim copy would write a
+    // dead record into every migrated Object. Only what was actually flagged survives, and
+    // an unflagged component is ABSENT rather than `false` — the same answer to every
+    // reader, and a smaller saved file for every project that never posed a bone.
+    const { nodes, childId } = migrateFusedGltfChild();
+    expect(nodes[childId].params.overridden).toEqual({ position: true });
+  });
+
+  it('splits the captured materials into slot 0 plus the full table', () => {
+    const { nodes, dataId } = migrateFusedGltfChild();
+    expect(nodes[dataId].params.assetRef).toBe(GLTF_MIG_ASSET);
+    expect(nodes[dataId].params.childName).toBe(GLTF_MIG_CHILD);
+    expect(nodes[dataId].params.material).toEqual(GLTF_MIG_MATERIALS[0]);
+    expect(nodes[dataId].params.materialSlots).toEqual(GLTF_MIG_MATERIALS);
+  });
+
+  it('leaves a materialless child with an explicit null, and no slot table', () => {
+    // A bone or an empty said "no material" by OMITTING the array. `null` is that same
+    // answer said out loud — and it must not become a fabricated grey, which would render
+    // as the missing-material fallback and read as an edit the director never made.
+    const childId = gltfChildDagId(GLTF_MIG_ASSET, 'bone_1');
+    let s = emptyDagState();
+    s = addRetiredNode(s, childId, 'GltfChild', 1, {
+      assetRef: GLTF_MIG_ASSET,
+      childName: 'bone_1',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      overridden: { position: false, rotation: false, scale: false },
+    });
+    const out = migrateProjectFormat({ formatVersion: 10, state: s }) as {
+      state: { nodes: MigratedNodes };
+    };
+    const dataId = (out.state.nodes[childId].inputs as { data: { node: string } }).data.node;
+    expect(out.state.nodes[dataId].params.material).toBeNull();
+    expect('materialSlots' in out.state.nodes[dataId].params).toBe(false);
+    // And nothing was flagged, so the Object carries no override key at all.
+    expect('overridden' in out.state.nodes[childId].params).toBe(false);
+  });
+
+  it('REWRITES the material channels — path AND target — and moves nothing else', () => {
+    // The row this suite exists for. A re-target without a rewrite leaves the channel
+    // pointing at a param that does not exist: it still shows in the dopesheet and drives
+    // nothing, with nothing failing anywhere.
+    const { nodes, childId, dataId } = migrateFusedGltfChild();
+
+    expect(nodes.n_ch_slot0.params.target).toBe(dataId);
+    expect(nodes.n_ch_slot0.params.paramPath).toBe('materialSlots.0.base.color');
+    expect(nodes.n_ch_slot1.params.target).toBe(dataId);
+    expect(nodes.n_ch_slot1.params.paramPath).toBe('materialSlots.1.specular.roughness');
+
+    // The pose channel stays on the inherited id — the Object owns the pose.
+    expect(nodes.n_ch_pos.params.target).toBe(childId);
+    expect(nodes.n_ch_pos.params.paramPath).toBe('position');
+
+    // And a channel on an unrelated node is untouched, which is what proves the pass is
+    // scoped by target rather than sweeping every channel it can see.
+    expect(nodes.n_ch_other.params.target).toBe('n_other');
+    expect(nodes.n_ch_other.params.paramPath).toBe('position');
+  });
+
+  it('addresses a SINGLE-slot child through `material`, not through a one-entry table', () => {
+    // The two spellings are the same answer, and only one of them is what `dataSlotsOnly`
+    // reads first. A single-primitive child writes no table, so its slot-0 channel has to
+    // address `material` — pointing it at `materialSlots.0` would resolve to nothing.
+    const childId = gltfChildDagId(GLTF_MIG_ASSET, 'Solo');
+    let s = emptyDagState();
+    s = addRetiredNode(s, childId, 'GltfChild', 1, {
+      assetRef: GLTF_MIG_ASSET,
+      childName: 'Solo',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      overridden: { position: false, rotation: false, scale: false },
+      materials: [GLTF_MIG_MATERIALS[0]],
+    });
+    s = addRetiredNode(s, 'n_solo_ch', 'KeyframeChannelColor', 1, {
+      name: 'c',
+      target: childId,
+      paramPath: 'materials.0.base.color',
+      keyframes: [{ time: 0, value: '#ffffff' }],
+    });
+    const out = migrateProjectFormat({ formatVersion: 10, state: s }) as {
+      state: { nodes: MigratedNodes };
+    };
+    const dataId = (out.state.nodes[childId].inputs as { data: { node: string } }).data.node;
+    expect('materialSlots' in out.state.nodes[dataId].params).toBe(false);
+    expect(out.state.nodes.n_solo_ch.params.target).toBe(dataId);
+    expect(out.state.nodes.n_solo_ch.params.paramPath).toBe('material.base.color');
+  });
+
+  it('is IDEMPOTENT — a project already at the current version is not re-split', () => {
+    const { json } = buildFusedGltfChildJson();
+    const once = migrateProjectFormat(JSON.parse(JSON.stringify(json)));
+    const twice = migrateProjectFormat(JSON.parse(JSON.stringify(once)));
+    expect(twice).toEqual(once);
+  });
+
+  it('the migrated pair PARSES against the LIVE schemas, not merely reads correctly', () => {
+    // A migration can produce params that read correctly and that no schema accepts, and
+    // the ladder itself cannot notice: it runs on raw JSON BEFORE the parse, so the failure
+    // surfaces later as a project that will not load.
+    //
+    // Asserted per HALF against each node type's own `paramSchema` rather than by parsing
+    // the whole project: this fixture is a node table, not a saved file, so a whole-project
+    // parse would red on the envelope fields it never had — a red that says nothing about
+    // the migration and would have to be silenced with fixture noise.
+    const { nodes, childId, dataId } = migrateFusedGltfChild();
+    const objectSchema = getNodeType('Object')!.paramSchema;
+    const dataSchema = getNodeType('GltfData')!.paramSchema;
+    expect(() => objectSchema.parse(nodes[childId].params)).not.toThrow();
+    expect(() => dataSchema.parse(nodes[dataId].params)).not.toThrow();
+    // And the versions are the LIVE ones, so the per-node ladder has nothing left to do.
+    expect((nodes[childId] as { version?: number }).version).toBe(getNodeType('Object')!.version);
+    expect((nodes[dataId] as { version?: number }).version).toBe(getNodeType('GltfData')!.version);
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe('AnimationClip v10 → v11: the dead `time` binding is dropped (#920)', () => {

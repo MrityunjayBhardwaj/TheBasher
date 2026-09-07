@@ -10,6 +10,7 @@
 //                    with GLTFLoader — center [0,0]; Basher's apply matched it).
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 interface MeshSummary {
   mapRepeat: [number, number] | null;
@@ -31,17 +32,17 @@ interface BasherWindow {
   __basher_gltf_meshes?: () => MeshSummary[];
 }
 
-const capturedUv = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const child = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
-    const mats = child?.params.materials as
-      | { uvTransform?: { tiling: number[]; offset: number[]; rotation: number } }[]
-      | undefined;
-    return mats?.[0]?.uvTransform ?? null;
-  });
+// #389 — the captured table moved to the `GltfData` half; see `_importedChild`.
+const capturedUv = async (page: import('@playwright/test').Page) => {
+  const child = await firstMaterialChild(page);
+  return (
+    (
+      child?.slots[0] as
+        | { uvTransform?: { tiling: number[]; offset: number[]; rotation: number } }
+        | undefined
+    )?.uvTransform ?? null
+  );
+};
 
 const firstMesh = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {
@@ -77,21 +78,26 @@ test('captures KHR_texture_transform into uvTransform; clone map matches (identi
 
   // EDITABLE: changing the DAG uvTransform.tiling re-overlays the clone's map →
   // proves the apply is LIVE (not merely the clone's original GLTFLoader transform).
-  await page.evaluate(() => {
+  // #389 — slot 0 IS `material` on the `GltfData` half, so the edit is a whole-`material`
+  // replace on that node rather than a map over a `materials` array on the fused child.
+  const dataId = (await firstMaterialChild(page))!.dataId;
+  await page.evaluate((id) => {
     const w = window as unknown as BasherWindow;
-    const child = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    )!;
-    const mats = (child.params.materials as { uvTransform: Record<string, unknown> }[]).map(
-      (mm, i) => (i === 0 ? { ...mm, uvTransform: { ...mm.uvTransform, tiling: [5, 5] } } : mm),
+    const mat = w.__basher_dag.getState().state.nodes[id].params.material as {
+      uvTransform: Record<string, unknown>;
+    };
+    w.__basher_dag.getState().dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: id,
+          paramPath: 'material',
+          value: { ...mat, uvTransform: { ...mat.uvTransform, tiling: [5, 5] } },
+        },
+      ],
+      'user',
+      'edit uvTransform tiling',
     );
-    w.__basher_dag
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: child.id, paramPath: 'materials', value: mats }],
-        'user',
-        'edit uvTransform tiling',
-      );
-  });
+  }, dataId);
   await expect.poll(async () => (await firstMesh(page))?.mapRepeat).toEqual([5, 5]);
 });

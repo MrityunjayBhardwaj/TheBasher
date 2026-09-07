@@ -40,7 +40,7 @@ import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 
 /** The kinds that have actually been split. One name per `ObjectData` producer. */
-export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked';
+export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked' | 'gltf';
 
 /** As much of a node definition as the data-lane predicates below read. Declared
  *  structurally so this module still never imports the registry (see the header).
@@ -583,6 +583,44 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
       'recolour the baked mesh',
       're-pose the baked mesh after the bake',
       'stack a modifier on the baked Object',
+    ],
+  },
+  gltf: {
+    dataType: 'GltfData',
+    band: 'children',
+    // ONE fused type, and the LAST one — after this the split has no fused kind left.
+    fusedTypes: ['GltfChild'],
+    migratesFromVersion: 10,
+    // All three are required with no zod default: an imported child with no asset, no
+    // name or no material ANSWER is not an imported child. `material` is NULLABLE rather
+    // than optional, so a bone says "none" out loud instead of by omission — the row
+    // below then writes a real one over it, which is what makes the base provably
+    // written rather than a mint value coming back.
+    baseDataParams: {
+      assetRef: 'conformance-asset',
+      childName: 'Cube',
+      material: null,
+    },
+    // The one param that survives to the value under an UNCHANGED path. `assetRef` and
+    // `childName` are folded into an opaque `GeometryRef.key`, so asserting on either
+    // would mean re-implementing that fold in the test — the drift the read-equals-render
+    // road exists to catch.
+    observableDataParam: 'material.base.color',
+    // The standard '#cccccc' default and the '#808080' missing-material fallback are both
+    // avoided, for the reason every kind above avoids them: a broken road returns the
+    // fallback and must not accidentally agree with what is asserted.
+    distinctValues: ['#c81e5a', '#1e9ac8'],
+    channelValueType: 'color',
+    readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
+    customSections: [],
+    // 'material' ALONE — the same answer `BakedData` gives, and for the same reason: a
+    // glTF child's geometry is not authored anywhere, so a declared 'mesh' section would
+    // be a permanently empty card. See GltfData.ts.
+    dataSections: ['material'],
+    primaryWorkflows: [
+      'recolour an imported mesh',
+      'pose an imported bone over its clip',
+      'stack a modifier on an imported child',
     ],
   },
 };

@@ -17,6 +17,7 @@
 //   per-island [0,0,1,1] bounds assertion FAILS (synthetic bounds are sub-regions).
 
 import { test, expect } from './_fixtures';
+import { importedChildren } from './_importedChild';
 import { splitSphereOps } from './_splitSphere';
 
 const ASSET_REF = 'assets/two-material-textured-quad.gltf';
@@ -157,12 +158,9 @@ test.describe('v0.6 #3 W1 — real UV display', () => {
       return s.length >= 1;
     });
 
-    // Find a GltfChild node id from the DAG.
-    const childId = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      const nodes = w.__basher_dag.getState().state.nodes;
-      return Object.keys(nodes).find((id) => nodes[id].type === 'GltfChild') ?? null;
-    });
+    // Find an imported child's id from the DAG. #389 — the OBJECT half, which inherits
+    // the fused node's id, so every seam keyed on "the child" still answers to it.
+    const childId = (await importedChildren(page))[0]?.objectId ?? null;
     expect(childId).not.toBeNull();
 
     // The clone may need a tick to register; retry the seam until it resolves.

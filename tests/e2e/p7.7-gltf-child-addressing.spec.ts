@@ -120,11 +120,13 @@ async function settleFrames(page: import('@playwright/test').Page) {
   );
 }
 
+// #389 — one `GltfData` per scene child, so this count is still json.nodes exactly.
+// The pair's `Object` half is not counted: it shares a type with every other object.
 function gltfChildNodes(page: import('@playwright/test').Page): Promise<DagNode[]> {
   return page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag.getState().state.nodes;
-    return Object.values(nodes).filter((n) => n.type === 'GltfChild');
+    return Object.values(nodes).filter((n) => n.type === 'GltfData');
   });
 }
 
@@ -187,10 +189,19 @@ test('P7.7 E1b — clicking a child outliner row selects the GltfChild and mount
   const ids = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag.getState().state.nodes;
+    // #389 — the OBJECT half: the gizmo, the selection and the TRS write all address
+    // it, and it inherited the fused node's id so nothing downstream moved.
     const childId =
-      Object.values(nodes).find(
-        (n) => n.type === 'GltfChild' && n.params.childName === 'SkinnedBar',
-      )?.id ?? null;
+      Object.entries(nodes).find(([, n]) => {
+        const dataId = (n.inputs as Record<string, { node: string } | undefined> | undefined)?.data
+          ?.node;
+        const data = dataId ? nodes[dataId] : undefined;
+        return (
+          n.type === 'Object' &&
+          data?.type === 'GltfData' &&
+          (data.params as { childName?: string }).childName === 'SkinnedBar'
+        );
+      })?.[0] ?? null;
     const assetId = Object.values(nodes).find((n) => n.type === 'GltfAsset')?.id ?? null;
     return { childId, assetId };
   });
@@ -247,11 +258,19 @@ test('P7.7 E1c — gizmo drag writes setParam + flips overridden + PERSISTS with
   const childId = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag.getState().state.nodes;
-    const child = Object.values(nodes).find(
-      (n) => n.type === 'GltfChild' && n.params.childName === 'SkinnedBar',
-    );
-    if (child) w.__basher_selection!.getState().select(child.id);
-    return child?.id ?? null;
+    // #389 — the OBJECT half; selection addresses the object, never the data node.
+    const entry = Object.entries(nodes).find(([, n]) => {
+      const dataId = (n.inputs as Record<string, { node: string } | undefined> | undefined)?.data
+        ?.node;
+      const data = dataId ? nodes[dataId] : undefined;
+      return (
+        n.type === 'Object' &&
+        data?.type === 'GltfData' &&
+        (data.params as { childName?: string }).childName === 'SkinnedBar'
+      );
+    });
+    if (entry) w.__basher_selection!.getState().select(entry[0]);
+    return entry?.[0] ?? null;
   });
   expect(childId).toBeTruthy();
 

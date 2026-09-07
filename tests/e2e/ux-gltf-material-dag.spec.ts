@@ -8,6 +8,7 @@
 // material (the pre-fix depNodesById no-op), the colour would never change.
 
 import { test, expect } from './_fixtures';
+import { importedChild } from './_importedChild';
 
 interface BasherWindow {
   __basher_dag: {
@@ -35,15 +36,15 @@ async function ingestCube(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
-function cubeChild(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-    const c = nodes.find((n) => n.type === 'GltfChild' && n.params.childName === 'cube');
-    return c
-      ? { id: c.id, materials: c.params.materials as { base: { color: string } }[] | undefined }
-      : null;
-  });
+// #389 — the child is an `Object` + `GltfData` pair now, so the id this spec writes to is
+// the DATA half's and the captured table is `material` + `materialSlots` rather than a
+// `materials` array. Both facts come from the one helper; re-spelling the hop here would
+// be a copy in the tier the compiler cannot check (#472).
+async function cubeChild(page: import('@playwright/test').Page) {
+  const child = await importedChild(page, 'cube');
+  return child
+    ? { id: child.dataId, materials: child.slots as { base: { color: string } }[] }
+    : null;
 }
 
 const renderedCubeColor = (page: import('@playwright/test').Page) =>
@@ -72,20 +73,25 @@ test.describe('#178 S3 — renderer reads the DAG-captured glTF material', () =>
     const beforeColor = await renderedCubeColor(page);
     expect(before?.materials?.[0].base.color).toBeTruthy();
 
-    // Edit the DAG material → red, via a whole-`materials` setParam (zod-revalidated).
-    await page.evaluate((childId) => {
+    // Edit the DAG material → red, via a whole-`material` setParam (zod-revalidated).
+    // #389 — slot 0 IS `material` now, so the edit no longer maps over an array; the
+    // multi-slot table lives in `materialSlots` and this fixture has one primitive.
+    await page.evaluate((dataId) => {
       const w = window as unknown as BasherWindow;
-      const node = w.__basher_dag.getState().state.nodes[childId];
-      const mats = (node.params.materials as { base: { color: string } }[]).map((m, i) =>
-        i === 0 ? { ...m, base: { ...m.base, color: '#ff0000' } } : m,
+      const node = w.__basher_dag.getState().state.nodes[dataId];
+      const mat = node.params.material as { base: { color: string } };
+      w.__basher_dag.getState().dispatchAtomic(
+        [
+          {
+            type: 'setParam',
+            nodeId: dataId,
+            paramPath: 'material',
+            value: { ...mat, base: { ...mat.base, color: '#ff0000' } },
+          },
+        ],
+        'user',
+        'edit gltf material',
       );
-      w.__basher_dag
-        .getState()
-        .dispatchAtomic(
-          [{ type: 'setParam', nodeId: childId, paramPath: 'materials', value: mats }],
-          'user',
-          'edit gltf material',
-        );
     }, before!.id);
 
     // The rendered clone material now reads red (the DAG material drives the render).

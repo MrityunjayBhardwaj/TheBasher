@@ -25,6 +25,7 @@ import { resolveEvaluatedTransform } from '../resolveEvaluatedTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 import { resolveGltfChildTrs, type ChildTrs } from '../resolveGltfChildTransform';
 import { gltfChildDagId, gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'asset-d3';
 const CHILD = 'bone_1';
@@ -57,19 +58,13 @@ function buildBakedState(): DagState {
     nodeType: 'GltfAsset',
     params: { assetRef: ASSET, nodeNameMap: { [CHILD]: CHILD_ID } },
   }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: CHILD_ID,
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET,
-      childName: CHILD,
-      position: BASE_POS,
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      overridden: { position: false, rotation: false, scale: false },
-    },
-  }).next;
+  for (const op of importedChildOps(CHILD_ID, {
+    assetRef: ASSET,
+    childName: CHILD,
+    position: BASE_POS,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   // The clip track (keyed by childName) — survives the revert (D-02 coexist).
   s = applyOp(s, {
     type: 'addNode',
@@ -229,19 +224,13 @@ describe('dispatchRevertGltfChannel (D3 — presence-based fallback)', () => {
       nodeType: 'GltfAsset',
       params: { assetRef: ASSET, nodeNameMap: { [CHILD]: CHILD_ID } },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: CHILD_ID,
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: CHILD,
-        position: BASE_POS,
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(CHILD_ID, {
+      assetRef: ASSET,
+      childName: CHILD,
+      position: BASE_POS,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
     useDagStore.getState().hydrate(s);
 
     const res = dispatchRevertGltfChannel({ assetRef: ASSET, childName: CHILD });

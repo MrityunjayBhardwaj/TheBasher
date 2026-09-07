@@ -15,6 +15,7 @@ import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 const BOX_ID = 'n_box';
 const SPHERE_ID = 'n_sphere';
@@ -99,19 +100,16 @@ describe('resolveEvaluatedMesh', () => {
       scale: [2, 2, 2] as [number, number, number],
     };
     const overridden = { position: false, rotation: false, scale: true };
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: GLTF_CHILD_ID,
-      nodeType: 'GltfChild',
-      params: {
-        childName: 'Mesh0',
-        assetRef: 'asset-1',
-        position: childTrs.position,
-        rotation: childTrs.rotation,
-        scale: childTrs.scale,
-        overridden,
-      },
-    }).next;
+    for (const op of importedChildOps(GLTF_CHILD_ID, {
+      assetRef: 'asset-1',
+      childName: 'Mesh0',
+      position: childTrs.position,
+      rotation: childTrs.rotation,
+      scale: childTrs.scale,
+      overridden,
+    })) {
+      state = applyOp(state, op as Op).next;
+    }
 
     const mesh = resolveEvaluatedMesh(state, GLTF_CHILD_ID, ctxAt(0));
     expect(mesh).not.toBeNull();

@@ -20,7 +20,7 @@
 //
 // ── THE PROOF (boundary-pair, both sides, every time) ─────────────────────────
 //
-// Side A is the DAG param (`GltfChild.materials[0]`), side B is the LIVE three.js
+// Side A is the DAG param (`GltfData.material`, #389), side B is the LIVE three.js
 // clone (`__basher_gltf_meshes().slotPlacements`, which reports every filled slot —
 // a single-slot probe cannot observe a per-SLOT claim). Every assertion names the
 // OTHER slot as a control in the same run, because "this slot moved" and "every slot
@@ -37,6 +37,8 @@
 //      ORIGIN pivot); issues #550, #551, #217, #181.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { firstMaterialChild } from './_importedChild';
 
 interface SlotPlacement {
   repeat: [number, number];
@@ -87,12 +89,10 @@ async function ingestPerMap(page: import('@playwright/test').Page, folder: strin
 }
 
 /** The imported child + the shape of its slot-0 material (side A). */
-function materialChild(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
+async function materialChild(page: import('@playwright/test').Page) {
+  {
+    const c0 = await firstMaterialChild(page);
+    const c = c0 ? { id: c0.dataId, params: { materials: c0.slots } } : null;
     if (!c) return null;
     const m0 = (c.params.materials as Record<string, unknown>[])[0];
     return {
@@ -103,7 +103,7 @@ function materialChild(page: import('@playwright/test').Page) {
         | Record<string, { tiling: [number, number]; offset: [number, number]; rotation: number }>
         | undefined,
     };
-  });
+  }
 }
 
 /** The LIVE clone's per-slot placements (side B). */
@@ -118,8 +118,8 @@ async function selectAndOpen(page: import('@playwright/test').Page, id: string) 
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
   }, id);
-  await page.getByTestId('inspector-section-toggle-material').click();
-  await expect(page.getByTestId(`inspector-gltf-material-editor-${id}`)).toBeVisible();
+  await openInspectorSection(page, 'material');
+  await expect(page.getByTestId(`inspector-material-editor-${id}`)).toBeVisible();
 }
 
 async function importedChild(page: import('@playwright/test').Page, folder: string) {
@@ -139,24 +139,24 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     // Both maps carry their own placement, so both get a row. The SHARED section
     // still renders (a slot with no entry uses it) but no longer claims to govern
     // every map — which is the read-side defect: it sits at identity here.
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0-albedo`)).toBeVisible();
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0-emissive`)).toBeVisible();
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0`)).toContainText(
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-albedo`)).toBeVisible();
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-emissive`)).toBeVisible();
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}`)).toContainText(
       'Texture Placement · shared',
     );
 
     // The numbers in the rows are the CAPTURED ones, per slot, not the shared value.
+    await expect(page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-albedo`)).toHaveValue(
+      '2',
+    );
+    await expect(page.getByTestId(`inspector-uvtransform-tilingY-${child.id}-albedo`)).toHaveValue(
+      '3',
+    );
     await expect(
-      page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-0-albedo`),
-    ).toHaveValue('2');
-    await expect(
-      page.getByTestId(`inspector-uvtransform-tilingY-${child.id}-0-albedo`),
-    ).toHaveValue('3');
-    await expect(
-      page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-0-emissive`),
+      page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-emissive`),
     ).toHaveValue('4');
     await expect(
-      page.getByTestId(`inspector-uvtransform-rotation-${child.id}-0-emissive`),
+      page.getByTestId(`inspector-uvtransform-rotation-${child.id}-emissive`),
     ).toHaveValue('0.25');
 
     // And the shared value really is identity — so an unlabelled shared section
@@ -164,7 +164,7 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     expect((await materialChild(page))?.uvTransform.tiling).toEqual([1, 1]);
 
     // A slot with no texture gets no row (rows are per PRESENT placement).
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0-normal`)).toHaveCount(0);
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-normal`)).toHaveCount(0);
   });
 
   test('editing one map’s placement re-places THAT map only, in the DAG and on screen', async ({
@@ -174,7 +174,7 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     await expect.poll(async () => (await drawn(page))?.map?.repeat).toEqual([2, 3]);
     await expect.poll(async () => (await drawn(page))?.emissiveMap?.repeat).toEqual([4, 4]);
 
-    const tilingX = page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-0-albedo`);
+    const tilingX = page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-albedo`);
     await tilingX.fill('7');
     await tilingX.blur();
 
@@ -197,7 +197,7 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     // FIRST make the shared placement non-identity, through the shared row. Without
     // this the fallback is unobservable: the road skips a slot resolving to identity,
     // so a correct reset and a reset that never ran draw the same thing.
-    const sharedX = page.getByTestId(`inspector-uvtransform-tilingX-${child.id}-0`);
+    const sharedX = page.getByTestId(`inspector-uvtransform-tilingX-${child.id}`);
     await sharedX.fill('9');
     await sharedX.blur();
     await expect.poll(async () => (await materialChild(page))?.uvTransform.tiling?.[0]).toBe(9);
@@ -205,7 +205,7 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     // the vacuity guard for the reset below.
     await expect.poll(async () => (await drawn(page))?.map?.repeat).toEqual([2, 3]);
 
-    await page.getByTestId(`inspector-uvtransform-reset-${child.id}-0-albedo`).click();
+    await page.getByTestId(`inspector-uvtransform-reset-${child.id}-albedo`).click();
 
     // Side A — albedo's key is gone; emissive's remains, so the field remains.
     await expect.poll(async () => (await materialChild(page))?.perMap?.albedo).toBeUndefined();
@@ -215,17 +215,17 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     expect((await drawn(page))?.emissiveMap?.repeat).toEqual([4, 4]);
     // The row is gone with the entry, and the shared header stops saying "· shared"
     // only once NO map has its own — emissive still does, so it still says it.
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0-albedo`)).toHaveCount(0);
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-albedo`)).toHaveCount(0);
 
     // Resetting the LAST entry must remove the FIELD itself, not leave an empty bag:
     // an empty-but-present bag renders identically and keys differently, re-minting
     // every material on the next load with nothing visible to explain it.
-    await page.getByTestId(`inspector-uvtransform-reset-${child.id}-0-emissive`).click();
+    await page.getByTestId(`inspector-uvtransform-reset-${child.id}-emissive`).click();
     await expect
       .poll(async () => (await materialChild(page))?.ownKeys.includes('mapUvTransforms'))
       .toBe(false);
     await expect.poll(async () => (await drawn(page))?.emissiveMap?.repeat).toEqual([9, 1]);
-    await expect(page.getByTestId(`inspector-uvtransform-${child.id}-0`)).toContainText(
+    await expect(page.getByTestId(`inspector-uvtransform-${child.id}`)).toContainText(
       'Texture Placement',
     );
   });

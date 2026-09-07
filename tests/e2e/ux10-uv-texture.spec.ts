@@ -14,6 +14,8 @@
 //     only quad) → `none`, no image. The grid-only path is unchanged.
 
 import { test, expect } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
+import { importedChildren } from './_importedChild';
 
 const ASSET_REF = 'assets/albedo-textured-quad.gltf';
 const FIXTURE_URL = '/assets/albedo-textured-quad.gltf';
@@ -90,7 +92,8 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
     await importGltf(page, FIXTURE_URL, ASSET_REF);
 
     const assetId = await findNode(page, 'GltfAsset');
-    const childId = await findNode(page, 'GltfChild');
+    // #389 — the OBJECT half: the UV seam is fed a SELECTION id.
+    const childId = (await importedChildren(page))[0]?.objectId ?? null;
     expect(assetId).not.toBeNull();
     expect(childId).not.toBeNull();
 
@@ -127,7 +130,8 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
     // A glTF whose only texture is a metallic-roughness map (NOT base color) is
     // still "no backdrop" — the editor shows base color only.
     await importGltf(page, PLAIN_URL, PLAIN_REF);
-    const childId = await findNode(page, 'GltfChild');
+    // #389 — the OBJECT half: the UV seam is fed a SELECTION id.
+    const childId = (await importedChildren(page))[0]?.objectId ?? null;
     const child = await readTexture(page, childId!);
     console.log(`[ux10 tex plain child ${childId}] ${JSON.stringify(child)}`);
     expect(child.status).toBe('none');
@@ -163,7 +167,7 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
     });
     const editor = page.getByTestId('inspector-material-editor-n_box_data');
     if (!(await editor.isVisible())) {
-      await page.getByTestId('inspector-section-toggle-material').click();
+      await openInspectorSection(page, 'material');
     }
     await expect(editor).toBeVisible();
     await page

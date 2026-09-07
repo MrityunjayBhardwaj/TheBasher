@@ -60,6 +60,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { gltfChildDagId } from '../../../core/import/gltfImportChain';
+import { isImportedChild } from '../../../app/importedChild';
 import { bakeChannelOpsForBone } from './bakeChannelOps';
 import type { Vec3 } from '../../../nodes/types';
 import { activeClipForAsset, activeClipKeyframesForAsset } from '../../../timeline/clipChannelRows';
@@ -87,18 +88,29 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
   contract: {
     // The bake emits ONLY fresh addNode ops (no edges). No edge kinds to walk.
     requiredEdges: [],
-    // The bone (a GltfChild) must be in scope — see buildClosureSpec.
-    requiredNodeTypes: ['GltfChild'],
+    // The bone must be in scope — see buildClosureSpec. #389 split the fused kind, so
+    // the DISCRIMINATING type is the data half: after the split the bone's own node is an
+    // ordinary `Object`, which every box, light and camera also is, and requiring that
+    // would make this contract match anything posable. `GltfData` is what says "imported
+    // child", and the closure follows `data` to reach it.
+    requiredNodeTypes: ['GltfData'],
     // The clip is untouched (D-02 coexist); the bake CREATES editable curves.
     preserves: ['animation'],
   },
   buildClosureSpec(spec): ClosureSpec {
-    // Root on the bone's own dagId (a real node in the DAG). The baked channels
-    // themselves are fresh addNodes (gate-3 isFreshAddNode), so they need no
-    // closure membership. No edges to follow — the GltfChild is edge-less (R-1).
+    // Root on the bone's own dagId (a real node in the DAG — the Object half inherits
+    // it). The baked channels themselves are fresh addNodes (gate-3 isFreshAddNode), so
+    // they need no closure membership.
+    //
+    // #389 — `followedEdges` was EMPTY, on the reasoning that a fused GltfChild is
+    // edge-less (R-1). The bone is still edge-less as far as the SCENE goes, but it now
+    // has exactly one edge: `data`, to the half that says which child it is. Gate 4 walks
+    // the closure for `requiredNodeTypes`, so without this the mutator would reject
+    // itself on every bone — with a message about a missing GltfData rather than about
+    // the edge that was not followed.
     return {
       rootSelectors: [gltfChildDagId(spec.assetRef, spec.childName)],
-      followedEdges: [],
+      followedEdges: ['data'],
     };
   },
   preconditions(spec, _closure, state) {
@@ -110,8 +122,11 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
         reason: `No GltfChild for assetRef="${spec.assetRef}" childName="${spec.childName}".`,
       };
     }
-    if (child.type !== 'GltfChild') {
-      return { ok: false, reason: `Node "${childId}" is ${child.type}; expected GltfChild.` };
+    if (!isImportedChild(state.nodes, childId)) {
+      return {
+        ok: false,
+        reason: `Node "${childId}" is ${child.type}; expected an imported glTF child.`,
+      };
     }
     // A clip track must exist for this bone — otherwise there is nothing to bake.
     const keyframes = activeClipKeyframesForAsset(state.nodes, spec.assetRef).filter(
