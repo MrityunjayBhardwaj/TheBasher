@@ -112,7 +112,6 @@ import { projectGltfSkeleton } from './projectGltfSkeleton';
 import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
 import { specToThreeSkeleton } from './threeAdapter';
 import { retargetClip, resolveNameMapToSource, resolveNameMapToTarget } from './retarget';
-import { solveRestAlignment } from './restAlignment';
 import { getBoneNameMapPreset } from './boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 
@@ -227,15 +226,6 @@ async function measure(bvhPath: string): Promise<Measured> {
   const tBindRot = new Map<string, Quaternion>();
   for (const b of tBind) tBindRot.set(b.name, worldRot(b));
 
-  // WHICH BRANCH. Run against fresh skeletons so the posing below cannot
-  // contaminate the solve, and report it rather than inferring it from prose.
-  const { bones: sProbe } = specToThreeSkeleton(parsed.skeletonParams.bones);
-  const { bones: tProbe } = specToThreeSkeleton(target);
-  sProbe[0].updateMatrixWorld(true);
-  tProbe[0].updateMatrixWorld(true);
-  const targetToSource = Object.fromEntries(Object.entries(sourceToTarget).map(([s, t]) => [t, s]));
-  const branch = solveRestAlignment(sProbe, tProbe, targetToSource) ? 'aligned' : 'direction';
-
   const out = retargetClip({
     sourceBones: parsed.skeletonParams.bones,
     sourceClip: {
@@ -254,6 +244,12 @@ async function measure(bvhPath: string): Promise<Measured> {
     for (const k of keys) by.set(k.time, [...(by.get(k.time) ?? []), k]);
     return { times, by };
   };
+  // WHICH BRANCH — taken from the retarget's OWN report, not recomputed here. A
+  // second copy of this decision beside the one that chose the offsets is free to
+  // drift from it, and this row exists precisely because a claim about the branch
+  // drifted once already.
+  const branch = out.restReconciliation.kind;
+
   const S = index(parsed.clipParams.keyframes as unknown as K[]);
   const T = index(out.clipParams.keyframes as unknown as K[]);
   const frames = Math.min(S.times.length, T.times.length);
@@ -463,11 +459,18 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
       const targetToSource = Object.fromEntries(
         Object.entries(sourceToTarget ?? {}).map(([sn, tn]) => [tn, sn]),
       );
-      const { bones: sB } = specToThreeSkeleton(parsed.skeletonParams.bones);
-      const { bones: tB } = specToThreeSkeleton(target);
-      sB[0].updateMatrixWorld(true);
-      tB[0].updateMatrixWorld(true);
-      (solveRestAlignment(sB, tB, targetToSource) ? aligned : direction).push(rel);
+      void targetToSource;
+      const reported = retargetClip({
+        sourceBones: parsed.skeletonParams.bones,
+        sourceClip: {
+          name: parsed.clipParams.name,
+          duration: parsed.clipParams.duration,
+          keyframes: parsed.clipParams.keyframes,
+        },
+        targetBones: target,
+        nameMap: preset.map,
+      }).restReconciliation;
+      (reported.kind === 'aligned' ? aligned : direction).push(rel);
     }
 
     // The dangerous set, named. A new fixture that joins it is a clip whose roll

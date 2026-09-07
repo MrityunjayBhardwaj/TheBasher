@@ -95,6 +95,39 @@ export interface RetargetResult {
   readonly unmappedSourceBones: readonly string[];
   /** Target bones that no source bone mapped to — surface to UI. */
   readonly unboundTargetBones: readonly string[];
+  /**
+   * How the two rests were reconciled — and therefore whether the roll ABOUT
+   * each bone survived the transfer.
+   *
+   * `aligned` means the source rest supplied a body frame, so every bone got its
+   * third rotational degree of freedom and its twist away from its own bind is
+   * carried across (measured: within 0.5°).
+   *
+   * `direction` means it could not, and only bone DIRECTIONS were matched. A
+   * direction is two degrees of freedom out of three, so the roll is
+   * undetermined and lost — up to 153° on a rest that lays every bone on one
+   * axis. Nothing can recover it from such a rest: there is no second axis in it
+   * to recover it FROM, not even the shoulder line, which on one measured rest
+   * runs within 15° of 61 of its 62 bones (#854).
+   *
+   * Reported rather than acted on. What a director should SEE when a clip lands
+   * here is a product decision and is #960; this field is the fact that decision
+   * needs, and it describes the clip in hand rather than the export flag we
+   * hoped the other side set — `serve.py` currently passes `standard_tpose=True`
+   * and we never ask it to.
+   */
+  readonly restReconciliation:
+    | {
+        readonly kind: 'aligned';
+        /** RMS angle between the two rests before the whole-rig rotation, in degrees. */
+        readonly disagreementBefore: number;
+        /** ...and after it. What the per-bone offsets then absorb. */
+        readonly disagreementAfter: number;
+      }
+    // The two numbers do not exist on this arm — no rotation was solved — so
+    // they are absent from the type rather than reported as zero, which would
+    // read as "the rests agreed perfectly".
+    | { readonly kind: 'direction' };
 }
 
 /**
@@ -723,6 +756,16 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     // lookup that did not happen and calls a bound bone unmapped.
     unmappedSourceBones: findUnmappedSource(args.sourceBones, nameMap, args.targetBones),
     unboundTargetBones: findUnboundTarget(args.sourceBones, nameMap, args.targetBones),
+    // Which builder ran, reported from the branch itself rather than re-derived
+    // by a caller — a second copy of this decision would be free to drift from
+    // the one that actually chose the offsets.
+    restReconciliation: restAlignment
+      ? {
+          kind: 'aligned',
+          disagreementBefore: restAlignment.disagreementBefore,
+          disagreementAfter: restAlignment.disagreementAfter,
+        }
+      : { kind: 'direction' },
   };
 }
 
