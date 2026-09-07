@@ -6,64 +6,98 @@
 // taking the MINIMAL rotation, which adds no roll of its own.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// WHAT THIS MEASURES, AND WHY THE FIRST INSTRUMENT READ ZERO
+// WHICH BRANCH — READ THIS BEFORE PROBING ANYTHING IN THIS AREA
 // ─────────────────────────────────────────────────────────────────────────
-// #854 asks for "the roll of a bone about its own axis, rendered against source
-// … a row per bone rather than a single worst case — the whole signature of this
-// defect is that it is CONSTANT, so a gate that watches for change cannot see
-// it."
+// `retargetClip` picks between two offset builders, and the pair below takes
+// the ALIGNED one:
 //
-// The first attempt compared each bone's twist against its OWN rig's bind and
-// read 0.0° on fifteen of seventeen bones. That number is real and it is
-// useless: the residual IS a difference between the two binds, so subtracting
-// each bind removes exactly the quantity under test. An instrument can move with
-// the subject and still be blind to what you are asking it.
+//     solveRestAlignment(...) -> non-null  =>  alignedLocalOffsets     <- here
+//                             -> null      =>  restDirectionLocalOffsets
+//
+// That is asserted rather than assumed, because it was assumed once and cost
+// two probes: both perturbed `restDirectionLocalOffsets`, which does not run for
+// this pair, and both returned a clean 0.0° that read as a result. The prose
+// beside the branch said null was the ordinary answer; it had been true and was
+// not any more. Row 2 pins the routing so the next probe is aimed before it is
+// fired.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// THE FINDING, WHICH IS SHARPER THAN "A CONSTANT PER-BONE DIFFERENCE"
+// WHAT THIS MEASURES — TWO QUANTITIES, AND ONLY ONE OF THEM IS AN ERROR
 // ─────────────────────────────────────────────────────────────────────────
-// Measured on all seventeen mapped bones: the rendered-against-source roll is
-// EXACTLY the angle between the two rigs' bind orientations about that bone.
-// Not approximately — the two agree to a tenth of a degree, on every bone, on
-// every frame:
+// CROSS, rendered against SOURCE: the twist between the two rigs' absolute
+// orientations. Measured on all seventeen mapped bones it is EXACTLY the angle
+// between the two rigs' BIND orientations about that bone — to a tenth of a
+// degree, on every bone, on every frame:
 //
 //     resid  +90.0   bindDiff  +90.0    Chest       -> mixamorig_Spine2
 //     resid  -90.0   bindDiff  -90.0    LeftArm     -> mixamorig_LeftArm
 //     resid  +47.6   bindDiff  +47.6    RightFoot   -> mixamorig_RightFoot
 //
-// So the retarget adds no roll of its own and removes none. The residual is not
-// an error accumulating through the pipeline — it is the two binds' disagreement
-// passed through intact, which is what "the source's twist passes through
-// unchanged" means when it is measured rather than asserted.
+// 🔴 THAT QUANTITY IS NOT THE DEFECT, AND AN EARLIER READING OF THIS FILE SAID
+// IT WAS. The pipeline composes `T_b(t) = R · W_b(t) · R⁻¹ · B_b`
+// (`restAlignment.ts`), whose whole point is that the target sits at its OWN
+// bind when the source sits at its rest. The two rigs disagree by a right angle
+// about which way is "up" around a bone — a bone-axis CONVENTION — and the
+// per-bone offset exists to absorb exactly that. If the cross residual were
+// zero the target's mesh would be deformed at rest. So this identity records
+// that the retarget adds no roll of its own and removes none, which is a real
+// invariant; it is not a measure of anything lost.
 //
-// That pins the fix as well as the defect: recovering the roll means subtracting
-// the bind difference wherever a second axis can determine it, and introducing
-// NO frame-varying term. A fix that leaves any spread behind has done something
-// other than what this file records.
+// OWN-BIND, each rig against ITS OWN bind about ITS OWN axis: the quantity a
+// retarget is actually obliged to preserve. If the source twists a bone 30° away
+// from its rest, the target must twist 30° away from its bind. Measured on this
+// pair:
 //
-// Confirmed from the other side: neutralising `restDirectionLocalOffsets`
-// entirely reds ELEVEN rows in `retarget.test.ts` and moves these numbers by
-// 0.0°. Direction alignment and roll are orthogonal, measured rather than
-// argued.
+//     0.00°  on fifteen of seventeen bones, every frame
+//     0.47°  worst, at the two feet
 //
-// 🔴 ROWS 2 AND 3 BOTH RED WHEN #854 IS FIXED, deliberately, and row 2 goes
-// first. Measured, by injecting a -90° roll into `alignedLocalOffsets` — the
-// live path for this pair — which drives the residual to 0.0°: row 2 reports
-// "residual 0.0° differs from the bind difference 90.0°". Read literally that
-// message is right and its inference is not; a fix IS the retarget contributing
-// roll of its own, on purpose. Whoever recovers the roll updates both rows and
-// says why. This file records what is true now so that change is argued rather
-// than a number that quietly moved.
+// The roll is recovered here. It is recovered by the REST ALIGNMENT, which
+// supplies the third degree of freedom uniformly — `alignedLocalOffsets` says so
+// in its own docstring — and not by any per-bone second axis.
 //
-// The magnitudes are a property of the two rigs' axis conventions rather than of
-// the code: this pair disagrees by a clean right angle on limbs and spine, and
-// by 47.6° at the feet. On the vendor pair #854 recorded +84° and +82°.
+// 🔑 THE OWN-BIND ROWS ARE FALSIFIED, because a 0.00° from an instrument nobody
+// has broken is indistinguishable from an instrument that cannot move. Injecting
+// a 20° roll into `alignedLocalOffsets` reads back 20.00° on the arms on every
+// frame and 20.00° on every bone at the source's rest. Row 6 is a measurement,
+// not a caption.
 //
-// REF: src/core/import/retarget.ts (`restDirectionLocalOffsets`, the single
-//      `setFromUnitVectors`, and the header that states the missing second axis);
+// ─────────────────────────────────────────────────────────────────────────
+// WHERE #854 IS STILL REAL, AND WHY ITS PROPOSED FIX CANNOT GO THERE
+// ─────────────────────────────────────────────────────────────────────────
+// On the DIRECTION branch the roll genuinely is lost, and by more than #854
+// recorded. Own-bind, over every BVH fixture on disk:
+//
+//     aligned branch    9 fixtures    worst 0.5°-32.3°   mean 0.1°-2.6°
+//     soma-walk         direction     worst 90.0°        mean 39.4°
+//     soma-generated    direction     worst 153.4°       mean 86.6°
+//
+// Row 7 pins that, so recovering it reds deliberately.
+//
+// #854 proposes recovering the roll from a second axis both rigs agree on — the
+// shoulder line. Measured on the rests that actually reach this branch, that
+// axis is not there to take:
+//
+//     soma-walk        shoulder line |v| = 0.32, and 61 of its 62 bones run
+//                      within 15° of it — a rank-1 rest lays the shoulder line
+//                      on the same axis as everything else
+//     soma-generated   shoulder line |v| = 0.0000 — both shoulders sit at one
+//                      point
+//     soma-walk-tpose  |v| = 0.79, healthy — and this rest takes the ALIGNED
+//                      branch, which does not need it
+//
+// So the second axis is degenerate on precisely the inputs that need it and
+// unnecessary on the ones where it is healthy. There is no second axis in a
+// rank-1 rest; that is what rank-1 means. The remedy that does work is the
+// T-pose conditioning of #855 — every conditioned clip takes the aligned branch
+// and measures clean. What is missing is the SIGNAL when conditioning did not
+// happen, which is #960.
+//
+// REF: src/core/import/retarget.ts:686-691 (the branch);
+//      src/core/import/restAlignment.ts (`solveRestAlignment`,
+//      `alignedLocalOffsets`, and the composition this file's argument rests on);
 //      src/core/import/restAlignmentFixture.test.ts (the harness this borrows,
 //      whose foot-contact row gates the RECONCILIATION and says in as many words
-//      that it does not gate this residual); issues #854, #853.
+//      that it does not gate this residual); issues #854, #853, #855, #960.
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -75,11 +109,14 @@ import { projectGltfSkeleton } from './projectGltfSkeleton';
 import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
 import { specToThreeSkeleton } from './threeAdapter';
 import { retargetClip, resolveNameMapToSource, resolveNameMapToTarget } from './retarget';
+import { solveRestAlignment } from './restAlignment';
 import { getBoneNameMapPreset } from './boneNameMaps';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 
 const RIG = resolve(process.cwd(), 'public/fixtures/rig/standin-character.glb');
 const TPOSE = resolve(process.cwd(), 'public/fixtures/anim/soma-walk-tpose.bvh');
+/** The rank-1 rest: reaches the direction branch, where #854 is still real. */
+const RANK1 = resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh');
 const DEG = 180 / Math.PI;
 
 async function targetRig(): Promise<readonly BoneSpec[]> {
@@ -113,13 +150,17 @@ function twistDeg(q: Quaternion, axis: Vector3): number {
 
 interface Row {
   readonly pair: string;
-  /** Rendered against source, about the bone's own axis: the residual #854 names. */
+  /** Rendered against source, about the bone's own axis: the CONVENTION difference. */
   readonly mean: number;
-  /** How much that residual varies across the clip. Its smallness IS the signature. */
+  /** How much that varies across the clip. Its smallness IS the signature. */
   readonly spread: number;
-  /** The angle between the two rigs' BIND orientations about this bone. The
-   *  residual turns out to equal this exactly, which is the finding. */
+  /** The angle between the two rigs' BIND orientations about this bone. `mean`
+   *  turns out to equal this exactly, which is what "the retarget adds no roll
+   *  of its own" means when it is measured rather than asserted. */
   readonly bindDiff: number;
+  /** Each rig's twist away from ITS OWN bind about ITS OWN axis, target minus
+   *  source, worst over the clip. THIS is the quantity #854 is about. */
+  readonly ownWorst: number;
 }
 
 /** Rest direction of each bone toward its first mapped descendant, in that bone's own frame. */
@@ -155,10 +196,17 @@ const wrap = (d: number): number => {
   return x;
 };
 
-async function measure(): Promise<{ frames: number; rows: Row[] }> {
+interface Measured {
+  readonly frames: number;
+  readonly rows: Row[];
+  /** Which offset builder this pair routes to. Asserted, never assumed. */
+  readonly branch: 'aligned' | 'direction';
+}
+
+async function measure(bvhPath: string): Promise<Measured> {
   const target = await targetRig();
   const preset = getBoneNameMapPreset('somaToMixamo')!;
-  const parsed = parseBvh(readFileSync(TPOSE, 'utf8'), 'walk', BVH_UNIT_SCALE_CENTIMETRES);
+  const parsed = parseBvh(readFileSync(bvhPath, 'utf8'), 'walk', BVH_UNIT_SCALE_CENTIMETRES);
   const sourceToTarget = resolveNameMapToTarget(
     resolveNameMapToSource(preset.map, parsed.skeletonParams.bones),
     target,
@@ -175,6 +223,15 @@ async function measure(): Promise<{ frames: number; rows: Row[] }> {
   const tRest = restDirs(tBind, (n) => targetMapped.has(n));
   const tBindRot = new Map<string, Quaternion>();
   for (const b of tBind) tBindRot.set(b.name, worldRot(b));
+
+  // WHICH BRANCH. Run against fresh skeletons so the posing below cannot
+  // contaminate the solve, and report it rather than inferring it from prose.
+  const { bones: sProbe } = specToThreeSkeleton(parsed.skeletonParams.bones);
+  const { bones: tProbe } = specToThreeSkeleton(target);
+  sProbe[0].updateMatrixWorld(true);
+  tProbe[0].updateMatrixWorld(true);
+  const targetToSource = Object.fromEntries(Object.entries(sourceToTarget).map(([s, t]) => [t, s]));
+  const branch = solveRestAlignment(sProbe, tProbe, targetToSource) ? 'aligned' : 'direction';
 
   const out = retargetClip({
     sourceBones: parsed.skeletonParams.bones,
@@ -204,6 +261,7 @@ async function measure(): Promise<{ frames: number; rows: Row[] }> {
 
   const resid = new Map<string, number[]>();
   const bindRel = new Map<string, number[]>();
+  const ownDelta = new Map<string, number[]>();
   for (let i = 0; i < frames; i++) {
     for (const k of S.by.get(S.times[i]) ?? []) {
       const b = sBind[k.bone];
@@ -229,17 +287,21 @@ async function measure(): Promise<{ frames: number; rows: Row[] }> {
       const tq = tBindRot.get(tName);
       if (!sd || !td || !sb || !tb || !sq || !tq) continue;
 
-      // The residual: rendered against SOURCE, in one frame. Not each against its
-      // own bind — the rest offset is exactly what makes that agree.
+      // CROSS: rendered against SOURCE, absolute. The convention difference.
       const r = wrap(twistDeg(worldRot(sb).clone().invert().multiply(worldRot(tb)), sd));
-      // What the residual is being compared AGAINST: the two binds' own
-      // disagreement about "up" around this bone, with no clip involved at all.
+      // What that is compared AGAINST: the two binds' own disagreement about
+      // "up" around this bone, with no clip involved at all.
       const bd = wrap(twistDeg(sq.clone().invert().multiply(tq), sd));
-      if (Number.isNaN(r) || Number.isNaN(bd)) continue;
-      void td;
+      // OWN-BIND: each rig against its own bind, about its own axis. Needs no
+      // correspondence between the two rest POSES, so it is the one measure
+      // that means the same thing on both branches.
+      const sOwn = twistDeg(sq.clone().invert().multiply(worldRot(sb)), sd);
+      const tOwn = twistDeg(tq.clone().invert().multiply(worldRot(tb)), td);
+      if (Number.isNaN(r) || Number.isNaN(bd) || Number.isNaN(sOwn) || Number.isNaN(tOwn)) continue;
       const pair = `${sName} -> ${tName}`;
       resid.set(pair, [...(resid.get(pair) ?? []), r]);
       bindRel.set(pair, [bd]);
+      ownDelta.set(pair, [...(ownDelta.get(pair) ?? []), Math.abs(wrap(tOwn - sOwn))]);
     }
   }
 
@@ -250,56 +312,110 @@ async function measure(): Promise<{ frames: number; rows: Row[] }> {
       mean: avg(v),
       spread: Math.max(...v) - Math.min(...v),
       bindDiff: (bindRel.get(pair) ?? [NaN])[0],
+      ownWorst: Math.max(...(ownDelta.get(pair) ?? [NaN])),
     };
   });
-  return { frames, rows };
+  return { frames, rows, branch };
 }
 
-describe('#854 — the unrecovered roll, per bone', () => {
-  it("is a CONSTANT that equals the two binds' own disagreement, and it is large", async () => {
-    const m = await measure();
+describe('#854 — the roll, per bone, on the branch this pair actually takes', () => {
+  it('recovers the roll on the ALIGNED branch, and the cross residual is convention, not error', async () => {
+    const m = await measure(TPOSE);
 
-    // The population beside the verdict. Seventeen mapped bones; a probe that
-    // measured none would otherwise report three clean passes.
+    // 1. The population beside the verdict. Seventeen mapped bones; a probe that
+    //    measured none would otherwise report a column of clean passes.
     expect(m.rows.length, 'no mapped bone was measured — every check below would be vacuous').toBe(
       17,
     );
     expect(m.frames, 'too few frames for "constant" to mean anything').toBeGreaterThan(20);
 
+    // 2. THE ROUTING FACT. Perturbing the other builder for this pair changes
+    //    nothing and reads as a discovery; it is a wrong aim. Pinned so the next
+    //    probe is aimed before it is fired.
+    expect(
+      m.branch,
+      'this pair no longer takes `alignedLocalOffsets`, so every number below is ' +
+        'about a different code path than the one this file argues over',
+    ).toBe('aligned');
+
     for (const r of m.rows) {
-      // 1. THE SIGNATURE: constant, not drifting. This is why a gate watching for
-      //    change could never have seen the defect.
+      // 3. THE SIGNATURE: constant, not drifting. This is why a gate watching for
+      //    change could never have seen the defect #854 describes.
       expect(
         r.spread,
-        `${r.pair}: the residual varies by ${r.spread.toFixed(2)}° across the clip, so it is no ` +
-          `longer the constant offset #854 describes and this row is measuring something else`,
+        `${r.pair}: the cross residual varies by ${r.spread.toFixed(2)}° across the clip, so it ` +
+          `is no longer the constant convention offset this file records`,
       ).toBeLessThan(1);
 
-      // 2. THE IDENTITY, which is the finding: the residual is EXACTLY the two
-      //    binds' disagreement. The retarget adds no roll of its own and removes
-      //    none. A fix must subtract this and introduce nothing frame-varying.
+      // 4. THE IDENTITY: the cross residual is EXACTLY the two binds' own
+      //    disagreement. The retarget adds no roll of its own and removes none.
       expect(
         Math.abs(wrap(r.mean - r.bindDiff)),
-        `${r.pair}: residual ${r.mean.toFixed(1)}° differs from the bind difference ` +
+        `${r.pair}: cross residual ${r.mean.toFixed(1)}° differs from the bind difference ` +
           `${r.bindDiff.toFixed(1)}° by ${Math.abs(wrap(r.mean - r.bindDiff)).toFixed(1)}°, so ` +
-          `the retarget is contributing roll of its own. If that was DELIBERATE — #854's second ` +
-          `axis — this row and the magnitudes below are what you came to change. If it was not, ` +
-          `it is a new defect, because until now this residual was exactly the binds' own ` +
-          `disagreement and nothing else`,
+          `the retarget is contributing roll of its own where before it passed the two rigs' ` +
+          `axis conventions through intact`,
+      ).toBeLessThan(1);
+
+      // 6. THE CONTRACT: each rig's twist away from ITS OWN bind, about ITS OWN
+      //    axis, must agree. This is what a retarget owes, and it is what #854
+      //    is about. Falsified — a 20° roll injected into `alignedLocalOffsets`
+      //    reads back 20.00° here.
+      expect(
+        r.ownWorst,
+        `${r.pair}: the target twists ${r.ownWorst.toFixed(1)}° away from its own bind more than ` +
+          `the source does from its own, so the roll is no longer being carried across`,
       ).toBeLessThan(1);
     }
 
-    // 3. THE RESIDUAL ITSELF — recorded, not accepted. REDS WHEN #854 IS FIXED.
-    const worst = m.rows.reduce((a, b) => (Math.abs(b.mean) > Math.abs(a.mean) ? b : a));
-    const quietest = m.rows.reduce((a, b) => (Math.abs(b.mean) < Math.abs(a.mean) ? b : a));
+    // 5. The bind differences are LARGE, and that is what makes row 4 mean
+    //    something: "residual equals bindDiff" is satisfiable by both being
+    //    zero. These magnitudes are the positive control for that identity, not
+    //    a defect — they are the two rigs' bone-axis conventions, which the
+    //    per-bone offset exists to absorb.
+    const widest = m.rows.reduce((a, b) => (Math.abs(b.bindDiff) > Math.abs(a.bindDiff) ? b : a));
+    const narrowest = m.rows.reduce((a, b) =>
+      Math.abs(b.bindDiff) < Math.abs(a.bindDiff) ? b : a,
+    );
     expect(
-      Math.abs(worst.mean),
-      `the worst unrecovered roll is ${worst.mean.toFixed(1)}° at ${worst.pair}`,
+      Math.abs(widest.bindDiff),
+      `the two rigs' widest convention difference is ${widest.bindDiff.toFixed(1)}° at ` +
+        `${widest.pair}; if this collapsed, row 4 would be comparing zero against zero`,
     ).toBeGreaterThan(80);
     expect(
-      Math.abs(quietest.mean),
-      `even the quietest bone (${quietest.pair}) carries ${quietest.mean.toFixed(1)}°, so this is ` +
-        `every bone rather than a few awkward ones`,
+      Math.abs(narrowest.bindDiff),
+      `even the closest-agreeing bone (${narrowest.pair}) differs by ` +
+        `${narrowest.bindDiff.toFixed(1)}°, so row 4 is exercised on every bone rather than a few`,
     ).toBeGreaterThan(40);
+  });
+
+  it('LOSES the roll on the DIRECTION branch, which is where #854 is still real', async () => {
+    const m = await measure(RANK1);
+
+    expect(m.rows.length, 'no mapped bone was measured — the verdict below would be vacuous').toBe(
+      17,
+    );
+    // The routing fact again, the other way. If this rest starts taking the
+    // aligned branch — someone conditioned the fixture — the numbers below stop
+    // being about #854 and this row says so rather than the bound quietly passing.
+    expect(
+      m.branch,
+      'soma-walk.bvh no longer routes to `restDirectionLocalOffsets`, so this row is no ' +
+        'longer measuring the branch #854 is about',
+    ).toBe('direction');
+
+    // 7. REDS WHEN #854 IS FIXED, deliberately. A rank-1 rest carries no second
+    //    axis to recover the roll FROM — measured: its shoulder line runs within
+    //    15° of 61 of its 62 bones — so a fix here is a change of road (#855's
+    //    conditioning) or a refusal (#960), not a better arithmetic.
+    const worst = m.rows.reduce((a, b) => (b.ownWorst > a.ownWorst ? b : a));
+    expect(
+      worst.ownWorst,
+      `the worst unrecovered roll on the direction branch is now ` +
+        `${worst.ownWorst.toFixed(1)}° at ${worst.pair}. If it dropped because the roll is being ` +
+        `recovered, that is #854 and this row is what you came to change — say how, given that ` +
+        `this rest has no second axis in it. If it dropped because the fixture changed, the row ` +
+        `above will have gone first`,
+    ).toBeGreaterThan(60);
   });
 });

@@ -20,15 +20,25 @@
 // the target's own bind. At the source's rest (W = I) the target sits exactly at
 // its bind, which is the identity case this construction is gated on.
 //
-// WHEN THIS IS AVAILABLE, AND WHY IT USUALLY IS NOT. A rest can only supply a
-// body frame if its bones point in more than one direction. The clips this
-// project receives today are exported against a rest that lays every bone on a
-// single axis: the eigen-spread of its directions measures 0.947 / 0.053 / 0.000
-// — a third dimension of exactly zero. There is no orientation to solve for, and
-// `solveRestAlignment` returns null so the caller keeps the per-bone direction
-// alignment that is correct for that case. A rest exported as a real T-pose
-// measures 0.582 / 0.303 / 0.115 against the target bind's 0.571 / 0.300 / 0.129,
-// and the disagreement between the two is very nearly one rotation.
+// WHEN THIS IS AVAILABLE, AND WHY IT NOW USUALLY IS. A rest can only supply a
+// body frame if its bones point in more than one direction. A rest that lays
+// every bone on a single axis has an eigen-spread of 0.947 / 0.053 / 0.000 — a
+// third dimension of exactly zero — so there is no orientation to solve for and
+// this returns null. A rest exported as a real T-pose measures
+// 0.582 / 0.303 / 0.115 against the target bind's 0.571 / 0.300 / 0.129, and the
+// disagreement between the two is very nearly one rotation.
+//
+// This note used to say the rank-1 case was what the project receives. #855's
+// T-pose conditioning changed that, and the note outlived it: censused over
+// every BVH fixture on disk, NINE of thirteen now solve non-null, including the
+// whole `assets/motion` library and the served Kimodo output. Null is the
+// exception and it marks a clip conditioning did not reach.
+//
+// THE CONSEQUENCE, MEASURED. On this branch a bone's twist away from its own
+// bind is carried across to within 0.5°; on the null branch it is lost by up to
+// 153°, because there is no second axis in a rank-1 rest to recover it from —
+// not even the shoulder line, which on such a rest runs within 15° of 61 of its
+// 62 bones. See `retargetRoll.gate.test.ts`, #854 and #960.
 
 import { Matrix4, Quaternion, Vector3, type Bone } from 'three';
 
@@ -189,8 +199,10 @@ function rmsDisagreement(
  * Solve the whole-rig rotation between two rests, or return null when the two
  * rests do not correspond well enough for one to exist.
  *
- * Null is the ordinary answer for the clips this project receives today, and the
- * caller must keep its per-bone behaviour for that case — see the module note.
+ * Null now means a rest that #855's conditioning did not reach: nine of the
+ * thirteen BVH fixtures on disk solve non-null. The caller must keep its
+ * per-bone behaviour for the null case, and that case loses the roll — see the
+ * module note, `retargetRoll.gate.test.ts` and #960.
  */
 export function solveRestAlignment(
   sourceBoneObjs: readonly Bone[],

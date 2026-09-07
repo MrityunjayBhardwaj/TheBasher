@@ -666,9 +666,17 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // animates the bones, so a rotation put on the root BONE would be overwritten
   // frame by frame, while the wrapper is untouched by the mixer.
   //
-  // `solveRestAlignment` returns null for the rests this project receives today
-  // (they lay every bone on one axis, so there is no orientation to solve for),
-  // and the per-bone direction alignment is kept unchanged for them.
+  // WHICH BRANCH RUNS, MEASURED RATHER THAN ASSUMED. This comment used to say
+  // null was the answer for the rests this project receives today. That was true
+  // when written and is now false, and two probes went into the dead arm on the
+  // strength of it. Censused over every BVH fixture on disk: NINE of thirteen
+  // solve non-null and take `alignedLocalOffsets` — the whole `assets/motion`
+  // library, the served Kimodo output, and the T-pose-conditioned soma clip.
+  // Null is now the exception, and it means a rank-1 rest that #855's
+  // conditioning did not reach. On that arm the roll is genuinely lost (up to
+  // 153° measured) and nothing reports it — see #960.
+  // Gated in `retargetRoll.gate.test.ts`, which asserts the branch for one
+  // fixture of each kind so a future probe is aimed before it is fired.
   const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
   if (restAlignment) {
     sourceWrap.quaternion.copy(restAlignment.rotation);
