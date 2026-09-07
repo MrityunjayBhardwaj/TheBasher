@@ -416,12 +416,95 @@ function walkDirection(name, f) {
       0,
     ).normalize();
   }
-  if (name.includes('Shoulder')) return new THREE.Vector3(0, 0.15, side).normalize();
+  if (name.includes('Shoulder')) {
+    // #858 — the shoulder GIRDLE rides the torso twist. Static, this contributed
+    // nothing to the shoulder triple; the arm's fore-aft swing alone moved that
+    // angle 0.7°, because a swing about the fore-aft axis is very nearly
+    // perpendicular to the plane the shoulder and upper arm span, and an angle
+    // barely changes when one arm of it moves out of plane.
+    const roll = f === 0 ? 0 : 0.12 * Math.sin(phase * 2);
+    return new THREE.Vector3(roll, 0.15, side).normalize();
+  }
   if (inArm(name)) {
     // An A-pose: down and away from the body, counter-swinging the legs.
-    return new THREE.Vector3(Math.sin(-swing * 0.3), -0.9, side * 0.45).normalize();
+    //
+    // #858 — TWO things changed here, and both were needed for a reason the
+    // measurement made plain rather than for realism.
+    //
+    // 1. The fore-aft term was 0.3 and moved the SHOULDER angle 0.7° across the
+    //    whole clip. The shoulder triple is the angle between this direction and
+    //    the (fixed) shoulder's, so a small term here is a smaller number there.
+    // 2. Every arm joint got the IDENTICAL direction, which makes the arm a
+    //    straight rod: the elbow triple is the angle between the upper arm's
+    //    direction and the forearm's, and two equal vectors subtend a constant
+    //    180°. Measured 0.0°, on every frame, for both elbows — not small, not
+    //    noisy, structurally incapable of moving.
+    //
+    // So the forearm now FLEXES relative to the upper arm. `1 - cos` rather than
+    // `sin` so it is zero at f = 0 (the A-pose calibration frame the retarget
+    // reads as the source's rest) and one-signed after — an elbow bends one way.
+    const flex = f === 0 ? 0 : 0.6 * (1 - Math.cos(phase));
+    const fore = Math.sin(-swing) * 0.32;
+    // ABDUCTION — the arm lifting away from the body. This is the term that
+    // actually moves the shoulder angle, and the reason is geometric rather than
+    // anatomical: it acts ALONG the shoulder's own axis, i.e. inside the plane
+    // the two directions span, where the fore-aft swing acts across it. Measured:
+    // fore-aft alone 0.7° -> 1.4° when doubled; adding this reaches double
+    // figures. A fixture is a measurement instrument, so the term is chosen for
+    // what it can reveal, and it is a motion a walk really has.
+    const abduct = f === 0 ? 0 : 0.09 * (1 - Math.cos(phase));
+    if (name.includes('Arm') && !name.includes('ForeArm')) {
+      return new THREE.Vector3(fore, -0.9, side * (0.45 + abduct)).normalize();
+    }
+    // ForeArm and Hand carry the flexion. The hand continues the forearm, so the
+    // wrist stays a straight continuation — the wrists are leaf bones and their
+    // own correction is what #854 is about; giving them a bend here would put a
+    // second explanation in front of that one.
+    return new THREE.Vector3(fore + flex, -0.9 + flex * 0.25, side * (0.45 + abduct)).normalize();
   }
-  return new THREE.Vector3(0, 1, 0); // spine, neck, head — up
+
+  // #858 — THE SPINE, NECK AND HEAD. This used to be `(0, 1, 0)` for every joint
+  // above the hips, on every frame, which is why four of the twelve measured
+  // joints moved and everything from the spine up read EXACTLY 0.0°.
+  //
+  // The rule the fix follows: for a triple (A, B, C), the angle at B is
+  // 180° minus the angle between A's chain direction and B's. So the triple moves
+  // if and only if CONSECUTIVE joints point differently, and differently over
+  // time. Identical directions give a constant 180° however elaborate they look.
+  //
+  // Hence alternating signs down the chain — a real walk counter-rotates the
+  // torso against the hips, and the counter-rotation is also what makes each
+  // consecutive pair differ. `sin(2·phase)` on the lateral axis so the twist runs
+  // at twice the stride, which is anatomically right and, more usefully here,
+  // gives the spine a period the legs do not share: a consumer that mixed the two
+  // up cannot be masked by them agreeing.
+  //
+  // Every term is zero at f = 0, so the calibration frame is still the clean
+  // A-pose. `Hips` is deliberately NOT in this family — it keeps `(0, 1, 0)`, or
+  // the two hip triples that already work would move for a new reason.
+  const twist = f === 0 ? 0 : Math.sin(phase * 2);
+  const nod = f === 0 ? 0 : 1 - Math.cos(phase);
+  switch (name) {
+    case 'Spine1':
+      return new THREE.Vector3(0.18 * swing, 1, 0.1 * twist).normalize();
+    case 'Spine2':
+      return new THREE.Vector3(-0.2 * swing, 1, -0.12 * twist).normalize();
+    case 'Chest':
+      return new THREE.Vector3(0.16 * swing, 1, 0.14 * twist).normalize();
+    case 'Neck1':
+      return new THREE.Vector3(-0.22 * swing, 1, 0.16 * nod).normalize();
+    case 'Neck2':
+      // The head must differ from its parent SOMEWHERE in the clip or no
+      // head-specific regression can ever be caught — #853 sat 42° off at this
+      // joint and the stand-in read 0.0° before the fix and 0.0° after. The nod
+      // rides a different term from the twist above it, so the head is not simply
+      // carried along by the neck.
+      return new THREE.Vector3(0.2 * nod, 1, -0.18 * swing).normalize();
+    case 'Head':
+      return new THREE.Vector3(0.25 * nod, 1, 0.12 * swing).normalize();
+    default:
+      return new THREE.Vector3(0, 1, 0); // hips and the leaf ends — up
+  }
 }
 
 /**

@@ -174,6 +174,17 @@ describe('a differential against Blender (#857)', () => {
     //
     // The bar is set at what is really there rather than at what would be nice,
     // because a bar the fixture cannot clear is a red that teaches nothing.
+    //
+    // #858 — what is really there is now ALL TWELVE. It was four: the legs moved
+    // and everything from the spine up read exactly 0.0°, so this gate could not
+    // fail on a defect in the spine, neck, head, elbows or wrists, which is most
+    // of the bones and — on the evidence of the last five defects — most of the
+    // risk. #853 is the proof: the head sat 42° off at the neck on the vendor
+    // pair, and the stand-in read 0.0° off before the fix and 0.0° after.
+    //
+    // So the bar is EVERY compared joint, not a count with slack in it. A joint
+    // that stops moving is the fixture regressing to the state that made this
+    // gate decorative, and there is no reading of that which should stay green.
     const lo = new Map<string, number>();
     const hi = new Map<string, number>();
     for (const frame of frames) {
@@ -192,7 +203,26 @@ describe('a differential against Blender (#857)', () => {
           .sort((a, b) => b[1] - a[1])
           .map(([k, d]) => `${k} ${d.toFixed(1)}°`)
           .join(', ')}`,
-    ).toBeGreaterThan(3);
+    ).toBe(TRIPLES.length);
+
+    // ...and with margin, so "moves" is not a joint trembling just over the line.
+    // Stated separately because the count above would be satisfied by twelve
+    // joints at 5.1° each, which is the same nearly-static agreement this row
+    // exists to refuse.
+    //
+    // The quietest is a shoulder at 8.4°, and its ceiling is not arbitrary: the
+    // term that moves the shoulder angle is the arm lifting AWAY from the body,
+    // and `generated-character-generated-motion.spec.ts` separately requires the
+    // upper arm to stay more than 50° below horizontal — the #845 guard against
+    // arms held out toward the target's T-pose bind. Measured at 54.7°, so the
+    // two requirements are both met and neither has much room. Anyone raising
+    // this bar has to spend that margin, and should read #845 first.
+    const quietest = Math.min(...travel.map(([, d]) => d));
+    expect(
+      quietest,
+      `the quietest joint travels only ${quietest.toFixed(1)}°, so the clip is closer to ` +
+        `static than the count above admits`,
+    ).toBeGreaterThan(7);
   });
 
   it('records the method, so the oracle cannot drift without saying so', () => {
