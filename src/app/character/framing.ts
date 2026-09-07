@@ -24,11 +24,17 @@ import { useThreeRef } from './threeRef';
 const DEFAULT_OFFSET = new THREE.Vector3(3, 2, 3);
 
 /** Read the world-space "anchor" position for a DAG node. Best-effort:
- *   - Transform / Camera / Light: read params.position when present.
+ *   - anything carrying `params.position` (Transform / Camera / Light / Group,
+ *     including the Group an import mints — it bakes position = the model centre).
  *   - Character: evaluate at current scrub time and read CharacterValue.position.
  *   - Otherwise: null (no anchor available).
- */
-function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
+ *
+ *  EXPORTED FOR TESTING (#856). Which nodes can be framed was previously
+ *  unstated and untested, and the two ways of finding out were reading this
+ *  function or noticing that the camera did not move. A director's report that
+ *  "Frame Selected does nothing" is a claim about THIS set, so the set needs to
+ *  be assertable without a camera. */
+export function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
   const dag = useDagStore.getState().state;
   const node = dag.nodes[nodeId];
   if (!node) return null;
@@ -53,11 +59,15 @@ function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
 }
 
 /** Apply a new target to OrbitControls + translate the camera so the
- *  camera-to-target offset is preserved. */
-function applyTarget(target: THREE.Vector3): void {
+ *  camera-to-target offset is preserved.
+ *
+ *  Returns whether it actually moved a camera. There is no camera before the
+ *  viewport mounts, and "no camera" is indistinguishable at the call site from
+ *  "framed successfully" unless it is reported. */
+function applyTarget(target: THREE.Vector3): boolean {
   const cam = useThreeRef.getState().camera;
   const ctrlTarget = useThreeRef.getState().controlsTarget;
-  if (!cam) return;
+  if (!cam) return false;
   if (ctrlTarget) {
     const offset = new THREE.Vector3().subVectors(cam.position, ctrlTarget);
     cam.position.copy(target).add(offset);
@@ -67,16 +77,30 @@ function applyTarget(target: THREE.Vector3): void {
   }
   cam.lookAt(target);
   cam.updateMatrixWorld();
+  return true;
 }
 
-/** Frame the primary selection. No-op when nothing is selected or the node
- *  has no anchor. */
-export function frameSelected(): void {
+/**
+ * Frame the primary selection. Returns whether it framed anything.
+ *
+ * #856 — IT HAS ALWAYS HAD TWO WAYS OF DOING NOTHING, and only one of them was
+ * visible to callers. Nothing selected is the obvious one. The other is a node
+ * with no anchor, which is silent and is the one a director actually hits: the
+ * report is "Frame Selected does nothing on my character", and the affordance
+ * that exists to make the button always useful (`homeFrame`) was guarding on
+ * `primaryNodeId !== null` — a PROXY for "this will work" rather than the thing
+ * itself. So it called through and the fallback never fired.
+ *
+ * Reporting rather than falling back here on purpose: this function's contract
+ * is "frame the selection", and whether a failure should become Frame All is a
+ * question about the affordance, which is where the answer now lives.
+ */
+export function frameSelected(): boolean {
   const primary = useSelectionStore.getState().primaryNodeId;
-  if (!primary) return;
+  if (!primary) return false;
   const anchor = anchorForNode(primary);
-  if (!anchor) return;
-  applyTarget(anchor);
+  if (!anchor) return false;
+  return applyTarget(anchor);
 }
 
 /** Frame all top-level scene children — average their anchors. Falls back

@@ -701,7 +701,15 @@ export function MenuBar() {
         <Item
           label="Frame Selected"
           shortcut="F"
-          onSelect={frameSelected}
+          // frameSelected reports whether it framed anything (#856). The MENU
+          // deliberately does not fall back — Frame All is the next item down,
+          // and a menu entry that quietly did the neighbouring thing would be
+          // harder to reason about than one that does nothing. The Home button
+          // in the viewport toolbar is the affordance that promises to always
+          // act, and that is where the fallback lives.
+          onSelect={() => {
+            frameSelected();
+          }}
           testId="menu-view-frame-selected"
         />
         <Item label="Frame All" shortcut="Home" onSelect={frameAll} testId="menu-view-frame-all" />
