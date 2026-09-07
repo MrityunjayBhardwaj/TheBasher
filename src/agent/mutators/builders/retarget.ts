@@ -111,11 +111,20 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   buildClosureSpec(spec): ClosureSpec {
     return {
       rootSelectors: [spec.sourceClipId, spec.sourceSkeletonId, spec.targetSkeletonId],
-      // No followed edges: a `GltfSkeleton` target's upstream `GltfAsset` is
-      // read via `evaluate()` inside build(), which is NOT an op — so it never
-      // enters the op-closure the gate validates (every emitted op targets the
-      // fresh output clip or a closure root). Matches the pre-Wave-G contract.
-      followedEdges: [],
+      // ONE 'parent' hop (#907) — the clips already bound to the target rig.
+      //
+      // A bind now stands its predecessor down, and 'parent' walks consumer-side:
+      // any node listing a root in its inputs. A clip lists the skeleton it is
+      // bound to, so one hop from `targetSkeletonId` is exactly the set of
+      // siblings the rebind may touch, and `maxDepth: 1` stops it being more.
+      //
+      // Declared rather than worked around, and the gate is why: it REFUSED the
+      // stand-down op as out-of-closure the first time, which is the system
+      // working. A mutator that reaches further than it declares is the thing
+      // this gate exists to catch; the answer is to declare the reach, not to
+      // move the write somewhere the gate cannot see it.
+      followedEdges: ['parent'],
+      maxDepth: 1,
     };
   },
   preconditions(spec, _closure, state) {
@@ -217,7 +226,8 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         type: 'addNode',
         nodeId: outputId,
         nodeType: 'RetargetClip',
-        params: { name: spec.outputName ?? '' },
+        // ACTIVE — this is the clip the director just asked for (#907).
+        params: { name: spec.outputName ?? '', active: true },
       },
       {
         type: 'connect',
@@ -236,6 +246,38 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         to: { node: outputId, socket: 'skeleton' },
       },
     ];
+
+    // LAST BIND WINS, and the predecessor is DEACTIVATED rather than unbound
+    // (#907). Before this, both clips stayed bound and the walk broke the tie by
+    // clip id — so which motion played was decided by the alphabetical order of
+    // the two source filenames, and dropping a second walk onto a character did
+    // one of two completely different things depending on what the files were
+    // called. Both looked like a successful bind.
+    //
+    // The reference's model, and the reason this is not an unbind: an animated
+    // data-block has ONE active action, and assigning a new one auto-stashes the
+    // previous onto a muted track — it is still there to unmute or delete. A
+    // director may well want two clips on a rig; what they could not do was say
+    // which one is playing.
+    //
+    // Emitted in the SAME op batch as the bind, so the two land atomically: a
+    // batch that added the new clip without standing the old one down would put
+    // two active clips on one rig, which is the state this flag exists to make
+    // unrepresentable.
+    // Iterated over the CLOSURE rather than over the whole graph: every op this
+    // emits is then inside the declared set by construction, instead of being
+    // checked against it afterwards.
+    for (const id of _closure.nodes) {
+      if (id === outputId) continue;
+      const node = _state.nodes[id];
+      if (!node) continue;
+      if (node.type !== 'AnimationClip' && node.type !== 'RetargetClip') continue;
+      if (edgeSource(node, 'skeleton') !== spec.targetSkeletonId) continue;
+      // Only clips that ARE active: a no-op setParam on every sibling would put
+      // undo entries and dirty params on nodes nothing asked about.
+      if ((node.params as { active?: unknown }).active !== true) continue;
+      ops.push({ type: 'setParam', nodeId: id, paramPath: 'active', value: false });
+    }
 
     return ops;
   },

@@ -22,6 +22,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { Bone, AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes, type ClipShape } from './threeAdapter';
+import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface FbxSkeletonParams {
   readonly bones: readonly BoneSpec[];
@@ -30,7 +31,7 @@ export interface FbxSkeletonParams {
 export interface FbxClipParams {
   readonly name: string;
   readonly duration: number;
-  readonly loop: boolean;
+  readonly loop: ClipLoop;
   readonly keyframes: readonly AnimationKeyframe[];
 }
 
@@ -62,7 +63,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
       skeletonParams: { bones: skeletonBones },
-      clipParams: { name, duration: 0, loop: false, keyframes: [] },
+      clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
     };
   }
 
@@ -78,7 +79,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       // the endpoint, and since #924 an asserted `true` makes a one-shot travel
       // away from its own end instead of stopping there. The skeleton-only branch
       // above has always said `false`; these two now agree.
-      loop: false,
+      loop: 'hold',
       keyframes,
     },
   };

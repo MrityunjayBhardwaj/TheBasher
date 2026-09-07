@@ -88,10 +88,13 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
   // only the pair would have thrown the director's request away.
   expect(added.sort()).toEqual(['AnimationClip', 'MotionGenerate', 'Skeleton']);
 
-  // The clip is wired to the skeleton and to time — the connects the import chain
-  // makes — AND its `source` resolves to the minted producer BY ID, not merely to
-  // "some node". Matching on the id is what separates a fed clip from a clip and
-  // a generator that happen to have landed in the same graph.
+  // The clip is wired to the skeleton — the connect the import chain makes, not
+  // a pair of orphans — AND its `source` resolves to the minted producer BY ID,
+  // not merely to "some node". Matching on the id is what separates a fed clip
+  // from a clip and a generator that happen to have landed in the same graph.
+  //
+  // It is NOT wired to time and has no socket for one: a clip is time-free
+  // (#920), and the consumer that samples it holds the clock.
   const wired = await page.evaluate(() => {
     const entries = Object.entries(
       (
@@ -113,14 +116,12 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
     const producerId = entries.find(([, n]) => n.type === 'MotionGenerate')?.[0];
     return {
       hasSkeletonInput: Boolean(clip?.inputs?.skeleton),
-      hasTimeInput: Boolean(clip?.inputs?.time),
       clipSourceIsTheProducer: Boolean(producerId) && clip?.inputs?.source?.node === producerId,
       skeletons: entries.filter(([, n]) => n.type === 'Skeleton').length,
     };
   });
   expect(wired).toEqual({
     hasSkeletonInput: true,
-    hasTimeInput: true,
     clipSourceIsTheProducer: true,
     skeletons: 1,
   });

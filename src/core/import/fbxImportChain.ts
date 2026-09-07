@@ -9,7 +9,6 @@
 
 import { parseFbx } from './fbx';
 import type { Op } from '../../core/dag/types';
-import type { DagState } from '../../core/dag/state';
 
 export interface FbxImportChainResult {
   readonly ops: Op[];
@@ -21,7 +20,6 @@ export interface FbxImportChainArgs {
   readonly data: ArrayBuffer | string;
   readonly name?: string;
   readonly ids?: { skeleton: string; clip: string };
-  readonly timeSourceId?: string;
 }
 
 let counter = 0;
@@ -35,22 +33,13 @@ export function __resetFbxImportCounterForTests(): void {
   counter = 0;
 }
 
-export function buildFbxImportOps(args: FbxImportChainArgs, state: DagState): FbxImportChainResult {
+export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResult {
   const parsed = parseFbx(args.data, args.name ?? 'imported-fbx');
 
   const ids = args.ids ?? {
     skeleton: uniqueId('fbx_skel'),
     clip: uniqueId('fbx_clip'),
   };
-
-  const timeId = args.timeSourceId ?? findTimeSource(state);
-  if (!timeId) {
-    throw new Error(
-      'No TimeSource node in DAG. Default projects seed `n_time` (PR #40); ' +
-        'this project has been mutated to remove it. Add a TimeSource node ' +
-        'before importing animation.',
-    );
-  }
 
   const ops: Op[] = [
     {
@@ -70,19 +59,7 @@ export function buildFbxImportOps(args: FbxImportChainArgs, state: DagState): Fb
       from: { node: ids.skeleton, socket: 'out' },
       to: { node: ids.clip, socket: 'skeleton' },
     },
-    {
-      type: 'connect',
-      from: { node: timeId, socket: 'out' },
-      to: { node: ids.clip, socket: 'time' },
-    },
   ];
 
   return { ops, skeletonId: ids.skeleton, clipId: ids.clip };
-}
-
-function findTimeSource(state: DagState): string | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === 'TimeSource') return node.id;
-  }
-  return null;
 }

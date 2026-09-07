@@ -57,10 +57,15 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import { retargetClip } from '../core/import/retarget';
 import type { AnimationClipValue, BoneNameMapValue, SkeletonValue } from './types';
+import { clipLoopOf } from './clipLoop';
 
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
   name: z.string().default(''),
+  /** Is this the clip the director most recently bound? (#907) Mirrors
+   *  `AnimationClip.active` — both are clip carriers in the one walk, so a flag
+   *  on only one of them would leave the other's binds ordered by id. */
+  active: z.boolean().default(false),
 });
 export type RetargetClipParams = z.infer<typeof RetargetClipParams>;
 
@@ -95,7 +100,7 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
         kind: 'AnimationClip',
         name: params.name || (sourceClip?.name ?? 'clip'),
         duration: sourceClip?.duration ?? 0,
-        loop: sourceClip?.loop ?? true,
+        loop: clipLoopOf(sourceClip?.loop),
         keyframes: [],
         skeleton: target ?? EMPTY_SKELETON,
       };

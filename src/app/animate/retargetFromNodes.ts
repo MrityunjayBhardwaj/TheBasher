@@ -39,6 +39,7 @@ import { projectGltfSkeleton } from '../../core/import/projectGltfSkeleton';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { clipLoopOf } from '../../nodes/clipLoop';
 
 /** Projections are keyed on the captured skin object, which import writes once. */
 const projectedSkins = new WeakMap<object, readonly BoneSpec[]>();
@@ -193,7 +194,7 @@ export function retargetClipParamsFromNodes(
       duration: typeof sourceParams.duration === 'number' ? sourceParams.duration : 0,
       keyframes: sourceParams.keyframes as AnimationClipParams['keyframes'],
       // #919 — the source's own time domain travels with its keys.
-      loop: sourceParams.loop !== false,
+      loop: clipLoopOf(sourceParams.loop),
     },
     targetBones,
     nameMap: map as Readonly<Record<string, string>>,

@@ -73,7 +73,7 @@ describe('parseBvh', () => {
     //
     // A director who wants cycling says so: `loop` is a schema'd boolean and
     // the Inspector has rendered a checkbox for it since #136.
-    expect(parseBvh(SYNTHETIC_BVH, 'wave').clipParams.loop).toBe(false);
+    expect(parseBvh(SYNTHETIC_BVH, 'wave').clipParams.loop).toBe('hold');
   });
 
   it('emits keyframes for animated bones, sorted by (time, bone)', () => {

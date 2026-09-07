@@ -69,17 +69,12 @@ function graph(): DagState {
       type: 'addNode',
       nodeId: 'clip',
       nodeType: 'AnimationClip',
-      params: { name: 'placeholder', duration: 2, loop: true, keyframes: [] },
+      params: { name: 'placeholder', duration: 2, loop: 'cycle-offset', keyframes: [] },
     },
     {
       type: 'connect',
       from: { node: 'skel', socket: 'out' },
       to: { node: 'clip', socket: 'skeleton' },
-    },
-    {
-      type: 'connect',
-      from: { node: 'n_time', socket: 'out' },
-      to: { node: 'clip', socket: 'time' },
     },
     {
       type: 'connect',
@@ -214,7 +209,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
         type: 'addNode',
         nodeId: 'other',
         nodeType: 'AnimationClip',
-        params: { name: 'x', duration: 1, loop: false, keyframes: [] },
+        params: { name: 'x', duration: 1, loop: 'hold', keyframes: [] },
       },
       {
         type: 'connect',

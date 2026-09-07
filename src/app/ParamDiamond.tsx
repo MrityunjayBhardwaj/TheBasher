@@ -25,8 +25,12 @@ import { useDagStore } from '../core/dag/store';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
-import { boneComponentAddress, paramAnimationDisplayState } from './animate/clipRowMint';
-import { useTimeStore } from './stores/timeStore';
+import {
+  boneComponentAddress,
+  diamondActivation,
+  paramAnimationDisplayState,
+} from './animate/clipRowMint';
+import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
 
 export function ParamDiamond({
@@ -88,9 +92,44 @@ export function ParamDiamond({
         : 'text-fg/40 hover:text-accent'; // gray — not animated
 
   const onActivate = (alt: boolean) => {
+    // 🔴 ALT NEVER REACHES THE KEYING PATH (#912).
+    //
+    // The delete branch below is gated on an authored channel existing, so on a
+    // clip-driven bone — `authoredState === 'none'`, the normal state of almost
+    // every bone since copy-on-write — an Alt-click used to fall PAST it onto
+    // `keyParamFromTransient` and create a key. The gesture the button's own
+    // tooltip documents as *delete* performed a *create*.
+    //
+    // The behaviour predates #908; what #908 changed is reachability. It turned
+    // this diamond green, and green is precisely the signal that says "there is
+    // animation here", which is what invites the Alt-click. A correct indicator
+    // put a foot on a rake that was already lying there.
+    //
+    // A clip key is not the director's to delete — the clip is read-only and
+    // shared, which is why the diamond deliberately never lights yellow from it.
+    // So this refuses, VISIBLY: a silent return on a green control is the thing
+    // that reads as a broken button. The sentence is the mutator's own
+    // (`channelAddress.ts` — "it follows the clip; there is nothing to remove"),
+    // reached by addressing the bone rather than restated here, so the diamond
+    // and the dopesheet cannot drift into two wordings for one refusal.
+    const action = diamondActivation(alt, authoredState);
+
+    if (action === 'refuse-nothing-authored') {
+      const boneAddr = boneComponentAddress(useDagStore.getState().state, nodeId, paramPath);
+      const refusal = boneAddr
+        ? dispatchMutatorFromUI(
+            'mutator.timeline.removeKeyframes',
+            { bone: boneAddr, scope: { time: frame / FRAMES_PER_SECOND } },
+            `Delete key ${nodeId}.${paramPath}`,
+          )
+        : { ok: false as const, reason: `${paramPath} has no key of yours to remove.` };
+      if (!refusal.ok) window.alert?.(refusal.reason);
+      return;
+    }
+
     // DELETE path (unchanged): an on-key click OR Alt-click on an animated param
     // removes the on-key sample (Blender's toggle). Off-key Alt is a silent no-op.
-    if (authoredState !== 'none' && (authoredState === 'on-key' || alt)) {
+    if (action === 'delete') {
       const resolved = resolveChannel(nodes, nodeId, paramPath, frame);
       if (!resolved) {
         window.alert?.('Channel not found for animated param.');
@@ -135,7 +174,11 @@ export function ParamDiamond({
       data-anim-state={animState}
       data-transient={isTransient || undefined}
       aria-label={`Toggle keyframe for ${paramPath} (${animState})`}
-      title="Click to key/unkey at the playhead. Alt-click to delete a key."
+      title={
+        authoredState === 'none'
+          ? 'Click to key at the playhead. This follows its clip — there is no key of yours to delete.'
+          : 'Click to key/unkey at the playhead. Alt-click to delete a key.'
+      }
       className={`select-none px-1 text-[11px] leading-none ${colorClass} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
       onClick={(e) => onActivate(e.altKey)}
     >
