@@ -22,7 +22,7 @@
 //
 // NOTE (a silent-boundary trap): `new MeshBVH(geometry)` REORDERS the geometry's index
 // buffer in place to group triangles spatially, so a hit's `faceIndex` indexes into the
-// REORDERED index. We therefore recover a hit face's vertices from `geometry.getIndex()`
+// REORDERED index. We therefore recover a hit TRIANGLE's vertices from `geometry.getIndex()`
 // AFTER the build, never from the original index passed in.
 //
 // REF: src/app/rayMesh.ts (the brute-force oracle + shared xf/normalize/faceNormalToward);
@@ -39,7 +39,7 @@ import {
   type Vec3,
 } from './rayMesh';
 
-/** A world-space BVH over one mesh's triangle soup + the data to recover a hit face. */
+/** A world-space BVH over one mesh's triangle soup + the data to recover a hit triangle. */
 export interface MeshBvh {
   readonly bvh: MeshBVH;
   /** World-space vertex positions (the baked geometry's `position` array). */
@@ -52,7 +52,8 @@ export interface MeshBvh {
  * Build a world-space BVH over the given LOCAL triangle soup. The world matrix is baked
  * into the vertex positions here (once) with the SAME `xf` the brute-force core applies per
  * triangle, so the BVH indexes the identical world triangles. A non-indexed buffer gets a
- * sequential index so every path is indexed (and `faceIndex` maps predictably).
+ * sequential index so every path is indexed (and three-mesh-bvh's `faceIndex` — a TRIANGLE
+ * index, not a polygon one — maps predictably).
  */
 export function buildMeshBvh(
   positions: ArrayLike<number>,
@@ -82,12 +83,20 @@ export function buildMeshBvh(
   return { bvh, worldPositions: world, index: finalIndex };
 }
 
-/** The three world-space vertices of triangle `faceIndex` (into the reordered index). */
-function faceVerts(mb: MeshBvh, faceIndex: number): [Vec3, Vec3, Vec3] {
+/**
+ * The three world-space vertices of triangle `triangleIndex` (into the reordered index).
+ *
+ * NOT `faceIndex`, and not `faceVerts`: since #770 a face in this substrate is a POLYGON,
+ * while `triangleIndex * 3` addresses a triangle. The old name stated the opposite of what
+ * the arithmetic does — and it disagreed with its own docstring, which already said
+ * "triangle". Passing a polygon index here compiles, runs, and returns another triangle's
+ * vertices, so the name is the only thing standing between a reader and a wrong answer.
+ */
+function triangleVerts(mb: MeshBvh, triangleIndex: number): [Vec3, Vec3, Vec3] {
   const p = mb.worldPositions;
-  const i0 = mb.index[faceIndex * 3];
-  const i1 = mb.index[faceIndex * 3 + 1];
-  const i2 = mb.index[faceIndex * 3 + 2];
+  const i0 = mb.index[triangleIndex * 3];
+  const i1 = mb.index[triangleIndex * 3 + 1];
+  const i2 = mb.index[triangleIndex * 3 + 2];
   return [
     [p[i0 * 3], p[i0 * 3 + 1], p[i0 * 3 + 2]],
     [p[i1 * 3], p[i1 * 3 + 1], p[i1 * 3 + 2]],
@@ -132,7 +141,9 @@ export function raycastMeshBvh(
       const t = h.distance;
       // Same skip logic as the brute-force core: closest keeps strict-min, farthest strict-max.
       if (best && (farthest ? t <= best.distance : t >= best.distance)) continue;
-      const [a, b, c] = faceVerts(mb, h.faceIndex ?? 0);
+      // `h.faceIndex` is three-mesh-bvh's word and means a TRIANGLE. The rename stops at
+      // this boundary deliberately: renaming their field would misreport its source.
+      const [a, b, c] = triangleVerts(mb, h.faceIndex ?? 0);
       best = {
         point: [h.point.x, h.point.y, h.point.z],
         normal: faceNormalToward(a, b, c, origin),
@@ -150,7 +161,8 @@ export function raycastMeshBvh(
 export function nearestPointMeshBvh(mb: MeshBvh, query: Vec3): RayHit | null {
   const res = mb.bvh.closestPointToPoint(_query.set(query[0], query[1], query[2]), _cpTarget);
   if (!res) return null;
-  const [a, b, c] = faceVerts(mb, res.faceIndex);
+  // `res.faceIndex` — three-mesh-bvh's word for a triangle, as at the raycast site above.
+  const [a, b, c] = triangleVerts(mb, res.faceIndex);
   return {
     point: [res.point.x, res.point.y, res.point.z],
     normal: faceNormalToward(a, b, c, query),
