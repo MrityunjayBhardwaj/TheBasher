@@ -14,7 +14,7 @@
 // bytes too — that is the `.basher` bundle's job (V41), out of scope for the JSON.
 //
 // REF: src/app/studioProfiles.ts (the in-app reader/builders); src/nodes/LightRig.ts;
-//      src/nodes/AreaLight.ts; src/nodes/TrackTo.ts;
+//      src/nodes/LightData.ts; src/nodes/TrackTo.ts;
 //      /tmp/bls-study/src/light_profiles.py (the grounded reference); vyapti V63.
 
 import { z } from 'zod';

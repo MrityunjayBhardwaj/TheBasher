@@ -35,7 +35,7 @@
 //
 // REF: issue #339; src/nodes/TrackTo.ts (the template); src/app/nodeConstraints.ts (the
 //      enumeration + the position fold); src/app/curveSampleSource.ts (the arc-length
-//      seam); src/nodes/Curve.ts.
+//      seam); src/nodes/CurveData.ts.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
