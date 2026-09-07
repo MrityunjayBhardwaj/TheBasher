@@ -53,6 +53,11 @@ export interface GroundVec {
  */
 const MIN_SEGMENT = 1e-6;
 
+// (`MotionGenerationCapability.MIN_HEADING_LENGTH` is the same number guarding
+// the EXPLICIT road, where a caller states headings this function never sees. It
+// is a separate constant on purpose — that one bounds a unitless direction, this
+// one a distance in metres.)
+
 /**
  * One facing per waypoint, from the direction of travel.
  *

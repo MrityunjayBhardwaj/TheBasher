@@ -196,6 +196,18 @@ export interface MotionGenerationCapability {
 export const MAX_MOTION_SECONDS = 600;
 
 /**
+ * Shortest vector still readable as a facing.
+ *
+ * Numerically equal to `pathHeadings.MIN_SEGMENT` and deliberately NOT shared
+ * with it: that one is a distance in metres between two waypoints, this one is
+ * the magnitude of a unitless direction. They answer the same question at two
+ * points on two different quantities, and tying them to one symbol would claim a
+ * relationship the units do not support — if the waypoint threshold ever moves
+ * for a reason about scene scale, this must not move with it.
+ */
+export const MIN_HEADING_LENGTH = 1e-6;
+
+/**
  * Upper bound on a clip's sampling rate, checked on the RESULT rather than on the
  * request — the bound survived the field's removal because its reason did, but it
  * had to be re-aimed rather than patched onto whatever was left.
@@ -238,7 +250,35 @@ export const MotionGenerationRequestSchema = z
     constraints: z
       .object({
         waypoints: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).optional(),
-        headings: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).optional(),
+        // 🔴 A DIRECTION, AND `{x: 0, z: 0}` IS FINITE WITHOUT BEING ONE (#961).
+        //
+        // `tangentHeadings` guards its own output against this — a curve shorter
+        // than its sample count repeats a point, and normalising that is NaN,
+        // "which the server would accept as a heading and the model would honour
+        // as garbage". A caller supplying headings explicitly bypasses that
+        // guard, and the explicit road is the whole reason the field exists.
+        //
+        // It decides more than one direction now: `headings[0]` sets the rotation
+        // the placement will undo, and `atan2(0, 0)` is 0 — indistinguishable
+        // from a caller who genuinely asked for the canonical facing. So a
+        // degenerate first heading is wrong on both halves at once and says
+        // nothing about it. Refused here rather than normalised, because a
+        // zero-length direction is not a facing anyone can be given: inventing
+        // one would be the fabrication the refusal exists to prevent.
+        //
+        // An un-normalised but non-zero heading is deliberately ALLOWED —
+        // `headingAngle` is scale-invariant, so it is unambiguous.
+        headings: z
+          .array(
+            z
+              .object({ x: z.number().finite(), z: z.number().finite() })
+              .refine((h) => Math.hypot(h.x, h.z) >= MIN_HEADING_LENGTH, {
+                message:
+                  'must be a direction with a length — [0, 0] states no facing rather than ' +
+                  'the canonical one, and there is no facing to derive from it',
+              }),
+          )
+          .optional(),
       })
       .optional(),
   })

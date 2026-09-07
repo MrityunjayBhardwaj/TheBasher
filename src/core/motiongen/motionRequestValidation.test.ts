@@ -103,6 +103,79 @@ describe('degenerate numbers are refused, not clamped (#751)', () => {
   });
 });
 
+// #961 — a heading is a DIRECTION, and finite is not the same as directional.
+// `{x: 0, z: 0}` passes every numeric check and is not a facing. It also decides
+// more than one direction: `headings[0]` sets the rotation the placement will
+// undo, and `atan2(0, 0)` is 0 — indistinguishable from a caller who genuinely
+// asked for the canonical facing. So a degenerate first heading is wrong on both
+// halves of the placement at once, confidently, with nothing downstream able to
+// notice. The derivation road guards this already; the explicit road is the one
+// that exists for a caller to bypass the derivation.
+describe('a heading must be a direction, not merely finite (#961)', () => {
+  const withHeadings = (headings: { x: number; z: number }[]) => ({
+    ...ok,
+    constraints: {
+      waypoints: [
+        { x: 0, z: 0 },
+        { x: 0, z: 2 },
+      ],
+      headings,
+    },
+  });
+
+  it.each([
+    [
+      'a zero-length first heading — reads as "the canonical facing"',
+      [
+        { x: 0, z: 0 },
+        { x: 0, z: 1 },
+      ],
+    ],
+    [
+      'a zero-length heading further down the path',
+      [
+        { x: 0, z: 1 },
+        { x: 0, z: 0 },
+      ],
+    ],
+  ])('refuses %s', (_label, headings) => {
+    expect(() => assertValidMotionRequest(withHeadings(headings))).toThrow(
+      MotionRequestInvalidError,
+    );
+  });
+
+  it('ALLOWS an un-normalised heading — the angle is scale-invariant', () => {
+    // Deliberately not refused, and worth a row so nobody "tightens" it later:
+    // `{x: 2, z: 0}` states +X unambiguously. Normalising is a kindness, not a
+    // correctness question, and refusing it would reject a caller who is right.
+    expect(() =>
+      assertValidMotionRequest(
+        withHeadings([
+          { x: 2, z: 0 },
+          { x: 2, z: 0 },
+        ]),
+      ),
+    ).not.toThrow();
+  });
+
+  it('names the field, so the caller learns WHICH heading was not a direction', () => {
+    try {
+      assertValidMotionRequest(
+        withHeadings([
+          { x: 0, z: 1 },
+          { x: 0, z: 0 },
+        ]),
+      );
+      throw new Error('expected a refusal');
+    } catch (err) {
+      expect(err).toBeInstanceOf(MotionRequestInvalidError);
+      expect((err as MotionRequestInvalidError).issues.join(' ')).toMatch(
+        /constraints\.headings\.1/,
+      );
+    }
+  });
+});
+
 describe('the refusal names the offending field, so a caller can learn from it', () => {
   it('reports the field path, not a generic failure', () => {
     try {
