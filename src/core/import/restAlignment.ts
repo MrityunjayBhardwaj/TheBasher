@@ -29,10 +29,12 @@
 // disagreement between the two is very nearly one rotation.
 //
 // This note used to say the rank-1 case was what the project receives. #855's
-// T-pose conditioning changed that, and the note outlived it: censused over
-// every BVH fixture on disk, NINE of thirteen now solve non-null, including the
-// whole `assets/motion` library and the served Kimodo output. Null is the
-// exception and it marks a clip conditioning did not reach.
+// T-pose conditioning changed that, and the note outlived it: SEVEN of the
+// eleven tracked fixtures now solve non-null, including the whole
+// `assets/motion` library, and so does the untracked served output when it is
+// present. Null is the exception and it marks a clip conditioning did not reach.
+// That census is a row in `retargetRoll.gate.test.ts` rather than a number here,
+// so the next time it moves something reds.
 //
 // THE CONSEQUENCE, MEASURED. On this branch a bone's twist away from its own
 // bind is carried across to within 0.5°; on the null branch it is lost by up to
@@ -199,10 +201,10 @@ function rmsDisagreement(
  * Solve the whole-rig rotation between two rests, or return null when the two
  * rests do not correspond well enough for one to exist.
  *
- * Null now means a rest that #855's conditioning did not reach: nine of the
- * thirteen BVH fixtures on disk solve non-null. The caller must keep its
- * per-bone behaviour for the null case, and that case loses the roll — see the
- * module note, `retargetRoll.gate.test.ts` and #960.
+ * Null now means a rest that #855's conditioning did not reach: seven of the
+ * eleven TRACKED fixtures solve non-null, and which four do not is gated. The
+ * caller must keep its per-bone behaviour for the null case, and that case loses
+ * the roll — see the module note, `retargetRoll.gate.test.ts` and #960.
  */
 export function solveRestAlignment(
   sourceBoneObjs: readonly Bone[],

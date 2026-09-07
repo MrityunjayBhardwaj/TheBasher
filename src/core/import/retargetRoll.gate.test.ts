@@ -65,9 +65,11 @@
 // WHERE #854 IS STILL REAL, AND WHY ITS PROPOSED FIX CANNOT GO THERE
 // ─────────────────────────────────────────────────────────────────────────
 // On the DIRECTION branch the roll genuinely is lost, and by more than #854
-// recorded. Own-bind, over every BVH fixture on disk:
+// recorded. Own-bind, over every BVH fixture on disk (seven of the eleven
+// TRACKED ones take the aligned branch, and so do the two untracked served-output
+// clips when present — the routing itself is gated in the third row below):
 //
-//     aligned branch    9 fixtures    worst 0.5°-32.3°   mean 0.1°-2.6°
+//     aligned branch    9 present     worst 0.5°-32.3°   mean 0.1°-2.6°
 //     soma-walk         direction     worst 90.0°        mean 39.4°
 //     soma-generated    direction     worst 153.4°       mean 86.6°
 //
@@ -101,6 +103,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { Quaternion, Vector3, type Bone } from 'three';
 import { parseGltfContainer, resolveBuffers } from './glb';
@@ -417,5 +420,79 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
         `this rest has no second axis in it. If it dropped because the fixture changed, the row ` +
         `above will have gone first`,
     ).toBeGreaterThan(60);
+  });
+
+  // ── THE CENSUS, AS A ROW RATHER THAN A SENTENCE ──────────────────────────
+  //
+  // Which fixtures take which builder is a fact this file's argument rests on,
+  // and a count written into prose has no detector — which is exactly how the
+  // comments beside the branch came to be wrong. So it is asserted here.
+  //
+  // TRACKED fixtures only, via `git ls-files`. The two served-output clips in
+  // `public/assets/` are untracked, so a gate that counted them would be a false
+  // green on a fresh checkout and a false red on a machine holding a different
+  // set. Both of those solve non-null when present.
+  it('routes the tracked fixtures, and only these four reach the branch that loses roll', async () => {
+    const tracked = execFileSync('git', ['ls-files', '-z', '--', '*.bvh'], {
+      encoding: 'utf8',
+      cwd: process.cwd(),
+    })
+      .split('\0')
+      .filter(Boolean);
+    // The denominator. A glob that matched nothing would otherwise report a
+    // clean pass over an empty set.
+    expect(
+      tracked.length,
+      'git ls-files found no tracked BVH fixture, so every claim below is vacuous',
+    ).toBeGreaterThanOrEqual(11);
+
+    const target = await targetRig();
+    const preset = getBoneNameMapPreset('somaToMixamo')!;
+    const direction: string[] = [];
+    const aligned: string[] = [];
+    for (const rel of tracked) {
+      const parsed = parseBvh(
+        readFileSync(resolve(process.cwd(), rel), 'utf8'),
+        'clip',
+        BVH_UNIT_SCALE_CENTIMETRES,
+      );
+      const sourceToTarget = resolveNameMapToTarget(
+        resolveNameMapToSource(preset.map, parsed.skeletonParams.bones),
+        target,
+      ) as Record<string, string> | null;
+      const targetToSource = Object.fromEntries(
+        Object.entries(sourceToTarget ?? {}).map(([sn, tn]) => [tn, sn]),
+      );
+      const { bones: sB } = specToThreeSkeleton(parsed.skeletonParams.bones);
+      const { bones: tB } = specToThreeSkeleton(target);
+      sB[0].updateMatrixWorld(true);
+      tB[0].updateMatrixWorld(true);
+      (solveRestAlignment(sB, tB, targetToSource) ? aligned : direction).push(rel);
+    }
+
+    // The dangerous set, named. A new fixture that joins it is a clip whose roll
+    // is silently lost (#960); a fixture that leaves it has been conditioned,
+    // and the prose in this file's header is then owed an update.
+    //
+    // Two of these four carry no usable bone map at all, so their null is the
+    // MIN_PAIRS refusal rather than a rank-1 rest. They are listed because this
+    // row is about routing, and routing is what decides whether the roll survives.
+    expect(
+      [...direction].sort(),
+      'the set of tracked fixtures reaching `restDirectionLocalOffsets` has changed',
+    ).toEqual([
+      'public/fixtures/anim/mixamo-naming.bvh',
+      'public/fixtures/anim/soma-generated.bvh',
+      'public/fixtures/anim/soma-walk.bvh',
+      'public/fixtures/anim/walk.bvh',
+    ]);
+    // ...and the other arm is genuinely populated, so the row above is not
+    // satisfied by everything having fallen into one bucket.
+    expect(
+      aligned.length,
+      'no tracked fixture solves non-null any more, so the aligned branch this file measures ' +
+        'is no longer reachable from anything committed',
+    ).toBe(tracked.length - 4);
+    expect(aligned.length).toBeGreaterThanOrEqual(7);
   });
 });

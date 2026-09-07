@@ -669,9 +669,12 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // WHICH BRANCH RUNS, MEASURED RATHER THAN ASSUMED. This comment used to say
   // null was the answer for the rests this project receives today. That was true
   // when written and is now false, and two probes went into the dead arm on the
-  // strength of it. Censused over every BVH fixture on disk: NINE of thirteen
-  // solve non-null and take `alignedLocalOffsets` — the whole `assets/motion`
-  // library, the served Kimodo output, and the T-pose-conditioned soma clip.
+  // strength of it. Censused over the TRACKED fixtures — and gated as a row in
+  // `retargetRoll.gate.test.ts`, because a count in prose has no detector, which
+  // is how this comment went wrong in the first place: SEVEN of eleven solve
+  // non-null and take `alignedLocalOffsets`, the whole `assets/motion` library
+  // plus the T-pose-conditioned soma clip. The untracked served output solves
+  // non-null too, when it is present.
   // Null is now the exception, and it means a rank-1 rest that #855's
   // conditioning did not reach. On that arm the roll is genuinely lost (up to
   // 153° measured) and nothing reports it — see #960.
