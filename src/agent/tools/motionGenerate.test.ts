@@ -260,7 +260,14 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // derivation moved to where the property actually lives. The guard did not
     // get weaker: a real fold node reds it either way, and this now also reds on
     // a list socket that the old count would have read as a single.
+    //
+    // #935 added a THIRD entry and it is deliberately not a fold: `AnimationClip`
+    // gained a `source` socket naming the node that PRODUCED its keys, and it
+    // takes exactly one. One pose socket on a node that has no other cannot hold
+    // two clips, so the property is untouched and only the census moved — which
+    // is the distinction this row exists to force someone to make.
     expect(poseConsumingSockets()).toEqual([
+      'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.clip: AnimationClip (single)',
       'RetargetClip.sourceClip: AnimationClip (single)',
     ]);

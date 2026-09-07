@@ -96,7 +96,20 @@ describe('resolvePendingMotionGenerations (#902)', () => {
     const { cap, requests } = countingCapability();
     const out = await resolvePendingMotionGenerations(s, cap);
 
-    expect(out).toEqual([{ nodeId: 'gen', requestHash: expect.any(String), outcome: 'generated' }]);
+    // #935 — a generated row carries the BYTES as well as the verdict. This call is
+    // the only place they exist: the content store keeps parsed keyframes, and
+    // nothing can turn those back into a file, so a row that dropped them would
+    // make the clip unsaveable.
+    expect(out).toEqual([
+      {
+        nodeId: 'gen',
+        requestHash: expect.any(String),
+        outcome: 'generated',
+        bvh: expect.any(String),
+        model: 'kimodo-base',
+      },
+    ]);
+    expect(out[0].bvh!.length).toBeGreaterThan(0);
     expect(requests).toHaveLength(1);
     expect(requests[0].prompt).toBe('a slow walk');
     expect(requests[0].seed).toBe(7);

@@ -1,0 +1,214 @@
+// The cook affordance's callee (#935) — the one thing that runs the resolver.
+//
+// Before this, `resolvePendingMotionGenerations` was a function nobody invoked,
+// so every `MotionGenerate` in a graph stayed `pending` forever. This is the
+// trigger, and the shape it takes IS the re-cook policy #902 left open.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPLICIT COOK, NOT DEBOUNCE — AND THE DATA MODEL ALREADY ENFORCES IT
+// ─────────────────────────────────────────────────────────────────────────────
+// A generation is a paid, several-second call. Firing it from a render reaction
+// would spend a director's money on every drag of a control point, and a debounce
+// only moves that decision behind a timer nobody chose. So the cook is a call, and
+// a director makes it.
+//
+// What makes that safe rather than merely deferred is that a stale clip keeps
+// playing: the band reads the sink clip's params, and `bakeGeneratedClipOps` only
+// ever writes a `ready` result. So the interval between an edit and a cook is a
+// clip that is out of date, never a character standing still.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// TWO DISPATCHES, NOT ONE, AND NOT THREE
+// ─────────────────────────────────────────────────────────────────────────────
+// The generation itself writes nothing to the graph — it lands in the content
+// store — so there is exactly one batch of ops here, the bake. It goes out as a
+// single atomic dispatch so a cook is ONE undo entry covering every clip it
+// refreshed. Undoing a cook returns every clip to its previous keys together,
+// which is what a director means by "undo that".
+//
+// REF: src/app/asset/resolveMotionGenerate.ts (performs the call);
+//      src/app/asset/bakeGeneratedClip.ts (turns a landed result into Ops);
+//      src/app/render/runWorkflow.ts (the same cook shape for images);
+//      issues #935, #902.
+
+import { useDagStore } from '../../core/dag/store';
+import type { DagState } from '../../core/dag/state';
+import { getMotionCapability } from '../boot';
+import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
+import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
+import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
+import { placeCookedMotionOps } from './placeGeneratedMotion';
+import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
+
+export interface CookOutcome {
+  /** How many producers this pass generated for. */
+  readonly generated: number;
+  /** How many refused, each already recorded as a terminal state on its node. */
+  readonly failed: number;
+  /** How many sink clips had their params refreshed. */
+  readonly baked: number;
+  /** Set only when the pass could not START — no capability, no settings. */
+  readonly reason?: string;
+}
+
+/**
+ * Whether anything in the graph is waiting to be cooked — the affordance's
+ * enabled state.
+ *
+ * 🔴 DO NOT CALL THIS ON A RENDER PATH WITHOUT MEMOIZING. Answering "is anything
+ * stale" means comparing each producer's CURRENT request hash against the hash
+ * its clip was baked from, and computing that hash means resolving the producer's
+ * inputs — which walks the curve. `evaluate` with no `cache` gets a fresh
+ * per-call memo, so nothing is shared between calls.
+ *
+ * Measured: 4 producers on a 64-point curve cost 2.2ms per call — 13% of a 60fps
+ * frame, on every pointer move of a drag, and the drag is exactly when it changes.
+ * The same shape `retargetFromNodes` memoizes on operand identity for the same
+ * reason. Nothing calls this yet, so it is documented rather than solved; the
+ * surface that wires it should memoize or pass a shared cache.
+ */
+export function hasStaleGenerations(): boolean {
+  const { state } = useDagStore.getState();
+  return clipBakeStates(state).some((c) => c.stale || c.status === 'pending');
+}
+
+/**
+ * Resolve every pending generation and write the results into their clips.
+ *
+ * Never throws. A generation that refuses is recorded ON the node as a `failed`
+ * state by the resolver, which is a thing the graph can show; throwing would
+ * leave the surface that invoked this with no way back to idle, and the reason
+ * would live only in a console.
+ */
+export async function cookMotionGenerations(): Promise<CookOutcome> {
+  let capability;
+  try {
+    capability = await getMotionCapability();
+  } catch (err) {
+    const reason = formatAssetError(err);
+    useAssetErrorStore.getState().report('motion generation', reason);
+    return { generated: 0, failed: 0, baked: 0, reason };
+  }
+
+  // Read the state fresh at each step rather than once: the resolver awaits, and
+  // a director can edit the graph while a several-second call is out. Baking a
+  // state captured before the await would write into a graph that has moved.
+  const resolutions = await resolvePendingMotionGenerations(
+    useDagStore.getState().state,
+    capability,
+  );
+
+  const ops = bakeGeneratedClipOps(useDagStore.getState().state);
+  const baked = ops.filter((o) => o.type === 'setParam' && o.paramPath === 'sourceHash').length;
+  if (ops.length > 0) {
+    useDagStore
+      .getState()
+      .dispatchAtomic(ops, 'user', `cook motion: ${baked} clip${baked === 1 ? '' : 's'}`);
+  }
+
+  const state = useDagStore.getState().state;
+
+  // Hold the bytes so a cooked clip can be SAVED (#819). This is the only place
+  // they exist: the content store keeps parsed keyframes, and nothing can turn
+  // those back into a file. Recorded AFTER the dispatch, so a cook that failed to
+  // land never leaves an offer to save something that is not in the scene.
+  //
+  // Keyed to the SINK clip rather than the producer, because the sink is what a
+  // director sees and what the save road writes out.
+  const sinkOf = new Map(clipBakeStates(state).map((c) => [c.producerId, c.clipId]));
+  for (const r of resolutions) {
+    if (r.outcome !== 'generated' || r.bvh === undefined) continue;
+    const clipId = sinkOf.get(r.nodeId);
+    if (!clipId) continue;
+    const params = state.nodes[clipId]?.params as { name?: string } | undefined;
+    useGeneratedMotionStore.getState().record({
+      clipId,
+      name: params?.name ?? '',
+      bvh: r.bvh,
+      model: r.model ?? '',
+    });
+  }
+
+  for (const r of resolutions) {
+    if (r.outcome === 'failed' && r.reason) {
+      useAssetErrorStore.getState().report('motion generation', r.reason);
+    }
+  }
+
+  return {
+    generated: resolutions.filter((r) => r.outcome === 'generated').length,
+    failed: resolutions.filter((r) => r.outcome === 'failed').length,
+    baked,
+  };
+}
+
+/**
+ * Move every cooked character to the start of the path it walks.
+ *
+ * 🔴 SEPARATE FROM THE COOK, AND THE SEQUENCE IS WHY. Placement needs the clip
+ * already bound to a character rig — that is how it finds the node that owns
+ * where the thing stands. On a FIRST generation the bind has not happened yet
+ * when the cook returns, so a cook that placed would refuse, and report a
+ * refusal for a state that is merely early rather than wrong. The imperative
+ * road drew the same line: the character the BIND just chose is the thing to
+ * move, so placement follows the bind rather than the generation.
+ *
+ * Safe to call whenever, including twice: the target is absolute, so a second
+ * call writes the same position rather than walking the character further.
+ *
+ * Returns how many characters moved.
+ */
+export function placeCookedMotion(): number {
+  const { ops, refusals } = placeCookedMotionOps(useDagStore.getState().state);
+  if (ops.length > 0) {
+    useDagStore.getState().dispatchAtomic(ops, 'user', 'place motion on path');
+  }
+  for (const r of refusals) {
+    // Reported, never swallowed: the motion plays correctly and only its
+    // POSITION is wrong, which is the failure that looks like success.
+    useAssetErrorStore.getState().report('motion placement', r.reason);
+  }
+  return ops.length;
+}
+
+/** What the inspector's cook affordance should say and whether it is live. */
+export interface MotionCookOffer {
+  readonly label: string;
+  readonly disabled: boolean;
+  /** `ready` | `pending` | `failed`, or null when the node has no clip wired. */
+  readonly status: string | null;
+  /** True when the clip's keys are behind the producer's current request. */
+  readonly stale: boolean;
+}
+
+/**
+ * The cook affordance's state for one producer node.
+ *
+ * A PURE function of the graph rather than a piece of the component, because
+ * this project has no React Testing Library — a decision that lives in JSX is a
+ * decision no row can reach. Same reason `motionSaveOffer` is a function.
+ *
+ * Scoped to ONE node, so the inspector never pays the whole-graph cost the
+ * warning on `hasStaleGenerations` is about.
+ */
+export function motionCookOffer(state: DagState, producerId: string): MotionCookOffer {
+  const row = clipBakeStates(state).find((c) => c.producerId === producerId);
+  if (!row) {
+    // A producer with no clip wired cannot be cooked into anything. Said out
+    // loud rather than shown as a live button that would silently do nothing.
+    return { label: 'No clip wired', disabled: true, status: null, stale: false };
+  }
+  if (row.status === 'failed') {
+    return { label: 'Retry generation', disabled: false, status: row.status, stale: row.stale };
+  }
+  if (!row.stale) {
+    return { label: 'Up to date', disabled: true, status: row.status, stale: false };
+  }
+  // Stale AND already baked is the drag: the clip keeps playing its last result,
+  // and the label says the inputs moved rather than offering a bare "Generate"
+  // that hides the fact there is something to lose.
+  if (row.baked) {
+    return { label: 'Re-cook (inputs changed)', disabled: false, status: row.status, stale: true };
+  }
+  return { label: 'Generate', disabled: false, status: row.status, stale: true };
+}

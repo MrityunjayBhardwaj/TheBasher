@@ -58,6 +58,18 @@ export interface MotionResolution {
   readonly requestHash: string;
   readonly outcome: 'generated' | 'failed' | 'skipped';
   readonly reason?: string;
+  /**
+   * The BVH text this pass received, on a `generated` row only.
+   *
+   * Carried rather than dropped for the same reason `worldOffsetXZ` is: this
+   * call is the ONLY place the bytes exist. The content store holds parsed
+   * keyframes, and nothing can turn those back into a file — so a clip whose
+   * bytes were discarded here can never be SAVED (#819). A `skipped` row has no
+   * bytes by construction: its result came from the store, not from the wire.
+   */
+  readonly bvh?: string;
+  /** The checkpoint that answered, on a `generated` row only. */
+  readonly model?: string;
 }
 
 /** Every MotionGenerate node in the graph, with its evaluated clip. */
@@ -139,7 +151,13 @@ export async function resolvePendingMotionGenerations(
         worldOffsetXZ: generated.worldOffsetXZ,
       });
       landed++;
-      results.push({ nodeId, requestHash, outcome: 'generated' });
+      results.push({
+        nodeId,
+        requestHash,
+        outcome: 'generated',
+        bvh: generated.bvh,
+        model: generated.model,
+      });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       // Recorded rather than rethrown: a refusal must be a terminal state the

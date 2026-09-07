@@ -154,6 +154,19 @@ const CONSUMERS: Record<string, Decision> = {
   // different request, and the content hash — which is the clip's identity —
   // would move under a graph nobody edited.
   'src/app/asset/resolveMotionGenerate.ts': authored('fixed-ctx-by-design'),
+  // #935 — the cook that writes a generated clip into an ordinary AnimationClip's
+  // params. Same claim as the resolver above and for the same reason: it reads the
+  // producer AUTHORED, at the default ctx, because what it bakes is the clip's
+  // identity. Evaluating it at the playhead would make the keys written to the
+  // graph depend on where the scrubber happened to be, so two cooks of an
+  // unedited project would disagree.
+  'src/app/asset/bakeGeneratedClip.ts': authored('fixed-ctx-by-design'),
+  // #935 — the node road's placement half reads the landed generation's world
+  // offset off the producer. AUTHORED and fixed-ctx for the third time in this
+  // chain and for the third instance of one reason: where a character stands at
+  // the start of its path is a property of the generation, not of the playhead.
+  // A time-varying read here would move the character as the scrubber moved.
+  'src/app/asset/placeGeneratedMotion.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -220,7 +233,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // retargeted clip at build time; it now emits a `RetargetClip` node that NAMES
     // the rig with an edge and lets the reader project it. The road collapsed rather
     // than moved — the evaluate went away with the bake, and the row went with it.
-    expect(evaluatorConsumers()).toHaveLength(38); // 37 -> 38 at #902 (the motion resolver)
+    expect(evaluatorConsumers()).toHaveLength(40); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
