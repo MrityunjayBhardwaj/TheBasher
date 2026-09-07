@@ -11,6 +11,7 @@
 // maps (the pre-S5 behaviour), hasMap would never change.
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 interface W {
   __basher_dag: {
@@ -48,14 +49,9 @@ async function stageQuad(page: import('@playwright/test').Page) {
   );
 }
 
-function child(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as W;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && Array.isArray(n.params.materials),
-    );
-    return c?.id ?? null;
-  });
+// #389 — the DATA half's id: that is the node a material write is addressed to now.
+async function child(page: import('@playwright/test').Page) {
+  return (await firstMaterialChild(page))?.dataId ?? null;
 }
 
 const firstHasMap = (page: import('@playwright/test').Page) =>
@@ -70,16 +66,22 @@ function setAlbedo(page: import('@playwright/test').Page, id: string, albedo: un
     ({ id, albedo }) => {
       const w = window as unknown as W;
       const node = w.__basher_dag.getState().state.nodes[id];
-      const mats = (node.params.materials as { maps: Record<string, unknown> }[]).map((m, i) =>
-        i === 0 ? { ...m, maps: { ...m.maps, albedo } } : m,
+      // #389 — slot 0 IS `material`; the multi-slot table lives in `materialSlots` and
+      // this fixture has one primitive, so the old map-over-the-array is now a direct
+      // whole-`material` replace on the DATA half.
+      const mat = node.params.material as { maps: Record<string, unknown> };
+      w.__basher_dag.getState().dispatchAtomic(
+        [
+          {
+            type: 'setParam',
+            nodeId: id,
+            paramPath: 'material',
+            value: { ...mat, maps: { ...mat.maps, albedo } },
+          },
+        ],
+        'user',
+        'edit gltf map',
       );
-      w.__basher_dag
-        .getState()
-        .dispatchAtomic(
-          [{ type: 'setParam', nodeId: id, paramPath: 'materials', value: mats }],
-          'user',
-          'edit gltf map',
-        );
     },
     { id, albedo },
   );

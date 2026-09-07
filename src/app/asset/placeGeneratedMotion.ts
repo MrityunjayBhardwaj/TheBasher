@@ -193,6 +193,36 @@ export interface CookedPlacement {
  * are skipped rather than placed at the origin — the distinction the generator
  * chain refuses to collapse, kept here for the same reason.
  */
+/**
+ * The character rig a generated clip actually drives.
+ *
+ * 🔑 ASK THE BIND, NOT THE CLIP (#949). A clip minted by `mintMotionGenerateOps`
+ * keeps the generator's own empty `Skeleton` on its `skeleton` socket for the
+ * whole of its life: the bind does not rewire that edge, it builds a
+ * `RetargetClip` that READS the clip and writes onto the character's rig. So
+ * reading the clip's own edge finds the generator's skeleton, never a
+ * `GltfSkeleton` — and every placement on the minted road refused, leaving the
+ * character at the origin with a banner instead of at the start of its path.
+ *
+ * The one-shot road this replaced never had the bug because it never asked the
+ * clip: it placed `bound.skeletonId`, the rig the bind had just chosen. This is
+ * that same question asked of the graph, so it also answers on a RE-COOK, where
+ * there is no bind result in hand.
+ *
+ * The clip's own edge stays as the fallback: an IMPORTED clip is wired straight
+ * to the rig it was authored against, with no retarget in between.
+ */
+function boundRigFor(state: DagState, clipId: string): string | null {
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'RetargetClip') continue;
+    if (edgeTarget(node, 'sourceClip') !== clipId) continue;
+    const rig = edgeTarget(node, 'skeleton');
+    if (rig && state.nodes[rig]?.type === 'GltfSkeleton') return rig;
+  }
+  const own = edgeTarget(state.nodes[clipId], 'skeleton');
+  return own && state.nodes[own]?.type === 'GltfSkeleton' ? own : null;
+}
+
 export function placeCookedMotionOps(state: DagState): CookedPlacement {
   const ops: Op[] = [];
   const refusals: { clipId: string; reason: string }[] = [];
@@ -203,10 +233,11 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     const offset = value.generation?.worldOffsetXZ;
     if (!offset) continue;
 
-    // The rig the clip drives IS the character to place — the same edge the read
-    // band matches on, so the thing that moves is the thing that animates.
-    const skeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
-    if (!skeletonId || state.nodes[skeletonId]?.type !== 'GltfSkeleton') {
+    // The rig the clip drives IS the character to place, so the thing that moves
+    // is the thing that animates — found through the bind, for the reason
+    // `boundRigFor` states.
+    const skeletonId = boundRigFor(state, clipId);
+    if (!skeletonId) {
       refusals.push({
         clipId,
         reason:

@@ -497,10 +497,17 @@ describe('library.import tool', () => {
     expect(nodeTypes).toContain('ClipSelect');
     // H40 boundary-pair — the agent path now produces the SAME node-type set
     // the UI path emits for the same file (GltfAsset + the per-child
-    // GltfChild + Group + TransformClip + ClipSelect). #222: no separate
+    // the imported-child PAIR + Group + TransformClip + ClipSelect). #222: no separate
     // Transform — the Group is the transformable import root.
     expect(nodeTypes).toEqual(
-      expect.arrayContaining(['GltfAsset', 'GltfChild', 'Group', 'TransformClip', 'ClipSelect']),
+      expect.arrayContaining([
+        'GltfAsset',
+        'GltfData',
+        'Object',
+        'Group',
+        'TransformClip',
+        'ClipSelect',
+      ]),
     );
     // ClipSelect wires into the GltfAsset's transformClip socket.
     const gltfAdd = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset') as {

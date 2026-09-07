@@ -133,11 +133,12 @@ export type SocketTypeName =
   | 'JobResult'
   // P5 — AI Render Bridge (THESIS §28, §44)
   | 'Prompt'
-  | 'Video'
-  // P7.7 — glTF scene children → addressable DAG nodes (issue #91). An
-  // addressing satellite, not a scene producer: GltfChild has no inputs/
-  // outputs into the render graph (the name registers the type only).
-  | 'GltfChild';
+  | 'Video';
+// #389 — `'GltfChild'` used to trail this union, registering a NAME that no socket ever
+// declared: the fused kind had `inputs: {}` and `outputs: {}` and reached the render
+// graph only through the renderer's by-name lookup. The split retires it, and its data
+// half needs nothing added here — a `GltfData` node's `out` is an ordinary `ObjectData`,
+// which is the socket type every other data kind already speaks.
 
 export type Cardinality = 'single' | 'list';
 

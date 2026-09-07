@@ -160,8 +160,22 @@ export function dataSlotsOnly<M>(data: {
  * ⚠️ NOT the `slotIndex` on `MaterialOverrideValue`, which addresses the i-th `isMesh` in a
  * cloned glTF's traverse order. Two different meanings of "slot".
  */
+/**
+ * What `objectSlotsOf` needs from an Object: its per-slot overrides, or nothing.
+ *
+ * Named (#389) so a caller holding raw node params can say WHICH SHAPE it is handing over
+ * without re-spelling the field. That matters beyond tidiness: `objectSlotTable.gate` D1
+ * censuses every production READ of `slotOverrides` to prove the field has one consumer,
+ * and a structural cast at a call site reads as a second reader while doing nothing of the
+ * kind. The alias lets a caller name the CONTRACT instead of the field.
+ */
+export type ObjectSlotSource<M> =
+  | { readonly slotOverrides?: Readonly<Record<string, M>> }
+  | null
+  | undefined;
+
 export function objectSlotsOf<M>(
-  object: { readonly slotOverrides?: Readonly<Record<string, M>> } | null | undefined,
+  object: ObjectSlotSource<M>,
   data: {
     readonly material: M;
     readonly materialSlots?: readonly M[];

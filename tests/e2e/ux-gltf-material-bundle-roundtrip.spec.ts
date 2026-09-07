@@ -23,6 +23,8 @@
 // file write/read exactly.
 
 import { test, expect } from './_fixtures';
+import { importedChild } from './_importedChild';
+import { openInspectorSection } from './_inspectorSections';
 
 interface Bundle {
   assets?: Record<string, string>;
@@ -74,24 +76,21 @@ async function ingestCube(page: Page): Promise<void> {
   });
 }
 
-/** The cube GltfChild's material datum (slot 0), re-found by childName so it
- *  survives the open (node ids are stable across bundleToProject). */
-function cubeMat(page: Page): Promise<ChildMat | null> {
-  return page.evaluate(() => {
-    const w = window as unknown as W;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && n.params.childName === 'cube',
-    );
-    if (!c) return null;
-    const m = (c.params.materials as Record<string, Record<string, unknown>>[] | undefined)?.[0];
-    const maps = (m?.maps ?? {}) as Record<string, unknown>;
-    return {
-      id: c.id,
-      baseColor: (m?.base as Record<string, unknown> | undefined)?.color ?? null,
-      albedo: maps.albedo ?? null,
-      roughness: maps.roughness ?? null,
-    };
-  });
+/** The cube's captured material datum (slot 0), re-found by childName so it
+ *  survives the open (node ids are stable across bundleToProject).
+ *  #389 — `id` is the DATA half's, which is where the material now lives. */
+async function cubeMat(page: Page): Promise<ChildMat | null> {
+  const c = await importedChild(page, 'cube');
+  if (!c) return null;
+  const m = c.slots[0] as Record<string, Record<string, unknown>> | undefined;
+  const maps = (m?.maps ?? {}) as Record<string, unknown>;
+  return {
+    id: c.dataId, // param paths + inspector testids live on the DATA half
+    objectId: c.objectId, // selection addresses the OBJECT
+    baseColor: (m?.base as Record<string, unknown> | undefined)?.color ?? null,
+    albedo: maps.albedo ?? null,
+    roughness: maps.roughness ?? null,
+  };
 }
 
 const cubeHasMap = (page: Page) =>
@@ -116,18 +115,18 @@ test.describe('#178 S6 — edited glTF materials round-trip through a .basher bu
     // Open the editable material section.
     await page.evaluate((id) => {
       (window as unknown as W).__basher_selection.getState().select(id);
-    }, child.id);
-    await page.getByTestId('inspector-section-toggle-material').click();
+    }, child.objectId);
+    await openInspectorSection(page, 'material');
 
     // (1) SCALAR — set base.color to a known hex.
-    const hex = page.getByTestId(`inspector-gltfmat-colorhex-${child.id}-0-base-color`);
+    const hex = page.getByTestId(`inspector-colorhex-${child.id}-material.base.color`);
     await hex.fill('#1188ff');
     await hex.press('Enter');
     await expect.poll(async () => (await cubeMat(page))?.baseColor).toBe('#1188ff');
 
     // (2) REPLACE — pick a file for the albedo slot → bake → a real ref.
     await page
-      .getByTestId(`inspector-gltfmap-file-${child.id}-0-albedo`)
+      .getByTestId(`inspector-map-file-${child.id}-albedo`)
       .setInputFiles({ name: 'red.png', mimeType: 'image/png', buffer: pngBuffer() });
     await expect
       .poll(async () => {
@@ -138,7 +137,7 @@ test.describe('#178 S6 — edited glTF materials round-trip through a .basher bu
     await expect.poll(() => cubeHasMap(page)).toBe(true);
 
     // (3) CLEAR — write the empty-hash sentinel to the roughness slot.
-    await page.getByTestId(`inspector-gltfmap-clear-${child.id}-0-roughness`).click();
+    await page.getByTestId(`inspector-map-clear-${child.id}-roughness`).click();
     await expect
       .poll(async () => (await cubeMat(page))?.roughness as { hash?: string } | null)
       .toEqual(expect.objectContaining({ hash: '' }));

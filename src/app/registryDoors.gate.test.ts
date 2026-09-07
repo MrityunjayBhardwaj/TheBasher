@@ -200,7 +200,15 @@ const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetG
  * adds a geometry kind — which is the shape `resolveMeshUVSpace.ts` was in before #630, and
  * its own header records that defect biting.
  */
-const GEOMETRY_CLASSIFIERS = ['availabilityOf'];
+// #389 — `drawnByAssetClone` joins on exactly the rule stated above rather than by
+// resemblance: it takes a DESCRIPTOR and returns a boolean, never touches the cache, and
+// hands back no instance, so there is nothing for a caller to hold or free. It is defined
+// in terms of `availabilityOf` — one implementation, one rule — so it is not a second
+// spelling of the classification either; it is that classification asked a question the
+// renderer needs ("is something else already drawing these buffers?"). The alternative was
+// a `descriptor.kind === 'gltf'` test at the draw site, which is the naming tier this
+// module has catalogued twice and which would have gone right on passing when a kind moved.
+const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone'];
 
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {

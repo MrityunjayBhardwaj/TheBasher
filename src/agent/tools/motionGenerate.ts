@@ -1,12 +1,32 @@
 // motion.generate — agent tool. Text becomes an AnimationClip in the graph.
 //
-// The claim phase A1 makes is that a generated clip is indistinguishable
-// downstream from an imported one, and this file is where that claim is either
-// kept or quietly broken. It keeps it by having nothing of its own: the handler
-// calls `buildGeneratedMotionOps`, which calls `buildBvhImportOps` — the same
-// function, with the same arguments, that a dropped .bvh file calls. There is no
-// second road to keep in step and no provenance flag for anything downstream to
-// branch on.
+// The claim this file keeps is UI == agent: a director and the agent must end up
+// with the same graph. It keeps it by having nothing of its own — the handler
+// calls `mintMotionGenerateOps` and `bakeGeneratedClipOps`, the same two
+// functions, over the same state, that the director's road calls. There is no
+// second road to keep in step.
+//
+// 🔑 IT MINTS A PRODUCER, NOT A BARE CLIP (#948). It used to call
+// `buildGeneratedMotionOps` and land exactly what a dropped .bvh lands. A
+// director's road stopped doing that at #935: it now mints a `MotionGenerate`
+// node and cooks it, so the prompt, the seed and the waypoints survive and the
+// clip can be re-cooked when a control point moves. For as long as the agent kept
+// the old road the two surfaces built genuinely different things, and the parity
+// row went on passing because it asserted the agent against a road no director
+// took — a claim measuring a road nobody walks.
+//
+// The clip is still an ordinary `AnimationClip` carrying no provenance flag; what
+// is new is the input edge feeding it. Everything downstream reads the clip's
+// params exactly as before, which is why the producer changes nothing for a
+// consumer and everything for the director.
+//
+// WHAT "COOK" MEANS HERE, AND WHY IT IS STILL ONE Op[]. The mint is pure, so the
+// handler applies it to a FORKED state (V7 — never the live store), resolves the
+// producer against the capability, and asks for the bake ops that resolution made
+// available. The director reaches the same place in two dispatches — mint, then
+// the cook button on the node's card — because a director is present to press it.
+// The agent returns both halves as one batch for the Diff, because a tool that
+// returned a half-built node would ask the model to press a button it cannot see.
 //
 // Shaped after `library.import`, which is the closest sibling: async, brings an
 // asset into the scene, returns Op[] for the Diff and NEVER dispatches (V7). It
@@ -36,13 +56,21 @@
 // asking for motion.
 //
 // REF: src/agent/tools/libraryImport.ts (the pattern);
-// src/core/motiongen/generatedMotionChain.ts; ref/architecture/ai-track.md A1.
+// src/app/asset/mintMotionGenerate.ts and src/app/asset/bakeGeneratedClip.ts
+// (the two halves, shared with the director's road);
+// src/app/asset/generateMotionAsNode.ts (that road); ref/architecture/ai-track.md A1.
+// Issues #948, #935, #902.
 
 import { z } from 'zod';
 import type { ToolContext, ToolDefinition, ToolResult } from './types';
-import { buildGeneratedMotionOps } from '../../core/motiongen';
+import type { Op } from '../../core/dag/types';
+import type { DagState } from '../../core/dag/state';
+import { applyOp } from '../../core/dag/ops';
 import { conditionsFor } from '../../core/licensing/allowedModels';
 import { MAX_MOTION_SECONDS } from '../../core/motiongen';
+import { bakeGeneratedClipOps } from '../../app/asset/bakeGeneratedClip';
+import { chooseSeed, mintMotionGenerateOps } from '../../app/asset/mintMotionGenerate';
+import { resolvePendingMotionGenerations } from '../../app/asset/resolveMotionGenerate';
 
 export const motionGenerateSchema = z.object({
   prompt: z
@@ -68,11 +96,13 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
   name: 'motion.generate',
   description:
     'Generate an animation clip from a text description. Returns an Op[] that adds ' +
-    'a Skeleton + AnimationClip wired to the project TimeSource — the identical ops ' +
-    'a dropped .bvh file produces, carrying no mark of having been generated, so ' +
-    'every road open to an imported clip is open to this one. Retarget it with ' +
-    'mutator.animation.retarget. The checkpoint is configured in Settings, not ' +
-    'chosen per call.',
+    'a MotionGenerate producer feeding a Skeleton + AnimationClip wired to the ' +
+    'project TimeSource — the same three nodes a director gets. The clip itself is ' +
+    'an ordinary AnimationClip carrying no mark of having been generated, so every ' +
+    'road open to an imported clip is open to this one: retarget it with ' +
+    'mutator.animation.retarget. The producer keeps the prompt and seed, so the ' +
+    'clip can be re-generated later without retyping them. The checkpoint is ' +
+    'configured in Settings, not chosen per call.',
   paramSchema: motionGenerateSchema,
   async handler(args: MotionGenerateArgs, ctx: ToolContext): Promise<ToolResult> {
     if (!ctx.motionCapability) {
@@ -96,17 +126,50 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       };
     }
 
-    let result;
+    // MINT — pure, and the same call the director's road makes. A seed is chosen
+    // here when the model did not name one, by the SAME chooser that road uses:
+    // `MotionGenerate` gives `seed` no default on purpose, so a clip that cannot
+    // say which seed produced it is a clip reproducible by accident.
+    let mint;
     try {
-      result = await buildGeneratedMotionOps(ctx.motionCapability, {
-        request: {
-          prompt: args.prompt,
-          model: ctx.motionModel,
-          ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
-          ...(args.seed !== undefined ? { seed: args.seed } : {}),
-        },
+      mint = mintMotionGenerateOps(ctx.dagState, {
+        prompt: args.prompt,
+        seed: args.seed ?? chooseSeed(),
+        model: ctx.motionModel,
+        ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
         ...(args.name !== undefined ? { name: args.name } : {}),
       });
+    } catch (err) {
+      // A graph with no TimeSource lands here. It is a real refusal with a real
+      // remedy, and the message names it.
+      return {
+        ops: [],
+        text: `Error: could not add a motion generator — ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    // V7 — the FORKED state, never the live store. The producer has to EXIST
+    // before it can be resolved, and it does not exist until these ops are
+    // applied; applying them to a fork is how the tool gets a graph to resolve
+    // against without anything real changing before the user accepts.
+    let forked: DagState = ctx.dagState;
+    for (const op of mint.ops) forked = applyOp(forked, op).next;
+
+    // COOK — the network half, then the pure half, exactly as `cookMotionGenerations`
+    // sequences them.
+    let bakeOps: Op[] = [];
+    let refusal: string | undefined;
+    try {
+      const resolutions = await resolvePendingMotionGenerations(forked, ctx.motionCapability);
+      // The resolver catches per node and RECORDS the reason rather than throwing,
+      // so a licence block arrives here as a `failed` row, not as an exception.
+      // Carrying its reason out is the difference between "no clip this time" and
+      // "this checkpoint is blocked — change it in Settings", and only the second
+      // tells the model what to do next.
+      refusal = resolutions.find(
+        (r) => r.nodeId === mint.producerId && r.outcome !== 'generated',
+      )?.reason;
+      bakeOps = bakeGeneratedClipOps(forked);
     } catch (err) {
       // A licence refusal and a transport failure both land here, and both are
       // things the model can act on — a blocked checkpoint is a settings change,
@@ -126,14 +189,35 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       ? ` This checkpoint is licensed WITH CONDITIONS: ${conditions.join(' ')}`
       : '';
 
+    const subject = args.name ?? args.prompt;
+
+    if (bakeOps.length === 0) {
+      // The generator refused. The MINT still ships, deliberately — the director's
+      // road makes the same choice for the same reason: a generator that vanished
+      // on a server hiccup takes the prompt and the seed with it, and re-cooking a
+      // node that is already there beats retyping a sentence. The text says the
+      // clip is empty so the model does not report success.
+      return {
+        ops: mint.ops,
+        text:
+          `Added a motion generator for "${subject}" (${ctx.motionModel}), but it ` +
+          `produced no clip — AnimationClip ${mint.clipId} is still empty` +
+          (refusal !== undefined ? `: ${refusal}` : '.') +
+          ` The generator keeps the prompt and seed, so once the cause is fixed it ` +
+          `can be re-cooked from its inspector card rather than asked for again.` +
+          owed,
+      };
+    }
+
     return {
-      ops: result.ops,
+      ops: [...mint.ops, ...bakeOps],
       text:
-        `Generated "${args.name ?? args.prompt}" with ${ctx.motionModel} ` +
-        `(job ${result.jobId}) — Skeleton ${result.skeletonId}, AnimationClip ` +
-        `${result.clipId}. It is an ordinary clip, with nothing in the graph ` +
-        `marking it as generated: retarget it onto a character with ` +
-        `mutator.animation.retarget.` +
+        `Generated "${subject}" with ${ctx.motionModel} — MotionGenerate ` +
+        `${mint.producerId} feeding Skeleton ${mint.skeletonId} and AnimationClip ` +
+        `${mint.clipId}. The clip is ordinary, with nothing in the graph marking it ` +
+        `as generated: retarget it onto a character with mutator.animation.retarget. ` +
+        `The producer keeps the prompt and seed, so moving a curve control point and ` +
+        `re-cooking regenerates it.` +
         owed,
     };
   },

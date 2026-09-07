@@ -11,6 +11,7 @@ import { ArrayModifierNode } from './ArrayModifier';
 // alphabetised so a re-sort doesn't produce noise.
 // (TransformClipNode is imported later in the alphabetical block.)
 import { BakedDataNode } from './BakedData';
+import { GltfDataNode } from './GltfData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { RetargetClipNode } from './RetargetClip';
@@ -39,7 +40,6 @@ import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
 import { DepthPassNode } from './DepthPass';
 import { GltfAssetNode } from './GltfAsset';
-import { GltfChildNode } from './GltfChild';
 import { GroupNode } from './Group';
 import { IDPassNode } from './IDPass';
 import { KeyframeChannelColorNode } from './KeyframeChannelColor';
@@ -117,10 +117,6 @@ const ALL: NodeDefinition[] = [
   // value; nothing consumes it until the data nodes grow a `material` socket.
   MaterialNode as unknown as NodeDefinition,
   GltfAssetNode as unknown as NodeDefinition,
-  // P7.7 — addressable proxy per glTF scene child (issue #91). Inputless,
-  // non-producing addressing satellite; emitted one-per-child at import
-  // (gltfImportChain). Must be registered before its addNode validates (V1).
-  GltfChildNode as unknown as NodeDefinition,
   // #388 (Stage C · C5) — the baked mesh's data half (the OPFS handle + the captured
   // material, no transform). The first ObjectData whose geometry is ASYNCHRONOUS, so
   // it is its own union member rather than a second MeshData producer — reusing
@@ -128,6 +124,13 @@ const ALL: NodeDefinition[] = [
   // silently (measured; see BakedData.ts). Coexists with the fused BakedMesh above;
   // the split retires its fused evaluate in a later slice.
   BakedDataNode as unknown as NodeDefinition,
+  // #389 (Stage C · C6) — the imported glTF child's data half, and the LAST kind the
+  // object↔data split had left fused. Unlike every kind above it this one does NOT
+  // coexist with its predecessor: `GltfChild` is retired in the same change, because
+  // the conformance machinery hardened after those kinds went in and now requires a
+  // registered kind to name a migration that has ALREADY shipped (splitKinds.roads R9).
+  // There is no honest descriptor for a split that has migrated nothing.
+  GltfDataNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
   NullNode as unknown as NodeDefinition,

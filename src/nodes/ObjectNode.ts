@@ -40,6 +40,34 @@ export const ObjectParams = z.object({
    * saved Object node, which is a format change dressed as a default.
    */
   slotOverrides: z.record(z.string().regex(/^\d+$/), openpbrMaterialSchema()).optional(),
+  /**
+   * #389 — the manual-override authored set for this Object's own TRS, carried BY THE
+   * OBJECT for the same reason `slotOverrides` is: an override record belongs to the ID
+   * that OWNS the overridden property, and after the glTF split the pose is the Object's.
+   *
+   * Only an imported glTF child has a source pose to inherit FROM, so only such an Object
+   * ever carries this. It is `.optional()` and sparse, exactly like `slotOverrides` above
+   * and for the same reason: a box, a camera and a light carry nothing at all — not three
+   * `false` booleans — and every project saved at the current format version parses
+   * unchanged. A `.default(...)` here would write a dead record into every Object node,
+   * which is a format change dressed as a default.
+   *
+   * ⚠️ EXPLICIT, never derived from value≠default. The importer SEEDS a child's TRS with
+   * its captured base pose, so `value === base` does NOT mean untouched — see
+   * `core/override/overrideSet.ts`, which spells out why Basher must carry the bit where
+   * Blender and USD can derive it (they are two-tier; Basher params are single-tier).
+   *
+   * REF: Blender `IDOverrideLibraryProperty.rna_path` — "RNA path leading to that
+   *      property, from owning ID"; `material_slots[n].link ∈ {DATA, OBJECT}`, the same
+   *      question answered the same way one value over.
+   */
+  overridden: z
+    .object({
+      position: z.boolean().optional(),
+      rotation: z.boolean().optional(),
+      scale: z.boolean().optional(),
+    })
+    .optional(),
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 

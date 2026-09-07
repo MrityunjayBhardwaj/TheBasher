@@ -10,6 +10,8 @@
 //   - the multi-slot selector is a radiogroup of radios with aria-checked.
 
 import { test, expect } from './_fixtures';
+import { importedChild, importedChildren } from './_importedChild';
+import { openInspectorSection } from './_inspectorSections';
 
 interface W {
   __basher_dag: {
@@ -30,14 +32,9 @@ interface W {
 
 type Page = import('@playwright/test').Page;
 
-const cubeChildId = (page: Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as W;
-    const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-      (n) => n.type === 'GltfChild' && n.params.childName === 'cube',
-    );
-    return c?.id ?? null;
-  });
+// #389 — the DATA half's id: the material rows, and therefore every label and control
+// this spec reaches for, are keyed on the node that owns the material.
+const cubeChildId = async (page: Page) => (await importedChild(page, 'cube'))?.dataId ?? null;
 
 test.describe('#178 S6 — glTF material inspector a11y', () => {
   test('map-row buttons have slot-specific accessible names; row is a named group', async ({
@@ -60,7 +57,7 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
       (i) => (window as unknown as W).__basher_selection.getState().select(i),
       id,
     );
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
     // The albedo row is a named group (not a label), and its action buttons read
     // unambiguously — "Pick albedo map" / "Clear albedo map", not bare "pick".
@@ -70,7 +67,7 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
     // A different slot's buttons are distinct (normal, not albedo).
     await expect(page.getByRole('button', { name: 'Pick normal map' })).toBeVisible();
     // The hidden file input keeps its aria-label.
-    await expect(page.getByTestId(`inspector-gltfmap-file-${id}-0-albedo`)).toHaveAttribute(
+    await expect(page.getByTestId(`inspector-map-file-${id}-albedo`)).toHaveAttribute(
       'aria-label',
       'albedo map file',
     );
@@ -90,24 +87,20 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
       await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
       await w.__basher_importGltf(buf, ref);
     });
-    const twoSlotChild = () =>
-      page.evaluate(() => {
-        const w = window as unknown as W;
-        const c = Object.values(w.__basher_dag.getState().state.nodes).find(
-          (n) =>
-            n.type === 'GltfChild' &&
-            Array.isArray(n.params.materials) &&
-            (n.params.materials as unknown[]).length === 2,
-        );
-        return c?.id ?? null;
-      });
+    // #389 — a two-primitive child stores the full table in `materialSlots`; `slots`
+    // is that table flattened by the one rule, so the arity question is asked of it.
+    const twoSlotChild = async () => {
+      const c = (await importedChildren(page)).find((child) => child.slots.length === 2);
+      // The OBJECT half — this id is selected, and selection addresses the object.
+      return c?.objectId ?? null;
+    };
     await expect.poll(twoSlotChild).not.toBeNull();
     const id = await twoSlotChild();
     await page.evaluate(
       (i) => (window as unknown as W).__basher_selection.getState().select(i),
       id,
     );
-    await page.getByTestId('inspector-section-toggle-material').click();
+    await openInspectorSection(page, 'material');
 
     const group = page.getByRole('radiogroup', { name: 'Material slot' });
     await expect(group).toBeVisible();

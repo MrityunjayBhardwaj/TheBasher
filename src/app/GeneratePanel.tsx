@@ -4,13 +4,12 @@
 // 🔴 THE MOTION ROAD IS THE NODE ROAD NOW (#935). It calls `generateMotionAsNode`,
 // which mints a `MotionGenerate` producer and cooks it, so the clip a director
 // gets has a producer the graph can re-cook when the curve moves.
-// `generateMotionIntoScene` — the one-shot road named below — has NO production
-// caller left; it is kept for now because the UI==agent parity claim is written
-// against it, and moving that claim is its own change. Filed.
+// The one-shot road it replaced is GONE (#948): `motion.generate` mints a
+// producer too, so both surfaces build the same graph and the parity claim is
+// written against the road a director actually takes.
 //
-// Before this, `generateMotionIntoScene` and `generateModelIntoScene` were
-// written, tested, wired to settings and to the licence gate, and reachable
-// only from their own test files. The agent could generate (`motion.generate`,
+// Before any of this, the generate roads were written, tested, wired to settings
+// and to the licence gate, and reachable only from their own test files. The agent could generate (`motion.generate`,
 // `model.generate`); a person could not. The claim "a generated asset is
 // indistinguishable from an imported one" needs someone able to ask for one.
 //

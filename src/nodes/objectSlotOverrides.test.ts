@@ -27,6 +27,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ObjectNode, ObjectParams } from './ObjectNode';
+import { isOverridden } from '../core/override/overrideSet';
 import { registerAllNodes } from './registerAll';
 import { hydrateInlineMaterial } from './materialSchema';
 import { boxDescriptor, boxGeometryRef } from '../app/modifierGeometry';
@@ -184,5 +185,40 @@ describe('#645 P1 — an Object can carry per-slot material overrides', () => {
     // object-level override cheap rather than a copy.
     expect(plain.data).toBe(shared);
     expect(overridden.data).toBe(shared);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+describe('Object.overridden — the TRS authored set lives with the pose (#389)', () => {
+  it('is ABSENT on a plain Object — a box carries no flags, not three false ones', () => {
+    // The objection that nearly put this on the data half was "every box, camera and
+    // light gets three dead booleans". It is void for the shape actually used: the field
+    // is `.optional()` and sparse, so an Object that never had an override carries no key
+    // at all, and every project saved before it parses unchanged.
+    const params = ObjectParams.parse({});
+
+    expect('overridden' in params).toBe(false);
+    expect(params.overridden).toBeUndefined();
+  });
+
+  it('is SPARSE — an authored component is recorded, an untouched one stays absent', () => {
+    const params = ObjectParams.parse({ overridden: { rotation: true } });
+
+    expect(params.overridden).toEqual({ rotation: true });
+    expect(params.overridden?.position).toBeUndefined();
+    expect(isOverridden(params.overridden, 'rotation')).toBe(true);
+    expect(isOverridden(params.overridden, 'position')).toBe(false);
+  });
+
+  it('reads through the SHARED primitive, so absent and false agree', () => {
+    // `isOverridden` is the one reader for every override set in the codebase; an absent
+    // key and an explicit `false` must be indistinguishable to it, or revert and
+    // never-touched would render differently.
+    const absent = ObjectParams.parse({ overridden: {} });
+    const explicit = ObjectParams.parse({ overridden: { scale: false } });
+
+    expect(isOverridden(absent.overridden, 'scale')).toBe(false);
+    expect(isOverridden(explicit.overridden, 'scale')).toBe(false);
   });
 });
