@@ -5,7 +5,7 @@
 // argument ref cleared to '' must be distinguishable from one that was ALREADY ''.
 import { describe, it, expect } from 'vitest';
 import { idRefSweep, findDanglingIdRef } from './idRefSweep';
-import { getNodeType, listNodeTypes } from './registry';
+import { getNodeType, listNodeTypes, paramFieldsOf } from './registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { Op } from './types';
 import { testNode } from '../../test-utils/testNode';
@@ -240,8 +240,14 @@ describe('idRefs registry — drift guard', () => {
     for (const type of listNodeTypes()) {
       const def = getNodeType(type);
       if (!def?.idRefs) continue;
-      const shape = (def.paramSchema as unknown as { shape?: Record<string, unknown> }).shape;
-      if (!shape) continue; // not a plain object schema — nothing to introspect
+      // #683 — REPORTED, not skipped. This type declares `idRefs`, so its paths are meant to
+      // be checkable; a schema this cannot read makes every one of them silently unchecked
+      // while the row stays green. `continue` here used to hide exactly that.
+      const shape = paramFieldsOf(def);
+      if (shape === null) {
+        broken.push(`${type}: paramSchema is not an object schema, so its idRefs are unchecked`);
+        continue;
+      }
       for (const ref of def.idRefs) {
         const head = ref.path.split('.')[0];
         if (!(head in shape)) broken.push(`${type}.${ref.path}`);
