@@ -98,6 +98,42 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(normaliseIds(viaTool.ops)).toEqual(normaliseIds(direct.ops));
   });
 
+  it('#957 — every node type the ops ADD is named in the description', async () => {
+    // The description is the contract the MODEL plans against, and it is prose, so
+    // it drifts in silence: no type reads it, no linter reads it, and a description
+    // that has become false is indistinguishable from one that is true.
+    //
+    // This row is the near miss from #948 turned into a gate. That change took the
+    // tool from minting two nodes to minting three; the description was rewritten in
+    // the same commit, correctly, and NOTHING would have failed had it not been. The
+    // direction that matters is ops -> description: a node the tool starts adding
+    // without announcing it is a capability the model cannot plan around, and that
+    // is the half no reviewer reliably notices.
+    //
+    // Only node types the ops ADD, and only by name. What a description CLAIMS
+    // ('carrying no mark of having been generated') is not mechanically checkable,
+    // and a gate that pretended otherwise would pass on wording rather than on
+    // behaviour. The vocabulary is the checkable part — and it is the part renames
+    // and splits break, invisibly, exactly as they broke sockets and params.
+    const result = await motionGenerateTool.handler(
+      { prompt: 'a figure walks forward' },
+      ctx({ dagState: stateWithTime() }),
+    );
+    const added = [
+      ...new Set(
+        result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType as string] : [])),
+      ),
+    ].sort();
+    // The population beside the verdict: with no ops this row would pass by
+    // examining nothing, which is the failure mode it exists to prevent elsewhere.
+    expect(added, 'the tool added no nodes — the check below would be vacuous').not.toEqual([]);
+    const unannounced = added.filter((t) => !motionGenerateTool.description.includes(t));
+    expect(
+      unannounced,
+      `the ops add node types the description never names: ${JSON.stringify(unannounced)}`,
+    ).toEqual([]);
+  });
+
   it('the emitted clip evaluates to a real AnimationClip with keyframes', async () => {
     // Observation at the OUTPUT, not at the call: ops being produced is not the
     // same fact as a clip existing in an evaluated graph.

@@ -6,8 +6,15 @@
 // REF: vyapti V7 (tool handlers return Op[]), THESIS.md §20.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  emptyDagState,
+  listNodeTypes,
+  type DagState,
+} from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
+import { SCENE_OBJECT_KINDS } from '../../app/addPrimitives';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
@@ -84,6 +91,45 @@ describe('tool registry', () => {
 
   it('getTool returns undefined for missing tools', () => {
     expect(getTool('nonexistent')).toBeUndefined();
+  });
+
+  it('#957 — every node type a description names is a node type that exists', () => {
+    // A tool description is not documentation. It is the contract the model plans
+    // against, and it names node types as bare words — which makes it a
+    // string-keyed surface with no compiler behind it, exactly like a socket name
+    // or a param literal. Renaming or retiring a node leaves every description
+    // that spells the old name green: `tsc` never reads prose, eslint never reads
+    // prose, and no row read one either until this one.
+    //
+    // Candidates are COMPOUND PascalCase only — two or more humps. Single
+    // capitalised words cannot be told from ordinary prose ('Settings', 'Returns',
+    // and the node types 'Group' and 'Transform' are the same shape as a
+    // sentence's first word), so including them would trade a real check for
+    // false reds. The compound names are also the ones that actually churn.
+    registerAllTools();
+    // TWO legitimate vocabularies, not one. A description may name a registered
+    // NODE TYPE, and it may name a SCENE OBJECT KIND — the director-facing word
+    // for a thing to add, which the code maps onto node types. `mesh.add` builds
+    // its list from `SCENE_OBJECT_KINDS` at runtime, so that half of its
+    // description cannot go stale and must not be reported as if it had.
+    const known = new Set<string>([...listNodeTypes(), ...SCENE_OBJECT_KINDS]);
+    const named = new Map<string, string[]>();
+    for (const tool of listTools()) {
+      for (const token of tool.description.match(/\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+)+\b/g) ?? []) {
+        named.set(token, [...(named.get(token) ?? []), tool.name]);
+      }
+    }
+    // The population beside the verdict: a zero here would otherwise be
+    // indistinguishable from a regex that matched nothing at all.
+    expect(
+      named.size,
+      'no compound names found in any description — check the regex',
+    ).toBeGreaterThan(0);
+    const unknown = [...named].filter(([token]) => !known.has(token));
+    expect(
+      unknown,
+      `descriptions name node types that do not exist: ${JSON.stringify(unknown)}`,
+    ).toEqual([]);
   });
 
   it('all tools have a non-empty paramSchema', () => {

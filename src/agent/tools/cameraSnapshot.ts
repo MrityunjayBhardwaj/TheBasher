@@ -1,5 +1,5 @@
 // camera.snapshot — agent tool that captures the editor camera pose into
-// a new PerspectiveCamera DAG node.
+// a new camera: a CameraData node plus the Object that places it.
 //
 // Pure: returns Op[] (never dispatches). The handler reads the editor camera
 // pose from the dagState + a provided `cameraPose` arg (the orchestrator
@@ -26,9 +26,10 @@ export type CameraSnapshotArgs = z.infer<typeof cameraSnapshotSchema>;
 export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
   name: 'camera.snapshot',
   description:
-    'Create a new PerspectiveCamera node from a camera pose. ' +
-    'The new camera is wired into the Scene aggregator, replacing any existing camera. ' +
-    'Returns an Op[] that the Diff system applies to the fork.',
+    'Create a new perspective camera from a camera pose: a CameraData node holding ' +
+    'the lens and an Object that places it. The new camera is wired into the Scene ' +
+    'aggregator, replacing any existing camera. Returns an Op[] that the Diff system ' +
+    'applies to the fork.',
   paramSchema: cameraSnapshotSchema,
   handler(args: CameraSnapshotArgs, ctx: ToolContext): ToolResult {
     const sceneRef = ctx.dagState.outputs.scene;
