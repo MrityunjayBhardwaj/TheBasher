@@ -10,6 +10,7 @@ import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
+import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 
 const ASSET_REF = 'asset://rig.glb';
@@ -21,7 +22,12 @@ const sourceBones = (): BoneSpec[] => [
 ];
 const sourceKeys = (): AnimationKeyframe[] => [
   { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
-  { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
+  // The hips TRAVEL over the clip. A root that stays put satisfies 'held' under every
+  // extend rule, so a still fixture cannot witness #924's claim — that a motion
+  // authored to stop must not accumulate travel. Measured: at t=9 this source reads
+  // z=1.2 held, z=0 cycling, z=10.8 under cycle-offset. Three different answers is
+  // what makes the row below a measurement rather than a caption.
+  { bone: 0, time: 1, position: [0, 1, 1], rotation: [0, 0.5, 0] },
   { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
   { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
 ];
@@ -266,7 +272,11 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const samplers = buildClipBoneSamplers({
       keyframes: bound.params.keyframes ?? [],
       duration: bound.params.duration ?? 1,
-      loop: bound.params.loop !== false,
+      // The CARRIED value, not a boolean. `loop` has been a `ClipLoop` since #930;
+      // `clipLoopOf` maps anything it cannot interpret to 'hold' on purpose, so a
+      // boolean here collapsed BOTH branches to 'hold' and the row returned the same
+      // verdict for every value the carry could deliver (#955).
+      loop: clipLoopOf(bound.params.loop),
     });
     const sampler = [...samplers.values()][0];
     const atEnd = sampler(1);
@@ -277,6 +287,18 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     // And the clip must genuinely MOVE inside its range, or "held" is satisfied by
     // a clip that never did anything and this row certifies nothing.
     expect(sampler(0).rotation).not.toEqual(atEnd.rotation);
+    // POSITIVE CONTROL. "Held" is only a finding if this fixture could have failed it.
+    // Same bound clip, same keys, cycle-offset instead of the carried 'hold': the root
+    // accumulates a full travel per period and reads ~9x out at t=9. So the assertions
+    // above discriminate, and a carry that delivered the wrong domain would red here.
+    const travelling = [
+      ...buildClipBoneSamplers({
+        keyframes: bound.params.keyframes ?? [],
+        duration: bound.params.duration ?? 1,
+        loop: 'cycle-offset',
+      }).values(),
+    ][0];
+    expect(travelling(9).position[2]).toBeGreaterThan(atEnd.position[2] * 8);
   });
   it("#919 carries the source clip's ONE-SHOT domain instead of inventing a loop", () => {
     // This fixture's source clip is `loop: 'hold'`. Before the carry, the resolver
