@@ -25,9 +25,17 @@
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { type BoneFrame, octahedralIndices, octahedralPositions, placeBones } from './boneShape';
+import {
+  type BoneFrame,
+  boneTransforms,
+  degenerateBasisCount,
+  degenerateBasisNames,
+  octahedralIndices,
+  octahedralPositions,
+  placeBones,
+  resetDegenerateBasisCount,
+} from './boneShape';
 import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
-import { boneTransforms } from './boneShape';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { AnimationClipValue } from '../nodes/types';
 
@@ -218,6 +226,7 @@ export function ArmatureHelper({
 
     // Kept PER ARMATURE, not flattened away: a reference rig has to be sized
     // and placed against the bounds of the one character it belongs beside.
+    resetDegenerateBasisCount();
     const perArmature = current.map((s) =>
       placeBones(
         s.bones.map((b, i) => ({ name: b.name, parent: s.parents[i], matrix: b.matrixWorld })),
@@ -250,6 +259,11 @@ export function ArmatureHelper({
     // must still leave the reference mesh in a defined state rather than
     // showing whatever it held last.
     const refMesh = refMeshRef.current;
+    // Kept for the DEV seam: the source rig's drawn frames, so a probe can
+    // compare limb directions against the live rig without a second sampling
+    // path (which would be a second answer to the pose it is measuring).
+    const refNames: string[] = [];
+    const refMatrices: number[][] = [];
     if (refMesh) {
       let refCount = 0;
       if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && perArmature.length > 0) {
@@ -288,6 +302,10 @@ export function ArmatureHelper({
             if (f.parent < 0) continue;
             local.multiplyMatrices(parentInverse.current, place).multiply(f.matrix);
             refMesh.setMatrixAt(refCount++, local);
+            if (import.meta.env.DEV) {
+              refNames.push(f.name);
+              refMatrices.push([...local.elements]);
+            }
           }
         }
       }
@@ -312,6 +330,10 @@ export function ArmatureHelper({
           // is indistinguishable from "it drew outside the camera frustum".
           sourceRigsOffered: number;
           sourceBones: number;
+          sourceNames: string[];
+          sourceMatrices: number[][];
+          degenerateBases: number;
+          degenerateNames: string[];
         };
       };
       w.__basher_armature = {
@@ -321,6 +343,10 @@ export function ArmatureHelper({
         matrices: frames.slice(0, count).map((f) => [...f.matrix.elements]),
         sourceRigsOffered: showSourceRigs ? (sourceRigs?.length ?? 0) : 0,
         sourceBones: refMeshRef.current?.count ?? 0,
+        sourceNames: refNames,
+        sourceMatrices: refMatrices,
+        degenerateBases: degenerateBasisCount,
+        degenerateNames: [...degenerateBasisNames],
       };
     }
   });

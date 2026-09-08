@@ -243,6 +243,19 @@ export function boneWorldMatrices(bones: readonly BoneSpec[]): THREE.Matrix4[] {
  * too — same table). The retarget errors we are chasing are 30-68°, well inside
  * one quadrant, but a falsification test MUST use a non-multiple of 90°.
  */
+/** DEV-only counter: how many bones fell back to a synthetic perpendicular
+ *  because their own X was parallel to head→tail. A probe comparing ROLL must
+ *  know this — two rigs that both fell back agree by construction, not by
+ *  fidelity, and would report a perfect zero. */
+export let degenerateBasisCount = 0;
+/** Names of the bones that fell back, so a probe can exclude them by name
+ *  rather than guess which of its rows are meaningless. */
+export const degenerateBasisNames: string[] = [];
+export function resetDegenerateBasisCount(): void {
+  degenerateBasisCount = 0;
+  degenerateBasisNames.length = 0;
+}
+
 export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
   const heads = bones.map((b) => new THREE.Vector3().setFromMatrixPosition(b.matrix));
 
@@ -301,15 +314,40 @@ export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
     const length = yAxis.length();
     yAxis.multiplyScalar(1 / (length || 1));
 
-    // Roll: the bone's own X, projected perpendicular to the head→tail axis.
+    // Roll: a reference axis from the BONE'S OWN basis, projected perpendicular
+    // to head→tail.
+    //
+    // 🔴 X FIRST, THEN Z, AND THE SECOND IS NOT DEFENSIVE PADDING. Measured on
+    // mixamo-xbot: the arm and finger bones carry their local X pointing DOWN
+    // THE BONE (Mixamo's T-pose arms extend along +/-X), so projecting X out of
+    // the axis leaves nothing — 43 of 145 bone placements in a single frame,
+    // every arm and every finger, and not one leg. Falling straight through to
+    // a world seed there means the helper draws a SYNTHETIC roll for exactly
+    // those bones: it cannot show a roll defect in an arm, and a probe
+    // comparing two rigs that both fell back reads a perfect zero and calls it
+    // fidelity.
+    //
+    // Z is still the rig's own axis and is orthogonal to X, so where X IS the
+    // bone axis, Z is not. Both being parallel to head→tail is impossible for
+    // an orthogonal basis, which is what makes this a real recovery rather
+    // than a second guess.
     const xAxis = new THREE.Vector3().setFromMatrixColumn(bones[i].matrix, 0);
     xAxis.addScaledVector(yAxis, -xAxis.dot(yAxis));
     if (xAxis.lengthSq() < 1e-12) {
-      // Degenerate (bone X parallel to head→tail): any perpendicular will do —
-      // roll is genuinely unrecoverable for this bone, so pick deterministically.
-      const seed =
-        Math.abs(yAxis.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
-      xAxis.copy(seed).addScaledVector(yAxis, -seed.dot(yAxis));
+      const zRef = new THREE.Vector3().setFromMatrixColumn(bones[i].matrix, 2);
+      zRef.addScaledVector(yAxis, -zRef.dot(yAxis));
+      if (zRef.lengthSq() > 1e-12) {
+        // Turn Z a quarter turn about the axis so it plays X's role, keeping
+        // the octahedron's ring where the X-derived basis would have put it.
+        xAxis.copy(zRef).normalize().cross(yAxis).multiplyScalar(-1);
+      } else {
+        degenerateBasisCount++;
+        if (degenerateBasisNames.length < 400) degenerateBasisNames.push(bones[i].name);
+        // Genuinely unrecoverable — pick deterministically.
+        const seed =
+          Math.abs(yAxis.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+        xAxis.copy(seed).addScaledVector(yAxis, -seed.dot(yAxis));
+      }
     }
     xAxis.normalize();
     const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
