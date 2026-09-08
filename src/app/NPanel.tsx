@@ -87,6 +87,8 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import { useActiveBone } from './boneSelection';
+import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import {
   boneMapView,
   elidePrefix,
@@ -3790,6 +3792,58 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   objectSlots: (ctx) => <ObjectSlotRows nodeId={ctx.objectNodeId} />,
 };
 
+/**
+ * The bone under the cursor, once one has been clicked (#973).
+ *
+ * WHY IT SITS AT THE TOP OF THE NODE'S INSPECTOR rather than in a panel of its
+ * own: a bone is not a node, and a second panel would ask a director to look in
+ * two places to answer one question. It appears only while a bone of the
+ * SELECTED node is live, so it takes no room the rest of the time.
+ *
+ * The CHAIN is the point. `LeftHandIndex1` says almost nothing on its own, and
+ * `Hips → Spine → … → LeftHand → LeftHandIndex1` says where in the body the
+ * director is — which is the question they clicked to ask.
+ */
+function SelectedBoneSection() {
+  const bone = useActiveBone();
+  if (!bone) return null;
+  // Root first, and the bone itself is the last entry — shown emphasised rather
+  // than repeated above the chain, so the same name is never printed twice.
+  const above = bone.chain.slice(0, -1);
+  return (
+    <div className="border-b border-border px-3 py-2" data-testid="inspector-selected-bone">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">bone</span>
+        <button
+          type="button"
+          className="font-mono text-[10px] text-fg/40 hover:text-fg"
+          data-testid="inspector-selected-bone-clear"
+          onClick={() => useBoneSelectionStore.getState().clear()}
+          title="Clear the bone selection"
+        >
+          clear
+        </button>
+      </div>
+      <div
+        className="truncate font-mono text-[12px] text-accent"
+        data-testid="inspector-selected-bone-name"
+        title={bone.boneName}
+      >
+        {bone.boneName}
+      </div>
+      {above.length > 0 ? (
+        <div
+          className="mt-0.5 break-words font-mono text-[10px] leading-tight text-fg/40"
+          data-testid="inspector-selected-bone-chain"
+          title={bone.chain.join(' → ')}
+        >
+          {above.join(' → ')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
@@ -4022,6 +4076,7 @@ export function NPanel() {
               {node.type} v{node.version} · {node.id}
             </div>
           </div>
+          <SelectedBoneSection />
           {refParamMeta && (
             // The general node-ref picker block — one NodeRefField per declared ref param,
             // shown regardless of section mode (and even when the ref is unset).

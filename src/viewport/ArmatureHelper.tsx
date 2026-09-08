@@ -22,7 +22,7 @@
 // REF: THESIS.md §11; vyapti V1, V8, V37;
 //      ref/GROUND_TRUTH_BLENDER_ARMATURE_DISPLAY.md.
 
-import { useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
@@ -37,10 +37,30 @@ import {
 } from './boneShape';
 import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useDagStore } from '../core/dag/store';
+import { useSelectionStore } from '../app/stores/selectionStore';
+import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
+import { getActiveBone } from '../app/boneSelection';
+import { selectNode, type SelectClickLike } from './selectNodeOnClick';
+import { assetIdsFor, bonesPickable, ownerNodeId, pickBone } from './armaturePick';
+import type { PickNode } from './armaturePick';
 import type { AnimationClipValue } from '../nodes/types';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
 const BONE_COLOR = '#c8d4e4';
+/** The selected bone, drawn in the same accent the rest of the editor selects
+ *  with. Colour, not size: a bone that grew on selection would move the very
+ *  thing a director is trying to judge. */
+const SELECTED_BONE_COLOR = '#f0a000';
+/** The two per-instance colours. The material's own colour is white so these
+ *  multiply through unchanged — a tinted material would make the selected bone
+ *  a blend of two decisions rather than the colour it says it is. */
+const BASE_COLOR = new THREE.Color(BONE_COLOR);
+/** How far ahead of the skin a bone sorts when it is pickable at all. Small
+ *  enough that no ordinary geometry can come between, and a MULTIPLIER rather
+ *  than a subtraction so bones keep their own order among themselves. */
+const PICK_DEPTH_BIAS = 1e-3;
+const SELECTED_COLOR = new THREE.Color(SELECTED_BONE_COLOR);
 
 /** The SOURCE rig, drawn in a different colour so the two are never confused —
  *  the entire value of the comparison depends on knowing which is which. */
@@ -155,6 +175,25 @@ export function ArmatureHelper({
   // Starts at the interval so the very first frame scans.
   const sinceScan = useRef(RESCAN_INTERVAL);
   const parentInverse = useRef(new THREE.Matrix4());
+  // What the LAST fill drew, so a click can be answered by the same flattening
+  // that produced the instance it hit. Read in an event handler, never in
+  // render, so a ref rather than state — and written in the same loop that sets
+  // the matrices, so the two cannot describe different frames.
+  const picks = useRef<{
+    offsets: number[];
+    frames: BoneFrame[];
+    roots: THREE.Object3D[];
+    /** Per armature: every node id that names a part of the same asset. Built on
+     *  the rescan cadence, not per raycast — R3F raycasts the scene on pointer
+     *  MOVE as well as on click, and a subtree walk there would cost a traverse
+     *  per mouse motion. */
+    assetIds: Set<string>[];
+  }>({ offsets: [], frames: [], roots: [], assetIds: [] });
+  // Which instance is currently painted as selected, so the colour buffer is
+  // rewritten when it CHANGES rather than on every frame of a 4096-instance
+  // mesh.
+  const lastHighlight = useRef(-2);
+  const assetIdsCache = useRef<Set<string>[]>([]);
 
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -166,7 +205,8 @@ export function ArmatureHelper({
   const material = useMemo(
     () =>
       new THREE.MeshBasicMaterial({
-        color: BONE_COLOR,
+        // WHITE, with the bone colour carried per instance — see BASE_COLOR.
+        color: '#ffffff',
         // The octahedron's 8 triangles have exactly the 12 edges of
         // `OCTAHEDRAL_WIRE_LINES`, so wireframe draws Blender's bone outline
         // with no second buffer — and an unshaded solid would read as a blob.
@@ -199,6 +239,83 @@ export function ArmatureHelper({
     [],
   );
 
+  /**
+   * Is this scene-object name a live DAG node? The walk up from a bone stops at
+   * the first ancestor for which this is true — `SceneFromDAG` names each
+   * producer's wrapping group with its node id, and an imported glTF's own group
+   * names must not be mistaken for one.
+   */
+  const isLiveNodeId = useCallback(
+    (name: string) => useDagStore.getState().state.nodes[name] !== undefined,
+    [],
+  );
+
+  /**
+   * Bones pick in FRONT of the skin, and only for the character being worked on.
+   *
+   * Two halves, and both are forced by what is already true:
+   *
+   * 1. THE BIAS. The helper draws with `depthTest: false` because a bone inside
+   *    a mesh is invisible and the helper exists to be looked at (#972). A thing
+   *    drawn in front that picks from behind is a pointer that disagrees with
+   *    the picture — the click lands on the skin the director cannot see through.
+   *    So the distance is scaled down, which orders bones ahead of the skinned
+   *    mesh while keeping bones in their own depth order among themselves.
+   *
+   * 2. THE GATE. Without it that bias would take EVERY click over a bone, and
+   *    most of a torso is over some bone — selecting the glTF parts of a rigged
+   *    character would quietly stop working. Blender gates the same thing with a
+   *    mode: a click reaches a bone only once its armature is the active object.
+   *    Ours is the selection — the character has to be the thing being worked on
+   *    first. Measured before it was written: six clicks on the character each
+   *    selected a `GltfChild` and the helper's handler never fired at all.
+   */
+  const raycastBones = useCallback(
+    (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
+      const mesh = meshRef.current;
+      if (!mesh || !mesh.visible || mesh.count === 0) return;
+      const selectedId = useSelectionStore.getState().primaryNodeId;
+      if (!selectedId) return;
+
+      const hits: THREE.Intersection[] = [];
+      THREE.InstancedMesh.prototype.raycast.call(mesh, raycaster, hits);
+      if (hits.length === 0) return;
+
+      const { offsets, frames } = picks.current;
+      for (const hit of hits) {
+        const id = hit.instanceId;
+        if (id === undefined) continue;
+        const bone = pickBone(id, offsets, frames);
+        if (!bone) continue;
+        if (!bonesPickable(picks.current.assetIds[bone.armature] ?? new Set(), selectedId))
+          continue;
+        intersects.push({ ...hit, distance: hit.distance * PICK_DEPTH_BIAS });
+      }
+    },
+    [],
+  );
+
+  const onBoneClick = useCallback(
+    (e: SelectClickLike & { instanceId?: number | null }) => {
+      const id = e.instanceId;
+      if (id === undefined || id === null) return;
+      const { offsets, frames, roots } = picks.current;
+      const hit = pickBone(id, offsets, frames);
+      if (!hit) return;
+      const nodeId = ownerNodeId(roots[hit.armature] ?? null, isLiveNodeId);
+      // No owning node means nothing to select. The click is deliberately NOT
+      // consumed in that case — `selectNode` leaves propagation alone for a null
+      // id, so an unroutable click still reaches OrbitControls, which is what
+      // every other picker in the viewport does.
+      if (!nodeId) return;
+      useBoneSelectionStore.getState().selectBone(nodeId, hit.name, hit.chain);
+      // The NODE selection goes through the one handler (#211): a helper earns
+      // selection by calling `selectNode`, never by writing the store itself.
+      selectNode(nodeId, e);
+    },
+    [isLiveNodeId],
+  );
+
   useFrame(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
@@ -213,8 +330,17 @@ export function ArmatureHelper({
       const fresh = scanArmatures(scene);
       const sig = scanSignature(fresh);
       if (sig !== signature.current) {
+        // The set of bones changed — a rig was added, removed, reloaded or
+        // swapped. A bone selection made against the old set may now name a
+        // bone that is not there, and the node id it hangs off can survive the
+        // swap, so the selection cannot detect this for itself. Cleared HERE,
+        // at the one place that knows, rather than guessed at by the reader.
+        if (signature.current !== '') useBoneSelectionStore.getState().clear();
         signature.current = sig;
         scans.current = fresh;
+        assetIdsCache.current = fresh.map((s) =>
+          assetIdsFor(s.root as unknown as PickNode, isLiveNodeId),
+        );
       }
     }
     const current = scans.current;
@@ -234,6 +360,22 @@ export function ArmatureHelper({
     );
     const frames = perArmature.flat();
 
+    // The offsets ARE the flattening, recorded rather than re-derived: a click
+    // handler that recomputed them from `perArmature` would be a second copy of
+    // this loop's arithmetic, free to disagree with it by a frame.
+    const offsets: number[] = [];
+    let running = 0;
+    for (const armature of perArmature) {
+      offsets.push(running);
+      running += armature.length;
+    }
+    picks.current = {
+      offsets,
+      frames,
+      roots: current.map((s) => s.root),
+      assetIds: assetIdsCache.current,
+    };
+
     // Instance matrices are in the mesh's LOCAL space; the bone matrices are
     // world. Without this the whole armature rides any ancestor transform twice.
     if (mesh.parent) {
@@ -252,6 +394,38 @@ export function ArmatureHelper({
       mesh.setMatrixAt(i, local);
     }
     mesh.instanceMatrix.needsUpdate = true;
+
+    // ── the selected bone, in a second colour ───────────────────────────────
+    // Per-instance colour rather than a second mesh: one draw call is the whole
+    // reason this helper is instanced, and a highlight that cost a second one
+    // would trade the property the design was chosen for.
+    const active = getActiveBone();
+    const wantedNode = active?.nodeId ?? null;
+    const wantedBone = active ? normalizeBoneName(active.boneName) : null;
+    let highlighted = -1;
+    if (wantedBone !== null) {
+      for (let a = 0; a < current.length && highlighted < 0; a++) {
+        // The owner is checked per armature, not per bone: two characters can
+        // carry identically named bones, and a name alone would light the wrong
+        // one on whichever rig the scan happened to reach first.
+        if (ownerNodeId(current[a].root, isLiveNodeId) !== wantedNode) continue;
+        const base = offsets[a];
+        const end = a + 1 < offsets.length ? offsets[a + 1] : frames.length;
+        for (let i = base; i < end && i < count; i++) {
+          if (normalizeBoneName(frames[i].name) === wantedBone) {
+            highlighted = i;
+            break;
+          }
+        }
+      }
+    }
+    if (highlighted !== lastHighlight.current || mesh.instanceColor === null) {
+      lastHighlight.current = highlighted;
+      for (let i = 0; i < count; i++) {
+        mesh.setColorAt(i, i === highlighted ? SELECTED_COLOR : BASE_COLOR);
+      }
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
 
     // ── the SOURCE rigs, beside the characters they drive (#977) ────────────
     // Deliberately NOT behind the `count === 0` early return that used to sit
@@ -359,6 +533,8 @@ export function ArmatureHelper({
         frustumCulled={false}
         renderOrder={999}
         visible={false}
+        onClick={onBoneClick}
+        raycast={raycastBones}
         // Never part of a production render — Blender does not render armatures
         // either. V37's hide-pass keys on exactly this flag.
         userData={{ editorChrome: true }}
