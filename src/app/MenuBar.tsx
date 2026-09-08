@@ -386,6 +386,8 @@ export function MenuBar() {
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
   const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
+  const boneDisplay = useViewportStore((s) => s.boneDisplay);
+  const bonesInFront = useViewportStore((s) => s.bonesInFront);
   const setShading = useViewportStore((s) => s.setShading);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
@@ -778,6 +780,30 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleSourceRigVisible()}
           testId="menu-view-toggle-source-rig"
         />
+        {/* #973 — Blender's own list is OCTAHEDRAL, STICK, BBONE, ENVELOPE,
+            WIRE (read live off `arm.data.bl_rna`). We ship the two that answer
+            different questions — octahedral SHOWS ROLL, stick declutters a
+            78-bone hand — and the rest wait for a reason to exist. */}
+        <Submenu label="Bones" testId="menu-view-bones">
+          {(['octahedral', 'stick'] as const).map((mode) => (
+            <Item
+              key={mode}
+              label={`${mode === boneDisplay ? '✓ ' : '   '}${mode.charAt(0).toUpperCase() + mode.slice(1)}`}
+              onSelect={() => useViewportStore.getState().setBoneDisplay(mode)}
+              testId={`menu-view-bone-display-${mode}`}
+            />
+          ))}
+          <Divider />
+          {/* Blender's "In Front". ON by default here because a bone inside a
+              skinned mesh is invisible, which is the whole helper defeated
+              (#972) — the switch is for the opposite question: is this bone
+              actually inside its limb? */}
+          <Item
+            label={`${bonesInFront ? '✓ ' : '   '}In Front`}
+            onSelect={() => useViewportStore.getState().toggleBonesInFront()}
+            testId="menu-view-bones-in-front"
+          />
+        </Submenu>
         <Divider />
         <Submenu label="Shading" testId="menu-view-shading">
           {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (

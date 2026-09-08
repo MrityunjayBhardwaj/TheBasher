@@ -37,6 +37,7 @@ import {
 } from './boneShape';
 import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
 import { useTimeStore } from '../app/stores/timeStore';
+import { useViewportStore } from '../app/stores/viewportStore';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
@@ -168,6 +169,8 @@ export function ArmatureHelper({
   readonly showSourceRigs?: boolean;
 } = {}) {
   const scene = useThree((s) => s.scene);
+  const boneDisplay = useViewportStore((s) => s.boneDisplay);
+  const bonesInFront = useViewportStore((s) => s.bonesInFront);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const refMeshRef = useRef<THREE.InstancedMesh>(null);
   const scans = useRef<ArmatureScan[]>([]);
@@ -193,6 +196,9 @@ export function ArmatureHelper({
   // rewritten when it CHANGES rather than on every frame of a 4096-instance
   // mesh.
   const lastHighlight = useRef(-2);
+  const lineRef = useRef<THREE.LineSegments>(null);
+  /** What was last WRITTEN to the three materials, not read back from one. */
+  const depthApplied = useRef<boolean | null>(null);
   const assetIdsCache = useRef<Set<string>[]>([]);
 
   const geometry = useMemo(() => {
@@ -201,6 +207,34 @@ export function ArmatureHelper({
     g.setIndex(octahedralIndices());
     return g;
   }, []);
+
+  /**
+   * STICK MODE (#973). Blender's stick is not a mesh: `drw_shgroup_bone_stick`
+   * pushes `{head, tail}` into a buffer (`overlay_armature.cc:210-231`) and the
+   * shader widens the segment in SCREEN space — `stick_size = theme.sizes.pixel
+   * * 5.0`, applied along a screen-aligned perpendicular
+   * (`overlay_armature_stick_vert.glsl:63-75`). Constant screen width is the
+   * property that makes it declutter: a hand's fingers stay readable at any zoom
+   * because the bones do not shrink into each other.
+   *
+   * So ours is lines, not thin geometry. WebGL ignores `linewidth`, so a segment
+   * is one device pixel against Blender's five — the same behaviour, a thinner
+   * stroke. Fat lines (`LineSegments2`) would match the width and cost a second
+   * geometry pipeline for a diagnostic overlay; that trade is not worth taking
+   * until someone asks for it.
+   */
+  const lineGeometry = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(MAX_BONES * 6), 3));
+    g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(MAX_BONES * 6), 3));
+    g.setDrawRange(0, 0);
+    return g;
+  }, []);
+
+  const lineMaterial = useMemo(
+    () => new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.9 }),
+    [],
+  );
 
   const material = useMemo(
     () =>
@@ -395,6 +429,37 @@ export function ArmatureHelper({
     }
     mesh.instanceMatrix.needsUpdate = true;
 
+    // ── the two display switches ────────────────────────────────────────────
+    // Written every frame from the store rather than through a React effect:
+    // the fill already runs here, and a material flag set in two places is a
+    // material flag that will one day disagree with itself.
+    // 🔴 The applied value is tracked HERE, not read back off one of the three
+    // materials. Reading `material.depthTest` was tried and is a silent
+    // no-op-forever: the mesh material is CONSTRUCTED with depthTest false, so
+    // the condition was already satisfied on frame one and the line material —
+    // constructed with three's default of TRUE — never received it. Sticks drew
+    // inside the skin and read as "stick mode draws nothing", which is [[H697]]
+    // wearing a different hat. One writer, one record of what it wrote.
+    const wantDepth = !bonesInFront;
+    if (depthApplied.current !== wantDepth) {
+      depthApplied.current = wantDepth;
+      for (const m of [material, sourceMaterial, lineMaterial]) {
+        m.depthTest = wantDepth;
+        m.depthWrite = wantDepth ? false : m.depthWrite;
+        m.needsUpdate = true;
+      }
+    }
+    const stick = boneDisplay === 'stick';
+    // In stick mode the octahedra stay MOUNTED AND RAYCASTABLE and stop
+    // drawing: `visible = false` would remove them from the ray, and picking a
+    // bone would quietly stop working in one of two display modes. The pick
+    // volume is the bone's shape either way — which is what Blender does too,
+    // where selection in stick mode still hits the bone.
+    if (material.colorWrite === stick) {
+      material.colorWrite = !stick;
+      material.needsUpdate = true;
+    }
+
     // ── the selected bone, in a second colour ───────────────────────────────
     // Per-instance colour rather than a second mesh: one draw call is the whole
     // reason this helper is instanced, and a highlight that cost a second one
@@ -425,6 +490,30 @@ export function ArmatureHelper({
         mesh.setColorAt(i, i === highlighted ? SELECTED_COLOR : BASE_COLOR);
       }
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+
+    // ── the sticks ──────────────────────────────────────────────────────────
+    const lines = lineRef.current;
+    if (lines) {
+      lines.visible = stick && count > 0;
+      if (lines.visible) {
+        const pos = lineGeometry.getAttribute('position') as THREE.BufferAttribute;
+        const col = lineGeometry.getAttribute('color') as THREE.BufferAttribute;
+        const p = new THREE.Vector3();
+        for (let i = 0; i < count; i++) {
+          const f = frames[i];
+          const c = i === highlighted ? SELECTED_COLOR : BASE_COLOR;
+          p.set(f.head[0], f.head[1], f.head[2]).applyMatrix4(parentInverse.current);
+          pos.setXYZ(i * 2, p.x, p.y, p.z);
+          p.set(f.tail[0], f.tail[1], f.tail[2]).applyMatrix4(parentInverse.current);
+          pos.setXYZ(i * 2 + 1, p.x, p.y, p.z);
+          col.setXYZ(i * 2, c.r, c.g, c.b);
+          col.setXYZ(i * 2 + 1, c.r, c.g, c.b);
+        }
+        pos.needsUpdate = true;
+        col.needsUpdate = true;
+        lineGeometry.setDrawRange(0, count * 2);
+      }
     }
 
     // ── the SOURCE rigs, beside the characters they drive (#977) ────────────
@@ -537,6 +626,18 @@ export function ArmatureHelper({
         raycast={raycastBones}
         // Never part of a production render — Blender does not render armatures
         // either. V37's hide-pass keys on exactly this flag.
+        userData={{ editorChrome: true }}
+      />
+      {/* The sticks. Deliberately NOT applied to the reference rig below: that
+          rig exists to judge ROLL against the live one, and a stick is a head
+          and a tail with no third axis — comparing roll with sticks is
+          comparing something neither shape carries. */}
+      <lineSegments
+        ref={lineRef}
+        args={[lineGeometry, lineMaterial]}
+        frustumCulled={false}
+        renderOrder={999}
+        visible={false}
         userData={{ editorChrome: true }}
       />
       <instancedMesh
