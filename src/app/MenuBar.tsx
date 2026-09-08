@@ -35,6 +35,7 @@ import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { canToggleViewLock, toggleViewLock } from './viewLock';
+import { useNotificationStore } from './stores/notificationStore';
 import { exportDagJson } from './exportDag';
 import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
@@ -734,7 +735,21 @@ export function MenuBar() {
           label={`${viewLock ? '✓ ' : '   '}Lock View to Selected`}
           disabled={!canToggleViewLock(viewLock, primaryNodeId)}
           onSelect={() => {
-            toggleViewLock();
+            // #984 — a refusal SAYS so. Locking to a light, an empty or a
+            // data-only node used to latch a checkmark beside a view that never
+            // moved, which is the affordance-that-reads-as-live this item's own
+            // issue was filed for. Only the followability arm is spoken: the
+            // other refusal is "nothing selected", which the disabled state
+            // already carries, and a toast repeating a greyed-out item is how a
+            // surface teaches people to stop reading it.
+            const outcome = toggleViewLock();
+            if (outcome.kind === 'refused' && outcome.why === 'nothing-to-follow') {
+              useNotificationStore.getState().notify({
+                severity: 'warn',
+                message:
+                  'Nothing to follow here — this draws no geometry or bones the view can centre on.',
+              });
+            }
           }}
           testId="menu-view-lock-to-selected"
         />

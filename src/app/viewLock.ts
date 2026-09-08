@@ -27,6 +27,9 @@
 import { getActiveBone } from './boneSelection';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
+import { useThreeRef } from './character/threeRef';
+import { useDagStore } from '../core/dag/store';
+import { pointFromScan, scanForFollow } from '../viewport/followScan';
 
 /**
  * Will toggling do anything? Pure, and shared with the affordance ON PURPOSE.
@@ -54,11 +57,23 @@ function lockable(primaryNodeId: string | null): primaryNodeId is string {
 }
 
 /**
- * Toggle the view lock. Returns whether the view is locked AFTER the call.
+ * What toggling did. A function that can decline must SAY so, in its return —
+ * the lesson this issue's first half was filed for — and "declined" now has two
+ * spellings that need different words from the caller, so a boolean can no
+ * longer carry it.
+ */
+export type ViewLockOutcome =
+  | { readonly kind: 'locked' }
+  | { readonly kind: 'released' }
+  | { readonly kind: 'refused'; readonly why: 'nothing-selected' | 'nothing-to-follow' };
+
+/**
+ * Toggle the view lock, and report what happened.
  *
  * Locked → unlocked, unconditionally: releasing never depends on what is
  * selected now, because what is selected now is unrelated to what was locked.
- * Unlocked → locked to the primary selection, or false when there is none.
+ * Unlocked → locked to the primary selection, when there is one AND the scene
+ * has something for it to follow.
  *
  * RELEASING LEAVES THE PIVOT WHERE THE CHARACTER WAS, which is a deliberate
  * divergence from Blender: its lock substitutes the point at view-matrix time
@@ -66,21 +81,68 @@ function lockable(primaryNodeId: string | null): primaryNodeId is string {
  * wherever it was before. Ours moves the pivot, so unlocking is CONTINUOUS —
  * nothing on screen changes at the moment you stop following, which is the
  * behaviour a director asked for by turning it off while watching.
+ *
+ * 🔴 THE FOLLOWABILITY CHECK IS HERE, AND THAT IS THE WHOLE OF #984. Three
+ * things can leave a lock with no point: a light or an empty, whose glyphs are
+ * editor chrome and are pruned from the bounds; a data-only node that draws
+ * nothing at all; and a rig whose every bone is a root. In all three the lock
+ * used to sit in the store with its checkmark showing while the view never
+ * moved — the same affordance-that-reads-as-live this issue's first half was
+ * about, one layer further in.
+ *
+ * It cannot be answered in the applier, which is where it first looks like it
+ * belongs: from inside a frame callback "nothing to follow" and "nothing to
+ * follow YET" are the same observation, and a lock restored from a previous
+ * session (#985) reads as the second until its asset finishes loading. Clearing
+ * on emptiness there would drop exactly the lock a director asked to be
+ * remembered. At the click there is no such window — the director is looking at
+ * what they just selected.
+ *
+ * And it is answered at the CLICK rather than in `canToggleViewLock`, which the
+ * menu evaluates on every render: this walks the scene, and the enabled state is
+ * recomputed whenever anything in the menu bar changes. `canToggleViewLock` is
+ * still the shared rule for the cheap half — whether there is anything to lock
+ * to at all — and it does not claim to predict this one.
  */
-export function toggleViewLock(): boolean {
+export function toggleViewLock(): ViewLockOutcome {
   const store = useViewportStore.getState();
   if (store.viewLock) {
     store.setViewLock(null);
-    return false;
+    return { kind: 'released' };
   }
   const nodeId = useSelectionStore.getState().primaryNodeId;
-  if (!lockable(nodeId)) return false;
-  const bone = getActiveBone();
+  if (!lockable(nodeId)) return { kind: 'refused', why: 'nothing-selected' };
   // The bone comes through `getActiveBone`, never off the raw store, and that
   // IS the check: it returns null unless the bone's rig is the primary
   // selection — the same value being locked. A `bone.nodeId === nodeId` guard
   // here looked prudent and was dead, which a falsification caught: removing it
   // changed no row, because there is no state in which the two disagree.
-  store.setViewLock({ nodeId, boneName: bone?.boneName ?? null });
-  return true;
+  const boneName = getActiveBone()?.boneName ?? null;
+  if (!hasSomethingToFollow(nodeId, boneName)) {
+    return { kind: 'refused', why: 'nothing-to-follow' };
+  }
+  store.setViewLock({ nodeId, boneName });
+  return { kind: 'locked' };
+}
+
+/**
+ * Is there anything in the live scene this lock could centre on?
+ *
+ * Asked through the SAME resolver the viewport applies every frame, so the
+ * answer a director is given at the click and the answer the viewport acts on
+ * cannot come apart. A second implementation here would be the drift this
+ * issue's first half already paid for once.
+ *
+ * 🔴 AN UNANSWERABLE QUESTION IS NOT A NO. With no scene pushed yet there is
+ * nothing to walk, and refusing on that would turn "I cannot tell" into "there
+ * is nothing there" — a confident wrong answer, and the one failure mode worse
+ * than the silence being fixed. The lock is taken and the applier follows it as
+ * soon as there is something to follow.
+ */
+function hasSomethingToFollow(nodeId: string, boneName: string | null): boolean {
+  const scene = useThreeRef.getState().scene;
+  if (!scene) return true;
+  const dag = useDagStore.getState().state;
+  const scan = scanForFollow(scene, (name) => dag.nodes[name] !== undefined, nodeId);
+  return pointFromScan(scan, nodeId, boneName) !== null;
 }

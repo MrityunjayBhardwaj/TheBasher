@@ -49,11 +49,8 @@ import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
 import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
-import { followPoint, type FollowArmature } from './cameraFollow';
 import { computeSceneBounds } from './sceneBounds';
-import { scanArmatures } from './ArmatureHelper';
-import { assetIdsFor, type PickNode } from './armaturePick';
-import { placeBones } from './boneShape';
+import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
 import { applyTarget } from '../app/character/framing';
 
 // Default free-mode clip planes (three's near-ish / the pre-#186 constants).
@@ -80,15 +77,6 @@ const MAX_FRAMES = 300;
  *  own rescan: ~0.25s at 60fps is the longest a rig that was just loaded or
  *  swapped can go unfollowed. */
 const LOCK_RESCAN_INTERVAL = 15;
-
-/** One live armature as the lock reads it: the scan's topology plus the DAG
- *  node ids that name any part of its asset. */
-interface LockedRig {
-  readonly root: THREE.Object3D;
-  readonly bones: THREE.Object3D[];
-  readonly parents: number[];
-  readonly ids: ReadonlySet<string>;
-}
 
 /** Orthographic zoom that makes the ortho framing match the perspective
  *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
@@ -219,16 +207,16 @@ export function EditorViewCamera() {
   // have been a cost decision made twice and answered differently. Starts at the
   // interval so the first locked frame resolves rather than following nothing
   // for a quarter second.
-  const lockScan = useRef<{ rigs: LockedRig[]; object: THREE.Object3D | null }>({
-    rigs: [],
-    object: null,
-  });
+  const lockScan = useRef<FollowScan | null>(null);
   const sinceLockScan = useRef(LOCK_RESCAN_INTERVAL);
   // A new lock names a different node, so what was resolved is about the old
   // one. Re-resolving on the next frame rather than up to a quarter second later
   // is the difference between a toggle that acts and one that hesitates.
   useEffect(() => {
     sinceLockScan.current = LOCK_RESCAN_INTERVAL;
+    // ...and the previous lock's scan is about a different node, so it is
+    // dropped rather than read once more against the new one.
+    lockScan.current = null;
   }, [viewLock]);
   // Reused so the follow allocates nothing per frame.
   const lockPoint = useMemo(() => new THREE.Vector3(), []);
@@ -400,61 +388,18 @@ export function EditorViewCamera() {
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
       const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
-      lockScan.current = {
-        rigs: scanArmatures(state.scene).map((scan) => ({
-          ...scan,
-          ids: assetIdsFor(scan.root as unknown as PickNode, isLiveNodeId),
-        })),
-        // The non-rig answer. `SceneFromDAG` names a wrapping group with the
-        // producer's id (`<group name={pickId}>`), so the id resolves — but
-        // 🔴 THAT GROUP IS NOT WHERE THE OBJECT IS. Measured: moving the seed
-        // cube to x=14 and then x=20 leaves `Group:n_box` at the world origin
-        // on every frame while the mesh inside it reads 14 and then 20. The
-        // wrapper is a picking handle; the transform is applied within. Reading
-        // its position gave a lock that resolved, looked live and never moved —
-        // the very defect this issue was filed for, rebuilt in its fix.
-        // So the point is taken from the CONTENT (below), not from the wrapper.
-        // Resolved unconditionally rather than only when no rig matched:
-        // skipping it there would put the rig-beats-object priority in two
-        // places, and this file's copy could then disagree with `followPoint`'s
-        // silently.
-        object: state.scene.getObjectByName(viewLock.nodeId) ?? null,
-      };
+      lockScan.current = scanForFollow(state.scene, isLiveNodeId, viewLock.nodeId);
     }
-    // Only the rig(s) the lock names get placed. The `ids.has` here is a COST
-    // pre-pass, not a second decision — it is the same expression `followPoint`
-    // selects with, so the two cannot disagree; placing every rig in the scene
-    // to throw all but one away is simply work with no reader.
-    const armatures: FollowArmature[] = [];
-    for (const rig of lockScan.current.rigs) {
-      if (!rig.ids.has(viewLock.nodeId)) continue;
-      // The TRS pass that poses the bones runs at the same default priority, so
-      // its order against this one is mount order. Forcing the update makes the
-      // read correct either way — the same guard the armature helper takes.
-      rig.root.updateWorldMatrix(true, true);
-      armatures.push({
-        ids: rig.ids,
-        frames: placeBones(
-          rig.bones.map((b, i) => ({
-            name: b.name,
-            parent: rig.parents[i],
-            matrix: b.matrixWorld,
-          })),
-        ),
-      });
-    }
-    // The centre of what this node actually DRAWS, through the same reader
-    // "frame all" uses — live world bounds over non-chrome meshes. Reading the
-    // scene rather than the node's authored `position` is the same choice the
-    // rig branch makes and for the same reason: a follow has to track what is
-    // on screen, so a keyframed, driven or constrained object is followed
-    // without any of those needing to be known about here. A node that draws
-    // no measurable content yields no point, which `followPoint` reports as
-    // nothing to follow rather than inventing a coordinate.
-    const object = lockScan.current.object;
-    const objectBounds = object ? computeSceneBounds(object) : null;
-    const objectPoint = objectBounds ? objectBounds.center : null;
-    const found = followPoint(armatures, viewLock.nodeId, viewLock.boneName, objectPoint);
+    const found = lockScan.current
+      ? pointFromScan(lockScan.current, viewLock.nodeId, viewLock.boneName)
+      : null;
+    // 🔴 NULL IS NOT CLEARED HERE, and that is a decision rather than an
+    // omission (#984). From inside this callback "nothing to follow" and
+    // "nothing to follow YET" are the same observation, and a lock restored
+    // from a previous session (#985) reads as the second for as long as its
+    // asset is loading. Clearing on emptiness would drop exactly the lock a
+    // director asked to be remembered. The question is answered where it CAN
+    // be — at the click, in `viewLock.ts`, with the scene already settled.
     if (!found) return;
     // A lock outranks the one-time bounds fit; ending the settle here is what
     // keeps the two from writing the camera in the same frame.
