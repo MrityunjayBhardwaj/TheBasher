@@ -43,9 +43,7 @@
 // that the retarget adds no roll of its own and removes none, which is a real
 // invariant; it is not a measure of anything lost.
 //
-// OWN-BIND, each rig against ITS OWN bind about ITS OWN axis: the quantity a
-// retarget is actually obliged to preserve. If the source twists a bone 30° away
-// from its rest, the target must twist 30° away from its bind. Measured on this
+// OWN-BIND, each rig against ITS OWN bind about ITS OWN axis. Measured on this
 // pair:
 //
 //     0.00°  on fifteen of seventeen bones, every frame
@@ -54,6 +52,41 @@
 // The roll is recovered here. It is recovered by the REST ALIGNMENT, which
 // supplies the third degree of freedom uniformly — `alignedLocalOffsets` says so
 // in its own docstring — and not by any per-bone second axis.
+//
+// 🔴 BUT OWN-BIND IS NOT THE CONTRACT, AND AN EARLIER READING OF THIS FILE SAID
+// IT WAS — the same mistake as the cross residual above, one dimension over.
+// It is a swing/twist decomposition taken about the SOURCE's axis on one side
+// and the TARGET's on the other, and those two axes coincide only when the two
+// rests already point the bone the same way IN WORLD. When they do not, the gap
+// leaks into the reading in proportion to how far the bone swings — with nothing
+// lost at all. Measured on the untracked vendor pair (mixamo-xbot driven by the
+// generator's own BVH, which is what a director actually gets):
+//
+//     rest gap 18.3°   own-twist 51.3°   |Δmagnitude| 0.00°   both feet
+//     rest gap  8.8°   own-twist 13.1°   |Δmagnitude| 0.00°   both shoulders
+//     rest gap  0.0°   own-twist  0.0°   |Δmagnitude| 0.00°   both arms
+//
+// Read through own-twist alone that pair looks like half a right angle of lost
+// roll at the foot. Nothing is lost: the row below injects a rest gap into THIS
+// fixture and watches own-twist follow it while the magnitude stays at zero.
+//
+// THE CONTRACT IS AXIS-FREE: how far the target has turned from its bind versus
+// how far the source has turned from its rest, as a magnitude, with no
+// decomposition and no shared frame required. A retarget that carries the
+// source's world motion onto the target's own bind preserves it exactly — the
+// axis is conjugated into the target's frame, the size is untouched. Measured
+// 0.00° on every mapped bone and frame of both aligned pairs, and 91.83° on the
+// direction branch, which makes it the sharpest discriminator in this file.
+//
+// GROUNDED, not asserted: in Blender every bone space is defined against the
+// OWNER's own rest (`BKE_armature_mat_pose_to_bone`, armature.cc:2281, reached
+// from `BKE_constraint_mat_convertspace`, constraint.cc:311), and Copy Rotation
+// transfers that delta without ever consulting the two rests' relative
+// orientation (`rotlike_evaluate`, constraint.cc:2049). Two rigs' twists are
+// therefore never in one frame unless their rests already agree, and a
+// rest-direction disagreement survives any rotation copy — Blender's answer to
+// it is matching the rests or adding IK, not a cleverer transfer.
+// See ref/GROUND_TRUTH_BLENDER_BONE_SPACES.md.
 //
 // 🔑 THE OWN-BIND ROWS ARE FALSIFIED, because a 0.00° from an instrument nobody
 // has broken is indistinguishable from an instrument that cannot move. Injecting
@@ -132,6 +165,39 @@ async function targetRig(): Promise<readonly BoneSpec[]> {
   return projectGltfSkeleton(skin as unknown as GltfSkinMetadata).bones;
 }
 
+/** A deliberate rest-axis gap: spin one target bone's BIND about a world axis,
+ *  so the two rigs point that bone differently at rest while nothing about the
+ *  motion changes. Used to show what a gap does to `ownWorst` (#979). */
+interface BindBend {
+  readonly bone: string;
+  readonly deg: number;
+}
+
+function bentTargetRig(bones: readonly BoneSpec[], bend: BindBend): readonly BoneSpec[] {
+  const i = bones.findIndex((b) => b.name === bend.bone);
+  if (i < 0) throw new Error(`${bend.bone} is not in the target rig`);
+  const rad = (bend.deg * Math.PI) / 180;
+  const spin = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), rad);
+  // Move the bone's CHILDREN at bind, leaving its own frame alone: the two rigs
+  // now genuinely point this bone somewhere else, which is the disagreement a
+  // retarget inherits and cannot fix.
+  //
+  // 🔴 NOT by rotating the bone's own bind rotation. That was tried and measured
+  // inert — rotating a bone's frame carries its children with it, so the rest
+  // direction is unchanged in the world and every number here stays put. The
+  // quantity that matters is the rest direction IN WORLD, because the target's
+  // twist axis arrives conjugated into the world by the retarget's own offset.
+  const moved = bones.map((b) => {
+    if (b.parent !== i) return b;
+    const p = new Vector3(b.position[0], b.position[1], b.position[2]).applyQuaternion(spin);
+    return { ...b, position: [p.x, p.y, p.z] as [number, number, number] };
+  });
+  if (moved.every((b, idx) => b === bones[idx])) {
+    throw new Error(`${bend.bone} has no child to move — the perturbation would be inert`);
+  }
+  return moved;
+}
+
 const worldRot = (b: Bone): Quaternion => {
   const p = new Vector3();
   const r = new Quaternion();
@@ -161,8 +227,23 @@ interface Row {
    *  of its own" means when it is measured rather than asserted. */
   readonly bindDiff: number;
   /** Each rig's twist away from ITS OWN bind about ITS OWN axis, target minus
-   *  source, worst over the clip. THIS is the quantity #854 is about. */
+   *  source, worst over the clip.
+   *
+   *  🔴 READ THIS WITH `restAxisGap`. It is a swing/twist decomposition taken
+   *  about TWO DIFFERENT AXES whenever the two rests point the bone differently,
+   *  so a gap leaks into it in proportion to how far the bone swings. It is not
+   *  by itself a measure of roll lost — `magWorst` is. */
   readonly ownWorst: number;
+  /** The angle between the two rigs' rest directions for this bone. The
+   *  confound in `ownWorst`, reported beside it so the two cannot be read as one
+   *  number (#979). */
+  readonly restAxisGap: number;
+  /** |target's rotation away from its bind| − |source's rotation away from its
+   *  rest|, worst over the clip. AXIS-FREE: it needs no decomposition and no
+   *  correspondence between the two rests, so nothing leaks into it. A retarget
+   *  that carries the source's motion onto the target's bind preserves it
+   *  exactly, whatever the two rests disagree about. */
+  readonly magWorst: number;
 }
 
 /** Rest direction of each bone toward its first mapped descendant, in that bone's own frame. */
@@ -205,8 +286,8 @@ interface Measured {
   readonly branch: 'aligned' | 'direction';
 }
 
-async function measure(bvhPath: string): Promise<Measured> {
-  const target = await targetRig();
+async function measure(bvhPath: string, bendBind?: BindBend): Promise<Measured> {
+  const target = bendBind ? bentTargetRig(await targetRig(), bendBind) : await targetRig();
   const preset = getBoneNameMapPreset('somaToMixamo')!;
   const parsed = parseBvh(readFileSync(bvhPath, 'utf8'), 'walk', BVH_UNIT_SCALE_CENTIMETRES);
   const sourceToTarget = resolveNameMapToTarget(
@@ -261,6 +342,8 @@ async function measure(bvhPath: string): Promise<Measured> {
   const resid = new Map<string, number[]>();
   const bindRel = new Map<string, number[]>();
   const ownDelta = new Map<string, number[]>();
+  const magDelta = new Map<string, number[]>();
+  const gap = new Map<string, number>();
   for (let i = 0; i < frames; i++) {
     for (const k of S.by.get(S.times[i]) ?? []) {
       const b = sBind[k.bone];
@@ -301,6 +384,17 @@ async function measure(bvhPath: string): Promise<Measured> {
       resid.set(pair, [...(resid.get(pair) ?? []), r]);
       bindRel.set(pair, [bd]);
       ownDelta.set(pair, [...(ownDelta.get(pair) ?? []), Math.abs(wrap(tOwn - sOwn))]);
+
+      // AXIS-FREE. The magnitude of each rig's rotation away from its own
+      // neutral, with no axis chosen and no decomposition taken.
+      const mag = (q: Quaternion) => 2 * Math.acos(Math.min(1, Math.abs(q.w))) * DEG;
+      const sMag = mag(sq.clone().invert().multiply(worldRot(sb)));
+      const tMag = mag(tq.clone().invert().multiply(worldRot(tb)));
+      magDelta.set(pair, [...(magDelta.get(pair) ?? []), Math.abs(tMag - sMag)]);
+      // IN WORLD, not in each bone's own frame. The own-frame gap is not the
+      // confound: the target's twist axis arrives conjugated by the retarget's
+      // own offset, which lands it in the world beside the source's.
+      gap.set(pair, sd.clone().applyQuaternion(sq).angleTo(td.clone().applyQuaternion(tq)) * DEG);
     }
   }
 
@@ -312,6 +406,8 @@ async function measure(bvhPath: string): Promise<Measured> {
       spread: Math.max(...v) - Math.min(...v),
       bindDiff: (bindRel.get(pair) ?? [NaN])[0],
       ownWorst: Math.max(...(ownDelta.get(pair) ?? [NaN])),
+      restAxisGap: gap.get(pair) ?? NaN,
+      magWorst: Math.max(...(magDelta.get(pair) ?? [NaN])),
     };
   });
   return { frames, rows, branch };
@@ -428,6 +524,122 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
   // `public/assets/` are untracked, so a gate that counted them would be a false
   // green on a fresh checkout and a false red on a machine holding a different
   // set. Both of those solve non-null when present.
+  it("the ALIGNED branch preserves every joint's rotation magnitude EXACTLY, and the direction branch does not", async () => {
+    // THE AXIS-FREE CONTRACT (#979). Every other row here decomposes a rotation
+    // about an axis one of the two rigs supplies, so a rest that points a bone
+    // differently leaks into the answer. This one takes no axis at all: how far
+    // has the target turned from its bind, how far has the source turned from
+    // its rest, and do those two numbers agree? A retarget that carries the
+    // source's world motion onto the target's own bind preserves the magnitude
+    // exactly no matter what the two rests disagree about — the axis is
+    // conjugated into the target's frame, the size is untouched.
+    //
+    // It is also the sharpest discriminator between the two branches this file
+    // is about, which is why it is worth having as its own row:
+    //
+    //     soma-walk-tpose   aligned     |Δ| 0.00°   (own-twist 0.5°,  gap 113.5°)
+    //     soma-walk         direction   |Δ| 91.83°  (own-twist 90.0°, gap  90.0°)
+    //
+    // Measured on the UNTRACKED vendor pair too — mixamo-xbot driven by the
+    // generator's own BVH — where it reads 0.00° while own-twist reads 51.3° at
+    // the foot on an 18.3° rest gap. That pair is the reason this row exists:
+    // read through `ownWorst` alone it looks like half a right angle of lost
+    // roll, and nothing is lost.
+    const aligned = await measure(TPOSE);
+    const direction = await measure(RANK1);
+    expect(aligned.branch).toBe('aligned');
+    expect(direction.branch).toBe('direction');
+
+    const worstOf = (m: Measured) => m.rows.reduce((a, b) => (b.magWorst > a.magWorst ? b : a));
+    const a = worstOf(aligned);
+    expect(
+      a.magWorst,
+      `on the aligned branch ${a.pair} turns ${a.magWorst.toFixed(2)}° further from its bind than ` +
+        `the source does from its rest — the retarget is adding or dropping motion, not just ` +
+        `re-expressing its axis`,
+    ).toBeLessThan(0.01);
+
+    // ...and the same measure on the branch that genuinely loses the roll, so
+    // "0.00°" is a result rather than an instrument that cannot move.
+    const d = worstOf(direction);
+    expect(
+      d.magWorst,
+      `the direction branch now preserves rotation magnitude to ${d.magWorst.toFixed(2)}°, so ` +
+        `either it stopped losing the roll or this measure stopped being able to see it`,
+    ).toBeGreaterThan(30);
+  });
+
+  it('a REST-AXIS GAP manufactures own-twist while nothing at all is lost', async () => {
+    // Why `ownWorst` cannot be read on its own, demonstrated rather than argued.
+    // Spin one target bone's BIND by 25° and nothing about the motion changes:
+    // the retarget still carries the source's rotation onto the target's bind,
+    // and the axis-free magnitude stays exact. What changes is that the two rigs
+    // now point that bone 25° apart at rest, so the swing/twist decomposition —
+    // taken about the source's axis on one side and the target's on the other —
+    // reports a twist difference that is entirely the gap.
+    //
+    // Swept on this fixture, moving the target's toe at bind by a known angle:
+    //
+    //     injected   rest gap (world)   own-twist   |Δmagnitude|
+    //        0°           0.3°            0.47°        0.000°
+    //       15°           6.7°            3.30°        0.000°
+    //       40°          17.7°            9.17°        0.000°
+    //       60°          26.0°           20.54°        0.000°
+    //       80°          33.6°           34.55°        0.000°
+    //
+    // The gap is one of two terms — the other is how far the bone SWINGS, since
+    // a decomposition about two axes only diverges once there is motion to
+    // decompose. That is why the vendor pair reads 51.3° on an 18.3° gap while
+    // this fixture reads 9.17° on a 17.7° one: the generated walk moves the foot
+    // far more than the stand-in clip does. Proportionality is not claimed; the
+    // direction of the effect is, and the magnitude column stays at zero
+    // throughout, which is the part that matters.
+    //
+    // This is the whole explanation of the vendor pair's 51.3° foot reading, and
+    // it is why #854's own-bind table cannot be read as "degrees of roll lost"
+    // on a pair whose rests differ. Grounded in Blender's own semantics: every
+    // bone space in `BKE_constraint_mat_convertspace` is defined against the
+    // OWNER's rest, so two rigs' twists are never in the same frame unless their
+    // rests already agree (GROUND_TRUTH_BLENDER_BONE_SPACES.md, stages 2-4).
+    const BONE = 'mixamorig_RightFoot';
+    const plain = await measure(TPOSE);
+    const bent = await measure(TPOSE, { bone: BONE, deg: 60 });
+    expect(
+      bent.branch,
+      'bending one bind changed the routing, so this is not a like-for-like',
+    ).toBe(plain.branch);
+
+    const find = (m: Measured) => m.rows.find((r) => r.pair.endsWith(`-> ${BONE}`));
+    const before = find(plain);
+    const after = find(bent);
+    expect(
+      before && after,
+      `${BONE} is not a mapped pair — the demonstration would be empty`,
+    ).toBeTruthy();
+
+    // The gap is what was injected...
+    expect(
+      (after as Row).restAxisGap - (before as Row).restAxisGap,
+      `bending the bind by 25° moved the rest-axis gap by ` +
+        `${((after as Row).restAxisGap - (before as Row).restAxisGap).toFixed(1)}°, so the ` +
+        `perturbation did not land where this row says it did`,
+    ).toBeGreaterThan(10);
+
+    // ...the own-twist follows it...
+    expect(
+      (after as Row).ownWorst,
+      `the injected rest gap moved own-twist to only ${(after as Row).ownWorst.toFixed(2)}°, so ` +
+        `this row no longer demonstrates the confound it exists for`,
+    ).toBeGreaterThan(5);
+
+    // ...and NOTHING was lost, which is the point.
+    expect(
+      (after as Row).magWorst,
+      `the axis-free magnitude moved to ${(after as Row).magWorst.toFixed(2)}° under a pure bind ` +
+        `rotation, so the two measures are no longer independent and the argument above is stale`,
+    ).toBeLessThan(0.01);
+  });
+
   it('routes the tracked fixtures, and only these four reach the branch that loses roll', async () => {
     const tracked = execFileSync('git', ['ls-files', '-z', '--', '*.bvh'], {
       encoding: 'utf8',
