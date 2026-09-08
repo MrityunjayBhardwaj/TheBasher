@@ -2320,11 +2320,21 @@ function ModifiedMeshR({
     );
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
-  // #638 (ns-1b step 5) — this renderer does not decide array-or-single either, even though
-  // its answer can only be single today: `ModifiedMeshValue` carries one material and no
-  // attribute key, so the assignment has one slot and arm 1 fires. Routing it through the
-  // one resolver anyway is what keeps the two roads from drifting when the modifier road
-  // grows a table — the alternative is a second place that knows how to make this decision.
+  // #638 (ns-1b step 5) — this renderer does not decide array-or-single; it is the SINGLE
+  // arm of a decision already taken above, so the one-slot assignment here is a consequence
+  // rather than a claim. Routing it through the one resolver anyway is what keeps the two
+  // roads from drifting — the alternative is a second place that knows how to make this
+  // decision.
+  //
+  // ⚠️ #978 — THIS SAID `ModifiedMeshValue` "carries one material and no attribute key",
+  // AND THAT IS FALSE ABOUT THE TYPE: it declares both `materialSlots` and `attributeKey`
+  // (`types.ts`), added at #638 so a partial-range material op's assignment would survive to
+  // the renderer. The line was harmless only because the caller forks on
+  // `needsMaterialSlots(objectSlotsOf(...))` first and sends the multi-slot case to
+  // `MultiMaterialMeshR`, so this arm is reached only when the resolved table really does
+  // hold one entry. It is sound BY POSITION, never by type — and a comment that grounds it
+  // in the type instead invites the next reader to trust the collapse somewhere the fork
+  // does not protect, which is exactly the defect #978 fixed one road over.
   const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
   if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
