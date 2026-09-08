@@ -144,7 +144,7 @@ describe('#960 — what a director is told when the rests could not be reconcile
 
   it('names both when neither rig can supply a body frame', () => {
     const signal = restSignal(view(flatten(SOURCE), flatten(yawed(SOURCE))));
-    expect(signal!.detail).toContain("Both this clip's rest and this character's bind");
+    expect(signal!.detail).toContain("Neither this clip's rest nor this character's bind");
   });
 
   it('says the clip was authored for another body when two full-rank rests disagree', () => {
@@ -159,6 +159,22 @@ describe('#960 — what a director is told when the rests could not be reconcile
     expect(signal!.detail).not.toContain('single axis');
   });
 
+  it('keeps the per-bone angles off the direction branch, where they point the wrong way', () => {
+    // #987, one column over. On the flat-rest pair eleven of seventeen mapped
+    // rows clear the alarm threshold, and each one describes a disagreement
+    // nobody reconciled rather than a residue nobody can remove — eleven
+    // invitations to edit a map that is already correct.
+    const flat = view(flatten(SOURCE), yawed(SOURCE));
+    expect(flat.restReconciliation.kind).toBe('direction');
+    expect(flat.rows.filter((r) => r.restGapDeg !== null)).toHaveLength(0);
+
+    // The losing alternative: the aligned branch must still name its bone, or
+    // this suppression has quietly deleted the feature it is protecting.
+    const aligned = view(SOURCE, TARGET_ALIGNED);
+    expect(aligned.rows.filter((r) => r.restGapDeg !== null).length).toBeGreaterThan(0);
+    expect(aligned.worstRestGap).not.toBeNull();
+  });
+
   it('stays silent when the map does not reach the rigs, because the counts already shout', () => {
     // Deliberate silence, pinned so it cannot be quietly filled in later. One
     // mapped bone has no mapped descendant, so the solve sees no pairs at all —
@@ -167,5 +183,10 @@ describe('#960 — what a director is told when the rests could not be reconcile
     const v = view(SOURCE, yawed(SOURCE), { s_spine: 't_spine' });
     expect(v.restReconciliation.kind).toBe('direction');
     expect(restSignal(v)).toBeNull();
+    // ...and the shouting is CHECKED, not assumed. The comment beside the
+    // silence claims the driven count already carries this failure; a claim with
+    // no reader is how a panel ends up saying nothing twice.
+    expect(v.drivenTargets).toBe(1);
+    expect(v.targetTotal).toBe(SOURCE.length);
   });
 });

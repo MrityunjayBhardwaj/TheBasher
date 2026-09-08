@@ -372,7 +372,18 @@ export function boneMapView(
     typeof v === 'string' && v !== '' && targetSet.has(v) ? v : null;
 
   const rest = restGapsCached(sourceBones, targetBones, map);
-  const gaps = rest.gaps;
+  // 🔴 PER-BONE ANGLES ONLY ON THE ALIGNED BRANCH (#987).
+  //
+  // The same call returns two different quantities. On `aligned` an angle is
+  // what the whole-rig rotation LEFT — irreducible anatomy, and naming the bone
+  // is the entire point, because two bones carry it and fifteen do not. On
+  // `direction` no rotation was applied, so every angle is a raw disagreement
+  // between two rests nobody reconciled: measured on the flat-rest pair, ELEVEN
+  // of seventeen mapped rows clear the alarm threshold. That is the column of
+  // numbers on every row this design exists to avoid, and it points the wrong
+  // way — it invites eleven map edits when the fault is one property of the clip
+  // and the remedy is a whole-clip one. The header says that, once.
+  const gaps: Map<string, number> = rest.reconciliation.kind === 'aligned' ? rest.gaps : new Map();
 
   const rows: BoneMapRow[] = [...sourceNames, ...orphanKeys].map((source) => {
     const target = Object.prototype.hasOwnProperty.call(map, source) ? map[source] : null;
@@ -530,17 +541,22 @@ export function restSignal(view: BoneMapView): RestSignal | null {
   // on the same fault is how a panel teaches people to stop reading it (#923).
   if (rest.reason.kind === 'too-few-pairs') return null;
 
+  // One sentence, shared, because it is the same loss on both arms — only the
+  // cause and the remedy differ.
   const lost =
     'Bone directions were matched instead, so the swing transfers and the twist about each ' +
     'bone is lost — up to 153° on a clip like this.';
 
   if (rest.reason.kind === 'flat-rest') {
-    const who =
+    const cause =
       rest.reason.side === 'source'
-        ? "This clip's rest pose lays"
+        ? "This clip's rest pose lays every bone on a single axis, so it can say which way each " +
+          'bone points but not how it is rolled.'
         : rest.reason.side === 'target'
-          ? "This character's bind pose lays"
-          : "Both this clip's rest and this character's bind lay";
+          ? "This character's bind pose lays every bone on a single axis, so it can say which " +
+            'way each bone points but not how it is rolled.'
+          : "Neither this clip's rest nor this character's bind spans more than one axis, so " +
+            'neither can say how a bone is rolled.';
     const remedy =
       rest.reason.side === 'target'
         ? 'Re-import the character from a source whose bind is a real pose.'
@@ -549,7 +565,7 @@ export function restSignal(view: BoneMapView): RestSignal | null {
       branch: 'direction',
       tone: 'warn',
       label: 'roll not transferred',
-      detail: `${who} every bone on a single axis, so it says which way each bone POINTS and ${lost} ${remedy}`,
+      detail: `${cause} ${lost} ${remedy}`,
     };
   }
 
@@ -558,9 +574,9 @@ export function restSignal(view: BoneMapView): RestSignal | null {
     tone: 'warn',
     label: 'roll not transferred',
     detail:
-      `The clip's rest and the character's bind are ${rest.reason.before.toFixed(0)}° apart and ` +
-      `no single turn brings them within ${rest.reason.after.toFixed(0)}°. ${lost} This clip was ` +
-      `authored for a differently-built character.`,
+      `The clip's rest and the character's bind are ${rest.reason.before.toFixed(0)}° apart, and ` +
+      `no single turn brings them closer than ${rest.reason.after.toFixed(0)}°. ${lost} This clip ` +
+      `was authored for a differently-built character.`,
   };
 }
 
