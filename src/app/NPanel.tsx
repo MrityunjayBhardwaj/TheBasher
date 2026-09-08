@@ -87,7 +87,13 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
-import { boneMapView, elidePrefix, mapWithRow } from './animate/boneMapRows';
+import {
+  boneMapView,
+  elidePrefix,
+  mapWithRow,
+  REST_GAP_ALARM_DEG,
+  REST_GAP_MENTION_DEG,
+} from './animate/boneMapRows';
 import { useAnimatableField } from './animate/useAnimatableField';
 import { useColorPickerInteraction } from './useColorPickerInteraction';
 import { useDragScrub } from './dragScrub';
@@ -1456,6 +1462,28 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
             {view.danglingCount} dangling
           </span>
         ) : null}
+        {/* #960 — the one fault a CORRECT map cannot fix, so it belongs beside the
+            mapping counts rather than inside them. No rotation transfer removes a
+            rest-direction disagreement; Blender's does not either, which is why
+            its answer is to match the rests or add IK. Named, not averaged: on
+            the pair a director gets, two bones carry it and fifteen do not. */}
+        {view.worstRestGap && view.worstRestGap.deg >= REST_GAP_MENTION_DEG ? (
+          <span
+            className={`rounded-full bg-bg-2 px-2 py-0.5 font-mono ${
+              view.worstRestGap.deg >= REST_GAP_ALARM_DEG ? 'text-warn' : 'text-fg/40'
+            }`}
+            data-testid="npanel-bone-map-rest-gap"
+            title={
+              `${view.worstRestGap.source} → ${view.worstRestGap.target}: the two rigs point this ` +
+              `bone ${view.worstRestGap.deg.toFixed(0)}° apart at rest. The motion transfers ` +
+              `exactly; this offset stays, because no rotation copy can remove it. Condition the ` +
+              `clip to a T-pose, or accept it.`
+            }
+          >
+            {view.worstRestGap.deg.toFixed(0)}° rest gap at{' '}
+            {elidePrefix(view.worstRestGap.source, view.sourcePrefix)}
+          </span>
+        ) : null}
       </div>
 
       {/* Blender cannot create this situation — its mapping is duplicated per rig —
@@ -1527,19 +1555,47 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
                 </option>
               ))}
             </select>
-            <span
-              className={`text-right font-mono text-[9px] uppercase ${
-                row.state !== 'mapped'
-                  ? 'text-warn'
-                  : // A person's decision has to out-read the machine's proposal. The UAT
-                    // showed both rendering equally dim, which makes the column decorative:
-                    // scanning 78 rows for "what did I change" was no easier than before it.
-                    row.origin === 'edited'
-                    ? 'text-accent'
-                    : 'text-fg/40'
-              }`}
-            >
-              {row.state === 'mapped' ? row.origin : row.state}
+            {/* THE ANGLE SITS IN THE STATUS CELL, not in a column of its own. A
+                fifth column was built and looked at: it fits, and it pays for
+                itself out of the target picker, which then truncates its own
+                text — the control a director has to READ to correct a mapping.
+                The status cell is where the eye already goes for "is this row
+                all right", and a gap is exactly that question.
+
+                Quiet unless it is worth reading: a 0° on seventy-eight rows is
+                the same mistake as a red chip on a healthy bind (#923) and would
+                train a director to scan past the two rows that carry the fault.
+                `null` is not zero — a chain end has no rest direction at all —
+                so it prints nothing rather than a dash-shaped claim of
+                agreement. */}
+            <span className="flex items-center justify-end gap-1 overflow-hidden">
+              {row.restGapDeg !== null && row.restGapDeg >= REST_GAP_MENTION_DEG ? (
+                <span
+                  className={`font-mono text-[9px] ${
+                    row.restGapDeg >= REST_GAP_ALARM_DEG ? 'text-warn' : 'text-fg/40'
+                  }`}
+                  data-testid={`npanel-bone-map-gap-${row.source}`}
+                  title={`the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest`}
+                >
+                  {row.restGapDeg.toFixed(0)}°
+                </span>
+              ) : (
+                <span data-testid={`npanel-bone-map-gap-${row.source}`} />
+              )}
+              <span
+                className={`text-right font-mono text-[9px] uppercase ${
+                  row.state !== 'mapped'
+                    ? 'text-warn'
+                    : // A person's decision has to out-read the machine's proposal. The UAT
+                      // showed both rendering equally dim, which makes the column decorative:
+                      // scanning 78 rows for "what did I change" was no easier than before it.
+                      row.origin === 'edited'
+                      ? 'text-accent'
+                      : 'text-fg/40'
+                }`}
+              >
+                {row.state === 'mapped' ? row.origin : row.state}
+              </span>
             </span>
           </div>
         ))}

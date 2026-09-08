@@ -39,9 +39,12 @@
 //      issues #921, #901.
 
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
+import { specToThreeSkeleton } from '../../core/import/threeAdapter';
+import { solveRestAlignment, restDirectionDisagreement } from '../../core/import/restAlignment';
 import { BONE_NAME_MAP_PRESETS } from '../../core/import/boneNameMaps';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { retargetOperandsFromNodes } from './retargetFromNodes';
+import type { BoneSpec } from '../../nodes/types';
 
 /** Why this pairing reads the way it does. Derived, never stored. */
 export type BoneMapRowOrigin = 'preset' | 'edited';
@@ -70,6 +73,19 @@ export interface BoneMapRow {
   readonly target: string | null;
   readonly state: BoneMapRowState;
   readonly origin: BoneMapRowOrigin;
+  /**
+   * How far apart the two rigs point THIS bone at rest, in degrees, after the
+   * whole-rig rotation — or null when the pairing has no rest direction to
+   * compare (a chain end, or a row that drives nothing).
+   *
+   * WHY A MAPPING PANEL CARRIES AN ANGLE. A pairing can be perfectly correct and
+   * still not look right, and this is the reason: no rotation transfer removes a
+   * rest-direction disagreement — Blender's does not either, which is why its
+   * answer is to match the rests or add IK. Measured on the pair a director gets
+   * today, the feet disagree by 18.3° and the arms by 0.0°, and until now the
+   * panel showed both as an identical healthy green row. `null` is not zero.
+   */
+  readonly restGapDeg: number | null;
 }
 
 export interface BoneMapView {
@@ -99,6 +115,17 @@ export interface BoneMapView {
   readonly gapCount: number;
   readonly danglingCount: number;
   /** What the auto-map proposes for these two rigs, for the header and the button. */
+  /**
+   * The mapped pairing whose two rests point furthest apart, or null when
+   * nothing could be measured. What a director should look at FIRST when the
+   * motion is right and the pose still is not — it is the one defect a correct
+   * map cannot fix.
+   */
+  readonly worstRestGap: {
+    readonly source: string;
+    readonly target: string;
+    readonly deg: number;
+  } | null;
   readonly proposalLabel: string | null;
   /** OTHER retargets reading this same map node. Editing here changes them too. */
   readonly sharedWith: readonly string[];
@@ -168,6 +195,66 @@ function proposedMapCached(
   let inner = proposalMemo.get(sourceBones);
   if (!inner) proposalMemo.set(sourceBones, (inner = new WeakMap()));
   inner.set(targetBones, answer);
+  return answer;
+}
+
+/**
+ * When a rest disagreement is worth SAYING, and when it is worth shouting.
+ *
+ * 🔴 OURS, not borrowed. The reference addon (RigCopy, MIT — ref/sources/rigcopy)
+ * has no per-row diagnostic of any kind, and Blender core has no retargeter to
+ * copy a convention from, so there is nothing here to inherit and a citation
+ * would be decoration.
+ *
+ * Read off the one pair a director actually has, where the ends of the range are
+ * known by looking: the arms disagree by 0.0° and look right, the shoulders by
+ * 8.8° and read as a slightly different build rather than as a fault, and the
+ * feet by 18.3° — which is the pair that gets called broken. So the alarm sits
+ * between the two ends that are known, and the quieter line low enough that a
+ * bone on its way to being wrong is visible before a director has to ask.
+ *
+ * Not a perceptual threshold and not claimed as one; two measured points and the
+ * decision that follows from them.
+ */
+export const REST_GAP_MENTION_DEG = 5;
+export const REST_GAP_ALARM_DEG = 15;
+
+const gapMemo = new WeakMap<object, WeakMap<object, WeakMap<object, Map<string, number>>>>();
+
+/**
+ * Per-bone rest disagreement for these two rigs under this map, memoised on all
+ * three — the map belongs in the key because a director editing a pairing
+ * changes the answer, and a cache that ignored it would show the old rig's
+ * numbers beside the new pairing.
+ */
+function restGapsCached(
+  sourceBones: readonly BoneSpec[],
+  targetBones: readonly BoneSpec[],
+  map: Readonly<Record<string, string | null>>,
+): Map<string, number> {
+  const a = sourceBones as unknown as object;
+  const b = targetBones as unknown as object;
+  const c = map as unknown as object;
+  const hit = gapMemo.get(a)?.get(b)?.get(c);
+  if (hit) return hit;
+
+  // The report is keyed by TARGET bone, so the map is inverted here. Two source
+  // bones pointing at one target collapse, which is what the retarget does with
+  // them too.
+  const targetToSource: Record<string, string> = {};
+  for (const [source, target] of Object.entries(map)) {
+    if (typeof target === 'string' && target !== '') targetToSource[target] = source;
+  }
+  const source = specToThreeSkeleton(sourceBones).bones;
+  const target = specToThreeSkeleton(targetBones).bones;
+  const solved = solveRestAlignment(source, target, targetToSource);
+  const answer = restDirectionDisagreement(source, target, targetToSource, solved?.rotation);
+
+  let outer = gapMemo.get(a);
+  if (!outer) gapMemo.set(a, (outer = new WeakMap()));
+  let inner = outer.get(b);
+  if (!inner) outer.set(b, (inner = new WeakMap()));
+  inner.set(c, answer);
   return answer;
 }
 
@@ -252,6 +339,8 @@ export function boneMapView(
   const declared = (v: string | null | undefined): string | null =>
     typeof v === 'string' && v !== '' && targetSet.has(v) ? v : null;
 
+  const gaps = restGapsCached(sourceBones, targetBones, map);
+
   const rows: BoneMapRow[] = [...sourceNames, ...orphanKeys].map((source) => {
     const target = Object.prototype.hasOwnProperty.call(map, source) ? map[source] : null;
     // Two entries match when they give the same ANSWER, including when both
@@ -260,14 +349,22 @@ export function boneMapView(
     const origin: BoneMapRowOrigin =
       declared(proposal.map[source]) === declared(target) ? 'preset' : 'edited';
     if (target === null || target === '') {
-      return { source, target: null, state: 'unmapped', origin };
+      return { source, target: null, state: 'unmapped', origin, restGapDeg: null };
     }
-    if (!seen.has(source)) return { source, target, state: 'orphan', origin };
+    // Only a row that DRIVES something gets an angle. An orphan's source bone is
+    // not in the rig and a dangling row's target is not either, so neither has a
+    // rest direction to disagree about — and a number beside them would read as
+    // a measurement of a pairing that does not exist.
+    if (!seen.has(source)) {
+      return { source, target, state: 'orphan', origin, restGapDeg: null };
+    }
+    const mapped = targetSet.has(target);
     return {
       source,
       target,
-      state: targetSet.has(target) ? 'mapped' : 'dangling',
+      state: mapped ? 'mapped' : 'dangling',
       origin,
+      restGapDeg: mapped ? (gaps.get(target) ?? null) : null,
     };
   });
 
@@ -302,6 +399,13 @@ export function boneMapView(
     // the headline is narrowed.
     gapCount: rows.filter((r) => r.state === 'unmapped' && r.origin === 'edited').length,
     danglingCount: rows.filter((r) => r.state === 'dangling').length,
+    // The worst pairing, not an average of them: seventeen bones are plenty to
+    // average two bad ones away with, and it is the two that a director sees.
+    worstRestGap: rows.reduce<BoneMapView['worstRestGap']>((worst, r) => {
+      if (r.restGapDeg === null || r.target === null) return worst;
+      if (worst !== null && worst.deg >= r.restGapDeg) return worst;
+      return { source: r.source, target: r.target, deg: r.restGapDeg };
+    }, null),
     proposalLabel: proposal.label,
     sharedWith: Object.keys(nodes)
       .filter(

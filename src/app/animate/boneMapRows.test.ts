@@ -362,3 +362,138 @@ describe('#923 the alarming count counts only actionable gaps', () => {
     expect(v.rows.find((r) => r.source === 'LeftLeg')!.origin).toBe('edited');
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// WHAT THE MAP CANNOT FIX (#960)
+// ─────────────────────────────────────────────────────────────────────────
+// A pairing can be perfectly correct and the pose still look wrong, because no
+// rotation transfer removes a rest-direction disagreement — Blender's does not
+// either, which is why its answer is to match the rests or add IK. The panel now
+// carries that leftover per row, so the bone to look at is named rather than
+// hunted.
+
+/** A bone with real geometry: the fixtures above sit every bone at the origin,
+ *  which gives a rig no directions at all and nothing to disagree about. */
+function limb(name: string, parent: number, position: [number, number, number]) {
+  return { name, parent, position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+}
+
+const POSED_SOURCE = [
+  limb('Hips', -1, [0, 1, 0]),
+  limb('LeftLeg', 0, [0.1, -0.05, 0]),
+  limb('LeftShin', 1, [0, -0.4, 0]),
+  limb('LeftFoot', 2, [0, -0.4, 0]),
+  limb('LeftToe', 3, [0, 0, 0.15]),
+  limb('Spine', 0, [0, 0.2, 0]),
+  limb('Neck2', 5, [0, 0.2, 0]),
+];
+
+/** The same anatomy with ONE difference: the toe is 45° below the source's, so
+ *  the two rigs point the FOOT — the bone whose direction is "toward the toe" —
+ *  somewhere else, while every other bone agrees. */
+const POSED_TARGET = [
+  limb('hips', -1, [0, 1, 0]),
+  limb('thigh.L', 0, [0.1, -0.05, 0]),
+  limb('shin.L', 1, [0, -0.4, 0]),
+  limb('foot.L', 2, [0, -0.4, 0]),
+  limb('toe.L', 3, [0, -0.106, 0.106]),
+  limb('spine', 0, [0, 0.2, 0]),
+  limb('neck', 5, [0, 0.2, 0]),
+];
+
+const POSED_MAP: Record<string, string> = {
+  Hips: 'hips',
+  LeftLeg: 'thigh.L',
+  LeftShin: 'shin.L',
+  LeftFoot: 'foot.L',
+  LeftToe: 'toe.L',
+  Spine: 'spine',
+  Neck2: 'neck',
+};
+
+function posedGraph(map: Record<string, string>) {
+  return {
+    srcRig: { id: 'srcRig', type: 'Skeleton', params: { bones: POSED_SOURCE }, inputs: {} },
+    tgtRig: { id: 'tgtRig', type: 'Skeleton', params: { bones: POSED_TARGET }, inputs: {} },
+    clip: {
+      id: 'clip',
+      type: 'AnimationClip',
+      params: { name: 'walk', duration: 1, keyframes: [{ bone: 0, time: 0 }] },
+      inputs: { skeleton: { node: 'srcRig' } },
+    },
+    map1: { id: 'map1', type: 'BoneNameMap', params: { name: 'bridge', map }, inputs: {} },
+    rt: {
+      id: 'rt',
+      type: 'RetargetClip',
+      params: { name: 'retargeted' },
+      inputs: {
+        sourceClip: { node: 'clip' },
+        boneMap: { node: 'map1' },
+        skeleton: { node: 'tgtRig' },
+      },
+    },
+  } as unknown as Record<string, GraphNodeLike>;
+}
+
+describe('#960 — the panel names the bone the two rests disagree about', () => {
+  it('puts the disagreement on the bone that has it, and leaves the others alone', () => {
+    const view = boneMapView(posedGraph(POSED_MAP), 'rt');
+    expect(view).not.toBeNull();
+    const byName = new Map(view!.rows.map((r) => [r.source, r]));
+
+    const foot = byName.get('LeftFoot');
+    expect(foot?.state).toBe('mapped');
+    expect(
+      foot?.restGapDeg ?? 0,
+      `the foot's two rests point 45° apart and the row reports ` +
+        `${(foot?.restGapDeg ?? 0).toFixed(1)}°`,
+    ).toBeGreaterThan(30);
+
+    for (const name of ['LeftLeg', 'LeftShin', 'Spine']) {
+      const row = byName.get(name);
+      expect(
+        row?.restGapDeg ?? 99,
+        `${name} agrees in both rigs but reports ${(row?.restGapDeg ?? 99).toFixed(1)}°`,
+      ).toBeLessThan(1);
+    }
+  });
+
+  it('reports null, not zero, for a row with no rest direction to compare', () => {
+    const view = boneMapView(posedGraph(POSED_MAP), 'rt');
+    const byName = new Map(view!.rows.map((r) => [r.source, r]));
+    // A chain end has no mapped descendant, so there is no direction on either
+    // side. Zero would read as "these two agree perfectly".
+    expect(byName.get('LeftToe')?.state).toBe('mapped');
+    expect(byName.get('LeftToe')?.restGapDeg).toBeNull();
+    expect(byName.get('Neck2')?.restGapDeg).toBeNull();
+  });
+
+  it('leads with the worst pairing, because an average hides the two that matter', () => {
+    const view = boneMapView(posedGraph(POSED_MAP), 'rt');
+    expect(view!.worstRestGap?.source).toBe('LeftFoot');
+    expect(view!.worstRestGap?.target).toBe('foot.L');
+    expect(view!.worstRestGap!.deg).toBeGreaterThan(30);
+  });
+
+  it('says nothing at all when the two rests agree', () => {
+    const same = posedGraph(POSED_MAP);
+    (same.tgtRig as { params: Record<string, unknown> }).params = {
+      bones: POSED_TARGET.map((b) => (b.name === 'toe.L' ? limb('toe.L', 3, [0, 0, 0.15]) : b)),
+    };
+    const view = boneMapView(same, 'rt');
+    const worst = view!.worstRestGap;
+    expect(
+      worst === null || worst.deg < 1,
+      `two identical rests still report ${worst?.deg.toFixed(1)}° at ${worst?.source}`,
+    ).toBe(true);
+  });
+
+  it('an unmapped row carries no angle, so a number never describes a pairing that is not there', () => {
+    const partial = { ...POSED_MAP };
+    delete partial.LeftFoot;
+    const view = boneMapView(posedGraph(partial), 'rt');
+    const foot = view!.rows.find((r) => r.source === 'LeftFoot');
+    expect(foot?.state).toBe('unmapped');
+    expect(foot?.restGapDeg).toBeNull();
+  });
+});
