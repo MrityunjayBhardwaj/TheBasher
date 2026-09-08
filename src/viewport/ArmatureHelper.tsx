@@ -34,6 +34,9 @@ const BONE_COLOR = '#c8d4e4';
  *  Rigs here run to ~78 bones (BVH) and a few hundred at the very most. */
 const MAX_BONES = 4096;
 
+/** How often the scene is re-traversed for armatures, in frames. */
+const RESCAN_INTERVAL = 15;
+
 /** One armature found in the scene: its root bone, and the bones under it. */
 interface ArmatureScan {
   readonly root: THREE.Object3D;
@@ -89,6 +92,8 @@ export function ArmatureHelper() {
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const scans = useRef<ArmatureScan[]>([]);
   const signature = useRef('');
+  // Starts at the interval so the very first frame scans.
+  const sinceScan = useRef(RESCAN_INTERVAL);
   const parentInverse = useRef(new THREE.Matrix4());
 
   const geometry = useMemo(() => {
@@ -125,13 +130,19 @@ export function ArmatureHelper() {
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    // Rescan only when the bone SET changes; otherwise reuse the topology and
-    // just refresh matrices (78 bones/frame instead of a whole-scene traverse).
-    const fresh = scanArmatures(scene);
-    const sig = scanSignature(fresh);
-    if (sig !== signature.current) {
-      signature.current = sig;
-      scans.current = fresh;
+    // The whole-scene traverse is the expensive part here, so it runs on a
+    // fixed cadence rather than every frame; in between, the topology is reused
+    // and only the ~78 bone matrices are refreshed. RESCAN_INTERVAL frames is
+    // therefore also the longest a rig that was just added or removed can stay
+    // wrong on screen (~0.25 s at 60fps), which is the trade being made.
+    if (++sinceScan.current >= RESCAN_INTERVAL) {
+      sinceScan.current = 0;
+      const fresh = scanArmatures(scene);
+      const sig = scanSignature(fresh);
+      if (sig !== signature.current) {
+        signature.current = sig;
+        scans.current = fresh;
+      }
     }
     const current = scans.current;
 
