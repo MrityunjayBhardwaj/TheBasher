@@ -12,6 +12,7 @@ import {
   alignedLocalOffsets,
   restDirectionDisagreement,
   MAX_RESIDUAL_DEGREES,
+  MIN_REST_RANK_SPREAD,
 } from './restAlignment';
 import { specToThreeSkeleton } from './threeAdapter';
 import type { BoneSpec } from '../../nodes/types';
@@ -112,12 +113,13 @@ describe('accepting or refusing a rest alignment', () => {
   it('accepts two rests that are one rotation apart, and names that rotation', () => {
     const { src, trg } = build(THREE_DIMENSIONAL, YAWED);
     const alignment = solveRestAlignment(src, trg, MAP);
-    expect(alignment).not.toBeNull();
+    expect(alignment.kind).toBe('aligned');
+    if (alignment.kind !== 'aligned') return;
     // The fixture was yawed by exactly a quarter turn, so that is the answer.
     const yaw = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
-    expect(alignment!.rotation.angleTo(yaw) * DEG).toBeLessThan(1e-4);
-    expect(alignment!.disagreementBefore).toBeGreaterThan(45);
-    expect(alignment!.disagreementAfter).toBeLessThan(1e-4);
+    expect(alignment.rotation.angleTo(yaw) * DEG).toBeLessThan(1e-4);
+    expect(alignment.disagreementBefore).toBeGreaterThan(45);
+    expect(alignment.disagreementAfter).toBeLessThan(1e-4);
   });
 
   it('answers with the heading only, on a pair whose anatomy tempts a lean', () => {
@@ -142,19 +144,20 @@ describe('accepting or refusing a rest alignment', () => {
     );
     const { src, trg } = build(THREE_DIMENSIONAL, relaxed);
     const alignment = solveRestAlignment(src, trg, MAP);
-    expect(alignment).not.toBeNull();
+    expect(alignment.kind).toBe('aligned');
+    if (alignment.kind !== 'aligned') return;
 
     const quarterTurn = new Quaternion().setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2);
-    expect(alignment!.rotation.angleTo(quarterTurn) * DEG).toBeLessThan(1e-4);
+    expect(alignment.rotation.angleTo(quarterTurn) * DEG).toBeLessThan(1e-4);
 
     // Stated separately from the answer above, because this is the property the
     // caller depends on: whatever the fit wanted, the vertical is untouched.
     const up = new Vector3(0, 1, 0);
-    expect(up.clone().applyQuaternion(alignment!.rotation).angleTo(up) * DEG).toBeLessThan(1e-9);
+    expect(up.clone().applyQuaternion(alignment.rotation).angleTo(up) * DEG).toBeLessThan(1e-9);
 
     // And the anatomy really is still there to be tempted by — a pair that
     // agreed after the turn would make the assertions above vacuous.
-    expect(alignment!.disagreementAfter).toBeGreaterThan(5);
+    expect(alignment.disagreementAfter).toBeGreaterThan(5);
   });
 
   it('refuses a rest that lays every bone on one axis', () => {
@@ -162,18 +165,48 @@ describe('accepting or refusing a rest alignment', () => {
     // there is nothing to solve — and the failure to notice that is what would
     // hand every bone a confidently wrong whole-rig rotation.
     const { src, trg } = build(RANK_ONE, YAWED);
-    expect(solveRestAlignment(src, trg, MAP)).toBeNull();
+    const refused = solveRestAlignment(src, trg, MAP);
+    expect(refused.kind).toBe('direction');
+    if (refused.kind !== 'direction') return;
+    // NAMED, not merely refused (#960). Which of the two rigs is flat decides
+    // what a director is told to do about it — regenerate the clip, or re-import
+    // the character — so a refusal that only said "no" would leave the caller
+    // inventing the remedy.
+    expect(refused.reason).toEqual({
+      kind: 'flat-rest',
+      side: 'source',
+      spread: expect.any(Number) as number,
+    });
+    expect(refused.reason.kind === 'flat-rest' ? refused.reason.spread : NaN).toBeLessThan(
+      MIN_REST_RANK_SPREAD,
+    );
   });
 
   it('refuses when too few bones are mapped to pin a rotation', () => {
     const { src, trg } = build(THREE_DIMENSIONAL, YAWED);
-    expect(solveRestAlignment(src, trg, { t_spine: 's_spine' })).toBeNull();
+    const refused = solveRestAlignment(src, trg, { t_spine: 's_spine' });
+    expect(refused.kind).toBe('direction');
+    if (refused.kind !== 'direction') return;
+    // A DIFFERENT reason from the flat rest above, and the difference is the
+    // whole point: this one is the loud failure the mapping counts already
+    // report, so the panel deliberately says nothing extra about it.
+    // ZERO, not one: a direction needs a mapped DESCENDANT, and a lone mapped
+    // bone has none. The count is the pairs the solve could form, not the map's
+    // size — reporting the latter would tell a director they had one when the
+    // solver saw none.
+    expect(refused.reason).toEqual({ kind: 'too-few-pairs', pairs: 0 });
   });
 
-  it('refuses two rests that no single rotation brings together', () => {
-    // Same skeleton, but with the arms folded down and the toes turned round, so
-    // the disagreement is per-bone rather than whole-rig. A solver that accepted
-    // this would be reporting a body frame that does not exist.
+  it('names the TARGET when it is the character whose bind is flat', () => {
+    // 🔴 THIS FIXTURE IS NOT WHAT IT WAS CALLED. It was introduced as "arms
+    // folded down and toes turned round, so the disagreement is per-bone rather
+    // than whole-rig" — and measured, every one of its eight rest directions
+    // lands on ±Y: normalised eigenvalues 1.0000 / 0.0000 / 0.0000. It is a
+    // rank-one TARGET, which is a different refusal with a different remedy
+    // (re-import the character, not regenerate the clip), and for as long as the
+    // solver answered a bare null the two were indistinguishable and the row
+    // read as covering a case nothing covered. `CROSSED` below is the fixture
+    // the old name described.
     const scrambled: BoneSpec[] = YAWED.map((b) =>
       b.name === 't_arm' || b.name === 't_hand'
         ? { ...b, position: [0, -0.2, 0] as [number, number, number] }
@@ -184,11 +217,58 @@ describe('accepting or refusing a rest alignment', () => {
             : b,
     );
     const { src, trg } = build(THREE_DIMENSIONAL, scrambled);
+    const refused = solveRestAlignment(src, trg, MAP);
+    expect(refused.kind).toBe('direction');
+    if (refused.kind !== 'direction') return;
+    expect(refused.reason.kind).toBe('flat-rest');
+    if (refused.reason.kind !== 'flat-rest') return;
+    // The SIDE, and it is the losing alternative that makes the row witness
+    // anything: the row above hands the same predicate a flat SOURCE, so a
+    // constant answer cannot satisfy both.
+    expect(refused.reason.side).toBe('target');
+    expect(refused.reason.spread).toBeLessThan(MIN_REST_RANK_SPREAD);
+  });
+
+  it('names BOTH when neither rig can supply a body frame', () => {
+    const flatTarget: BoneSpec[] = RANK_ONE.map((b) => ({
+      ...b,
+      name: b.name.replace('s_', 't_'),
+    }));
+    const { src, trg } = build(RANK_ONE, flatTarget);
+    const refused = solveRestAlignment(src, trg, MAP);
+    expect(refused.kind).toBe('direction');
+    if (refused.kind !== 'direction') return;
+    expect(refused.reason.kind).toBe('flat-rest');
+    if (refused.reason.kind !== 'flat-rest') return;
+    expect(refused.reason.side).toBe('both');
+  });
+
+  it('refuses two rests that no single rotation brings together', () => {
+    // Two FULL-RANK rests that no heading reconciles, which is what the name has
+    // always claimed and what nothing measured until now. The target's arms are
+    // turned to -X against the source's +X (180° apart) while its foot is left
+    // pointing +Z exactly as the source does (0° apart). A half turn fixes the
+    // arms and breaks the foot; identity does the reverse; nothing fixes both.
+    //
+    // Rank is preserved on purpose — directions +Y, -X, -Y, +Z give normalised
+    // eigenvalues 0.625 / 0.250 / 0.125 — so this cannot be mistaken for the
+    // flat-rest case above, and the two arms of the refusal are told apart by a
+    // fixture each rather than by the same one twice.
+    const CROSSED: BoneSpec[] = YAWED.map((b) =>
+      b.name === 't_arm' || b.name === 't_hand'
+        ? { ...b, position: [-0.2, 0, 0] as [number, number, number] }
+        : b.name === 't_toe'
+          ? { ...b, position: [0, 0, 0.15] as [number, number, number] }
+          : b,
+    );
+    const { src, trg } = build(THREE_DIMENSIONAL, CROSSED);
     const alignment = solveRestAlignment(src, trg, MAP);
-    if (alignment !== null) {
-      expect(alignment.disagreementAfter).toBeLessThanOrEqual(MAX_RESIDUAL_DEGREES);
-    }
-    expect(alignment).toBeNull();
+    expect(alignment.kind).toBe('direction');
+    if (alignment.kind !== 'direction') return;
+    expect(alignment.reason.kind).toBe('rests-disagree');
+    if (alignment.reason.kind !== 'rests-disagree') return;
+    expect(alignment.reason.after).toBeGreaterThan(MAX_RESIDUAL_DEGREES);
+    expect(alignment.reason.before).toBeGreaterThanOrEqual(alignment.reason.after);
   });
 });
 
@@ -201,7 +281,8 @@ describe('the offsets that go with an alignment', () => {
     // identity for identity is not worth reading anywhere else.
     const src = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
     const trg = specToThreeSkeleton(YAWED).bones;
-    const alignment = solveRestAlignment(src, trg, MAP)!;
+    const alignment = solveRestAlignment(src, trg, MAP);
+    if (alignment.kind !== 'aligned') throw new Error('the fixture pair must align');
     const offsets = alignedLocalOffsets(trg, MAP, alignment.rotation);
     trg[0].updateMatrixWorld(true);
 
@@ -230,9 +311,10 @@ describe('what the two rests still disagree about, bone by bone', () => {
   it('reports nothing left over when one rotation explains the whole difference', () => {
     const { source, target } = skeletons(THREE_DIMENSIONAL, YAWED);
     const solved = solveRestAlignment(source, target, MAP);
-    expect(solved, 'these two rests are one yaw apart and must solve').toBeTruthy();
+    expect(solved.kind, 'these two rests are one yaw apart and must solve').toBe('aligned');
+    if (solved.kind !== 'aligned') return;
 
-    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    const gaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
     expect(gaps.size, 'no bone was compared — a clean report of nothing').toBeGreaterThan(5);
     const worst = Math.max(...gaps.values());
     expect(
@@ -262,9 +344,10 @@ describe('what the two rests still disagree about, bone by bone', () => {
     );
     const { source, target } = skeletons(THREE_DIMENSIONAL, bent);
     const solved = solveRestAlignment(source, target, MAP);
+    if (solved.kind !== 'aligned') throw new Error('this pair must align');
     expect(solved).toBeTruthy();
 
-    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    const gaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
     // The bent bone is the FOOT — a bone's rest direction is the direction to
     // its child, so moving the toe is what points the foot somewhere else.
     const foot = gaps.get('t_foot') ?? NaN;
@@ -306,8 +389,9 @@ describe('what the two rests still disagree about, bone by bone', () => {
     );
     const { source, target } = skeletons(THREE_DIMENSIONAL, sideways);
     const solved = solveRestAlignment(source, target, MAP);
+    if (solved.kind !== 'aligned') throw new Error('this pair must align');
     expect(solved).toBeTruthy();
-    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    const gaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
     const others = [...gaps.entries()].filter(([n]) => n !== 't_foot').map(([, v]) => v);
     const worstOther = Math.max(...others);
     expect(
@@ -335,7 +419,8 @@ describe('what the two rests still disagree about, bone by bone', () => {
     // left over — reading the own-frame number instead sent one investigation
     // after a defect that was not there (#979).
     const { source, target } = skeletons(THREE_DIMENSIONAL, YAWED);
-    const solved = solveRestAlignment(source, target, MAP)!;
+    const solved = solveRestAlignment(source, target, MAP);
+    if (solved.kind !== 'aligned') throw new Error('this pair must align');
     const worldGaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
     const noRotation = restDirectionDisagreement(source, target, MAP);
     const worstWorld = Math.max(...worldGaps.values());

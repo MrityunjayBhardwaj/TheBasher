@@ -52,6 +52,7 @@ import {
   specToThreeSkeleton,
 } from './threeAdapter';
 import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
+import type { RestReconciliation } from './restAlignment';
 import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
 
 export interface RetargetArgs {
@@ -110,24 +111,23 @@ export interface RetargetResult {
    * to recover it FROM, not even the shoulder line, which on one measured rest
    * runs within 15° of 61 of its 62 bones (#854).
    *
-   * Reported rather than acted on. What a director should SEE when a clip lands
-   * here is a product decision and is #960; this field is the fact that decision
-   * needs, and it describes the clip in hand rather than the export flag we
-   * hoped the other side set — `serve.py` currently passes `standard_tpose=True`
-   * and we never ask it to.
+   * The `direction` arm carries its REASON, and the reason is what makes this
+   * actionable: the four tracked fixtures that land here are two different
+   * failures. Two yield no mapped pairs at all and retarget to 0 and 2 keyframe
+   * tracks — loud, and already described by `unmappedSourceBones`. The other two
+   * have a flat rest and retarget to 713 tracks of complete, plausible motion
+   * with the roll gone. Only the second needs saying, and only the reason
+   * distinguishes them.
+   *
+   * It describes the clip in hand rather than the export flag we hoped the other
+   * side set — `serve.py` currently passes `standard_tpose=True` and we never
+   * ask it to.
+   *
+   * This is `solveRestAlignment`'s own return, forwarded rather than projected:
+   * a projection would be a second copy of the branch decision, free to drift
+   * from the one that actually chose the offsets.
    */
-  readonly restReconciliation:
-    | {
-        readonly kind: 'aligned';
-        /** RMS angle between the two rests before the whole-rig rotation, in degrees. */
-        readonly disagreementBefore: number;
-        /** ...and after it. What the per-bone offsets then absorb. */
-        readonly disagreementAfter: number;
-      }
-    // The two numbers do not exist on this arm — no rotation was solved — so
-    // they are absent from the type rather than reported as zero, which would
-    // read as "the rests agreed perfectly".
-    | { readonly kind: 'direction' };
+  readonly restReconciliation: RestReconciliation;
 }
 
 /**
@@ -714,17 +714,18 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // Gated in `retargetRoll.gate.test.ts`, which asserts the branch for one
   // fixture of each kind so a future probe is aimed before it is fired.
   const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
-  if (restAlignment) {
+  if (restAlignment.kind === 'aligned') {
     sourceWrap.quaternion.copy(restAlignment.rotation);
     sourceWrap.updateMatrixWorld(true);
   }
 
-  const localOffsets = restAlignment
-    ? // Uniform across every mapped bone, chain ends included: a rest that
-      // supplies a body frame gives a leaf its third degree of freedom too, so
-      // nothing here needs the clip's first frame as a stand-in neutral.
-      alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
-    : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
+  const localOffsets =
+    restAlignment.kind === 'aligned'
+      ? // Uniform across every mapped bone, chain ends included: a rest that
+        // supplies a body frame gives a leaf its third degree of freedom too, so
+        // nothing here needs the clip's first frame as a stand-in neutral.
+        alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
+      : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
@@ -759,13 +760,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     // Which builder ran, reported from the branch itself rather than re-derived
     // by a caller — a second copy of this decision would be free to drift from
     // the one that actually chose the offsets.
-    restReconciliation: restAlignment
-      ? {
-          kind: 'aligned',
-          disagreementBefore: restAlignment.disagreementBefore,
-          disagreementAfter: restAlignment.disagreementAfter,
-        }
-      : { kind: 'direction' },
+    restReconciliation: restAlignment,
   };
 }
 

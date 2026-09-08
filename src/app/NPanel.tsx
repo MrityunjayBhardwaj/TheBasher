@@ -95,6 +95,7 @@ import {
   mapWithRow,
   REST_GAP_ALARM_DEG,
   REST_GAP_MENTION_DEG,
+  restSignal,
 } from './animate/boneMapRows';
 import { useAnimatableField } from './animate/useAnimatableField';
 import { useColorPickerInteraction } from './useColorPickerInteraction';
@@ -1464,28 +1465,26 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
             {view.danglingCount} dangling
           </span>
         ) : null}
-        {/* #960 — the one fault a CORRECT map cannot fix, so it belongs beside the
-            mapping counts rather than inside them. No rotation transfer removes a
-            rest-direction disagreement; Blender's does not either, which is why
-            its answer is to match the rests or add IK. Named, not averaged: on
-            the pair a director gets, two bones carry it and fifteen do not. */}
-        {view.worstRestGap && view.worstRestGap.deg >= REST_GAP_MENTION_DEG ? (
-          <span
-            className={`rounded-full bg-bg-2 px-2 py-0.5 font-mono ${
-              view.worstRestGap.deg >= REST_GAP_ALARM_DEG ? 'text-warn' : 'text-fg/40'
-            }`}
-            data-testid="npanel-bone-map-rest-gap"
-            title={
-              `${view.worstRestGap.source} → ${view.worstRestGap.target}: the two rigs point this ` +
-              `bone ${view.worstRestGap.deg.toFixed(0)}° apart at rest. The motion transfers ` +
-              `exactly; this offset stays, because no rotation copy can remove it. Condition the ` +
-              `clip to a T-pose, or accept it.`
-            }
-          >
-            {view.worstRestGap.deg.toFixed(0)}° rest gap at{' '}
-            {elidePrefix(view.worstRestGap.source, view.sourcePrefix)}
-          </span>
-        ) : null}
+        {/* #960/#987 — the faults a CORRECT map cannot fix, so they belong beside
+            the mapping counts rather than inside them. The wording and the
+            threshold both live in `restSignal`, because the same angle means two
+            different things on the two branches and a condition restated here
+            printed the aligned branch's promise on the branch where it is false. */}
+        {(() => {
+          const signal = restSignal(view);
+          if (!signal) return null;
+          return (
+            <span
+              className={`rounded-full bg-bg-2 px-2 py-0.5 font-mono ${
+                signal.tone === 'warn' ? 'text-warn' : 'text-fg/40'
+              }`}
+              data-testid={`npanel-bone-map-rest-${signal.branch}`}
+              title={signal.detail}
+            >
+              {signal.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Blender cannot create this situation — its mapping is duplicated per rig —

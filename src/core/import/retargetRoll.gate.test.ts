@@ -682,25 +682,36 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
         targetBones: target,
         nameMap: preset.map,
       }).restReconciliation;
-      (reported.kind === 'aligned' ? aligned : direction).push(rel);
+      if (reported.kind === 'aligned') aligned.push(rel);
+      else direction.push(`${rel}:${reported.reason.kind}`);
     }
 
-    // The dangerous set, named. A new fixture that joins it is a clip whose roll
-    // is silently lost (#960); a fixture that leaves it has been conditioned,
-    // and the prose in this file's header is then owed an update.
+    // The dangerous set, named — WITH THE REASON EACH ONE LANDED THERE, because
+    // the four are two different failures and only one of them is dangerous.
     //
-    // Two of these four carry no usable bone map at all, so their null is the
-    // MIN_PAIRS refusal rather than a rank-1 rest. They are listed because this
-    // row is about routing, and routing is what decides whether the roll survives.
+    //   `too-few-pairs` — the map does not reach these rigs. They retarget to 0
+    //     and 2 keyframe tracks: a LOUD failure the driven/unmapped counts
+    //     already report, and the panel deliberately adds nothing.
+    //   `flat-rest` — a rank-one source rest. These retarget to 713 tracks of
+    //     complete, plausible motion with up to 153° of roll gone. The SILENT
+    //     one, and the whole of #960.
+    //
+    // A fixture moving between those two columns changes what a director is
+    // told, which is why the reason is gated and not just the routing.
     expect(
       [...direction].sort(),
       'the set of tracked fixtures reaching `restDirectionLocalOffsets` has changed',
     ).toEqual([
-      'public/fixtures/anim/mixamo-naming.bvh',
-      'public/fixtures/anim/soma-generated.bvh',
-      'public/fixtures/anim/soma-walk.bvh',
-      'public/fixtures/anim/walk.bvh',
+      'public/fixtures/anim/mixamo-naming.bvh:too-few-pairs',
+      'public/fixtures/anim/soma-generated.bvh:flat-rest',
+      'public/fixtures/anim/soma-walk.bvh:flat-rest',
+      'public/fixtures/anim/walk.bvh:too-few-pairs',
     ]);
+    // Both reasons are populated. Without this the row above is satisfied by a
+    // classifier that answers one constant, which is the failure it exists to
+    // detect one level down.
+    expect(direction.filter((d) => d.endsWith(':flat-rest')).length).toBe(2);
+    expect(direction.filter((d) => d.endsWith(':too-few-pairs')).length).toBe(2);
     // ...and the other arm is genuinely populated, so the row above is not
     // satisfied by everything having fallen into one bucket.
     expect(

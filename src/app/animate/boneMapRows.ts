@@ -41,6 +41,7 @@
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
 import { specToThreeSkeleton } from '../../core/import/threeAdapter';
 import { solveRestAlignment, restDirectionDisagreement } from '../../core/import/restAlignment';
+import type { RestReconciliation } from '../../core/import/restAlignment';
 import { BONE_NAME_MAP_PRESETS } from '../../core/import/boneNameMaps';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { retargetOperandsFromNodes } from './retargetFromNodes';
@@ -126,6 +127,17 @@ export interface BoneMapView {
     readonly target: string;
     readonly deg: number;
   } | null;
+  /**
+   * Whether the two rests were reconciled by a whole-rig rotation, and if not,
+   * why not.
+   *
+   * 🔴 READ THIS BEFORE `worstRestGap`. It decides which quantity that angle IS.
+   * On `aligned` it is what the rotation LEFT BEHIND — irreducible anatomy, the
+   * thing no rotation copy removes. On `direction` no rotation was applied, so
+   * the same number is the RAW disagreement between two rests nobody reconciled,
+   * and on that branch the roll about every bone is gone as well (#960, #987).
+   */
+  readonly restReconciliation: RestReconciliation;
   readonly proposalLabel: string | null;
   /** OTHER retargets reading this same map node. Editing here changes them too. */
   readonly sharedWith: readonly string[];
@@ -219,7 +231,19 @@ function proposedMapCached(
 export const REST_GAP_MENTION_DEG = 5;
 export const REST_GAP_ALARM_DEG = 15;
 
-const gapMemo = new WeakMap<object, WeakMap<object, WeakMap<object, Map<string, number>>>>();
+/** The gaps and the branch that decides what they MEAN, memoised together.
+ *
+ *  Together on purpose (#987). The same call returns two different quantities
+ *  depending on the branch — the residue LEFT BY the whole-rig rotation when one
+ *  was solved, the RAW disagreement when none was — and a cache that kept only
+ *  the numbers forced every reader to re-derive the branch to know which it was
+ *  holding. The panel then described one as the other. */
+interface RestReport {
+  readonly gaps: Map<string, number>;
+  readonly reconciliation: RestReconciliation;
+}
+
+const gapMemo = new WeakMap<object, WeakMap<object, WeakMap<object, RestReport>>>();
 
 /**
  * Per-bone rest disagreement for these two rigs under this map, memoised on all
@@ -231,7 +255,7 @@ function restGapsCached(
   sourceBones: readonly BoneSpec[],
   targetBones: readonly BoneSpec[],
   map: Readonly<Record<string, string | null>>,
-): Map<string, number> {
+): RestReport {
   const a = sourceBones as unknown as object;
   const b = targetBones as unknown as object;
   const c = map as unknown as object;
@@ -248,7 +272,15 @@ function restGapsCached(
   const source = specToThreeSkeleton(sourceBones).bones;
   const target = specToThreeSkeleton(targetBones).bones;
   const solved = solveRestAlignment(source, target, targetToSource);
-  const answer = restDirectionDisagreement(source, target, targetToSource, solved?.rotation);
+  const answer: RestReport = {
+    gaps: restDirectionDisagreement(
+      source,
+      target,
+      targetToSource,
+      solved.kind === 'aligned' ? solved.rotation : undefined,
+    ),
+    reconciliation: solved,
+  };
 
   let outer = gapMemo.get(a);
   if (!outer) gapMemo.set(a, (outer = new WeakMap()));
@@ -339,7 +371,8 @@ export function boneMapView(
   const declared = (v: string | null | undefined): string | null =>
     typeof v === 'string' && v !== '' && targetSet.has(v) ? v : null;
 
-  const gaps = restGapsCached(sourceBones, targetBones, map);
+  const rest = restGapsCached(sourceBones, targetBones, map);
+  const gaps = rest.gaps;
 
   const rows: BoneMapRow[] = [...sourceNames, ...orphanKeys].map((source) => {
     const target = Object.prototype.hasOwnProperty.call(map, source) ? map[source] : null;
@@ -406,6 +439,7 @@ export function boneMapView(
       if (worst !== null && worst.deg >= r.restGapDeg) return worst;
       return { source: r.source, target: r.target, deg: r.restGapDeg };
     }, null),
+    restReconciliation: rest.reconciliation,
     proposalLabel: proposal.label,
     sharedWith: Object.keys(nodes)
       .filter(
@@ -436,6 +470,100 @@ export function boneMapView(
  * so slicing ten characters off it renders an EMPTY label in the picker. The prefix is
  * adopted by a majority precisely so the minority can exist; they must render whole.
  */
+/**
+ * What the bone-map header says about the two rests, or null when there is
+ * nothing to say.
+ *
+ * ONE producer for both branches, and that is the point (#987). The two are
+ * different sentences about different quantities, and the previous arrangement
+ * — a threshold restated in JSX over a number whose meaning depended on a branch
+ * the panel could not see — printed the ALIGNED branch's promise on the branch
+ * where it is false: "the motion transfers exactly" beside a 92° reading on a
+ * clip that had just lost up to 153° of roll.
+ *
+ * The decision this encodes (#960): WARN, never refuse, and name the side.
+ *
+ *   Not refuse — the clip is otherwise usable. `soma-walk.bvh` retargets to 713
+ *   keyframe tracks of correct swing; only the twist is gone. Blender takes the
+ *   same posture on the same class of thing: `rotlike_evaluate` transfers what
+ *   it can and never consults the two rests, leaving the remedy to the user
+ *   (constraint.cc:2049, see ref/GROUND_TRUTH_BLENDER_BONE_SPACES.md).
+ *
+ *   Not condition automatically — there is nothing to condition WITH. A rank-one
+ *   rest has no second axis to recover the roll from, not even the shoulder
+ *   line, which is degenerate on exactly these rests (#854). The conditioning
+ *   lever lives in the exporter, not here (#855).
+ *
+ *   So: warn, attributably. A flat CLIP is regenerated, a flat CHARACTER is
+ *   re-imported, and two full-rank rests that disagree mean this clip was
+ *   authored for a differently-built body. Those are three different actions,
+ *   which is why the refusal carries a side and not just a fact.
+ */
+export interface RestSignal {
+  readonly tone: 'quiet' | 'warn';
+  readonly label: string;
+  readonly detail: string;
+  /** For the test id, so a spec can tell the two branches apart by name. */
+  readonly branch: 'aligned' | 'direction';
+}
+
+export function restSignal(view: BoneMapView): RestSignal | null {
+  const rest = view.restReconciliation;
+  if (rest.kind === 'aligned') {
+    const worst = view.worstRestGap;
+    if (!worst || worst.deg < REST_GAP_MENTION_DEG) return null;
+    return {
+      branch: 'aligned',
+      tone: worst.deg >= REST_GAP_ALARM_DEG ? 'warn' : 'quiet',
+      label: `${worst.deg.toFixed(0)}° rest gap at ${elidePrefix(worst.source, view.sourcePrefix)}`,
+      detail:
+        `${worst.source} → ${worst.target}: the two rigs still point this bone ` +
+        `${worst.deg.toFixed(0)}° apart after the whole-rig turn. The motion transfers exactly; ` +
+        `this offset stays, because no rotation copy can remove it. Condition the clip to a ` +
+        `T-pose, or accept it.`,
+    };
+  }
+
+  // The LOUD failure needs nothing from here. With fewer than four mapped pairs
+  // almost nothing transfers at all, and the driven/unmapped counts beside this
+  // badge already say so in the terms a director acts on. A second widget firing
+  // on the same fault is how a panel teaches people to stop reading it (#923).
+  if (rest.reason.kind === 'too-few-pairs') return null;
+
+  const lost =
+    'Bone directions were matched instead, so the swing transfers and the twist about each ' +
+    'bone is lost — up to 153° on a clip like this.';
+
+  if (rest.reason.kind === 'flat-rest') {
+    const who =
+      rest.reason.side === 'source'
+        ? "This clip's rest pose lays"
+        : rest.reason.side === 'target'
+          ? "This character's bind pose lays"
+          : "Both this clip's rest and this character's bind lay";
+    const remedy =
+      rest.reason.side === 'target'
+        ? 'Re-import the character from a source whose bind is a real pose.'
+        : 'Regenerate the clip with a T-pose rest, or accept the loss.';
+    return {
+      branch: 'direction',
+      tone: 'warn',
+      label: 'roll not transferred',
+      detail: `${who} every bone on a single axis, so it says which way each bone POINTS and ${lost} ${remedy}`,
+    };
+  }
+
+  return {
+    branch: 'direction',
+    tone: 'warn',
+    label: 'roll not transferred',
+    detail:
+      `The clip's rest and the character's bind are ${rest.reason.before.toFixed(0)}° apart and ` +
+      `no single turn brings them within ${rest.reason.after.toFixed(0)}°. ${lost} This clip was ` +
+      `authored for a differently-built character.`,
+  };
+}
+
 export function elidePrefix(name: string, prefix: string): string {
   return prefix && name.startsWith(prefix) && name.length > prefix.length
     ? name.slice(prefix.length)

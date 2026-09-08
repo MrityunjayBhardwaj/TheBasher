@@ -93,6 +93,112 @@ export const MAX_RESIDUAL_DEGREES = 30;
 /** Fewer pairs than this cannot pin a rotation with any confidence. */
 export const MIN_PAIRS = 4;
 
+/**
+ * A rest whose second-largest direction eigenvalue falls below this lays every
+ * bone on ONE axis, and no rotation can be solved from it.
+ *
+ * Two non-parallel directions determine a rotation, so rank TWO is already
+ * enough; rank one is exactly the failure. That is what this measures, and the
+ * two populations do not overlap — normalised eigenvalues over the mapped
+ * directions of every tracked fixture:
+ *
+ *   seven healthy sources   0.538-0.558 / 0.339-0.353 / 0.089-0.123
+ *   the target rig's bind   0.558       / 0.353       / 0.089
+ *   the two flat sources    0.9999-1.0   / 0.0000-0.0001 / 0.0000
+ *
+ * The bar sits 17x below the lowest healthy reading and 200x above the highest
+ * flat one. It is on the NORMALISED spectrum, so it is scale-free and states a
+ * shape rather than a size.
+ *
+ * WHY THIS IS MEASURED AND NOT INFERRED FROM THE GUARDS BELOW. The residual and
+ * fraction bounds are properties of the PAIR — they cannot say which of the two
+ * rigs is at fault, and the remedy differs entirely by side: a flat CLIP is
+ * regenerated with a T-pose rest (#855), a flat CHARACTER is a broken import,
+ * and two full-rank rests that simply disagree are a clip aimed at the wrong
+ * body. A director can only act on a reason attributable to a side.
+ */
+export const MIN_REST_RANK_SPREAD = 0.02;
+
+/**
+ * Why no whole-rig rotation was solved — reported from the refusal site itself,
+ * so a caller never re-derives it. Each arm names a different remedy, and that
+ * is the whole reason the arms exist:
+ *
+ *   `too-few-pairs`  the map does not reach this pair of rigs. Almost nothing
+ *                    transfers, and `unmappedSourceBones` already says so —
+ *                    this is the LOUD failure.
+ *   `flat-rest`      a rest lays every bone on one axis. The clip still
+ *                    retargets and looks complete; only the roll is gone, by up
+ *                    to 153 degrees. This is the SILENT one (#960).
+ *   `rests-disagree` both rests are full rank and still do not correspond.
+ */
+export type RestRefusal =
+  | { readonly kind: 'too-few-pairs'; readonly pairs: number }
+  | {
+      readonly kind: 'flat-rest';
+      /** Which rig cannot supply a body frame. Names the remedy. */
+      readonly side: 'source' | 'target' | 'both';
+      /** The offending rest's second eigenvalue, against MIN_REST_RANK_SPREAD. */
+      readonly spread: number;
+    }
+  | {
+      readonly kind: 'rests-disagree';
+      readonly before: number;
+      readonly after: number;
+    };
+
+/**
+ * The outcome of reconciling two rests. Never null: the refusal carries its
+ * reason, because the caller's job is to SAY what happened and a bare null
+ * leaves it inventing an explanation.
+ */
+export type RestReconciliation =
+  | ({ readonly kind: 'aligned' } & RestAlignment)
+  | { readonly kind: 'direction'; readonly reason: RestRefusal };
+
+/**
+ * The second-largest normalised eigenvalue of a direction set's covariance —
+ * how far the set departs from lying on a single axis.
+ *
+ * Closed form for a symmetric 3x3 (Smith 1961): no iteration, no seeding. The
+ * directions are already unit, so the covariance trace is the count and the
+ * normalisation is by the eigenvalue sum.
+ */
+function rankSpread(v: readonly Vector3[]): number {
+  if (v.length < 2) return 0;
+  const a = [
+    [0, 0, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+  ];
+  for (const d of v) {
+    const c = [d.x, d.y, d.z];
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) a[i][j] += c[i] * c[j];
+  }
+  const p1 = a[0][1] ** 2 + a[0][2] ** 2 + a[1][2] ** 2;
+  const q = (a[0][0] + a[1][1] + a[2][2]) / 3;
+  // Already diagonal: the eigenvalues ARE the diagonal, and the general branch
+  // below divides by zero here.
+  if (p1 < 1e-18) {
+    const e = [a[0][0], a[1][1], a[2][2]].sort((x, y) => y - x);
+    const sum = e[0] + e[1] + e[2];
+    return sum > 0 ? e[1] / sum : 0;
+  }
+  const p2 = (a[0][0] - q) ** 2 + (a[1][1] - q) ** 2 + (a[2][2] - q) ** 2 + 2 * p1;
+  const p = Math.sqrt(p2 / 6);
+  const b = a.map((row, i) => row.map((x, j) => (x - (i === j ? q : 0)) / p));
+  const det =
+    b[0][0] * (b[1][1] * b[2][2] - b[1][2] * b[2][1]) -
+    b[0][1] * (b[1][0] * b[2][2] - b[1][2] * b[2][0]) +
+    b[0][2] * (b[1][0] * b[2][1] - b[1][1] * b[2][0]);
+  const phi = Math.acos(Math.max(-1, Math.min(1, det / 2))) / 3;
+  const e1 = q + 2 * p * Math.cos(phi);
+  const e3 = q + 2 * p * Math.cos(phi + (2 * Math.PI) / 3);
+  const e2 = 3 * q - e1 - e3;
+  const sum = e1 + e2 + e3;
+  return sum > 0 ? e2 / sum : 0;
+}
+
 /** A bone's world rotation, off a matrix the caller has already composed. */
 function worldRotationOf(bone: Bone): Quaternion {
   const position = new Vector3();
@@ -252,19 +358,29 @@ export function restDirectionDisagreement(
 }
 
 /**
- * Solve the whole-rig rotation between two rests, or return null when the two
- * rests do not correspond well enough for one to exist.
+ * Solve the whole-rig rotation between two rests, or refuse WITH A REASON when
+ * the two rests do not correspond well enough for one to exist.
  *
- * Null now means a rest that #855's conditioning did not reach: seven of the
- * eleven TRACKED fixtures solve non-null, and which four do not is gated. The
- * caller must keep its per-bone behaviour for the null case, and that case loses
- * the roll — see the module note, `retargetRoll.gate.test.ts` and #960.
+ * A refusal means a rest that #855's conditioning did not reach: seven of the
+ * eleven TRACKED fixtures align, and which four do not is gated. The caller must
+ * keep its per-bone behaviour for the refusal, and that case loses the roll —
+ * see the module note, `retargetRoll.gate.test.ts` and #960.
+ *
+ * 🔴 THE REASON IS NOT DECORATION, and it is why this returns a union rather than
+ * null. The four refusing fixtures are two DIFFERENT failures with opposite
+ * remedies, and a bare null cannot tell them apart: two of them yield zero
+ * mapped pairs and retarget to 0 and 2 keyframe tracks — a loud failure the
+ * mapping counts already report — while the other two retarget to 713 tracks of
+ * complete, plausible motion with the roll silently gone. Anything that wants to
+ * tell a director what happened needs the reason, and re-deriving it at the call
+ * site would put a second copy of this decision where it is free to drift
+ * (`FloatingViewportToolbar`'s Home button, #856, is what that costs).
  */
 export function solveRestAlignment(
   sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
-): RestAlignment | null {
+): RestReconciliation {
   const sourceNames = new Set(Object.values(targetToSource));
   const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
   const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
@@ -279,7 +395,32 @@ export function solveRestAlignment(
       to.push(t);
     }
   }
-  if (from.length < MIN_PAIRS) return null;
+  if (from.length < MIN_PAIRS) {
+    return { kind: 'direction', reason: { kind: 'too-few-pairs', pairs: from.length } };
+  }
+
+  // WHICH RIG, ASKED BEFORE THE FIT. A rank-one rest cannot be aligned to
+  // anything, so the guards below would refuse it — but they would refuse it as
+  // a property of the PAIR, and a director cannot act on that. Asked here, the
+  // answer names a side and therefore a remedy. Both sides, because a degenerate
+  // BIND is a broken character rather than a flat clip and the two are fixed in
+  // different places.
+  const sourceSpread = rankSpread(from);
+  const targetSpread = rankSpread(to);
+  const flatSource = sourceSpread < MIN_REST_RANK_SPREAD;
+  const flatTarget = targetSpread < MIN_REST_RANK_SPREAD;
+  if (flatSource || flatTarget) {
+    return {
+      kind: 'direction',
+      reason: {
+        kind: 'flat-rest',
+        side: flatSource && flatTarget ? 'both' : flatSource ? 'source' : 'target',
+        // The offending one. With both flat, the source is the one a director
+        // can regenerate, so it leads.
+        spread: flatSource ? sourceSpread : targetSpread,
+      },
+    };
+  }
 
   // ── SOLVE FOR A HEADING, NOT FOR AN ORIENTATION ──────────────────────────
   //
@@ -321,7 +462,9 @@ export function solveRestAlignment(
   const after = rmsDisagreement(from, to, rotation);
   // What is actually required is that the two rests CORRESPOND once the rotation
   // is applied — that is the residual bound, and it is the primary test.
-  if (after > MAX_RESIDUAL_DEGREES) return null;
+  if (after > MAX_RESIDUAL_DEGREES) {
+    return { kind: 'direction', reason: { kind: 'rests-disagree', before, after } };
+  }
   // The fraction is a second, narrower guard: it rejects a solve that found a
   // rotation which explained nothing, which is what a rank-1 source produces.
   // It only applies when there was a real disagreement to explain. Two rests
@@ -330,10 +473,10 @@ export function solveRestAlignment(
   // identity, and every bone still gains the third degree of freedom the aligned
   // offsets carry.
   if (before > MAX_RESIDUAL_DEGREES && after > before * (1 - MIN_EXPLAINED_FRACTION)) {
-    return null;
+    return { kind: 'direction', reason: { kind: 'rests-disagree', before, after } };
   }
 
-  return { rotation, disagreementBefore: before, disagreementAfter: after };
+  return { kind: 'aligned', rotation, disagreementBefore: before, disagreementAfter: after };
 }
 
 /**
