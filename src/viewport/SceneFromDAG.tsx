@@ -43,7 +43,7 @@ import {
 } from '../app/dataLaneOverlay';
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
-import { drawnByAssetClone, getForAttach } from '../app/geometryRegistry';
+import { getForAttach } from '../app/geometryRegistry';
 import { hydrateInlineMaterial } from '../nodes/materialSchema';
 import { useBakedTexture } from '../app/asset/bakedTextureLoader';
 import {
@@ -2569,13 +2569,18 @@ function ObjectMeshR({
     // caller knows which one it is making.
     mat && mat === data?.material ? (data?.materialKey ?? null) : null,
   );
-  // #389 — an Object does not draw what the asset clone is already drawing. `getForAttach`
-  // resolves a glTF child's buffers since #367, so "can I draw this" and "is this mine to
-  // draw" stopped being the same question; without this the pair draws a second mesh from
-  // one geometry, and on a skinned child that second draw is the undeformed bind pose.
-  // A recipe OVER a glTF source is not clone-drawn and is unaffected — see the predicate.
-  const geom =
-    data && !drawnByAssetClone(data.geometry.descriptor) ? getForAttach(data.geometry) : null;
+  // #389 — an Object does not draw what the asset clone is already drawing: without that
+  // rule the pair draws a second mesh from one geometry, and on a skinned child the second
+  // draw is the undeformed bind pose. A recipe OVER a glTF source is not clone-drawn and is
+  // unaffected.
+  //
+  // #981 — THE TEST USED TO BE SPELLED HERE, and being spelled HERE is what let it be
+  // skipped. `MultiMaterialMeshR` — the fork this component's own note below points at —
+  // reached for the same door with no such test, so a two-primitive imported child drew
+  // twice while this one-primitive road was correct. `getForAttach` refuses a clone-drawn
+  // ref itself now, so this reads as an ordinary attach and there is no unguarded spelling
+  // left for a fourth draw site to find.
+  const geom = data ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This
   // component is only mounted for a one-entry table (`ObjectR` dispatches the rest to

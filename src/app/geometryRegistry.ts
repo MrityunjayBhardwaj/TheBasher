@@ -239,13 +239,22 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
 // object itself). Naming the door moves the answer to the import line, where
 // `registryDoors.gate.test.ts` can read it and hold the consumer set closed.
 //
-// ⚠️ DECLARED LIMIT — these are the same function today, and that is honest rather than
-// accidental. Geometry has no refcount (unlike `materialRegistry`), so `getForAttach`
-// takes no bookkeeping to do; and `getForRead` CANNOT enforce its no-write rule, because
-// a `BufferGeometry` is mutable and every reader must hand the real object to three.js.
-// This is a naming tier, not a type tier: it makes intent reviewable and a new consumer's
-// door declared, and it stops there. #535 is the behavioural backstop that asks whether
-// anything actually leaked.
+// 🔴 THE DOORS ARE NO LONGER THE SAME FUNCTION, AND THAT PARAGRAPH IS KEPT BELOW RATHER
+// THAN DELETED BECAUSE ITS PREDICTION CAME TRUE (#981). It read: *these are the same
+// function today, and that is a declared limit rather than an accident … the day someone
+// gives one door different behaviour it is a decision with a red test attached rather
+// than a silent divergence between two names that used to agree.* The decision arrived,
+// and the divergence is `drawnByAssetClone`: an ATTACH is a request to put buffers in the
+// scene graph, and buffers something else is already drawing must not be put there twice.
+// A READ has no such limit — Apply-Transform reads a glTF child's buffers out of the
+// mounted clone on purpose (`dispatchApplyTransform.ts`), which is why the narrowing
+// belongs on one door and not in `get`.
+//
+// What is still true of the old paragraph: geometry has no refcount (unlike
+// `materialRegistry`), so `getForAttach` still has no bookkeeping to do; and `getForRead`
+// still CANNOT enforce its no-write rule, because a `BufferGeometry` is mutable and every
+// reader must hand the real object to three.js. #535 is the behavioural backstop that asks
+// whether anything actually leaked.
 //
 // ⚠️ The two doors now pass DIFFERENT `via` tags to `get`, and that is still not a type
 // tier — it is the same resolution with a label attached (#586). Reading the tag as
@@ -260,10 +269,31 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
  * must be passed as a PROP and never adopted by `<primitive>` (#530/#533). If geometry
  * ever grows a refcount, it belongs on this door and not on {@link getForRead}.
  *
- * Null cases are `get`'s: a `gltf` ref, or a `baked` MISS the caller resolves by
- * suspending and priming.
+ * ── "IS THIS MINE TO DRAW" IS ANSWERED HERE, NOT AT THE DRAW SITE (#981) ──────────────
+ *
+ * {@link drawnByAssetClone} refs resolve to null. Their buffers live inside a mounted
+ * asset clone that `GltfAssetR` is already drawing, so attaching them puts the SAME
+ * `BufferGeometry` instance in the scene graph twice — and on a skinned child the second
+ * draw is the undeformed bind pose.
+ *
+ * 🔴 IT IS THE DOOR AND NOT A GUARD AT EACH CALL SITE, and that is the whole repair. The
+ * test used to live at ONE of the three draw sites (`ObjectMeshR`), so the multi-slot fork
+ * added later reached straight past it and a two-primitive imported child drew twice. A
+ * rule enforced at a call site is a rule every future call site may decline; the same
+ * omission is unconstructible here, because there is no unguarded spelling left to reach
+ * for. Censusing the callers of the classifier could never have caught it either — the
+ * defective site called neither the classifier nor any named exemption, so it contributed
+ * nothing to the count (#978).
+ *
+ * ⚠️ THE NARROWING IS THIS DOOR'S ALONE. `getForRead` still resolves a clone-backed ref,
+ * and must: Apply-Transform bakes a glTF child by reading exactly those buffers. Moving
+ * this test down into `get` would break that road, which is why it sits here.
+ *
+ * Null cases are therefore: a clone-drawn ref (above), or a `baked` MISS the caller
+ * resolves by suspending and priming.
  */
 export function getForAttach(ref: GeometryRef): BufferGeometry | null {
+  if (drawnByAssetClone(ref.descriptor)) return null;
   return get(ref, 'attach');
 }
 
