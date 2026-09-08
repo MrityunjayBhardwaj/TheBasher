@@ -10,6 +10,7 @@ import {
   bestRotationAboutAxis,
   solveRestAlignment,
   alignedLocalOffsets,
+  restDirectionDisagreement,
   MAX_RESIDUAL_DEGREES,
 } from './restAlignment';
 import { specToThreeSkeleton } from './threeAdapter';
@@ -217,5 +218,133 @@ describe('the offsets that go with an alignment', () => {
         `${bone.name} must sit on its own bind when the source is at rest`,
       ).toBeLessThan(1e-4);
     }
+  });
+});
+
+describe('what the two rests still disagree about, bone by bone', () => {
+  const skeletons = (source: BoneSpec[], target: BoneSpec[]) => ({
+    source: specToThreeSkeleton(source).bones,
+    target: specToThreeSkeleton(target).bones,
+  });
+
+  it('reports nothing left over when one rotation explains the whole difference', () => {
+    const { source, target } = skeletons(THREE_DIMENSIONAL, YAWED);
+    const solved = solveRestAlignment(source, target, MAP);
+    expect(solved, 'these two rests are one yaw apart and must solve').toBeTruthy();
+
+    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    expect(gaps.size, 'no bone was compared — a clean report of nothing').toBeGreaterThan(5);
+    const worst = Math.max(...gaps.values());
+    expect(
+      worst,
+      `the worst bone still differs by ${worst.toFixed(2)}° after a rotation that explains ` +
+        `everything, so this is measuring something other than the leftover`,
+    ).toBeLessThan(0.01);
+  });
+
+  it('names the bone that is left over, and leaves the rest at zero', () => {
+    // One bone bent away from the other rig's anatomy: exactly the vendor case,
+    // where the feet disagree and the arms do not.
+    // The yawed toe sits at [0.15, 0, 0]; tilt it DOWNWARD by 40°, which changes
+    // the foot's rest direction without changing its azimuth or its length. That
+    // matters: the whole-rig solve is a heading, so a bend that also turned the
+    // bone in the horizontal plane would be partly absorbed by the solve and the
+    // leftover would appear spread across every other bone instead of on this one.
+    const BENT = 40;
+    const r = (BENT * Math.PI) / 180;
+    const bent = YAWED.map((b) =>
+      b.name === 't_toe'
+        ? {
+            ...b,
+            position: [0.15 * Math.cos(r), -0.15 * Math.sin(r), 0] as [number, number, number],
+          }
+        : b,
+    );
+    const { source, target } = skeletons(THREE_DIMENSIONAL, bent);
+    const solved = solveRestAlignment(source, target, MAP);
+    expect(solved).toBeTruthy();
+
+    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    // The bent bone is the FOOT — a bone's rest direction is the direction to
+    // its child, so moving the toe is what points the foot somewhere else.
+    const foot = gaps.get('t_foot') ?? NaN;
+    expect(
+      foot,
+      `the bone whose child was moved by ${BENT}° reports ${foot.toFixed(1)}°, so the report is ` +
+        `not tracking the anatomy it claims to`,
+    ).toBeGreaterThan(BENT - 15);
+
+    const others = [...gaps.entries()].filter(([n]) => n !== 't_foot');
+    const worstOther = Math.max(...others.map(([, v]) => v));
+    expect(
+      worstOther,
+      `an untouched bone reports ${worstOther.toFixed(1)}°, so the disagreement is being spread ` +
+        `across the rig instead of named where it is`,
+    ).toBeLessThan(1);
+  });
+
+  it('THE LIMIT: a disagreement the heading can partly absorb is spread, not named', () => {
+    // Tilt the same toe SIDEWAYS instead of downward, so the change is in the
+    // horizontal plane the whole-rig heading can turn in. The solve then spends
+    // some of itself absorbing this one bone, and what is left over appears on
+    // every other bone as well — measured 11.3° on bones nothing touched.
+    //
+    // So a large reading on one bone is trustworthy; a small reading spread
+    // evenly across the rig can be one bone's anatomy wearing a disguise. The
+    // report says where the leftover IS, not where it came from, and that is a
+    // property of fitting one rotation to many bones rather than of this
+    // function. Written down because the obvious reading — "every bone is a
+    // little off" — invites a search for a global defect that is not there.
+    const r = (40 * Math.PI) / 180;
+    const sideways = YAWED.map((b) =>
+      b.name === 't_toe'
+        ? {
+            ...b,
+            position: [0.15 * Math.cos(r), 0, 0.15 * Math.sin(r)] as [number, number, number],
+          }
+        : b,
+    );
+    const { source, target } = skeletons(THREE_DIMENSIONAL, sideways);
+    const solved = solveRestAlignment(source, target, MAP);
+    expect(solved).toBeTruthy();
+    const gaps = restDirectionDisagreement(source, target, MAP, solved!.rotation);
+    const others = [...gaps.entries()].filter(([n]) => n !== 't_foot').map(([, v]) => v);
+    const worstOther = Math.max(...others);
+    expect(
+      worstOther,
+      `an in-plane disagreement on one bone no longer spreads (worst other ` +
+        `${worstOther.toFixed(1)}°), so either the solver changed or this limit is stale`,
+    ).toBeGreaterThan(5);
+  });
+
+  it('leaves out a bone it cannot measure rather than calling it zero', () => {
+    // A chain end has no mapped descendant, so it has no rest DIRECTION at all.
+    // Reporting 0° for it would read as "these two agree perfectly" — the one
+    // thing an absent measurement does not mean.
+    const { source, target } = skeletons(THREE_DIMENSIONAL, YAWED);
+    const gaps = restDirectionDisagreement(source, target, MAP);
+    expect(gaps.has('t_toe'), 'the chain end has no direction and must be absent').toBe(false);
+    expect(gaps.has('t_hand'), 'the hand is a chain end here too').toBe(false);
+    expect(gaps.has('t_foot'), 'a bone WITH a mapped child must be present').toBe(true);
+  });
+
+  it("measures in world, which is not the same question as each bone's own frame", () => {
+    // Measured on the stand-in pair: 113.5° in the bones\' own frames, 0.3° in
+    // the world. The retarget conjugates the target\'s axis into the world
+    // beside the source\'s, so the world answer is the one that predicts what is
+    // left over — reading the own-frame number instead sent one investigation
+    // after a defect that was not there (#979).
+    const { source, target } = skeletons(THREE_DIMENSIONAL, YAWED);
+    const solved = solveRestAlignment(source, target, MAP)!;
+    const worldGaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
+    const noRotation = restDirectionDisagreement(source, target, MAP);
+    const worstWorld = Math.max(...worldGaps.values());
+    const worstRaw = Math.max(...noRotation.values());
+    expect(worstWorld).toBeLessThan(0.01);
+    expect(
+      worstRaw,
+      `without the whole-rig rotation the same two rests read ${worstRaw.toFixed(1)}°, so the ` +
+        `rotation argument is not doing the work this function says it does`,
+    ).toBeGreaterThan(60);
   });
 });

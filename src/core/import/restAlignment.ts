@@ -198,6 +198,60 @@ function rmsDisagreement(
 }
 
 /**
+ * How far apart the two rigs point each mapped bone AT REST, in world, after the
+ * whole-rig rotation has been applied. Target bone name → degrees.
+ *
+ * WHY THIS IS THE NUMBER A DIRECTOR NEEDS. Nothing in a rotation transfer
+ * removes a rest-direction disagreement, and that is not a limitation of ours:
+ * in Blender every bone space is defined against the OWNER's own rest
+ * (`BKE_armature_mat_pose_to_bone`, armature.cc:2281, reached from
+ * `BKE_constraint_mat_convertspace`, constraint.cc:311), and Copy Rotation
+ * transfers that delta without ever consulting the two rests' relative
+ * orientation (`rotlike_evaluate`, constraint.cc:2049). The remedy there is to
+ * match the rests or to pin the contact with IK — never a cleverer transfer.
+ * See ref/GROUND_TRUTH_BLENDER_BONE_SPACES.md.
+ *
+ * So this is a residue the pipeline is entitled to leave, and the only honest
+ * thing to do with it is SAY it. Measured on the pair a director actually gets
+ * (mixamo-xbot driven by the generator's own BVH): 18.3° at both feet, 8.8° at
+ * both shoulders, 0.0° at the arms — which is why that character's feet do not
+ * sit the way the motion says they should, while its arms are perfect.
+ *
+ * 🔴 IN WORLD, not in each bone's own frame. The two are different questions and
+ * the own-frame one is the wrong one: measured on the stand-in pair, the foot's
+ * own-frame gap is 113.5° while the world gap is 0.3°, and it is the world gap
+ * that predicts what the retarget leaves behind (#979).
+ *
+ * The RMS on `RestAlignment` answers "did one rotation explain these two rests";
+ * this answers "which bone will look wrong". An average cannot: on the vendor
+ * pair the feet are the worst bones by a factor of two and there are seventeen
+ * bones to average them away with.
+ */
+export function restDirectionDisagreement(
+  sourceBoneObjs: readonly Bone[],
+  targetBoneObjs: readonly Bone[],
+  targetToSource: Readonly<Record<string, string>>,
+  rotation?: Quaternion,
+): Map<string, number> {
+  const sourceNames = new Set(Object.values(targetToSource));
+  const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
+  const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
+
+  const out = new Map<string, number>();
+  for (const [targetName, sourceName] of Object.entries(targetToSource)) {
+    const s = sourceDirs.get(sourceName);
+    const t = targetDirs.get(targetName);
+    // A bone with no mapped descendant has no direction on one side or the
+    // other, so it is ABSENT rather than 0 — a zero here would read as "these
+    // two agree perfectly", which is the one thing it does not mean.
+    if (!s || !t) continue;
+    const turned = rotation ? s.clone().applyQuaternion(rotation) : s;
+    out.set(targetName, turned.angleTo(t) * DEG);
+  }
+  return out;
+}
+
+/**
  * Solve the whole-rig rotation between two rests, or return null when the two
  * rests do not correspond well enough for one to exist.
  *
