@@ -327,12 +327,21 @@ describe('a differential against Blender (#857)', () => {
     // named rather than counted — a count with slack in it is satisfied by a
     // fixture quietly going still.
     //
-    // 🔴 AND THE SIX THAT ARE MISSING FROM THIS LIST ARE THE POINT. Measured on
-    // this fixture: Root 0.0°, Hips 0.0°, both Feet 0.1°, both ToeBases 0.1°.
-    // The stand-in clip walks with rigid hips and rigid feet, so this gate is
-    // blind in orientation exactly where #854's defect is (feet rolling at
-    // ground contact). The vendor clip turns those same feet through 128-139°.
-    // Same shape as #858, which found the whole upper body reading 0.0°.
+    // 🔴 AND THE TWO THAT ARE MISSING ARE STATED, not left to be discovered.
+    // `Root` is identically zero every frame by construction. `Hips` is a
+    // deliberate refusal: a pelvis twist is a roll about the hips' OWN axis, and
+    // rolling them swings both leg roots around the vertical, so the two hip
+    // triples would move for a reason that has nothing to do with what is being
+    // measured. The clip leaves it out, and this is where that is recorded.
+    //
+    // The FEET used to be missing too, at 0.1° across the whole clip, which made
+    // these orientation rows blind exactly where #854's defect is. #980 gave the
+    // fixture an ankle roll and a heel-to-toe pitch: the feet now travel 35.3°
+    // and their toes 55.4°, and NOT ONE position the joint-angle rows read
+    // changed — a roll about the axis pointing at a joint's only child leaves
+    // that child exactly where it was. Measured on the regeneration: 744
+    // position rows compared, 56 changed, every one of them a toe base, which no
+    // compared triple contains.
     const MUST_ROTATE = [
       'Spine1',
       'Spine2',
@@ -352,6 +361,10 @@ describe('a differential against Blender (#857)', () => {
       'LeftShin',
       'RightLeg',
       'RightShin',
+      'LeftFoot',
+      'RightFoot',
+      'LeftToeBase',
+      'RightToeBase',
     ];
     const moving = [...travel.entries()].filter(([, d]) => d > 10).map(([n]) => n);
     expect(

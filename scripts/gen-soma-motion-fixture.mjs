@@ -401,7 +401,15 @@ function walkDirection(name, f) {
   const swing = f === 0 ? 0 : Math.sin(phase) * side;
   const knee = f === 0 ? 0 : 0.3 * (1 - Math.cos(phase + (side < 0 ? Math.PI : 0)));
 
-  if (inFoot(name)) return new THREE.Vector3(1, -0.2, 0).normalize();
+  if (inFoot(name)) {
+    // Heel strike to toe-off: the foot pitches through the stride. It used to be
+    // a constant `(1, -0.2, 0)`, which is why the two feet measured 0.1° of
+    // total rotation across the clip and the orientation differential was blind
+    // exactly where #854's defect is. The toe is this joint's only child and no
+    // compared triple contains one, so the pitch moves nothing the joint-angle
+    // rows read.
+    return new THREE.Vector3(1, -0.2 + 0.45 * swing, 0).normalize();
+  }
   if (inLeg(name)) {
     // Thigh and shin swing fore-and-aft about the lateral axis. The knee bend
     // VARIES — a constant one is a local rotation that never changes, so the
@@ -516,6 +524,42 @@ function walkDirection(name, f) {
  * with no child has no direction to aim and stays identity, inheriting its
  * parent, which is the same answer Blender's constraint stack lands on.
  */
+/**
+ * How far each joint TWISTS about its own axis, in radians, at frame `f`.
+ *
+ * 🔴 WHY THIS EXISTS AT ALL. `solveFrame` builds every local rotation with
+ * `setFromUnitVectors`, which is the MINIMAL rotation carrying the rest
+ * direction onto the wanted one — it has no roll component by construction. So
+ * before this, no bone in this fixture ever twisted about itself, on any frame:
+ * the clip could not exhibit a roll defect at all, and the orientation rows of
+ * the Blender differential measured the two feet at 0.1° of total rotation
+ * across the whole clip (#979, #980). A fixture that cannot exhibit the property
+ * under test is the failure this file was written to stop making.
+ *
+ * WHICH JOINTS, AND WHY NOT ALL OF THEM. A roll about the axis that points at a
+ * joint's PRIMARY child leaves that child's position exactly where it was — a
+ * rotation fixes its own axis — but it moves any OTHER child, and every joint
+ * angle in the differential is built from positions. So the feet can twist for
+ * free (their only child is a toe, and no compared triple contains one), while
+ * the hips cannot: rolling them swings both leg roots around the vertical and
+ * the two hip triples would move for a reason that has nothing to do with what
+ * is being measured. The pelvis twist a real walk has is left out on purpose,
+ * and its absence is stated in the differential's own bar rather than hidden.
+ *
+ * Zero at f = 0, like every other term here, so the calibration frame stays the
+ * clean A-pose the retarget reads as the source's rest.
+ */
+function walkRoll(name, f) {
+  if (f === 0) return 0;
+  const side = name.startsWith('Right') ? -1 : 1;
+  const phase = (f / (WALK_FRAMES - 1)) * Math.PI * 2;
+  // The ankle rolls through the stride — the foot everts as it swings and
+  // inverts as it takes the load. 25° peak, which is both anatomical and large
+  // enough that a differential cannot mistake it for numerical noise.
+  if (inFoot(name)) return ((25 * Math.PI) / 180) * Math.sin(phase) * side;
+  return 0;
+}
+
 function solveFrame(f, table = WALK_REST_CM) {
   const world = new Map([[null, new THREE.Quaternion()]]);
   const local = new Map();
@@ -527,6 +571,13 @@ function solveFrame(f, table = WALK_REST_CM) {
       const rest = new THREE.Vector3(...restOf(child, table)).normalize();
       const want = walkDirection(name, f).clone().applyQuaternion(parentWorld.clone().invert());
       q = new THREE.Quaternion().setFromUnitVectors(rest, want.normalize());
+      // ...and the TWIST, about the bone's own axis. Post-multiplied, so it
+      // spins about `rest` — which `q` carries onto `want` — and the child stays
+      // exactly where the direction put it.
+      const roll = walkRoll(name, f);
+      if (roll !== 0) {
+        q.multiply(new THREE.Quaternion().setFromAxisAngle(rest, roll));
+      }
     }
     local.set(name, q);
     world.set(name, parentWorld.clone().multiply(q));
