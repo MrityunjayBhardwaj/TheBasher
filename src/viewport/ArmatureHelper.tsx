@@ -108,7 +108,15 @@ export function ArmatureHelper() {
         wireframe: true,
         transparent: true,
         opacity: 0.9,
-        depthTest: true,
+        // DRAWN THROUGH THE SKIN, and this is not a preference. Observed on
+        // mixamo-xbot: with depth testing on, the bones sit INSIDE the mesh and
+        // only fragments at the shins and feet are visible — so the one thing
+        // this helper exists for, judging the leg chain's roll by eye, is
+        // exactly the thing you cannot do. #971 filed x-ray as a v2 nicety;
+        // the picture says it is v1's exit condition. Blender has the same
+        // switch ("In Front") for the same reason. A toggle belongs in v2.
+        depthTest: false,
+        depthWrite: false,
       }),
     [],
   );
