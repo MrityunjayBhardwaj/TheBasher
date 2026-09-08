@@ -63,8 +63,18 @@ export function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
  *
  *  Returns whether it actually moved a camera. There is no camera before the
  *  viewport mounts, and "no camera" is indistinguishable at the call site from
- *  "framed successfully" unless it is reported. */
-function applyTarget(target: THREE.Vector3): boolean {
+ *  "framed successfully" unless it is reported.
+ *
+ *  🔑 EXPORTED because this is also the whole of the camera math a FOLLOW needs
+ *  (#856), and the two must not be two implementations. Re-centring on a point
+ *  is a fixed point of OrbitControls' own update — it recomputes
+ *  `offset = position - target` and writes back `position = target + offset`
+ *  (three-stdlib/controls/OrbitControls.js, `update`) — so translating both ends
+ *  together survives the next frame, while moving the camera alone does not
+ *  (its orientation is rewritten by `lookAt(target)` against the OLD target).
+ *  Calling this every frame with a moving point IS the follow; the only thing
+ *  the follow adds is which point (src/viewport/cameraFollow.ts). */
+export function applyTarget(target: THREE.Vector3): boolean {
   const cam = useThreeRef.getState().camera;
   const ctrlTarget = useThreeRef.getState().controlsTarget;
   if (!cam) return false;

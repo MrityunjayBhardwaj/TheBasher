@@ -48,7 +48,12 @@ import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
 import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
+import { followPoint, type FollowArmature } from './cameraFollow';
 import { computeSceneBounds } from './sceneBounds';
+import { scanArmatures } from './ArmatureHelper';
+import { assetIdsFor, type PickNode } from './armaturePick';
+import { placeBones } from './boneShape';
+import { applyTarget } from '../app/character/framing';
 
 // Default free-mode clip planes (three's near-ish / the pre-#186 constants).
 // The bounds-fit overrides them per-load so large/tiny models don't clip.
@@ -66,6 +71,23 @@ const DEFAULT_FREE_FAR = 1000;
 // camera thereafter (explicit camera constraints are a future feature).
 const SETTLE_STILL_FRAMES = 45;
 const MAX_FRAMES = 300;
+
+/** How often the view lock re-traverses the scene for armatures, in frames.
+ *  The whole-scene walk is the expensive part of following, so it runs on a
+ *  cadence while the bone matrices — the part that actually moves — are read
+ *  every frame. The same trade, and the same number, as the armature helper's
+ *  own rescan: ~0.25s at 60fps is the longest a rig that was just loaded or
+ *  swapped can go unfollowed. */
+const LOCK_RESCAN_INTERVAL = 15;
+
+/** One live armature as the lock reads it: the scan's topology plus the DAG
+ *  node ids that name any part of its asset. */
+interface LockedRig {
+  readonly root: THREE.Object3D;
+  readonly bones: THREE.Object3D[];
+  readonly parents: number[];
+  readonly ids: ReadonlySet<string>;
+}
 
 /** Orthographic zoom that makes the ortho framing match the perspective
  *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
@@ -183,6 +205,32 @@ export function EditorViewCamera() {
   // user's pose, re-derive near/far + dolly limits from the LIVE camera distance
   // each frame as async bounds arrive, so a large model still clears `far`.
   const fit = useRef({ active: false, poseToo: false, frames: 0, still: 0, lastR: -1 });
+
+  // #856 — the view lock. Subscribed rather than snapshot-read, because taking
+  // one has to be able to CANCEL an in-progress bounds-fit: the fit is a
+  // one-time framing and the lock is a constraint, and two writers on the same
+  // camera in the same frame is the arbitration this file exists to avoid.
+  const viewLock = useViewportStore((s) => s.viewLock);
+  // What the lock resolved to, refreshed on a cadence (LOCK_RESCAN_INTERVAL)
+  // while the matrices — the part that actually moves — are read every frame.
+  // BOTH lookups sit on the one cadence: `getObjectByName` walks the whole scene
+  // exactly as `scanArmatures` does, so throttling one and not the other would
+  // have been a cost decision made twice and answered differently. Starts at the
+  // interval so the first locked frame resolves rather than following nothing
+  // for a quarter second.
+  const lockScan = useRef<{ rigs: LockedRig[]; object: THREE.Object3D | null }>({
+    rigs: [],
+    object: null,
+  });
+  const sinceLockScan = useRef(LOCK_RESCAN_INTERVAL);
+  // A new lock names a different node, so what was resolved is about the old
+  // one. Re-resolving on the next frame rather than up to a quarter second later
+  // is the difference between a toggle that acts and one that hesitates.
+  useEffect(() => {
+    sinceLockScan.current = LOCK_RESCAN_INTERVAL;
+  }, [viewLock]);
+  // Reused so the follow allocates nothing per frame.
+  const lockPoint = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
     const cam = ref.current;
@@ -310,6 +358,88 @@ export function EditorViewCamera() {
       if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
     }
     if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
+  });
+
+  // #856 — THE VIEW LOCK: keep the view CENTRE on something that moves, so a
+  // walking character stays framed instead of leaving the viewport in a second.
+  //
+  // Runs only in free mode. Blender's own lock is skipped in camera view for the
+  // same reason — `view3d_viewmatrix_set` returns from the `RV3D_CAMOB` branch
+  // before it reads `ob_center` (view3d_view.cc:399, tag v5.1.1) — and here
+  // look-through is a mirror of the DAG camera's pose, which is not ours to move.
+  //
+  // WHY THIS SURVIVES ORBITCONTROLS AND A DIRECT CAMERA WRITE DOES NOT: drei
+  // runs `controls.update()` at priority -1, so it has already rewritten
+  // `position = target + offset` and `lookAt(target)` by the time this default-
+  // priority callback runs. Re-centring moves BOTH ends together, which is a
+  // fixed point of that arithmetic — the next update reproduces it, and the
+  // user's orbit angle and dolly distance are never touched. That is also what
+  // Blender's lock does: it substitutes the followed point for `rv3d->ofs` while
+  // `viewquat` and `rv3d->dist` are applied untouched (view3d_view.cc:414-427).
+  useFrame((state) => {
+    const cam = ref.current;
+    if (!viewLock || lookThrough || !cam) return;
+    const dag = useDagStore.getState().state;
+    // The locked node left the graph (deleted, or a project switched under us).
+    // Cleared HERE, at the one place that looks: a lock naming nothing would
+    // otherwise sit in the store looking active while the view never moves,
+    // which is the shape of the defect this issue is about.
+    if (dag.nodes[viewLock.nodeId] === undefined) {
+      useViewportStore.getState().setViewLock(null);
+      return;
+    }
+    if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
+      sinceLockScan.current = 0;
+      const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
+      lockScan.current = {
+        rigs: scanArmatures(state.scene).map((scan) => ({
+          ...scan,
+          ids: assetIdsFor(scan.root as unknown as PickNode, isLiveNodeId),
+        })),
+        // The non-rig answer: an ordinary object IS named with its node id
+        // (`SceneFromDAG` writes `<group name={pickId}>`), so a moving empty or
+        // light needs no armature at all. Resolved unconditionally rather than
+        // only when no rig matched: skipping it there would put the rig-beats-
+        // object priority in two places, and this file's copy could then go on
+        // disagreeing with `followPoint`'s silently.
+        object: state.scene.getObjectByName(viewLock.nodeId) ?? null,
+      };
+    }
+    // Only the rig(s) the lock names get placed. The `ids.has` here is a COST
+    // pre-pass, not a second decision — it is the same expression `followPoint`
+    // selects with, so the two cannot disagree; placing every rig in the scene
+    // to throw all but one away is simply work with no reader.
+    const armatures: FollowArmature[] = [];
+    for (const rig of lockScan.current.rigs) {
+      if (!rig.ids.has(viewLock.nodeId)) continue;
+      // The TRS pass that poses the bones runs at the same default priority, so
+      // its order against this one is mount order. Forcing the update makes the
+      // read correct either way — the same guard the armature helper takes.
+      rig.root.updateWorldMatrix(true, true);
+      armatures.push({
+        ids: rig.ids,
+        frames: placeBones(
+          rig.bones.map((b, i) => ({
+            name: b.name,
+            parent: rig.parents[i],
+            matrix: b.matrixWorld,
+          })),
+        ),
+      });
+    }
+    const object = lockScan.current.object;
+    let objectPoint: [number, number, number] | null = null;
+    if (object) {
+      object.updateWorldMatrix(true, false);
+      object.getWorldPosition(lockPoint);
+      objectPoint = [lockPoint.x, lockPoint.y, lockPoint.z];
+    }
+    const found = followPoint(armatures, viewLock.nodeId, viewLock.boneName, objectPoint);
+    if (!found) return;
+    // A lock outranks the one-time bounds fit; ending the settle here is what
+    // keeps the two from writing the camera in the same frame.
+    fit.current.active = false;
+    applyTarget(lockPoint.set(found.point[0], found.point[1], found.point[2]));
   });
 
   // #190 — while looking THROUGH the production camera, follow the EVALUATED

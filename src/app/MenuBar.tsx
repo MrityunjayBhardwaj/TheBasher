@@ -34,6 +34,7 @@ import {
 import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { toggleViewLock } from './viewLock';
 import { exportDagJson } from './exportDag';
 import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
@@ -388,6 +389,7 @@ export function MenuBar() {
   const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
   const boneDisplay = useViewportStore((s) => s.boneDisplay);
   const bonesInFront = useViewportStore((s) => s.bonesInFront);
+  const viewLock = useViewportStore((s) => s.viewLock);
   const setShading = useViewportStore((s) => s.setShading);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
@@ -452,6 +454,9 @@ export function MenuBar() {
   const selectedId = useSelectionStore((s) =>
     s.selectedNodeIds.size === 1 ? s.selectedNodeId : null,
   );
+  // #856 — the lock is taken against the PRIMARY selection, so the menu item's
+  // enabled state has to read the same thing `toggleViewLock` will.
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const currentFrame = useTimeStore((s) => s.frame);
   // #376 follow-up: ask the ONE shared predicate rather than re-spelling the types here.
   // Admitting every `Object` by type left this enabled for an Empty, which then failed with
@@ -716,6 +721,21 @@ export function MenuBar() {
           testId="menu-view-frame-selected"
         />
         <Item label="Frame All" shortcut="Home" onSelect={frameAll} testId="menu-view-frame-all" />
+        {/* #856 — Blender's View ▸ View Lock ▸ Lock to Object, which is the
+            answer to "a walking character leaves the viewport in a second".
+            Sits under the two framing items because it is the same question
+            asked continuously: Frame Selected is a pose, this is a constraint.
+            Disabled with nothing selected rather than silently doing nothing —
+            the whole of this issue's first half was an affordance that looked
+            live and was not. */}
+        <Item
+          label={`${viewLock ? '✓ ' : '   '}Lock View to Selected`}
+          disabled={viewLock === null && primaryNodeId === null}
+          onSelect={() => {
+            toggleViewLock();
+          }}
+          testId="menu-view-lock-to-selected"
+        />
         <Divider />
         <Item
           label={lookThrough ? '✓ Look Through Camera' : '   Look Through Camera'}
