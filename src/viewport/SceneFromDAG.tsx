@@ -112,6 +112,7 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
+import { ArmatureHelper } from './ArmatureHelper';
 import {
   enumerateCameraNodeIds,
   resolveCameraDofAt,
@@ -561,6 +562,13 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
           })
         : null}
+      {/* #972 — octahedral bones for every rig in the scene. A camera gets a
+          frustum and a light gets a gizmo; until now a rig got nothing, so a
+          character animating wrongly and a character not animating at all
+          looked the same (#970). Reads the LIVE `Bone` objects, so it follows
+          the playhead; orients each bone by its own basis, so ROLL is visible
+          (#854/#960). Hidden in `rendered` mode like every other helper. */}
+      {showLightHelpers ? <ArmatureHelper /> : null}
       {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
           MEMOIZED SceneChildNode so a single param edit re-renders ONE node, not

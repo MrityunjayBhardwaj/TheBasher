@@ -116,6 +116,15 @@ export const LEAF_LENGTH_RATIO = 0.25;
 /** Fallback length for a rig whose bones are ALL degenerate (no scale to borrow). */
 const DEGENERATE_FALLBACK_LENGTH = 0.1;
 
+/** Placement input: a bone's identity, its parent, and its WORLD matrix —
+ *  whether that came from DAG params or from a live three.js `Bone`. */
+export interface BoneWorld {
+  readonly name: string;
+  /** Parent index into the same array, or -1 for a root. */
+  readonly parent: number;
+  readonly matrix: THREE.Matrix4;
+}
+
 /** One bone, placed in world space and ready to instance. */
 export interface BoneFrame {
   readonly name: string;
@@ -223,9 +232,8 @@ export function boneWorldMatrices(bones: readonly BoneSpec[]): THREE.Matrix4[] {
  * too — same table). The retarget errors we are chasing are 30-68°, well inside
  * one quadrant, but a falsification test MUST use a non-multiple of 90°.
  */
-export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
-  const world = boneWorldMatrices(bones);
-  const heads = world.map((m) => new THREE.Vector3().setFromMatrixPosition(m));
+export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
+  const heads = bones.map((b) => new THREE.Vector3().setFromMatrixPosition(b.matrix));
 
   // Children per bone, in index order (stable, so the averaged tail is stable).
   const children: number[][] = bones.map(() => []);
@@ -260,7 +268,7 @@ export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
       if (d.lengthSq() > 1e-18) return d.normalize();
     }
     // No usable parent direction: use the bone's own +Y, then world +Y.
-    const y = new THREE.Vector3().setFromMatrixColumn(world[i], 1);
+    const y = new THREE.Vector3().setFromMatrixColumn(bones[i].matrix, 1);
     if (y.lengthSq() > 1e-18) return y.normalize();
     return new THREE.Vector3(0, 1, 0);
   };
@@ -283,7 +291,7 @@ export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
     yAxis.multiplyScalar(1 / (length || 1));
 
     // Roll: the bone's own X, projected perpendicular to the head→tail axis.
-    const xAxis = new THREE.Vector3().setFromMatrixColumn(world[i], 0);
+    const xAxis = new THREE.Vector3().setFromMatrixColumn(bones[i].matrix, 0);
     xAxis.addScaledVector(yAxis, -xAxis.dot(yAxis));
     if (xAxis.lengthSq() < 1e-12) {
       // Degenerate (bone X parallel to head→tail): any perpendicular will do —
@@ -329,4 +337,18 @@ export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
     });
   }
   return frames;
+}
+
+/**
+ * Re-express a `BoneSpec` skeleton (DAG params, bind pose) as placement input.
+ *
+ * The other producer is the LIVE three.js rig: `GltfSkeleton.evaluate` returns
+ * the bind pose captured at import (GltfSkeleton.ts:48-53, no time argument),
+ * so the ANIMATED pose exists only as `Bone` objects written per frame by the
+ * useFrame in SceneFromDAG. Those feed `placeBones` directly through their
+ * `matrixWorld` — same core, same roll handling, no second implementation.
+ */
+export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
+  const world = boneWorldMatrices(bones);
+  return placeBones(bones.map((b, i) => ({ name: b.name, parent: b.parent, matrix: world[i] })));
 }
