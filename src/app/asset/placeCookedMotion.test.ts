@@ -26,9 +26,14 @@ import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
+import { validatePlan } from '../../agent/mutators/index';
+import { retargetMutator } from '../../agent/mutators/builders/retarget';
 
 /** The offset the generator reports when a world path was requested. */
 const OFFSET: [number, number] = [3, -1];
+
+/** Source bone names → the character's, for the real mutator's `customMap`. */
+const BRIDGE: Record<string, string> = { Hips: 'Hips', Spine: 'Spine' };
 
 function capability(withOffset = true, rotation: number | null = null) {
   const cap: MotionGenerationCapability = {
@@ -148,26 +153,25 @@ async function mintAndCookThroughRetarget(s: DagState, cap: MotionGenerationCapa
     curveObjectId: 'pathObj',
   });
   let next = apply(s, ops);
-  // The clip keeps its SOURCE skeleton — untouched, exactly as the bind leaves it.
-  next = apply(next, [
-    { type: 'addNode', nodeId: 'bonemap', nodeType: 'BoneNameMap', params: { map: {} } },
-    { type: 'addNode', nodeId: 'retarget', nodeType: 'RetargetClip', params: {} },
+  // 🔴 THE OPS COME FROM THE PRODUCT'S OWN MUTATOR, NOT FROM THIS FILE.
+  // Hand-writing the RetargetClip here would make this a SECOND description of
+  // how a bind is wired, free to drift from the first exactly as the old fixture
+  // did — and the drift is what #966 was. `bindMotionToCharacter` calls this
+  // same mutator with these same arguments; only the store round-trip is skipped.
+  const bind = validatePlan(
+    retargetMutator,
     {
-      type: 'connect',
-      from: { node: clipId, socket: 'out' },
-      to: { node: 'retarget', socket: 'sourceClip' },
+      sourceClipId: clipId,
+      sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
+      targetSkeletonId: 'gskel',
+      customMap: BRIDGE,
+      outputClipId: 'retarget',
     },
-    {
-      type: 'connect',
-      from: { node: 'bonemap', socket: 'out' },
-      to: { node: 'retarget', socket: 'boneMap' },
-    },
-    {
-      type: 'connect',
-      from: { node: 'gskel', socket: 'out' },
-      to: { node: 'retarget', socket: 'skeleton' },
-    },
-  ] as Op[]);
+    next,
+    'bind the generated motion to the character',
+  );
+  if (!bind.ok) throw new Error(`the real bind refused: ${bind.reason}`);
+  next = apply(next, bind.ops as Op[]);
   await resolvePendingMotionGenerations(next, cap);
   next = apply(next, bakeGeneratedClipOps(next));
   return { state: next, clipId };
@@ -333,26 +337,26 @@ describe('placeCookedMotionOps (#935)', () => {
         from: { node: 'asset2', socket: 'out' },
         to: { node: 'root2', socket: 'children' },
       },
-      { type: 'addNode', nodeId: 'retarget2', nodeType: 'RetargetClip', params: {} },
-      {
-        type: 'connect',
-        from: { node: clipId, socket: 'out' },
-        to: { node: 'retarget2', socket: 'sourceClip' },
-      },
-      {
-        type: 'connect',
-        from: { node: 'bonemap', socket: 'out' },
-        to: { node: 'retarget2', socket: 'boneMap' },
-      },
-      {
-        type: 'connect',
-        from: { node: 'gskel2', socket: 'out' },
-        to: { node: 'retarget2', socket: 'skeleton' },
-      },
     ] as Op[]);
-    const { ops, refusals } = placeCookedMotionOps(two);
+    // The SECOND bind through the same real mutator, for the same reason as the
+    // first: a hand-wired one would be this file's opinion of a bind.
+    const bind2 = validatePlan(
+      retargetMutator,
+      {
+        sourceClipId: clipId,
+        sourceSkeletonId: edgeTarget(two.nodes[clipId], 'skeleton')!,
+        targetSkeletonId: 'gskel2',
+        customMap: BRIDGE,
+        outputClipId: 'retarget2',
+      },
+      two,
+      'bind the same walk to a second character',
+    );
+    if (!bind2.ok) throw new Error(`the real bind refused: ${bind2.reason}`);
+    const bound = apply(two, bind2.ops as Op[]);
+    const { ops, refusals } = placeCookedMotionOps(bound);
     expect(refusals).toEqual([]);
-    const placed = apply(two, ops);
+    const placed = apply(bound, ops);
     expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
     expect((placed.nodes.root2.params as { position: number[] }).position).toEqual([
       OFFSET[0],
