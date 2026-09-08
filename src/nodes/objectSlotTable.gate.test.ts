@@ -200,14 +200,20 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // could not honour a per-slot override and did not try. After the split it is an
     // Object like any other, so it resolves through the same derivation — which is #645's
     // rule finally reaching the last kind.
+    // 6 → 7 at #978, and again the new caller is the point of the change. The modifier arm
+    // of `resolveEvaluatedMesh` built its own assignment from `[source.material]` instead of
+    // resolving one, so it was neither a road NOR the counted hatch below — invisible to
+    // this row in both directions. It resolves through the derivation now, like every other
+    // arm that has an Object in reach.
     const road = invocationsOf('objectSlotsOf', PRODUCTION_ROADS);
-    expect(road).toHaveLength(6);
+    expect(road).toHaveLength(7);
     expect(road.map((c) => c.fn).sort()).toEqual([
       'GltfAssetR',
       'ObjectMeshR',
       'ObjectR',
       'ObjectR',
       'evaluatedMeshFromMeshData',
+      'resolveEvaluatedMesh',
       'resolveEvaluatedMesh',
     ]);
 
@@ -228,6 +234,55 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     const internal = invocationsOf('dataSlotsOnly', [ASSIGNMENT]);
     expect(internal).toHaveLength(1);
     expect(internal[0].fn).toBe('objectSlotsOf');
+  });
+
+  // ── B2. THE ROW ABOVE COULD NOT SEE #978, AND THIS IS WHY ────────────────────────────
+  //
+  // 🔴 B COUNTS USES OF THE SANCTIONED HELPERS. A site that calls NEITHER — building its
+  // assignment inline from `[source.material]` — is not a road it counts and not a hatch it
+  // censuses, so it is invisible in both directions. B passed for two issues while the
+  // modifier arm answered with the WRONG material, because an occurrence census cannot see
+  // an OMISSION: there is nothing at the defective site for it to count.
+  //
+  // The discriminating question is not "how many callers use the derivation" but "how many
+  // places FILL the projection, and does each one reach the derivation". So this row
+  // censuses the fill sites themselves. A fifth arm, or an existing arm quietly rejoining
+  // the inline spelling, moves this count or these names.
+  it('B2. every site that FILLS the assignment is named, so an inline one cannot hide', () => {
+    const fills = invocationsOf('materialAssignmentOf', PRODUCTION_ROADS);
+    expect(fills).toHaveLength(7);
+    expect(fills.map((c) => c.fn).sort()).toEqual([
+      'ModifiedMeshR',
+      'MultiMaterialMeshR',
+      'ObjectMeshR',
+      'evaluatedMeshFromMeshData',
+      'resolveEvaluatedMesh',
+      'resolveEvaluatedMesh',
+      'resolveEvaluatedMesh',
+    ]);
+
+    // 🔴 THE INLINE SPELLING, CENSUSED EXACTLY — the shape #978 was. `null` as the key with
+    // a one-entry array literal asserts "one material, and no face indexes into a table".
+    // That is a CLAIM about the source, and it is the claim the modifier arm got wrong.
+    //
+    // Two remain, and the reason each is sound is different — which is the point of naming
+    // them rather than counting them:
+    //
+    //   `resolveEvaluatedMesh`  the BAKED arm. `BakedDataValue` declares no `materialSlots`
+    //                           at all (`types.ts`), so the claim is true BY TYPE.
+    //   `ModifiedMeshR`         the single-material arm of a fork. `ModifiedMeshValue` DOES
+    //                           carry `materialSlots`, so the claim is not true by type — it
+    //                           is true by POSITION: the arm is only reached when
+    //                           `needsMaterialSlots(objectSlotsOf(...))` is false, i.e. the
+    //                           resolved table really does have one entry. The multi-slot
+    //                           case went to `MultiMaterialMeshR` one branch earlier.
+    //
+    // So a THIRD entry here is the thing to look at: it is either a new source with no table,
+    // or someone collapsing an assignment that had more to say.
+    const lineAt = (c: { file: string; line: number }): string =>
+      readFileSync(c.file, 'utf8').split('\n')[c.line - 1] ?? '';
+    const inline = fills.filter((c) => /materialAssignmentOf\(null,/.test(lineAt(c)));
+    expect(inline.map((c) => c.fn).sort()).toEqual(['ModifiedMeshR', 'resolveEvaluatedMesh']);
   });
 
   it('C. the fused ModifiedMesh arm has no producer on the DAG value flow', () => {

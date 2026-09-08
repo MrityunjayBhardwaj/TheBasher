@@ -198,10 +198,34 @@ export function resolveEvaluatedMesh(
     // Object branch below, so a modified mesh and its object can never disagree about
     // where they are. A dangling chain (nothing wears it yet) has no pose at all.
     const objectId = resolveStackObject(state, selectedId);
+    const objectValue = objectId
+      ? (evaluate(state, objectId, { ctx, cache }).value as ObjectValue | undefined)
+      : undefined;
     const transform = objectId
       ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
-    const modifierMaterials = materialAssignmentOf(null, [source.material]);
+    // #978 — READ AT THE DEPTH THE SOURCE OFFERS, which is what the two sibling arms do.
+    // This built its own assignment instead: `materialAssignmentOf(null, [source.material])`,
+    // a literal `null` where the siblings pass a real key and one entry where the source
+    // carries a table. `modifierDataSource` propagates both halves deliberately, so the
+    // discard was not a limitation of what was in reach.
+    //
+    // ⚠️ IT WAS A WRONG MATERIAL, NOT A MISSING SLOT. `SetMaterialOp` and
+    // `MaterialOverrideOp` emit `material: wired` beside `materialSlots: [source.material,
+    // wired]` — so `material` is slot ONE. Collapsing to `[source.material]` therefore
+    // answered slot 1 where slot 0 is correct, and `resolveMeshUVSpace` (no type guard,
+    // reached with the raw selection) resolved its texture from it.
+    //
+    // The Object is the same one the pose comes from, for the same reason stated above: it
+    // is the only node in the chain that has one, so a modified mesh and its object cannot
+    // disagree about what it is made of any more than about where it is. `source` — not the
+    // Object's own resolved mesh — is the data half, because a modifier BELOW the top of the
+    // stack has a different face count from the stack's output, and the key must index the
+    // geometry this arm actually returns.
+    const modifierMaterials = materialAssignmentOf(
+      source.attributeKey ?? null,
+      objectSlotsOf(objectValue ?? null, source),
+    );
     const modifierUvs = readMeshUVs(source.geometry);
     return {
       geometry: source.geometry,
