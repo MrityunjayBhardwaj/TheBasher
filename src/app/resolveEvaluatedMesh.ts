@@ -34,7 +34,7 @@
 //
 // REF: PLAN.md Wave 1 Task 2; CONTEXT §B/§H; RESEARCH §B; vyapti V1/V20; hetvabhasa H40.
 
-import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
@@ -198,11 +198,22 @@ export function resolveEvaluatedMesh(
     // Object branch below, so a modified mesh and its object can never disagree about
     // where they are. A dangling chain (nothing wears it yet) has no pose at all.
     const objectId = resolveStackObject(state, selectedId);
+    // ONE memo across BOTH reads of the Object below — its slot overrides and its pose.
+    // `evaluate` builds a fresh per-call memo, so a caller that passed no cache (Apply, the
+    // UV editor, the diagnostic seams) would otherwise walk the Object's subgraph twice
+    // where it walked it once. Keyed on a params+inputs hash, so a local one is a pure
+    // memo and cannot change an answer.
+    const objectCache = cache ?? createEvaluatorCache();
+    // ⚠️ `resolveStackObject` guarantees a POSER (`isPoserNode` — accepts `ObjectData` on
+    // `data`), which is `Object` today but is a shape test, not a kind test. The cast is
+    // therefore loose ON PURPOSE and degrades safely: `objectSlotsOf` reads `slotOverrides`
+    // and nothing else, so a future poser without that field resolves the data's own table —
+    // the answer this arm gave before, rather than a wrong one.
     const objectValue = objectId
-      ? (evaluate(state, objectId, { ctx, cache }).value as ObjectValue | undefined)
+      ? (evaluate(state, objectId, { ctx, cache: objectCache }).value as ObjectValue | undefined)
       : undefined;
     const transform = objectId
-      ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
+      ? (resolveEvaluatedMesh(state, objectId, ctx, objectCache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
     // #978 — READ AT THE DEPTH THE SOURCE OFFERS, which is what the two sibling arms do.
     // This built its own assignment instead: `materialAssignmentOf(null, [source.material])`,
