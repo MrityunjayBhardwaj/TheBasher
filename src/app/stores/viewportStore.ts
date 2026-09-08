@@ -77,6 +77,10 @@ export interface ViewportStore {
   gridVisible: boolean;
   /** Whether the bottom-right axis widget renders. */
   axisWidgetVisible: boolean;
+  /** Whether the SOURCE rig of each retargeted clip draws beside the character
+   *  it drives (#977). A diagnostic for judging the retarget by eye, not scene
+   *  furniture — default OFF. */
+  sourceRigVisible: boolean;
   /** Editor shading mode — see ShadingMode for semantics. */
   shading: ShadingMode;
   /** Whether the viewport renders THROUGH the active DAG scene camera
@@ -165,6 +169,7 @@ export interface ViewportStore {
   toggleSnapAffect(mode: 'move' | 'rotate' | 'scale'): void;
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
+  setSourceRigVisible(visible: boolean): void;
   setShading(shading: ShadingMode): void;
   setLookThroughCamera(on: boolean): void;
   setCameraProjection(projection: CameraProjection): void;
@@ -179,6 +184,7 @@ export interface ViewportStore {
   setViewportClipReadout(clip: { near: number; far: number }): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
+  toggleSourceRigVisible(): void;
   toggleSnapEnabled(): void;
   toggleTimelineDrawer(): void;
   toggleLookThroughCamera(): void;
@@ -203,6 +209,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   scaleSnapStep: 0.1,
   gridVisible: true,
   axisWidgetVisible: true,
+  sourceRigVisible: false,
   // Default 'studio' so a fresh seed scene with one DirectionalLight still
   // looks lit. Production renders (P4) read 'rendered' to match.
   shading: 'studio',
@@ -240,6 +247,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
     set((s) => ({ snapAffect: { ...s.snapAffect, [mode]: !s.snapAffect[mode] } })),
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
+  setSourceRigVisible: (sourceRigVisible) => set({ sourceRigVisible }),
   setShading: (shading) => set({ shading }),
   setLookThroughCamera: (lookThroughCamera) => set({ lookThroughCamera }),
   setCameraProjection: (cameraProjection) => {
@@ -262,6 +270,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   },
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
+  toggleSourceRigVisible: () => set({ sourceRigVisible: !get().sourceRigVisible }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
   toggleTimelineDrawer: () => set({ timelineDrawerOpen: !get().timelineDrawerOpen }),
   toggleLookThroughCamera: () => set({ lookThroughCamera: !get().lookThroughCamera }),

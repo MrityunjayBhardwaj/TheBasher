@@ -385,6 +385,7 @@ export function MenuBar() {
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
+  const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
   const setShading = useViewportStore((s) => s.setShading);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
@@ -767,6 +768,16 @@ export function MenuBar() {
             testId="menu-view-toggle-fps"
           />
         ) : null}
+        {/* #977 — the SOURCE rig of each retargeted clip, drawn beside the
+            character it drives. A diagnostic for judging the retarget by eye
+            (the leg-chain roll of #854/#960), not scene furniture, so it is
+            off by default and lives here rather than in the always-visible
+            floating toolbar. */}
+        <Item
+          label={`${sourceRigVisible ? '✓ ' : '   '}Show Source Rig`}
+          onSelect={() => useViewportStore.getState().toggleSourceRigVisible()}
+          testId="menu-view-toggle-source-rig"
+        />
         <Divider />
         <Submenu label="Shading" testId="menu-view-shading">
           {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (

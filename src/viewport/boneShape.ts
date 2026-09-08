@@ -129,6 +129,9 @@ export interface BoneWorld {
 export interface BoneFrame {
   readonly name: string;
   readonly index: number;
+  /** Parent index in the same array, or -1 for a root. Carried through so a
+   *  consumer can tell anatomy from a rig's transport nodes. */
+  readonly parent: number;
   readonly head: readonly [number, number, number];
   readonly tail: readonly [number, number, number];
   readonly length: number;
@@ -148,9 +151,22 @@ const _s = new THREE.Vector3();
 
 /**
  * World-space matrix per bone, composed down the parent chain from the
- * bind-pose TRS. `rotation` is DEGREES in DAG storage (src/viewport/rotation.ts,
- * H20) and Euler order is three.js' default XYZ, matching how SceneFromDAG
- * writes bone TRS onto the live objects.
+ * bind-pose TRS.
+ *
+ * 🔴 `BoneSpec.rotation` IS IN RADIANS, and it is the exception to this repo's
+ * degrees-in-storage convention (rotation.ts, H20). Not a guess — every
+ * consumer reads it raw: `specToThreeSkeleton` builds
+ * `new Euler(s.rotation[0], …, 'XYZ')` with no conversion
+ * (threeAdapter.ts:250), the clip-keyframe path does the same
+ * (threeAdapter.ts:317), and so does the retarget (retarget.ts:377). There is
+ * no `degToRad` anywhere in src/core/import or src/core/rigging.
+ *
+ * This was originally written as degrees, on the general convention, and every
+ * unit row passed because the rows encoded the same wrong assumption. It only
+ * surfaced when the params path was first used for real (#977): applying
+ * degToRad to radians divides every rotation by ~57, which collapses any pose
+ * back onto its bind — the source rig drew as a perfect T-pose while its body
+ * translated. Euler order is three's default XYZ, matching all three sites.
  *
  * Tolerates a child listed before its parent, and a malformed parent index,
  * without throwing — a bad rig must draw wrong, never crash the viewport.
@@ -161,12 +177,7 @@ export function boneWorldMatrices(bones: readonly BoneSpec[]): THREE.Matrix4[] {
   const local = (i: number): THREE.Matrix4 => {
     const b = bones[i];
     _v.set(b.position[0], b.position[1], b.position[2]);
-    _e.set(
-      THREE.MathUtils.degToRad(b.rotation[0]),
-      THREE.MathUtils.degToRad(b.rotation[1]),
-      THREE.MathUtils.degToRad(b.rotation[2]),
-      'XYZ',
-    );
+    _e.set(b.rotation[0], b.rotation[1], b.rotation[2], 'XYZ');
     _q.setFromEuler(_e);
     const sc = b.scale;
     _s.set(sc ? sc[0] : 1, sc ? sc[1] : 1, sc ? sc[2] : 1);
@@ -329,6 +340,7 @@ export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
     frames.push({
       name: bones[i].name,
       index: i,
+      parent: bones[i].parent,
       head: [head.x, head.y, head.z],
       tail: [tail.x, tail.y, tail.z],
       length,

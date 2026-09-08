@@ -184,6 +184,45 @@ export function riggedSkeletonsForClip(
   return [...out].sort();
 }
 
+/** A retarget's two ends: the SOURCE clip it reads and the rig it drives. */
+export interface RetargetPair {
+  readonly retargetId: string;
+  readonly sourceClipId: string;
+  readonly targetSkeletonId: string;
+}
+
+/**
+ * Every retarget in the graph, as the pair of ends it connects (#977).
+ *
+ * `riggedSkeletonsForClip` walks this same spine from the CLIP end and answers
+ * "which rigs does this clip drive". This walks it whole and answers "what does
+ * each retarget read, and what does it drive" — which is what a viewer needs to
+ * draw the source rig beside the character it is being retargeted onto.
+ *
+ * It lives here, next to that walk, rather than beside the drawing code: two
+ * modules resolving `RetargetClip`'s edges independently would be two answers to
+ * one question, which is exactly the divergence V425 was filed for.
+ *
+ * A retarget missing either end is skipped — a half-wired graph draws no
+ * reference rig rather than throwing in a render loop.
+ */
+export function retargetPairs(nodes: Readonly<Record<string, GraphNodeLike>>): RetargetPair[] {
+  const out: RetargetPair[] = [];
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (n.type !== 'RetargetClip') continue;
+    const sourceClipId = edgeTarget(n, 'sourceClip');
+    const targetSkeletonId = edgeTarget(n, 'skeleton');
+    if (!sourceClipId || !targetSkeletonId) continue;
+    out.push({ retargetId: id, sourceClipId, targetSkeletonId });
+  }
+  // Sorted so WHICH reference rig pairs with which character can never depend
+  // on object-key order (V22, the same reason riggedSkeletonsForClip sorts).
+  return out.sort((a, b) =>
+    a.retargetId < b.retargetId ? -1 : a.retargetId > b.retargetId ? 1 : 0,
+  );
+}
+
 /**
  * The bone index a childName occupies in a bound clip, or null when that clip's
  * rig does not carry the bone.

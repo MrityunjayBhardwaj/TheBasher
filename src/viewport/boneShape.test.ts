@@ -28,10 +28,14 @@ function drawnPoints(m: THREE.Matrix4): string[] {
   }).sort();
 }
 
-/** root → child at +Y, so head→tail is +Y and a Y-rotation is a pure roll. */
+/** root → child at +Y, so head→tail is +Y and a Y-rotation is a pure roll.
+ *  Takes DEGREES for readability and converts, because BoneSpec.rotation is in
+ *  RADIANS — writing 45 there would be 45 radians, which is how the units bug
+ *  this file now pins got in. */
 function twoBoneRig(rootRotationDeg: [number, number, number]): BoneSpec[] {
+  const r = rootRotationDeg.map((d) => THREE.MathUtils.degToRad(d)) as [number, number, number];
   return [
-    { name: 'root', parent: -1, position: [0, 0, 0], rotation: rootRotationDeg },
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: r },
     { name: 'child', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
   ];
 }
@@ -85,15 +89,33 @@ describe('boneWorldMatrices', () => {
     expect(p[2]).toEqual([1, 2, 3]);
   });
 
-  it('reads rotation as DEGREES (H20 — DAG storage is degrees)', () => {
-    // 90° about Z takes the child's local +Y offset onto world -X.
+  it('reads rotation as RADIANS — the exception to the degrees convention', () => {
+    // Deliberately pinned, because the first version of this module assumed
+    // degrees (the general DAG convention) and every row still passed: the rows
+    // encoded the assumption instead of checking it. Ground truth is the three
+    // consumers, which all read BoneSpec.rotation raw into a THREE.Euler —
+    // threeAdapter.ts:250 and :317, retarget.ts:377.
+    //
+    // Math.PI/2 about Z takes the child's local +Y offset onto world -X.
     const bones: BoneSpec[] = [
-      { name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 90] },
+      { name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, Math.PI / 2] },
       { name: 'b', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
     ];
     const p = new THREE.Vector3().setFromMatrixPosition(boneWorldMatrices(bones)[1]);
     expect(p.x).toBeCloseTo(-1);
     expect(p.y).toBeCloseTo(0);
+  });
+
+  it('does NOT treat rotation as degrees — 90 would be 14 full turns', () => {
+    // The falsification of the row above: under the old degrees reading, a
+    // rotation of `90` was a quarter turn. Under radians it is 90 rad, which is
+    // NOT a quarter turn — so this pins the units rather than merely a rotation.
+    const bones: BoneSpec[] = [
+      { name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 90] },
+      { name: 'b', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    ];
+    const p = new THREE.Vector3().setFromMatrixPosition(boneWorldMatrices(bones)[1]);
+    expect(Math.abs(p.x - -1)).toBeGreaterThan(0.1);
   });
 
   it('applies optional bind scale, defaulting to 1', () => {

@@ -25,10 +25,24 @@
 import { useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
-import { type BoneWorld, octahedralIndices, octahedralPositions, placeBones } from './boneShape';
+import { type BoneFrame, octahedralIndices, octahedralPositions, placeBones } from './boneShape';
+import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
+import { boneTransforms } from './boneShape';
+import { useTimeStore } from '../app/stores/timeStore';
+import type { AnimationClipValue } from '../nodes/types';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
 const BONE_COLOR = '#c8d4e4';
+
+/** The SOURCE rig, drawn in a different colour so the two are never confused —
+ *  the entire value of the comparison depends on knowing which is which. */
+const SOURCE_BONE_COLOR = '#ffb454';
+
+/** How much of a live armature's bone names a retarget must account for before
+ *  the two are treated as the same character. Well clear of both outcomes: a
+ *  retarget's own target rig shares nearly all its names, and an unrelated
+ *  armature shares essentially none. */
+const NAME_MATCH_THRESHOLD = 0.4;
 
 /** Hard ceiling on instances, so a pathological rig cannot allocate unboundedly.
  *  Rigs here run to ~78 bones (BVH) and a few hundred at the very most. */
@@ -36,6 +50,17 @@ const MAX_BONES = 4096;
 
 /** How often the scene is re-traversed for armatures, in frames. */
 const RESCAN_INTERVAL = 15;
+
+/** A source rig to draw beside the character it drives (#977). */
+export interface ReferenceRigInput {
+  /** The retarget node's id — stable identity across frames. */
+  readonly id: string;
+  /** The SOURCE clip: carries its own skeleton, keyframes, duration and loop. */
+  readonly clip: AnimationClipValue;
+  /** The bone names of the rig this retarget DRIVES, used to find the live
+   *  armature it belongs beside. */
+  readonly targetBoneNames: readonly string[];
+}
 
 /** One armature found in the scene: its root bone, and the bones under it. */
 interface ArmatureScan {
@@ -47,6 +72,24 @@ interface ArmatureScan {
 
 function isBone(o: THREE.Object3D): boolean {
   return (o as THREE.Bone).isBone === true;
+}
+
+/**
+ * A bone name reduced to what BOTH sides agree on.
+ *
+ * 🔴 MEASURED, not defensive. The same glTF bone reaches the two sides under two
+ * different names: the DAG projection reports `mixamorig_Hips` while the live
+ * three.js `Bone` is `mixamorigHips`. Both are sanitisations of the file's
+ * `mixamorig:Hips` — three strips the colon because `[].:/` are reserved in
+ * PropertyBinding paths, and the projection replaces it with an underscore.
+ * Compared raw, a rig and its own retarget target overlap by ZERO names, and the
+ * reference rig silently never draws.
+ *
+ * Stripping every non-alphanumeric makes the match independent of which
+ * sanitisation a given path applied.
+ */
+function normalizeBoneName(name: string): string {
+  return name.replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
 /**
@@ -87,9 +130,18 @@ function scanSignature(scans: ArmatureScan[]): string {
  * octahedron geometry with a per-instance matrix keeps it at one, and gives v2
  * an `instanceId` to map back to a bone name for selection.
  */
-export function ArmatureHelper() {
+export function ArmatureHelper({
+  sourceRigs,
+  showSourceRigs = false,
+}: {
+  /** Source rigs to draw beside their characters. Empty when nothing is
+   *  retargeted, or when the diagnostic is off. */
+  readonly sourceRigs?: readonly ReferenceRigInput[];
+  readonly showSourceRigs?: boolean;
+} = {}) {
   const scene = useThree((s) => s.scene);
   const meshRef = useRef<THREE.InstancedMesh>(null);
+  const refMeshRef = useRef<THREE.InstancedMesh>(null);
   const scans = useRef<ArmatureScan[]>([]);
   const signature = useRef('');
   // Starts at the interval so the very first frame scans.
@@ -126,6 +178,19 @@ export function ArmatureHelper() {
     [],
   );
 
+  const sourceMaterial = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        color: SOURCE_BONE_COLOR,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.9,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    [],
+  );
+
   useFrame(() => {
     const mesh = meshRef.current;
     if (!mesh) return;
@@ -151,19 +216,14 @@ export function ArmatureHelper() {
     // on. Forcing the update here makes the read correct either way.
     for (const s of current) s.root.updateWorldMatrix(true, true);
 
-    const frames = current.flatMap((s) => {
-      const input: BoneWorld[] = s.bones.map((b, i) => ({
-        name: b.name,
-        parent: s.parents[i],
-        matrix: b.matrixWorld,
-      }));
-      return placeBones(input);
-    });
-
-    const count = Math.min(frames.length, MAX_BONES);
-    mesh.count = count;
-    mesh.visible = count > 0;
-    if (count === 0) return;
+    // Kept PER ARMATURE, not flattened away: a reference rig has to be sized
+    // and placed against the bounds of the one character it belongs beside.
+    const perArmature = current.map((s) =>
+      placeBones(
+        s.bones.map((b, i) => ({ name: b.name, parent: s.parents[i], matrix: b.matrixWorld })),
+      ),
+    );
+    const frames = perArmature.flat();
 
     // Instance matrices are in the mesh's LOCAL space; the bone matrices are
     // world. Without this the whole armature rides any ancestor transform twice.
@@ -173,12 +233,70 @@ export function ArmatureHelper() {
     } else {
       parentInverse.current.identity();
     }
+
+    const count = Math.min(frames.length, MAX_BONES);
+    mesh.count = count;
+    mesh.visible = count > 0;
     const local = new THREE.Matrix4();
     for (let i = 0; i < count; i++) {
       local.multiplyMatrices(parentInverse.current, frames[i].matrix);
       mesh.setMatrixAt(i, local);
     }
     mesh.instanceMatrix.needsUpdate = true;
+
+    // ── the SOURCE rigs, beside the characters they drive (#977) ────────────
+    // Deliberately NOT behind the `count === 0` early return that used to sit
+    // here: the two meshes are independent, and a frame with no live armature
+    // must still leave the reference mesh in a defined state rather than
+    // showing whatever it held last.
+    const refMesh = refMeshRef.current;
+    if (refMesh) {
+      let refCount = 0;
+      if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && perArmature.length > 0) {
+        const seconds = useTimeStore.getState().seconds;
+        for (const rig of sourceRigs) {
+          // Which live armature is this retarget's character? Matched on the
+          // TARGET rig's bone names rather than on index or id order, so two
+          // characters in one scene cannot swap reference rigs (V22).
+          const wanted = new Set(rig.targetBoneNames.map(normalizeBoneName));
+          if (wanted.size === 0) continue;
+          let best: BoneFrame[] | null = null;
+          let bestScore = 0;
+          for (const armature of perArmature) {
+            if (armature.length === 0) continue;
+            let hits = 0;
+            for (const f of armature) if (wanted.has(normalizeBoneName(f.name))) hits++;
+            const score = hits / armature.length;
+            if (score > bestScore) {
+              bestScore = score;
+              best = armature;
+            }
+          }
+          if (!best || bestScore < NAME_MATCH_THRESHOLD) continue;
+
+          const posed = boneTransforms(posedSourceBones(rig.clip, seconds));
+          if (posed.length === 0) continue;
+          const srcB = armatureBounds(posed);
+          const tgtB = armatureBounds(best);
+          const place = referencePlacement(srcB, tgtB);
+          for (const f of posed) {
+            if (refCount >= MAX_BONES) break;
+            // Skip the rig's transport node for the same reason armatureBounds
+            // excludes it: its octahedron runs from the world origin to a pelvis
+            // that walks away, so it is a connector rather than anatomy and it
+            // dominates the very comparison this rig is drawn for.
+            if (f.parent < 0) continue;
+            local.multiplyMatrices(parentInverse.current, place).multiply(f.matrix);
+            refMesh.setMatrixAt(refCount++, local);
+          }
+        }
+      }
+      refMesh.count = refCount;
+      refMesh.visible = refCount > 0;
+      refMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    if (count === 0) return;
 
     // DEV observation seam, the LightHelpers pattern: what the helper actually
     // drew this frame, so an e2e can assert on the rig rather than on pixels.
@@ -189,6 +307,11 @@ export function ArmatureHelper() {
           bones: number;
           names: string[];
           matrices: number[][];
+          // #977 — the REFERENCE rigs get their own counters. Without them the
+          // seam reports the live mesh only, and "the source rig did not draw"
+          // is indistinguishable from "it drew outside the camera frustum".
+          sourceRigsOffered: number;
+          sourceBones: number;
         };
       };
       w.__basher_armature = {
@@ -196,20 +319,32 @@ export function ArmatureHelper() {
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),
         matrices: frames.slice(0, count).map((f) => [...f.matrix.elements]),
+        sourceRigsOffered: showSourceRigs ? (sourceRigs?.length ?? 0) : 0,
+        sourceBones: refMeshRef.current?.count ?? 0,
       };
     }
   });
 
   return (
-    <instancedMesh
-      ref={meshRef}
-      args={[geometry, material, MAX_BONES]}
-      frustumCulled={false}
-      renderOrder={999}
-      visible={false}
-      // Never part of a production render — Blender does not render armatures
-      // either. V37's hide-pass keys on exactly this flag.
-      userData={{ editorChrome: true }}
-    />
+    <>
+      <instancedMesh
+        ref={meshRef}
+        args={[geometry, material, MAX_BONES]}
+        frustumCulled={false}
+        renderOrder={999}
+        visible={false}
+        // Never part of a production render — Blender does not render armatures
+        // either. V37's hide-pass keys on exactly this flag.
+        userData={{ editorChrome: true }}
+      />
+      <instancedMesh
+        ref={refMeshRef}
+        args={[geometry, sourceMaterial, MAX_BONES]}
+        frustumCulled={false}
+        renderOrder={999}
+        visible={false}
+        userData={{ editorChrome: true }}
+      />
+    </>
   );
 }
