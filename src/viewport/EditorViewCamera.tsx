@@ -45,6 +45,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore, DEFAULT_VIEWPORT_CLIP } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
+import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
 import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
@@ -378,16 +379,24 @@ export function EditorViewCamera() {
   // `viewquat` and `rv3d->dist` are applied untouched (view3d_view.cc:414-427).
   useFrame((state) => {
     const cam = ref.current;
-    if (!viewLock || lookThrough || !cam) return;
+    if (!viewLock) return;
     const dag = useDagStore.getState().state;
     // The locked node left the graph (deleted, or a project switched under us).
     // Cleared HERE, at the one place that looks: a lock naming nothing would
     // otherwise sit in the store looking active while the view never moves,
     // which is the shape of the defect this issue is about.
+    //
+    // 🔴 ABOVE the camera-view return, not below it (#985). Whether the node
+    // still exists has nothing to do with whether we are looking through a
+    // camera, and a director who reloads into camera view was left with a
+    // checkmark beside a lock on a node that is gone — which is exactly the
+    // "leaves no checkmark behind" this persistence would otherwise reintroduce
+    // on every reload rather than once per session.
     if (dag.nodes[viewLock.nodeId] === undefined) {
       useViewportStore.getState().setViewLock(null);
       return;
     }
+    if (lookThrough || !cam) return;
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
       const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
@@ -541,6 +550,26 @@ export function EditorViewCamera() {
     useViewportStore
       .getState()
       .setViewportClipOverride(loadViewportClip(projectId) ?? DEFAULT_VIEWPORT_CLIP);
+  }, [projectId]);
+
+  // #985 — the view lock, restored per project and kept in step with it.
+  //
+  // ONE effect, and it both hydrates and subscribes, because the two halves must
+  // agree about WHICH project they are talking about. Written as a hydrate
+  // effect plus a separate save-on-change effect, the save fires once with the
+  // NEW project id and the OLD project's lock still in the store, filing one
+  // project's node id under another's key.
+  //
+  // Subscribed rather than saved at the toggle, because the toggle is not the
+  // only writer: the applier below clears a lock whose node has left the graph,
+  // and a lock that cleared itself must not come back on the next reload. The
+  // store is where every writer meets, so it is where the persistence listens.
+  useEffect(() => {
+    // Before the subscription, so hydrating does not echo straight back out.
+    useViewportStore.getState().setViewLock(loadViewLock(projectId));
+    return useViewportStore.subscribe((state, prev) => {
+      if (state.viewLock !== prev.viewLock) saveViewLock(projectId, state.viewLock);
+    });
   }, [projectId]);
 
   // DEV-only observation seam for the #165 e2e: read the live view camera so
