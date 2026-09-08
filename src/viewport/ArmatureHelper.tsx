@@ -597,6 +597,7 @@ export function ArmatureHelper({
           sourceMatrices: number[][];
           degenerateBases: number;
           degenerateNames: string[];
+          highlightedBone: string | null;
         };
       };
       w.__basher_armature = {
@@ -610,6 +611,11 @@ export function ArmatureHelper({
         sourceMatrices: refMatrices,
         degenerateBases: degenerateBasisCount,
         degenerateNames: [...degenerateBasisNames],
+        // WHICH bone is painted as selected, by name rather than by index —
+        // an index means nothing to a reader and would have to be resolved
+        // against this same array to say anything, which is a second chance to
+        // resolve it differently. null when nothing is highlighted (#973).
+        highlightedBone: highlighted >= 0 ? (frames[highlighted]?.name ?? null) : null,
       };
     }
   });
