@@ -127,6 +127,52 @@ async function mintAndCook(s: DagState, cap: MotionGenerationCapability) {
   return { state: next, clipId };
 }
 
+/**
+ * Mint and cook, then bind THE WAY THE REAL BIND DOES (#966).
+ *
+ * 🔴 THE DIFFERENCE FROM `mintAndCook` IS THE WHOLE POINT. That helper moves the
+ * clip's own `skeleton` edge onto the `GltfSkeleton`, which is a graph shape
+ * `bindMotionToCharacter` never produces: it leaves the generated clip hanging
+ * off its 78-bone source `Skeleton` and adds a `RetargetClip` beside it carrying
+ * the rig. `boundClipsForAsset`'s header states that arrangement explicitly and
+ * excludes the source clip from the read band because of it.
+ *
+ * So the shape below is the one a director actually gets, and placement has to
+ * find the rig through the retarget rather than on the clip.
+ */
+async function mintAndCookThroughRetarget(s: DagState, cap: MotionGenerationCapability) {
+  const { ops, clipId } = mintMotionGenerateOps(s, {
+    prompt: 'a slow walk',
+    seed: 7,
+    model: 'kimodo-base',
+    curveObjectId: 'pathObj',
+  });
+  let next = apply(s, ops);
+  // The clip keeps its SOURCE skeleton — untouched, exactly as the bind leaves it.
+  next = apply(next, [
+    { type: 'addNode', nodeId: 'bonemap', nodeType: 'BoneNameMap', params: { map: {} } },
+    { type: 'addNode', nodeId: 'retarget', nodeType: 'RetargetClip', params: {} },
+    {
+      type: 'connect',
+      from: { node: clipId, socket: 'out' },
+      to: { node: 'retarget', socket: 'sourceClip' },
+    },
+    {
+      type: 'connect',
+      from: { node: 'bonemap', socket: 'out' },
+      to: { node: 'retarget', socket: 'boneMap' },
+    },
+    {
+      type: 'connect',
+      from: { node: 'gskel', socket: 'out' },
+      to: { node: 'retarget', socket: 'skeleton' },
+    },
+  ] as Op[]);
+  await resolvePendingMotionGenerations(next, cap);
+  next = apply(next, bakeGeneratedClipOps(next));
+  return { state: next, clipId };
+}
+
 const posOf = (s: DagState) => (s.nodes.root.params as { position: number[] }).position;
 const rotOf = (s: DagState) => (s.nodes.root.params as { rotation?: number[] }).rotation;
 
@@ -187,6 +233,132 @@ describe('placeCookedMotionOps (#935)', () => {
     const { state } = await mintAndCook(project(), capability(false));
     expect(placeCookedMotionOps(state)).toEqual({ ops: [], refusals: [] });
     expect(posOf(state)).toEqual([0, 0, 0]);
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // #966 — THE SHAPE THE BIND ACTUALLY BUILDS
+  // ───────────────────────────────────────────────────────────────────────
+  // Every row above this one binds by moving the clip's own `skeleton` edge onto
+  // the GltfSkeleton. `bindMotionToCharacter` does not do that, and never did:
+  // it leaves the generated clip on its source `Skeleton` and hangs the rig off a
+  // `RetargetClip`. Measured in a headed browser against the real server — the
+  // waypoints reached the wire, the offset came back as the curve's first point,
+  // and placement refused with "not bound to a character rig" while 18 of 23
+  // bones animated. The fixture was constructing the one world in which the code
+  // was right.
+  it('places the character when the rig is reached through the RetargetClip the bind builds', async () => {
+    const { state } = await mintAndCookThroughRetarget(project(), capability(true, Math.PI / 2));
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(rotOf(placed)).toEqual([0, -90, 0]);
+  });
+
+  // Each guard in `riggedSkeletonsForClip` gets its own row, in a world where the
+  // others cannot carry it. Written because the first two were VACUOUS: deleting
+  // either left the row above green, because the fixture had only one rig, one
+  // retarget and nothing else for a loosened match to find.
+  it('does NOT claim a rig from a RetargetClip that retargets some OTHER clip', async () => {
+    const { state, clipId } = await mintAndCookThroughRetarget(project(), capability());
+    // Re-point the retarget at an unrelated clip. The rig is still in the graph
+    // and still reachable by a walk that forgets to check WHOSE motion it carries.
+    const detached = apply(state, [
+      { type: 'addNode', nodeId: 'otherclip', nodeType: 'AnimationClip', params: {} },
+      {
+        type: 'disconnect',
+        from: { node: clipId, socket: 'out' },
+        to: { node: 'retarget', socket: 'sourceClip' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'otherclip', socket: 'out' },
+        to: { node: 'retarget', socket: 'sourceClip' },
+      },
+    ] as Op[]);
+    const out = placeCookedMotionOps(detached);
+    expect(out.ops).toEqual([]);
+    expect(out.refusals).toHaveLength(1);
+    expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+  });
+
+  it('does NOT treat a retarget onto a plain Skeleton as a character to place', async () => {
+    const { state } = await mintAndCookThroughRetarget(project(), capability());
+    // A rig-to-rig retarget is a legitimate graph: `RetargetClip.skeleton` takes a
+    // `Skeleton`, and a `GltfSkeleton` is only one of the things that satisfies it.
+    // A plain one has no asset and no root Group, so it is not somewhere a
+    // character can be STOOD — and saying "no rig" is the honest diagnosis, not
+    // "found a rig with nowhere to put it".
+    const plain = apply(state, [
+      { type: 'addNode', nodeId: 'plainskel', nodeType: 'Skeleton', params: {} },
+      {
+        type: 'disconnect',
+        from: { node: 'gskel', socket: 'out' },
+        to: { node: 'retarget', socket: 'skeleton' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'plainskel', socket: 'out' },
+        to: { node: 'retarget', socket: 'skeleton' },
+      },
+    ] as Op[]);
+    const out = placeCookedMotionOps(plain);
+    expect(out.ops).toEqual([]);
+    expect(out.refusals).toHaveLength(1);
+    expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+  });
+
+  it('places EVERY character the one clip drives, not whichever sorts first', async () => {
+    const { state, clipId } = await mintAndCookThroughRetarget(project(), capability());
+    const skin = (state.nodes.asset.params as { skins: unknown[] }).skins;
+    // A second character, bound to the SAME generated walk. Both were asked to
+    // walk the path; leaving one at the origin would make which one moves an
+    // accident of id order.
+    const two = apply(state, [
+      {
+        type: 'addNode',
+        nodeId: 'asset2',
+        nodeType: 'GltfAsset',
+        params: { assetRef: 'asset://rig2.glb', skins: skin },
+      },
+      { type: 'addNode', nodeId: 'gskel2', nodeType: 'GltfSkeleton', params: { skinIndex: 0 } },
+      {
+        type: 'connect',
+        from: { node: 'asset2', socket: 'out' },
+        to: { node: 'gskel2', socket: 'asset' },
+      },
+      { type: 'addNode', nodeId: 'root2', nodeType: 'Group', params: { position: [0, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'asset2', socket: 'out' },
+        to: { node: 'root2', socket: 'children' },
+      },
+      { type: 'addNode', nodeId: 'retarget2', nodeType: 'RetargetClip', params: {} },
+      {
+        type: 'connect',
+        from: { node: clipId, socket: 'out' },
+        to: { node: 'retarget2', socket: 'sourceClip' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'bonemap', socket: 'out' },
+        to: { node: 'retarget2', socket: 'boneMap' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'gskel2', socket: 'out' },
+        to: { node: 'retarget2', socket: 'skeleton' },
+      },
+    ] as Op[]);
+    const { ops, refusals } = placeCookedMotionOps(two);
+    expect(refusals).toEqual([]);
+    const placed = apply(two, ops);
+    expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect((placed.nodes.root2.params as { position: number[] }).position).toEqual([
+      OFFSET[0],
+      0,
+      OFFSET[1],
+    ]);
   });
 
   it('REFUSES rather than silently leaving a character at the origin', async () => {

@@ -62,7 +62,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
-import { edgeTarget } from '../animate/graphNodes';
+import { riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
 import { clipBakeStates } from './bakeGeneratedClip';
 import { evaluate } from '../../core/dag/evaluator';
 import type { AnimationClipValue } from '../../nodes/types';
@@ -268,10 +268,19 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     // rotate. Absent means leave the facing alone.
     const rotation = value.generation?.worldRotationRadians ?? null;
 
-    // The rig the clip drives IS the character to place — the same edge the read
-    // band matches on, so the thing that moves is the thing that animates.
-    const skeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
-    if (!skeletonId || state.nodes[skeletonId]?.type !== 'GltfSkeleton') {
+    // The rig the clip drives IS the character to place — asked of the ONE walk
+    // the read band uses, so the thing that moves is the thing that animates.
+    //
+    // 🔴 NOT `edgeTarget(clip, 'skeleton')`, which is what this did and what
+    // #966 was. A generated clip keeps its 78-bone SOURCE `Skeleton` on that
+    // socket and the bind hangs the character's `GltfSkeleton` off a
+    // `RetargetClip` beside it — so reading the clip's own edge finds a
+    // `Skeleton` that is not a rig and refuses, every time, on the only road
+    // that produces generated motion. The comment here used to claim parity
+    // with the read band; the read band matches the RETARGETED clip and
+    // deliberately excludes the source. Same socket name, different node.
+    const skeletonIds = riggedSkeletonsForClip(state.nodes, clipId);
+    if (skeletonIds.length === 0) {
       refusals.push({
         clipId,
         reason:
@@ -281,9 +290,14 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
       continue;
     }
 
-    const placed = placeCharacterAtPathStart(state, skeletonId, offset, rotation);
-    if (placed.ok) ops.push(...(placed.ops as Op[]));
-    else refusals.push({ clipId, reason: placed.reason });
+    // Every character the clip drives, not the first: one generated walk bound to
+    // two characters walks the path twice, and placing one of them would leave
+    // the other at the origin with nothing said.
+    for (const skeletonId of skeletonIds) {
+      const placed = placeCharacterAtPathStart(state, skeletonId, offset, rotation);
+      if (placed.ok) ops.push(...(placed.ops as Op[]));
+      else refusals.push({ clipId, reason: placed.reason });
+    }
   }
 
   return { ops, refusals };

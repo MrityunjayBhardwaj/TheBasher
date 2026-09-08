@@ -136,6 +136,55 @@ export function boundClipsForAsset(
 }
 
 /**
+ * Every character rig a clip's motion ends up driving, in deterministic order.
+ *
+ * The INVERSE of the walk above: that one starts at an asset and finds its
+ * clips, this one starts at a clip and finds its rigs. Both answer "which clip
+ * drives which rig", so they live together — the alternative is a second copy of
+ * the edge knowledge, and this file's header is about what that costs.
+ *
+ * 🔴 A GENERATED CLIP IS NOT ON ITS CHARACTER'S EDGE, AND NEVER WAS (#966).
+ * `bindMotionToCharacter` leaves the incoming 78-bone clip hanging off its own
+ * source `Skeleton` and builds a `RetargetClip` beside it carrying the
+ * `GltfSkeleton`. So a caller asking a generated clip "which character are you
+ * on?" by reading `clip.inputs.skeleton` gets the SOURCE rig — the right socket
+ * name on the wrong node — and concludes the clip is bound to no character at
+ * all. Measured in a browser: the motion generated along a drawn path, 18 of 23
+ * bones animating, and placement refusing every time because it asked here.
+ *
+ * Both arrangements are answered: a clip already sitting on a `GltfSkeleton` (an
+ * import that needed no retarget) reports it directly, and a clip reached through
+ * one or more `RetargetClip`s reports each rig those carry.
+ *
+ * Returns every rig rather than the first, because one generated walk can be
+ * bound to two characters and both of them walk the path. Picking one would make
+ * WHICH character moves depend on id order — the same arbitrariness the sort
+ * above exists to remove (V22).
+ */
+export function riggedSkeletonsForClip(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  clipId: string,
+): string[] {
+  const out = new Set<string>();
+  const direct = edgeTarget(nodes[clipId], 'skeleton');
+  if (direct && nodes[direct]?.type === 'GltfSkeleton') out.add(direct);
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    // A COST GATE, not a correctness one, and said so because it cannot be
+    // falsified: `RetargetClip` is the only node in the tree that declares a
+    // `sourceClip` input, so deleting this line changes no answer today. It
+    // earns its place by skipping two edge reads per node on a table that runs
+    // to several hundred after a glTF import. What makes the answer RIGHT is the
+    // `sourceClip` match below.
+    if (n.type !== 'RetargetClip') continue;
+    if (edgeTarget(n, 'sourceClip') !== clipId) continue;
+    const skel = edgeTarget(n, 'skeleton');
+    if (skel && nodes[skel]?.type === 'GltfSkeleton') out.add(skel);
+  }
+  return [...out].sort();
+}
+
+/**
  * The bone index a childName occupies in a bound clip, or null when that clip's
  * rig does not carry the bone.
  *
