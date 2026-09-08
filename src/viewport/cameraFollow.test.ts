@@ -91,6 +91,78 @@ describe('followPoint', () => {
     expect(followPoint([], 'group-1', null, null)).toBeNull();
   });
 
+  // ─────────────────────────────────────────────────────────────────────
+  // #986 — TWO RIGS UNDER ONE IMPORT GROUP
+  // ─────────────────────────────────────────────────────────────────────
+  // `assetIdsFor` walks to the OUTERMOST named ancestor, so two armatures in one
+  // glTF get IDENTICAL id sets. There is no id that tells them apart, and the
+  // answer used to be whichever `scanArmatures` reached first.
+
+  it('follows the UNION of every rig claiming the node, not whichever was reached first', () => {
+    const a = rig(['n_crowd'], walker(0));
+    const b = rig(['n_crowd'], walker(10));
+    const got = followPoint([a, b], 'n_crowd', null, null);
+    expect(got?.source).toBe('armature');
+    // Between the two, because that is what framing the asset means.
+    expect(got?.point[0]).toBeCloseTo(5, 3);
+
+    // 🔴 THE CLAIM IS ORDER-INDEPENDENCE, and only this line states it. The
+    // assertion above is equally true of an implementation that always takes the
+    // first rig, if the first rig happens to be the one at 0.
+    const reversed = followPoint([b, a], 'n_crowd', null, null);
+    expect(reversed?.point).toEqual(got?.point);
+
+    // ...and it is not either rig's own answer, which is what "union" has to
+    // mean to be worth the name.
+    const alone = followPoint([a], 'n_crowd', null, null);
+    expect(alone?.point[0]).toBeCloseTo(0, 3);
+    expect(got?.point[0]).not.toBeCloseTo(alone!.point[0], 1);
+  });
+
+  it('still follows a bone that only one of the two rigs carries', () => {
+    // The union must not cost the bone. A character carrying a rigged prop is
+    // the ordinary case, and their bone names differ.
+    const character = rig(['n_asset'], walker(0));
+    const prop = rig(
+      ['n_asset'],
+      [frame('PropRoot', -1, [0, 0, 0], [0, 0, 0]), frame('PropTip', 0, [10, 2, 0], [10, 2.2, 0])],
+    );
+    const got = followPoint([character, prop], 'n_asset', 'PropTip', null);
+    expect(got?.source).toBe('bone');
+    expect(got?.bone).toBe('PropTip');
+    expect(got?.point[0]).toBeCloseTo(10, 3);
+  });
+
+  it('falls through to the union when a bone name matches in MORE than one rig', () => {
+    // Two copies of one character share every bone NAME, and nothing in a name
+    // says which was clicked. Taking the first match would put the
+    // traversal-order dependence straight back where it was removed, so the
+    // ambiguity is answered rather than resolved.
+    const a = rig(['n_crowd'], walker(0));
+    const b = rig(['n_crowd'], walker(10));
+    const got = followPoint([a, b], 'n_crowd', 'Hips', null);
+    expect(got?.source).toBe('armature');
+    expect(got?.bone).toBeNull();
+    expect(followPoint([b, a], 'n_crowd', 'Hips', null)?.point).toEqual(got?.point);
+
+    // The losing alternative, and it is the row that makes the one above mean
+    // something: with ONE rig claiming, the same bone name is unambiguous and
+    // must still be followed. A fall-through that fired always would pass every
+    // assertion above.
+    const single = followPoint([a], 'n_crowd', 'Hips', null);
+    expect(single?.source).toBe('bone');
+    expect(single?.bone).toBe('Hips');
+  });
+
+  it('ignores a rig that does not claim the node, however many are on stage', () => {
+    // The filter must filter. A union taken over EVERY armature in the scene
+    // would pass the order-independence row above and follow the whole cast.
+    const mine = rig(['n_hero'], walker(0));
+    const other = rig(['n_villain'], walker(10));
+    const got = followPoint([mine, other], 'n_hero', null, null);
+    expect(got?.point[0]).toBeCloseTo(0, 3);
+  });
+
   it('🔴 does not drag the point toward a root bone pinned at the origin', () => {
     // The defect this row exists for: a rig's transport root sits at the world
     // origin while the body walks away, so a point taken over ALL bones is a

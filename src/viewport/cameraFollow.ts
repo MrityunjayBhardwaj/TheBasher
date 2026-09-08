@@ -80,7 +80,11 @@ export interface FollowArmature {
   /** Every DAG node id that names some part of this rig's asset — the set
    *  `assetIdsFor` builds. Membership, not equality: a director who clicks the
    *  body selects a `GltfChild` that is the armature's SIBLING, so the id they
-   *  locked with is almost never the one on the armature's own ancestors. */
+   *  locked with is almost never the one on the armature's own ancestors.
+   *
+   *  🔴 NOT UNIQUE PER RIG. Two armatures under one import group share the
+   *  outermost named ancestor and so share this set exactly — which is why the
+   *  point is taken over every rig that claims an id, never the first (#986). */
   readonly ids: ReadonlySet<string>;
   /** The rig as placed THIS frame, heads and tails in world space. */
   readonly frames: readonly BoneFrame[];
@@ -101,7 +105,8 @@ export interface FollowArmature {
  * A named bone that is no longer in the rig falls through to the rig's centre
  * rather than returning null: the character is still there and still walking,
  * and refusing to follow it because one bone was renamed would be a worse
- * answer than following the body.
+ * answer than following the body. A bone name that matches in MORE than one rig
+ * falls through the same way, for the reason at that line (#986).
  */
 export function followPoint(
   armatures: readonly FollowArmature[],
@@ -109,13 +114,38 @@ export function followPoint(
   boneName: string | null,
   objectPoint: readonly [number, number, number] | null,
 ): FollowPoint | null {
-  const rig = armatures.find((a) => a.ids.has(nodeId));
-  if (rig && rig.frames.length > 0) {
+  // 🔴 EVERY rig that claims the node, not the first one found (#986).
+  //
+  // `assetIdsFor` walks up to the OUTERMOST named ancestor and collects
+  // everything the DAG can name inside it, so two armatures under ONE import
+  // group get IDENTICAL id sets — a glTF holding a crowd, or a character
+  // carrying a rigged prop. `find` then returned whichever `scanArmatures`
+  // reached first, which is scene-traversal order and not a decision: the view
+  // followed one of them and could follow the other after a reload with nothing
+  // visible having changed.
+  //
+  // The union needs no heuristic and is the meaning of "follow this asset" —
+  // the same thing framing a group means. It composes with the root exclusion
+  // for free, because `armatureBounds` already takes a flat frame list. Picking
+  // the LARGEST rig was the alternative and is a heuristic that happens to work
+  // on a character-plus-prop and is simply wrong for two characters.
+  const claimed = armatures.filter((a) => a.ids.has(nodeId));
+  const frames = claimed.flatMap((a) => a.frames);
+  if (frames.length > 0) {
     if (boneName !== null) {
-      const frame = rig.frames.find((f) => f.name === boneName);
-      if (frame) return { point: frame.head, source: 'bone', bone: frame.name };
+      // Ambiguity is possible here and is answered rather than resolved: two
+      // copies of one character carry the same bone NAMES, so a name can match
+      // in more than one rig and nothing in a name can say which was clicked.
+      // Taking the first match would put the traversal-order dependence back
+      // exactly where it was removed. Falling through to the union instead is
+      // stable, and it is the honest reading of "I cannot tell which of these
+      // you meant, so here is the asset".
+      const matches = frames.filter((f) => f.name === boneName);
+      if (matches.length === 1) {
+        return { point: matches[0].head, source: 'bone', bone: matches[0].name };
+      }
     }
-    const bounds = armatureBounds(rig.frames);
+    const bounds = armatureBounds(frames);
     if (!bounds.empty) {
       return {
         point: [bounds.center.x, bounds.center.y, bounds.center.z],
