@@ -8,33 +8,30 @@
 // What discriminates is which spelling the ARM reaches for, and the only way to observe
 // that is to resolve a real modifier node over a real two-slot source.
 //
-// ── WHY THE STACK IS A MATERIAL OP WITH A MODIFIER ABOVE IT, AND WHY IT IS REWIRED ───
+// ── WHY THE STACK IS A MATERIAL OP WITH A MODIFIER ABOVE IT, AND WHY THE ORDER OF THE
+//    TWO ADD CALLS IS THE WHOLE FIXTURE ───────────────────────────────────────────────
 //
 // `MaterialOverrideOp` declares `section: 'material'`, so `isModifierNode` is false for it
 // and resolving it does NOT enter the arm under test. A geometry modifier must sit ABOVE
 // it. The two sections share one physical chain and are transparent to each other
-// (`enumerateOperatorStack`, #526), so this order is representable — but MEASURED, the
-// add-operator builders do not produce it: `buildAddModifierOps` splices at the top of the
-// MODIFIER stack, which sits BELOW the material stack, giving
-// `BoxData → ArrayModifier → MaterialOverrideOp → Object` in either insertion order. The
-// modifier's source is then the bare data, with one slot, and the arm has nothing to drop.
+// (`enumerateOperatorStack`, #526), and each builder splices at the top of ITS OWN section.
 //
-// So the wiring is swapped explicitly here rather than built by the panel's road. That is
-// the honest fixture: the order under test is reachable by rewiring (the node editor, or an
-// agent `connect`), not by the add buttons, and a test that pretended otherwise would be
-// asserting a topology the builders never emit.
+// 🔴 SO THE TWO INSERTION ORDERS ARE NOT SYMMETRIC, AND ASSUMING THEY WERE IS WHAT MADE
+// THIS FIXTURE WRONG ONCE ALREADY. Measured, both orders, on this fixture's own nodes:
+//
+//     material op FIRST, then modifier   →  BoxData → ArrayModifier → MaterialOverrideOp
+//     modifier FIRST, then material op   →  BoxData → MaterialOverrideOp → ArrayModifier
+//
+// Only the second puts the modifier over a source that carries a table. It is built by the
+// panel's own add buttons, in that order, with no rewiring — which is why this file adds the
+// MODIFIER first and the material op second, and why swapping those two calls silently turns
+// every row below into a test of the wrong topology.
 //
 // REF: src/app/resolveEvaluatedMesh.ts (the modifier arm); src/nodes/MaterialOverrideOp.ts
 //      (`materialSlots: [base, composed]` beside `material: composed`); issue #978, #605.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  applyOp,
-  emptyDagState,
-  __resetRegistryForTests,
-  type DagState,
-  type Op,
-} from '../core/dag';
+import { applyOp, emptyDagState, __resetRegistryForTests, type DagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { buildAddMaterialOpOps, buildAddModifierOps, resolveStackBase } from './operatorStack';
@@ -53,9 +50,8 @@ const colorOf = (m: unknown): string | null => {
 
 /**
  * A split cube wearing a PARTIAL-RANGE `MaterialOverrideOp` with an `ArrayModifier` above
- * it. Both operators are CREATED through the production builders — so their params, ids and
- * spine sockets are whatever the panel actually produces — and then the three spine edges
- * are re-pointed, because the builders cannot express this order (see the header).
+ * it — built entirely through the production builders, in the order the panel would use, so
+ * the topology is what a director actually gets rather than a second description of it.
  *
  * `overridden: { color: true }` is what makes the composition non-identity — without a
  * field marked, the op composes to the source and BOTH slots would hold the same colour,
@@ -73,49 +69,26 @@ function cubeWithScopedOverrideThenArray(): {
     color: SOURCE_COLOR,
   });
 
-  const matRes = buildAddMaterialOpOps(
+  // THE MODIFIER GOES ON FIRST. See the header: this order is the fixture.
+  const modRes = buildAddModifierOps(
     seeded.state,
     resolveStackBase(seeded.state, seeded.objectId),
-    'MaterialOverrideOp',
-    { muted: false, scope: '0-1', color: WIRED_COLOR, overridden: { color: true } },
-    'n_matop',
-  );
-  if (!matRes) throw new Error('buildAddMaterialOpOps returned null');
-  const withMat: DagState = matRes.ops.reduce((acc, op) => applyOp(acc, op).next, seeded.state);
-
-  const modRes = buildAddModifierOps(
-    withMat,
-    resolveStackBase(withMat, seeded.objectId),
     'ArrayModifier',
     { count: 2, offset: [2, 0, 0], muted: false },
     'n_arr',
   );
   if (!modRes) throw new Error('buildAddModifierOps returned null');
-  const built: DagState = modRes.ops.reduce((acc, op) => applyOp(acc, op).next, withMat);
+  const withMod: DagState = modRes.ops.reduce((acc, op) => applyOp(acc, op).next, seeded.state);
 
-  // The builders leave `BoxData → n_arr → n_matop → Object`. Re-point the three edges so the
-  // modifier sits ABOVE the material op, which is the order the arm under test is about.
-  const rewire: Op[] = [
-    {
-      type: 'connect',
-      from: { node: seeded.dataId, socket: 'out' },
-      to: { node: 'n_matop', socket: 'target' },
-      replace: true,
-    },
-    {
-      type: 'connect',
-      from: { node: 'n_matop', socket: 'out' },
-      to: { node: 'n_arr', socket: 'target' },
-      replace: true,
-    },
-    {
-      type: 'connect',
-      from: { node: 'n_arr', socket: 'out' },
-      to: { node: seeded.objectId, socket: 'data' },
-      replace: true,
-    },
-  ];
-  const state: DagState = rewire.reduce((acc, op) => applyOp(acc, op).next, built);
+  const matRes = buildAddMaterialOpOps(
+    withMod,
+    resolveStackBase(withMod, seeded.objectId),
+    'MaterialOverrideOp',
+    { muted: false, scope: '0-1', color: WIRED_COLOR, overridden: { color: true } },
+    'n_matop',
+  );
+  if (!matRes) throw new Error('buildAddMaterialOpOps returned null');
+  const state: DagState = matRes.ops.reduce((acc, op) => applyOp(acc, op).next, withMod);
 
   return { state, objectId: seeded.objectId, matOpId: 'n_matop', modifierId: 'n_arr' };
 }
