@@ -29,11 +29,43 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
 
 /**
+ * Will toggling do anything? Pure, and shared with the affordance ON PURPOSE.
+ *
+ * 🔴 THIS EXISTS BECAUSE OF THIS ISSUE'S OWN FIRST HALF. That half found the
+ * Home button guarding on `primaryNodeId !== null` — a PROXY for "frameSelected
+ * will work" — which was true in exactly the case the function did nothing, so
+ * the fallback never fired. A menu item cannot ask by calling (the call acts),
+ * so the two would be a second proxy waiting to drift apart. They share this
+ * predicate instead, and a change to what a lock needs moves both at once.
+ */
+export function canToggleViewLock(
+  viewLock: { nodeId: string } | null,
+  primaryNodeId: string | null,
+): boolean {
+  // Releasing is always available; taking needs something to take it against.
+  return viewLock !== null || lockable(primaryNodeId);
+}
+
+/** The one statement of what a lock can be TAKEN against. A type predicate so
+ *  the toggle narrows through it rather than restating the test — a restatement
+ *  is how the two spellings drift apart in the first place. */
+function lockable(primaryNodeId: string | null): primaryNodeId is string {
+  return primaryNodeId !== null;
+}
+
+/**
  * Toggle the view lock. Returns whether the view is locked AFTER the call.
  *
  * Locked → unlocked, unconditionally: releasing never depends on what is
  * selected now, because what is selected now is unrelated to what was locked.
  * Unlocked → locked to the primary selection, or false when there is none.
+ *
+ * RELEASING LEAVES THE PIVOT WHERE THE CHARACTER WAS, which is a deliberate
+ * divergence from Blender: its lock substitutes the point at view-matrix time
+ * and never writes the stored pivot, so unlocking snaps the view back to
+ * wherever it was before. Ours moves the pivot, so unlocking is CONTINUOUS —
+ * nothing on screen changes at the moment you stop following, which is the
+ * behaviour a director asked for by turning it off while watching.
  */
 export function toggleViewLock(): boolean {
   const store = useViewportStore.getState();
@@ -42,7 +74,7 @@ export function toggleViewLock(): boolean {
     return false;
   }
   const nodeId = useSelectionStore.getState().primaryNodeId;
-  if (!nodeId) return false;
+  if (!lockable(nodeId)) return false;
   const bone = getActiveBone();
   // The bone comes through `getActiveBone`, never off the raw store, and that
   // IS the check: it returns null unless the bone's rig is the primary

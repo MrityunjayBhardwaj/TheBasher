@@ -34,7 +34,7 @@ import {
 import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
-import { toggleViewLock } from './viewLock';
+import { canToggleViewLock, toggleViewLock } from './viewLock';
 import { exportDagJson } from './exportDag';
 import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
@@ -727,10 +727,12 @@ export function MenuBar() {
             asked continuously: Frame Selected is a pose, this is a constraint.
             Disabled with nothing selected rather than silently doing nothing —
             the whole of this issue's first half was an affordance that looked
-            live and was not. */}
+            live and was not. The enabled state asks the SAME predicate the
+            toggle does (`canToggleViewLock`) rather than re-spelling it here,
+            which is the shape that half found broken. */}
         <Item
           label={`${viewLock ? '✓ ' : '   '}Lock View to Selected`}
-          disabled={viewLock === null && primaryNodeId === null}
+          disabled={!canToggleViewLock(viewLock, primaryNodeId)}
           onSelect={() => {
             toggleViewLock();
           }}

@@ -396,12 +396,19 @@ export function EditorViewCamera() {
           ...scan,
           ids: assetIdsFor(scan.root as unknown as PickNode, isLiveNodeId),
         })),
-        // The non-rig answer: an ordinary object IS named with its node id
-        // (`SceneFromDAG` writes `<group name={pickId}>`), so a moving empty or
-        // light needs no armature at all. Resolved unconditionally rather than
-        // only when no rig matched: skipping it there would put the rig-beats-
-        // object priority in two places, and this file's copy could then go on
-        // disagreeing with `followPoint`'s silently.
+        // The non-rig answer. `SceneFromDAG` names a wrapping group with the
+        // producer's id (`<group name={pickId}>`), so the id resolves — but
+        // 🔴 THAT GROUP IS NOT WHERE THE OBJECT IS. Measured: moving the seed
+        // cube to x=14 and then x=20 leaves `Group:n_box` at the world origin
+        // on every frame while the mesh inside it reads 14 and then 20. The
+        // wrapper is a picking handle; the transform is applied within. Reading
+        // its position gave a lock that resolved, looked live and never moved —
+        // the very defect this issue was filed for, rebuilt in its fix.
+        // So the point is taken from the CONTENT (below), not from the wrapper.
+        // Resolved unconditionally rather than only when no rig matched:
+        // skipping it there would put the rig-beats-object priority in two
+        // places, and this file's copy could then disagree with `followPoint`'s
+        // silently.
         object: state.scene.getObjectByName(viewLock.nodeId) ?? null,
       };
     }
@@ -427,13 +434,17 @@ export function EditorViewCamera() {
         ),
       });
     }
+    // The centre of what this node actually DRAWS, through the same reader
+    // "frame all" uses — live world bounds over non-chrome meshes. Reading the
+    // scene rather than the node's authored `position` is the same choice the
+    // rig branch makes and for the same reason: a follow has to track what is
+    // on screen, so a keyframed, driven or constrained object is followed
+    // without any of those needing to be known about here. A node that draws
+    // no measurable content yields no point, which `followPoint` reports as
+    // nothing to follow rather than inventing a coordinate.
     const object = lockScan.current.object;
-    let objectPoint: [number, number, number] | null = null;
-    if (object) {
-      object.updateWorldMatrix(true, false);
-      object.getWorldPosition(lockPoint);
-      objectPoint = [lockPoint.x, lockPoint.y, lockPoint.z];
-    }
+    const objectBounds = object ? computeSceneBounds(object) : null;
+    const objectPoint = objectBounds ? objectBounds.center : null;
     const found = followPoint(armatures, viewLock.nodeId, viewLock.boneName, objectPoint);
     if (!found) return;
     // A lock outranks the one-time bounds fit; ending the settle here is what

@@ -34,6 +34,12 @@
 //      because an armature object's origin does not move when the motion lives
 //      in the pose. Ours is the same: root travel is written to `Bone` objects,
 //      so the object a director selected sits still while the character walks.
+//      🔴 AND THE SAME TRAP SITS ONE LEVEL OUT, measured while building this:
+//      the group `SceneFromDAG` names with a node's id is a PICKING wrapper and
+//      stays at the world origin — moving the seed cube to x=14 and then x=20
+//      left `Group:n_box` at [0,0,0] on every frame while the mesh inside it
+//      read 14 and then 20. So `objectPoint` is the centre of what the node
+//      DRAWS, never the wrapper's own position.
 //   3. IT DOES NOT APPLY IN CAMERA VIEW. The `RV3D_CAMOB` branch returns before
 //      the lock block, so looking through a camera ignores it (view3d_view.cc:399).
 //
