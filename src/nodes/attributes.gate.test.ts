@@ -133,12 +133,15 @@ const DISPATCH_SITES: readonly DispatchSite[] = [
 /**
  * Declared exemptions — asserted EXACTLY below.
  *
- * 🔴 THIS LIST WAS EMPTY UNTIL ns-2, AND THE THREE ENTRIES ARE A DEFERRAL, NOT A
- * NOT-APPLICABLE. A component selection at `point`, `edge` or `corner` is a perfectly
- * sensible thing to want; what is missing is a way to COUNT those elements from a
- * descriptor, which is the same arithmetic that decided ns-2 ships `face` alone. Written
- * here rather than left implicit, because a census whose exemptions carry no reason is a
- * list of things nobody has to justify again.
+ * 🔴 THIS LIST WAS EMPTY UNTIL ns-2, FILLED WITH THREE DEFERRALS, AND IS EMPTY AGAIN. Each
+ * entry said a component selection at `point`, `edge` or `corner` was sensible to want and
+ * uncountable from a descriptor; all three counts then shipped (#716, #718, #776) and every
+ * entry left because its stated reason went false. Do not read the empty list as "ns-2 ships
+ * `face` alone" — that was true when the entries were written and is not now: `SCOPE_DOMAINS`
+ * is `face` and `edge`, and what keeps `point` and `corner` out is the absence of an operator
+ * that can declare them, recorded in `SCOPE_ABSENT` rather than here. Written out rather than
+ * left implicit, because a census whose exemptions carry no reason is a list of things nobody
+ * has to justify again.
  */
 const DOMAIN_NOT_APPLICABLE: readonly {
   readonly module: string;
