@@ -63,6 +63,8 @@ import {
 import { ADDABLE_CONSTRAINTS } from './constraintStack';
 import { operatorTypesInSection } from './operatorChain';
 import { PASS_NODE_TYPE_BY_KIND } from '../agent/mutators/builders/addPass';
+import { listMutators } from '../agent/mutators/catalog';
+import { registerAllMutators } from '../agent/mutators';
 import type { OperatorSection } from '../core/dag/types';
 
 const REPO_ROOT = process.cwd();
@@ -116,6 +118,25 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +
     '(ScatterR) and carries a scene-tree icon, and nothing has ever been able to create ' +
     'one — the oldest instance of exactly the gap this gate exists to catch.',
+};
+
+/**
+ * A road is not a road if it cannot be taken.
+ *
+ * `WalkPath` has a literal creation road (`walkTo.ts`) and is nonetheless unreachable,
+ * because `buildWalkToOps` returns null without a `Navmesh` and nothing can create one.
+ * The same shape is machine-readable for Mutators, which declare `requiredNodeTypes`:
+ * a Mutator requiring a type from the ledger above can never fire either.
+ *
+ * All three entries here are the same asymmetry — the render lane is reachable by an
+ * agent writing raw ops and by nobody else. They are recorded rather than fixed because
+ * the fix is a product decision (seed a RenderJob? offer one in a menu?), and recording
+ * them is what makes a FOURTH such Mutator a failure rather than a shrug.
+ */
+const MUTATORS_GATED_ON_A_ROADLESS_TYPE: Readonly<Record<string, string>> = {
+  'mutator.render.addPass': 'RenderJob',
+  'mutator.render.addAIPass': 'RenderJob',
+  'mutator.render.addStitch': 'RenderJob',
 };
 
 /** Every tracked `.ts`/`.tsx` under `src/` — exactly what CI sees. */
@@ -250,6 +271,47 @@ describe('#996 — every registered node type has a road IN, or a written reason
       ghosts,
       `NO_CREATION_ROAD names ${ghosts.length} type(s) that are no longer registered: ` +
         `${ghosts.join(', ')}. The type was retired — retire its ledger entry with it.`,
+    ).toEqual([]);
+  });
+  it('adds no Mutator that requires a type nothing can create', () => {
+    const byType = roadsByType();
+    registerAllMutators();
+    const roadless = new Set([...byType].filter(([, roads]) => roads.length === 0).map(([t]) => t));
+
+    const mutators = listMutators();
+    expect(mutators.length, 'no Mutators registered — this arm examined nothing').toBeGreaterThan(
+      0,
+    );
+
+    const blocked = mutators
+      .map((m) => ({
+        name: m.name,
+        on: m.contract.requiredNodeTypes.filter((t) => roadless.has(t)),
+      }))
+      .filter((r) => r.on.length > 0);
+
+    const undeclared = blocked
+      .filter((r) => !(r.name in MUTATORS_GATED_ON_A_ROADLESS_TYPE))
+      .map((r) => `${r.name} — requires ${r.on.join(', ')}`)
+      .sort();
+
+    expect(
+      undeclared,
+      undeclared.length === 0
+        ? ''
+        : `${undeclared.length} Mutator(s) declare a precondition that nothing can satisfy:\n\n  ` +
+            `${undeclared.join('\n  ')}\n\nThe Mutator ships, validates and can never fire. ` +
+            `Give the required type a creation road, or record the Mutator in ` +
+            `MUTATORS_GATED_ON_A_ROADLESS_TYPE with the type that blocks it.`,
+    ).toEqual([]);
+
+    const freed = Object.keys(MUTATORS_GATED_ON_A_ROADLESS_TYPE)
+      .filter((name) => !blocked.some((b) => b.name === name))
+      .sort();
+    expect(
+      freed,
+      `${freed.join(', ')} — no longer gated on a roadless type (or no longer registered). ` +
+        `Remove the entry.`,
     ).toEqual([]);
   });
 });
