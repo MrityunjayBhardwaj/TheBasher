@@ -1,0 +1,126 @@
+{
+ "asset": {
+  "version": "2.0",
+  "generator": "basher-fixture-gen (control: single UV set, map on TEXCOORD_0)"
+ },
+ "scenes": [
+  {
+   "nodes": [
+    0
+   ]
+  }
+ ],
+ "scene": 0,
+ "nodes": [
+  {
+   "mesh": 0,
+   "name": "OneUvQuad"
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "TEXCOORD_0": 1
+     },
+     "indices": 2,
+     "material": 0
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "OneUvQuadMat",
+   "pbrMetallicRoughness": {
+    "baseColorTexture": {
+     "index": 0
+    },
+    "metallicFactor": 0,
+    "roughnessFactor": 0.8
+   }
+  }
+ ],
+ "textures": [
+  {
+   "sampler": 0,
+   "source": 0
+  }
+ ],
+ "images": [
+  {
+   "uri": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxIAKsPMZGBgAJgQCAdRnB5cAAAAASUVORK5CYII="
+  }
+ ],
+ "samplers": [
+  {
+   "magFilter": 9728,
+   "minFilter": 9728,
+   "wrapS": 10497,
+   "wrapT": 10497
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC3",
+   "min": [
+    -0.5,
+    -0.5,
+    0.0
+   ],
+   "max": [
+    0.5,
+    0.5,
+    0.0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 4,
+   "type": "VEC2",
+   "min": [
+    0.0,
+    0.0
+   ],
+   "max": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5123,
+   "count": 6,
+   "type": "SCALAR"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 48
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 48,
+   "byteLength": 32
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 112,
+   "byteLength": 12
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 124,
+   "uri": "data:application/octet-stream;base64,AAAAvwAAAL8AAAAAAAAAPwAAAL8AAAAAAAAAvwAAAD8AAAAAAAAAPwAAAD8AAAAAAAAAAAAAgD8AAIA/AACAPwAAAAAAAAAAAACAPwAAAAAAAIA+AABAPwAAQD8AAEA/AACAPgAAgD4AAEA/AACAPgAAAQACAAIAAQADAA=="
+  }
+ ]
+}
