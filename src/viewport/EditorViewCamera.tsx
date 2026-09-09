@@ -347,6 +347,19 @@ export function EditorViewCamera() {
       if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
     }
     if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
+    // DEV observation seam (the ArmatureHelper/LightHelpers pattern). The fit
+    // MOVES THE CAMERA while it is active, so "is it still running?" is the
+    // difference between a camera the user aimed and one the fit aimed — and
+    // from outside there is nothing to tell them apart. #989 is exactly that
+    // ambiguity read as a view lock firing unasked.
+    if (import.meta.env.DEV) {
+      (window as unknown as { __basher_view_fit?: unknown }).__basher_view_fit = {
+        active: f.active,
+        poseToo: f.poseToo,
+        frames: f.frames,
+        still: f.still,
+      };
+    }
   });
 
   // #856 — THE VIEW LOCK: keep the view CENTRE on something that moves, so a
