@@ -99,13 +99,51 @@ function view(source: typeof SOURCE, target: typeof SOURCE, map = FULL_MAP) {
 }
 
 describe('#960 — what a director is told when the rests could not be reconciled', () => {
-  it('reports the leftover anatomy on the aligned branch, and promises the transfer', () => {
+  it('#866 — says nothing when the leftover anatomy is ABSORBED, and marks the row as such', () => {
+    // The toe is tilted 20° down, so the foot's rest disagrees with the source's
+    // by 20°. Before #866 that was the header's "20° rest gap at s_foot"; now the
+    // retarget folds it into the foot's offset, so there is nothing for a
+    // director to act on — the row carries the fact, the header carries nothing.
     const v = view(SOURCE, TARGET_ALIGNED);
     expect(v.restReconciliation.kind).toBe('aligned');
+    const foot = v.rows.find((r) => r.source === 's_foot');
+    expect(foot?.restGapDeg ?? 0, 'the fixture must actually disagree at the foot').toBeGreaterThan(
+      15,
+    );
+    expect(foot?.restGapAbsorbed, 'the aligned branch absorbs a gap it can').toBe(true);
+    expect(v.worstRestGap, 'an absorbed gap is not what is left').toBeNull();
+    expect(restSignal(v)).toBeNull();
+  });
+
+  it('#866 — names the bone whose gap could NOT be absorbed, and promises the transfer', () => {
+    // A rig with many agreeing bones and one whose rest points the OPPOSITE way
+    // from the source's. One reversed bone among eight would push the whole-rig
+    // solve past its residual bound and refuse the pair; among forty it does not,
+    // and the pair aligns with exactly that bone refused — the only reading on
+    // the aligned branch that still needs saying.
+    // SOURCE plus a 32-bone chain hanging off s_hand, each link along +X: bones
+    // that agree with their yawed twins exactly, and enough of them that one
+    // opposed toe cannot push the pair's RMS past the residual bound.
+    const source = [...SOURCE];
+    for (let i = 0; i < 32; i++) {
+      source.push(bone(`s_f${i}`, i === 0 ? 6 : source.length - 1, [0.02, 0, 0]));
+    }
+    const target = yawed(source).map((b) =>
+      b.name === 't_toe' ? { ...b, position: [-0.15, 0, 0] as Vec3 } : b,
+    );
+    const map = Object.fromEntries(source.map((b) => [b.name, b.name.replace('s_', 't_')]));
+    const v = view(source, target, map);
+    expect(v.restReconciliation.kind, 'forty agreeing bones must carry one opposed one').toBe(
+      'aligned',
+    );
+    const foot = v.rows.find((r) => r.source === 's_foot');
+    expect(foot?.restGapAbsorbed, 'an opposed bone is refused, not absorbed').toBe(false);
+    expect(foot?.restGapDeg ?? 0).toBeGreaterThan(150);
     const signal = restSignal(v);
     expect(signal).not.toBeNull();
     expect(signal!.branch).toBe('aligned');
     expect(signal!.label).toContain('rest gap');
+    expect(signal!.label).toContain('not absorbed');
     // The promise is only true HERE, and this row is what pins it to this branch.
     expect(signal!.detail).toContain('The motion transfers exactly');
   });
@@ -168,11 +206,15 @@ describe('#960 — what a director is told when the rests could not be reconcile
     expect(flat.restReconciliation.kind).toBe('direction');
     expect(flat.rows.filter((r) => r.restGapDeg !== null)).toHaveLength(0);
 
-    // The losing alternative: the aligned branch must still name its bone, or
-    // this suppression has quietly deleted the feature it is protecting.
+    // The losing alternative: the aligned branch must still carry its angles on
+    // the rows, or this suppression has quietly deleted the feature it is
+    // protecting. Since #866 those angles are ABSORBED — carried as a fact about
+    // the two anatomies, marked as such, and kept out of the header — so the
+    // witness is the marked row, not a header entry.
     const aligned = view(SOURCE, TARGET_ALIGNED);
-    expect(aligned.rows.filter((r) => r.restGapDeg !== null).length).toBeGreaterThan(0);
-    expect(aligned.worstRestGap).not.toBeNull();
+    const carried = aligned.rows.filter((r) => r.restGapDeg !== null);
+    expect(carried.length).toBeGreaterThan(0);
+    expect(carried.some((r) => r.restGapAbsorbed && (r.restGapDeg ?? 0) > 15)).toBe(true);
   });
 
   it('stays silent when the map does not reach the rigs, because the counts already shout', () => {

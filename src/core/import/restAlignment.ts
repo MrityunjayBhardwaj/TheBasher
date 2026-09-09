@@ -90,6 +90,20 @@ export const MIN_EXPLAINED_FRACTION = 0.5;
  */
 export const MAX_RESIDUAL_DEGREES = 30;
 
+/**
+ * How nearly opposite two rest directions may be before the minimal rotation
+ * between them stops being a usable correction. cos(168.5°), the angle at which
+ * a nudge to either direction is amplified about tenfold in the result. Derived
+ * from the measured amplification curve rather than chosen for roundness — see
+ * the refusal site in `restDirectionLocalOffsets` (retarget.ts) for the table.
+ *
+ * Lives HERE because both offset builders refuse on it: the direction branch
+ * always did, and the aligned branch does since #866 folded a per-bone direction
+ * correction into its offsets. `retarget.ts` re-exports it so its callers keep
+ * their import.
+ */
+export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
+
 /** Fewer pairs than this cannot pin a rotation with any confidence. */
 export const MIN_PAIRS = 4;
 
@@ -480,26 +494,130 @@ export function solveRestAlignment(
 }
 
 /**
- * The per-bone offsets that go with an alignment: `R⁻¹ · B_b`, where `B_b` is the
- * target bone's own bind world rotation. Uniform across every mapped bone —
- * including the chain ends that otherwise need a reference pose to be given a
- * third degree of freedom, because here the rest supplies one.
+ * What `alignedLocalOffsets` hands back: the offsets, and which mapped bones the
+ * per-bone direction correction reached.
+ *
+ * `absorbed` — bones whose rest-direction disagreement the offset now removes.
+ * `refused`  — bones whose two rest directions are nearly OPPOSITE after the
+ *              heading, where the minimal rotation between them is undetermined
+ *              (see `ANTIPARALLEL_REFUSAL_COSINE`); their offset carries no
+ *              direction term and their gap stays. A bone with no mapped child is
+ *              in neither list: it has no direction to correct.
+ *
+ * Both are reported from the builder itself so the bone-map panel says what the
+ * retarget DID rather than re-deriving it one file over (#987's shape).
+ */
+export interface AlignedOffsets {
+  readonly offsets: Record<string, Matrix4>;
+  readonly absorbed: readonly string[];
+  readonly refused: readonly string[];
+}
+
+/**
+ * The per-bone offsets that go with an alignment: `R⁻¹ · B_b · D_b`, where `B_b`
+ * is the target bone's own bind world rotation and `D_b` is the bone-local
+ * rotation that carries the target's rest direction onto the source's.
+ *
+ * ── WHY THERE IS A `D_b` AT ALL (#866) ─────────────────────────────────────
+ *
+ * Without it the offset is `R⁻¹ · B_b` and the pipeline composes
+ * `T_b(t) = R · W_b(t) · R⁻¹ · B_b`: at the source's rest the target sits on its
+ * own bind, and thereafter it performs THE SAME DELTA FROM ITS OWN REST as the
+ * source performs from the source's. That is exactly right when the two rests
+ * agree about where every bone points, and it is silently wrong by the whole
+ * disagreement when they do not — a target whose upper arm rests 21° below the
+ * source's carries that 21° through every frame of the clip. Measured on the
+ * live vendor pair (Kimodo T-pose rest driving the Tripo rig), the direction
+ * error between the target bone and the heading-turned source bone was CONSTANT
+ * across 109 frames and equal, to a tenth of a degree, to the rest gap:
+ * feet 29.7°/28.5°, forearms 28.4°/24.4°, upper arms 21.7°/21.0°.
+ *
+ * A heading cannot express a disagreement that differs bone by bone, and this is
+ * per-bone anatomy — left/right symmetric to a tenth of a degree. So the
+ * whole-rig part stays where it was and the per-bone part is layered on top:
+ * `D_b` is solved in the target bone's bind-local frame so that
+ *
+ *     B_b · D_b · localDir_T  =  R · worldDir_S
+ *
+ * — at the source's rest the target bone POINTS WHERE THE SOURCE'S DOES (turned
+ * by the heading), and since `T_b(t) · localDir_T = R · W_b(t) · worldDir_S`,
+ * it keeps doing so at every frame. The identity case is unchanged: two rests
+ * that are one rotation apart give `D_b = I` on every bone and the target still
+ * sits on its bind.
+ *
+ * WHAT `D_b` DOES NOT TOUCH. It is the minimal rotation between two directions,
+ * so its axis is perpendicular to the bone and it adds no roll about it. The
+ * third degree of freedom still comes from the rest alignment, as before.
+ *
+ * WHAT IT REFUSES. A pair of rest directions that are nearly opposite after the
+ * heading has no usable minimal rotation — every half-turn perpendicular to the
+ * bone carries one onto the other and they differ by a roll, which is precisely
+ * the degree of freedom this term must not decide. Those bones keep `R⁻¹ · B_b`
+ * and are named in `refused` so the panel can say their gap stayed.
+ *
+ * Grounded against the reference: Blender's own transfer never consults the two
+ * rests and leaves this gap in place (`rotlike_evaluate`, constraint.cc:2049);
+ * its remedy is that a human MATCHES the rests first. This is that matching,
+ * done per bone from the two rests themselves.
  */
 export function alignedLocalOffsets(
+  sourceBoneObjs: readonly Bone[],
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
   rotation: Quaternion,
-): Record<string, Matrix4> {
-  for (const bone of targetBoneObjs) {
-    if (!bone.parent || !(bone.parent as Bone).isBone) bone.updateMatrixWorld(true);
+): AlignedOffsets {
+  // The source's rest directions are read off its live bones and turned by
+  // `rotation` HERE. If the caller has already turned the source's wrapper by the
+  // same rotation, the heading lands twice — measured: every arm and foot 82-90°
+  // off on the live vendor pair. A sequence error that silent gets a detector,
+  // not a comment: a source root whose parent is already rotated is refused.
+  for (const bone of sourceBoneObjs) {
+    const parent = bone.parent;
+    if (parent && !(parent as Bone).isBone && parent.quaternion.angleTo(new Quaternion()) > 1e-6) {
+      throw new Error(
+        'alignedLocalOffsets: the source wrapper is already rotated. Build the offsets ' +
+          'BEFORE turning the wrapper by the heading, or the heading is applied twice.',
+      );
+    }
   }
+  for (const bones of [sourceBoneObjs, targetBoneObjs]) {
+    for (const bone of bones) {
+      if (!bone.parent || !(bone.parent as Bone).isBone) bone.updateMatrixWorld(true);
+    }
+  }
+  const sourceNames = new Set(Object.values(targetToSource));
+  const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
+  const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
+
   const inverse = rotation.clone().invert();
   const offsets: Record<string, Matrix4> = {};
+  const absorbed: string[] = [];
+  const refused: string[] = [];
   for (const bone of targetBoneObjs) {
-    if (targetToSource[bone.name] === undefined) continue;
+    const sourceName = targetToSource[bone.name];
+    if (sourceName === undefined) continue;
+    const bind = worldRotationOf(bone);
+    let correction = new Quaternion();
+
+    const targetWorld = targetDirs.get(bone.name);
+    const sourceWorld = sourceDirs.get(sourceName);
+    if (targetWorld && sourceWorld) {
+      // Both directions expressed in the target bone's own bind frame, where the
+      // offset is applied.
+      const bindInverse = bind.clone().invert();
+      const have = targetWorld.clone().applyQuaternion(bindInverse);
+      const want = sourceWorld.clone().applyQuaternion(rotation).applyQuaternion(bindInverse);
+      if (have.dot(want) < ANTIPARALLEL_REFUSAL_COSINE) {
+        refused.push(bone.name);
+      } else {
+        correction = new Quaternion().setFromUnitVectors(have, want);
+        absorbed.push(bone.name);
+      }
+    }
+
     offsets[bone.name] = new Matrix4().makeRotationFromQuaternion(
-      inverse.clone().multiply(worldRotationOf(bone)),
+      inverse.clone().multiply(bind).multiply(correction),
     );
   }
-  return offsets;
+  return { offsets, absorbed, refused };
 }

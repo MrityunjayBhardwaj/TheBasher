@@ -40,7 +40,11 @@
 
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
 import { specToThreeSkeleton } from '../../core/import/threeAdapter';
-import { solveRestAlignment, restDirectionDisagreement } from '../../core/import/restAlignment';
+import {
+  solveRestAlignment,
+  restDirectionDisagreement,
+  alignedLocalOffsets,
+} from '../../core/import/restAlignment';
 import type { RestReconciliation } from '../../core/import/restAlignment';
 import { BONE_NAME_MAP_PRESETS } from '../../core/import/boneNameMaps';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
@@ -87,6 +91,14 @@ export interface BoneMapRow {
    * panel showed both as an identical healthy green row. `null` is not zero.
    */
   readonly restGapDeg: number | null;
+  /**
+   * Whether the retarget's per-bone direction term ABSORBS that gap (#866). On
+   * the aligned branch every bone with a mapped child is absorbed unless its two
+   * rests are nearly opposite; an absorbed gap is information about the two
+   * anatomies, not a defect to act on, and it must never be coloured as one.
+   * False on the direction branch and for a refused bone, where the gap stays.
+   */
+  readonly restGapAbsorbed: boolean;
 }
 
 export interface BoneMapView {
@@ -117,10 +129,11 @@ export interface BoneMapView {
   readonly danglingCount: number;
   /** What the auto-map proposes for these two rigs, for the header and the button. */
   /**
-   * The mapped pairing whose two rests point furthest apart, or null when
-   * nothing could be measured. What a director should look at FIRST when the
-   * motion is right and the pose still is not — it is the one defect a correct
-   * map cannot fix.
+   * The mapped pairing whose two rests point furthest apart AND whose gap the
+   * retarget could not absorb, or null when nothing is left. What a director
+   * should look at FIRST when the motion is right and the pose still is not.
+   * Since #866 the aligned branch absorbs a rest gap per bone, so on that branch
+   * this names only a bone whose two rests are nearly opposite (refused).
    */
   readonly worstRestGap: {
     readonly source: string;
@@ -132,10 +145,12 @@ export interface BoneMapView {
    * why not.
    *
    * 🔴 READ THIS BEFORE `worstRestGap`. It decides which quantity that angle IS.
-   * On `aligned` it is what the rotation LEFT BEHIND — irreducible anatomy, the
-   * thing no rotation copy removes. On `direction` no rotation was applied, so
-   * the same number is the RAW disagreement between two rests nobody reconciled,
-   * and on that branch the roll about every bone is gone as well (#960, #987).
+   * On `aligned` it is what the whole-rig rotation left behind — and since #866
+   * the retarget absorbs that per bone, so a row's angle is information about
+   * the two anatomies (`restGapAbsorbed`) unless the bone was refused. On
+   * `direction` no rotation was applied, so the same number is the RAW
+   * disagreement between two rests nobody reconciled, and on that branch the
+   * roll about every bone is gone as well (#960, #987).
    */
   readonly restReconciliation: RestReconciliation;
   readonly proposalLabel: string | null;
@@ -241,6 +256,9 @@ export const REST_GAP_ALARM_DEG = 15;
 interface RestReport {
   readonly gaps: Map<string, number>;
   readonly reconciliation: RestReconciliation;
+  /** Target bones whose gap the aligned offsets absorb — reported by the same
+   *  builder the retarget runs, never re-derived here (#866). */
+  readonly absorbed: ReadonlySet<string>;
 }
 
 const gapMemo = new WeakMap<object, WeakMap<object, WeakMap<object, RestReport>>>();
@@ -280,6 +298,10 @@ function restGapsCached(
       solved.kind === 'aligned' ? solved.rotation : undefined,
     ),
     reconciliation: solved,
+    absorbed:
+      solved.kind === 'aligned'
+        ? new Set(alignedLocalOffsets(source, target, targetToSource, solved.rotation).absorbed)
+        : new Set(),
   };
 
   let outer = gapMemo.get(a);
@@ -393,14 +415,21 @@ export function boneMapView(
     const origin: BoneMapRowOrigin =
       declared(proposal.map[source]) === declared(target) ? 'preset' : 'edited';
     if (target === null || target === '') {
-      return { source, target: null, state: 'unmapped', origin, restGapDeg: null };
+      return {
+        source,
+        target: null,
+        state: 'unmapped',
+        origin,
+        restGapDeg: null,
+        restGapAbsorbed: false,
+      };
     }
     // Only a row that DRIVES something gets an angle. An orphan's source bone is
     // not in the rig and a dangling row's target is not either, so neither has a
     // rest direction to disagree about — and a number beside them would read as
     // a measurement of a pairing that does not exist.
     if (!seen.has(source)) {
-      return { source, target, state: 'orphan', origin, restGapDeg: null };
+      return { source, target, state: 'orphan', origin, restGapDeg: null, restGapAbsorbed: false };
     }
     const mapped = targetSet.has(target);
     return {
@@ -409,6 +438,7 @@ export function boneMapView(
       state: mapped ? 'mapped' : 'dangling',
       origin,
       restGapDeg: mapped ? (gaps.get(target) ?? null) : null,
+      restGapAbsorbed: mapped && rest.absorbed.has(target),
     };
   });
 
@@ -445,8 +475,10 @@ export function boneMapView(
     danglingCount: rows.filter((r) => r.state === 'dangling').length,
     // The worst pairing, not an average of them: seventeen bones are plenty to
     // average two bad ones away with, and it is the two that a director sees.
+    // Over what is LEFT after the retarget's own correction (#866): an absorbed
+    // gap is not a thing a director can act on, so it does not compete here.
     worstRestGap: rows.reduce<BoneMapView['worstRestGap']>((worst, r) => {
-      if (r.restGapDeg === null || r.target === null) return worst;
+      if (r.restGapDeg === null || r.target === null || r.restGapAbsorbed) return worst;
       if (worst !== null && worst.deg >= r.restGapDeg) return worst;
       return { source: r.source, target: r.target, deg: r.restGapDeg };
     }, null),
@@ -521,17 +553,20 @@ export interface RestSignal {
 export function restSignal(view: BoneMapView): RestSignal | null {
   const rest = view.restReconciliation;
   if (rest.kind === 'aligned') {
+    // Only what the retarget could NOT absorb reaches the header (#866). A gap
+    // on a bone whose rests are nearly opposite keeps its bind and the
+    // disagreement stays; every other gap is folded into that bone's offset.
     const worst = view.worstRestGap;
     if (!worst || worst.deg < REST_GAP_MENTION_DEG) return null;
     return {
       branch: 'aligned',
       tone: worst.deg >= REST_GAP_ALARM_DEG ? 'warn' : 'quiet',
-      label: `${worst.deg.toFixed(0)}° rest gap at ${elidePrefix(worst.source, view.sourcePrefix)}`,
+      label: `${worst.deg.toFixed(0)}° rest gap at ${elidePrefix(worst.source, view.sourcePrefix)}, not absorbed`,
       detail:
-        `${worst.source} → ${worst.target}: the two rigs still point this bone ` +
-        `${worst.deg.toFixed(0)}° apart after the whole-rig turn. The motion transfers exactly; ` +
-        `this offset stays, because no rotation copy can remove it. Condition the clip to a ` +
-        `T-pose, or accept it.`,
+        `${worst.source} → ${worst.target}: the two rigs point this bone nearly opposite ways ` +
+        `(${worst.deg.toFixed(0)}° apart after the whole-rig turn), so the per-bone correction ` +
+        `refused it and this offset stays. The motion transfers exactly; every other bone's ` +
+        `rest difference is absorbed. Condition the clip to a T-pose, or accept it.`,
     };
   }
 

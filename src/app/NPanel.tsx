@@ -1573,11 +1573,22 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
             <span className="flex items-center justify-end gap-1 overflow-hidden">
               {row.restGapDeg !== null && row.restGapDeg >= REST_GAP_MENTION_DEG ? (
                 <span
+                  // An ABSORBED gap is never coloured as a defect (#866): the
+                  // retarget folds it into the bone's offset, so it is a fact
+                  // about the two anatomies and a warn chip here would be a
+                  // lying label of the kind #923 already removed once.
                   className={`font-mono text-[9px] ${
-                    row.restGapDeg >= REST_GAP_ALARM_DEG ? 'text-warn' : 'text-fg/40'
+                    !row.restGapAbsorbed && row.restGapDeg >= REST_GAP_ALARM_DEG
+                      ? 'text-warn'
+                      : 'text-fg/40'
                   }`}
                   data-testid={`npanel-bone-map-gap-${row.source}`}
-                  title={`the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest`}
+                  data-absorbed={row.restGapAbsorbed ? 'true' : 'false'}
+                  title={
+                    row.restGapAbsorbed
+                      ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; absorbed by the retarget`
+                      : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
+                  }
                 >
                   {row.restGapDeg.toFixed(0)}°
                 </span>

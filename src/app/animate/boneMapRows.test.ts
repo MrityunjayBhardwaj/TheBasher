@@ -468,11 +468,19 @@ describe('#960 — the panel names the bone the two rests disagree about', () =>
     expect(byName.get('Neck2')?.restGapDeg).toBeNull();
   });
 
-  it('leads with the worst pairing, because an average hides the two that matter', () => {
+  it('#866 — the worst pairing is ABSORBED by the retarget, so nothing is left to lead with', () => {
+    // This row used to lead with LeftFoot -> foot.L at 45°, the worst pairing,
+    // because an average would hide it. The aligned branch now folds that gap
+    // into the foot's own offset: the row still carries the fact (a director
+    // judging the pairing can see the two anatomies differ), the header carries
+    // nothing, because there is nothing to act on.
     const view = boneMapView(posedGraph(POSED_MAP), 'rt');
-    expect(view!.worstRestGap?.source).toBe('LeftFoot');
-    expect(view!.worstRestGap?.target).toBe('foot.L');
-    expect(view!.worstRestGap!.deg).toBeGreaterThan(30);
+    const foot = view!.rows.find((r) => r.source === 'LeftFoot');
+    expect(foot?.restGapDeg ?? 0, 'the fixture must still disagree at the foot').toBeGreaterThan(
+      30,
+    );
+    expect(foot?.restGapAbsorbed, 'the aligned branch absorbs the foot').toBe(true);
+    expect(view!.worstRestGap, 'an absorbed gap is not what is left').toBeNull();
   });
 
   it('says nothing at all when the two rests agree', () => {

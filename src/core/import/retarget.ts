@@ -51,7 +51,11 @@ import {
   paramsToThreeClip,
   specToThreeSkeleton,
 } from './threeAdapter';
-import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
+import {
+  solveRestAlignment,
+  alignedLocalOffsets,
+  ANTIPARALLEL_REFUSAL_COSINE,
+} from './restAlignment';
 import type { RestReconciliation } from './restAlignment';
 import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
 
@@ -386,14 +390,10 @@ export function referenceWorldRotations(
   return out;
 }
 
-/**
- * How nearly opposite two rest directions may be before the minimal rotation
- * between them stops being a usable correction. cos(168.5 deg), the angle at
- * which a nudge to either direction is amplified about tenfold in the result.
- * Derived from the measured amplification curve rather than chosen for roundness
- * -- see the refusal site in `restDirectionLocalOffsets` for the table.
- */
-export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
+// The antiparallel refusal now lives beside the other offset builder, since #866
+// made both branches refuse on it. Re-exported so this module's callers keep
+// their import; the table that derives the value is at the refusal site below.
+export { ANTIPARALLEL_REFUSAL_COSINE };
 
 export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
@@ -714,18 +714,30 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // Gated in `retargetRoll.gate.test.ts`, which asserts the branch for one
   // fixture of each kind so a future probe is aimed before it is fired.
   const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
+
+  // 🔴 OFFSETS FIRST, THEN THE WRAPPER — the order is load-bearing (#866). The
+  // aligned builder reads the SOURCE's rest directions off its live bones and
+  // turns them by `R` itself. Turning the wrapper first means those bones already
+  // carry `R` when they are read, and the heading is applied twice: measured on
+  // the live vendor pair, that put every arm and foot 82-90° from where it
+  // belonged. `alignedLocalOffsets` refuses a source whose wrapper is already
+  // turned, so this cannot regress silently.
+  const localOffsets =
+    restAlignment.kind === 'aligned'
+      ? // Every mapped bone gets its third degree of freedom from the rest
+        // alignment, chain ends included, so nothing here needs the clip's first
+        // frame as a stand-in neutral — and since #866 every bone WITH a mapped
+        // child also gets a per-bone direction term, so the two rests' remaining
+        // disagreement (the vendor pair's 21° arm droop, 30° at the feet) is
+        // absorbed rather than carried through the whole clip.
+        alignedLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, restAlignment.rotation)
+          .offsets
+      : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
+
   if (restAlignment.kind === 'aligned') {
     sourceWrap.quaternion.copy(restAlignment.rotation);
     sourceWrap.updateMatrixWorld(true);
   }
-
-  const localOffsets =
-    restAlignment.kind === 'aligned'
-      ? // Uniform across every mapped bone, chain ends included: a rest that
-        // supplies a body frame gives a leaf its third degree of freedom too, so
-        // nothing here needs the clip's first frame as a stand-in neutral.
-        alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
-      : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
