@@ -47,7 +47,15 @@ const AddPassSpec = z.object({
 });
 export type AddPassSpec = z.infer<typeof AddPassSpec>;
 
-const NODE_TYPE_BY_KIND: Record<PassKind, string> = {
+/**
+ * The pass kinds this Mutator can mint, and the node type each becomes.
+ *
+ * EXPORTED so the creation-road gate (#996) can ASK this road what it mints rather than
+ * keeping a second copy of the answer. A gate that mirrors a table is a gate that goes
+ * quietly stale the first time the table grows — which is the failure the gate exists to
+ * catch, reproduced inside the gate itself.
+ */
+export const PASS_NODE_TYPE_BY_KIND: Record<PassKind, string> = {
   beauty: 'BeautyPass',
   id: 'IDPass',
   depth: 'DepthPass',
@@ -175,7 +183,7 @@ export const addPassMutator: MutatorDefinition<AddPassSpec> = {
     ops.push({
       type: 'addNode',
       nodeId: passId,
-      nodeType: NODE_TYPE_BY_KIND[spec.passKind],
+      nodeType: PASS_NODE_TYPE_BY_KIND[spec.passKind],
       params,
     });
     ops.push({
