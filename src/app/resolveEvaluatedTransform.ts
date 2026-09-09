@@ -55,6 +55,7 @@ import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { importedChildOf } from './importedChild';
 
 type Vec3 = [number, number, number];
 
@@ -139,29 +140,23 @@ export function resolveEvaluatedTransform(
     //   the override layer AND the base. The clip track comes from the owning
     //   GltfAsset's evaluated TransformClip.
     const selected = state.nodes[selectedId];
-    if (selected?.type === 'GltfChild') {
-      const cp = selected.params as {
+    // #389 — the address and the override flags come from the ONE seam; the pose comes
+    // off the Object itself, because after the split the Object is what owns it. Both
+    // reads are needed and neither substitutes for the other (see importedChild.ts).
+    const cp = importedChildOf(state.nodes, selectedId);
+    if (selected && cp) {
+      const sp = selected.params as {
         position?: unknown;
         rotation?: unknown;
         scale?: unknown;
-        assetRef?: unknown;
-        childName?: unknown;
-        overridden?: { position: boolean; rotation: boolean; scale: boolean };
       };
-      if (
-        !isVec3(cp.position) ||
-        !isVec3(cp.rotation) ||
-        !isVec3(cp.scale) ||
-        typeof cp.assetRef !== 'string' ||
-        typeof cp.childName !== 'string' ||
-        !cp.overridden
-      ) {
+      if (!isVec3(sp.position) || !isVec3(sp.rotation) || !isVec3(sp.scale)) {
         return null;
       }
       const childTrs: ChildTrs = {
-        position: cp.position,
-        rotation: cp.rotation,
-        scale: cp.scale,
+        position: sp.position,
+        rotation: sp.rotation,
+        scale: sp.scale,
       };
 
       // Find the owning GltfAsset (matched by assetRef) and read its evaluated

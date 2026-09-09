@@ -35,6 +35,7 @@
 //      src/agent/mutators/builders/bakeGltfChannel.ts; issues #889, #903, #877.
 
 import type { DagState } from '../../core/dag/state';
+import { importedChildOf } from '../importedChild';
 import type { Op } from '../../core/dag/types';
 import type { ClosureSpec } from '../../agent/closure/types';
 // The NARROW modules, not the `agent/mutators` barrel. The barrel pulls every
@@ -207,12 +208,16 @@ export function boneComponentAddress(
   paramPath: string,
 ): { assetRef: string; childName: string; component: BakedComponent } | null {
   if (!BONE_PARAM_PATHS.has(paramPath)) return null;
-  const node = state.nodes[nodeId];
-  if (!node || node.type !== 'GltfChild') return null;
-  const p = node.params as { assetRef?: unknown; childName?: unknown } | undefined;
-  if (typeof p?.assetRef !== 'string' || p.assetRef.length === 0) return null;
-  if (typeof p?.childName !== 'string' || p.childName.length === 0) return null;
-  return { assetRef: p.assetRef, childName: p.childName, component: paramPath as BakedComponent };
+  // #389 — the kind test is now a hop, not a string compare: an imported child is an
+  // ordinary `Object`, and what makes it a bone is the `GltfData` on its `data` input.
+  const child = importedChildOf(state.nodes, nodeId);
+  if (!child) return null;
+  if (child.assetRef.length === 0 || child.childName.length === 0) return null;
+  return {
+    assetRef: child.assetRef,
+    childName: child.childName,
+    component: paramPath as BakedComponent,
+  };
 }
 
 /**

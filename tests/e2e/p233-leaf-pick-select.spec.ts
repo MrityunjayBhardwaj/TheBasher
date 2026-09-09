@@ -17,6 +17,7 @@
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { importedChildren } from './_importedChild';
 
 const KEY = 'basher.lastProjectId';
 
@@ -80,6 +81,13 @@ const nodeTypeOf = (page: Page, id: string | null): Promise<string | null> =>
     );
   }, id);
 
+// ⚠️ THE TITLE KEEPS THE RETIRED KIND'S NAME ON PURPOSE (#389). `accepted-failures.txt`
+// keys on `<spec file> › <describe titles…> › <test title>`, and this row is one of the ten
+// baselined linux entries. Renaming it to match the split's vocabulary would stop the
+// baseline matching, so the accepted failure would report as a NOVEL one and red the merge
+// gate — a rename with no behavioural content taking a branch down. The body below speaks
+// the current vocabulary; only the key is frozen. Retire the name here when the entry is
+// pruned from the baseline, in the same change, or not at all.
 test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears', async ({
   page,
 }) => {
@@ -138,13 +146,31 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
     { files: FIXTURE, name: 'p233-gltf' },
   );
 
-  // Wait for the asset + its GltfChild to exist and the camera seam to land.
+  // #781 — WAIT ON THE IMPORTED MESH, NOT ON A CAMERA.
+  //
+  // The previous condition was `hasChild && camera != null`. Both halves are satisfied
+  // before the thing this spec measures exists: the DAG node appears as soon as the import
+  // writes it, and `camera != null` is true the instant the canvas mounts, because R3F
+  // supplies a DEFAULT camera. So the wait was satisfied by the wrong object, and under
+  // load the spec projected a mesh that had not mounted (`pt === null`) or one still at the
+  // origin (the projected point landing on exactly the canvas centre). Measured at 2
+  // failures in 5 runs before this.
+  //
+  // The object under test is the mesh, so that is what is waited on. Keeping the node and
+  // camera checks costs nothing and keeps the failure message specific about which half is
+  // missing when it times out.
   await page.waitForFunction(
     () => {
       const w = window as unknown as BasherWindow;
       const nodes = w.__basher_dag?.getState().state.nodes ?? {};
-      const hasChild = Object.values(nodes).some((n) => n.type === 'GltfChild');
-      return hasChild && w.__basher_three?.getState().camera != null;
+      const hasChild = Object.values(nodes).some((n) => n.type === 'GltfData');
+      const three = w.__basher_three?.getState();
+      if (!hasChild || three?.scene == null || three.camera == null) return false;
+      let mounted = false;
+      three.scene.traverse((o) => {
+        if (!mounted && o.name === 'Box' && (o as import('three').Mesh).isMesh) mounted = true;
+      });
+      return mounted;
     },
     undefined,
     { timeout: 20_000 },
@@ -152,7 +178,13 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
 
   // Project the imported model's actual "Box" mesh (in the live scene clone) to
   // canvas pixels — the distractors are moved far aside, so this point hits only
-  // the model. Poll: the clone may still be settling right after import.
+  // the model.
+  //
+  // ⚠️ The sentence removed here read "Poll: the clone may still be settling right after
+  // import." There was no poll — this is a single `evaluate`, and it always was. The
+  // comment described the defence the spec needed and did not have, which is exactly how
+  // it read as covered. The settling it worried about is now handled where it belongs, in
+  // the wait above.
   const pt = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const cam = w.__basher_three!.getState().camera!;
@@ -174,14 +206,24 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
   });
   expect(pt).not.toBeNull();
 
-  // SINGLE click → selects the LEAF (the GltfChild under the cursor), NOT the
+  // SINGLE click → selects the LEAF (the imported child under the cursor), NOT the
   // whole import. This is the #233 inversion of the old broad-first behavior.
   await page.mouse.click(pt!.x, pt!.y);
-  await expect.poll(async () => nodeTypeOf(page, await selectedIdOf(page))).toBe('GltfChild');
+  // #389 — the leaf is an ordinary `Object` now, so its TYPE no longer identifies it:
+  // a box, a light and a camera are Objects too, and asserting 'Object' here would pass
+  // for a click that selected the starter box. Assert IDENTITY instead — the selected
+  // id must be one of the asset's imported children.
+  await expect
+    .poll(async () => {
+      const selected = await selectedIdOf(page);
+      const children = await importedChildren(page);
+      return children.some((c) => c.objectId === selected);
+    })
+    .toBe(true);
   const leafId = await selectedIdOf(page);
 
   // ALT+click at the same spot → selects UP one level (the import root: the
-  // Group, or the GltfAsset). The level above the GltfChild.
+  // Group, or the GltfAsset). The level above the imported child.
   await page.keyboard.down('Alt');
   await page.mouse.click(pt!.x, pt!.y);
   await page.keyboard.up('Alt');

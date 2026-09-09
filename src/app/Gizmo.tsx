@@ -60,6 +60,7 @@ import type { CharacterValue } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
 import { useEditorStore } from './stores/editorStore';
+import { isImportedChild } from './importedChild';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
@@ -417,8 +418,10 @@ function SingleGizmo() {
   // byte-identical to pre-7.7.
   function writeGltfChildOverride(field: 'position' | 'rotation' | 'scale', value: Vec3): boolean {
     if (!selectedId) return false;
-    const sel = useDagStore.getState().state.nodes[selectedId];
-    if (sel?.type !== 'GltfChild') return false;
+    // #389 — asked through the ONE seam. Both writes below still land on `selectedId`:
+    // after the split the Object owns the TRS *and* the `overridden` flags, so the pair
+    // is still one node's params and still one atomic dispatch.
+    if (!isImportedChild(useDagStore.getState().state.nodes, selectedId)) return false;
     useDagStore.getState().dispatchAtomic(
       [
         { type: 'setParam', nodeId: selectedId, paramPath: field, value },

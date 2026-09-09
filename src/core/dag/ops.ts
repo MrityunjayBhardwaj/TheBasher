@@ -269,13 +269,29 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
       // the first one deleted; an agent proposing it had no signal, so the
       // plan validated, applied, and quietly did half of what it said.
       //
-      // REPORTABLE, not refused — and the choice was measured, not assumed.
-      // Refusing was built first and ran green across the unit tier, but under
-      // e2e load it turned a glTF import into a hard failure: some production
-      // path races two writers onto one socket, and replace-by-default had
-      // been papering over it. Refusing converts that latent race into a
-      // crash; reporting makes it VISIBLE without breaking the road. The race
-      // is real and is filed separately — this op is not the place to fix it.
+      // REPORTABLE, not refused — 🔴 AND THE REASON THAT USED TO SIT HERE IS FALSE.
+      // It is quoted rather than deleted, because it was cited as settled fact:
+      // *"under e2e load it turned a glTF import into a hard failure: some
+      // production path races two writers onto one socket, and replace-by-default
+      // had been papering over it... The race is real and is filed separately."*
+      //
+      // There is no such race. #781 rebuilt the refusal behind a flag and recorded
+      // every displacement WITH A STACK — instrumenting the change's own predicate
+      // instead of its outcome. `p233-leaf-pick-select` then failed with the refusal
+      // ON while its page recorded ZERO displacements: the gate never fired, so it
+      // cannot have caused that failure. A 741-test census found 20 displacements,
+      // 14 declaring `replace: true`, 5 test scaffolding, 1 production — `Scene.
+      // lightRig` (#789), which is not a race. The e2e failure that motivated the
+      // choice was that spec's own load-flakiness: its wait was satisfied by R3F's
+      // default camera rather than by the imported mesh, fixed under #781.
+      //
+      // ⚠️ SO THE BEHAVIOUR BELOW IS UNCHANGED AND ITS JUSTIFICATION IS OPEN (#956).
+      // Reporting may still be right, but not for the reason stated here, and the
+      // evidence now points the other way: refusing ran green across the unit tier
+      // and across every production caller, because `setActiveCamera` and all three
+      // `operatorStack` splice paths already emit an explicit `disconnect` first.
+      // Left as it is rather than flipped on the strength of a comment audit —
+      // changing it is a behavioural decision that wants its own measurement.
       //
       // Re-binding the edge that is already there displaces nothing, so it
       // reports nothing, and stays idempotent for callers re-asserting state.

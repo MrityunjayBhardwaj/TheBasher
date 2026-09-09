@@ -1,12 +1,14 @@
 // The director's road to a re-cookable generated motion (#935, closing #902).
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHY THIS REPLACES THE ONE-SHOT ROAD RATHER THAN SITTING BESIDE IT
+// WHY THIS REPLACED THE ONE-SHOT ROAD, WHICH IS NOW DELETED (#948)
 // ─────────────────────────────────────────────────────────────────────────────
-// `generateMotionIntoScene` calls the generator, bakes the clip, and discards the
-// prompt, the seed and the waypoints that produced it. The clip is correct and it
-// has no producer, so editing the curve cannot re-cook it — the promise #730 made
-// and could not keep, for a structural reason: a call has no input edge.
+// `generateMotionIntoScene` called the generator, baked the clip, and discarded
+// the prompt, the seed and the waypoints that produced it. The clip was correct
+// and it had no producer, so editing the curve could not re-cook it — the promise
+// #730 made and could not keep, for a structural reason: a call has no input
+// edge. It survived #935 only because the parity claim was still written against
+// it; #948 moved that claim here and retired the road.
 //
 // This road mints the producer instead. Everything downstream is unchanged,
 // because the cook writes its keys into an ordinary `AnimationClip` node's params
@@ -36,7 +38,6 @@
 //
 // REF: src/app/asset/mintMotionGenerate.ts (the chain);
 //      src/app/asset/cookMotionGenerations.ts (the cook + the placement step);
-//      src/app/asset/generateMotion.ts (the one-shot road this supersedes);
 //      src/app/asset/importBvhFbx.ts (`bindImportedMotion`, the shared continuation);
 //      issues #935, #902, #730.
 
@@ -48,7 +49,7 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { bindImportedMotion } from './importBvhFbx';
 import { cookMotionGenerations, placeCookedMotion } from './cookMotionGenerations';
-import { mintMotionGenerateOps } from './mintMotionGenerate';
+import { chooseSeed, mintMotionGenerateOps } from './mintMotionGenerate';
 import { waypointsFromCurve } from './motionPathFromCurve';
 
 export interface GenerateMotionNodeOptions {
@@ -63,12 +64,6 @@ export interface GenerateMotionNodeOptions {
 export type GenerateMotionNodeResult =
   | { readonly ok: true; readonly producerId: string; readonly clipId: string }
   | { readonly ok: false; readonly reason: string };
-
-/** A seed a director did not type but the node will always carry. Positive and
- *  32-bit so it round-trips through JSON and reads as a number, not an artefact. */
-function chooseSeed(): number {
-  return Math.floor(Math.random() * 0x7fffffff);
-}
 
 /**
  * The curve to walk, or undefined.

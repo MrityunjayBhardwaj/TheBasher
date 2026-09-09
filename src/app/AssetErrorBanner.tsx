@@ -11,10 +11,13 @@
 //
 // REF: #83 gap 2, src/viewport/AssetErrorBoundary.tsx, src/app/stores/assetErrorStore.ts.
 
-import { useAssetErrorStore } from './stores/assetErrorStore';
+import { DEFAULT_ERROR_LABEL, useAssetErrorStore } from './stores/assetErrorStore';
 
 export function AssetErrorBanner() {
   const errors = useAssetErrorStore((s) => s.errors);
+  // #711 — not every row is an asset that failed. A row carrying its own label says what
+  // it actually is; the default is unchanged, so every existing reporter reads as before.
+  const labels = useAssetErrorStore((s) => s.labels);
   const clear = useAssetErrorStore((s) => s.clear);
   const entries = Object.entries(errors);
   if (entries.length === 0) return null;
@@ -52,7 +55,7 @@ export function AssetErrorBanner() {
         >
           <span aria-hidden>⚠</span>
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            <span style={{ color: '#ff8888' }}>asset failed:</span>{' '}
+            <span style={{ color: '#ff8888' }}>{labels[assetRef] ?? DEFAULT_ERROR_LABEL}</span>{' '}
             <span style={{ color: '#ffd0d0' }}>{assetRef}</span>
             <span style={{ color: '#cc9999' }}> — {message}</span>
           </span>

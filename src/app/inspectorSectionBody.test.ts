@@ -230,23 +230,25 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     }
   });
 
-  it('picks the glTF editor over the readout only when materials were captured', () => {
-    const withMaterials = ctxFor('GltfChild', {
-      assetRef: 'a',
-      childName: 'c',
-      materials: [{ name: 'm' }],
-    });
-    const without = ctxFor('GltfChild', { assetRef: 'a', childName: 'c', materials: [] });
+  it('gives the imported child ordinary material rows, and the readout to the ASSET alone', () => {
+    // 🔴 #389 INVERTED THIS ROW, AND THE INVERSION IS THE FEATURE. It used to assert that a
+    // fused `GltfChild` got the bespoke `gltfMaterialEditor` when it had captured materials
+    // and the read-only `gltfMaterialReadout` when it had none. Both arms are gone: the
+    // editor existed only because a fused child stored `materials` as an ARRAY the generic
+    // dotted param road could not address, and the data half stores an ordinary `material`.
+    //
+    // So a `GltfData` gets NO glTF-specific control at all — its material renders as plain
+    // param rows through the same `MaterialRows` a box uses. That is the whole point of the
+    // last kind splitting, and the assertion is the empty middle of the list.
+    const data = ctxFor('GltfData', { assetRef: 'a', childName: 'c', material: null });
     const active = (c: ReturnType<typeof ctxFor>): ControlKey[] =>
       SECTION_CONTROLS.material.filter((x) => x.applies(c)).map((x) => x.key);
     // #394 S3d — `materialLink` and `materialStack` are both `whenDeclared`, so they are
-    // active for every node that declares the section, including these. Asserted as part
-    // of the SET rather than filtered out of it: the claim under test is which of the two
-    // glTF controls wins, and a filter would also hide the day a fifth control started
-    // applying here. It is in TABLE ORDER, which is render order — the data-block row
-    // leads, then the stack, and the glTF editor sits between them.
-    expect(active(withMaterials)).toEqual(['materialLink', 'gltfMaterialEditor', 'materialStack']);
-    expect(active(without)).toEqual(['materialLink', 'gltfMaterialReadout', 'materialStack']);
+    // active for every node that declares the section, including this one. Asserted as part
+    // of the SET rather than filtered out of it: the claim under test is that NEITHER glTF
+    // control applies, and a filter would also hide the day a fifth control started
+    // applying here.
+    expect(active(data)).toEqual(['materialLink', 'materialStack']);
     // The whole-asset node keeps the read-only readout.
     expect(active(ctxFor('GltfAsset', { assetRef: 'a' }))).toEqual([
       'materialLink',

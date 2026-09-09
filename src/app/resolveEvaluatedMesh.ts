@@ -34,15 +34,12 @@
 //
 // REF: PLAN.md Wave 1 Task 2; CONTEXT §B/§H; RESEARCH §B; vyapti V1/V20; hetvabhasa H40.
 
-import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
-  BakedMaterialSpec,
   EvaluatedMesh,
-  GeometryRef,
   InlineMaterialSpec,
-  MaterialAssignment,
   MeshDataValue,
   MeshTransform,
   ObjectData,
@@ -53,16 +50,14 @@ import { modifierDataSource } from './modifierDataSource';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { materialAssignmentOf, objectSlotsOf } from './materialAssignment';
-import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { readMeshUVs } from './uvAttributes';
 
 const IDENTITY_SCALE: Vec3 = [1, 1, 1];
 
-/** No slot table and no per-face index — the answer for a road with no data half yet. */
-const EMPTY_ASSIGNMENT: MaterialAssignment<InlineMaterialSpec | BakedMaterialSpec | null> = {
-  slots: [],
-  indices: null,
-};
+// #389 — `EMPTY_ASSIGNMENT` lived here and is gone with its only caller. It was "no slot
+// table and no per-face index — the answer for a road with no data half yet", and after
+// the last kind split there is no such road left: every mesh face this resolver answers
+// for reaches a data node that carries a real table.
 
 /** The pose of a modifier chain nothing wears yet — a dangling stack has no Object to
  *  take one from, and inventing the source's would re-fuse what the split separated. */
@@ -153,64 +148,18 @@ export function resolveEvaluatedMesh(
   // box/sphere is a split Object, resolved by the `node.type === 'Object'` branch below (reach
   // through `data` to the BoxData/SphereData).
 
-  if (node.type === 'GltfChild') {
-    const p = node.params as {
-      assetRef?: unknown;
-      childName?: unknown;
-      position?: unknown;
-      rotation?: unknown;
-      scale?: unknown;
-      overridden?: { position: boolean; rotation: boolean; scale: boolean };
-    };
-    if (
-      typeof p.assetRef !== 'string' ||
-      typeof p.childName !== 'string' ||
-      !isVec3(p.position) ||
-      !isVec3(p.rotation) ||
-      !isVec3(p.scale) ||
-      !p.overridden
-    ) {
-      return null;
-    }
-    const geometry: GeometryRef = {
-      key: `gltf|${p.assetRef}|${p.childName}`,
-      descriptor: { kind: 'gltf', assetRef: p.assetRef, childName: p.childName },
-    };
-
-    // Transform via the ONE band. Prefer the full evaluated walk
-    // (resolveEvaluatedTransform → resolveGltfChildTrs: manual → baked → clip →
-    // base, the renderer's exact precedence). When there is no render output to
-    // walk (bare-node case), fall back to resolveGltfChildTrs directly with the
-    // child's own params as base — still the one primitive, never a parallel walk.
-    const walked = resolveEvaluatedTransform(state, selectedId, ctx, cache);
-    let transform: MeshTransform;
-    if (walked && walked.rotation && walked.scale) {
-      transform = { position: walked.position, rotation: walked.rotation, scale: walked.scale };
-    } else {
-      const childTrs = { position: p.position, rotation: p.rotation, scale: p.scale };
-      const resolved = resolveGltfChildTrs({
-        base: childTrs,
-        clipTrack: undefined,
-        childNode: { ...childTrs, overridden: p.overridden },
-        bakedChannel: undefined,
-      });
-      transform = {
-        position: resolved.position,
-        rotation: resolved.rotation,
-        scale: resolved.scale,
-      };
-    }
-
-    // glTF has no data half to carry a slot table — its materials live on the loaded
-    // clone (#389). An EMPTY table is the honest answer: not "one slot holding nothing".
-    const gltfUvs = readMeshUVs(geometry);
-    return {
-      geometry,
-      uvRead: gltfUvs,
-      materials: EMPTY_ASSIGNMENT,
-      transform,
-    };
-  }
+  // #389 — the fused `node.type === 'GltfChild'` branch was HERE, and it is gone with
+  // the node it read, exactly as the BakedMesh branch below went at its own retirement.
+  // An imported child is now an `Object` over a `GltfData`, so the `node.type === 'Object'`
+  // branch resolves it: the geometry handle comes from the data node's own evaluate (one
+  // minter for the `gltf|<assetRef>|<childName>` key, where this branch was a second
+  // spelling of it), and the pose comes from `resolvePrimitiveTransform`, which walks
+  // `resolveEvaluatedTransform` and therefore still layers manual → baked → clip → base.
+  //
+  // The materials answer IMPROVES rather than merely moving. This branch returned
+  // `EMPTY_ASSIGNMENT` because a fused child had no data half to carry a slot table; the
+  // data half has one, so an imported mesh now reports its captured slots on the read side
+  // like every other kind.
 
   // #388 — the fused `node.type === 'BakedMesh'` branch was HERE, and it is gone with the
   // node it read. A retired kind must not keep a working read road: `BakedMesh.evaluate`
@@ -249,10 +198,45 @@ export function resolveEvaluatedMesh(
     // Object branch below, so a modified mesh and its object can never disagree about
     // where they are. A dangling chain (nothing wears it yet) has no pose at all.
     const objectId = resolveStackObject(state, selectedId);
+    // ONE memo across BOTH reads of the Object below — its slot overrides and its pose.
+    // `evaluate` builds a fresh per-call memo, so a caller that passed no cache (Apply, the
+    // UV editor, the diagnostic seams) would otherwise walk the Object's subgraph twice
+    // where it walked it once. Keyed on a params+inputs hash, so a local one is a pure
+    // memo and cannot change an answer.
+    const objectCache = cache ?? createEvaluatorCache();
+    // ⚠️ `resolveStackObject` guarantees a POSER (`isPoserNode` — accepts `ObjectData` on
+    // `data`), which is `Object` today but is a shape test, not a kind test. The cast is
+    // therefore loose ON PURPOSE and degrades safely: `objectSlotsOf` reads `slotOverrides`
+    // and nothing else, so a future poser without that field resolves the data's own table —
+    // the answer this arm gave before, rather than a wrong one.
+    const objectValue = objectId
+      ? (evaluate(state, objectId, { ctx, cache: objectCache }).value as ObjectValue | undefined)
+      : undefined;
     const transform = objectId
-      ? (resolveEvaluatedMesh(state, objectId, ctx, cache)?.transform ?? IDENTITY_TRANSFORM)
+      ? (resolveEvaluatedMesh(state, objectId, ctx, objectCache)?.transform ?? IDENTITY_TRANSFORM)
       : IDENTITY_TRANSFORM;
-    const modifierMaterials = materialAssignmentOf(null, [source.material]);
+    // #978 — READ AT THE DEPTH THE SOURCE OFFERS, which is what the two sibling arms do.
+    // This built its own assignment instead: `materialAssignmentOf(null, [source.material])`,
+    // a literal `null` where the siblings pass a real key and one entry where the source
+    // carries a table. `modifierDataSource` propagates both halves deliberately, so the
+    // discard was not a limitation of what was in reach.
+    //
+    // ⚠️ IT WAS A WRONG MATERIAL, NOT A MISSING SLOT. `SetMaterialOp` and
+    // `MaterialOverrideOp` emit `material: wired` beside `materialSlots: [source.material,
+    // wired]` — so `material` is slot ONE. Collapsing to `[source.material]` therefore
+    // answered slot 1 where slot 0 is correct, and `resolveMeshUVSpace` (no type guard,
+    // reached with the raw selection) resolved its texture from it.
+    //
+    // The Object is the same one the pose comes from, for the same reason stated above: it
+    // is the only node in the chain that has one, so a modified mesh and its object cannot
+    // disagree about what it is made of any more than about where it is. `source` — not the
+    // Object's own resolved mesh — is the data half, because a modifier BELOW the top of the
+    // stack has a different face count from the stack's output, and the key must index the
+    // geometry this arm actually returns.
+    const modifierMaterials = materialAssignmentOf(
+      source.attributeKey ?? null,
+      objectSlotsOf(objectValue ?? null, source),
+    );
     const modifierUvs = readMeshUVs(source.geometry);
     return {
       geometry: source.geometry,

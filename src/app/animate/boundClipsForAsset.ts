@@ -160,6 +160,11 @@ export function boundClipsForAsset(
  * bound to two characters and both of them walk the path. Picking one would make
  * WHICH character moves depend on id order — the same arbitrariness the sort
  * above exists to remove (V22).
+ *
+ * Asked of the GRAPH rather than of a bind result, and that is what makes it
+ * work on a re-cook. The one-shot road that this replaced never had the bug,
+ * because it placed the rig the bind had just handed back — but a re-cook has no
+ * bind result in hand, and the graph still knows.
  */
 export function riggedSkeletonsForClip(
   nodes: Readonly<Record<string, GraphNodeLike>>,

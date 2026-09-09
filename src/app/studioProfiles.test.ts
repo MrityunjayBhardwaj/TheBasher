@@ -158,4 +158,52 @@ describe('studioProfiles (#208)', () => {
     const broken = { ...state, outputs: { ...state.outputs, scene: undefined } };
     expect(buildAddProfileOps(broken, 'Key', [0, 0, 0])).toBeNull();
   });
+
+  // ── #789 — a BARE rig on Scene.lightRig is adopted, not displaced ─────────────────────
+  //
+  // A `LightRig` wired straight into the scene is a legitimate state, and this file's delete
+  // path already branched on it ("or directly from the scene"). Only the MINT paths did not.
+  // `activeProfileSelect` answers null for a bare rig — correctly — and the mint used to read
+  // that as "no select exists" and connect onto the occupied socket, dropping the authored
+  // edge with no disconnect and no `replace: true`.
+  //
+  // Measured before the fix: profiles read [Authored inactive, Key active] and re-selecting
+  // "Authored" left `resolveActiveRigNode` answering NULL. A profile listed, selectable, and
+  // resolving to nothing — which is why the last assertion here is the one that matters.
+  it('#789 "+ Profile" over a bare authored rig ADOPTS it instead of dropping the edge', () => {
+    let state = buildDefaultDagState();
+    const sceneId = state.outputs.scene!.node;
+    state = apply(state, [
+      {
+        type: 'addNode',
+        nodeId: 'rt_rig',
+        nodeType: 'LightRig',
+        params: { name: 'Authored', center: [0, 0, 0], radius: 6 },
+      },
+      {
+        type: 'connect',
+        from: { node: 'rt_rig', socket: 'out' },
+        to: { node: sceneId, socket: 'lightRig' },
+      },
+    ] as Op[]);
+    expect(resolveActiveRigNode(state)).toBe('rt_rig');
+
+    const next = apply(state, buildAddProfileOps(state, 'Key', [0, 0, 0])!.ops);
+
+    // Both profiles are listed, and the new one is live — the behaviour that already held
+    // whenever a select existed. Adoption is about REACHABILITY, not about which is active.
+    expect(
+      enumerateProfiles(next)
+        .map((p) => p.name)
+        .sort(),
+    ).toEqual(['Authored', 'Key']);
+
+    // 🔴 THE ROW THAT WOULD HAVE CAUGHT THE DEFECT. Everything above passed before the fix
+    // too — the orphaned rig still enumerated. This is the half that did not.
+    const sel = Object.values(next.nodes).find((n) => n.type === 'LightProfileSelect')!;
+    const reselected = apply(next, [
+      { type: 'setParam', nodeId: sel.id, paramPath: 'selectedProfile', value: 'Authored' },
+    ] as Op[]);
+    expect(resolveActiveRigNode(reselected)).toBe('rt_rig');
+  });
 });

@@ -131,6 +131,12 @@ export const KIND_MARKERS: Record<SplitKindName, readonly string[]> = {
   light: ['LightData', '_splitLight', 'splitLightOps'],
   camera: ['CameraData', '_splitCamera', 'splitCameraOps'],
   baked: ['BakedData', 'buildBakedRow'],
+  // #389 — no `_splitGltf`/`splitGltfOps` builder, and for a sharper reason than baked's.
+  // A pair of this kind cannot be hand-authored at all: its geometry is a reference into a
+  // LOADED ASSET CLONE, so a fixture that minted the two nodes would resolve to no buffers
+  // and draw nothing. The producer is the importer, and the marker is the import helper an
+  // e2e drives to get one.
+  gltf: ['GltfData', 'importGltfFixture'],
 };
 
 const NESTED_UNOBSERVABLE =
@@ -181,6 +187,10 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
       sphere: gap(NESTED_UNOBSERVABLE, '#501'),
       curve: gap(NESTED_UNOBSERVABLE, '#501'),
       baked: gap(NESTED_UNOBSERVABLE, '#501'),
+      // Same instrument blocker as the four above, and one on top of it that is this kind's
+      // own: an imported child is ALREADY nested, under the import Group its asset mints,
+      // so there is no un-nested arm to control against within the kind.
+      gltf: gap(NESTED_UNOBSERVABLE, '#501'),
     },
   },
   R3: {

@@ -19,6 +19,7 @@ import { simplifyChannelMutator } from './simplifyChannel';
 import { setChannelExtendMutator } from './setChannelExtend';
 import { setKeyframeInterpMutator } from './setKeyframeInterp';
 import { addChannelModifierMutator } from './addChannelModifier';
+import { importedChildNodes } from '../../../test-utils/importedChildFixture';
 
 const ASSET = 'user-imports/dwarf.glb';
 const BONE = 'mixamorig_LeftArm';
@@ -48,18 +49,12 @@ function riggedState(extraNodes?: Record<string, unknown>): DagState {
       params: { skinIndex: 0 },
       inputs: { asset: { node: 'n_asset', socket: 'out' } },
     },
-    [BONE_ID]: {
-      id: BONE_ID,
-      type: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: BONE,
-        position: [1, 2, 3],
-        rotation: [10, 20, 30],
-        scale: [1, 1, 1],
-      },
-      inputs: {},
-    },
+    ...importedChildNodes(BONE_ID, {
+      assetRef: ASSET,
+      childName: BONE,
+      position: [1, 2, 3],
+      rotation: [10, 20, 30],
+    }),
     n_clip: {
       id: 'n_clip',
       type: 'AnimationClip',

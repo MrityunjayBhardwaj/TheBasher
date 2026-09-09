@@ -1,9 +1,14 @@
 // motion.generate — the agent half of A1's three-way parity.
 //
-// The phase's claim is proven at the chain level (generatedMotion.test.ts: the
-// Ops are deep-equal to an imported BVH's). What these tests pin is that the TOOL
-// adds nothing of its own on top — no extra op, no provenance flag, no branch —
-// and that its context wiring fails legibly rather than silently.
+// What these tests pin is that the TOOL adds nothing of its own on top of the
+// road a DIRECTOR takes — no extra op, no provenance flag, no branch — and that
+// its context wiring fails legibly rather than silently.
+//
+// The comparator moved at #948. It used to be `buildGeneratedMotionOps`, the
+// one-shot importer road; a director stopped taking that road at #935 and now
+// mints a `MotionGenerate` producer, so comparing the tool against the importer
+// was measuring agreement with a road nobody walks. It is now compared against
+// mint + bake — the two halves the director's road itself composes.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -15,17 +20,17 @@ import {
   listNodeTypes,
 } from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
-import {
-  StubMotionGenerationCapability,
-  buildGeneratedMotionOps,
-  DEFAULT_MOTIONGEN_MODEL,
-} from '../../core/motiongen';
+import { StubMotionGenerationCapability, DEFAULT_MOTIONGEN_MODEL } from '../../core/motiongen';
 import { __resetBvhImportCounterForTests } from '../../core/import/bvhImportChain';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
 import { motionGenerateTool } from './motionGenerate';
 import { registerAllTools, listTools, __resetToolRegistryForTests } from './index';
 import type { ToolContext } from './types';
 import type { DagState } from '../../core/dag/state';
+import { applyOp } from '../../core/dag/ops';
+import { bakeGeneratedClipOps } from '../../app/asset/bakeGeneratedClip';
+import { mintMotionGenerateOps } from '../../app/asset/mintMotionGenerate';
+import { resolvePendingMotionGenerations } from '../../app/asset/resolveMotionGenerate';
 import type { AnimationClipValue } from '../../nodes/types';
 
 const BLOCKED = aBlockedRecord().id;
@@ -81,21 +86,40 @@ function ctx(over: Partial<ToolContext> = {}): ToolContext {
 }
 
 describe('motion.generate produces a clip and adds no road of its own', () => {
-  it('returns exactly the Ops the generation chain returns — no tool-level extras', async () => {
-    // The load-bearing assertion. If the tool ever grows an op an import does not
-    // also produce, that op IS the provenance branch A1 exists to avoid, and this
-    // reds the moment it appears.
+  it("returns exactly the ops the DIRECTOR's road builds — no tool-level extras", async () => {
+    // The load-bearing assertion. If the tool ever grows an op the director's road
+    // does not also produce, that op IS the divergence #948 records, and this reds
+    // the moment it appears.
+    //
+    // The seed is FIXED on both sides. It is a required param with no default, so
+    // an unseeded call picks one at random and the two graphs would differ in the
+    // one field that is supposed to make them reproducible.
     const state = stateWithTime();
-    const direct = await buildGeneratedMotionOps(new StubMotionGenerationCapability(), {
-      request: { prompt: 'a figure walks forward', model: DEFAULT_MOTIONGEN_MODEL },
+
+    const mint = mintMotionGenerateOps(state, {
+      prompt: 'a figure walks forward',
+      seed: 7,
+      model: DEFAULT_MOTIONGEN_MODEL,
     });
+    let forked = state;
+    for (const op of mint.ops) forked = applyOp(forked, op).next;
+    await resolvePendingMotionGenerations(forked, new StubMotionGenerationCapability());
+    const direct = [...mint.ops, ...bakeGeneratedClipOps(forked)];
+
     const viaTool = await motionGenerateTool.handler(
-      { prompt: 'a figure walks forward' },
+      { prompt: 'a figure walks forward', seed: 7 },
       ctx({ dagState: state }),
     );
 
-    expect(viaTool.ops).toHaveLength(direct.ops.length);
-    expect(normaliseIds(viaTool.ops)).toEqual(normaliseIds(direct.ops));
+    // THE POPULATION, beside the verdict. Two empty arrays are deep-equal, so a
+    // comparator with nothing in it agrees perfectly and measures nothing. This
+    // pins that the director's road actually built AND COOKED something before
+    // the tool is asked to match it.
+    expect(direct.length).toBeGreaterThan(6);
+    expect(direct.some((o) => o.type === 'setParam' && o.paramPath === 'sourceHash')).toBe(true);
+
+    expect(viaTool.ops).toHaveLength(direct.length);
+    expect(normaliseIds(viaTool.ops)).toEqual(normaliseIds(direct));
   });
 
   it('#957 — every node type the ops ADD is named in the description', async () => {
@@ -212,15 +236,30 @@ describe('a missing piece of context fails legibly, and names the right setting'
     expect(result.text).not.toMatch(/no motion-generation capability/i);
   });
 
-  it('returns a BLOCKED refusal as readable text rather than ending the turn', async () => {
+  it('returns a BLOCKED refusal as readable text, and KEEPS the generator', async () => {
     // A licence refusal is something the model can act on — it is a settings
     // change. Throwing would end the turn with nothing for it to read.
+    //
+    // The producer still ships, and that is deliberate parity rather than an
+    // oversight: a director's road mints before it cooks, so a blocked checkpoint
+    // leaves them a node carrying the prompt and the seed, re-cookable the moment
+    // Settings changes. A tool that returned nothing would make the agent's road
+    // the one where a refusal costs you the request.
     const result = await motionGenerateTool.handler(
       { prompt: 'walk' },
       ctx({ motionModel: BLOCKED }),
     );
-    expect(result.ops).toEqual([]);
     expect(result.text).toMatch(/BLOCKED/);
+    // The generator and its sink, and NOT a cooked clip: no keys were written.
+    expect(
+      result.ops
+        .filter((o) => o.type === 'addNode')
+        .map((o) => o.nodeType)
+        .sort(),
+    ).toEqual(['AnimationClip', 'MotionGenerate', 'Skeleton']);
+    expect(result.ops.some((o) => o.type === 'setParam' && o.paramPath === 'sourceHash')).toBe(
+      false,
+    );
   });
 
   it('refuses a degenerate request through the same path', async () => {

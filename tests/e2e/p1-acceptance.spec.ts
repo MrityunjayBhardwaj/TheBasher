@@ -503,11 +503,13 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     // `n_box`, `n_scene`, `n_render`.
     const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
     const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
-    // P7.7 (#91) materializes one GltfChild per scene child; V67/#222 made the
-    // import root ONE transformable Group (NOT a Group wrapping a separate
-    // Transform). cube.gltf has 1 scene node → the drop adds GltfAsset +
-    // GltfChild + Group = 3 nodes (there is no `n_tx_` Transform anymore).
-    const gltfChildCount = Object.values(nodes).filter((n) => n.type === 'GltfChild').length;
+    // P7.7 (#91) materializes one child per scene child; V67/#222 made the import
+    // root ONE transformable Group (NOT a Group wrapping a separate Transform).
+    // #389 — a child is now a PAIR (`Object` + `GltfData`), so cube.gltf's single
+    // scene node adds GltfAsset + Object + GltfData + Group = 4, one more than before
+    // the split. Counted on the data half: `Object` is also what the default
+    // project's box, light and camera are.
+    const gltfChildCount = Object.values(nodes).filter((n) => n.type === 'GltfData').length;
     const assetRef = gltf ? (nodes[gltf].params as { assetRef: string }).assetRef : null;
     return {
       delta: Object.keys(nodes).length - newNodeIds.length, // pre-existing count
@@ -519,9 +521,9 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
       undoLen: s.undoStack.length,
     };
   });
-  // GltfAsset + 1 GltfChild (cube.gltf has one scene node) + the transformable
-  // import-root Group (V67/#222 — no separate Transform node).
-  expect(after.nodeCount).toBe(beforeNodeCount + 3);
+  // GltfAsset + the Object/GltfData PAIR for cube.gltf's one scene node (#389) + the
+  // transformable import-root Group (V67/#222 — no separate Transform node).
+  expect(after.nodeCount).toBe(beforeNodeCount + 4);
   expect(after.sawGltf).toBe(true);
   expect(after.sawGroup).toBe(true);
   expect(after.gltfChildCount).toBe(1);

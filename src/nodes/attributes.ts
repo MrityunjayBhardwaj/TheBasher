@@ -142,18 +142,66 @@ export const SCOPE_DOMAINS = ['face', 'edge'] as const satisfies readonly KnownD
 export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
 
 /**
+ * WHY THE OTHER TWO DOMAINS ARE NOT HERE — stated, because an unexplained gap gets read as
+ * an oversight and re-filed (#962).
+ *
+ * `point` and `corner` are absent for a REASON, not for want of arithmetic. All four domains
+ * have had a count, an order and an identity since #776 — `pointCountOf`, `edgeCountOf`,
+ * `cornerCountOf` and `faceCountOf` all answer. The bar for membership here is the one
+ * {@link CLASS_CARRIAGE} states one level up: **a domain needs an operator that can declare
+ * it and mean something by it.** Admitting a domain on the strength of a count is exactly the
+ * mistake that entry's own doc block was rewritten to stop.
+ *
+ * That is why this is a `why`/`until` record rather than a comment: it mirrors
+ * `CLASS_CARRIAGE.edge`, which carries the same shape for the same reason one level up, and
+ * it names the issue that would supply the missing consumer.
+ *
+ * 🔑 THE TYPE MAKES THE TWO SETS PARTITION {@link KNOWN_DOMAINS}. `Exclude<KnownDomain,
+ * ScopeDomain>` means adding a domain to `SCOPE_DOMAINS` without deleting its entry here is a
+ * COMPILE ERROR, and deleting an entry without admitting the domain is one too. The pair
+ * cannot drift apart in the direction that produced this issue: a comment that said one thing
+ * while the code said another. This is the half a gate cannot do — a gate reds after the fact,
+ * a type refuses to build.
+ */
+export const SCOPE_ABSENT: Readonly<
+  Record<Exclude<KnownDomain, ScopeDomain>, { readonly why: string; readonly until: string }>
+> = {
+  point: {
+    why:
+      'a point count has been derivable since #716 and total since #754, but no operator has ' +
+      'a per-point semantic anybody has stated — a point selection would be a subset of a set ' +
+      'nothing consumes',
+    until: '#959',
+  },
+  corner: {
+    why:
+      'a corner count has been derivable since #776, but the two issues that want corner data ' +
+      'want a whole authored LAYER (#786) or a blend plan (#881), neither of which names a ' +
+      'subset; and a fragment shader has no corner input to resolve one against',
+    until: '#959',
+  },
+};
+
+/**
  * ── HOW AN OPERATOR DECLARES ITS CLASS, AND WHY EACH ONE DECLARES ITS OWN ─────────────
  *
- * Stated here, at the type, because it is ONE FACT and it was spelled five times (#680).
- * Every scoped operator carries `const SCOPE_DOMAIN: ScopeDomain = 'face'` and a copy of
- * this reasoning; the VALUE stays copied, deliberately, and the reasoning moved here.
+ * Stated here, at the type, because it is ONE FACT and it was spelled once per operator
+ * (#680). Every scoped operator carries its own `const SCOPE_DOMAIN: ScopeDomain = …` and a
+ * copy of this reasoning; the VALUE stays copied, deliberately, and the reasoning moved here.
  *
- * 🔑 FIVE OPERATORS CHOOSING `'face'` IS FIVE DECISIONS THAT HAPPEN TO AGREE. That is the
- * whole reason #714 replaced the single module-private constant with a per-operator
- * declaration, and collapsing the five back into one shared value would undo it: the day an
+ * 🔑 SIX OPERATORS DECLARING A CLASS IS SIX DECISIONS, AND THEY NO LONGER ALL AGREE. That is
+ * the whole reason #714 replaced the single module-private constant with a per-operator
+ * declaration, and collapsing them back into one shared value would undo it: the day an
  * operator scopes at a different class, a shared constant is the thing that silently gives
- * it the wrong one. So the duplication of the VALUE is correct and must survive; only the
- * explanation was redundant.
+ * it the wrong one. **That day arrived at #827** — `BevelModifier` declares `'edge'` while the
+ * other five declare `'face'` — so this is no longer a hypothetical the duplication guards
+ * against, it is a case it already survived. The duplication of the VALUE is correct and must
+ * survive; only the explanation was redundant.
+ *
+ * ⚠️ THE COUNTS IN THE PARAGRAPH ABOVE ARE PROSE, AND PROSE HAS NO DETECTOR. `scopeDomainDeclarers.gate.test.ts`
+ * is where the same facts are asserted against the source, so this block going stale is a
+ * red rather than a reader's problem — which is what #962 was filed about, after five
+ * comments in this substrate spent two issues describing a face-only world.
  *
  * Each operator's `const` is declared once and read twice — the `chain` declaration hands it
  * to the evaluator, which resolves the selection at it, and the builder call in `evaluate`

@@ -14,6 +14,7 @@
 // exact "inspector shows empty slots even though it renders textured" gap.
 
 import { test, expect } from './_fixtures';
+import { firstMaterialChild } from './_importedChild';
 
 interface CapturedMap {
   hash: string;
@@ -54,14 +55,11 @@ async function ingestAlbedoQuad(page: import('@playwright/test').Page): Promise<
   });
 }
 
-const capturedMaps = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
-    const child = nodes.find((n) => n.type === 'GltfChild' && Array.isArray(n.params.materials));
-    const mats = child?.params.materials as { maps?: CapturedMaps }[] | undefined;
-    return mats?.[0]?.maps ?? null;
-  });
+// #389 — the captured table moved to the `GltfData` half; see `_importedChild`.
+const capturedMaps = async (page: import('@playwright/test').Page) => {
+  const child = await firstMaterialChild(page);
+  return (child?.slots[0] as { maps?: CapturedMaps } | undefined)?.maps ?? null;
+};
 
 const someMeshHasMap = (page: import('@playwright/test').Page) =>
   page.evaluate(() => {

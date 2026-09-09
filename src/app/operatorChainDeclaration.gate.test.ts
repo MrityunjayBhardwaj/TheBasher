@@ -39,6 +39,7 @@ import {
   __resetRegistryForTests,
   getNodeType,
   listNodeTypes,
+  paramFieldsOf,
   registerNodeType,
 } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -182,10 +183,8 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // registration refusal enforces, asserted here so the enforcement has a witness.
     for (const [type, chain] of operators()) {
       if (chain.bypass.kind !== 'passthrough') continue;
-      const shape = (
-        getNodeType(type)?.paramSchema as unknown as { shape?: Record<string, unknown> }
-      ).shape;
-      expect(shape, `${type} paramSchema shape`).toBeDefined();
+      const shape = paramFieldsOf(getNodeType(type));
+      expect(shape, `${type} paramSchema shape`).not.toBeNull();
       expect(Object.keys(shape ?? {}), `${type} declares ${chain.bypass.param}`).toContain(
         chain.bypass.param,
       );

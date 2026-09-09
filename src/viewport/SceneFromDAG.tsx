@@ -55,6 +55,12 @@ import { applyGltfUvTransform, GLTF_UV_MAP_SLOTS } from './applyGltfUvTransform'
 import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
 import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
 import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
+import {
+  importedChildDataId,
+  importedChildMaterials,
+  importedChildrenOf,
+  isImportedChildMaterialPath,
+} from '../app/importedChild';
 import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
 import {
   applyEditedMaps,
@@ -151,7 +157,12 @@ import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
 // geometry, the assignment and the hydrated table, and draws whatever comes back.
 import { meshMaterialRefusal, resolveMeshMaterial } from '../app/resolveMeshMaterial';
 import { useSlotMaterials } from '../app/material/useSlotMaterials';
-import { dataSlotsOnly, materialAssignmentOf, objectSlotsOf } from '../app/materialAssignment';
+import {
+  dataSlotsOnly,
+  materialAssignmentOf,
+  objectSlotsOf,
+  type ObjectSlotSource,
+} from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
 import type {
   AmbientLightValue,
@@ -2347,15 +2358,30 @@ function ModifiedMeshR({
     }
     store.report(
       ref,
-      'modifier geometry could not be built (source not sync-buildable — glTF/baked-sourced modifiers are a follow-up)',
+      'this modifier cannot load its source (glTF/baked-sourced modifiers are a follow-up)',
+      // #711 — NOT "asset failed:". The registry classifies this exact state as still
+      // loading (`composedOverSource` maps a primed source through to primed), so the
+      // default label would have the banner contradict the registry about the same
+      // condition. The asset is fine; nothing on this road ever asks for it.
+      'modifier blocked:',
     );
     return () => useAssetErrorStore.getState().clear(ref);
   }, [geom, geomKey]);
-  // #638 (ns-1b step 5) — this renderer does not decide array-or-single either, even though
-  // its answer can only be single today: `ModifiedMeshValue` carries one material and no
-  // attribute key, so the assignment has one slot and arm 1 fires. Routing it through the
-  // one resolver anyway is what keeps the two roads from drifting when the modifier road
-  // grows a table — the alternative is a second place that knows how to make this decision.
+  // #638 (ns-1b step 5) — this renderer does not decide array-or-single; it is the SINGLE
+  // arm of a decision already taken above, so the one-slot assignment here is a consequence
+  // rather than a claim. Routing it through the one resolver anyway is what keeps the two
+  // roads from drifting — the alternative is a second place that knows how to make this
+  // decision.
+  //
+  // ⚠️ #978 — THIS SAID `ModifiedMeshValue` "carries one material and no attribute key",
+  // AND THAT IS FALSE ABOUT THE TYPE: it declares both `materialSlots` and `attributeKey`
+  // (`types.ts`), added at #638 so a partial-range material op's assignment would survive to
+  // the renderer. The line was harmless only because the caller forks on
+  // `needsMaterialSlots(objectSlotsOf(...))` first and sends the multi-slot case to
+  // `MultiMaterialMeshR`, so this arm is reached only when the resolved table really does
+  // hold one entry. It is sound BY POSITION, never by type — and a comment that grounds it
+  // in the type instead invites the next reader to trust the collapse somewhere the fork
+  // does not protect, which is exactly the defect #978 fixed one road over.
   const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
   if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
@@ -2590,6 +2616,17 @@ function ObjectMeshR({
     // caller knows which one it is making.
     mat && mat === data?.material ? (data?.materialKey ?? null) : null,
   );
+  // #389 — an Object does not draw what the asset clone is already drawing: without that
+  // rule the pair draws a second mesh from one geometry, and on a skinned child the second
+  // draw is the undeformed bind pose. A recipe OVER a glTF source is not clone-drawn and is
+  // unaffected.
+  //
+  // #981 — THE TEST USED TO BE SPELLED HERE, and being spelled HERE is what let it be
+  // skipped. `MultiMaterialMeshR` — the fork this component's own note below points at —
+  // reached for the same door with no such test, so a two-primitive imported child drew
+  // twice while this one-primitive road was correct. `getForAttach` refuses a clone-drawn
+  // ref itself now, so this reads as an ordinary attach and there is no unguarded spelling
+  // left for a fourth draw site to find.
   const geom = data ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This
@@ -2903,42 +2940,43 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
 }
 
 /**
- * P7.7 (#91) — derive the GltfChild override layer for one asset from the DAG
- * node table. Pure projection (no mutation): filter the nodes for
- * `type === 'GltfChild' && params.assetRef === assetRef`, keyed by childName.
+ * P7.7 (#91) — derive the imported-child override layer for one asset from the DAG
+ * node table, keyed by childName. Pure projection (no mutation).
  *
  * V8 is FILE-ROOTED: a read-only state access under `src/viewport/` is clean —
  * V8 forbids dispatch/setState/mutation, not reads. The threading alternative
  * (a `childNodes` field on GltfAssetValue) is UNREACHABLE, not merely a
- * preference: R-1 makes GltfChild INPUTLESS, so GltfAsset.evaluate has no input
- * edge to the children; the only way the evaluated value could carry them is a
- * raw sibling-state read inside the evaluator, which violates V2 (pure
- * evaluators are bit-exact over (params, inputs); a sibling-filter-by-assetRef
- * is not an input). So the viewport read-only filter is the ONLY V2-respecting
- * option.
+ * preference: an imported child has no edge INTO the asset, so GltfAsset.evaluate
+ * has no input to reach the children through; the only way the evaluated value
+ * could carry them is a raw sibling-state read inside the evaluator, which
+ * violates V2 (pure evaluators are bit-exact over (params, inputs); a
+ * sibling-filter-by-assetRef is not an input). So the viewport read-only filter is
+ * the ONLY V2-respecting option.
+ *
+ * #389 — MEMBERSHIP now comes from the seam rather than from a param filter, because
+ * after the split the two facts live on two nodes: `assetRef` is on the child's DATA
+ * half and the POSE (with its `overridden` flags) is on the Object. The old single-node
+ * filter cannot express that, and the version of it that compiles — filter the data
+ * nodes — would return an override layer with no transform in it, which reads as
+ * "no child overrides" and silently drops every posed bone.
  */
 function childOverridesForAsset(
   nodes: DagState['nodes'],
   assetRef: string,
 ): Record<string, ChildOverride> {
   const out: Record<string, ChildOverride> = {};
-  for (const node of Object.values(nodes)) {
-    if (node.type !== 'GltfChild') continue;
-    const p = node.params as {
-      assetRef?: unknown;
-      childName?: unknown;
+  for (const [objectId, child] of importedChildrenOf(nodes, assetRef)) {
+    const p = nodes[objectId].params as {
       position?: Vec3;
       rotation?: Vec3;
       scale?: Vec3;
-      overridden?: ChildOverride['overridden'];
     };
-    if (p.assetRef !== assetRef || typeof p.childName !== 'string') continue;
-    if (!p.position || !p.rotation || !p.scale || !p.overridden) continue;
-    out[p.childName] = {
+    if (!p.position || !p.rotation || !p.scale) continue;
+    out[child.childName] = {
       position: p.position,
       rotation: p.rotation,
       scale: p.scale,
-      overridden: p.overridden,
+      overridden: child.overridden,
     };
   }
   return out;
@@ -3173,8 +3211,15 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap, value.assetRef),
     [depNodeMap, value.nodeNameMap, value.assetRef],
   );
-  // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed childDagId → the
-  // function-of-time channel VALUES targeting that child's `materials.*` paths.
+  // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed by the child's DATA node id
+  // → the function-of-time channel VALUES targeting that node's material paths.
+  //
+  // #389 — the key and the paths BOTH moved. A captured material is a fact about what the
+  // child IS, so it lives on the data half, and a channel authored through the ordinary
+  // split road (`resolveDataParamOwner`) therefore targets the data node under
+  // `material.<lobe>.<field>` / `materialSlots.<slot>.<lobe>.<field>`. Keying this map by
+  // the Object id, as the fused version did, would find nothing and read as "no animated
+  // materials" — green, silent, and wrong.
   // Enumerated from depNodeMap (the narrow subscription — Slice 1 already filters
   // material channels in, so editing one re-renders here and this memo re-derives,
   // H40/H48), and built via the SHARED `channelValuesFromNodes` (one sampler source,
@@ -3190,7 +3235,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       if (node.type !== 'KeyframeChannelNumber' && node.type !== 'KeyframeChannelColor') continue;
       const p = node.params as { target?: unknown; paramPath?: unknown };
       if (typeof p.target !== 'string' || !p.target) continue;
-      if (typeof p.paramPath !== 'string' || !p.paramPath.startsWith('materials.')) continue;
+      if (!isImportedChildMaterialPath(p.paramPath)) continue;
       (nodesByChild.get(p.target) ?? nodesByChild.set(p.target, []).get(p.target)!).push(node);
     }
     for (const [childId, nodes] of nodesByChild) {
@@ -3373,10 +3418,11 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       }
       let dagBase: THREE.Material | THREE.Material[] = src;
       if (childId && !Array.isArray(src)) {
-        const irs = (
-          depNodeMap[childId]?.params as { materials?: InlineMaterialSpec[] } | undefined
-        )?.materials;
-        const ir = irs?.[local];
+        // #389 — the captured table comes off the child's DATA half, flattened by the
+        // one rule (`materialSlots ?? [material]`) so slot indexing here cannot drift
+        // from the read side's `dataSlotsOnly`.
+        const irs = importedChildMaterials<InlineMaterialSpec>(depNodeMap, childId)?.slots;
+        const ir = irs?.[local] ?? undefined;
         if (ir) {
           dagBase = overlayDagMaterial(src, ir);
           // #181 / V53 — apply the captured KHR_texture_transform onto the overlay's
@@ -3652,13 +3698,17 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
     ) {
       return;
     }
-    for (const [childId, channels] of materialChannelsByChild) {
-      const slotMats = childSlotMaterials.current.get(childId);
-      if (!slotMats) continue;
-      const baseMaterials = (
-        depNodeMap[childId]?.params as { materials?: InlineMaterialSpec[] } | undefined
-      )?.materials;
-      if (!baseMaterials) continue;
+    // Keyed by the OBJECT id, because that is what a clone's meshes resolve to
+    // (`nearestChildId` → `nodeNameMap`); the channels and transients are addressed to the
+    // DATA half. One hop reconciles the two, and doing it here rather than re-keying the
+    // channel map keeps `materialChannelsByChild` a faithful index of what was authored.
+    for (const [childId, slotMats] of childSlotMaterials.current) {
+      const dataId = importedChildDataId(depNodeMap, childId);
+      if (!dataId) continue;
+      const channels = materialChannelsByChild.get(dataId);
+      if (!channels) continue;
+      const captured = importedChildMaterials<InlineMaterialSpec>(depNodeMap, childId);
+      if (!captured) continue;
       // Overlay the channels onto the EVALUATED materials (H40 — read evaluated, not
       // a parallel sample) via the ONE overlay primitive (V57); weight 1 → the
       // sampled value wins. `writeAt` indexes the `materials.<slot>.<lobe>.<field>`
@@ -3668,14 +3718,30 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
       // field previews live, the SAME overlayTransients the native DirectChannelsR
       // uses (one band, two callers) so the RENDER matches the inspector read-side
       // (resolveEvaluatedParam) — no H40 "snaps right back" divergence.
-      const animated = overlayTransients(
-        overlayChannels({ materials: baseMaterials }, channels, 1, seconds) ?? {
-          materials: baseMaterials,
-        },
-        childId,
+      // Overlay onto the DATA HALF'S OWN PARAM SHAPE, so `writeAt` indexes the same
+      // paths the channels carry — `material.<lobe>.<field>` writes the scalar leaf, and
+      // `materialSlots.<n>.…` indexes the table. Then flatten by the one rule, so a
+      // single-primitive child (which stores no table) still yields slot 0.
+      const overlaid = overlayTransients(
+        overlayChannels(captured.base, channels, 1, seconds) ?? captured.base,
+        dataId,
         transients,
-      )?.materials;
-      if (!animated) continue;
+      );
+      if (!overlaid) continue;
+      // Through `objectSlotsOf` — the ONE derivation — and NOT through the `dataSlotsOnly`
+      // hatch (#645). The hatch is for a road with no Object in reach; this road has one,
+      // because after #389 an imported child IS an Object, and `childId` is its id. So a
+      // per-slot override the director set on this child wins here for the index it names,
+      // exactly as it does for a box — which is the rule #645 stated for every Object and
+      // this kind could not obey while it was fused.
+      //
+      // The order is the precedence: channel overlay first (it animates the BASE material),
+      // then the transient on top of that, then the Object's override applied per index
+      // last. That is `objectSlotTable.gate`'s own statement of the rule.
+      const animated = objectSlotsOf(
+        depNodeMap[childId]?.params as ObjectSlotSource<InlineMaterialSpec>,
+        overlaid,
+      );
       for (let i = 0; i < slotMats.length; i += 1) {
         const slot = slotMats[i];
         const ir = animated[i];

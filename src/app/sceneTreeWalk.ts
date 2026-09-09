@@ -182,7 +182,11 @@ function projectGltfChildren(
     pushRow(ctx, {
       key: `${assetKey}/gltfchild/${key}`,
       nodeId: childNodeId,
-      nodeType: 'GltfChild',
+      // #389 — an imported child IS an Object now, and saying so here is what makes the
+      // outliner icon it through its `data` edge like every other split pair. Naming the
+      // retired type would still render (the walk only passes the string on) and would
+      // draw the generic dot, because no branch matches it any more.
+      nodeType: 'Object',
       depth,
       display: key,
       // NO `parent` — glTF children are non-reorderable (no scene edge). The

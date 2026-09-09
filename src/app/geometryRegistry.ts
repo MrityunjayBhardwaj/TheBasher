@@ -239,13 +239,22 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
 // object itself). Naming the door moves the answer to the import line, where
 // `registryDoors.gate.test.ts` can read it and hold the consumer set closed.
 //
-// ⚠️ DECLARED LIMIT — these are the same function today, and that is honest rather than
-// accidental. Geometry has no refcount (unlike `materialRegistry`), so `getForAttach`
-// takes no bookkeeping to do; and `getForRead` CANNOT enforce its no-write rule, because
-// a `BufferGeometry` is mutable and every reader must hand the real object to three.js.
-// This is a naming tier, not a type tier: it makes intent reviewable and a new consumer's
-// door declared, and it stops there. #535 is the behavioural backstop that asks whether
-// anything actually leaked.
+// 🔴 THE DOORS ARE NO LONGER THE SAME FUNCTION, AND THAT PARAGRAPH IS KEPT BELOW RATHER
+// THAN DELETED BECAUSE ITS PREDICTION CAME TRUE (#981). It read: *these are the same
+// function today, and that is a declared limit rather than an accident … the day someone
+// gives one door different behaviour it is a decision with a red test attached rather
+// than a silent divergence between two names that used to agree.* The decision arrived,
+// and the divergence is `drawnByAssetClone`: an ATTACH is a request to put buffers in the
+// scene graph, and buffers something else is already drawing must not be put there twice.
+// A READ has no such limit — Apply-Transform reads a glTF child's buffers out of the
+// mounted clone on purpose (`dispatchApplyTransform.ts`), which is why the narrowing
+// belongs on one door and not in `get`.
+//
+// What is still true of the old paragraph: geometry has no refcount (unlike
+// `materialRegistry`), so `getForAttach` still has no bookkeeping to do; and `getForRead`
+// still CANNOT enforce its no-write rule, because a `BufferGeometry` is mutable and every
+// reader must hand the real object to three.js. #535 is the behavioural backstop that asks
+// whether anything actually leaked.
 //
 // ⚠️ The two doors now pass DIFFERENT `via` tags to `get`, and that is still not a type
 // tier — it is the same resolution with a label attached (#586). Reading the tag as
@@ -260,10 +269,31 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
  * must be passed as a PROP and never adopted by `<primitive>` (#530/#533). If geometry
  * ever grows a refcount, it belongs on this door and not on {@link getForRead}.
  *
- * Null cases are `get`'s: a `gltf` ref, or a `baked` MISS the caller resolves by
- * suspending and priming.
+ * ── "IS THIS MINE TO DRAW" IS ANSWERED HERE, NOT AT THE DRAW SITE (#981) ──────────────
+ *
+ * {@link drawnByAssetClone} refs resolve to null. Their buffers live inside a mounted
+ * asset clone that `GltfAssetR` is already drawing, so attaching them puts the SAME
+ * `BufferGeometry` instance in the scene graph twice — and on a skinned child the second
+ * draw is the undeformed bind pose.
+ *
+ * 🔴 IT IS THE DOOR AND NOT A GUARD AT EACH CALL SITE, and that is the whole repair. The
+ * test used to live at ONE of the three draw sites (`ObjectMeshR`), so the multi-slot fork
+ * added later reached straight past it and a two-primitive imported child drew twice. A
+ * rule enforced at a call site is a rule every future call site may decline; the same
+ * omission is unconstructible here, because there is no unguarded spelling left to reach
+ * for. Censusing the callers of the classifier could never have caught it either — the
+ * defective site called neither the classifier nor any named exemption, so it contributed
+ * nothing to the count (#978).
+ *
+ * ⚠️ THE NARROWING IS THIS DOOR'S ALONE. `getForRead` still resolves a clone-backed ref,
+ * and must: Apply-Transform bakes a glTF child by reading exactly those buffers. Moving
+ * this test down into `get` would break that road, which is why it sits here.
+ *
+ * Null cases are therefore: a clone-drawn ref (above), or a `baked` MISS the caller
+ * resolves by suspending and priming.
  */
 export function getForAttach(ref: GeometryRef): BufferGeometry | null {
+  if (drawnByAssetClone(ref.descriptor)) return null;
   return get(ref, 'attach');
 }
 
@@ -447,6 +477,41 @@ function composedOverSource(source: GeometryAvailability): GeometryAvailability 
       return unreachable;
     }
   }
+}
+
+/**
+ * Is this geometry ALREADY BEING DRAWN by something other than an Object? (#389)
+ *
+ * ── WHY THE RENDERER NEEDS TO ASK, AND WHY IT ASKS *HERE* ────────────────────────────
+ *
+ * `getForAttach` used to answer null for a `gltf` ref, so "can I draw this?" and "is this
+ * mine to draw?" were the same question by accident. #367 separated them: the registry now
+ * resolves a glTF child's buffers, and those buffers belong to the clone `GltfAssetR` is
+ * already drawing. An Object over an unmodified glTF child would therefore draw a SECOND
+ * mesh from one geometry — measured before this existed, on both a plain and a skinned
+ * asset: mesh count 8 → 9 with the distinct-geometry count unchanged, and on the skinned
+ * one the second draw was an ordinary `Mesh` wearing a `SkinnedMesh`'s geometry, i.e. the
+ * undeformed bind pose.
+ *
+ * ── WHY IT IS THE AVAILABILITY CLASS AND NOT A KIND TEST ─────────────────────────────
+ *
+ * A `descriptor.kind === 'gltf'` test would select the same set TODAY and be a naming tier
+ * — the mistake this module has already catalogued twice. The real property is the one
+ * {@link availabilityOf} names: `'clone'` means "these buffers live in a loaded asset clone,
+ * never in the registry", which is exactly the set something else is drawing.
+ *
+ * And it is the class that makes the composed case fall out correctly rather than needing
+ * its own rule. A recipe OVER a glTF source is `'mounting'`, not `'clone'` — the registry
+ * builds those buffers itself, nothing else is drawing them, and the Object must draw them.
+ * Measured: an Array over an imported cube draws 72 positions (3 × 24) in its own material,
+ * alongside the clone's original, with no shared-geometry double draw. One rule, both cases.
+ *
+ * Defined in terms of {@link availabilityOf} rather than beside it, for the reason
+ * `getForRead` is defined in terms of `readGeometry`: one implementation, one rule. A second
+ * predicate agreeing with this one today would diverge the first time a kind was added.
+ */
+export function drawnByAssetClone(descriptor: GeometryDescriptor): boolean {
+  return availabilityOf(descriptor) === 'clone';
 }
 
 /**
@@ -675,13 +740,25 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // 165 k-point walk. Builds are memoised on `ref.key` at the door above and the weld on the
   // geometry, so either way it is once per geometry, not once per read.
   //
-  // 🔴 AND NOTHING CONSTRUCTS ITS FAILURE TODAY, which is said here rather than left implied.
-  // The registry builds the geometry FROM the descriptor, so the two agree by construction;
-  // this fires only when the arithmetic and three.js's tessellation drift apart — a version
-  // bump, or an edit to one of the two spellings. A guard whose subject never arrives reads
-  // as "no objection" forever, so `pointIdentity.gate.test.ts` exercises the refusal directly
-  // by pairing a box descriptor with a sphere's geometry. Same treatment `zeroIndexRefusal`
-  // above already gets, for the same reason.
+  // 🔴 A SCENE CAN CONSTRUCT ITS FAILURE, AND THE SENTENCE THAT USED TO SIT HERE SAID IT
+  // COULD NOT. It read: *"AND NOTHING CONSTRUCTS ITS FAILURE TODAY... this fires only when
+  // the arithmetic and three.js's tessellation drift apart — a version bump, or an edit to
+  // one of the two spellings."* That was measured false (#745). The registry does build the
+  // geometry FROM the descriptor, but the two spellings answer in different UNITS: the
+  // arithmetic is topological and scale-free, while the weld quantises positions to 1e-4
+  // (`pointIdentity.ts`). Below a scale, distinct corners round into one key and the weld
+  // under-counts a perfectly correct build:
+  //
+  //     box    size 1.0e-4  welds 1 of 8      | size >= 1.1e-4  exact
+  //     sphere r = 1.0e-3   welds 434 of 482  | r >= 3.0e-3     exact (32x16)
+  //                r = 2.0e-3   welds 466 of 482
+  //
+  // So this warns on small geometry, which is authored, not drifted. The LARGE end is clean
+  // far past where it was assumed not to be — exact at r = 1e9 even at 256x128, because
+  // coarse float32 spacing snaps coincident positions onto the SAME value rather than apart;
+  // the first over-count is r = 1e12, where `coord * 1e4` leaves float64's exact-integer
+  // range. `pointIdentity.gate.test.ts` also exercises the refusal directly by pairing a box
+  // descriptor with a sphere's geometry, so the guard is covered from both directions.
   const pointDisagreement = pointCountMismatch(ref.descriptor, built, () =>
     sourceWeldFor(ref.descriptor),
   );

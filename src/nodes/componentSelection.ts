@@ -295,14 +295,18 @@ function refuse(why: string): never {
  * four numbers, so calling it here would mean fabricating three counts in order to read the
  * fourth — inventing a topology to satisfy a signature. This asks a different question of a
  * different input: "can ns-2 resolve a selection against this descriptor, at this domain?"
- * The three unshipped domains answer honestly instead of plausibly.
+ * The domains no operator can scope at answer honestly instead of plausibly. That was three
+ * of the four when this was written and is two of the four now (`point`, `corner`);
+ * `SCOPE_ABSENT` in `attributes.ts` carries the reason for each, and
+ * `scopeDomainDeclarers.gate.test.ts` reds if this sentence and that set diverge again.
  *
  * Exported so `attributes.gate.test.ts` can PROBE it. That gate refuses to let any module
  * name the closed domain type without registering an answer for every member, and it caught
  * this module the moment it existed — which is the census working, not an obstacle. The
- * three refusals are registered there as declared exemptions carrying their reason, so
- * "ns-2 resolves at `face` only" is visible where a reader goes looking for it rather than
- * buried in this file's prose.
+ * exemptions it registers are asserted EXACTLY, and that list is now EMPTY — every entry it
+ * ever held left because its stated reason went false, which is the reason for writing
+ * reasons down. Where a selection can actually be RESOLVED is `SCOPE_DOMAINS`, and that is
+ * `face` and `edge`, not `face` alone.
  */
 export function componentCountOf(
   domain: KnownDomain,
@@ -335,9 +339,10 @@ export function componentCountOf(
       //
       // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, which is worth saying because
       // it looks like it should. A scope's domain is chosen by an OPERATOR'S DECLARATION, and
-      // `ScopeDomain` is still `['face']` — so no operator can name `'point'` until that const
-      // is widened, which is #667's work. The type refuses it today rather than allowing it
-      // quietly, so this arm is reachable from a test and from #667, and from nothing else.
+      // `ScopeDomain` is `['face', 'edge']` — so no operator can name `'point'` until that set
+      // admits it. `SCOPE_ABSENT.point` carries why it does not, and names the issue that
+      // would change the answer. The type refuses it today rather than allowing it quietly, so
+      // this arm is reachable from a test and from that widening, and from nothing else.
       return pointCountOf(descriptor);
     case 'edge':
       // #718 gave this arm an answer, and it is the LAST of the four to get one. An edge is a
@@ -345,10 +350,11 @@ export function componentCountOf(
       // an edge set read off the index buffer counts a box's 12 edges as 24, because two faces
       // sharing an edge do not share point indices on a split buffer.
       //
-      // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, for exactly the reason the
-      // `point` arm above records: `ScopeDomain` is still `['face']`, so no operator can name an
-      // edge scope until #667 widens it. This arm is reachable from a test and from #667, and
-      // from nothing else.
+      // 🔑 THIS ARM IS NOW LIVE FROM THE AUTHORING SURFACE, and it is the only one of the three
+      // late arrivals that is. What stood here said an edge scope was unreachable until #667
+      // widened `ScopeDomain` — #667 closed, #827 did the widening, and `BevelModifier`
+      // declares `'edge'` to bevel a SUBSET of its source's edges. So this is an ordinary
+      // shipped road with a director on the other end of it, not a test-only arm.
       return edgeCountOf(descriptor);
     case 'corner': {
       // #776 gave this arm an answer, and it is the fourth and last. A corner is a POLYGON
@@ -357,8 +363,9 @@ export function componentCountOf(
       // ns-1, so this arm now agrees with the table every other domain resolves against.
       //
       // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, for exactly the reason the
-      // `point` and `edge` arms above record: `ScopeDomain` is still `['face']`, so no operator
-      // can name a corner scope until #667 widens it.
+      // `point` arm above records — and NOT for the reason the `edge` arm used to give, which
+      // went false at #827. `ScopeDomain` is `['face', 'edge']`; no operator can name a corner
+      // scope until that set admits it, and `SCOPE_ABSENT.corner` carries why it does not.
       //
       // Lifted from `number | null` the same way the `face` arm above is, and for the same
       // reason — a corner hangs off a face, so `cornerCountOf` answers exactly where

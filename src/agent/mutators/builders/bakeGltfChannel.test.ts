@@ -25,6 +25,7 @@ import { gltfChildDagId, gltfChannelDagId } from '../../../core/import/gltfImpor
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../../../nodes/KeyframeChannelVec3';
 import { TransformClipNode, TransformClipParams } from '../../../nodes/TransformClip';
 import type { TransformClipValue } from '../../../nodes/types';
+import { importedChildOps } from '../../../test-utils/importedChildFixture';
 
 const ASSET_REF = 'asset-bake';
 const CHILD = 'bone_1';
@@ -90,20 +91,14 @@ function buildState(loop?: 'cycle' | 'cycle-offset' | 'hold'): DagState {
     from: { node: 'n_sel_0', socket: 'out' },
     to: { node: 'n_gltf_0', socket: 'transformClip' },
   }).next;
-  // The GltfChild for bone_1 — its dagId IS gltfChildDagId(ASSET_REF, CHILD).
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: gltfChildDagId(ASSET_REF, CHILD),
-    nodeType: 'GltfChild',
-    params: {
-      assetRef: ASSET_REF,
-      childName: CHILD,
-      position: [0, 0, 0],
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      overridden: { position: false, rotation: false, scale: false },
-    },
-  }).next;
+  // The imported child for bone_1 — its OBJECT half's dagId IS
+  // gltfChildDagId(ASSET_REF, CHILD), which is what the mutator roots its closure on.
+  for (const op of importedChildOps(gltfChildDagId(ASSET_REF, CHILD), {
+    assetRef: ASSET_REF,
+    childName: CHILD,
+  })) {
+    s = applyOp(s, op as Op).next;
+  }
   return s;
 }
 
@@ -370,19 +365,12 @@ describe('mutator.timeline.bakeGltfChannel (D1)', () => {
 
   it('rejects when no clip track exists for the bone (nothing to bake)', () => {
     let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(ASSET_REF, CHILD),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET_REF,
-        childName: CHILD,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    for (const op of importedChildOps(gltfChildDagId(ASSET_REF, CHILD), {
+      assetRef: ASSET_REF,
+      childName: CHILD,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
     const r = validatePlan(
       bakeGltfChannelMutator,
       { assetRef: ASSET_REF, childName: CHILD },

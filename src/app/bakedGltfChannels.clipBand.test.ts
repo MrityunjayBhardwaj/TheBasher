@@ -20,6 +20,7 @@ import { gltfChannelDagId, gltfChildDagId } from '../core/import/gltfImportChain
 import { bakedChannelSamplersForAsset } from './bakedGltfChannels';
 import { buildClipBoneSamplers } from '../nodes/AnimationClip';
 import { gltfAssetDepNodes } from './gltfAssetDeps';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 
 registerAllNodes();
 
@@ -137,19 +138,14 @@ function buildScene(opts: SceneOpts = {}): DagState {
   }
 
   for (const b of BONES) {
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: gltfChildDagId(ASSET, b),
-      nodeType: 'GltfChild',
-      params: {
-        assetRef: ASSET,
-        childName: b,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        overridden: { position: false, rotation: false, scale: false },
-      },
-    }).next;
+    // No `overridden` — the pair fixture is SPARSE, exactly like the live Object schema:
+    // a child nobody has posed carries no key, and all-false is what a reader derives.
+    for (const op of importedChildOps(gltfChildDagId(ASSET, b), {
+      assetRef: ASSET,
+      childName: b,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
   }
   return s;
 }

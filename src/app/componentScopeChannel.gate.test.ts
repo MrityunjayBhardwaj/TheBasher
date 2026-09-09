@@ -68,7 +68,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { __resetRegistryForTests, listNodeTypes, registerNodeType } from '../core/dag/registry';
-import { getNodeType } from '../core/dag/registry';
+import { getNodeType, paramFieldsOf } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { importsOf } from '../../tools/gates/moduleShape';
@@ -187,6 +187,33 @@ beforeEach(() => {
   registerAllNodes();
   handed = { called: false, scope: undefined };
 });
+
+/**
+ * The registered types whose param schema DECLARES the scope param.
+ *
+ * 🔴 IT REFUSES AN UNREADABLE SCHEMA RATHER THAN SKIPPING IT (#683). `paramFieldsOf` answers
+ * `null` for a schema that is not an object schema — an object-wide `.refine()` is the
+ * natural way to write a cross-field constraint, and it has no `.shape` at all. A filter that
+ * silently drops those would shrink this census WITHOUT SAYING SO: the literal list below
+ * would still match, having examined fewer types than it thinks. That is the exact vacuity
+ * the accessor exists to make impossible, so the check belongs here rather than in a reader's
+ * memory.
+ *
+ * One helper rather than three inline copies, for the reason this census exists at all: three
+ * spellings of one rule are three places for it to drift.
+ */
+function typesDeclaringScopeParam(): string[] {
+  const unreadable = listNodeTypes().filter((type) => paramFieldsOf(getNodeType(type)) === null);
+  expect(
+    unreadable,
+    'a registered paramSchema is not an object schema, so this census cannot see its fields — ' +
+      'it would report a clean answer over a smaller set',
+  ).toEqual([]);
+  return listNodeTypes().filter((type) => {
+    const shape = paramFieldsOf(getNodeType(type));
+    return shape !== null && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
+  });
+}
 
 describe('ns-2 step 9b — the evaluator hands a scoped operator its selection', () => {
   it('a `source` operator receives a resolved selection with the mesh’s own face count', () => {
@@ -676,12 +703,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // The literal is kept EXACT rather than loosened to a count. No next entrant is named,
     // because none is planned; the row is a standing census rather than a fuse waiting on a
     // known step.
-    const declaring = listNodeTypes().filter((type) => {
-      const shape = (
-        getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
-      ).shape;
-      return shape !== undefined && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
-    });
+    const declaring = typesDeclaringScopeParam();
     expect({ examined: listNodeTypes().length, declaring }).toEqual({
       examined: listNodeTypes().length,
       // The order is `listNodeTypes()`'s — registration order, not alphabetical.
@@ -710,12 +732,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // Asked BEHAVIOURALLY, of the schema itself, never of the source text — a grep for the
     // validator's name would pass on `.refine(() => true)` and on a refinement applied to
     // the wrong field.
-    const declaring = listNodeTypes().filter((type) => {
-      const shape = (
-        getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
-      ).shape;
-      return shape !== undefined && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
-    });
+    const declaring = typesDeclaringScopeParam();
     expect(declaring.length).toBeGreaterThan(0);
 
     const accepting: string[] = [];
@@ -742,12 +759,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     // Asked BEHAVIOURALLY, like the row above — of the parsed value and of the raised issue,
     // never of the source text. A grep for `scopeParam(` would pass on a declarer that
     // called it and then overrode the default.
-    const declaring = listNodeTypes().filter((type) => {
-      const shape = (
-        getNodeType(type)!.paramSchema as unknown as { shape?: Record<string, unknown> }
-      ).shape;
-      return shape !== undefined && Object.prototype.hasOwnProperty.call(shape, SCOPE_PARAM);
-    });
+    const declaring = typesDeclaringScopeParam();
     expect(declaring.length).toBeGreaterThan(0);
 
     const defaults: Record<string, unknown> = {};

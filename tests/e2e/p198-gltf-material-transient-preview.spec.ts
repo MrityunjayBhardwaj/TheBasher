@@ -7,7 +7,7 @@
 // value (the H40 displayed≠rendered divergence #149 fixed for native materials).
 //
 // THE PROOF (the #149 method, glTF edition): import cube-draco → inject a
-// `materials.0.base.metalness` channel (0→1) → pause mid-curve (t=0.5 ⇒ channel
+// `material.base.metalness` channel (0→1) → pause mid-curve (t=0.5 ⇒ channel
 // 0.5) → set a TRANSIENT of 0.9 on that field → the RENDERED clone metalness
 // (read back through __basher_gltf_meshes, side A) reads 0.9 (transient > channel),
 // not 0.5. Clearing the transient snaps the render back to the channel's 0.5.
@@ -15,6 +15,7 @@
 // at 0.5 → this test fails (the falsifiable regression gate).
 
 import { test, expect } from './_fixtures';
+import { importedChild } from './_importedChild';
 
 interface BasherWindow {
   __basher_dag: {
@@ -46,15 +47,12 @@ async function ingestCube(page: import('@playwright/test').Page): Promise<void> 
   });
 }
 
-function cubeChildId(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return (
-      Object.values(w.__basher_dag.getState().state.nodes).find(
-        (n) => n.type === 'GltfChild' && n.params.childName === 'cube',
-      )?.id ?? null
-    );
-  });
+// #389 — the DATA half's id. A material channel, a diamond and a transient all address
+// the node that OWNS the param, and after the split that is `GltfData`. Aiming any of
+// them at the Object would resolve to a node that exists and a param that does not:
+// visible in the dopesheet, driving nothing, with nothing failing anywhere.
+async function cubeChildId(page: import('@playwright/test').Page) {
+  return (await importedChild(page, 'cube'))?.dataId ?? null;
 }
 
 const cubeMetalness = (page: import('@playwright/test').Page) =>
@@ -89,7 +87,7 @@ test('#198 — an Auto-Key-OFF transient on an animated glTF material field prev
   const childId = (await cubeChildId(page))!;
 
   // A free-floating metalness channel (the transient is only held for ANIMATED
-  // fields, so a channel must exist first) — target the GltfChild directly (V57).
+  // fields, so a channel must exist first) — target the GltfData node directly (V57).
   await page.evaluate((id) => {
     (window as unknown as BasherWindow).__basher_dag.getState().dispatch(
       {
@@ -99,7 +97,7 @@ test('#198 — an Auto-Key-OFF transient on an animated glTF material field prev
         params: {
           name: 'metalness',
           target: id,
-          paramPath: 'materials.0.base.metalness',
+          paramPath: 'material.base.metalness',
           keyframes: [
             { time: 0, value: 0, easing: 'linear' },
             { time: 1, value: 1, easing: 'linear' },
@@ -121,7 +119,7 @@ test('#198 — an Auto-Key-OFF transient on an animated glTF material field prev
     ({ id }) => {
       (window as unknown as BasherWindow).__basher_transient
         .getState()
-        .set(id, 'materials.0.base.metalness', 0.9);
+        .set(id, 'material.base.metalness', 0.9);
     },
     { id: childId },
   );
