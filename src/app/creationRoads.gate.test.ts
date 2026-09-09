@@ -179,11 +179,31 @@ function literalRoads(types: readonly string[]): Road[] {
  * section forever without anyone ever offering it.
  */
 function mountedOperatorSections(): OperatorSection[] {
-  const re = /addableOperators\(\s*['"`]([a-z]+)['"`]/g;
+  const literal = /addableOperators\(\s*['"`]([a-z]+)['"`]/g;
+  const anyCall = /addableOperators\(/g;
   const out = new Set<string>();
+  let literalCalls = 0;
+  let allCalls = 0;
   for (const rel of trackedSourceFiles().filter(isProduction)) {
     const src = stripComments(readFileSync(join(REPO_ROOT, rel), 'utf8'));
-    for (const m of src.matchAll(re)) out.add(m[1]);
+    if (rel.endsWith('operatorMenu.ts')) continue; // its own declaration, not a mount
+    for (const m of src.matchAll(literal)) {
+      out.add(m[1]);
+      literalCalls++;
+    }
+    allCalls += [...src.matchAll(anyCall)].length;
+  }
+  // The blind spot this whole gate exists to catch, turned on the gate itself: a mount
+  // whose section arrives as a VARIABLE is invisible to the regex above, and its members
+  // would be reported roadless forever. Counting both forms makes that unrepresentable
+  // rather than merely unlikely.
+  if (allCalls !== literalCalls) {
+    throw new Error(
+      `mountedOperatorSections: ${allCalls} call(s) to addableOperators but only ` +
+        `${literalCalls} name their section literally. A section passed as a variable ` +
+        `cannot be derived by this scan — teach it that call site, or this gate will ` +
+        `report that section's operators as having no creation road.`,
+    );
   }
   return [...out].sort() as OperatorSection[];
 }
