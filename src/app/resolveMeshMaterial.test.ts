@@ -31,6 +31,10 @@ import {
 } from '../test-utils/twoMaterialMesh';
 import type { MeshDataValue } from '../nodes/types';
 
+/** Any registry-built handle: these rows are about the table/index pair and the group
+ *  layout, not about where the materials live, so an absent slot here means 'none'. */
+const BOX = boxGeometryRef([1, 1, 1], null);
+
 /** A hydrated slot table, the shape `useSlotMaterials` hands over: dense, in table order. */
 const hydrated = (n: number) =>
   Array.from({ length: n }, () => new THREE.MeshPhysicalMaterial()) as THREE.Material[];
@@ -38,7 +42,7 @@ const hydrated = (n: number) =>
 /** The pair a component builds: the built instance, and the value's own assignment. */
 const drawFor = (data: MeshDataValue, materials: readonly THREE.Material[]) => {
   const geometry = getForRead(data.geometry);
-  const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data));
+  const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data), BOX);
   return {
     geometry,
     draw: resolveMeshMaterial(geometry, assignment, materials),
@@ -111,7 +115,7 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
     // a store miss, a stale key after an overlay rebuild, or either named refusal.
     const geometry = getForRead(boxGeometryRef([1, 1, 1], null))!;
     expect(geometry.groups).toHaveLength(0);
-    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null]);
+    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null], BOX);
     const materials = hydrated(2);
 
     const draw = resolveMeshMaterial(geometry, assignment, materials);
@@ -128,7 +132,7 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
     // something else survived, the array has no constructor over it.
     const stock = new THREE.BoxGeometry(1, 1, 1);
     expect(stock.groups).toHaveLength(6);
-    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null]);
+    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null], BOX);
     const materials = hydrated(2);
 
     expect(Array.isArray(resolveMeshMaterial(stock, assignment, materials)!.material)).toBe(false);
@@ -138,7 +142,7 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
   it('a NON-INDEXED geometry is refused by name — groups there address another buffer', () => {
     const nonIndexed = new THREE.BoxGeometry(1, 1, 1).toNonIndexed();
     expect(nonIndexed.index).toBeNull();
-    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null]);
+    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null], BOX);
     const materials = hydrated(2);
 
     expect(Array.isArray(resolveMeshMaterial(nonIndexed, assignment, materials)!.material)).toBe(
@@ -154,7 +158,7 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
     const uniform = getForRead(
       boxGeometryRef([1, 1, 1], mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate')),
     )!;
-    const oneSlot = materialAssignmentOf(null, [null]);
+    const oneSlot = materialAssignmentOf(null, [null], BOX);
     expect(Array.isArray(resolveMeshMaterial(uniform, oneSlot, materials)!.material)).toBe(false);
     expect(meshMaterialRefusal(uniform, oneSlot, materials)).toBeNull();
 
@@ -162,6 +166,7 @@ describe('#638 resolveMeshMaterial — the four states with no constructor', () 
     const fourSlotsOneUsed = materialAssignmentOf(
       mintMeshAttributes(boxDescriptor([1, 1, 1]), 'evaluate'),
       [null, null, null, null],
+      BOX,
     );
     expect(Array.isArray(resolveMeshMaterial(uniform, fourSlotsOneUsed, materials)!.material)).toBe(
       false,
@@ -183,7 +188,7 @@ describe('#651 the single material is the one the faces USE', () => {
     indices.fill(1);
     const data = boxFromFaceIndices(indices);
     const slots = objectSlotsOf(null, data);
-    const assignment = materialAssignmentOf(data.attributeKey, slots);
+    const assignment = materialAssignmentOf(data.attributeKey, slots, BOX);
     const geometry = getForRead(data.geometry)!;
     const materials = hydrated(2);
 
@@ -203,7 +208,7 @@ describe('#651 the single material is the one the faces USE', () => {
     const indices = new Int32Array(6);
     indices.fill(3);
     const data = boxFromFaceIndices(indices, [null, null, null, null]);
-    const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data));
+    const assignment = materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data), BOX);
     const geometry = getForRead(data.geometry)!;
     const materials = hydrated(2);
 
@@ -216,7 +221,7 @@ describe('#638 resolveMeshMaterial — the contract at its edges', () => {
     // `getForAttach` returns null on an ordinary cache miss, and both callers branch on it
     // AFTER their hooks — so the natural placement calls this with a null geometry. The
     // answer is in the contract rather than in placement discipline.
-    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null]);
+    const assignment = materialAssignmentOf(twoMaterialMeshData().attributeKey, [null, null], BOX);
     expect(resolveMeshMaterial(null, assignment, hydrated(2))).toBeNull();
     expect(meshMaterialRefusal(null, assignment, hydrated(2))).toBeNull();
   });
@@ -229,7 +234,7 @@ describe('#638 resolveMeshMaterial — the contract at its edges', () => {
     const geometry = getForRead(data.geometry)!;
     const draw = resolveMeshMaterial(
       geometry,
-      materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data)),
+      materialAssignmentOf(data.attributeKey, objectSlotsOf(null, data), BOX),
       hydrated(8),
     );
     expect(draw!.geometry).toBe(geometry);
@@ -240,7 +245,7 @@ describe('#638 resolveMeshMaterial — the contract at its edges', () => {
     // test files. Both standing gates are blind to the same wrong call site, so the refusal
     // has to be a runtime one — an undefined material draws in three.js's default white,
     // which is plausible and silent.
-    const assignment = materialAssignmentOf(null, [null]);
+    const assignment = materialAssignmentOf(null, [null], BOX);
     expect(() => resolveMeshMaterial(new THREE.BoxGeometry(1, 1, 1), assignment, [])).toThrow(
       /material table is empty/,
     );

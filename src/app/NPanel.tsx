@@ -3187,6 +3187,11 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
       {table.rows.map((row) => {
         const authored = params.slotOverrides?.[String(row.index)];
         const color = typeof authored?.base?.color === 'string' ? authored.base.color : row.color;
+        // #605 item 2 — the slot's material lives inside the mounted asset clone and we hold
+        // no capture of it, so `row.color` is a PLACEHOLDER here and drawing it as the swatch
+        // would state a colour nothing measured. Once the slot is overridden the authored
+        // value is a real answer again, which is why the override half is in the test.
+        const uncaptured = row.answer === 'elsewhere' && !row.overridden;
         return (
           <div key={row.index} className="flex flex-col">
             <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
@@ -3194,11 +3199,23 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
                 <span
                   aria-hidden="true"
                   data-testid={`inspector-slot-swatch-${nodeId}-${row.index}`}
-                  style={{ backgroundColor: row.color }}
-                  className="h-3 w-3 shrink-0 rounded-sm border border-border"
+                  data-answer={uncaptured ? 'elsewhere' : 'ok'}
+                  style={uncaptured ? undefined : { backgroundColor: row.color }}
+                  className={`h-3 w-3 shrink-0 rounded-sm border ${
+                    uncaptured ? 'border-dashed border-fg/40' : 'border-border'
+                  }`}
                 />
                 <span>{row.index}</span>
                 {row.name ? <span className="text-fg/40">{row.name}</span> : null}
+                {uncaptured ? (
+                  <span
+                    data-testid={`inspector-slot-uncaptured-${nodeId}-${row.index}`}
+                    title="Not captured at import — the asset draws this slot."
+                    className="text-fg/40"
+                  >
+                    from asset
+                  </span>
+                ) : null}
               </span>
               <span className="flex items-center gap-1.5">
                 {/* The link state IN WORDS. "Object"/"Data" is the reference's own
@@ -3220,6 +3237,14 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
                       : `inspector-slot-override-${nodeId}-${row.index}`
                   }
                   onClick={() => (row.overridden ? handBack(row.index) : takeOver(row.index))}
+                  // Taking over a slot normally changes no pixel — it seeds from what the
+                  // slot already resolves to. That promise cannot be kept for a slot whose
+                  // material we never captured, so the offer says so instead of implying it.
+                  title={
+                    uncaptured
+                      ? 'This slot has no captured material — overriding it will change how it draws.'
+                      : undefined
+                  }
                   className="rounded border border-border px-2 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 >
                   {row.overridden ? 'Revert' : 'Override'}
