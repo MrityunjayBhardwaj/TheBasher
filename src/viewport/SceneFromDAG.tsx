@@ -2842,6 +2842,12 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
     m.emissive = new THREE.Color(scalar.emissive);
     m.emissiveIntensity = scalar.emissiveIntensity;
     m.wireframe = shading === 'wireframe';
+    // #997 — this road binds every slot to UV set 0, and that is currently the RIGHT
+    // answer rather than an oversight: a baked mesh has no second set to bind to. The
+    // bake persists exactly one `uv` and restores exactly one (`bakedGeometryStore.ts:67`
+    // and `:185`), so honouring a captured set here would point a sampler at an
+    // attribute that does not exist. The discharge is upstream — carry the second set
+    // through the bake first; only then does binding it here mean anything.
     m.map = sRGB(mapTex);
     m.normalMap = linear(normalTex);
     m.roughnessMap = linear(roughnessTex);

@@ -24,6 +24,7 @@ import { persistTexture } from '../asset/bakedTextureStore';
 import { NULL_MAPS } from '../../nodes/materialSchema';
 import type { BakedTextureRef, InlineMaterialMaps, UvPlacement } from '../../nodes/types';
 import { applyEditedMaps } from './gltfMapOverlay';
+import { materialKeyOf } from '../../nodes/materialKey';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -162,5 +163,21 @@ describe('#997 — the importer captures the set off a real asset', () => {
     );
 
     expect(loaded.channel).toBe(1);
+  });
+});
+
+describe('#997 — the set participates in material identity', () => {
+  it('two specs differing ONLY in the UV set key differently', () => {
+    // `materialKeyOf` walks generically, so this holds without anyone maintaining a
+    // field list — asserted anyway, because the failure it prevents is invisible: two
+    // materials that differ only here would share one cached material and one of them
+    // would silently draw the other's UV set.
+    const base = { color: '#fff', maps: {} };
+    expect(materialKeyOf({ ...base, mapUvSets: { albedo: 1 } })).not.toBe(
+      materialKeyOf({ ...base, mapUvSets: { albedo: 2 } }),
+    );
+    // …and an ABSENT bag keys as the pre-#997 material did, which is what keeps every
+    // already-imported material's identity stable.
+    expect(materialKeyOf(base)).not.toBe(materialKeyOf({ ...base, mapUvSets: { albedo: 1 } }));
   });
 });
