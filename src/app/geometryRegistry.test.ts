@@ -1,4 +1,4 @@
-import { BoxGeometry } from 'three';
+import { BoxGeometry, Group, Mesh, MeshBasicMaterial } from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
 import {
@@ -9,6 +9,7 @@ import {
   prime,
   size,
 } from './geometryRegistry';
+import { registerGltfClone, unregisterGltfClone } from './asset/gltfCloneRegistry';
 
 afterEach(() => clear());
 
@@ -32,15 +33,70 @@ describe('geometryRegistry', () => {
     expect(size()).toBe(1);
   });
 
-  // #536 S3 — the two doors are the SAME function today, and that is a declared limit
-  // rather than an accident: geometry has no refcount, so `getForAttach` has no extra
-  // bookkeeping to do. This pins it, so the day someone gives one door different
-  // behaviour (a clone, a refcount, a dispose) it is a decision with a red test attached
-  // rather than a silent divergence between two names that used to agree.
-  it('both doors resolve one ref to the SAME shared instance', () => {
+  // #536 S3 — the two doors resolve one BUILDABLE ref to the same shared instance, and
+  // that half is unchanged: geometry has no refcount, so `getForAttach` adds no
+  // bookkeeping to a ref it is entitled to hand over.
+  it('both doors resolve one buildable ref to the SAME shared instance', () => {
     const ref = boxRef('box|1,1,1', [1, 1, 1]);
     expect(getForAttach(ref)).toBe(getForRead(ref));
     expect(size()).toBe(1); // one ref, one entry — neither door cloned
+  });
+
+  // #981 — AND HERE THEY DIVERGE, WHICH IS THE HALF THAT USED NOT TO EXIST.
+  //
+  // The row above used to carry a note predicting this: *the day someone gives one door
+  // different behaviour it is a decision with a red test attached rather than a silent
+  // divergence between two names that used to agree.* The decision arrived and the note
+  // would NOT have redded on its own — that row asserts over a box, and a box is not the
+  // input the divergence is about. So the divergence is asserted directly, on the input
+  // that has it, in BOTH directions: a green row over an unaffected input is how a
+  // description rots while its assertion keeps passing.
+  it('the ATTACH door refuses a clone-drawn ref that the READ door resolves', () => {
+    const clone = new Group();
+    const mesh = new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial());
+    mesh.name = 'Cube';
+    clone.add(mesh);
+    registerGltfClone('asset-a', clone);
+    try {
+      const ref: GeometryRef = {
+        key: 'gltf|asset-a|Cube',
+        descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+      };
+      // The READ door must still resolve it: Apply-Transform bakes a glTF child by reading
+      // exactly these buffers out of the mounted clone. Narrowing `get` instead of this one
+      // door would have broken that road silently.
+      expect(getForRead(ref)).toBe(mesh.geometry);
+      // The ATTACH door must not: `GltfAssetR` is already drawing this very instance, so
+      // handing it over puts one BufferGeometry in the scene graph twice — and on a skinned
+      // child the second draw is the undeformed bind pose.
+      expect(getForAttach(ref)).toBeNull();
+    } finally {
+      unregisterGltfClone('asset-a', clone);
+    }
+  });
+
+  // The case that keeps the rule ONE rule: a recipe over a glTF source is built by the
+  // registry and drawn by nobody else, so the attach door must still hand it over. This is
+  // the boundary a `descriptor.kind === 'gltf'` test would have got wrong.
+  it('the ATTACH door still resolves a RECIPE over a glTF source', () => {
+    const clone = new Group();
+    const mesh = new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial());
+    mesh.name = 'Cube';
+    clone.add(mesh);
+    registerGltfClone('asset-a', clone);
+    try {
+      const source: GeometryRef = {
+        key: 'gltf|asset-a|Cube',
+        descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+      };
+      const recipe: GeometryRef = {
+        key: 'gltf|asset-a|Cube|array|3',
+        descriptor: { kind: 'array', source, count: 3, offset: [1, 0, 0] },
+      };
+      expect(getForAttach(recipe)).not.toBeNull();
+    } finally {
+      unregisterGltfClone('asset-a', clone);
+    }
   });
 
   it('keys distinct params to distinct instances (no false sharing)', () => {
