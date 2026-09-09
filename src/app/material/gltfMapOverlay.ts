@@ -102,6 +102,17 @@ export function hasMapEdits(maps: InlineMaterialMaps | undefined): boolean {
 export interface EditedMapPlacement {
   readonly shared: UvPlacement;
   readonly perMap?: SlotPlacements<MaterialMapSlot>;
+  /**
+   * #997 — which UV set each slot samples (`InlineMaterialSpec.mapUvSets`). Absent, or
+   * absent for a slot, means set 0.
+   *
+   * OPTIONAL, unlike `shared` and like `perMap`, and the difference is not an oversight.
+   * `shared` is required because omitting it drew a replacement UNPLACED while the panel
+   * reported a placement — a visible wrong with no default that could be right. Omitting
+   * this one yields set 0, which is both glTF's default and exactly what this road did
+   * before, so the forgetful caller gets today's behaviour rather than a new defect.
+   */
+  readonly uvSets?: { readonly [K in MaterialMapSlot]?: number };
 }
 
 /**
@@ -164,6 +175,12 @@ export async function applyEditedMaps(
       resolveSlotPlacement(placement.shared, placement.perMap, slot),
       ORIGIN_PIVOT,
     );
+    // #997 — and the UV SET it samples. Written unconditionally rather than only when a
+    // set is named, so a slot whose binding is REMOVED goes back to 0 instead of keeping
+    // whatever the previous write left: this texture is freshly decoded per call (see the
+    // no-clone note above), but the property has a non-zero default in no case and an
+    // explicit 0 states the intent at the boundary the way the colorspace assignments do.
+    texture.channel = placement.uvSets?.[slot] ?? 0;
     (std as unknown as Record<string, unknown>)[prop] = texture;
     changed = true;
   }
