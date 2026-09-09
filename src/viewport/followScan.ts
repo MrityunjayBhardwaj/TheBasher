@@ -22,10 +22,23 @@
 // WHY THE CHECK IS AT THE CLICK AND NOT IN THE APPLIER
 // ─────────────────────────────────────────────────────────────────────────
 // Clearing a lock that resolved a fresh scan and still found no point is the
-// cheaper-looking answer, and it is WRONG here: a lock restored from a previous
-// session (#985) finds no point for as long as its asset is still loading, and
-// "still loading" and "nothing to follow" are the same observation from inside
-// the applier. It would clear exactly the lock a director asked to be remembered.
+// cheaper-looking answer, and it is wrong here. From inside the applier "there
+// is nothing to follow" and "there is nothing to follow YET" are the same
+// observation — `pointFromScan` returns null for both and the callback holds
+// nothing else that separates them — so a lock restored from a previous session
+// (#985) would be cleared for as long as its asset had not arrived.
+//
+// 🔑 AND A CHARACTER IS EXACTLY THE CASE THAT ARRIVES LATE. Measured on a real
+// import: of the node ids in the graph, NOT ONE names an object in the scene —
+// not the `GltfAsset`, not the `GltfSkeleton`, not any of the twenty
+// `GltfChild`s; only the seed cube's own id does. So a character lock resolves
+// through the rig branch alone, which means it resolves only once the armature
+// is in the scene, and until then it looks exactly like a light.
+//
+// (How LONG that window is has not been measured — an import made through a
+// test seam is not persisted, so a reload has no character to wait for. The
+// argument above does not need the duration: it needs the two states to be
+// indistinguishable here, and they are.)
 //
 // At the click there is no such window. The director is looking at the thing
 // they just selected, so the scene is settled, and the answer is available

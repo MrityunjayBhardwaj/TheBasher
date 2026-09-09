@@ -92,11 +92,13 @@ export type ViewLockOutcome =
  *
  * It cannot be answered in the applier, which is where it first looks like it
  * belongs: from inside a frame callback "nothing to follow" and "nothing to
- * follow YET" are the same observation, and a lock restored from a previous
- * session (#985) reads as the second until its asset finishes loading. Clearing
- * on emptiness there would drop exactly the lock a director asked to be
- * remembered. At the click there is no such window — the director is looking at
- * what they just selected.
+ * follow YET" are the same observation — the resolver returns null for both and
+ * the callback holds nothing else that separates them — so a lock restored from
+ * a previous session (#985) would be cleared until its asset arrived. And a
+ * character is the case that arrives late: measured on a real import, not one
+ * node id names an object in the scene, so a character resolves through its rig
+ * alone. At the click there is no such window — the director is looking at what
+ * they just selected. See `followScan.ts` for the full argument.
  *
  * And it is answered at the CLICK rather than in `canToggleViewLock`, which the
  * menu evaluates on every render: this walks the scene, and the enabled state is
