@@ -17,6 +17,7 @@ import { applyOp } from '../core/dag/ops';
 import { registerAllNodes } from '../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../core/import/gltfImportChain';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
+import { resolveAllChildTrs } from './resolveGltfChildTransform';
 
 registerAllNodes();
 
@@ -238,5 +239,35 @@ describe('the authored-pose band (#974)', () => {
 
   it('with no override the band is exactly what it was before (#888 unchanged)', () => {
     expect(bandAt(buildScene({ noOverride: true }), 'Hips', 0)?.position).toEqual([0, 0, 0]);
+  });
+
+  // 🔴 ONE HOP FURTHER THAN THE BAND. Everything above proves the band produces
+  // the right numbers; this proves the LAYERING PRIMITIVE consumes them, which
+  // is the seam the renderer's useFrame and the read-side resolver both call.
+  // Without it the chain from an authored param to a resolved child TRS is
+  // asserted in two halves that nothing joins.
+  it('the layering primitive resolves the authored pose onto the child TRS', () => {
+    const resolveAt = (s: DagState, seconds: number) => {
+      const samplers = bakedChannelSamplersForAsset(s.nodes, NODE_NAME_MAP, ASSET);
+      const bakedByName: Record<string, NonNullable<ReturnType<typeof sampleBakedChannel>>> = {};
+      for (const name of Object.keys(samplers)) {
+        const baked = sampleBakedChannel(samplers[name], seconds);
+        if (baked) bakedByName[name] = baked;
+      }
+      return resolveAllChildTrs({
+        names: Object.keys(NODE_NAME_MAP),
+        childByName: {},
+        tracks: null,
+        bakedByName,
+      });
+    };
+
+    const posed = resolveAt(buildScene(), 0);
+    expect(posed.Hips.position).toEqual([1, 2, 3]);
+
+    // And the same scene WITHOUT the override resolves to the clip instead, so
+    // the row above is attributable to the pose and not to a default.
+    const bare = resolveAt(buildScene({ noOverride: true }), 0);
+    expect(bare.Hips.position).toEqual([0, 0, 0]);
   });
 });
