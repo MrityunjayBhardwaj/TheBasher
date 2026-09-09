@@ -99,7 +99,13 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
   description:
     'Add a geometry MODIFIER (the SOP / geometry-operator stack) on top of a ' +
     "mesh's modifier stack — a non-destructive, re-orderable operation over the " +
-    'mesh geometry. modifierType "ArrayModifier" replicates the mesh `count` ' +
+    // 🔴 THE BACKTICK IS LOAD-BEARING, not decoration. `firstSentence` (catalog.ts)
+    // ends the picker summary at a period followed by an upper-case letter, digit
+    // or quote — a period followed by a BARE lower-case identifier is not a
+    // boundary, and the summary then ran on to the next capital: measured at 803
+    // characters, the single largest entry in the picker payload and most of what
+    // pushed it against its byte ceiling.
+    'mesh geometry. `modifierType` "ArrayModifier" replicates the mesh `count` ' +
     'times along `offset` (local space) and merges; "MirrorModifier" reflects the ' +
     'mesh across the local-origin plane on `axis` (x|y|z) and merges → a symmetric ' +
     'whole; "MaskModifier" keeps the faces its `scope` names and drops the rest (or ' +

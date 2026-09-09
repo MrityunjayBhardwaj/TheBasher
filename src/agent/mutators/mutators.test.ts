@@ -140,6 +140,9 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
+    // 29 = 28 + `animate.poseBone` (#993 — the pose lane's AUTHOR. `PoseOverride` was
+    // registered, evaluated and consumed by the render band while NOTHING could bring one
+    // into existence; registration and reachability look like one property and are two.)
     // 28 = 29 − `bakeClipOntoRig` (#889 slice 3 — binding a motion no longer bakes a
     // channel onto every bone, so the mutator that did it has no source of truth left
     // to be; a channel is minted per-bone at edit time by `ensureChannelForBone`).
@@ -150,9 +153,10 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
-    expect(mutators).toHaveLength(28);
+    expect(mutators).toHaveLength(29);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
+      'mutator.animate.poseBone',
       'mutator.animation.retarget',
       'mutator.deleteNode',
       'mutator.duplicate',
@@ -2236,7 +2240,9 @@ describe('agent.listMutators tool', () => {
     // emitting nothing. A registered mutator that validates, reports success and
     // changes nothing is a capability the model can reach and cannot use, and the
     // agent surface is the one place that lie would never surface as a red.
-    expect(parsed.mutators).toHaveLength(28);
+    // 28 → 29 at #993 — `animate.poseBone`, for the mirror-image reason: a node type
+    // the agent surface could not reach at all.
+    expect(parsed.mutators).toHaveLength(29);
   });
 });
 
@@ -3857,6 +3863,7 @@ import {
   simplifyChannelMutator as _simplifyM,
   removeKeyframesMutator as _removeKfM,
   shotCreateMutator as _shotM,
+  poseBoneMutator as _poseBoneM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -3940,6 +3947,46 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       from: { node: 'src_skel', socket: 'out' },
       to: { node: 'src_clip', socket: 'skeleton' },
     }).next;
+    return s;
+  }
+
+  // #993 — a probe scene for poseBone: a WIRED RetargetClip whose target rig
+  // actually carries bones. A `Skeleton` with `params: {}` is enough for the
+  // retarget mutator (it only names the rig with an edge) and is NOT enough for
+  // this one — poseBone resolves the caller's bone name against the rig's own
+  // spelling, so a rig with no bones can resolve nothing and the probe would
+  // gate-reject rather than exercise the build.
+  function buildSceneForPoseBone(): DagState {
+    let s = buildSceneForRetarget();
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'tgt_skel',
+      paramPath: 'bones',
+      value: [{ name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'pb_map',
+      nodeType: 'BoneNameMap',
+      params: { name: 'bridge', map: {} },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'pb_retarget',
+      nodeType: 'RetargetClip',
+      params: { name: 'retargeted' },
+    }).next;
+    for (const [from, socket] of [
+      ['src_clip', 'sourceClip'],
+      ['pb_map', 'boneMap'],
+      ['tgt_skel', 'skeleton'],
+    ] as const) {
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: from, socket: 'out' },
+        to: { node: 'pb_retarget', socket },
+      }).next;
+    }
     return s;
   }
 
@@ -4144,6 +4191,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         endTime: 4,
         shotId: 'shot_opening',
       },
+    },
+    'mutator.animate.poseBone': {
+      mutator: _poseBoneM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseBone,
+      // The LIVE three.js spelling on purpose — the rig calls this bone
+      // `mixamorig_Hips`, and resolving the two is the mutator's job.
+      spec: { retarget: 'pb_retarget', bone: 'mixamorigHips', rotation: [0, 0, 45] },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

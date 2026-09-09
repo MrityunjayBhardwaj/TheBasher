@@ -53,6 +53,7 @@ import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
 import { setComponentScopeMutator } from './builders/setComponentScope';
+import { poseBoneMutator } from './builders/poseBone';
 
 export {
   rotateMutator,
@@ -83,6 +84,7 @@ export {
   setTrackStateMutator,
   setObjectSlotMaterialMutator,
   setComponentScopeMutator,
+  poseBoneMutator,
 };
 
 export function registerAllMutators(): void {
@@ -156,4 +158,9 @@ export function registerAllMutators(): void {
   // registry (does the target declare a `scope` param?), so requiredNodeTypes is empty
   // and a seventh scoped operator needs no edit here.
   registerMutator(setComponentScopeMutator);
+
+  // #993 — the pose lane's AUTHOR. `PoseOverride` was registered, evaluated and
+  // consumed by the render band while nothing in the codebase could bring one into
+  // existence; a lane is not shipped until something can author it.
+  registerMutator(poseBoneMutator);
 }
