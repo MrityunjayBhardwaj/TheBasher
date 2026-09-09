@@ -229,6 +229,35 @@ export function retargetPairs(nodes: Readonly<Record<string, GraphNodeLike>>): R
 }
 
 /**
+ * Does `startId`'s `pose` chain terminate on one of `bound`? `PoseOverride`s
+ * stack, so this follows the whole chain rather than checking one hop. Bounded
+ * by the evaluator's own depth limit so a malformed graph cannot spin.
+ *
+ * 🔴 IT LIVES HERE, WITH THE OTHER WALKS, BECAUSE IT HAS TWO CONSUMERS AND THEY
+ * MUST NOT DISAGREE (#995). The render band asks it "does this override belong to
+ * my rig?", and `gltfAssetDepNodes` asks it "must this override be in the asset's
+ * subscription scope?" — the SAME question, from the two ends of the same
+ * boundary. Answered in two places, the enumerator would find an override the
+ * subscription never delivers: the read side shows a posed bone, the viewport
+ * shows none, and nothing errors. That is the split this file's header is about,
+ * and #995 is the third time this pair has come apart at this exact seam.
+ */
+export function overrideReachesRig(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  startId: string,
+  bound: ReadonlySet<string>,
+): boolean {
+  let cur: string | null = startId;
+  for (let hops = 0; hops < 32 && cur !== null; hops++) {
+    const next: string | null = edgeTarget(nodes[cur], 'pose');
+    if (next === null) return false;
+    if (bound.has(next)) return true;
+    cur = next;
+  }
+  return false;
+}
+
+/**
  * The bone index a childName occupies in a bound clip, or null when that clip's
  * rig does not carry the bone.
  *

@@ -36,7 +36,11 @@ import type { BakedChannel } from './resolveGltfChildTransform';
 // edited — otherwise the bone visibly jumps on its first keyframe. Two
 // conversion sites are two chances to drift, which is why they name each other.
 import { radVec3ToDeg } from '../viewport/rotation';
-import { boundClipsForAsset, edgeTarget, type GraphNodeLike } from './animate/boundClipsForAsset';
+import {
+  boundClipsForAsset,
+  overrideReachesRig,
+  type GraphNodeLike,
+} from './animate/boundClipsForAsset';
 import { clipLoopOf } from '../nodes/clipLoop';
 
 type ChannelSampler = (seconds: number) => Vec3;
@@ -296,26 +300,6 @@ function poseBandForAsset(
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
-}
-
-/**
- * Does `startId`'s `pose` chain terminate on a clip bound to this rig? Overrides
- * stack, so this follows the chain rather than checking one hop. Bounded by the
- * evaluator's own depth limit so a malformed graph cannot spin.
- */
-function overrideReachesRig(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  startId: string,
-  bound: ReadonlySet<string>,
-): boolean {
-  let cur: string | null = startId;
-  for (let hops = 0; hops < 32 && cur !== null; hops++) {
-    const next: string | null = edgeTarget(nodes[cur], 'pose');
-    if (next === null) return false;
-    if (bound.has(next)) return true;
-    cur = next;
-  }
-  return false;
 }
 
 /**

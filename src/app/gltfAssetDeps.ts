@@ -17,7 +17,8 @@
 //     (#888) the `GltfAsset` → `GltfSkeleton` → `AnimationClip` chain that
 //     enumerator now walks to reach a retargeted clip, AND (#901) a
 //     `RetargetClip` on that rig TOGETHER WITH ITS OPERANDS — the source clip,
-//     that clip's own `Skeleton`, and the `BoneNameMap`
+//     that clip's own `Skeleton`, and the `BoneNameMap`, AND (#995) the
+//     `PoseOverride` chain hanging off any of those clips
 //
 // 🔴 THE #888 ADDITION IS NOT OPTIONAL POLISH — IT IS THE H40 PAIR. The
 // enumerator is shared by the renderer (which passes THIS collector's output)
@@ -36,6 +37,20 @@
 // clip — the graph was perfect and the skin was frozen. So the walk goes one
 // hop further here: an operand whose ref cannot flip is an edit the viewport
 // will never see.
+// 🔴 AND #995 IS THE THIRD TIME, WITH THE WARNING ABOVE ALREADY WRITTEN DOWN.
+// #974 gave the enumerator a third band — authored `PoseOverride`s — and did not
+// widen this collector. Everything downstream was correct: the node minted, the
+// bone name resolved to the rig's own spelling, the band produced the pose when
+// handed the whole node table, and every unit row was green. On the render path
+// the override was simply not in the table, so the band was empty AND the memo's
+// dependency array never flipped — the layer did not even re-derive. Observed in
+// a browser on `mixamo-xbot.glb` + a Kimodo clip: `dispatch {"ok":true}`, the
+// override present in the DAG, and 0 of 67 bones moved, the armature's world
+// matrices byte-identical before and after.
+// 🔑 THE RULE, NOW EARNED THREE TIMES: a new band in the enumerator is not one
+// change, it is two. The enumerator learns to READ a node type; this collector
+// learns to DELIVER it. Ship either alone and both surfaces still look like they
+// are working.
 //
 // Subscribed with zustand `shallow`, the returned array is referentially equal
 // across an unrelated edit (the DAG uses structural sharing: ops.ts:278-282 keeps
@@ -48,6 +63,7 @@
 
 import type { Node } from '../core/dag/types';
 import { importedChildDataId, importedChildOf, isImportedChildMaterialPath } from './importedChild';
+import { overrideReachesRig } from './animate/boundClipsForAsset';
 
 /**
  * The nodes whose params drive GltfAssetR's per-child TRS/material override
@@ -112,11 +128,16 @@ export function gltfAssetDepNodes(
       // ids are gathered first and resolved after the sweep because an operand
       // can sit anywhere in the table, including before its consumer.
       const operandIds = new Set<string>();
+      // #995 — the clips an authored pose can hang off. Gathered here rather than
+      // re-swept, because this loop already decides exactly which clips belong to
+      // this asset's rigs, and that set IS the pose band's membership root.
+      const clipIds = new Set<string>();
       for (const n of Object.values(nodes)) {
         const boundTo =
           n.type === 'AnimationClip' || n.type === 'RetargetClip' ? edgeTo(n, 'skeleton') : null;
         if (boundTo === null || !skeletonIds.has(boundTo)) continue;
         out.push(n);
+        clipIds.add(n.id);
         if (n.type !== 'RetargetClip') continue;
         const mapId = edgeTo(n, 'boneMap');
         if (mapId) operandIds.add(mapId);
@@ -137,6 +158,18 @@ export function gltfAssetDepNodes(
       for (const id of operandIds) {
         const n = nodes[id];
         if (n && !already.has(n)) out.push(n);
+      }
+      // #995 — every `PoseOverride` whose `pose` chain lands on one of those
+      // clips, asked through the SAME predicate the band asks. A second copy of
+      // the reachability rule here would be a collector that delivers a different
+      // set from the one the enumerator reads, which is the displayed-≠-rendered
+      // split one level up from the one this file already guards.
+      if (clipIds.size > 0) {
+        for (const n of Object.values(nodes)) {
+          if (n.type !== 'PoseOverride') continue;
+          if (!overrideReachesRig(nodes, n.id, clipIds)) continue;
+          if (!already.has(n)) out.push(n);
+        }
       }
     }
   }
