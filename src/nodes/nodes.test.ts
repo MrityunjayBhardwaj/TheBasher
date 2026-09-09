@@ -6,6 +6,7 @@ import {
   topoSort,
   applyOp,
   emptyDagState,
+  requireNodeType,
 } from '../core/dag';
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
@@ -623,15 +624,9 @@ describe('P2 — Skeleton (pure)', () => {
   });
 });
 
-describe('P2 — PosedSkeleton (pure, time-aware)', () => {
+describe('P2 — PosedSkeleton (pure, TIME-FREE — #992)', () => {
   function buildPosed() {
     let state = emptyDagState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'time',
-      nodeType: 'TimeSource',
-      params: {},
-    }).next;
     state = applyOp(state, {
       type: 'addNode',
       nodeId: 'sk',
@@ -649,26 +644,58 @@ describe('P2 — PosedSkeleton (pure, time-aware)', () => {
       from: { node: 'sk', socket: 'out' },
       to: { node: 'posed', socket: 'skeleton' },
     }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'time', socket: 'out' },
-      to: { node: 'posed', socket: 'time' },
-    }).next;
     return state;
   }
 
-  it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
+  // Determinism is asserted on the SAMPLED pose, not on the value: the value now
+  // carries a closure, and two evaluations without a shared cache build two
+  // distinct function objects that are unequal by identity while being equal in
+  // every observable way. Same adaptation the clip family made at P7.10.
+  it.each(TIME_SAMPLES)('twice-eval samples bit-exact at t=%d', (t) => {
     const state = buildPosed();
     const a = evalAt<PosedSkeletonValue>(state, 'posed', t);
     const b = evalAt<PosedSkeletonValue>(state, 'posed', t);
-    expect(a).toEqual(b);
+    expect(a.sample(t)).toEqual(b.sample(t));
+    expect(a.skeleton).toEqual(b.skeleton);
   });
 
-  it('different t produces different pose (time actually flows through the socket)', () => {
+  // 🔴 THE #992 GATE, mirroring #920's. The node used to declare a `time` input
+  // and evaluate to the pose AT that instant, so its cache key flipped every
+  // playback frame — the shape the per-frame-re-render invariant forbids.
+  // Twice-eval at ONE time cannot catch that: it holds for a per-frame value
+  // too. Only comparing the node's own HASH across times does. Re-add the input
+  // and this reddens.
+  it.each(TIME_SAMPLES)('the node HASH at t=%d equals the hash at t=0', (t) => {
     const state = buildPosed();
-    const a = evalAt<PosedSkeletonValue>(state, 'posed', 0);
-    const b = evalAt<PosedSkeletonValue>(state, 'posed', 0.5);
-    expect(a.poses[1].rotation).not.toEqual(b.poses[1].rotation);
+    const at = (seconds: number) =>
+      evaluate(state, 'posed', {
+        ctx: { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      }).hash;
+    expect(at(t)).toBe(at(0));
+  });
+
+  // 🔴 THE STRUCTURAL HALF OF THE #992 GATE. The hash check above can only see a
+  // time edge that is WIRED in this fixture; a re-added but unwired socket would
+  // slip past it, because the evaluator hashes only bound inputs. This one reds
+  // on the DECLARATION, so re-adding the socket fails whether or not anything
+  // connects to it.
+  it('declares no Time input — time enters as a sample argument, never as an edge', () => {
+    expect(Object.keys(requireNodeType('PosedSkeleton').inputs)).toEqual(['skeleton']);
+  });
+
+  // Time did not stop mattering — it moved from an edge to an argument.
+  it('sample IS a function of time — different seconds produce different poses', () => {
+    const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
+    expect(posed.sample(0)[1].rotation).not.toEqual(posed.sample(0.5)[1].rotation);
+  });
+
+  // The array pairs index-for-index with the skeleton, so a consumer can map a
+  // BonePose back to its bone (and thence to its name) without a side table.
+  it('sample returns one pose per bone, index-aligned with the skeleton', () => {
+    const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
+    const poses = posed.sample(1.25);
+    expect(poses).toHaveLength(posed.skeleton.bones.length);
+    expect(poses.map((p) => p.bone)).toEqual(posed.skeleton.bones.map((_, i) => i));
   });
 });
 
@@ -908,7 +935,14 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
     const state = buildLocoChain();
     const a = evalAt<CharacterValue>(state, 'char', t);
     const b = evalAt<CharacterValue>(state, 'char', t);
-    expect(a).toEqual(b);
+    // Pose compared through `sample` (#992): the carried closure is a fresh
+    // object per uncached evaluation, so identity-equality would fail on a value
+    // that is equal in every observable respect.
+    const { pose: poseA, ...restA } = a;
+    const { pose: poseB, ...restB } = b;
+    expect(restA).toEqual(restB);
+    expect(poseA.skeleton).toEqual(poseB.skeleton);
+    expect(poseA.sample(t)).toEqual(poseB.sample(t));
   });
 
   it('character moves along the path as time advances', () => {

@@ -4174,13 +4174,23 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
 // resolved into world transforms via parent indices declared on the
 // skeleton itself.
 function CharacterR({ value }: { value: CharacterValue }) {
+  // #992 — the pose is a FUNCTION OF TIME, so this surface supplies the time
+  // rather than receiving an answer at one instant. Subscribed rather than read
+  // through `getState()` because this road draws declaratively (a <group> tree
+  // per bone) instead of writing transforms imperatively in a useFrame the way
+  // GltfAssetR does. That is not a new per-frame cost: `LocomotionState` carries
+  // a `Time` input, so the CharacterValue upstream of here is already rebuilt
+  // every frame. Making this road lazy is the P2 placeholder rig's own job (real
+  // skinning lands in P3), not this change's.
+  const seconds = useTimeStore((s) => s.seconds);
   const boneTransforms: {
     position: [number, number, number];
     rotation: [number, number, number];
   }[] = [];
   const skel = value.pose.skeleton;
+  const poses = value.pose.sample(seconds);
   for (let i = 0; i < skel.bones.length; i++) {
-    const pose = value.pose.poses[i];
+    const pose = poses[i];
     boneTransforms.push({
       position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
       rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],

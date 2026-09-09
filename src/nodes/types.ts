@@ -1203,10 +1203,47 @@ export interface BonePose {
   readonly rotation: Vec3;
 }
 
+/**
+ * A posed rig, as a FUNCTION OF TIME (rung 2 of #900, issue #992).
+ *
+ * Bone-indexed counterpart to {@link TransformClipValue}, and the same shape for
+ * the same reason: `sample(seconds)` returns the per-bone poses at that time, so
+ * a producing node's `evaluate` takes NO `Time` input and its cache key does not
+ * flip while the clock runs.
+ *
+ * **Why function-of-time, not a pose at an instant.** A value computed AT an
+ * instant changes identity every frame. Under the content-addressed cache that
+ * flips the key every frame; under React it changes a prop reference every frame
+ * and forces a full tree walk. The cost is not proportional to what changed, it
+ * is proportional to the SCENE — measured for the clip family as B13/H48 (#114),
+ * which is what P7.10 lifted time out of the value to fix. This type was still
+ * the pre-P7.10 shape, so wiring the pose lane as-is would have reintroduced that
+ * defect in the rung whose whole point is to stop materialising things.
+ *
+ * That also answers, rather than trades against, the objection recorded on
+ * `RetargetClip.ts`: emitting a pose "would require a `Time` input, which would
+ * put ~12ms on the frame path" is true of the INSTANT shape and false of this
+ * one.
+ *
+ * **Bone-indexed, not name-keyed, deliberately.** A {@link BonePose}'s `bone` is
+ * an index, meaningful only against the skeleton it is paired with — the same
+ * reasoning `RetargetClip` gives for taking the source rig off the clip rather
+ * than off a fourth input. Reconciling index → name belongs at the one seam that
+ * needs names, not in the value, so there is one reconciliation rather than one
+ * per consumer.
+ */
 export interface PosedSkeletonValue {
   readonly kind: 'PosedSkeleton';
   readonly skeleton: SkeletonValue;
-  readonly poses: readonly BonePose[];
+  /**
+   * The per-bone poses at `seconds`. Pure given the captured source: calling
+   * twice at the same seconds returns equal poses. A bone the source does not
+   * touch holds its rest pose rather than being absent, so the array pairs
+   * index-for-index with `skeleton.bones`.
+   *
+   * Caller owns invocation cadence, exactly as with `TransformClipValue.sample`.
+   */
+  readonly sample: (seconds: number) => readonly BonePose[];
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */

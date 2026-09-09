@@ -44,40 +44,52 @@ export type LocomotionStateParams = z.infer<typeof LocomotionStateParams>;
 const EMPTY_POSE: PosedSkeletonValue = {
   kind: 'PosedSkeleton',
   skeleton: { kind: 'Skeleton', bones: [] },
-  poses: [],
+  sample: () => [],
 };
 
 /**
- * Sample the bound clip at this node's own time (#920).
+ * A posed view of the bound clip, as a FUNCTION OF TIME (#920, reshaped #992).
  *
  * The clip used to arrive pre-posed, which made a CLIP a function of the current
- * frame. It is now a description, and this is the node that holds the `Time` to
- * sample it AT — so the sampling lands here rather than being invented upstream.
+ * frame. It is now a description, and this is the node that turns it into a
+ * sampleable pose.
  *
  * It delegates to `buildClipBoneSamplers`, the SAME factory the baked render band
  * uses (#888), because a second interpolator would be a second answer to "where
  * is this bone at t" that drifts from the first silently. A bone the clip does
  * not touch holds its rest pose, exactly as before.
+ *
+ * The samplers are built ONCE here and closed over, rather than rebuilt per
+ * sample: that factory groups and sorts every keyframe by bone, so building it
+ * inside `sample` would pay for the whole clip on every frame. This is the hoist
+ * the function-of-time shape exists to permit — previously the factory was built
+ * and then immediately collapsed to a single instant.
  */
-function poseClipAt(clip: AnimationClipValue | undefined, tSeconds: number): PosedSkeletonValue {
+function poseSamplerFor(clip: AnimationClipValue | undefined): PosedSkeletonValue {
   if (!clip) return EMPTY_POSE;
   const { skeleton } = clip;
   const samplers = buildClipBoneSamplers(clip);
-  const poses: BonePose[] = [];
-  for (let i = 0; i < skeleton.bones.length; i++) {
-    const sampler = samplers.get(i);
-    if (!sampler) {
-      poses.push({
-        bone: i,
-        position: skeleton.bones[i].position,
-        rotation: skeleton.bones[i].rotation,
-      });
-      continue;
-    }
-    const { position, rotation } = sampler(tSeconds);
-    poses.push({ bone: i, position, rotation });
-  }
-  return { kind: 'PosedSkeleton', skeleton, poses };
+  return {
+    kind: 'PosedSkeleton',
+    skeleton,
+    sample: (seconds: number): readonly BonePose[] => {
+      const poses: BonePose[] = [];
+      for (let i = 0; i < skeleton.bones.length; i++) {
+        const sampler = samplers.get(i);
+        if (!sampler) {
+          poses.push({
+            bone: i,
+            position: skeleton.bones[i].position,
+            rotation: skeleton.bones[i].rotation,
+          });
+          continue;
+        }
+        const { position, rotation } = sampler(seconds);
+        poses.push({ bone: i, position, rotation });
+      }
+      return poses;
+    },
+  };
 }
 
 function distanceAlong(
@@ -134,7 +146,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
         kind: 'LocomotionState',
         position: [0, 0, 0],
         heading: 0,
-        pose: poseClipAt(clip, tSeconds),
+        pose: poseSamplerFor(clip),
       };
     }
     const total = path.length;
@@ -146,7 +158,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
       kind: 'LocomotionState',
       position,
       heading,
-      pose: poseClipAt(clip, tSeconds),
+      pose: poseSamplerFor(clip),
     };
   },
 };
