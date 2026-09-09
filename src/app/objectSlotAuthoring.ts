@@ -48,6 +48,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Op } from '../core/dag/types';
 import type { InlineMaterialSpec } from '../nodes/types';
 import { hydrateInlineMaterial, isBakedMaterialSpec } from '../nodes/materialSchema';
+import { slotMaterialAt } from './materialAssignment';
 import { dataSectionCapability, type ObjectDataKind } from './dataSectionCapability';
 import { resolveDataKind } from './modifierGeometry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
@@ -62,6 +63,19 @@ export interface ObjectSlotRow {
   readonly color: string;
   /** The resolved slot's material name, when it has one. */
   readonly name: string | null;
+  /**
+   * WHETHER `color` AND `name` ARE AN ANSWER ABOUT THIS SLOT, OR A PLACEHOLDER (#605 item 2).
+   *
+   * `'ok'` — the slot has a material and the two fields describe it.
+   * `'none'` — there is genuinely no material; the default swatch is an honest placeholder.
+   * `'elsewhere'` — a mounted asset clone owns what draws here and we hold no capture of it,
+   *   so `color` is a placeholder that **must not be presented as this slot's colour**.
+   *
+   * Before this existed the last two were one value, and the panel drew the same default
+   * grey swatch for both — a lying label on an imported child that is on screen in whatever
+   * the asset gave it. The row carries the distinction so a surface cannot fail to meet it.
+   */
+  readonly answer: 'ok' | 'none' | 'elsewhere';
 }
 
 /**
@@ -207,12 +221,18 @@ export function objectSlotTable(
 
   const slots = mesh.materials.slots;
   const overridden = new Set(overriddenIndices(state, objectId));
-  const rows = slots.map((slot, index) => ({
-    index,
-    overridden: overridden.has(index),
-    color: colorOfSlot(slot),
-    name: nameOfSlot(slot),
-  }));
+  const rows = slots.map((slot, index) => {
+    // Read THROUGH the assignment, never off the raw array — the two absences are one
+    // spelling there, and telling them apart is the whole point of this field (#605 item 2).
+    const read = slotMaterialAt(mesh.materials, index);
+    return {
+      index,
+      overridden: overridden.has(index),
+      color: colorOfSlot(slot),
+      name: nameOfSlot(slot),
+      answer: read.status === 'no-such-slot' ? ('none' as const) : read.status,
+    };
+  });
   // Past the DATA's length — see the header. Derived from the same two numbers the
   // derivation uses, so it cannot disagree with what `objectSlotsOf` dropped.
   const stale = [...overridden].filter((i) => i >= slots.length);
@@ -232,6 +252,13 @@ export function objectSlotTable(
  * A baked or absent slot has no inline spec to copy, so it hydrates from that slot's colour:
  * the closest thing to "unchanged" the override's type can express.
  *
+ * ⚠️ AND ON AN `'elsewhere'` SLOT THE "NO PIXEL CHANGES" CLAIM ABOVE IS FALSE, which is
+ * stated here rather than quietly relied on (#605 item 2). What draws is inside a mounted
+ * asset clone; we hold no capture of it and cannot read one synchronously, so the seed is
+ * the default grey and taking the slot over genuinely can change the picture. The behaviour
+ * is unchanged — grey is the only value this function can produce — but the surface must say
+ * so rather than offer the act as free. `ObjectSlotRow.answer` carries the fact.
+ *
  * Null when the index is not a slot this object has — offer == accept, asked once here so
  * the panel cannot advertise a write this refuses ([[V108]]).
  */
@@ -242,14 +269,21 @@ export function buildOverrideSlotOp(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Op | null {
-  if (!Number.isInteger(index) || index < 0) return null;
   const node = state.nodes[objectId];
   if (!node || node.type !== 'Object') return null;
   const mesh = resolveEvaluatedMesh(state, objectId, ctx, cache);
   if (!mesh) return null;
-  const slot = mesh.materials.slots[index];
-  if (slot === undefined) return null;
+  // Through the reader, not off the array. `slotMaterialAt` owns the range test and tells the
+  // three answers apart, so this function has one `null` return for "no such slot" instead of
+  // its own bounds check agreeing with the reader's by hand (#605 item 2).
+  const read = slotMaterialAt(mesh.materials, index);
+  if (read.status === 'no-such-slot') return null;
 
+  // A material to copy hydrates from it. Both ABSENCES hydrate from the slot's colour — for
+  // `'none'` that is the closest thing to "unchanged" the override's type can express, and for
+  // `'elsewhere'` it is the only value available at all, which is the case the doc above says
+  // this function cannot keep its promise for.
+  const slot = read.status === 'ok' ? read.material : null;
   const seed: InlineMaterialSpec =
     slot !== null && !isBakedMaterialSpec(slot)
       ? hydrateInlineMaterial(slot)

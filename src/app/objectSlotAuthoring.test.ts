@@ -27,6 +27,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import type { EvalCtx, Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 import {
   buildClearSlotOverrideOp,
   buildOverrideSlotOp,
@@ -330,5 +331,55 @@ describe('#645 an override that stops naming a slot', () => {
     const cleared = apply(shrunk, [buildClearSlotOverrideOp(shrunk, left, 1)!]);
     expect(objectSlotTable(cleared, left, CTX)!.stale).toEqual([]);
     expect(overridesOn(cleared, left)).toEqual({});
+  });
+});
+
+// #605 item 2 — THE ROW SAYS WHETHER ITS OWN SWATCH IS AN ANSWER.
+//
+// The measured defect: an imported child whose material was never captured listed a slot
+// with the DEFAULT GREY swatch, identical to a slot that genuinely has no material. The
+// child is on screen in whatever the asset gave it, so the swatch was a colour nothing
+// measured — a lying label of exactly the kind this area has paid for before.
+//
+// 🔴 WHAT THE PAIR BELOW ACTUALLY CATCHES, MEASURED IN BOTH DIRECTIONS RATHER THAN ASSUMED.
+// Hardwiring the derivation to `'none'` reds both rows. Hardwiring it to `'elsewhere'` reds
+// NEITHER — the cube control asserts `'ok'`, which a slot holding a material answers under
+// either hardwiring, and a materialless slot on a registry-built mesh has no constructor to
+// build the missing control from (`BoxData.material` is a required object). That direction is
+// covered one layer down, in `materialAssignment.test.ts`, where the minter can be handed the
+// synthetic input directly. Recorded because the first version of this comment claimed the
+// pair caught both, and the inverse perturbation said otherwise.
+describe('#605 item 2 — an uncaptured slot is not a grey one', () => {
+  it('an imported child with no captured material reports `elsewhere`, a cube reports `ok`', () => {
+    const imported = apply(emptyDagState(), importedChildOps('child', {}) as unknown as Op[]);
+    const table = objectSlotTable(imported, 'child', CTX);
+    expect(table).not.toBeNull();
+    expect(table!.rows).toHaveLength(1);
+    expect(table!.rows[0].answer).toBe('elsewhere');
+
+    // The control, on the road that was always correct: a cube's slot HAS a material, so its
+    // colour is a real answer and the row says so.
+    const { state } = makeSplitCube(emptyDagState(), { objectId: 'box', color: RED });
+    const cube = objectSlotTable(state, 'box', CTX);
+    expect(cube!.rows[0].answer).toBe('ok');
+    expect(cube!.rows[0].color).toBe(RED);
+  });
+
+  it('a captured slot on an imported child is `ok` — the mesh being imported is not the point', () => {
+    // The discriminator against the lazy fix. "Imported ⇒ elsewhere" would pass the row
+    // above and be wrong here: what decides is whether THIS SLOT was captured, and slot 0 of
+    // this child was. Only slot 1, which the glTF left without a material, is unanswerable.
+    const imported = apply(
+      emptyDagState(),
+      importedChildOps('child', {
+        material: { base: { color: RED } },
+        materialSlots: [{ base: { color: RED } }, null],
+      }) as unknown as Op[],
+    );
+    const rows = objectSlotTable(imported, 'child', CTX)!.rows;
+    expect(rows).toHaveLength(2);
+    expect(rows[0].answer).toBe('ok');
+    expect(rows[0].color).toBe(RED);
+    expect(rows[1].answer).toBe('elsewhere');
   });
 });

@@ -158,6 +158,15 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // arm below pins the count at one: a second disposer is a second answer to "is this still
   // in use?", and the two would not have to agree.
   'src/viewport/geometrySweep.ts': 'lifetime',
+
+  // SPEC-ONLY — imports the CLASSIFIER (`availabilityOf`) and nothing else. #605 item 2: the
+  // sole minter of a `MaterialAssignment` derives from it whether an unanswered slot can be
+  // answered somewhere else, which is the same condition `MeshUVRead` and `GeometryReadResult`
+  // key their own `'elsewhere'` on. A classifier takes a descriptor and returns a label — it
+  // never touches the cache and hands back no instance — so there is nothing here for a caller
+  // to hold or free, and no door is opened. Deliberately NOT `readGeometry`: that would build
+  // a geometry on every material read, where this question needs only the classification.
+  'src/app/materialAssignment.ts': 'spec-only',
 };
 
 /**
@@ -293,7 +302,15 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
       );
       const allowed = GEOMETRY_DOORS[cls];
       for (const door of opened) if (!allowed.includes(door)) wrong.push(`${path}: ${door}`);
-      if (opened.length === 0) wrong.push(`${path}: opens no named door`);
+      // A declared consumer that opens nothing is a STALE declaration — EXCEPT for the one
+      // class whose entire meaning is that it opens nothing. `spec-only` names a file that
+      // imports a classifier or a type and takes no instance, which this suite's own prose
+      // already calls a legitimate state ("hands back no instance and therefore opens no
+      // door"); until #605 item 2 the only such file had been deleted from the map rather
+      // than classified, so the two arms quietly disagreed about whether it could exist.
+      // Staleness is still caught for it, one arm up: stop importing the module at all and
+      // the census above reds, because the importer set no longer matches the map's keys.
+      if (opened.length === 0 && allowed.length > 0) wrong.push(`${path}: opens no named door`);
     }
     expect(wrong).toEqual([]);
   });

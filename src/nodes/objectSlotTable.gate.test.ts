@@ -433,8 +433,11 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     ).toEqual([]);
 
     // The assignment reuses that same `slots` rather than resolving a second time — one
-    // question, one answer.
-    expect(code.some((l) => /materialAssignmentOf\(data\.attributeKey, slots\)/.test(l))).toBe(
+    // question, one answer. The trailing argument is the GEOMETRY (#605 item 2): the handle
+    // this road already holds, from which the sole minter derives whether an absent slot can
+    // be answered elsewhere. Matched loosely at the tail and exactly on the first two args,
+    // because what this row is about is the reuse of `slots`, not the arity.
+    expect(code.some((l) => /materialAssignmentOf\(data\.attributeKey, slots\b/.test(l))).toBe(
       true,
     );
   });

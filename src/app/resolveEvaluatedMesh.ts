@@ -115,7 +115,11 @@ export function evaluatedMeshFromMeshData(
   // The data node's IR is the object's slot TABLE; the geometry's face attribute says which
   // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
   // which is the point: the read path moved first, while the answers still agreed.
-  const materials = materialAssignmentOf(data.attributeKey, objectSlotsOf(object, data));
+  const materials = materialAssignmentOf(
+    data.attributeKey,
+    objectSlotsOf(object, data),
+    data.geometry,
+  );
   const uvRead = readMeshUVs(data.geometry);
   return {
     geometry: data.geometry,
@@ -236,6 +240,7 @@ export function resolveEvaluatedMesh(
     const modifierMaterials = materialAssignmentOf(
       source.attributeKey ?? null,
       objectSlotsOf(objectValue ?? null, source),
+      source.geometry,
     );
     const modifierUvs = readMeshUVs(source.geometry);
     return {
@@ -282,7 +287,7 @@ export function resolveEvaluatedMesh(
       // baked ref is not sync-buildable from the registry. Only the TRANSFORM differs
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
-      const bakedMaterials = materialAssignmentOf(null, [data.material]);
+      const bakedMaterials = materialAssignmentOf(null, [data.material], data.geometry);
       const bakedUvs = readMeshUVs(data.geometry);
       return {
         geometry: data.geometry,
@@ -312,6 +317,7 @@ export function resolveEvaluatedMesh(
       const modifiedMaterials = materialAssignmentOf(
         data.attributeKey ?? null,
         objectSlotsOf(value, data),
+        modGeometry,
       );
       const modifiedUvs = readMeshUVs(modGeometry);
       return {

@@ -439,7 +439,41 @@ export interface BakedMaterialSpec {
 export interface MaterialAssignment<M> {
   readonly slots: readonly M[];
   readonly indices: ArrayLike<number> | null;
+  /**
+   * WHAT AN ABSENT SLOT MEANS ON THIS MESH (#605 item 2).
+   *
+   * A `null` slot carried two meanings and had one spelling, and one producer wrote both.
+   * `GltfData.material` is `null` for a bone, an empty and a pre-#178 save — and the
+   * renderer's answer to that is *keep the clone's embedded material*, i.e. the material
+   * exists and we never captured it. A `materialSlots` entry is `null` for a primitive the
+   * glTF assigned no material at all. **"We do not have it" and "there is none" are not the
+   * same claim**, and every reader was giving them one answer: the inspector drew the
+   * default grey swatch for a child that is on screen in whatever the asset gave it.
+   *
+   * 🔴 IT IS A PROPERTY OF THE MESH, NOT OF THE SLOT, and that is why it sits here rather
+   * than widening `M`. Whether an unanswered slot can be answered elsewhere depends on
+   * where these buffers live — one fact for the whole assignment. Putting an `'elsewhere'`
+   * arm in the slot type would invite per-slot reasoning about a per-mesh condition, and
+   * would widen the material union at every consumer that never asks the question.
+   *
+   * The two sibling reads on {@link EvaluatedMesh} already draw this distinction and are
+   * keyed on the same condition — {@link MeshUVRead}'s `'elsewhere'` and
+   * `GeometryReadResult`'s. This was the last of the three still spelling it as `null`.
+   */
+  readonly absentSlot: AbsentSlotMeaning;
 }
+
+/**
+ * Where the answer for an unanswered slot lives.
+ *
+ * `'none'` — there is no material, and looking elsewhere will not produce one.
+ * `'elsewhere'` — a mounted asset clone owns what draws; we hold no capture of it.
+ *
+ * Deliberately NOT a boolean. `elsewhere: false` would read as "not elsewhere", which is a
+ * statement about location rather than about the answer, and the two absences are what this
+ * type exists to keep apart.
+ */
+export type AbsentSlotMeaning = 'none' | 'elsewhere';
 
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
