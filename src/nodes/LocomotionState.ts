@@ -24,14 +24,23 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type {
   AnimationClipValue,
-  BonePose,
   LocomotionStateValue,
   PosedSkeletonValue,
   TimeValue,
   Vec3,
   WalkPathValue,
 } from './types';
-import { buildClipBoneSamplers } from './AnimationClip';
+import { posedSkeletonFromClip } from './AnimationClip';
+
+/**
+ * This node's posed view of its bound clip. Delegates to the ONE clip→pose
+ * adapter (#992) rather than carrying a second copy: a private interpolator here
+ * would be a second answer to "where is this bone at t" that drifts from the
+ * render band's silently. An unbound clip poses nothing.
+ */
+function posedFor(clip: AnimationClipValue | undefined): PosedSkeletonValue {
+  return clip ? posedSkeletonFromClip(clip) : EMPTY_POSE;
+}
 
 export const LocomotionStateParams = z.object({
   /** World-units per second along the path. */
@@ -46,51 +55,6 @@ const EMPTY_POSE: PosedSkeletonValue = {
   skeleton: { kind: 'Skeleton', bones: [] },
   sample: () => [],
 };
-
-/**
- * A posed view of the bound clip, as a FUNCTION OF TIME (#920, reshaped #992).
- *
- * The clip used to arrive pre-posed, which made a CLIP a function of the current
- * frame. It is now a description, and this is the node that turns it into a
- * sampleable pose.
- *
- * It delegates to `buildClipBoneSamplers`, the SAME factory the baked render band
- * uses (#888), because a second interpolator would be a second answer to "where
- * is this bone at t" that drifts from the first silently. A bone the clip does
- * not touch holds its rest pose, exactly as before.
- *
- * The samplers are built ONCE here and closed over, rather than rebuilt per
- * sample: that factory groups and sorts every keyframe by bone, so building it
- * inside `sample` would pay for the whole clip on every frame. This is the hoist
- * the function-of-time shape exists to permit — previously the factory was built
- * and then immediately collapsed to a single instant.
- */
-function poseSamplerFor(clip: AnimationClipValue | undefined): PosedSkeletonValue {
-  if (!clip) return EMPTY_POSE;
-  const { skeleton } = clip;
-  const samplers = buildClipBoneSamplers(clip);
-  return {
-    kind: 'PosedSkeleton',
-    skeleton,
-    sample: (seconds: number): readonly BonePose[] => {
-      const poses: BonePose[] = [];
-      for (let i = 0; i < skeleton.bones.length; i++) {
-        const sampler = samplers.get(i);
-        if (!sampler) {
-          poses.push({
-            bone: i,
-            position: skeleton.bones[i].position,
-            rotation: skeleton.bones[i].rotation,
-          });
-          continue;
-        }
-        const { position, rotation } = sampler(seconds);
-        poses.push({ bone: i, position, rotation });
-      }
-      return poses;
-    },
-  };
-}
 
 function distanceAlong(
   samples: readonly Vec3[],
@@ -146,7 +110,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
         kind: 'LocomotionState',
         position: [0, 0, 0],
         heading: 0,
-        pose: poseSamplerFor(clip),
+        pose: posedFor(clip),
       };
     }
     const total = path.length;
@@ -158,7 +122,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
       kind: 'LocomotionState',
       position,
       heading,
-      pose: poseSamplerFor(clip),
+      pose: posedFor(clip),
     };
   },
 };

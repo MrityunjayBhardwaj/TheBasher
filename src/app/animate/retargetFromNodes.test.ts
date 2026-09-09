@@ -11,7 +11,7 @@ import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import { clipLoopOf } from '../../nodes/clipLoop';
-import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
+import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
 
 const ASSET_REF = 'asset://rig.glb';
 
@@ -136,10 +136,13 @@ describe('retargetClipParamsFromNodes', () => {
         skeleton: { kind: 'Skeleton', bones: bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[] },
       } as never,
       undefined as never,
-    );
-    expect(viaParams!.keyframes).toEqual(viaEvaluate.keyframes);
-    expect(viaParams!.duration).toBe(viaEvaluate.duration);
-    expect(viaParams!.name).toBe(viaEvaluate.name);
+    ) as { out: AnimationClipValue };
+    // #992/#974 — the node emits two views of one retarget, so the parity claim
+    // names the `out` socket. `posed` is pinned against this same clip in
+    // RetargetClip.test.ts, so both views stay tied to this one params road.
+    expect(viaParams!.keyframes).toEqual(viaEvaluate.out.keyframes);
+    expect(viaParams!.duration).toBe(viaEvaluate.out.duration);
+    expect(viaParams!.name).toBe(viaEvaluate.out.name);
   });
 
   it('is null for every incomplete graph, one cause at a time', () => {

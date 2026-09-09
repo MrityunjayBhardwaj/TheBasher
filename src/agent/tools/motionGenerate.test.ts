@@ -341,9 +341,15 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // takes exactly one. One pose socket on a node that has no other cannot hold
     // two clips, so the property is untouched and only the census moved — which
     // is the distinction this row exists to force someone to make.
+    // #974 adds a FOURTH entry and it is deliberately not a fold either:
+    // `PoseOverride` takes exactly one `PosedSkeleton` and has no other
+    // pose-bearing socket, so it cannot hold two poses at once. It is the first
+    // consumer the pose lane has ever had — which is what makes the lane
+    // terminate somewhere — and the property this row guards is untouched.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.clip: AnimationClip (single)',
+      'PoseOverride.pose: PosedSkeleton (single)',
       'RetargetClip.sourceClip: AnimationClip (single)',
     ]);
   });

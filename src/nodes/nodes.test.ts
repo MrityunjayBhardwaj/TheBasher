@@ -127,6 +127,7 @@ const ALL_TYPES = [
   'Null',
   'Object',
   'ParamDriver',
+  'PoseOverride',
   'PosedSkeleton',
   'PrevFrame',
   'PrevFrameVec',

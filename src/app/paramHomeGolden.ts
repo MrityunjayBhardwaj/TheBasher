@@ -196,6 +196,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
+  // #974 — hand-posing. No `home` declared: the params are the override itself,
+  // not a routed view of somebody else's, so every cell is honestly unrouted.
+  PoseOverride:
+    '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
@@ -287,4 +291,5 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-export const GOLDEN_TOTALS = { types: 84, routed: 133, unrouted: 226 } as const;
+// 84 -> 85 at #974 (PoseOverride), which contributes five unrouted cells.
+export const GOLDEN_TOTALS = { types: 85, routed: 133, unrouted: 231 } as const;

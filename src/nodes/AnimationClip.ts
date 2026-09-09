@@ -29,7 +29,14 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { AnimationClipValue, AnimationKeyframe, SkeletonValue, Vec3 } from './types';
+import type {
+  AnimationClipValue,
+  AnimationKeyframe,
+  BonePose,
+  PosedSkeletonValue,
+  SkeletonValue,
+  Vec3,
+} from './types';
 import { sampleVec3KeyframesExtended, type Vec3Key } from './keyframeInterp';
 import { ClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 
@@ -157,6 +164,46 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * documented, and app/bakedGltfChannels.ts, which makes the same conversion for
  * the read band.
  */
+/**
+ * A clip, viewed as a posed rig — the ONE clip→pose adapter (#992, rung 2 of #900).
+ *
+ * Lives beside `buildClipBoneSamplers` because it is that factory's only pose-shaped
+ * consumer, and having one home is the point: `LocomotionState` and `RetargetClip`
+ * both need "this clip, as a pose at t", and two copies would be two answers to
+ * where a bone is at t that drift silently — the same reason the factory itself was
+ * shared in the first place (#888).
+ *
+ * The samplers are built ONCE and closed over. That is what the function-of-time
+ * shape buys: grouping and sorting every keyframe by bone happens per graph change,
+ * not per frame. A bone the clip does not touch holds its rest pose, so the returned
+ * array pairs index-for-index with `skeleton.bones`.
+ */
+export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonValue {
+  const { skeleton } = clip;
+  const samplers = buildClipBoneSamplers(clip);
+  return {
+    kind: 'PosedSkeleton',
+    skeleton,
+    sample: (seconds: number): readonly BonePose[] => {
+      const poses: BonePose[] = [];
+      for (let i = 0; i < skeleton.bones.length; i++) {
+        const sampler = samplers.get(i);
+        if (!sampler) {
+          poses.push({
+            bone: i,
+            position: skeleton.bones[i].position,
+            rotation: skeleton.bones[i].rotation,
+          });
+          continue;
+        }
+        const { position, rotation } = sampler(seconds);
+        poses.push({ bone: i, position, rotation });
+      }
+      return poses;
+    },
+  };
+}
+
 export function buildClipBoneSamplers(
   // Widened to READONLY keys (#920) so the same factory serves both a node's
   // params and an `AnimationClipValue`, which is where the sampling now happens.
