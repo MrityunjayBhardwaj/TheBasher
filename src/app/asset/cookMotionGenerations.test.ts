@@ -179,7 +179,7 @@ describe('cookMotionGenerations (#935)', () => {
         stale: true,
         // #1001 — nobody has edited a bone, so nothing is stranded. It stays
         // empty for every project until a director's first bone edit.
-        strandedBones: [],
+        stranded: [],
       });
     });
 
@@ -236,7 +236,7 @@ describe('cookMotionGenerations (#935)', () => {
       expect(motionCookOffer(useDagStore.getState().state, producerId)).toEqual({
         label: 'No clip wired',
         disabled: true,
-        strandedBones: [],
+        stranded: [],
         status: null,
         stale: false,
       });

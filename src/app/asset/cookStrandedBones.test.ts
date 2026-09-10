@@ -125,18 +125,18 @@ describe('#1001 — the cook affordance names the bones it stranded', () => {
     // The ordinary project, and it must stay silent there or the signal becomes
     // the alarm on a healthy bind that a director learns to scan past (#923).
     const s = characterWithGeneratedClip([key(1, 0, 1), key(1, 1, 2)]);
-    expect(motionCookOffer(s, PRODUCER).strandedBones).toEqual([]);
+    expect(motionCookOffer(s, PRODUCER).stranded).toEqual([]);
   });
 
   it('says nothing when a bone is edited and the clip has not moved', () => {
     const s = editBone(characterWithGeneratedClip([key(1, 0, 1), key(1, 1, 2)]));
-    expect(motionCookOffer(s, PRODUCER).strandedBones).toEqual([]);
+    expect(motionCookOffer(s, PRODUCER).stranded).toEqual([]);
   });
 
   it('🔴 names the edited bone once the clip is re-cooked under it', () => {
     const edited = editBone(characterWithGeneratedClip([key(1, 0, 1), key(1, 1, 2)]));
     const offer = motionCookOffer(recook(edited, [key(1, 0, 1), key(1, 1, 99)]), PRODUCER);
-    expect(offer.strandedBones).toEqual([BONE]);
+    expect(offer.stranded.map((b) => b.childName)).toEqual([BONE]);
   });
 
   it('🔴 reports it even while the card reads "Up to date" — the lying label', () => {
@@ -148,6 +148,6 @@ describe('#1001 — the cook affordance names the bones it stranded', () => {
     const offer = motionCookOffer(after, PRODUCER);
     expect(offer.stale).toBe(false);
     expect(offer.label).toBe('Up to date');
-    expect(offer.strandedBones).toEqual([BONE]);
+    expect(offer.stranded.map((b) => b.childName)).toEqual([BONE]);
   });
 });

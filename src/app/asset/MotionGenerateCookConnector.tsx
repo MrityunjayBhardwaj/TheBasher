@@ -23,6 +23,7 @@ import { useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
 import { cookMotionGenerations, motionCookOffer, placeCookedMotion } from './cookMotionGenerations';
+import { dispatchFollowClip } from '../animate/dispatchMutator';
 
 export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId }) {
   const state = useDagStore((s) => s.state);
@@ -73,15 +74,58 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
       {/* #1001 — the bones a cook leaves behind. WARN-coloured and named,
           because the alternative is this card reading "Up to date" over a
           character playing two motions at once. Named rather than counted: the
-          director has to go and look at a bone, and "3 bones" does not say
-          which. Absent entirely when nothing is stranded, which is every
-          project where nobody has edited a bone. */}
-      {offer.strandedBones.length > 0 ? (
-        <p data-testid="motion-cook-stranded" className="mt-1 text-warn">
-          {offer.strandedBones.length === 1
-            ? `${offer.strandedBones[0]} is still on the previous motion — you edited it, so the clip no longer drives it.`
-            : `${offer.strandedBones.length} bones are still on the previous motion — you edited them, so the clip no longer drives them: ${offer.strandedBones.join(', ')}.`}
-        </p>
+          director has to act on a bone, and "3 bones" does not say which.
+          Absent entirely when nothing is stranded, which is every project where
+          nobody has edited a bone.
+
+          #1002 — and each name now carries the act beside it. A signal with
+          nothing to press is a signal a director learns to scan past, which is
+          the failure #923 had to correct from the other direction. */}
+      {offer.stranded.length > 0 ? (
+        <div data-testid="motion-cook-stranded" className="mt-1 text-warn">
+          {/* THE SENTENCE COUNTS AND THE ROWS NAME — observed in pixels, where a
+              single stranded bone had its name printed twice, once in the
+              sentence and once on the row beside its button. The name belongs
+              next to the thing that acts on it. */}
+          <p>
+            {offer.stranded.length === 1
+              ? 'One bone is still on the previous motion — you edited it, so the clip no longer drives it.'
+              : `${offer.stranded.length} bones are still on the previous motion — you edited them, so the clip no longer drives them.`}
+          </p>
+          <ul className="mt-1 space-y-0.5">
+            {offer.stranded.map((bone) => (
+              <li key={bone.childName} className="flex items-center justify-between gap-2">
+                <span className="truncate">{bone.childName}</span>
+                <button
+                  type="button"
+                  data-testid={`motion-cook-follow-${bone.childName}`}
+                  onClick={() =>
+                    dispatchFollowClip(
+                      bone.targets.map((t) => ({
+                        assetRef: t.assetRef,
+                        childName: bone.childName,
+                        component: t.component,
+                      })),
+                      `Discard edit on ${bone.childName}`,
+                    )
+                  }
+                  className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/80 hover:bg-muted hover:text-fg"
+                >
+                  Discard edit
+                </button>
+              </li>
+            ))}
+          </ul>
+          {/* THE LABEL SAYS WHAT IS LOST, IN THE OPEN AND NOT ON HOVER. The act
+              deletes the keys the director authored on that bone; there is no
+              road that keeps them (`dispatchFollowClip` records both
+              measurements). A title attribute would put the only honest half of
+              the sentence somewhere a touch device never shows. */}
+          <p className="mt-1 text-fg/40">
+            Discarding drops the keys you authored on that bone and puts it back on the clip. Undo
+            brings them back.
+          </p>
+        </div>
       ) : null}
     </div>
   );

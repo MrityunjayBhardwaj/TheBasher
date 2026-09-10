@@ -51,9 +51,16 @@ function key(bone: number, time: number, y: number) {
   return { bone, time, position: [0, y, 0], rotation: [0, 0, 0] };
 }
 
-test('a re-cook names the bone the director edited, on the card that would otherwise say "Up to date" (#1001)', async ({
-  page,
-}) => {
+/**
+ * The scene a director is looking at when the damage is done: a character with a
+ * generated clip, one bone edited through the product's own authoring road, the
+ * producer selected so the inspector draws its cook card.
+ *
+ * ONE builder for both tests, because #1002's act is only meaningful on the
+ * exact state #1001's signal reports — two spellings of this scene would let the
+ * act be observed on a state the signal never describes.
+ */
+async function buildStrandedScene(page: import('@playwright/test').Page) {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as BasherWindow).__basher_dag));
@@ -204,12 +211,80 @@ test('a re-cook names the bone the director edited, on the card that would other
         ),
     { clip: CLIP, nextKeys: [key(1, 0, 1), key(1, 1, 99)] },
   );
+}
 
-  // 5 — THE OBSERVATION. The card still says "Up to date", because the clip is;
-  //     and the warn line names the bone, because the character is not.
+test('a re-cook names the bone the director edited, on the card that would otherwise say "Up to date" (#1001)', async ({
+  page,
+}) => {
+  await buildStrandedScene(page);
+
+  // THE OBSERVATION. The card still says "Up to date", because the clip is;
+  // and the warn line names the bone, because the character is not.
   await expect(page.getByTestId('motion-cook-run')).toHaveText('Up to date');
   const stranded = page.getByTestId('motion-cook-stranded');
   await expect(stranded).toBeVisible();
   await expect(stranded).toContainText(BONE);
   await expect(stranded).toContainText('still on the previous motion');
+});
+
+// #1002 — the act. The signal is attributable and quiet, and until this it was
+// also INERT: a director reading the bone's name had to go and find that bone in
+// the outliner, select it, and use a button labelled for imported clips. The row
+// below is the whole of the claim — the thing to press is where the sentence is.
+test('the director presses Discard edit beside the name and the bone goes back on the clip (#1002)', async ({
+  page,
+}) => {
+  await buildStrandedScene(page);
+
+  const stranded = page.getByTestId('motion-cook-stranded');
+  await expect(stranded).toBeVisible();
+  await expect(stranded).toContainText(BONE);
+  // THE LOSS IS ON THE CARD, not on hover: a title attribute puts the only
+  // honest half of the sentence where a touch device never shows it.
+  await expect(stranded).toContainText('drops the keys you authored');
+  await page.screenshot({ path: 'test-results/1002-before-press.png' });
+
+  // PRECONDITION, ASSERTED BEFORE THE ACT. The channel exists and carries the
+  // director's key — otherwise the "it is gone" below is true of a graph where
+  // it was never there, which photographs identically.
+  const before = await page.evaluate(
+    async ({ asset, bone }) => {
+      const ids = await import('/src/core/import/gltfImportChain.ts');
+      const w = window as unknown as BasherWindow;
+      const id = ids.gltfChannelDagId(asset, bone, 'position');
+      const node = w.__basher_dag.getState().state.nodes[id];
+      return { present: Boolean(node), keys: (node?.params?.keyframes as unknown[])?.length ?? 0 };
+    },
+    { asset: ASSET, bone: BONE },
+  );
+  expect(before).toMatchObject({ present: true });
+  expect(before.keys).toBeGreaterThan(0);
+
+  // THE PRESS.
+  await page.getByTestId(`motion-cook-follow-${BONE}`).click();
+
+  // 1 — the sentence the director acted on is gone from the card.
+  await expect(page.getByTestId('motion-cook-stranded')).toHaveCount(0);
+  // and the card still reads the truth about the clip.
+  await expect(page.getByTestId('motion-cook-run')).toHaveText('Up to date');
+  await page.screenshot({ path: 'test-results/1002-after-press.png' });
+
+  // 2 — STRUCTURAL, not an emptying (#909). The node is GONE, so the resolver's
+  //     presence pick falls through to the clip. An emptied channel would still
+  //     claim the component at [0,0,0] and drop the bone to the origin.
+  const after = await page.evaluate(
+    async ({ asset, bone }) => {
+      const ids = await import('/src/core/import/gltfImportChain.ts');
+      const w = window as unknown as BasherWindow;
+      return {
+        present: Boolean(
+          w.__basher_dag.getState().state.nodes[ids.gltfChannelDagId(asset, bone, 'position')],
+        ),
+        undoDepth: (w.__basher_dag.getState() as unknown as { undoStack: unknown[] }).undoStack
+          .length,
+      };
+    },
+    { asset: ASSET, bone: BONE },
+  );
+  expect(after.present).toBe(false);
 });

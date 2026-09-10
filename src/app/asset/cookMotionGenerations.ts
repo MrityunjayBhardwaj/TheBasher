@@ -40,7 +40,8 @@ import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { assetRefOfSkeleton, riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
-import { staleSeedBones } from '../animate/clipSeedProvenance';
+import { channelSeedRows } from '../animate/clipSeedProvenance';
+import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
 
 export interface CookOutcome {
   /** How many producers this pass generated for. */
@@ -197,7 +198,7 @@ export interface MotionCookOffer {
   readonly stale: boolean;
   /**
    * Bones on this producer's character whose edited channel is still playing the
-   * motion a PREVIOUS cook produced (#1001), sorted.
+   * motion a PREVIOUS cook produced (#1001), sorted by name.
    *
    * 🔴 IT BELONGS HERE, BESIDE THE BUTTON THAT CAUSES IT. The cook is the gesture
    * that strands them: the clip refreshes, every untouched bone follows it, and
@@ -211,7 +212,24 @@ export interface MotionCookOffer {
    * bones can never see it, which is what keeps it from becoming the alarm on a
    * healthy bind that #923 had to remove.
    */
-  readonly strandedBones: readonly string[];
+  readonly stranded: readonly StrandedBone[];
+}
+
+/**
+ * One bone left behind by a cook, and every channel an action would remove to
+ * put it back on the clip (#1002).
+ *
+ * The name is deduplicated across the characters this clip drives, because a
+ * director reading the card recognises `LeftArm` once; the targets are not,
+ * because two characters carry two channels under that one name and an action
+ * that removed only one would leave the card saying exactly what it said before.
+ */
+export interface StrandedBone {
+  /** What the director reads. Unique within an offer, sorted. */
+  readonly childName: string;
+  /** Every channel behind the clip under that name — per character, per
+   *  component. Never empty: a bone with no stale channel is not stranded. */
+  readonly targets: readonly { readonly assetRef: string; readonly component: BakedComponent }[];
 }
 
 /**
@@ -234,21 +252,21 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
       disabled: true,
       status: null,
       stale: false,
-      strandedBones: [],
+      stranded: [],
     };
   }
-  const strandedBones = strandedBonesForClip(state, row.clipId);
+  const stranded = strandedBonesForClip(state, row.clipId);
   if (row.status === 'failed') {
     return {
       label: 'Retry generation',
       disabled: false,
       status: row.status,
       stale: row.stale,
-      strandedBones,
+      stranded,
     };
   }
   if (!row.stale) {
-    return { label: 'Up to date', disabled: true, status: row.status, stale: false, strandedBones };
+    return { label: 'Up to date', disabled: true, status: row.status, stale: false, stranded };
   }
   // Stale AND already baked is the drag: the clip keeps playing its last result,
   // and the label says the inputs moved rather than offering a bare "Generate"
@@ -259,27 +277,57 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
       disabled: false,
       status: row.status,
       stale: true,
-      strandedBones,
+      stranded,
     };
   }
-  return { label: 'Generate', disabled: false, status: row.status, stale: true, strandedBones };
+  return { label: 'Generate', disabled: false, status: row.status, stale: true, stranded };
 }
 
 /**
- * The bones left behind on old motion across every character this clip drives.
+ * The bones left behind on old motion across every character this clip drives,
+ * each carrying the channels an action would have to remove.
  *
  * Asked of the GRAPH rather than of a cook's return value, for the reason
  * `riggedSkeletonsForClip` states: a re-cook has no bind result in hand, and the
- * graph still knows. A clip bound to two characters reports both, deduplicated —
- * the same bone name stranded on two rigs is one thing for a director to fix,
- * not two.
+ * graph still knows.
+ *
+ * 🔴 THE NAME IS WHAT A DIRECTOR READS AND THE ADDRESS IS WHAT AN ACTION NEEDS,
+ * AND THEY ARE NOT THE SAME COUNT (#1002). So the name is deduplicated for the
+ * message and every target is kept underneath it.
+ *
+ * The reachable-and-gated half of that is the COMPONENT split below. The other
+ * half is the character: `riggedSkeletonsForClip` returns a SET — measured, it
+ * returns both rigs when a second character retargets the same clip — so one
+ * name can stand for channels on two characters, and an action driven by the
+ * deduplicated name would fix one and leave the other warned with the same
+ * sentence still on the card. ⚠️ THAT SECOND HALF IS NOT GATED HERE: the row
+ * needs a `RetargetClip` with real source and target bone tables, which is a
+ * fixture of its own. It is stated as the reason the shape is a LIST, not as a
+ * claim this file proves.
+ *
+ * 🔴 AND PER COMPONENT, NOT PER BONE. Measured over two real cooks of the same
+ * character: 9 bones of 78 come back with their POSITION track unchanged and
+ * their ROTATION track moved — 77 of 78 bones carry a constant position track,
+ * so that is the ordinary case rather than the exotic one. Those position
+ * channels are `current`: the clip has not moved under them and the director's
+ * edit is still driving. Removing them along with the bone would discard a live
+ * edit nobody was warned about, which is a worse failure than the one this
+ * whole band exists to report.
  */
-function strandedBonesForClip(state: DagState, clipId: string): string[] {
-  const names = new Set<string>();
+function strandedBonesForClip(state: DagState, clipId: string): StrandedBone[] {
+  const byName = new Map<string, { assetRef: string; component: BakedComponent }[]>();
   for (const skeletonId of riggedSkeletonsForClip(state.nodes, clipId)) {
     const assetRef = assetRefOfSkeleton(state.nodes, skeletonId);
     if (!assetRef) continue;
-    for (const name of staleSeedBones(state, assetRef)) names.add(name);
+    for (const row of channelSeedRows(state, assetRef)) {
+      if (row.state !== 'stale') continue;
+      const bucket = byName.get(row.childName);
+      const target = { assetRef, component: row.component };
+      if (bucket) bucket.push(target);
+      else byName.set(row.childName, [target]);
+    }
   }
-  return [...names].sort();
+  return [...byName.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([childName, targets]) => ({ childName, targets }));
 }
