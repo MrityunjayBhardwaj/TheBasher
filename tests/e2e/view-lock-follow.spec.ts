@@ -34,7 +34,7 @@
 //      src/app/viewLock.ts (taking the lock);
 //      issue #856.
 
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Win {
   __basher_three: {
@@ -87,7 +87,8 @@ test('the view lock keeps a moving object framed; without it the object leaves',
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 20_000 });
   await page.getByTestId('scene-tree-row-n_box').click();
   await expect(page.getByTestId('inspector-vec-n_box-position-x')).toBeVisible({ timeout: 20_000 });
-  await page.waitForTimeout(600);
+  // The camera has to be the director's before the control arm can read it (#989).
+  await settleViewFit(page);
 
   // THE CONTROL, and it is not a preamble: if the object does not leave frame
   // unlocked, the locked reading below is satisfied by a camera that never had

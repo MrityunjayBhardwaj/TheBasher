@@ -290,7 +290,43 @@ export function EditorViewCamera() {
   useFrame((state) => {
     const f = fit.current;
     const cam = ref.current;
-    if (!f.active || lookThrough || !cam) return;
+    // DEV observation seam (the ArmatureHelper/LightHelpers pattern). The fit MOVES THE
+    // CAMERA while it is active, so "is it still running?" is the difference between a
+    // camera the user aimed and one the fit aimed — and from outside there is nothing
+    // else to tell them apart. #989 is exactly that ambiguity, read as a view lock
+    // firing unasked.
+    //
+    // 🔴 PUBLISHED BEFORE THE EARLY RETURN, AND THAT IS THE WHOLE POINT (#989). Written
+    // at the END of the body it only ever described a fit that was RUNNING: the frame a
+    // fit stops on — cancelled by canvas input, skipped in look-through, or with no
+    // camera yet — returns above the write and leaves the LAST value standing. So a
+    // stopped fit went on publishing `active: true` forever, and "running", "cancelled"
+    // and "not mounted" were one output. Measured: with a restored view lock the seam
+    // froze at `{active: true, frames: 1}` indefinitely while the fit was doing nothing,
+    // and a spec waiting for it to settle waited out its timeout.
+    //
+    // A description surface has to be TOTAL to be a description. Reporting every frame
+    // costs one object allocation in DEV and makes "the fit is not touching the camera"
+    // an observable state rather than an absence.
+    // TWO questions, published separately, because conflating them is how this seam came
+    // to lie. `active` is whether the fit is touching the camera THIS frame — what a spec
+    // reading the camera needs. `wants` is the fit's own intent, which outlives a frame
+    // skipped for look-through or a camera ref that has not landed. `lookThrough` and
+    // `hasCamera` say WHICH of those is holding it, so a hang is diagnosable from outside
+    // instead of by adding logs to the product.
+    const fitStopped = !f.active || lookThrough || !cam;
+    if (import.meta.env.DEV) {
+      (window as unknown as { __basher_view_fit?: unknown }).__basher_view_fit = {
+        active: !fitStopped,
+        wants: f.active,
+        lookThrough: Boolean(lookThrough),
+        hasCamera: Boolean(cam),
+        poseToo: f.poseToo,
+        frames: f.frames,
+        still: f.still,
+      };
+    }
+    if (fitStopped) return;
     f.frames += 1;
     const bounds = computeSceneBounds(state.scene);
     if (bounds) {
@@ -347,19 +383,6 @@ export function EditorViewCamera() {
       if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
     }
     if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
-    // DEV observation seam (the ArmatureHelper/LightHelpers pattern). The fit
-    // MOVES THE CAMERA while it is active, so "is it still running?" is the
-    // difference between a camera the user aimed and one the fit aimed — and
-    // from outside there is nothing to tell them apart. #989 is exactly that
-    // ambiguity read as a view lock firing unasked.
-    if (import.meta.env.DEV) {
-      (window as unknown as { __basher_view_fit?: unknown }).__basher_view_fit = {
-        active: f.active,
-        poseToo: f.poseToo,
-        frames: f.frames,
-        still: f.still,
-      };
-    }
   });
 
   // #856 — THE VIEW LOCK: keep the view CENTRE on something that moves, so a

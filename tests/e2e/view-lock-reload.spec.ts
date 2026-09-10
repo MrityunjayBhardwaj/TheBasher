@@ -32,7 +32,7 @@
 //      tests/e2e/view-lock-follow.spec.ts (the sibling, within one session);
 //      issue #985, and #856 which reported it.
 
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Win {
   __basher_three: {
@@ -82,7 +82,11 @@ async function settle(page: import('@playwright/test').Page) {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 20_000 });
   await page.getByTestId('scene-tree-row-n_box').click();
   await expect(page.getByTestId('inspector-vec-n_box-position-x')).toBeVisible({ timeout: 20_000 });
-  await page.waitForTimeout(800);
+  // #989 — the bounds-fit owns the camera until it settles, and while it does it moves
+  // the pivot by exactly what a working lock would. Without this the assertions below
+  // pass whether or not the lock does anything. Runs after the reload too, because the
+  // fit runs again there.
+  await settleViewFit(page);
 }
 
 /** The menu item's label, which carries the checkmark. Closed by re-clicking
