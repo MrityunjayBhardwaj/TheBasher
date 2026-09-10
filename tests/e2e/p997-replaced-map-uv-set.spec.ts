@@ -128,17 +128,22 @@ function hue(c: RGB): 'green' | 'magenta' | 'blue' | 'red' | null {
   return null;
 }
 
-/** The centre, then the four corners at ±0.35 of the quad — inside their texels and clear of
- *  set 1's range ending exactly on a texel edge. The same five points the fixture's own gate
- *  resolves against the image bytes, which is what makes the two tiers one argument. */
+/**
+ * The centre, then the four corners at ±0.35 of the quad — inside their texels and clear of
+ * set 1's range ending exactly on a texel edge. The same points `twoUvFixture.gate.test.ts`
+ * resolves against the image bytes, which is what makes the two tiers one argument.
+ *
+ * ONE array of name-and-place rather than two parallel ones: the sample is read back by
+ * index, so a point added to a list of places and not to a list of names mislabels every
+ * reading after it, and every assertion below addresses its point BY NAME.
+ */
 const POINTS = [
-  [0, 0],
-  [-0.35, -0.35],
-  [0.35, -0.35],
-  [-0.35, 0.35],
-  [0.35, 0.35],
+  { name: 'centre', at: [0, 0] },
+  { name: 'corner -x-y', at: [-0.35, -0.35] },
+  { name: 'corner +x-y', at: [0.35, -0.35] },
+  { name: 'corner -x+y', at: [-0.35, 0.35] },
+  { name: 'corner +x+y', at: [0.35, 0.35] },
 ] as const;
-const POINT_NAMES = ['centre', 'corner0', 'corner1', 'corner2', 'corner3'] as const;
 
 /**
  * The view camera's world position, or `null` while the camera is not mounted.
@@ -250,11 +255,11 @@ async function captureQuad(page: Page, meshName: string) {
         };
       });
     },
-    { meshName, points: POINTS.map((pt) => [...pt]), shot },
+    { meshName, points: POINTS.map((p) => [...p.at]), shot },
   );
   if (!read) throw new Error(`mesh ${meshName} is not in the rendered scene`);
   const out: Record<string, { hue: ReturnType<typeof hue>; rgb: RGB; inFrustum: boolean }> = {};
-  POINT_NAMES.forEach((name, i) => {
+  POINTS.forEach(({ name }, i) => {
     const r = read[i];
     if (!r) throw new Error(`${name} did not project through the view camera`);
     out[name] = { hue: hue(r.rgb), rgb: r.rgb, inFrustum: r.inFrustum };
