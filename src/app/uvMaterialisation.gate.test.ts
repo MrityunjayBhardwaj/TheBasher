@@ -34,7 +34,12 @@ import {
   readGeometry,
 } from './geometryRegistry';
 import { alignedSplitRims } from './builtRims';
-import { boxGeometryRef, sphereGeometryRef, uvProjectGeometryRef } from './modifierGeometry';
+import {
+  bevelGeometryRef,
+  boxGeometryRef,
+  sphereGeometryRef,
+  uvProjectGeometryRef,
+} from './modifierGeometry';
 import { cubeProjectedLayer } from './cubeProjection';
 import { readMeshUVs } from './uvAttributes';
 import { materialiseCornerLayer } from './cornerMaterialisation';
@@ -212,6 +217,32 @@ describe('#786 the authored layer reaches the buffer', () => {
     expect(result.geometry.getAttribute('position').count).toBe(
       geometry.getAttribute('position').count,
     );
+  });
+
+  it('🔴 adding a projection over a CLAMPED BEVEL does not manufacture a parity warning', () => {
+    // Found by reviewing this change rather than by a failing test, which is why it is pinned:
+    // a clamped bevel is ALLOWED to weld below its derived point count — the corners have met,
+    // which is what the clamp means — and `pointCountMismatch` exempts it by asking whether the
+    // descriptor is a bevel AND the build carries the stamp. A projection over one is not a
+    // bevel by that test, so the exemption was lost and the warning read
+    //   "descriptor 'uvProject' derives 24 topological points but the built geometry welds to 6".
+    // Every word true, and about the clamp rather than about any drift. Adding a modifier above
+    // a correct mesh must not produce a complaint about the mesh.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const bevel = bevelGeometryRef(BOX(), 5, null);
+      getForRead(bevel);
+      expect(
+        warn.mock.calls.map((c) => String(c[0])),
+        'the bevel alone must be silent',
+      ).toEqual([]);
+      warn.mockClear();
+
+      getForRead(uvProjectGeometryRef(bevel, SIZE));
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('🔴 a source with NO polygons PASSES THROUGH rather than vanishing', () => {
