@@ -140,6 +140,9 @@ describe('mutator catalog', () => {
   it('registerAllMutators registers all first-party mutators', () => {
     registerAllMutators();
     const mutators = listMutators();
+    // 30 = 29 + `camera.trajectory` (#774 — A3's build. A named shot becomes a wired,
+    // aimed path: a mutator rather than a generation capability, because a trajectory is
+    // about five Vec3s and that is what a language model emits well.)
     // 29 = 28 + `animate.poseBone` (#993 — the pose lane's AUTHOR. `PoseOverride` was
     // registered, evaluated and consumed by the render band while NOTHING could bring one
     // into existence; registration and reachability look like one property and are two.)
@@ -153,11 +156,12 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
-    expect(mutators).toHaveLength(29);
+    expect(mutators).toHaveLength(30);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.poseBone',
       'mutator.animation.retarget',
+      'mutator.camera.trajectory',
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
@@ -2242,7 +2246,7 @@ describe('agent.listMutators tool', () => {
     // agent surface is the one place that lie would never surface as a red.
     // 28 → 29 at #993 — `animate.poseBone`, for the mirror-image reason: a node type
     // the agent surface could not reach at all.
-    expect(parsed.mutators).toHaveLength(29);
+    expect(parsed.mutators).toHaveLength(30);
   });
 });
 
@@ -3863,6 +3867,7 @@ import {
   simplifyChannelMutator as _simplifyM,
   removeKeyframesMutator as _removeKfM,
   shotCreateMutator as _shotM,
+  cameraTrajectoryMutator as _cameraTrajM,
   poseBoneMutator as _poseBoneM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
@@ -4190,6 +4195,23 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         startTime: 0,
         endTime: 4,
         shotId: 'shot_opening',
+      },
+    },
+    // A3 (#774). `buildSceneWithJob` is the one fixture carrying a camera, and the
+    // camera is the whole subject here — the Follow-Path and the Track-To both name
+    // it as their `target`.
+    'mutator.camera.trajectory': {
+      mutator: _cameraTrajM as MutatorDefinition<unknown>,
+      build: buildSceneWithJob,
+      spec: {
+        cameraId: 'cam',
+        subjectId: 'box',
+        name: 'arc',
+        points: [
+          [4, 2, 3],
+          [0, 2, 5],
+          [-4, 2, 3],
+        ],
       },
     },
     'mutator.animate.poseBone': {

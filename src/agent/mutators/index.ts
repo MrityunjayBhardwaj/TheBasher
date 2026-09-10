@@ -36,6 +36,7 @@ import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { simplifyChannelMutator } from './builders/simplifyChannel';
 import { removeKeyframesMutator } from './builders/removeKeyframes';
+import { cameraTrajectoryMutator } from './builders/cameraTrajectory';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
@@ -67,6 +68,7 @@ export {
   simplifyChannelMutator,
   removeKeyframesMutator,
   shotCreateMutator,
+  cameraTrajectoryMutator,
   retargetMutator,
   addPassMutator,
   addAIPassMutator,
@@ -110,6 +112,10 @@ export function registerAllMutators(): void {
   registerMutator(simplifyChannelMutator);
   registerMutator(removeKeyframesMutator);
   registerMutator(shotCreateMutator);
+  // A3 (#774) — a named shot becomes a wired, aimed camera path. A mutator rather
+  // than a capability: a trajectory is about five Vec3s, which is what a language
+  // model emits well, so no service, stub or transport is involved.
+  registerMutator(cameraTrajectoryMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);
   // P4 Wave C — render graph
