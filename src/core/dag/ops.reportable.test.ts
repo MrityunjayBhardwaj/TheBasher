@@ -118,9 +118,10 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
     });
     expect(result.reportable?.badge).toBe('stripped-write');
     expect(result.reportable?.paramPath).toBe('overridden.bogus');
-    // and it names the PATH, not the root — the root is fine, and blaming it
-    // sends the reader somewhere there is nothing to fix.
-    expect(result.reportable?.reason).toContain("'overridden.bogus'");
+    // The reason does NOT restate the path — the badge's own opening clause
+    // already names it, and repeating it renders the path twice in one sentence.
+    expect(result.reportable?.reason).toBe('Object has no such parameter');
+    expect(result.reportable?.reason).not.toContain('overridden');
     // The value did not land — which is the claim. Note what it DOES leave behind:
     // `setAtPath` creates the container on the way down and zod keeps it, so the
     // params gain an empty `overridden: {}`. So the write is not a clean no-op; it
@@ -144,7 +145,19 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
     expect(result.next.nodes.n.params.overridden).toMatchObject({ position: true });
   });
 
-  it('a bad ROOT key still blames the root, which is the more useful sentence', () => {
+  it('a bad ROOT key under a NESTED path names the segment that failed', () => {
+    const result = applyOp(cube(), {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'transform.position.y',
+      value: 2,
+    });
+    expect(result.reportable?.badge).toBe('stripped-write');
+    // Here the root and the path differ, so naming the root IS new information.
+    expect(result.reportable?.reason).toBe("Object has no parameter 'transform'");
+  });
+
+  it('a bad ROOT key equal to the whole path adds nothing but the node type', () => {
     const result = applyOp(cube(), {
       type: 'setParam',
       nodeId: 'n',
@@ -152,7 +165,7 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
       value: 5,
     });
     expect(result.reportable?.badge).toBe('stripped-write');
-    expect(result.reportable?.reason).toContain("'size' is not a parameter of Object");
+    expect(result.reportable?.reason).toBe('Object has no such parameter');
   });
 
   // The guard that keeps the product's own cleanup un-badged: `idRefSweep` clears a

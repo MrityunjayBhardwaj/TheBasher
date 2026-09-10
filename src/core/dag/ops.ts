@@ -430,12 +430,20 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
         badge: 'stripped-write',
         nodeId: op.nodeId,
         paramPath: op.paramPath,
-        // Name what is actually wrong. A bad root is the commoner mistake and the
-        // more useful sentence; blaming a root that is fine sends the reader to the
-        // wrong place, which is the failure this whole check exists to prevent.
-        reason: rootSurvived
-          ? `'${op.paramPath}' is not a parameter of ${node.type}`
-          : `'${rootKey}' is not a parameter of ${node.type}`,
+        // 🔴 THE REASON MUST NOT RESTATE THE PATH. The badge that renders this
+        // already opens with `Ignored <paramPath> on <nodeId>`, so a reason quoting
+        // the path again reads as "Ignored overridden.bogus on n — 'overridden.bogus'
+        // is not a parameter of Object" — observed in the DiffBar, invisible to every
+        // assertion, because a test that checks the string CONTAINS the path passes
+        // twice as happily as once.
+        //
+        // So each case says the thing the opening clause did not: a root miss under a
+        // NESTED path names the segment that failed, which is new information; every
+        // other case has nothing to add but the node type.
+        reason:
+          rootSurvived || rootKey === op.paramPath
+            ? `${node.type} has no such parameter`
+            : `${node.type} has no parameter '${rootKey}'`,
       },
     };
   }
