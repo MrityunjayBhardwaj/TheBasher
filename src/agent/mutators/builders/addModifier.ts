@@ -43,7 +43,13 @@ import { canModifyGeometry } from '../../../app/modifierGeometry';
 // rather than silent — but it is NOT unconstructible, and that difference is recorded in
 // the blindness census rather than glossed: this surface is still one a new operator is
 // invisible to.
-const ModifierType = z.enum(['ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier']);
+const ModifierType = z.enum([
+  'ArrayModifier',
+  'MirrorModifier',
+  'MaskModifier',
+  'BevelModifier',
+  'UVProjectModifier',
+]);
 type ModifierType = z.infer<typeof ModifierType>;
 
 const AddModifierSpec = z.object({
@@ -64,6 +70,15 @@ const AddModifierSpec = z.object({
    * it never reaches a builder that would throw on the render walk.
    */
   amount: z.number().min(0).optional(),
+  /**
+   * UV Project param (optional — the node schema defaults size=2).
+   *
+   * `.positive()` rather than `.min(0)`, and the asymmetry with `amount` above is the
+   * operators' own: a zero bevel is the reference's disabled state and passes the mesh
+   * through, while a zero cube divides every corner into a non-finite UV. The builder throws
+   * on the render walk for exactly this, so it is refused here where nothing is drawing.
+   */
+  size: z.number().positive().optional(),
   /** Caller-supplied modifier id; auto-derived from target + type when omitted. */
   modifierId: z.string().optional(),
 });
@@ -90,6 +105,8 @@ function specParams(spec: AddModifierSpec): Record<string, unknown> {
     if (spec.axis !== undefined) p.axis = spec.axis;
   } else if (spec.modifierType === 'BevelModifier') {
     if (spec.amount !== undefined) p.amount = spec.amount;
+  } else if (spec.modifierType === 'UVProjectModifier') {
+    if (spec.size !== undefined) p.size = spec.size;
   }
   return p;
 }
@@ -106,9 +123,12 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     'the reverse, via `keep`); "BevelModifier" chamfers every edge by `amount` in ' +
     'local units, which MINTS faces — a quad per source edge and an n-gon per source ' +
     "point — and drops the source's per-face materials, so an amount of 0 leaves the " +
-    'mesh untouched. target may be the mesh or any modifier already in its stack (the base ' +
+    'mesh untouched. "UVProjectModifier" leaves the shape completely alone and authors a ' +
+    'corner-domain UV layer instead, projecting each face onto the nearest side of a ' +
+    'virtual cube of edge length `size` centred on the local origin — use it to texture a ' +
+    'mesh that has no usable UVs. target may be the mesh or any modifier already in its stack (the base ' +
     'is resolved automatically). Returns a deterministic modifierId; tune it later ' +
-    'with dag.exec setParam (count / offset / axis / amount / keep / muted) or stack it with ' +
+    'with dag.exec setParam (count / offset / axis / amount / size / keep / muted) or stack it with ' +
     'another addModifier call.',
   spec: AddModifierSpec,
   specExample: {

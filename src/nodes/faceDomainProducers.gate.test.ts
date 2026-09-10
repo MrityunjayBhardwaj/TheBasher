@@ -69,8 +69,9 @@ import { sourceFiles } from '../../tools/gates/sourceFiles';
 import { stripComments } from '../test-utils/sourceScan';
 import { insert, read } from '../app/attributeStore';
 import { clear } from '../app/geometryRegistry';
-import { arrayGeometryRef, boxGeometryRef } from '../app/modifierGeometry';
+import { arrayGeometryRef, boxGeometryRef, uvProjectGeometryRef } from '../app/modifierGeometry';
 import { readMeshUVs } from '../app/uvAttributes';
+import { projectMeshUVs } from '../app/uvProjection';
 import { boxFromFaceIndices } from '../test-utils/twoMaterialMesh';
 import {
   faceRangeMaterialAttributes,
@@ -78,7 +79,7 @@ import {
   targetedMaterialAttributes,
   uniformMaterialAttributes,
 } from './meshAttributes';
-import { MATERIAL_INDEX, UV_MAP, isKnownDomain, type AttributeSet } from './attributes';
+import { MATERIAL_INDEX, UV_MAP, UV_PROJECT, isKnownDomain, type AttributeSet } from './attributes';
 
 const BOX_SIZE: [number, number, number] = [1, 1, 1];
 
@@ -170,6 +171,28 @@ const PRODUCERS: readonly Producer[] = [
     },
   },
   {
+    module: 'src/app/uvProjection.ts',
+    what: 'projectMeshUVs',
+    // #994 — THE SECOND CORNER-DOMAIN PRODUCER, AND THE FIRST THAT IS NOT A LIFT. The row
+    // above it gathers a `uv` BUFFER through the rims, so its value is a function of the render
+    // vertex. This one chooses a cube side per FACE and is a function of (face, corner), which
+    // is why the corner domain finally has a producer whose output a lift cannot reproduce.
+    //
+    // A box is the probe subject deliberately: this census's subject is what a producer MINTS
+    // and at which DOMAIN, and a box mints exactly as a sphere does. The property that
+    // distinguishes this producer from the lift — that its corners at one render vertex can
+    // DISAGREE — is a different claim at a different denominator, and it is measured where it
+    // belongs, in `uvProjection.gate.test.ts`.
+    probe: () =>
+      fromStore(
+        (() => {
+          const verdict = projectMeshUVs(uvProjectGeometryRef(boxGeometryRef(BOX_SIZE, null), 2));
+          return verdict.kind === 'resident' ? verdict.key : null;
+        })(),
+        'the cube projection',
+      ),
+  },
+  {
     module: 'src/test-utils/twoMaterialMesh.ts',
     what: 'boxFromFaceIndices',
     probe: () =>
@@ -241,16 +264,29 @@ describe('#688 the face-domain producer census', () => {
   });
 
   it('pins every producer`s name and domain, so a re-domained attribute cannot slip in', () => {
-    // The whole observed map, not just the face rows. `UVMap` is the one non-face producer
-    // and the reason the defect is unreachable today; re-domaining it to `face` would put a
-    // second attribute into the collapsing set while every name-keyed assertion stayed green.
+    // The whole observed map, not just the face rows. Re-domaining a corner producer to `face`
+    // would put a second attribute into the collapsing set while every name-keyed assertion
+    // stayed green, which is what this row exists to stop.
+    //
+    // 🔴 "`UVMap` IS THE ONE NON-FACE PRODUCER" WENT FALSE AT #994 AND IS RE-DERIVED RATHER
+    // THAN PATCHED. There are TWO corner producers now, and the difference between them is the
+    // whole subject of that issue: `UVMap` is LIFTED off a `uv` buffer through the rims, so its
+    // value is a function of the render vertex; `UVProject` is AUTHORED, choosing a cube side
+    // per face, so its value is a function of (face, corner). Both land at `corner`, which is
+    // what this row checks — and the fact that they cannot be told apart HERE is correct: the
+    // property that separates them is about values at shared vertices, not about domains, and
+    // it is measured in `uvProjection.gate.test.ts`.
     const observed = [...censusDomains()]
       .map(([name, domains]) => `${name} @ ${[...domains].sort().join(',')}`)
       .sort();
 
-    // `UVMap` sorts BEFORE `material_index` — ASCII, uppercase first. Written in the order
+    // Both UV names sort BEFORE `material_index` — ASCII, uppercase first. Written in the order
     // the sort actually produces rather than the order the prose above reads in.
-    expect(observed).toEqual([`${UV_MAP} @ corner`, `${MATERIAL_INDEX} @ face`]);
+    expect(observed).toEqual([
+      `${UV_MAP} @ corner`,
+      `${UV_PROJECT} @ corner`,
+      `${MATERIAL_INDEX} @ face`,
+    ]);
   });
 
   it('mints each attribute at exactly ONE domain across the whole population', () => {

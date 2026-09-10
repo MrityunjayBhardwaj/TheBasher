@@ -229,6 +229,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
+  // #994 — every param routed, and there are only two. A modifier that reshapes nothing still
+  // owes the inspector the same card every other modifier draws.
+  UVProjectModifier: '[modifier] size=modifier muted=modifier',
   Vec3Math: '[] op=(unrouted) scalar=(unrouted)',
   VecBreak3: '[]',
   VideoStitch: '[render] codec=render fps=render outputPath=render',
@@ -287,4 +290,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-export const GOLDEN_TOTALS = { types: 84, routed: 133, unrouted: 226 } as const;
+// 84 → 85 types and 133 → 135 routed at #994: `UVProjectModifier`'s whole row arrives under
+// the fifth arm above, and BOTH of its cells route (`size`, `muted` → modifier). `unrouted` is
+// UNCHANGED, which is the derived half of the claim that nothing existing was re-homed to make
+// room for it. Two cells rather than three for the same reason `BevelModifier`'s row gave
+// before #847: this modifier declares no scope, and its header says the deferral is a decision.
+export const GOLDEN_TOTALS = { types: 85, routed: 135, unrouted: 226 } as const;

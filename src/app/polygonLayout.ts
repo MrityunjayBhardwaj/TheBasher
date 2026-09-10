@@ -362,6 +362,17 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
         kind: 'outside-the-descriptor',
         why: "a 'bevel' mints faces, so its rims exist only in the split numbering the builder lays out; its WELDED rims are stated by 'weldedPolygonsOf'",
       };
+    // #994 — 🔑 THE ONE DERIVED KIND THAT ANSWERS HERE, AND THE REASON IS THE SAME ONE THAT
+    // MAKES THE THREE ABOVE REFUSE. Their refusal is about SPLIT VERTEX NUMBERING: a copy's rim
+    // needs its source's split vertex count, which nothing descriptor-side has. A projection
+    // makes no copy — `geometryRegistry.get` resolves it to the source's own instance — so its
+    // split numbering IS the source's, corner for corner, and the rims come back unchanged.
+    //
+    // Worth being exact about, because "delegates to its source" reads like a formality and is
+    // not one: this is what lets `readMeshUVs` and the projection itself walk the same rims over
+    // a projected handle as over the handle underneath it.
+    case 'uvProject':
+      return polygonLayoutOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`polygonLayoutOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

@@ -198,6 +198,17 @@ const ROWS = [
     hash: '82055c87',
   },
   {
+    // #994 — the fifth geometry modifier and the tenth operator. Nothing about it is special
+    // HERE, which is the point of the row: an operator that reshapes no geometry is bypassed by
+    // the same machinery as one that does, because bypass is a property of standing in a stack.
+    // Its hash is measured AT INTRODUCTION rather than re-based from a pre-step tree — there is
+    // no earlier tree for it — and from here it freezes the passthrough exactly as the others do.
+    type: 'UVProjectModifier',
+    src: meshSrc('#777777'),
+    params: { size: 2 },
+    hash: '0adbd52f',
+  },
+  {
     type: 'SetMaterialOp',
     src: meshSrc('#444444'),
     // ns-2 step 14 — the retired face range, and its default meant EVERY face; a blank
@@ -244,8 +255,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   it('THE INSTRUMENT CONTROL: the registry and the corpus both answered', () => {
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this step's own thesis — the most expensive kind of agreement.
-    expect(listNodeTypes()).toHaveLength(84); // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate);
-    expect(operators()).toHaveLength(9);
+    expect(listNodeTypes()).toHaveLength(85); // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), 84 -> 85 at #994 (UVProjectModifier);
+    expect(operators()).toHaveLength(10);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

@@ -146,12 +146,13 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this phase's own thesis — the most expensive kind.
     expect(unreadableSchemas()).toEqual([]);
-    // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate). Stated exactly, not floored: the count is
+    // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), 84 -> 85 at #994
+    // (UVProjectModifier). Stated exactly, not floored: the count is
     // the instrument's denominator, and a floor would not catch an over-deletion.
-    expect(listNodeTypes()).toHaveLength(84);
+    expect(listNodeTypes()).toHaveLength(85);
   });
 
-  it('`muted` is declared NINE times in source, and that is three different populations', () => {
+  it('`muted` is declared TEN times in source, and that is three different populations', () => {
     expect(zodDeclarations('muted')).toEqual([
       ['src/nodes/ArrayModifier.ts', 1],
       // #818 — the fourth geometry modifier. It joins this census by declaring the field,
@@ -164,13 +165,17 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       ['src/nodes/SetMaterialOp.ts', 1],
       // A video strip. Bypassable, and not an operator — it declares no chain spine.
       ['src/nodes/Strip.ts', 1],
+      // #994 — the fifth geometry modifier, joining exactly as the fourth did: by declaring
+      // the field. It is the first member of this census that reshapes no geometry, which
+      // changes nothing about the row — bypass is a property of standing in a stack.
+      ['src/nodes/UVProjectModifier.ts', 1],
       // NOT a node type: the shared f-curve modifier base, one lane over. It is the
       // working counter-example this phase exists to carry back — a category that
       // declares its shared fields ONCE — and it has been sitting there since July.
       ['src/nodes/channelModifiers.ts', 1],
     ]);
 
-    // Eight of the nine are on registered node types; the ninth is that shared base.
+    // Nine of the ten are on registered node types; the tenth is that shared base.
     expect(registeredDeclaring('muted')).toEqual([
       'ArrayModifier',
       'BevelModifier',
@@ -180,6 +185,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'MirrorModifier',
       'SetMaterialOp',
       'Strip',
+      'UVProjectModifier',
     ]);
 
     // Six are inside the operator category, and that number is DERIVED — the category is
@@ -195,6 +201,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
+      'UVProjectModifier',
     ]);
   });
 
@@ -218,12 +225,14 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     ]);
     expect(registeredDeclaring('mute')).toHaveLength(11);
 
-    // 21 declarations of one concept across 82 node types, in two vocabularies, and no
+    // 22 declarations of one concept across 85 node types, in two vocabularies, and no
     // node declares both. The pair moves together at #818 — `BevelModifier` picked `muted`,
     // and it picked it because `chain.bypass` NAMES the param and registration refuses a
     // declaration whose named param the schema does not declare, which is exactly the relation
-    // this row measures the absence of for everything that predates it.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(21);
+    // this row measures the absence of for everything that predates it. It moves the same way
+    // again at #994, for the same reason and with no second mechanism: 21 -> 22, all on the
+    // `muted` side, because `UVProjectModifier` names the param its own `chain.bypass` names.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(22);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -281,6 +290,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'MirrorModifier',
       'SetMaterialOp',
       'Transform',
+      'UVProjectModifier',
     ]);
 
     // Two operators declare no bypass. Nothing says whether that is a decision or an
@@ -318,6 +328,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
+      'UVProjectModifier',
     ]);
     expect(operatorTypesInSection('material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(operatorTypesInSection('effect')).toEqual(['ColorCorrect']);
@@ -330,7 +341,13 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
         'src/agent/mutators/builders/addModifier.ts',
         /const ModifierType = z\.enum\(\[([\s\S]*?)\]\)/,
       ),
-    ).toBe("'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier'");
+    ).toBe(
+      // ⚠️ THE TRAILING COMMA IS REAL AND IS NOT SLOP. At #994 the tuple stopped fitting on one
+      // line, so the formatter breaks it one member per line and adds the comma the style
+      // requires. This row extracts SOURCE TEXT, so it sees formatting as well as membership —
+      // worth knowing before someone "cleans up" the expectation and reds the gate.
+      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier',",
+    );
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines
     // `MaterialLaneType`, and the per-field ownership switch closes on a `never` over it. A

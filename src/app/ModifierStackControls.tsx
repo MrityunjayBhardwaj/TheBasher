@@ -63,6 +63,7 @@ const LABELS: Readonly<Record<string, string>> = {
   MirrorModifier: 'Mirror',
   MaskModifier: 'Mask',
   BevelModifier: 'Bevel',
+  UVProjectModifier: 'UV Project',
 };
 
 /** #498 — a module constant, not a fresh `[]` per render, so the rows keep a stable
