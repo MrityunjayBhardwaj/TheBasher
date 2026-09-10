@@ -10,6 +10,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
 import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
+import { dagInspectTool } from './tools/dagInspect';
 import type { DagState } from '../core/dag/types';
 import type { ParamField } from './nodeCatalog';
 import {
@@ -164,6 +165,18 @@ describe('node schema payload (#1007)', () => {
     expect(examined).toBeGreaterThan(400);
     expect(stripped).toEqual([]);
     expect(dropped).toEqual([]);
+  });
+
+  // The no-drift row. `dag.inspect({scope:'types'})` used to carry its OWN summarizer
+  // three files away from the registry, which is how it came to be wrong at 34 paths
+  // without anyone noticing. It now returns this projection verbatim; if the two ever
+  // diverge again, they diverge here first.
+  it('is what dag.inspect({scope:types}) returns, verbatim', () => {
+    const result = dagInspectTool.handler({ scope: 'types' }, {
+      dagState: emptyDagState(),
+    } as Parameters<typeof dagInspectTool.handler>[1]);
+    expect(result.text).toBe(renderNodeCatalog());
+    expect(result.ops).toHaveLength(0);
   });
 
   it('renders a payload small enough to send, with its own legend', () => {
