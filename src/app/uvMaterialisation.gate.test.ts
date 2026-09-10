@@ -37,6 +37,8 @@ import { alignedSplitRims } from './builtRims';
 import { boxGeometryRef, sphereGeometryRef, uvProjectGeometryRef } from './modifierGeometry';
 import { cubeProjectedLayer } from './cubeProjection';
 import { readMeshUVs } from './uvAttributes';
+import { materialiseCornerLayer } from './cornerMaterialisation';
+import { faceArityOf } from './faceCount';
 import { read } from './attributeStore';
 import { UV_MAP } from '../nodes/attributes';
 import type { GeometryRef } from '../nodes/types';
@@ -158,6 +160,15 @@ describe('#786 the authored layer reaches the buffer', () => {
     // descriptor's topological arithmetic against a POSITION weld — two questions in different
     // units — and `build()` warns on every disagreement. A split duplicates a vertex WITHOUT
     // moving it, so the weld fuses the copies and reads what it read before.
+    //
+    // ⚠️ WHAT THIS ROW CAN AND CANNOT CATCH, MEASURED RATHER THAN ASSUMED. It was written
+    // expecting to catch any mis-placed duplicate, and it does not. A duplicate written at some
+    // OTHER existing vertex's position leaves this silent — stacking copies cannot raise a count
+    // of DISTINCT positions — and the falsification that stacked all 30 on vertex 0 passed here
+    // while failing the losslessness row above. What it does catch is a duplicate at a position
+    // no vertex held before: offsetting one by a unit reds this row. So it is a one-sided guard,
+    // in the same direction and for the same reason as the clamped-bevel exemption it sits
+    // beside, and the losslessness row is what covers the other side.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
@@ -169,6 +180,38 @@ describe('#786 the authored layer reaches the buffer', () => {
       warn.mockRestore();
       error.mockRestore();
     }
+  });
+
+  it('🔴 THE CONTROL THE BOX CANNOT BE: 45 SHARED vertices that AGREE split NOTHING', () => {
+    // 🔴 THIS ROW EXISTS BECAUSE THE BOX ROW WAS MEASURED UNABLE TO DO ITS JOB. The box control
+    // above says a mesh with nothing to duplicate duplicates nothing — but a box's 24 loops sit
+    // on 24 vertices, one loop each, so NO vertex is shared and the minting branch is never
+    // reached at all. A split that fired on SHARING rather than on DISAGREEMENT would leave the
+    // box untouched and pass. Falsified directly: forcing every value comparison to report
+    // "different" left the box row green.
+    //
+    // A sphere carrying its own UV0 LIFT is the subject that separates them. It has the same 45
+    // shared render vertices the projection does, and — structurally, because a lift is a
+    // pullback along loop → vertex — it disagrees at none of them. So a correct split duplicates
+    // nothing here, over a mesh where there was every opportunity to.
+    const source = SPHERE();
+    const geometry = getForRead(source)!;
+    const layer = lifted(source);
+    expect(sharedAndDisagreeing(source, layer)).toEqual({ shared: 45, disagreeing: 0 });
+
+    const result = materialiseCornerLayer(
+      geometry,
+      faceArityOf(source.descriptor)!,
+      alignedSplitRims(source, geometry)!,
+      { domain: 'corner', type: 'float2', count: layer.length / 2, data: layer },
+      'uv',
+    );
+    expect(result.kind, result.kind === 'refused' ? result.why : '').toBe('materialised');
+    if (result.kind !== 'materialised') throw new Error('unreachable');
+    expect(result.duplicates).toBe(0);
+    expect(result.geometry.getAttribute('position').count).toBe(
+      geometry.getAttribute('position').count,
+    );
   });
 
   it('🔴 a source with NO polygons PASSES THROUGH rather than vanishing', () => {
