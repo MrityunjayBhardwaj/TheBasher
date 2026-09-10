@@ -120,8 +120,15 @@ describe('#994 the cube projection AUTHORS a corner layer', () => {
   beforeEach(() => clear());
 
   it('🔴 THE FALSIFICATION: corners at one render vertex DISAGREE', () => {
-    const ref = uvProjectGeometryRef(SPHERE(), SIZE);
-    const stat = sharedAndDisagreeing(ref, projected(ref));
+    // 🔴 WALKED OVER THE SOURCE'S RIMS, AND SINCE #786 IT HAS TO BE. The projection now BUILDS a
+    // split buffer, and on that buffer this count is ZERO BY CONSTRUCTION — splitting is exactly
+    // the removal of disagreement. Measuring there would turn #994's central row into an
+    // assertion that fails on a correct build. The claim was always about what the OPERATOR
+    // authors over the mesh it is given, so it is taken where the loops still share vertices.
+    // That the authored values then survive materialisation is #786's gate, not this one.
+    const source = SPHERE();
+    const ref = uvProjectGeometryRef(source, SIZE);
+    const stat = sharedAndDisagreeing(source, projected(ref));
 
     // Stated exactly rather than as `> 0`, for the reason every census in this repo states its
     // numbers exactly: a floor cannot catch a drop, and a projection that quietly stopped
@@ -149,10 +156,11 @@ describe('#994 the cube projection AUTHORS a corner layer', () => {
     // This file's own projection, planar: every face onto +Z instead of onto the nearest cube
     // side. One line different from the operator, and it authors nothing — which is what says
     // the 22 above is attributable to the per-face choice and to nothing else in the pipeline.
-    const ref = uvProjectGeometryRef(SPHERE(), SIZE);
-    const geometry = getForRead(ref)!;
+    // Over the SOURCE, for the reason the falsification row above states.
+    const source = SPHERE();
+    const geometry = getForRead(source)!;
     const position = geometry.getAttribute('position');
-    const polygons = alignedSplitRims(ref, geometry)!;
+    const polygons = alignedSplitRims(source, geometry)!;
     let corners = 0;
     for (const rim of polygons) corners += rim.length;
     const planar = new Float32Array(corners * 2);
@@ -164,7 +172,7 @@ describe('#994 the cube projection AUTHORS a corner layer', () => {
         at++;
       }
 
-    const stat = sharedAndDisagreeing(ref, planar);
+    const stat = sharedAndDisagreeing(source, planar);
     expect(stat.shared).toBe(45);
     expect(stat.disagreeing).toBe(0);
   });
@@ -244,36 +252,51 @@ describe('#994 a projection reshapes NOTHING', () => {
 
     // 🔑 AND THE LAYOUT IS AN ANSWER, NOT A REFUSAL — the one derived kind for which it is.
     // `array`/`mirror`/`subset` answer `not-yet` here because a copy's rim needs its source's
-    // split vertex count. A projection makes no copy, so its split numbering IS its source's.
+    // split vertex count. A projection changes no TOPOLOGY — same faces, same welded rims — so
+    // the descriptor-side layout delegates and is laid out. ⚠️ Since #786 that is no longer the
+    // same statement as "its split numbering IS its source's": the built buffer duplicates the
+    // vertices whose loops disagree, so the SPLIT numbering is its own. The two were one claim
+    // while the projection built nothing, and separating them is what #786 cost here.
     expect(polygonLayoutOf(ref.descriptor).kind).toBe('laid-out');
   });
 
-  it('🔑 the registry hands back the SOURCE`s instance, and takes no entry of its own', () => {
+  it('🔴 #786 — the registry takes an entry of its OWN, and it is a COPY not a share', () => {
+    // 🔴 THIS ROW ASSERTED THE OPPOSITE UNTIL #786, and the reason it did is worth keeping: a
+    // projection that only minted a layer owned no buffer, so `get` handed back the source's own
+    // instance and took no cache entry. Materialising the layer duplicates vertices, so there is
+    // now a second buffer and it is the one that draws.
+    //
+    // 🔑 THE TWO SHAPES #994 MEASURED FATAL ARE STILL EXCLUDED, and this row is where that is
+    // checked rather than asserted in prose. Returning the SOURCE'S instance from a build arm
+    // would let `build()`'s `clearGroups()` wipe the source's slot layout; SHARING the source's
+    // `BufferAttribute` instances would let the sweep dispose GPU buffers a live source is still
+    // drawing from. A copy is neither — which is what the attribute-identity checks below say.
     const source = SPHERE();
     const ref = uvProjectGeometryRef(source, SIZE);
+    const projected = getForRead(ref)!;
+    const underneath = getForRead(source)!;
 
-    // Identity, not equality. A copy would be a second buffer free to drift, and — measured
-    // before this shape was chosen — a shared-attribute copy would be disposed by the geometry
-    // sweep while the source was still drawing from those buffers.
-    expect(getForRead(ref)).toBe(getForRead(source));
-
-    // And availability is inherited VERBATIM rather than composed.
-    expect(availabilityOf(ref.descriptor)).toBe(availabilityOf(source.descriptor));
+    expect(projected).not.toBe(underneath);
+    for (const name of ['position', 'normal', 'uv'])
+      expect(projected.getAttribute(name), name).not.toBe(underneath.getAttribute(name));
+    expect(projected.getIndex()).not.toBe(underneath.getIndex());
   });
 
-  it('🔴 VERBATIM, NOT COMPOSED — and only a glTF source can show the difference', () => {
+  it('🔴 COMPOSED WHEN IT BUILDS, VERBATIM WHEN IT PASSES THROUGH — only a glTF source shows it', () => {
     // ⚠️ THE ROW ABOVE CANNOT MAKE THIS CLAIM, AND THAT WAS MEASURED RATHER THAN NOTICED. It
-    // asserts equality over a PROCEDURAL source, where `composedOverSource('procedural')` is
-    // itself `'procedural'` — so the two rules agree and the assertion is green under both.
-    // Replacing the verbatim inheritance with `composedOverSource` left the whole file passing,
-    // which makes that row a fixture that cannot exhibit the property it names.
+    // works over a PROCEDURAL source, where `composedOverSource('procedural')` is itself
+    // `'procedural'` — so the two rules agree and any assertion there is green under both.
     //
-    // A glTF source separates them, because that is the one input on which the rules differ:
+    // A glTF source separates them, because that is the one input on which they differ:
     //   composed → 'mounting'  ("the registry will build this once the asset mounts")
     //   verbatim → 'clone'     ("these buffers ARE the asset clone's")
-    // and only the second is true of a projection, which builds nothing and hands the source's
-    // own instance back. `drawnByAssetClone` reads this answer, and a false `'mounting'` would
-    // let `getForAttach` put buffers into the scene graph that the clone is already drawing.
+    //
+    // 🔴 AND SINCE #786 THE ANSWER IS `clone` FOR A REASON THAT IS NO LONGER "IT BUILDS
+    // NOTHING". It builds — over any source that states a face arity. A glTF child states none
+    // (#738: an imported mesh is triangulated before this module sees it), so the projection
+    // cannot materialise anything over it and passes through instead. `'mounting'` there would
+    // promise buffers the registry will never hold, turn `drawnByAssetClone` false, and leave the
+    // Object asking for a build that refuses — the imported mesh would simply not be drawn.
     const asset: GeometryRef = {
       key: 'gltf|asset-a|Cube',
       descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
@@ -283,8 +306,14 @@ describe('#994 a projection reshapes NOTHING', () => {
     expect(availabilityOf(asset.descriptor)).toBe('clone');
     expect(availabilityOf(ref.descriptor)).toBe('clone');
     expect(drawnByAssetClone(ref.descriptor)).toBe(true);
-    // The composed answer, named as the thing this row exists to exclude.
     expect(availabilityOf(ref.descriptor)).not.toBe('mounting');
+
+    // And the composing half of the rule, over a source that DOES state an arity: a projection
+    // over an ARRAY over a glTF child materialises, so its buffers are the registry's.
+    const arrayed = arrayGeometryRef(asset, 3, [1, 0, 0], null);
+    expect(availabilityOf(arrayed.descriptor)).toBe('mounting');
+    expect(availabilityOf(uvProjectGeometryRef(arrayed, SIZE).descriptor)).toBe('mounting');
+    expect(drawnByAssetClone(uvProjectGeometryRef(arrayed, SIZE).descriptor)).toBe(false);
   });
 
   it('two sizes are two layers, and one size is one', () => {
