@@ -138,9 +138,15 @@ export function detectUnsupportedGltfFeatures(json: {
   // corner lift refuses for every imported mesh, first set included, because a `gltf`
   // descriptor states no face arity (#738).
   //
-  // ⚠️ Deleting this entry outright needs one thing this change does not have — a browser
-  // observation that a replaced map on `two-uv-quad.gltf` draws the centre quarter rather
-  // than the whole texture. It is gated at unit level only.
+  // ✅ THE OBSERVATION IS TAKEN, AND IT DID NOT LICENSE DELETING THIS ENTRY. The browser
+  // check this comment used to ask for — a replaced map on `two-uv-quad.gltf` drawing the
+  // centre quarter rather than the whole texture — now runs as
+  // `tests/e2e/p997-replaced-map-uv-set.spec.ts`, on real composited pixels, in both
+  // directions (the control on the default set draws the whole image), and it reds when
+  // either half of the wiring is deleted. What that discharged is the reason this entry
+  // USED to give. The three above are untouched by it and were each re-measured when the
+  // observation landed, so the notice keeps firing and its words stay true: the feature
+  // renders, and it is not editable.
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),
