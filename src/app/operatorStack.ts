@@ -160,7 +160,7 @@ export function enumerateOperatorStack(
         nodeId: node!.id,
         type: node!.type,
         muted: bypassed(node!),
-        label: nodeDisplayName(node!),
+        label: nodeDisplayName(state.nodes, node!.id),
       });
     }
     producer = consumer.node;

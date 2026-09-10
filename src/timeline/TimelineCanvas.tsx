@@ -252,7 +252,7 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
     const targetNode = params.target ? nodes[params.target] : undefined;
     const name =
       isBareDefault && targetNode
-        ? `${nodeDisplayName(targetNode)} — ${paramLabel}`
+        ? `${nodeDisplayName(nodes, params.target as string)} — ${paramLabel}`
         : params.name || params.paramPath || '';
     rows.push({
       channelId: node.id,

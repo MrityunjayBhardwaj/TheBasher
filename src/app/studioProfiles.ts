@@ -34,9 +34,10 @@ export interface ProfileEntry {
   readonly active: boolean;
 }
 
-function rigName(node: Node): string {
+function rigName(nodes: Readonly<Record<string, Node>>, nodeId: string): string {
+  const node = nodes[nodeId];
   const n = (node.params as { name?: unknown }).name;
-  return typeof n === 'string' && n.length > 0 ? n : nodeDisplayName(node);
+  return typeof n === 'string' && n.length > 0 ? n : nodeDisplayName(nodes, nodeId);
 }
 
 /** The `LightProfileSelect` feeding `Scene.inputs.lightRig`, or null. Single-input. */
@@ -56,7 +57,11 @@ export function enumerateProfiles(state: DagState): ProfileEntry[] {
   const out: ProfileEntry[] = [];
   for (const node of Object.values(state.nodes)) {
     if (node.type !== 'LightRig') continue;
-    out.push({ rigId: node.id, name: rigName(node), active: node.id === activeRig });
+    out.push({
+      rigId: node.id,
+      name: rigName(state.nodes, node.id),
+      active: node.id === activeRig,
+    });
   }
   return out;
 }

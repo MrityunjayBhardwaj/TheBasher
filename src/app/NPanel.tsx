@@ -3889,7 +3889,11 @@ export function NPanel() {
   const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
     overrideInfoFor(node, paramPath);
 
-  const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
+  // Through the ONE resolver (#1010), like the header two hundred lines below. Spelling
+  // `meta.name ?? id` here was a third answer to a question `nodeDisplayName` owns, and it
+  // read an imported bone's content hash aloud to a screen reader while the outliner row
+  // that reached it said `mixamorig_LeftArm`.
+  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(dagState.nodes, node.id) : 'no selection'}`;
 
   if (collapsed) {
     // Collapsed strip: 28px wide, chevron-only (mirrors LeftSidebar's collapsed
@@ -3980,7 +3984,7 @@ export function NPanel() {
                 title="Double-click to rename"
                 onDoubleClick={() => beginRename(node.id, 'inspector')}
               >
-                {nodeDisplayName(node)}
+                {nodeDisplayName(dagState.nodes, node.id)}
               </div>
             )}
             <div className="font-mono text-[10px] text-fg/40">
