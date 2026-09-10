@@ -39,6 +39,8 @@ import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
 import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
+import { assetRefOfSkeleton, riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
+import { staleSeedBones } from '../animate/clipSeedProvenance';
 
 export interface CookOutcome {
   /** How many producers this pass generated for. */
@@ -193,6 +195,23 @@ export interface MotionCookOffer {
   readonly status: string | null;
   /** True when the clip's keys are behind the producer's current request. */
   readonly stale: boolean;
+  /**
+   * Bones on this producer's character whose edited channel is still playing the
+   * motion a PREVIOUS cook produced (#1001), sorted.
+   *
+   * 🔴 IT BELONGS HERE, BESIDE THE BUTTON THAT CAUSES IT. The cook is the gesture
+   * that strands them: the clip refreshes, every untouched bone follows it, and
+   * every bone the director edited keeps the old motion. A moment later this
+   * affordance says "Up to date" — true of the clip, false of the character — so
+   * without this the one surface a director is looking at is the surface that
+   * lies to them. `stale` and this are opposite halves of the same word: `stale`
+   * is the clip behind its request, this is the channels behind the clip.
+   *
+   * Empty is the ordinary case and must stay quiet. A director who edited no
+   * bones can never see it, which is what keeps it from becoming the alarm on a
+   * healthy bind that #923 had to remove.
+   */
+  readonly strandedBones: readonly string[];
 }
 
 /**
@@ -210,19 +229,57 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
   if (!row) {
     // A producer with no clip wired cannot be cooked into anything. Said out
     // loud rather than shown as a live button that would silently do nothing.
-    return { label: 'No clip wired', disabled: true, status: null, stale: false };
+    return {
+      label: 'No clip wired',
+      disabled: true,
+      status: null,
+      stale: false,
+      strandedBones: [],
+    };
   }
+  const strandedBones = strandedBonesForClip(state, row.clipId);
   if (row.status === 'failed') {
-    return { label: 'Retry generation', disabled: false, status: row.status, stale: row.stale };
+    return {
+      label: 'Retry generation',
+      disabled: false,
+      status: row.status,
+      stale: row.stale,
+      strandedBones,
+    };
   }
   if (!row.stale) {
-    return { label: 'Up to date', disabled: true, status: row.status, stale: false };
+    return { label: 'Up to date', disabled: true, status: row.status, stale: false, strandedBones };
   }
   // Stale AND already baked is the drag: the clip keeps playing its last result,
   // and the label says the inputs moved rather than offering a bare "Generate"
   // that hides the fact there is something to lose.
   if (row.baked) {
-    return { label: 'Re-cook (inputs changed)', disabled: false, status: row.status, stale: true };
+    return {
+      label: 'Re-cook (inputs changed)',
+      disabled: false,
+      status: row.status,
+      stale: true,
+      strandedBones,
+    };
   }
-  return { label: 'Generate', disabled: false, status: row.status, stale: true };
+  return { label: 'Generate', disabled: false, status: row.status, stale: true, strandedBones };
+}
+
+/**
+ * The bones left behind on old motion across every character this clip drives.
+ *
+ * Asked of the GRAPH rather than of a cook's return value, for the reason
+ * `riggedSkeletonsForClip` states: a re-cook has no bind result in hand, and the
+ * graph still knows. A clip bound to two characters reports both, deduplicated —
+ * the same bone name stranded on two rigs is one thing for a director to fix,
+ * not two.
+ */
+function strandedBonesForClip(state: DagState, clipId: string): string[] {
+  const names = new Set<string>();
+  for (const skeletonId of riggedSkeletonsForClip(state.nodes, clipId)) {
+    const assetRef = assetRefOfSkeleton(state.nodes, skeletonId);
+    if (!assetRef) continue;
+    for (const name of staleSeedBones(state, assetRef)) names.add(name);
+  }
+  return [...names].sort();
 }

@@ -152,8 +152,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
   KeyframeChannelVec2:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) keyframes=channel',
+  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` record
+  // which clip a minted channel was seeded from. Machine provenance, so both are
+  // unrouted, the same standing as `childName`/`assetRef` beside them: a director
+  // never edits them and no card draws them.
   KeyframeChannelVec3:
-    '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) keyframes=channel',
+    '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',
   Layer:
     '[layout,animate] name=layout enabled=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
@@ -292,4 +296,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
 // 84 -> 85 at #974 (PoseOverride), which contributes five unrouted cells.
-export const GOLDEN_TOTALS = { types: 85, routed: 133, unrouted: 231 } as const;
+// #1001 appended two unrouted cells to KeyframeChannelVec3: `unrouted` 231 → 233,
+// `routed` untouched — the append arm's derived half.
+export const GOLDEN_TOTALS = { types: 85, routed: 133, unrouted: 233 } as const;

@@ -189,6 +189,30 @@ export function riggedSkeletonsForClip(
   return [...out].sort();
 }
 
+/**
+ * The `assetRef` of the `GltfAsset` a `GltfSkeleton` projects, or null when the
+ * rig is not wired to one.
+ *
+ * 🔴 IT LIVES HERE BECAUSE IT WAS ABOUT TO BE SPELLED A THIRD TIME (#1001).
+ * `bindMotionToCharacter` had it as a private two-hop read and
+ * `placeGeneratedMotion` has the id-returning half of the same walk, each
+ * commenting that it must not disagree with the other. A third copy — for the
+ * stranded-bone read — is how "which asset does this rig belong to" ends up with
+ * three answers, and this file's header is about exactly that cost.
+ *
+ * Goes through `edgeTarget` rather than reading `inputs.asset` by hand, so the
+ * single-vs-array socket shape is decoded in one place too.
+ */
+export function assetRefOfSkeleton(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  skeletonId: string,
+): string | null {
+  const assetId = edgeTarget(nodes[skeletonId], 'asset');
+  if (!assetId) return null;
+  const ref = (nodes[assetId]?.params as { assetRef?: unknown } | undefined)?.assetRef;
+  return typeof ref === 'string' && ref.length > 0 ? ref : null;
+}
+
 /** A retarget's two ends: the SOURCE clip it reads and the rig it drives. */
 export interface RetargetPair {
   readonly retargetId: string;

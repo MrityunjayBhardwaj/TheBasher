@@ -56,6 +56,9 @@ import { useDagStore } from '../../core/dag/store';
 import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
+// #1001 — the two-hop rig→asset read moved to the module that owns the graph
+// walks, where `placeGeneratedMotion`'s id-returning half already points.
+import { assetRefOfSkeleton } from '../animate/boundClipsForAsset';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
@@ -122,16 +125,6 @@ export function labelForAssetRef(assetRef: string): string {
   return base.replace(/\.[^.]+$/, '') || base;
 }
 
-/** The `assetRef` of the `GltfAsset` a `GltfSkeleton` projects. */
-function assetRefOfSkeleton(state: DagState, skeletonId: string): string | null {
-  const socket = state.nodes[skeletonId]?.inputs?.asset;
-  if (!socket) return null;
-  const one = Array.isArray(socket) ? socket[0] : socket;
-  const asset = one?.node ? state.nodes[one.node] : undefined;
-  const ref = (asset?.params as { assetRef?: unknown } | undefined)?.assetRef;
-  return typeof ref === 'string' && ref.length > 0 ? ref : null;
-}
-
 /**
  * Every character in the scene that could receive motion.
  *
@@ -143,7 +136,7 @@ export function motionTargetCandidates(state: DagState): Candidate[] {
   const out: Candidate[] = [];
   for (const node of Object.values(state.nodes)) {
     if (node.type !== 'GltfSkeleton') continue;
-    const assetRef = assetRefOfSkeleton(state, node.id);
+    const assetRef = assetRefOfSkeleton(state.nodes, node.id);
     if (!assetRef) continue;
     const value = evaluate(state, node.id, { ctx: BIND_POSE_CTX }).value as SkeletonValue;
     const bones = value?.kind === 'Skeleton' ? value.bones : [];

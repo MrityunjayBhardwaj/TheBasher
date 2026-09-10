@@ -70,6 +70,19 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
           The clip still plays its last result until you re-cook.
         </p>
       ) : null}
+      {/* #1001 — the bones a cook leaves behind. WARN-coloured and named,
+          because the alternative is this card reading "Up to date" over a
+          character playing two motions at once. Named rather than counted: the
+          director has to go and look at a bone, and "3 bones" does not say
+          which. Absent entirely when nothing is stranded, which is every
+          project where nobody has edited a bone. */}
+      {offer.strandedBones.length > 0 ? (
+        <p data-testid="motion-cook-stranded" className="mt-1 text-warn">
+          {offer.strandedBones.length === 1
+            ? `${offer.strandedBones[0]} is still on the previous motion — you edited it, so the clip no longer drives it.`
+            : `${offer.strandedBones.length} bones are still on the previous motion — you edited them, so the clip no longer drives them: ${offer.strandedBones.join(', ')}.`}
+        </p>
+      ) : null}
     </div>
   );
 }
