@@ -34,10 +34,13 @@ export interface ProfileEntry {
   readonly active: boolean;
 }
 
-function rigName(nodes: Readonly<Record<string, Node>>, nodeId: string): string {
-  const node = nodes[nodeId];
+function rigName(nodes: Readonly<Record<string, Node>>, node: Node): string {
+  // Takes BOTH the table and the node it already has: the table is what the display
+  // resolver needs to follow a `data` edge, and the node is what the caller already
+  // holds. Taking only an id would have made "no such node" representable here for the
+  // first time, guarded by nothing but the caller iterating `Object.values`.
   const n = (node.params as { name?: unknown }).name;
-  return typeof n === 'string' && n.length > 0 ? n : nodeDisplayName(nodes, nodeId);
+  return typeof n === 'string' && n.length > 0 ? n : nodeDisplayName(nodes, node.id);
 }
 
 /** The `LightProfileSelect` feeding `Scene.inputs.lightRig`, or null. Single-input. */
@@ -59,7 +62,7 @@ export function enumerateProfiles(state: DagState): ProfileEntry[] {
     if (node.type !== 'LightRig') continue;
     out.push({
       rigId: node.id,
-      name: rigName(state.nodes, node.id),
+      name: rigName(state.nodes, node),
       active: node.id === activeRig,
     });
   }

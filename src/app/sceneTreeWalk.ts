@@ -225,7 +225,12 @@ function projectGltfChildren(
       // director renames the bone, where `meta.name` has to win. Spelling `key` here was
       // the outliner having its own answer to a question `nodeDisplayName` already owns,
       // which is how it came to be the only surface showing bone names at all.
-      display: display(ctx.state, childNodeId),
+      // Through the ONE resolver (#1010) when the node is there, and the map key when it
+      // is not. Nothing prunes `nodeNameMap`, so a key pointing at a removed node is
+      // reachable, and `display` answers `<missing:…>` for it — a different claim from
+      // the one this issue is about. The key stays that row's answer until something
+      // decides what a stale entry should do.
+      display: ctx.state.nodes[childNodeId] ? display(ctx.state, childNodeId) : key,
       // NO `parent` — glTF children are non-reorderable (no scene edge). The
       // outliner collapses them by row-key prefix (the key nests under the
       // asset's), so no owner back-reference is needed.

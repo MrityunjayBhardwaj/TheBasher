@@ -23,7 +23,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { importedChildOps } from '../test-utils/importedChildFixture';
 import { gltfChildDagId } from '../core/import/gltfImportChain';
 import { importedChildOf } from './importedChild';
-import { nodeDisplayName } from './sceneTreeWalk';
+import { buildSceneTreeRows, nodeDisplayName } from './sceneTreeWalk';
 
 const ASSET = 'assets/character.glb';
 const BONES = ['mixamorig_Hips', 'mixamorig_LeftArm', 'mixamorig_Spine'] as const;
@@ -54,6 +54,14 @@ function withImportedBones(): { state: DagState; ids: Record<string, string> } {
         }) as Op[],
     ),
   ];
+  // Wired into the scene — `buildSceneTreeRows` walks from the `scene` output, so an
+  // unconnected asset projects no rows at all and every outliner assertion below would
+  // pass vacuously against an empty list.
+  ops.push({
+    type: 'connect',
+    from: { node: 'n_asset', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  });
   for (const op of ops) state = applyOp(state, op).next;
   return { state, ids };
 }
@@ -100,5 +108,47 @@ describe('nodeDisplayName — a node with a name never shows as a bare id (#1010
   it('is total — an id no node answers to resolves to the id itself', () => {
     const { state } = withImportedBones();
     expect(nodeDisplayName(state.nodes, 'n_not_here')).toBe('n_not_here');
+  });
+});
+
+describe('the outliner row goes through the same resolver (#1010)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  // The outliner used to render the `nodeNameMap` KEY, which is a second answer to a
+  // question the resolver owns. It agreed for an un-renamed bone — the key and
+  // `childName` are the same string — and that agreement is exactly why the drift was
+  // invisible until a rename made them differ.
+  it('shows a renamed bone under its new name, not the map key', () => {
+    const { state: base, ids } = withImportedBones();
+    const id = ids['mixamorig_LeftArm'];
+
+    // The denominator: prove the bone HAS an outliner row before asserting its label.
+    const before = buildSceneTreeRows(base).filter((r) => r.nodeId === id);
+    expect(before.map((r) => r.display)).toEqual(['mixamorig_LeftArm']);
+
+    const state = applyOp(base, { type: 'setMeta', nodeId: id, name: 'left arm' }).next;
+    const after = buildSceneTreeRows(state).filter((r) => r.nodeId === id);
+    expect(after.map((r) => r.display)).toEqual(['left arm']);
+  });
+
+  // A key whose node is gone keeps the key as its label. Nothing prunes `nodeNameMap`,
+  // so this row is reachable, and what a stale entry SHOULD do is a different question
+  // from which of two strings a live one shows — this pins that #1010 did not answer it.
+  it('keeps the map key for an entry whose node is gone', () => {
+    const { state: base, ids } = withImportedBones();
+    const id = ids['mixamorig_Spine'];
+    const state = applyOp(base, { type: 'removeNode', nodeId: id }).next;
+
+    // Denominator again: the node is really gone AND the map still names it.
+    expect(state.nodes[id]).toBeUndefined();
+    const map = (state.nodes['n_asset'].params as { nodeNameMap: Record<string, string> })
+      .nodeNameMap;
+    expect(map['mixamorig_Spine']).toBe(id);
+
+    const rows = buildSceneTreeRows(state).filter((r) => r.nodeId === id);
+    expect(rows.map((r) => r.display)).toEqual(['mixamorig_Spine']);
   });
 });
