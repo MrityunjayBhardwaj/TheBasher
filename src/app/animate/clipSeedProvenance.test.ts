@@ -162,6 +162,36 @@ describe('#1001 — the re-cook is detected', () => {
   });
 });
 
+describe('#1001 — the read is memoised, and the memo must not answer for a clip that moved', () => {
+  it('goes stale after a re-cook through the REAL op road, not just a rebuilt table', () => {
+    // The conversion and the hash are cached on the keyframe array's identity.
+    // That is only safe while a re-cook REPLACES the array rather than mutating
+    // it, so the claim is checked against `applyOp` itself rather than against
+    // the spread-and-replace helper above — a cache that served the old answer
+    // here would make every row in this file green over a signal that never
+    // fires in the product.
+    const minted = mint(riggedState(), 'position');
+    expect(rowFor(minted, 'position')!.state).toBe('current');
+    const after = applyOp(minted, {
+      type: 'setParam',
+      nodeId: 'n_clip',
+      paramPath: 'keyframes',
+      value: [key(1, 0, 1), key(1, 1, 999)],
+    } as unknown as Op).next;
+    expect(rowFor(after, 'position')!.state).toBe('stale');
+  });
+
+  it('a second read of an UNCHANGED graph gives the same answer', () => {
+    // The other direction: a cache that keyed on something unstable would flip a
+    // healthy channel to stale on the second render, which is a widget that
+    // alarms at random.
+    const minted = mint(riggedState(), 'position');
+    expect(rowFor(minted, 'position')!.state).toBe('current');
+    expect(rowFor(minted, 'position')!.state).toBe('current');
+    expect(rowFor(minted, 'position')!.state).toBe('current');
+  });
+});
+
 describe('#1001 — 🔴 THE LOSING ALTERNATIVE: an edit is not staleness', () => {
   it('a channel the DIRECTOR rewrote, over an unchanged clip, is NOT stale', () => {
     // Reds for any implementation that compares the channel's keys against the

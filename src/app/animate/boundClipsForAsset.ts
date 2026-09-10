@@ -289,7 +289,13 @@ export function overrideReachesRig(
  * same spine: the read band iterates every bone a clip has, while the mint asks
  * about exactly one.
  */
-export function boneIndexOf(clip: BoundClip, childName: string): number | null {
+export function boneIndexOf(
+  // Narrowed to the ONE field it reads (#1001), so a caller holding a clip in a
+  // different shape — the staleness read holds one bucketed by bone — asks this
+  // question here rather than re-spelling `jointKeys.indexOf` at its own site.
+  clip: { readonly jointKeys: readonly string[] },
+  childName: string,
+): number | null {
   const i = clip.jointKeys.indexOf(childName);
   return i >= 0 ? i : null;
 }
