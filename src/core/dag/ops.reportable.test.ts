@@ -142,7 +142,9 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
       value: true,
     });
     expect(result.reportable).toBeUndefined();
-    expect(result.next.nodes.n.params.overridden).toMatchObject({ position: true });
+    expect((result.next.nodes.n.params as Record<string, unknown>).overridden).toMatchObject({
+      position: true,
+    });
   });
 
   it('a bad ROOT key under a NESTED path names the segment that failed', () => {

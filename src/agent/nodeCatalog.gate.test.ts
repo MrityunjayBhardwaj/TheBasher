@@ -11,7 +11,7 @@ import { getNodeType, listNodeTypes } from '../core/dag/registry';
 import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
 import { dagInspectTool } from './tools/dagInspect';
-import type { DagState } from '../core/dag/types';
+import type { DagState } from '../core/dag/state';
 import type { ParamField } from './nodeCatalog';
 import {
   listNodeSchemas,
@@ -175,8 +175,11 @@ describe('node schema payload (#1007)', () => {
     const result = dagInspectTool.handler({ scope: 'types' }, {
       dagState: emptyDagState(),
     } as Parameters<typeof dagInspectTool.handler>[1]);
-    expect(result.text).toBe(renderNodeCatalog());
-    expect(result.ops).toHaveLength(0);
+    // `handler` may return a promise for other tools; this one is synchronous, and
+    // narrowing here keeps the assertion typed rather than reaching through `any`.
+    const sync = result as { text: string; ops: unknown[] };
+    expect(sync.text).toBe(renderNodeCatalog());
+    expect(sync.ops).toHaveLength(0);
   });
 
   it('renders a payload small enough to send, with its own legend', () => {
