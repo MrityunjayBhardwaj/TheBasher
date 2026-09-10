@@ -308,10 +308,17 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
  * returns both rigs when a second character retargets the same clip — so one
  * name can stand for channels on two characters, and an action driven by the
  * deduplicated name would fix one and leave the other warned with the same
- * sentence still on the card. ⚠️ THAT SECOND HALF IS NOT GATED HERE: the row
- * needs a `RetargetClip` with real source and target bone tables, which is a
- * fixture of its own. It is stated as the reason the shape is a LIST, not as a
- * claim this file proves.
+ * sentence still on the card. That half is now gated too, in
+ * `cookStrandedTwoCharacters.test.ts` (#1003) — it needed a `RetargetClip` with
+ * real source and target bone tables, which was a fixture of its own.
+ *
+ * 🔴 AND BUILDING IT MEASURED SOMETHING THE CLAIM DID NOT SAY. A retarget carries
+ * ROTATION; the target's positions come from its own bind pose. So a re-cook that
+ * moves only the source's POSITIONS leaves the retargeted clip byte-identical and
+ * the second character never goes stale at all — the first fixture reported one
+ * character while claiming to prove two, and passed its own precondition row only
+ * because that row existed. Which component a stranding travels through is a
+ * property of the retarget, not a detail of the fixture.
  *
  * 🔴 AND PER COMPONENT, NOT PER BONE. Measured over two real cooks of the same
  * character: 9 bones of 78 come back with their POSITION track unchanged and
