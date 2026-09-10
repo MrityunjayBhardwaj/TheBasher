@@ -17,12 +17,30 @@
 // carrying differing projected values**, against 0 for the lift and 0 for the same code with
 // the per-face choice removed, over the identical 45.
 //
+// ── 🔴 WHAT A DIRECTOR SEES TODAY: NOTHING. READ THIS BEFORE ASSUMING IT IS BROKEN ────
+//
+// Adding this modifier changes no pixel. The layer it authors has no reader in production —
+// censused, and the only readers are its own gate and the producer census — so the mesh draws
+// exactly as it did before. Materialising the layer to the render buffer is #786, and it is a
+// tessellation change rather than an omission here: wherever two corners at one render vertex
+// disagree, the buffer has to SPLIT that vertex, and that is a different operator's work.
+//
+// ⚠️ AND THAT MAKES THIS AN ADVERTISED ACTION THAT SILENTLY DOES NOTHING, which is the exact
+// shape `ModifierStackControls` refuses elsewhere: *"an add that `buildAddModifierOps` would
+// refuse is not shown at all, so the panel cannot advertise an action that silently does
+// nothing."* The two honest options were to ship it offered and say so, or to withhold the
+// `section` declaration — and the second is unavailable without also withholding the operator,
+// because in this substrate the section IS the membership ("a member joins a stack by declaring
+// the section, never by having the right sockets"). So it ships offered, the cost is written
+// down here rather than discovered, and the gap is FILED rather than left in a comment.
+//
 // ── WHAT THIS NODE DOES NOT DO, DELIBERATELY ──────────────────────────────────────────
 //
-// It does not put the layer on the render buffer (#786 — that needs vertex splitting wherever
-// the corners disagree, which is a tessellation change), it does not carry the layer through a
-// minting kind (#881), and there is no seam marking or unwrapping here. A projection needs no
-// seams, which is exactly why it is the smallest producer that qualifies.
+// It does not put the layer on the render buffer (#786 — see above), it does not carry the
+// layer through a minting kind (#881 — measured: a downstream modifier gathers its source's
+// attribute KEY, and this layer cannot be in one, because a key is content-derived while the
+// values need built positions), and there is no seam marking or unwrapping here. A projection
+// needs no seams, which is exactly why it is the smallest producer that qualifies.
 //
 // ── WHY THERE IS NO `scope` ───────────────────────────────────────────────────────────
 //

@@ -41,11 +41,16 @@ import {
   drawnByAssetClone,
 } from './geometryRegistry';
 import { alignedSplitRims } from './builtRims';
-import { boxGeometryRef, sphereGeometryRef, uvProjectGeometryRef } from './modifierGeometry';
+import {
+  arrayGeometryRef,
+  boxGeometryRef,
+  sphereGeometryRef,
+  uvProjectGeometryRef,
+} from './modifierGeometry';
 import { projectMeshUVs } from './uvProjection';
 import { readMeshUVs } from './uvAttributes';
 import { read } from './attributeStore';
-import { faceCountOf } from './faceCount';
+import { cornerCountOf, faceCountOf } from './faceCount';
 import { pointCountOf } from './pointIdentity';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { polygonLayoutOf } from './polygonLayout';
@@ -162,6 +167,52 @@ describe('#994 the cube projection AUTHORS a corner layer', () => {
     const stat = sharedAndDisagreeing(ref, planar);
     expect(stat.shared).toBe(45);
     expect(stat.disagreeing).toBe(0);
+  });
+
+  it('the layer carries exactly as many elements as the corner domain has', () => {
+    // The model's own rule — "an attribute at a domain must carry exactly as many elements as
+    // that domain has" — and it is the rule the UV0 lift was found BREAKING at #776, silently,
+    // for every shape that is not a box. A box has 24 render vertices and 24 loops, so a
+    // producer that confused the two passed every test it had; a sphere separates them 61 to
+    // 176. Both shapes are asserted here for exactly that reason: the box row alone cannot fail.
+    for (const [source, corners] of [
+      [BOX(), 24],
+      [SPHERE(), 176],
+    ] as const) {
+      const ref = uvProjectGeometryRef(source, SIZE);
+      const verdict = projectMeshUVs(ref);
+      expect(verdict.kind).toBe('resident');
+      if (verdict.kind !== 'resident') throw new Error('unreachable');
+      const layer = read(verdict.key)![UV_PROJECT];
+      expect(layer.count).toBe(corners);
+      expect(layer.count).toBe(cornerCountOf(ref.descriptor));
+    }
+  });
+
+  it('⚠️ THE LAYER DOES NOT SURVIVE A DOWNSTREAM OPERATOR, and that is recorded not hidden', () => {
+    // #881's subject, measured here rather than described, because a limit nobody has run is a
+    // limit that can be wrong. The projected layer is minted on the READ road keyed by the
+    // PROJECTED handle — it cannot be in an attribute key, because a key is content-derived and
+    // the values need built positions. A downstream modifier gathers its source's attribute
+    // KEY, so there is nothing there for it to carry, and asking the array for a projection
+    // gets the refusal below rather than a wrong answer.
+    //
+    // This is the honest state of "it composes as an operator like any other in the chain": the
+    // OPERATOR composes — it is a legal source and the array builds over it — while the LAYER
+    // stops at the projection. Carriage through a minting kind is #881 and is out of scope of
+    // #994 by that issue's own words.
+    const projection = uvProjectGeometryRef(BOX(), SIZE);
+    const downstream = arrayGeometryRef(projection, 3, [2, 0, 0]);
+
+    // The operator composes: the array is a real handle over the projection and builds.
+    expect(downstream.descriptor.kind).toBe('array');
+    expect(getForRead(downstream)).not.toBeNull();
+
+    // The layer does not: asked for a projection, the array says what it is instead of
+    // answering with the source's values under a shape they do not describe.
+    const verdict = projectMeshUVs(downstream);
+    expect(verdict.kind).toBe('not-derivable');
+    if (verdict.kind === 'not-derivable') expect(verdict.why).toContain("'array'");
   });
 
   it('a BOX has no shared vertices at all, and the row says so instead of hiding it', () => {
