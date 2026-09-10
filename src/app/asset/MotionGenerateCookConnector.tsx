@@ -22,12 +22,22 @@
 import { useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
-import { cookMotionGenerations, motionCookOffer, placeCookedMotion } from './cookMotionGenerations';
+import {
+  cookMotionGenerations,
+  motionCookOffer,
+  placeCookedMotion,
+  STRANDED_ROWS_SHOWN,
+} from './cookMotionGenerations';
+import { useSelectionStore } from '../stores/selectionStore';
 import { dispatchFollowClip } from '../animate/dispatchMutator';
 
 export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId }) {
   const state = useDagStore((s) => s.state);
   const [busy, setBusy] = useState(false);
+  // #1004 — the ONLY thing this component decides: whether the bounded list is
+  // currently expanded. Which bones, which channels and which objects are all
+  // decided in `motionCookOffer`, where a row can reach them.
+  const [showAll, setShowAll] = useState(false);
   const offer = motionCookOffer(state, producerId);
 
   async function run() {
@@ -93,22 +103,69 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
               : `${offer.stranded.length} bones are still on the previous motion — you edited them, so the clip no longer drives them.`}
           </p>
           <ul className="mt-1 space-y-0.5">
-            {offer.stranded.map((bone) => (
-              <li key={bone.childName} className="flex items-center justify-between gap-2">
-                <span className="truncate">{bone.childName}</span>
-                <button
-                  type="button"
-                  data-testid={`motion-cook-follow-${bone.childName}`}
-                  onClick={() =>
-                    dispatchFollowClip(bone.targets, `Discard edit on ${bone.childName}`)
-                  }
-                  className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/80 hover:bg-muted hover:text-fg"
-                >
-                  Discard edit
-                </button>
-              </li>
-            ))}
+            {(showAll ? offer.stranded : offer.stranded.slice(0, STRANDED_ROWS_SHOWN)).map(
+              (bone) => (
+                <li key={bone.childName} className="flex items-center justify-between gap-2">
+                  {/* #1004 — THE NAME IS THE WAY TO GO AND LOOK. A row that only
+                    offers to throw the keys away makes the destructive choice the
+                    only choice: deciding whether an edit is worth keeping meant
+                    leaving the card, finding the bone in the outliner, selecting
+                    it, and coming back. For one bone that is friction; for twenty
+                    it is the reason nobody looks.
+
+                    Selects EVERY character carrying the name, not the first —
+                    `objectIds` is derived in the offer for exactly that reason.
+
+                    ⚠️ TWO LIMITS, BOTH OBSERVED IN PIXELS AND NEITHER FIXED HERE.
+                    (1) Selection drives the inspector, so going to look REPLACES
+                    this card with the bone's; the return trip is unassisted. That
+                    is still strictly less work than hunting the bone in the
+                    outliner, which is what this replaces. (2) The bone's inspector
+                    header reads its content-addressed id (`n_gltfChild_bcf19259`),
+                    not `mixamorig_LeftArm` — so you press a name and land on
+                    something that does not say it. Pre-existing for every imported
+                    child however it is selected, and filed separately rather than
+                    widened into this one. */}
+                  <button
+                    type="button"
+                    data-testid={`motion-cook-goto-${bone.childName}`}
+                    onClick={() => useSelectionStore.getState().selectMany(bone.objectIds)}
+                    className="truncate text-left underline decoration-dotted underline-offset-2 hover:text-fg"
+                    title={`Select ${bone.childName}`}
+                  >
+                    {bone.childName}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`motion-cook-follow-${bone.childName}`}
+                    onClick={() =>
+                      dispatchFollowClip(bone.targets, `Discard edit on ${bone.childName}`)
+                    }
+                    className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/80 hover:bg-muted hover:text-fg"
+                  >
+                    Discard edit
+                  </button>
+                </li>
+              ),
+            )}
           </ul>
+          {/* THE BOUND, AND IT EXPANDS RATHER THAN TRUNCATES. Capping the rows
+              without a way back would make the hidden bones unreachable — no
+              per-bone discard, and nothing to press to go and look — leaving the
+              bulk act as the only thing that could touch them, which is the
+              destructive-choice-only failure this section just removed. */}
+          {offer.stranded.length > STRANDED_ROWS_SHOWN ? (
+            <button
+              type="button"
+              data-testid="motion-cook-stranded-more"
+              onClick={() => setShowAll((v) => !v)}
+              className="mt-0.5 text-[10px] text-fg/60 underline decoration-dotted hover:text-fg"
+            >
+              {showAll
+                ? 'Show fewer'
+                : `Show all ${offer.stranded.length} (${offer.stranded.length - STRANDED_ROWS_SHOWN} more)`}
+            </button>
+          ) : null}
           {/* #1004 — ONE ACT OVER THE SET THE CARD IS ALREADY SHOWING. Measured
               over two real cooks of a 78-bone character: 68 bones come back with
               their rotation moved, so a director who edited twenty strands close

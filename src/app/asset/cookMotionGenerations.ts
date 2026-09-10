@@ -40,6 +40,7 @@ import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { assetRefOfSkeleton, riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
+import { gltfChildDagId } from '../../core/import/gltfImportChain';
 import { channelSeedRows } from '../animate/clipSeedProvenance';
 import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
 
@@ -238,7 +239,31 @@ export interface StrandedBone {
     readonly childName: string;
     readonly component: BakedComponent;
   }[];
+  /**
+   * The scene objects this name stands for — the bones themselves, deduplicated,
+   * sorted (#1004). What a director presses to go and LOOK at the thing before
+   * deciding to throw it away.
+   *
+   * 🔴 EVERY CHARACTER, NOT THE FIRST. One name can stand for a bone on two
+   * characters — measured, and gated in `cookStrandedTwoCharacters.test.ts`. A
+   * "take me there" that picked `targets[0]` would silently choose one of them,
+   * which is the same defect the whole-address shape exists to prevent, wearing
+   * navigation's clothes instead of an action's.
+   *
+   * Derived HERE and not in JSX for the reason this file's consumers state: an id
+   * assembled in a component is an id no row can reach.
+   */
+  readonly objectIds: readonly string[];
 }
+
+/**
+ * How many stranded rows the card shows before it offers to show the rest (#1004).
+ *
+ * Measured: 68 of 78 bones come back moved from two real cooks, so the unbounded
+ * list is a twenty-row scroll inside a ~280px panel. Exported so a row can assert
+ * the bound rather than a component owning a number nothing can reach.
+ */
+export const STRANDED_ROWS_SHOWN = 6;
 
 /**
  * The cook affordance's state for one producer node.
@@ -347,5 +372,11 @@ function strandedBonesForClip(state: DagState, clipId: string): StrandedBone[] {
   }
   return [...byName.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([childName, targets]) => ({ childName, targets }));
+    .map(([childName, targets]) => ({
+      childName,
+      targets,
+      // Deduplicated because the components of one bone on one character are
+      // several targets and ONE object; sorted so the selection is stable.
+      objectIds: [...new Set(targets.map((t) => gltfChildDagId(t.assetRef, t.childName)))].sort(),
+    }));
 }

@@ -381,3 +381,44 @@ test('the director discards every stranded edit in one press (#1004)', async ({ 
     clip: { x: 0, y: 0, width: 1280, height: 800 },
   });
 });
+
+// #1004 — the row is a way to LOOK, not only a way to destroy. Pressing the name
+// selects the bone; with two characters under one name it selects both, which is
+// gated in the unit rows and observed here as the real selection store changing.
+test('pressing the stranded bone name selects that bone (#1004)', async ({ page }) => {
+  await buildStrandedScene(page, { alsoStrand: true });
+  await expect(page.getByTestId('motion-cook-stranded')).toBeVisible();
+
+  const before = await page.evaluate(() => [
+    ...(window as unknown as BasherWindow).__basher_selection!.getState().selectedNodeIds,
+  ]);
+  await page.getByTestId(`motion-cook-goto-${BONE}`).click();
+  const after = await page.evaluate(() => [
+    ...(window as unknown as BasherWindow).__basher_selection!.getState().selectedNodeIds,
+  ]);
+
+  // The control is the BEFORE read: the producer was selected to draw this card,
+  // so a row asserting only "something is selected" would pass without the press.
+  expect(before).not.toEqual(after);
+  // The id is a CONTENT HASH — `hashId('gltfChild', assetRef, childName)` — so it
+  // never spells the bone name. Asking whether it CONTAINS the name is a test of a
+  // guess about the id scheme; computing it with the product's own function is a
+  // test of the feature. (Measured: the substring form failed on a working button.)
+  const expected = await page.evaluate(
+    async ({ asset, bone }) => {
+      const ids = await import('/src/core/import/gltfImportChain.ts');
+      return ids.gltfChildDagId(asset, bone);
+    },
+    { asset: ASSET, bone: BONE },
+  );
+  expect(after).toContain(expected);
+  // 🔴 THE CARD IS GONE AFTER THE PRESS, and that is the product, not the test:
+  // selection drives the inspector, so going to LOOK at the bone replaces the
+  // producer's card with the bone's. Recorded as a limit rather than asserted
+  // away — the return trip is unassisted. See the connector.
+  await expect(page.getByTestId('motion-cook-stranded')).toHaveCount(0);
+  await page.screenshot({
+    path: '/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/53341e94-cc8c-410f-900a-434886b3c27b/scratchpad/1004-goto.png',
+    clip: { x: 960, y: 80, width: 320, height: 560 },
+  });
+});

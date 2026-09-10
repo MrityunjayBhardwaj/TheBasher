@@ -30,7 +30,7 @@ import type { Op } from '../../core/dag/types';
 import { gltfChildDagId } from '../../core/import/gltfImportChain';
 import { importedChildNodes } from '../../test-utils/importedChildFixture';
 import { ensureChannelForBone } from '../animate/ensureChannelForBone';
-import { motionCookOffer } from './cookMotionGenerations';
+import { motionCookOffer, STRANDED_ROWS_SHOWN } from './cookMotionGenerations';
 import { channelSeedRows } from '../animate/clipSeedProvenance';
 import { motionRequestHash, MotionGenerateParams } from '../../nodes/MotionGenerate';
 
@@ -55,6 +55,16 @@ beforeEach(() => {
  */
 function key(bone: number, time: number, deg: number) {
   return { bone, time, position: [0, 0, 0], rotation: [0, deg, 0] };
+}
+
+/**
+ * Moves BOTH components. Needed because a bone with one stale component has one
+ * target and one object, so a dedup assertion over it passes whether the dedup
+ * exists or not — measured: dropping the dedup reddened the two-character row and
+ * left this one green.
+ */
+function key2(bone: number, time: number, v: number) {
+  return { bone, time, position: [0, v, 0], rotation: [0, v, 0] };
 }
 
 /**
@@ -325,5 +335,60 @@ describe('#1004 — one act over the whole stranded list', () => {
     const bulk = motionCookOffer(s, PRODUCER).stranded.flatMap((b) => b.targets);
     expect(bulk.every((t) => t.component === 'rotation')).toBe(true);
     expect(bulk.some((t) => t.component === 'position')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1004 — the way to go and LOOK, decided where a row can reach it
+// ---------------------------------------------------------------------------
+
+describe('#1004 — reaching the bone from its row', () => {
+  it('one name carrying two characters selects BOTH bones, not the first', () => {
+    let s = twoCharactersOneClip([key(1, 0, 0), key(1, 1, 5)]);
+    s = editBone(s, ASSET_A);
+    s = editBone(s, ASSET_B);
+    s = recook(s, [key(1, 0, 50), key(1, 1, 90)]);
+
+    const stranded = motionCookOffer(s, PRODUCER).stranded;
+    expect(stranded).toHaveLength(1);
+    // THE ROW. `targets[0]` would silently pick one character — the same defect
+    // the whole-address shape exists to prevent, wearing navigation's clothes.
+    expect(stranded[0].objectIds).toEqual(
+      [gltfChildDagId(ASSET_A, BONE), gltfChildDagId(ASSET_B, BONE)].sort(),
+    );
+  });
+
+  it('the components of one bone on one character are ONE object, not several', () => {
+    let s = oneCharacterBothComponents([key2(1, 0, 0), key2(1, 1, 5)]);
+    s = mint(s, BONE, 'rotation');
+    s = mint(s, BONE, 'position');
+    s = recook(s, [key2(1, 0, 40), key2(1, 1, 80)]);
+
+    const stranded = motionCookOffer(s, PRODUCER).stranded;
+    expect(stranded).toHaveLength(1);
+    // THE DISCRIMINATING FACT, asserted so the row cannot go vacuous: this bone
+    // carries TWO stale targets. With one, a dedup assertion passes whether the
+    // dedup exists or not.
+    expect(stranded[0].targets).toHaveLength(2);
+    expect(stranded[0].objectIds).toEqual([gltfChildDagId(ASSET_A, BONE)]);
+  });
+
+  it('every id it offers is a node that exists in the graph', () => {
+    let s = oneCharacterBothComponents([key(0, 0, 0), key(1, 0, 0), key(1, 1, 5)]);
+    s = mint(s, BONE, 'rotation');
+    s = mint(s, OTHER, 'rotation');
+    s = recook(s, [key(0, 0, 30), key(1, 0, 50), key(1, 1, 90)]);
+
+    const ids = motionCookOffer(s, PRODUCER).stranded.flatMap((b) => b.objectIds);
+    // Print the denominator: a name that offered NO ids would pass an "all exist"
+    // check trivially.
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) expect(s.nodes[id], `${id} is not in the graph`).toBeDefined();
+  });
+
+  it('the row bound is a number a row can read, and it is smaller than a real cook', () => {
+    // 68 of 78 bones move on a real re-cook; a bound at or above that is not a bound.
+    expect(STRANDED_ROWS_SHOWN).toBeGreaterThan(0);
+    expect(STRANDED_ROWS_SHOWN).toBeLessThan(20);
   });
 });
