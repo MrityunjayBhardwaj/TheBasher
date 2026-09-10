@@ -97,6 +97,11 @@ export interface BoneMapRow {
    * rests are nearly opposite; an absorbed gap is information about the two
    * anatomies, not a defect to act on, and it must never be coloured as one.
    * False on the direction branch and for a refused bone, where the gap stays.
+   *
+   * Since #999 a LEAF is absorbed too, from the rig's bone-axis convention. Its
+   * `restGapDeg` is still null — the gap this panel measures is the one to a
+   * MAPPED child, and a leaf has none — so the pairing renders no angle either
+   * way and the two fields stay consistent.
    */
   readonly restGapAbsorbed: boolean;
 }

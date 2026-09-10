@@ -261,6 +261,130 @@ function restDirectionsInWorld(
   return out;
 }
 
+/** Bones of a rig that ARE limbs: everything but the anchor at the top. */
+function nonRootBones(bones: readonly Bone[]): Bone[] {
+  return bones.filter((b) => b.parent && (b.parent as Bone).isBone);
+}
+
+/** A bone's own child bones, in rig order. */
+function childBones(bone: Bone): Bone[] {
+  return (bone.children as Bone[]).filter((c) => c.isBone);
+}
+
+/** The world direction from `bone` to the mean of `points`, or null if degenerate. */
+function directionToMean(bone: Bone, points: readonly Vector3[]): Vector3 | null {
+  if (points.length === 0) return null;
+  const mean = new Vector3();
+  for (const p of points) mean.add(p);
+  mean.multiplyScalar(1 / points.length).sub(new Vector3().setFromMatrixPosition(bone.matrixWorld));
+  return mean.lengthSq() < 1e-18 ? null : mean.normalize();
+}
+
+/**
+ * How far a rig's bones may stray from one shared local axis and still count as
+ * carrying a convention. Measured, not chosen: on the rig a director gets today
+ * the worst of 17 non-root bones is 0.1° off local +Y, and on the two rigs that
+ * have no convention the BEST is over 20°. Nothing sits near this line.
+ */
+const BONE_AXIS_TOLERANCE_COSINE = Math.cos((5 * Math.PI) / 180);
+
+/** At least this many bones must agree before one axis is called a convention. */
+const BONE_AXIS_MIN_EVIDENCE = 3;
+
+/**
+ * The single bone-local axis every non-root bone of this rig points along, or
+ * null when the rig has no such convention (#999).
+ *
+ * ── WHY A RIG WOULD HAVE ONE, AND WHY IT IS WORTH ASKING ──────────────────
+ *
+ * A bone in the map with no MAPPED child has no direction to align by, so #866's
+ * per-bone correction skips it and its rest gap survives — hands, toe bases and
+ * the head, the three joints furthest out. On the rig a director actually gets
+ * those bones have no children AT ALL, so there is no unmapped child to fall
+ * back to either. The direction has to come from somewhere else.
+ *
+ * It comes from the rig's own other bones. Measured over the three rigs in the
+ * tree, excluding each rig's root:
+ *
+ *   tripo (the target)   17 of 17 within 0.1° of local (0, 1, 0)
+ *   mixamo xbot           0 of 51 within 5° of anything
+ *   kimodo BVH source     0 of 61 within 5° of anything
+ *
+ * So "a bone points along its local +Y" is a FACT ABOUT THIS RIG that 17 bones
+ * can be checked against, not an assumption — and a rig without the property
+ * says so loudly rather than nearly passing.
+ *
+ * 🔴 THE ROOT IS EXCLUDED, AND IT IS THE ONE THING THAT DECIDES THIS. Measured
+ * with the root in, the tripo rig reads 17 of 18 with an 87° outlier, and a rule
+ * tuned to tolerate one outlier would also tolerate a rig with no convention at
+ * all. A root is an anchor rather than a limb: its "direction to its children"
+ * is the direction to the whole body, which is not a bone axis and was never
+ * meant to be one. Excluding it by STRUCTURE — a bone whose parent is not a bone
+ * — takes the outlier out for a reason rather than by threshold.
+ *
+ * Null on too little evidence: three bones agreeing is a coincidence a small rig
+ * can produce, and inferring a leaf's direction from a coincidence is worse than
+ * leaving the gap where a director can at least see it.
+ */
+export function boneAxisConvention(bones: readonly Bone[]): Vector3 | null {
+  for (const bone of bones) {
+    if (!bone.parent || !(bone.parent as Bone).isBone) bone.updateMatrixWorld(true);
+  }
+  const local: Vector3[] = [];
+  for (const bone of nonRootBones(bones)) {
+    const kids = childBones(bone);
+    const world = directionToMean(
+      bone,
+      kids.map((k) => new Vector3().setFromMatrixPosition(k.matrixWorld)),
+    );
+    if (!world) continue;
+    local.push(world.applyQuaternion(worldRotationOf(bone).clone().invert()));
+  }
+  if (local.length < BONE_AXIS_MIN_EVIDENCE) return null;
+  const mean = new Vector3();
+  for (const v of local) mean.add(v);
+  if (mean.lengthSq() < 1e-12) return null;
+  mean.normalize();
+  // EVERY bone, not most of them. A convention with exceptions is not one, and
+  // the two rigs that lack it miss by tens of degrees rather than by a few.
+  for (const v of local) {
+    if (v.dot(mean) < BONE_AXIS_TOLERANCE_COSINE) return null;
+  }
+  return mean;
+}
+
+/**
+ * Where a bone's TAIL points in world, for a bone the map treats as a chain end.
+ *
+ * ── THE `*End` CHILD IS THE TAIL, AND AVERAGING INSTEAD IS MEASURABLY WRONG ──
+ *
+ * A leaf in the MAP is rarely a leaf in the RIG: a head has a skull top, a toe
+ * base has a toe end, a hand has fingers. Which of those children is the tail is
+ * not a matter of taste — measured against the target's own convention direction
+ * on the live vendor pair:
+ *
+ *   Head        children [HeadEnd, Jaw, LeftEye, RightEye]
+ *                 *End child      9.5°
+ *                 mean of all    28.2°   ← jaw and eyes point FORWARD, not up
+ *   LeftHand    children [five finger bases, no End]
+ *                 mean of all     2.7°
+ *   LeftToeBase children [LeftToeEnd]     22.2°  (all three rules agree)
+ *
+ * So: an `End` child is the tail when there is one — that is the BVH `End Site`
+ * and Mixamo `_End` convention, present on both source rigs here. Otherwise the
+ * mean of the children, which is right for a hand precisely because no single
+ * finger is a hand's direction (the thumb least of all).
+ */
+function tailDirectionInWorld(bone: Bone): Vector3 | null {
+  const kids = childBones(bone);
+  const ends = kids.filter((k) => /end$/i.test(k.name));
+  const chosen = ends.length > 0 ? ends : kids;
+  return directionToMean(
+    bone,
+    chosen.map((k) => new Vector3().setFromMatrixPosition(k.matrixWorld)),
+  );
+}
+
 /**
  * The world's vertical. Both rests reach this module already in the project's
  * Y-up world — the BVH reader and the glTF reader each convert on the way in —
@@ -501,8 +625,13 @@ export function solveRestAlignment(
  * `refused`  — bones whose two rest directions are nearly OPPOSITE after the
  *              heading, where the minimal rotation between them is undetermined
  *              (see `ANTIPARALLEL_REFUSAL_COSINE`); their offset carries no
- *              direction term and their gap stays. A bone with no mapped child is
- *              in neither list: it has no direction to correct.
+ *              direction term and their gap stays.
+ *
+ * A bone with no mapped child — a LEAF of the map — is absorbed too since #999,
+ * from the target rig's bone-axis CONVENTION and the source bone's tail, and is
+ * named in `byConvention` as well. It falls back into NEITHER list when the
+ * target rig has no convention, or when the source leaf has no children of its
+ * own to point at: there is then no direction to correct and none is invented.
  *
  * Both are reported from the builder itself so the bone-map panel says what the
  * retarget DID rather than re-deriving it one file over (#987's shape).
@@ -511,6 +640,16 @@ export interface AlignedOffsets {
   readonly offsets: Record<string, Matrix4>;
   readonly absorbed: readonly string[];
   readonly refused: readonly string[];
+  /**
+   * The subset of `absorbed` whose direction came from the target rig's bone-axis
+   * CONVENTION rather than from a mapped child (#999) — the leaves.
+   *
+   * Reported separately because the evidence is weaker and a reader should be
+   * able to tell: a mapped bone's direction is measured from where its own child
+   * sits, while a leaf's is inferred from what the rig's other seventeen bones
+   * do. Both are absorbed, and only one of them could be wrong about THIS bone.
+   */
+  readonly byConvention: readonly string[];
 }
 
 /**
@@ -588,20 +727,40 @@ export function alignedLocalOffsets(
   const sourceNames = new Set(Object.values(targetToSource));
   const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
   const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
+  // #999 — what a LEAF falls back to. Null on a rig with no convention, and the
+  // leaves then keep the pre-#999 behaviour: no direction term, gap intact,
+  // named in neither list. Asked once for the whole rig rather than per bone.
+  const convention = boneAxisConvention(targetBoneObjs);
+  const sourceByName = new Map(sourceBoneObjs.map((b) => [b.name, b]));
 
   const inverse = rotation.clone().invert();
   const offsets: Record<string, Matrix4> = {};
   const absorbed: string[] = [];
   const refused: string[] = [];
+  const byConvention: string[] = [];
   for (const bone of targetBoneObjs) {
     const sourceName = targetToSource[bone.name];
     if (sourceName === undefined) continue;
     const bind = worldRotationOf(bone);
     let correction = new Quaternion();
 
-    const targetWorld = targetDirs.get(bone.name);
-    const sourceWorld = sourceDirs.get(sourceName);
+    // A mapped child's direction FIRST, always. The convention is the fallback
+    // for a bone that has no such child, never a second opinion about one that
+    // does — 17 bones agreeing about the rig cannot outrank this bone's own
+    // measured direction, and letting it try would replace measurement with
+    // inference on every bone at once.
+    const measuredTarget = targetDirs.get(bone.name);
+    const leafTarget =
+      measuredTarget ?? (convention ? convention.clone().applyQuaternion(bind) : undefined);
+    const sourceBone = sourceByName.get(sourceName);
+    const sourceWorld =
+      sourceDirs.get(sourceName) ??
+      (measuredTarget === undefined && sourceBone
+        ? (tailDirectionInWorld(sourceBone) ?? undefined)
+        : undefined);
+    const targetWorld = leafTarget;
     if (targetWorld && sourceWorld) {
+      if (measuredTarget === undefined) byConvention.push(bone.name);
       // Both directions expressed in the target bone's own bind frame, where the
       // offset is applied.
       const bindInverse = bind.clone().invert();
@@ -609,6 +768,9 @@ export function alignedLocalOffsets(
       const want = sourceWorld.clone().applyQuaternion(rotation).applyQuaternion(bindInverse);
       if (have.dot(want) < ANTIPARALLEL_REFUSAL_COSINE) {
         refused.push(bone.name);
+        // A refused leaf claimed a convention term it did not get. Take the
+        // claim back rather than leaving the panel two lists that disagree.
+        if (measuredTarget === undefined) byConvention.pop();
       } else {
         correction = new Quaternion().setFromUnitVectors(have, want);
         absorbed.push(bone.name);
@@ -619,5 +781,5 @@ export function alignedLocalOffsets(
       inverse.clone().multiply(bind).multiply(correction),
     );
   }
-  return { offsets, absorbed, refused };
+  return { offsets, absorbed, refused, byConvention };
 }
