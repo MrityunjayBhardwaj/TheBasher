@@ -31,6 +31,7 @@ import { gltfChildDagId } from '../../core/import/gltfImportChain';
 import { importedChildNodes } from '../../test-utils/importedChildFixture';
 import { ensureChannelForBone } from '../animate/ensureChannelForBone';
 import { motionCookOffer } from './cookMotionGenerations';
+import { channelSeedRows } from '../animate/clipSeedProvenance';
 import { motionRequestHash, MotionGenerateParams } from '../../nodes/MotionGenerate';
 
 const ASSET_A = 'user-imports/dwarf.glb';
@@ -232,5 +233,97 @@ describe('#1003 — a clip stranding one bone on two characters', () => {
       motionCookOffer(s, PRODUCER).stranded.flatMap((b) => b.targets.map((t) => t.assetRef)),
     );
     expect([...refs]).toEqual([ASSET_A]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// #1004 — one act over the whole list, and the one thing it must never reach
+// ---------------------------------------------------------------------------
+
+/**
+ * A single character whose bone has BOTH components edited, where the re-cook
+ * moves only the rotation. That asymmetry is the ordinary case, not a contrived
+ * one: measured over two real cooks, 77 of 78 bones carry a constant position
+ * track, so their position channels stay `current` while their rotation goes
+ * stale — and a bulk act that took the whole bone would throw away a live edit.
+ */
+function oneCharacterBothComponents(keyframes: unknown[]): DagState {
+  return {
+    nodes: {
+      ...characterNodes('a', ASSET_A),
+      [PRODUCER]: { id: PRODUCER, type: 'MotionGenerate', params: PRODUCER_PARAMS, inputs: {} },
+      n_clip: {
+        id: 'n_clip',
+        type: 'AnimationClip',
+        params: {
+          duration: 1,
+          loop: 'hold',
+          keyframes,
+          sourceHash: motionRequestHash(MotionGenerateParams.parse(PRODUCER_PARAMS), undefined),
+        },
+        inputs: {
+          skeleton: { node: 'a_rig', socket: 'out' },
+          source: { node: PRODUCER, socket: 'out' },
+        },
+      },
+      ...importedChildNodes(gltfChildDagId(ASSET_A, BONE), {
+        assetRef: ASSET_A,
+        childName: BONE,
+        position: [1, 2, 3],
+        rotation: [10, 20, 30],
+        scale: [1, 1, 1],
+      }),
+      ...importedChildNodes(gltfChildDagId(ASSET_A, OTHER), {
+        assetRef: ASSET_A,
+        childName: OTHER,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }),
+    },
+    outputs: {},
+  } as unknown as DagState;
+}
+
+function mint(state: DagState, childName: string, component: 'position' | 'rotation'): DagState {
+  const out = ensureChannelForBone(state, gltfChildDagId(ASSET_A, childName), component);
+  expect(out, `nothing to mint for ${childName}/${component}`).not.toBeNull();
+  let next = state;
+  for (const op of out!.ops) next = applyOp(next, op as Op).next;
+  return next;
+}
+
+describe('#1004 — one act over the whole stranded list', () => {
+  it('the bulk set is exactly the union of the per-row sets', () => {
+    let s = oneCharacterBothComponents([key(0, 0, 0), key(1, 0, 0), key(1, 1, 5)]);
+    s = mint(s, BONE, 'rotation');
+    s = mint(s, OTHER, 'rotation');
+    s = recook(s, [key(0, 0, 30), key(1, 0, 50), key(1, 1, 90)]);
+
+    const stranded = motionCookOffer(s, PRODUCER).stranded;
+    expect(stranded.length).toBeGreaterThan(1); // or the button does not render
+    const bulk = stranded.flatMap((b) => b.targets);
+    const perRow = stranded.map((b) => b.targets).flat();
+    expect(bulk).toEqual(perRow);
+  });
+
+  // 🔴 THE ROW THAT CARRIES THIS SECTION. `Clear baked motion` takes the whole
+  // baked band; this act must take only what the card listed. The discriminating
+  // fixture is a bone whose POSITION is still current while its ROTATION went
+  // stale — take the bone and a live edit dies with it.
+  it('the bulk act does not reach a channel that is still current', () => {
+    let s = oneCharacterBothComponents([key(0, 0, 0), key(1, 0, 0), key(1, 1, 5)]);
+    s = mint(s, BONE, 'rotation');
+    s = mint(s, BONE, 'position');
+    s = recook(s, [key(0, 0, 30), key(1, 0, 50), key(1, 1, 90)]);
+
+    // The fixture exhibits the asymmetry, asserted rather than assumed — without
+    // it the row cannot fail and would pass on any implementation.
+    const rows = channelSeedRows(s, ASSET_A).filter((r) => r.childName === BONE);
+    expect(new Set(rows.map((r) => r.state))).toEqual(new Set(['stale', 'current']));
+
+    const bulk = motionCookOffer(s, PRODUCER).stranded.flatMap((b) => b.targets);
+    expect(bulk.every((t) => t.component === 'rotation')).toBe(true);
+    expect(bulk.some((t) => t.component === 'position')).toBe(false);
   });
 });

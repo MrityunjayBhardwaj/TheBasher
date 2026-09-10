@@ -60,7 +60,14 @@ function key(bone: number, time: number, y: number) {
  * exact state #1001's signal reports — two spellings of this scene would let the
  * act be observed on a state the signal never describes.
  */
-async function buildStrandedScene(page: import('@playwright/test').Page) {
+async function buildStrandedScene(
+  page: import('@playwright/test').Page,
+  // #1004 — the bulk act only renders from TWO rows up, so its observation needs a
+  // scene with two stranded bones. Grown here rather than in a second builder, for
+  // the reason this one exists: two spellings of the scene let the act be observed
+  // on a state the signal never describes.
+  opts: { alsoStrand?: boolean } = {},
+) {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => Boolean((window as unknown as BasherWindow).__basher_dag));
@@ -70,7 +77,7 @@ async function buildStrandedScene(page: import('@playwright/test').Page) {
   //     provenance params are DECLARED: undeclared, they are stripped here and
   //     the card would stay silent for a reason no assertion could see.
   const built = await page.evaluate(
-    async ({ asset, bone, other, producer, clip, firstKeys }) => {
+    async ({ asset, bone, other, producer, clip, firstKeys, alsoStrand }) => {
       const ids = await import('/src/core/import/gltfImportChain.ts');
       const fx = await import('/src/test-utils/importedChildFixture.ts');
       const mg = await import('/src/nodes/MotionGenerate.ts');
@@ -152,6 +159,15 @@ async function buildStrandedScene(page: import('@playwright/test').Page) {
           rotation: [10, 20, 30],
           scale: [1, 1, 1],
         }),
+        ...(alsoStrand
+          ? fx.importedChildOps(ids.gltfChildDagId(asset, other), {
+              assetRef: asset,
+              childName: other,
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+            })
+          : []),
       ];
       w.__basher_dag.getState().dispatchAtomic(ops, 'user', 'e2e #1001 scene');
       return Object.keys(w.__basher_dag.getState().state.nodes).length;
@@ -162,7 +178,11 @@ async function buildStrandedScene(page: import('@playwright/test').Page) {
       other: OTHER,
       producer: PRODUCER,
       clip: CLIP,
-      firstKeys: [key(1, 0, 1), key(1, 1, 2)],
+      // Bone 0 carries a track too, and it MOVES on the re-cook. Harmless to the
+      // one-bone rows — a bone with no minted channel cannot strand however the
+      // clip moves — and required for the two-bone one.
+      firstKeys: [key(0, 0, 1), key(0, 1, 2), key(1, 0, 1), key(1, 1, 2)],
+      alsoStrand: opts.alsoStrand === true,
     },
   );
   expect(built).toBeGreaterThan(4);
@@ -185,6 +205,23 @@ async function buildStrandedScene(page: import('@playwright/test').Page) {
   // Reported rather than assumed: an "Unknown mutator" here would leave the card
   // silent for the right reason and the wrong cause.
   expect(edit, JSON.stringify(edit)).toMatchObject({ ok: true });
+
+  if (opts.alsoStrand) {
+    const second = await page.evaluate(
+      ({ asset, other }) =>
+        (window as unknown as BasherWindow).__basher_dispatchMutator!(
+          'mutator.timeline.keyframe',
+          {
+            bone: { assetRef: asset, childName: other, component: 'position' },
+            time: 0.5,
+            value: [0, 7, 0],
+          },
+          'e2e #1004 edit a second bone',
+        ),
+      { asset: ASSET, other: OTHER },
+    );
+    expect(second, JSON.stringify(second)).toMatchObject({ ok: true });
+  }
 
   // 3 — select the producer so the inspector draws its cook card. BEFORE the
   //     re-cook, so the card is observed saying nothing first: an assertion that
@@ -209,7 +246,10 @@ async function buildStrandedScene(page: import('@playwright/test').Page) {
           'user',
           'e2e #1001 re-cook',
         ),
-    { clip: CLIP, nextKeys: [key(1, 0, 1), key(1, 1, 99)] },
+    {
+      clip: CLIP,
+      nextKeys: [key(0, 0, 1), key(0, 1, 40), key(1, 0, 1), key(1, 1, 99)],
+    },
   );
 }
 
@@ -287,4 +327,57 @@ test('the director presses Discard edit beside the name and the bone goes back o
     { asset: ASSET, bone: BONE },
   );
   expect(after.present).toBe(false);
+});
+
+// #1004 — the act at the size a real re-cook produces. Measured over two cooks of
+// a 78-bone character, 68 bones come back with their rotation moved, so a director
+// who edited twenty gets twenty rows in a ~280px panel, each needing its own press.
+//
+// The button is deliberately absent at ONE row, where the row's own button already
+// IS the bulk act — so the first assertion here is that the one-bone scene does not
+// grow a second button, which is also the control proving the two-bone scene is
+// what makes it appear.
+test('two stranded bones get one act, and one stranded bone does not (#1004)', async ({ page }) => {
+  await buildStrandedScene(page);
+  const stranded = page.getByTestId('motion-cook-stranded');
+  await expect(stranded).toBeVisible();
+  await expect(stranded).toContainText(BONE);
+  await expect(page.getByTestId('motion-cook-follow-all')).toHaveCount(0);
+  // …and at one row the footer stays singular, which is the control for the
+  // count-aware sentence the two-row case asserts.
+  await expect(stranded).toContainText('on that bone and puts it back');
+});
+
+test('the director discards every stranded edit in one press (#1004)', async ({ page }) => {
+  await buildStrandedScene(page, { alsoStrand: true });
+
+  const stranded = page.getByTestId('motion-cook-stranded');
+  await expect(stranded).toBeVisible();
+  await expect(stranded).toContainText(BONE);
+  await expect(stranded).toContainText(OTHER);
+  await expect(stranded).toContainText('2 bones are still on the previous motion');
+
+  const all = page.getByTestId('motion-cook-follow-all');
+  await expect(all).toBeVisible();
+  // The count is IN the label, so the act cannot be read as the bigger one
+  // (`Clear baked motion`, which takes the character's whole baked band).
+  await expect(all).toHaveText('Discard all 2 edits');
+  // The footer agrees with the act above it. It read "on that bone" — singular,
+  // with no referent — until the bulk button was seen sitting beside it.
+  await expect(stranded).toContainText('on those bones and puts them back');
+  await expect(stranded).not.toContainText('on that bone');
+  await page.screenshot({
+    path: '/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/53341e94-cc8c-410f-900a-434886b3c27b/scratchpad/1004-before.png',
+    clip: { x: 0, y: 0, width: 1280, height: 800 },
+  });
+
+  await all.click();
+
+  // Both bones are back on the clip, so the warn band is gone entirely — not
+  // merely shorter, which is what a bulk act that missed one would look like.
+  await expect(page.getByTestId('motion-cook-stranded')).toHaveCount(0);
+  await page.screenshot({
+    path: '/tmp/claude-501/-Users-mrityunjaybhardwaj-Documents-projects-basher-ai/53341e94-cc8c-410f-900a-434886b3c27b/scratchpad/1004-after.png',
+    clip: { x: 0, y: 0, width: 1280, height: 800 },
+  });
 });

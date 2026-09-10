@@ -109,14 +109,52 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
               </li>
             ))}
           </ul>
+          {/* #1004 — ONE ACT OVER THE SET THE CARD IS ALREADY SHOWING. Measured
+              over two real cooks of a 78-bone character: 68 bones come back with
+              their rotation moved, so a director who edited twenty strands close
+              to twenty and gets twenty rows in a ~280px panel, each needing its
+              own press.
+
+              🔴 IT IS NOT `Clear baked motion` (#813), WHICH IS THE WRONG TOOL AND
+              THE REASON THIS EXISTS. That clears the character's whole baked band
+              — including the bones that are still CURRENT and still carrying edits
+              the clip has not moved under. This reaches exactly the addresses under
+              the names above, which `strandedBonesForClip` already filtered to the
+              stale rows, so a current channel is not merely avoided here: it was
+              never in the set. The label says the count so the act cannot be read
+              as the bigger one.
+
+              Only from two rows up. At one, the row's own button IS the bulk act,
+              and a second button that does the same thing invites the reader to
+              look for the difference. */}
+          {offer.stranded.length > 1 ? (
+            <button
+              type="button"
+              data-testid="motion-cook-follow-all"
+              onClick={() =>
+                dispatchFollowClip(
+                  offer.stranded.flatMap((b) => b.targets),
+                  `Discard edits on ${offer.stranded.length} bones`,
+                )
+              }
+              className="mt-1 w-full rounded border border-border px-2 py-1 text-[10px] text-fg/80 hover:bg-muted hover:text-fg"
+            >
+              Discard all {offer.stranded.length} edits
+            </button>
+          ) : null}
           {/* THE LABEL SAYS WHAT IS LOST, IN THE OPEN AND NOT ON HOVER. The act
               deletes the keys the director authored on that bone; there is no
               road that keeps them (`dispatchFollowClip` records both
               measurements). A title attribute would put the only honest half of
               the sentence somewhere a touch device never shows. */}
+          {/* 🔴 IT COUNTS FOR THE SAME REASON THE SENTENCE ABOVE DOES, and it did
+              not until the bulk act was observed in pixels beside it: "that bone"
+              had no referent once one press could drop keys on several. A line
+              written for a per-row act reads as correct forever if nobody looks. */}
           <p className="mt-1 text-fg/40">
-            Discarding drops the keys you authored on that bone and puts it back on the clip. Undo
-            brings them back.
+            {offer.stranded.length === 1
+              ? 'Discarding drops the keys you authored on that bone and puts it back on the clip. Undo brings them back.'
+              : 'Discarding drops the keys you authored on those bones and puts them back on the clip. Undo brings them back.'}
           </p>
         </div>
       ) : null}
