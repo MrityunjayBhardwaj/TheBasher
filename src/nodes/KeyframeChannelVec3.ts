@@ -107,6 +107,24 @@ export const KeyframeChannelVec3Params = z.object({
   // + absent on ordinary authored channels (addChannel), so it's a no-op there.
   childName: z.string().optional(),
   assetRef: z.string().optional(),
+  // #1001 — WHERE THIS CHANNEL'S KEYS WERE COPIED FROM, recorded at the mint.
+  //
+  // `sourceClipId` is the `AnimationClip`/`RetargetClip` consulted (`''` when no
+  // bound clip carried the bone and the base pose was used); `sourceHash` is a
+  // content hash of the track that clip offered for THIS bone and component at
+  // that moment. Staleness is `sourceHash !== the clip's hash today`, which is
+  // silent about whether the keys were afterwards edited — the one question a
+  // key comparison cannot answer, and the reason this is stored rather than
+  // derived (see `src/app/animate/clipSeedProvenance.ts`).
+  //
+  // 🔴 OPTIONAL, AND ABSENT MUST NEVER READ AS CURRENT. Every channel in every
+  // project saved before this records nothing, and a copy whose origin is
+  // unrecorded cannot be vouched for; the read reports it `unknown`. That is
+  // also why there is NO migration and no version bump: a migration could only
+  // invent a provenance it does not have, and inventing one is precisely the
+  // false clean bill this field exists to prevent. Absent is a meaning.
+  sourceClipId: z.string().optional(),
+  sourceHash: z.string().optional(),
   keyframes: z
     .array(
       z.object({

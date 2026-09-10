@@ -114,8 +114,28 @@ export function bakeChannelOpsForBone(args: {
    * clip cycling IN PLACE silently gained travel it was never asked for.
    */
   readonly loop?: ClipLoop;
+  /**
+   * Where each component's keys were COPIED FROM (#1001) — the clip id and a
+   * hash of the track that clip offered at the moment of the copy.
+   *
+   * 🔴 KEYED PER COMPONENT, mirroring `byComponent`, because the hash is of ONE
+   * bone's ONE track. A single provenance for the whole call would stamp the
+   * position track's revision onto the rotation channel, which reads `stale`
+   * forever for a bone nobody touched — the false alarm that costs a signal its
+   * credibility (#923).
+   *
+   * OMITTED BY THE OTHER CONSUMER, ON PURPOSE. `bakeGltfChannel` seeds from the
+   * asset's own embedded `TransformClip`, which `boundClipsForAsset` does not
+   * walk, so the staleness read would recompute an empty track for it and call
+   * every one of its channels stale. A channel with no recorded provenance reads
+   * `unknown`, which is the true answer for a copy this mechanism cannot vouch
+   * for — and it leaves that road byte-identical to before.
+   */
+  readonly provenance?: Partial<
+    Record<BakedComponent, { readonly sourceClipId: string; readonly sourceHash: string }>
+  >;
 }): Op[] {
-  const { assetRef, childName, byComponent, state, loop = 'hold' } = args;
+  const { assetRef, childName, byComponent, state, loop = 'hold', provenance } = args;
   const target = gltfChildDagId(assetRef, childName);
   const ops: Op[] = [];
 
@@ -172,6 +192,11 @@ export function bakeChannelOpsForBone(args: {
         // The key is OMITTED rather than set to `[]` when the source does not
         // cycle, so a non-looping mint stays byte-identical to pre-#913.
         ...(isCycling(loop) ? { modifiers: [cycleModifierFor(component, loop)] } : {}),
+        // #1001 — spread, so a caller that records nothing emits exactly the
+        // params it emitted before. ABSENT is a meaning here, not a default: the
+        // read calls an absent hash `unknown` and refuses to vouch for the copy,
+        // where a stamped-in `''` would claim a provenance nobody recorded.
+        ...(provenance?.[component] ?? {}),
       },
     });
   }
