@@ -64,6 +64,8 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 import { scopeSelection } from '../nodes/scopeQuery';
 import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
+import { cubeProjectedLayer } from './cubeProjection';
+import { materialiseCornerLayer } from './cornerMaterialisation';
 import { arrayCopiesOf } from './arrayCopies';
 import { newellNormal, planarWeights } from './polygonInterpolation';
 // #367 — where a glTF child's buffers actually live. A LEAF by the strictest measure in
@@ -215,6 +217,28 @@ function gltfCloneGeometry(
 
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
   if (ref.descriptor.kind === 'gltf') return gltfCloneGeometry(ref.descriptor);
+  // 🔴 #786 — A PROJECTION USED TO RESOLVE TO ITS SOURCE'S INSTANCE HERE AND TAKE NO CACHE ENTRY,
+  // AND THAT STOPPED BEING TRUE THE MOMENT THE LAYER REACHED THE BUFFER. What stood here read
+  // *"`uvProject` authors an ATTRIBUTE LAYER; it moves no position and rewires no index, so there
+  // is no second buffer for it to own"* — exactly right for #994's scope, and false for this one:
+  // materialising a corner layer DUPLICATES the vertices whose loops disagree and rewrites the
+  // index to send each face at its own copy. There is now a second buffer, and it is the one that
+  // draws. So the delegation is gone and the kind is an ordinary recipe, cached and swept like
+  // every other.
+  //
+  // 🔑 THE TWO ALTERNATIVES #994 MEASURED FATAL ARE STILL FATAL, AND THIS IS NEITHER OF THEM.
+  // They were: a build arm returning the SOURCE'S instance — `build()` calls `clearGroups()` on
+  // what it gets back, wiping the per-face slot layout off the geometry the source is drawing
+  // with; and a fresh container SHARING the source's `BufferAttribute` instances — fatal under
+  // {@link sweep}, where disposing an unattached projected entry frees GPU buffers a LIVE source
+  // is still drawing from. `buildUVProject` COPIES into buffers of its own, so `clearGroups()`
+  // touches only its own container and `dispose()` frees only what it allocated. The cost is the
+  // duplication, stated where it is paid.
+  // 🔴 AND IT PASSES THROUGH WHEN IT CANNOT MATERIALISE — the delegation survives for exactly
+  // the sources #738 is about. See {@link projectionMaterialises} for why this is one rule and
+  // not a special case, and what vanishes without it.
+  if (ref.descriptor.kind === 'uvProject' && !projectionMaterialises(ref.descriptor))
+    return get(ref.descriptor.source, via);
   const hit = cache.get(ref.key);
   if (hit) return hit;
   if (ref.descriptor.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
@@ -429,11 +453,74 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
     // about whether the buffers can be reached, never about how many elements come out.
     case 'bevel':
       return composedOverSource(availabilityOf(descriptor.source.descriptor));
+    // 🔴 #786 — COMPOSED NOW, AND IT WAS VERBATIM UNTIL THE PROJECTION STARTED BUILDING.
+    //
+    // #994's reason for the verbatim answer was sound and is now false, so it is restated rather
+    // than deleted: *"a projection builds nothing — `get` hands back the source's own instance —
+    // so over a `gltf` source its buffers ARE the asset clone's, and saying `mounting` here would
+    // be false in the one way that matters: `drawnByAssetClone` reads this answer, and a false
+    // `mounting` would let `getForAttach` put buffers into the scene graph that the clone is
+    // already drawing (#981)."*
+    //
+    // `buildUVProject` copies into buffers of its own, so over a mounted glTF child the
+    // projection's buffers are the REGISTRY's and `mounting` is the true answer — the same answer
+    // `array` and `bevel` give, for the same reason. The two rules differ on exactly one input
+    // class, a `gltf` or `baked` source, which is why the change is stated here instead of being
+    // left to look like a tidy-up: over a procedural source both rules agree and nothing could
+    // tell them apart.
+    //
+    // 🔴 AND IT IS COMPOSED ONLY WHEN THE PROJECTION ACTUALLY BUILDS. A source with no derivable
+    // polygon layout cannot be projected at all, and answering `mounting` for one would promise
+    // buffers the registry will never hold — measured consequence, before this line existed: a
+    // UV Project added to an IMPORTED mesh made the mesh DISAPPEAR. `mounting` turns
+    // `drawnByAssetClone` false, so the Object stops letting the clone draw it and asks for its
+    // own buffers; the build refuses because there are no rims; nothing is drawn. That is a
+    // worse answer than the no-op #1005 documents.
+    case 'uvProject':
+      return projectionMaterialises(descriptor)
+        ? composedOverSource(availabilityOf(descriptor.source.descriptor))
+        : availabilityOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       return unreachable;
     }
   }
+}
+
+/**
+ * #786 — CAN A PROJECTION OVER THIS SOURCE MATERIALISE ITS LAYER, OR MUST IT PASS THROUGH?
+ *
+ * ── WHY THE QUESTION EXISTS, AND WHY IT IS NOT A SPECIAL CASE ────────────────────────────
+ *
+ * Materialising a corner layer needs the source's polygon RIMS, and a rim needs a face arity.
+ * An arity is null on exactly the descriptors whose face COUNT is — `gltf`, `baked`, or a chain
+ * reaching one — which is #738's subject: an imported mesh arrives already triangulated and its
+ * polygons are gone before this module sees it. So over those sources the projection genuinely
+ * cannot do its job.
+ *
+ * The codebase's answer for an operator that cannot apply is already decided and written down in
+ * `ModifierStackControls`: *"a geometry modifier only rewrites mesh data; on non-mesh data it
+ * passes THROUGH unchanged."* Passing through is what this selects — and the pass-through is
+ * #994's delegation, kept rather than reinvented: the source's own instance, no copy, no second
+ * buffer, availability inherited verbatim because the buffers really are the source's.
+ *
+ * 🔑 IT IS A DESCRIPTOR-SIDE PROPERTY, WHICH IS THE WHOLE REASON IT IS SAFE. "Does this source
+ * state a face arity" is answerable from the descriptor alone, so the availability rule stays a
+ * pure function of the descriptor the way every other arm is. A discriminator that depended on
+ * the built DATA — how many corners happen to disagree, say — would make availability change
+ * under a mesh, which is the landmine this deliberately is not.
+ *
+ * 🔴 WHAT IT COSTS TO GET WRONG, MEASURED. Answering `composedOverSource` unconditionally makes
+ * `drawnByAssetClone` false for a projection over an imported mesh; the Object then asks for its
+ * own buffers, `buildUVProject` refuses because there are no rims, and the mesh is simply not
+ * drawn. A director who adds a UV Project to an imported model watches it disappear.
+ *
+ * REF: src/app/faceCount.ts (`faceArityOf` — the null set); issues #786, #738, #1005.
+ */
+function projectionMaterialises(
+  descriptor: Extract<GeometryDescriptor, { kind: 'uvProject' }>,
+): boolean {
+  return faceArityOf(descriptor.source.descriptor) !== null;
 }
 
 /**
@@ -885,6 +972,11 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
     case 'gltf':
     case 'baked':
       return null;
+    // #786 — REACHABLE NOW. This arm read `return null` and carried #994's reason for it: *"`get`
+    // resolves a `uvProject` to its source's instance before it ever reaches a build, so this arm
+    // has no caller."* The delegation is gone; a projection builds.
+    case 'uvProject':
+      return buildUVProject(d);
     default: {
       const unreachable: never = d;
       console.error(
@@ -1767,4 +1859,76 @@ export function resetGrowth(): void {
   growth.read = 0;
   growth.internal = 0;
   growth.prime = 0;
+}
+
+/**
+ * #786 — THE PROJECTION'S BUILD ARM: the authored corner layer, materialised to a buffer.
+ *
+ * ── WHY THIS BUILDS AT ALL, WHEN #994 SAID IT NEVER WOULD ────────────────────────────────
+ *
+ * #994 shipped the operator with no build arm and the reason was true then: a projection that
+ * only MINTS a layer into the attribute store moves no position, so it has no buffer to own.
+ * #786 is the other direction — the layer has to reach the render buffer — and that is a
+ * tessellation change, because two loops meeting at one render vertex can now carry different
+ * values and one slot cannot hold both. So the vertex splits, and a split buffer is this
+ * handle's own.
+ *
+ * ── THE VALUES COME FROM THE SAME PLACE THE READ ROAD'S DO ───────────────────────────────
+ *
+ * `cubeProjectedLayer` is shared with `projectMeshUVs` rather than re-spelled here. The buffer
+ * this materialises and the layer the store mints must be the same numbers; two spellings would
+ * let the mesh draw one projection while the attribute system reported another, and nothing
+ * would error.
+ *
+ * ── WHAT THE SPLIT DOES TO THE PARITY CHECKS, STATED NOT DISCOVERED ──────────────────────
+ *
+ * `pointCountMismatch` runs on this build like every other, comparing `pointCountOf` against a
+ * POSITION weld. It stays silent, and structurally rather than luckily: a duplicate is written at
+ * the position of the vertex it copies, so the weld fuses the copies and reads the source's
+ * count — which is what `pointCountOf` derives for this kind. Measured at 24→24 / 63→93 / 561→669
+ * split positions against 8→8 / 42→42 / 482→482 welded points; the table is in
+ * `cornerMaterialisation.ts`.
+ *
+ * Face count and index length do not move at all — only index VALUES change — so `faceCountOf`,
+ * `faceCountMismatch` and the material-group derivation above see exactly what they saw before.
+ *
+ * `internal` growth: this caches the SOURCE, which no consumer attaches (#586), as every other
+ * derived builder here does.
+ */
+function buildUVProject(
+  d: Extract<GeometryDescriptor, { kind: 'uvProject' }>,
+): BufferGeometry | null {
+  const source = get(d.source, 'internal');
+  if (source === null) return null;
+  const arity = faceArityOf(d.source.descriptor);
+  const rims = alignedSplitRims(d.source, source);
+  if (arity === null || rims === null) {
+    // 🔴 THIS IS A DEFECT ARM, NOT THE ORDINARY MISSING-BUFFER ONE, AND THE DIFFERENCE IS THE
+    // POINT. {@link projectionMaterialises} has already sent every source with no derivable face
+    // arity down the pass-through road, so a `gltf` or `baked` chain cannot arrive here — the
+    // `arity === null` half is unreachable through `get` and is written out anyway, because a
+    // predicate and a builder agreeing today is not a reason for the builder to assume it.
+    //
+    // What CAN arrive is a genuine disagreement: an arity exists and no rotation of a recovered
+    // rim reproduces the substrate's welded one. `uvAttributes.ts` names that same condition a
+    // defect rather than a wait, and it is refused BY NAME here for the reason `buildBevel` gives
+    // — the two nulls in this file mean different things, and a director asking why their
+    // projection vanished deserves a sentence.
+    console.error(
+      `geometryRegistry: cannot build a 'uvProject' over a '${d.source.descriptor.kind}' — its polygon rims could not be recovered from the built index, so there are no faces to choose a cube side per`,
+    );
+    return null;
+  }
+  const materialised = materialiseCornerLayer(
+    source,
+    arity,
+    rims,
+    cubeProjectedLayer(source, rims, d.size),
+    'uv',
+  );
+  if (materialised.kind === 'refused') {
+    console.error(`geometryRegistry: cannot build a 'uvProject' — ${materialised.why}`);
+    return null;
+  }
+  return materialised.geometry;
 }

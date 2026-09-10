@@ -416,6 +416,13 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
         ? counted(verdict.layout.points)
         : { kind: 'outside-the-descriptor', why: verdict.why };
     }
+    // #994 — the source's count verbatim, for the reason `faceCountOf` states: a projection
+    // moves no position and merges nothing, so it has exactly its source's topological points.
+    // Note this is NOT a tiling of one copy — `pointTilingOf` deliberately does not answer for
+    // this kind, because "one copy of the source" and "the source itself" are the same number
+    // and different claims, and only the second is true here.
+    case 'uvProject':
+      return pointCountOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`pointCountOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
@@ -472,7 +479,21 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
  * REF: src/app/geometryRegistry.ts (`buildBevel`, `clampOverlapLimit`); issue #817.
  */
 function isClampedBevel(descriptor: GeometryDescriptor, geometry: BufferGeometry): boolean {
-  return descriptor.kind === 'bevel' && typeof geometry.userData.bevelCollisionLimit === 'number';
+  // 🔴 #786 — READ THROUGH A PROJECTION, BECAUSE THE EXEMPTION IS A PROPERTY OF THE POSITIONS AND
+  // A PROJECTION DOES NOT MOVE THEM. Measured before this loop existed: a clamped bevel alone
+  // warns nothing, and the SAME bevel under a cube projection warns
+  //   "descriptor 'uvProject' derives 24 topological points but the built geometry welds to 6".
+  // Every word of that is true and it is not a defect — it is the clamp, reported one kind up,
+  // where the `descriptor.kind === 'bevel'` test no longer matches. Adding a projection above a
+  // correct bevel must not manufacture a warning about it.
+  //
+  // The geometry half needs no special case: `materialiseCornerLayer` copies the source's
+  // `userData` onto the split buffer, so the stamp `buildBevel` wrote travels with the positions
+  // it describes. Both halves are still required — a stamp arriving on any other kind, or a bevel
+  // below its limit, is still not an exemption.
+  let base = descriptor;
+  while (base.kind === 'uvProject') base = base.source.descriptor;
+  return base.kind === 'bevel' && typeof geometry.userData.bevelCollisionLimit === 'number';
 }
 
 export function pointCountMismatch(

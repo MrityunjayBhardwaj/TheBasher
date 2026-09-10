@@ -695,6 +695,77 @@ export type GeometryDescriptor =
        * warns at all, which is the quieter half.
        */
       readonly amount: number;
+    }
+  // `uvProject` (#994) — THE FIRST OPERATOR THAT AUTHORS AN ATTRIBUTE LAYER INSTEAD OF
+  // GEOMETRY, and therefore the corner domain's first PRODUCER.
+  //
+  // Every kind above answers "what shape is this?". This one answers "what does each corner
+  // of that shape read from a texture?" and hands the source's topology straight through
+  // untouched — same faces, same points, same edges, same rims, in the same order. That is
+  // not a coincidence of its implementation, it is the definition, which is why the five
+  // topology modules delegate to `source` for this kind in one line each rather than deriving
+  // anything.
+  //
+  // ── WHY IT IS A DESCRIPTOR KIND AND NOT A `SetMaterialOp`-SHAPED RE-KEY ──────────────
+  //
+  // `SetMaterialOp` already authors an attribute layer without a descriptor kind: it mints a
+  // set and rides it on `GeometryRef.attributeKey`. That road is unavailable here, and by
+  // elimination rather than by taste:
+  //
+  //   a projected UV is a function of the corner's POSITION, and positions come out of the
+  //   tessellation — measured, 0 of 97 files in `src/nodes/` import `geometryRegistry`, which
+  //   is the same boundary `uvAttributes.ts` states in prose ("a pure synchronous `evaluate()`
+  //   has no business tessellating"). So the values cannot exist at evaluate;
+  //
+  //   an attribute key is CONTENT-derived (`mintAttributes`), so an operator cannot re-key
+  //   without the values it does not have. `SetMaterialOp`'s road works only because a
+  //   face→slot index is derivable from params and a face COUNT alone;
+  //
+  //   a `GeometryRef` carries exactly two things — `descriptor` and `attributeKey` — so with
+  //   the second ruled out, the declaration has one place left to ride.
+  //
+  // The reference agrees rather than merely permitting: UV Project is a MODIFIER
+  // (`manual/modeling/modifiers/modify/uv_project.rst`), and the modifier stack here IS the
+  // descriptor kinds.
+  //
+  // ── 🔴 WHY IT IS A CUBE AND NOT A PLANE, WHICH IS THE WHOLE POINT OF THE OPERATOR ────
+  //
+  // #994 offers "planar or box projection" as if either would do. Only one does, and the
+  // issue's own falsification is what says so. A planar projection maps position → UV through
+  // ONE axis for every face, so its value is a pure function of the render vertex: constant on
+  // every loop → vertex fibre, agreeing at every shared vertex by construction. That is
+  // exactly the pullback [[V449]] proves can never satisfy an authored-value gate — a planar
+  // projection would be a third lift wearing an operator's clothes, and it would ship green.
+  //
+  // A cube projection chooses its side PER FACE, from that face's normal:
+  //
+  //     Each face will choose the closest and aligned projector with its surface normal.
+  //       — manual/modeling/modifiers/modify/uv_project.rst
+  //
+  //     Projects each selected face onto the most suitable side of a virtual cube […]
+  //     The cube is centered on the pivot point and aligned to the mesh's local axes.
+  //       — manual/modeling/meshes/editing/uv.rst
+  //
+  // So two loops meeting at one render vertex on faces with different dominant normals land
+  // on different sides and get different UVs. The value is a function of (face, corner), not
+  // of the vertex — which is the one property that makes this a producer at all.
+  //
+  // ⚠️ IT FOLLOWS THAT A CUBE PROJECTION OF A MESH WHOSE FACES ALL FACE ONE WAY AUTHORS
+  // NOTHING NEW. That is not a defect and it is not hidden: it is what the falsification in
+  // #994 measures, and the count it reports is the operator's own claim about itself.
+  | {
+      readonly kind: 'uvProject';
+      readonly source: GeometryRef;
+      /**
+       * The virtual cube's edge length in the source's local units — the reference's *Cube
+       * Size*, with the cube centred on the local origin and aligned to the local axes.
+       *
+       * It scales the authored VALUES and nothing else: face, point and edge counts do not
+       * read it, and neither does any rim. It folds into the key for the reason `bevel.amount`
+       * does — two sizes are two different layers, and one cached entry serving both would
+       * hand whichever built first to the other.
+       */
+      readonly size: number;
     };
 
 /** The axis a `mirror` modifier reflects across (the negated component). */

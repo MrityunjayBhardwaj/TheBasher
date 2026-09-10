@@ -222,14 +222,21 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // cross-check below now speaks for it instead of this row excusing it — which is the only
     // safe way to leave this list.
     //
-    // The three that remain are here for the OTHER reason, and it is a different claim: a scene
+    // Three of the four are here for the OTHER reason, and it is a different claim: a scene
     // object, a scene object and an image have no component domain at all, so there is nothing a
-    // selection could name. This row deliberately does not distinguish the two reasons — the
-    // union carries `why`, and `operatorChainDeclaration.gate.test.ts` asserts that partition
-    // exactly. What matters HERE is only that an unscoped operator is excused from the
-    // cross-check by its own declaration rather than by being forgotten.
+    // selection could name. The fourth is NOT — `UVProjectModifier` (#994) stands on an
+    // `ObjectData` spine and declares `'declined'`, a deferral rather than a fact. This row
+    // deliberately does not distinguish the two reasons — the union carries `why`, and
+    // `operatorChainDeclaration.gate.test.ts` asserts that partition exactly. What matters HERE
+    // is only that an unscoped operator is excused from the cross-check by its own declaration
+    // rather than by being forgotten, and a deferral excuses it exactly as a fact does.
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
-    expect(exempt.sort()).toEqual(['ColorCorrect', 'MaterialOverride', 'Transform']);
+    expect(exempt.sort()).toEqual([
+      'ColorCorrect',
+      'MaterialOverride',
+      'Transform',
+      'UVProjectModifier',
+    ]);
   });
 
   it('🔴 THE CROSS-CHECK — every operator declaring a scope emits something DIFFERENT for a subset', () => {

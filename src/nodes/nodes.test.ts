@@ -152,6 +152,7 @@ const ALL_TYPES = [
   'TrackTo',
   'Transform',
   'TransformClip',
+  'UVProjectModifier',
   'Vec3Math',
   'VecBreak3',
   'VideoStitch',

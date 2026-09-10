@@ -177,6 +177,7 @@ describe('#396 — the chain spine is declared, not named', () => {
       'MirrorModifier', // data lane — geometry
       'SetMaterialOp', // data lane — material (already binary today)
       'Transform', // scene lane
+      'UVProjectModifier', // data lane — geometry (#994, the first that RESHAPES NOTHING)
     ]);
   });
 });
