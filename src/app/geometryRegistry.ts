@@ -215,6 +215,27 @@ function gltfCloneGeometry(
 
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
   if (ref.descriptor.kind === 'gltf') return gltfCloneGeometry(ref.descriptor);
+  // #994 — A PROJECTION RESOLVES TO ITS SOURCE'S INSTANCE AND TAKES NO CACHE ENTRY OF ITS OWN,
+  // which is what makes "its topology is its source's" true rather than merely implemented that
+  // way. `uvProject` authors an ATTRIBUTE LAYER; it moves no position and rewires no index, so
+  // there is no second buffer for it to own.
+  //
+  // 🔴 THE TWO ALTERNATIVES WERE BOTH MEASURED WRONG BEFORE THIS LINE WAS WRITTEN, and they are
+  // recorded because each looks correct until one specific site is read:
+  //
+  //   a build arm returning the SOURCE'S instance — `build()` calls `clearGroups()` on what it
+  //   gets back, so a projection would wipe the per-face slot layout off the geometry its own
+  //   source is drawing with;
+  //
+  //   a fresh container SHARING the source's `BufferAttribute` instances — no duplication, and
+  //   fatal under {@link sweep}: an unattached projected entry is disposed, and `dispose()` frees
+  //   the GPU buffers behind attributes a LIVE source is still drawing from. Nothing errors and
+  //   the mesh goes blank, which is this module's quietest possible failure.
+  //
+  // Delegating instead of caching removes both, because there is nothing to wipe and nothing to
+  // sweep. The precedent is the line directly above: a kind whose buffers are somewhere else
+  // answers from there rather than through the cache.
+  if (ref.descriptor.kind === 'uvProject') return get(ref.descriptor.source, via);
   const hit = cache.get(ref.key);
   if (hit) return hit;
   if (ref.descriptor.kind === 'baked') return null; // miss → caller suspends + primes; no sync build
@@ -429,6 +450,17 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
     // about whether the buffers can be reached, never about how many elements come out.
     case 'bevel':
       return composedOverSource(availabilityOf(descriptor.source.descriptor));
+    // #994 — VERBATIM, NOT COMPOSED, AND THE DIFFERENCE DECIDES A REAL REFUSAL.
+    //
+    // {@link composedOverSource} exists because a recipe BUILDS its own buffers out of its
+    // source's: an array over a glTF child is `mounting`, not `clone`, because the registry
+    // holds the array's buffers once the asset mounts. A projection builds nothing — `get`
+    // hands back the source's own instance — so over a `gltf` source its buffers ARE the
+    // asset clone's, and saying `mounting` here would be false in the one way that matters:
+    // `drawnByAssetClone` reads this answer, and a false `mounting` would let `getForAttach`
+    // put buffers into the scene graph that the clone is already drawing (#981).
+    case 'uvProject':
+      return availabilityOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       return unreachable;
@@ -884,6 +916,13 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
     // loaded asset clone, baked in OPFS behind an async read that `prime` completes).
     case 'gltf':
     case 'baked':
+      return null;
+    // #994 — UNREACHABLE BY CONSTRUCTION AND DECLARED ANYWAY. `get` resolves a `uvProject` to
+    // its source's instance before it ever reaches a build, so this arm has no caller; it is a
+    // null of the same species as the two above — the buffers are somewhere else, namely on the
+    // source — rather than a refusal. Written out instead of folded into them because the
+    // ELSEWHERE differs, and a reader who lands here from the union should not have to guess it.
+    case 'uvProject':
       return null;
     default: {
       const unreachable: never = d;

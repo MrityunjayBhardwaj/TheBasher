@@ -363,6 +363,29 @@ export const MATERIAL_INDEX = 'material_index';
 export const UV_MAP = 'UVMap';
 
 /**
+ * The corner-domain UV layer a cube projection AUTHORS (#994) — distinct from {@link UV_MAP},
+ * and the distinction is load-bearing rather than a naming preference.
+ *
+ * `UVMap` is what `readMeshUVs` LIFTS off a built geometry's `uv` buffer. That lift is a
+ * pullback along loop → vertex: its value is a function of the render vertex, so two loops
+ * meeting at one vertex agree by construction, on every mesh, forever ([[V449]]). A projection
+ * is the opposite thing — it picks its cube side per FACE, so those two loops can and do
+ * disagree — and it is the substrate's first producer of a corner value that is not a lift.
+ *
+ * 🔴 IF THE TWO SHARED A NAME THE LIFT WOULD OVERWRITE THE AUTHORED LAYER AND NOTHING WOULD
+ * SAY SO. Both mint into the same store; the buffer under a projected handle still carries the
+ * SOURCE's unprojected `uv` (the projection writes no buffer — that is #786), so a `UVMap` read
+ * of a projected mesh would answer with the values the projection exists to replace. Under one
+ * name that is a silent wrong answer; under two it is two questions with two answers, and the
+ * question of which one a material samples is #881's, asked out loud.
+ *
+ * Not Blender's spelling, because Blender has no equivalent: there, UV Project writes INTO a
+ * chosen UV map because a mesh owns named UV layers the modifier can target. This substrate has
+ * no layer table yet, so the name is the layer.
+ */
+export const UV_PROJECT = 'UVProject';
+
+/**
  * The attributes a geometry value carries, keyed by name (`material_index`, `UVMap`, …).
  *
  * Names are data, exactly as domains are: this record is deliberately not a closed struct

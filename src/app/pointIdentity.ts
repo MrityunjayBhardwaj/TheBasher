@@ -416,6 +416,13 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
         ? counted(verdict.layout.points)
         : { kind: 'outside-the-descriptor', why: verdict.why };
     }
+    // #994 — the source's count verbatim, for the reason `faceCountOf` states: a projection
+    // moves no position and merges nothing, so it has exactly its source's topological points.
+    // Note this is NOT a tiling of one copy — `pointTilingOf` deliberately does not answer for
+    // this kind, because "one copy of the source" and "the source itself" are the same number
+    // and different claims, and only the second is true here.
+    case 'uvProject':
+      return pointCountOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`pointCountOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

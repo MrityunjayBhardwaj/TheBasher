@@ -150,6 +150,12 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // whole job is that one read, so the shared scope resolver stays a pure function of its spine
   // and params and does not join this census.
   'src/app/edgeAngleSelection.ts': 'read',
+  // #994 — the cube projection takes positions to project and writes to nothing. It is a
+  // `read` for the same reason `uvAttributes.ts` is, and it is a SECOND consumer of that shape
+  // rather than a widening of the first: the lift gathers a `uv` buffer, this gathers a
+  // `position` buffer and computes a layer that was never in any buffer. Both mint into the
+  // attribute store and hand the shared instance back untouched.
+  'src/app/uvProjection.ts': 'read',
 
   // PRODUCE — primes the cache after the async OPFS read, then reads back to check.
   'src/app/asset/bakedGeometryLoader.ts': 'produce',

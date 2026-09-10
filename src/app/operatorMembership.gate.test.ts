@@ -104,6 +104,9 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
+      // #994 — the fifth, and the first that reshapes no geometry. It is a MODIFIER by its own
+      // declaration and nothing else, which is this gate's whole subject.
+      'UVProjectModifier',
     ]);
     expect(operatorTypesInSection('material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(operatorTypesInSection('effect')).toEqual(['ColorCorrect']);
@@ -123,6 +126,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
+      'UVProjectModifier',
     ]);
     expect(addableOperators('modifier', { ArrayModifier: 'Array' }).map((o) => o.type)).toEqual([
       'ArrayModifier',
@@ -130,6 +134,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
+      'UVProjectModifier',
     ]);
   });
 

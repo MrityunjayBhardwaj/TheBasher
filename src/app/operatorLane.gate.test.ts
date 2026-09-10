@@ -204,11 +204,15 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       MirrorModifier: 'ObjectData',
       SetMaterialOp: 'ObjectData',
       Transform: 'SceneObject',
+      // #994 — the fifth geometry modifier, and the sharpest case this row makes. It reshapes
+      // no geometry at all, and it still lands on the data lane, because the lane is about what
+      // FLOWS THROUGH and an `ObjectData` flows through it like any other.
+      UVProjectModifier: 'ObjectData',
     });
     expect(Object.values(laneMap())).not.toContain('NO LANE');
   });
 
-  it('THE LANE IS NOT THE SECTION: six on the data lane, four in the modifier set', () => {
+  it('THE LANE IS NOT THE SECTION: seven on the data lane, five in the modifier set', () => {
     // The discrepancy is the finding, not a defect. The lane answers a question about SHAPE
     // ("does this kind of value flow through?") and every node with that shape has to be
     // walked past. Which STACK offers an operator is a different question with a different
@@ -222,12 +226,14 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'MaterialOverrideOp',
       'MirrorModifier',
       'SetMaterialOp',
+      'UVProjectModifier',
     ]);
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
       'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
+      'UVProjectModifier',
     ]);
     expect(laneMembers('SceneObject')).toEqual(['MaterialOverride', 'Transform']);
     expect(laneMembers('Image')).toEqual(['ColorCorrect']);
@@ -249,6 +255,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'MirrorModifier',
       'Ns2SyntheticDataOp',
       'SetMaterialOp',
+      'UVProjectModifier',
     ]);
     expect(isDataLaneOperator(nodeOfType('Ns2SyntheticDataOp'))).toBe(true);
 
@@ -263,6 +270,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
+      'UVProjectModifier',
     ]);
     expect(isModifierNode(nodeOfType('Ns2SyntheticDataOp'))).toBe(false);
   });
