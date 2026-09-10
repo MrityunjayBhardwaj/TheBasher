@@ -172,6 +172,27 @@ describe('#638 the count is a leaf', () => {
       '../nodes/scopeQuery',
       './bevelLayout',
       './builtRims',
+      // 🔴 WIDENED AGAIN at #786, by TWO, and BOTH are leaves — the bar #814's two additions
+      // openly did not meet, and neither opens a new ring.
+      //
+      // `cubeProjection` is the projection's arithmetic with no road attached: two TYPE imports
+      // and no value imports at all. It is in the registry's set for the same reason
+      // `copyTransform` and `arrayCopies` are — the BUILD road and the READ road must produce
+      // the SAME projected values, and two spellings would let the mesh draw one projection
+      // while `projectMeshUVs` reported another, with nothing to error.
+      //
+      // `cornerMaterialisation` is the vertex split: `three`, one TYPE from `polygonLayout`, and
+      // `faceElementStarts` from `faceCount` — which is this file's own subject and a declared
+      // leaf, so the reach is one hop into arithmetic and stops. Nothing it imports imports the
+      // registry, so unlike `builtRims` it adds NO cycle; `importCycles.gate.test.ts` enumerates
+      // the rings and this addition does not appear there.
+      //
+      // Why the registry needs it at all: materialising a corner layer changes the TESSELLATION
+      // — vertices whose loops disagree are duplicated and the index rewritten — and the one
+      // place a descriptor and a built geometry are both in hand is `build()`. The layer cannot
+      // reach the buffer from the attribute path, which is what this gate's whole subject forbids.
+      './cubeProjection',
+      './cornerMaterialisation',
       './arrayCopies',
       './polygonInterpolation',
       // #367 — where a glTF child's buffers live. A LEAF by the strictest measure in this

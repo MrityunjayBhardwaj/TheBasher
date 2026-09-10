@@ -46,126 +46,27 @@
 // `readMeshUVs` mints, off geometry the registry has already built, and is counted as `read`
 // growth. Nothing here awaits: an unbuilt source answers `loading` and the next read finds it.
 //
-// REF: src/app/uvAttributes.ts (`readMeshUVs` — the lift this is deliberately not, and the
-//      minting pattern this follows); src/app/builtRims.ts (`alignedSplitRims` — corner → split
-//      vertex, the same walk both use); src/nodes/attributes.ts (`UV_PROJECT`, and why it is not
-//      `UV_MAP`); src/nodes/types.ts (the `uvProject` descriptor, and why it is a descriptor);
-//      issues #994, #786 (materialising the layer to the buffer), #881 (its carriage), #959.
+// ── 🔑 #786 — THE ARITHMETIC IS SHARED WITH THE BUILD ROAD AND LIVES IN NEITHER ─────────
+//
+// `cubeProjectedLayer` moved to `cubeProjection.ts` when the projection got a build arm. The
+// buffer `buildUVProject` materialises and the layer this mints have to be the same numbers; two
+// spellings would let the mesh draw one projection while the attribute system reported another,
+// with nothing to error. So both roads call one function and neither owns it.
+//
+// REF: src/app/cubeProjection.ts (the arithmetic); src/app/uvAttributes.ts (`readMeshUVs` — the
+//      lift this is deliberately not, and the minting pattern this follows); src/app/builtRims.ts
+//      (`alignedSplitRims` — corner → split vertex, the same walk both use);
+//      src/app/cornerMaterialisation.ts (the split #786 needs); src/nodes/attributes.ts
+//      (`UV_PROJECT`, and why it is not `UV_MAP`); src/nodes/types.ts (the `uvProject`
+//      descriptor); issues #994, #786, #881 (its carriage), #959.
 
-import type { BufferGeometry, BufferAttribute } from 'three';
 import { readGeometry } from './geometryRegistry';
 import { alignedSplitRims } from './builtRims';
-import { UV_PROJECT, type AttributeData } from '../nodes/attributes';
+import { cubeProjectedLayer } from './cubeProjection';
+import { UV_PROJECT } from '../nodes/attributes';
 import { mintAttributes } from '../nodes/attributeKey';
 import { insert } from './attributeStore';
 import type { GeometryDescriptor, GeometryRef, UVAttributeVerdict } from '../nodes/types';
-
-/** The six sides of the virtual cube, as (dominant axis, sign). */
-type CubeSide = 0 | 1 | 2 | 3 | 4 | 5;
-
-/**
- * Which side of the cube a face projects onto — the reference's "closest and aligned
- * projector", with the six axis-aligned projectors a cube has.
- *
- * Ties (a normal exactly on a diagonal) resolve by the `>` comparisons below, i.e. to the
- * earliest axis. Deterministic rather than arbitrary: a tie must not depend on iteration order,
- * because two runs disagreeing about one face's side is a difference in the authored layer that
- * nothing downstream could explain.
- */
-function sideFor(nx: number, ny: number, nz: number): CubeSide {
-  const ax = Math.abs(nx);
-  const ay = Math.abs(ny);
-  const az = Math.abs(nz);
-  if (ax >= ay && ax >= az) return nx >= 0 ? 0 : 1;
-  if (ay >= az) return ny >= 0 ? 2 : 3;
-  return nz >= 0 ? 4 : 5;
-}
-
-/**
- * The two components a side reads, in the cube-map convention — +X reads (−z, y), −X reads
- * (z, y), and so on around the cube.
- *
- * The sign flips are what keep a face's UV winding consistent with its geometric winding. A
- * convention that ignored them projects three of the six sides mirrored, which draws a legible
- * picture of a wrong answer: text on the far side of a box reads backwards and nothing errors.
- */
-function uvForSide(side: CubeSide, x: number, y: number, z: number): readonly [number, number] {
-  switch (side) {
-    case 0:
-      return [-z, y];
-    case 1:
-      return [z, y];
-    case 2:
-      return [x, -z];
-    case 3:
-      return [x, z];
-    case 4:
-      return [x, y];
-    case 5:
-      return [-x, y];
-    default: {
-      const unreachable: never = side;
-      throw new Error(`uvForSide: undeclared cube side ${JSON.stringify(unreachable)}`);
-    }
-  }
-}
-
-/**
- * The corner-domain layer a cube projection authors over `geometry`'s rims.
- *
- * The normal is Newell's, not a cross product of the first three corners: an n-gon's first
- * three corners can be collinear (they are, on a bevel's chamfer quads at small amounts), and a
- * cross product there yields a zero vector whose dominant axis is whichever `sideFor`'s
- * comparisons happen to reach. Newell's sums over the whole rim, so it is stable on any polygon
- * that has an area at all.
- */
-function projectedLayer(
-  geometry: BufferGeometry,
-  polygons: readonly (readonly number[])[],
-  size: number,
-): AttributeData {
-  const position = geometry.getAttribute('position') as BufferAttribute;
-  const components = 2;
-  let corners = 0;
-  for (const rim of polygons) corners += rim.length;
-  const data = new Float32Array(corners * components);
-  let at = 0;
-  for (const rim of polygons) {
-    let nx = 0;
-    let ny = 0;
-    let nz = 0;
-    for (let k = 0; k < rim.length; k++) {
-      const a = rim[k];
-      const b = rim[(k + 1) % rim.length];
-      const ax = position.getX(a);
-      const ay = position.getY(a);
-      const az = position.getZ(a);
-      const bx = position.getX(b);
-      const by = position.getY(b);
-      const bz = position.getZ(b);
-      nx += (ay - by) * (az + bz);
-      ny += (az - bz) * (ax + bx);
-      nz += (ax - bx) * (ay + by);
-    }
-    // 🔑 CHOSEN ONCE PER FACE AND READ BY EVERY CORNER OF IT — this line, and only this line, is
-    // what makes the output an authored corner layer rather than a lift. Hoisting the choice to
-    // the vertex (projecting positions, as a planar map does) would make the value a function of
-    // the render vertex again and the operator would qualify for nothing.
-    const side = sideFor(nx, ny, nz);
-    for (const vertex of rim) {
-      const [u, v] = uvForSide(
-        side,
-        position.getX(vertex),
-        position.getY(vertex),
-        position.getZ(vertex),
-      );
-      data[at] = u / size + 0.5;
-      data[at + 1] = v / size + 0.5;
-      at += components;
-    }
-  }
-  return { domain: 'corner', type: 'float2', count: corners, data };
-}
 
 /**
  * Project `ref`'s corners onto a virtual cube and mint the resulting layer.
@@ -188,16 +89,22 @@ export function projectMeshUVs(ref: GeometryRef): UVAttributeVerdict {
   }
   const result = readGeometry(ref);
   if (result.status !== 'ok') {
-    // Propagated as the read's own word, never re-worded. `elsewhere` and `pending` are the
-    // SOURCE's states — a projection resolves to its source's instance — and a caller that must
-    // decide whether to wait needs the reason that decides it, not this module's paraphrase.
+    // Propagated as the read's own word, never re-worded. `elsewhere` and `pending` still
+    // originate at the SOURCE — since #786 a projection BUILDS, but it can only build once its
+    // source has, so an unbuilt source is what any non-`ok` status here is reporting — and a
+    // caller that must decide whether to wait needs the reason that decides it, not this
+    // module's paraphrase.
     return {
       kind: 'not-derivable',
       why: `the geometry under this projection reads '${result.status}' (${result.availability}), so there are no positions to project`,
     };
   }
-  // The SOURCE's rims, which are this handle's rims: `polygonLayoutOf` delegates for this kind
-  // precisely because the projection makes no copy and inherits its source's split numbering.
+  // 🔴 THIS HANDLE'S OWN RIMS, AND SINCE #786 THAT IS NO LONGER THE SAME THING AS ITS SOURCE'S.
+  // What stood here read *"the projection makes no copy and inherits its source's split
+  // numbering"* — true while it built nothing. It now builds a SPLIT buffer, so its split
+  // numbering is its own and these rims are recovered from its own index. `polygonLayoutOf` still
+  // delegates to the source, correctly, because that answers at the TOPOLOGICAL domain, which the
+  // split does not touch: same faces, same rims, more slots to hold them in.
   const polygons = alignedSplitRims(ref, result.geometry);
   if (polygons === null) {
     return {
@@ -206,7 +113,7 @@ export function projectMeshUVs(ref: GeometryRef): UVAttributeVerdict {
     };
   }
   const minted = mintAttributes({
-    [UV_PROJECT]: projectedLayer(result.geometry, polygons, descriptor.size),
+    [UV_PROJECT]: cubeProjectedLayer(result.geometry, polygons, descriptor.size),
   });
   if (minted === null)
     return { kind: 'not-derivable', why: 'the projected corner layer would not mint' };
