@@ -483,6 +483,47 @@ export function bevelGeometryRef(
   );
 }
 
+/**
+ * The ONE place a UV projection becomes a `GeometryRef` (#994) — the first operator whose
+ * output geometry is its INPUT geometry, and whose whole product is an attribute layer.
+ *
+ * ── WHY THE ATTRIBUTE COMPONENT IS THE SOURCE'S OWN, VERBATIM ─────────────────────────
+ *
+ * The three tiling kinds strip their source's component and append a TILED one, because the
+ * merged geometry expresses a re-laid-out version of what the source carried. A projection
+ * lays nothing out: it has the source's faces, points, corners and edges, in the source's
+ * order, so every attribute the source carries describes this geometry unchanged. Passing the
+ * source's key through is therefore the accurate claim, and it is the one claim
+ * `mintTiledModifierAttributes` cannot make — it answers for `array`, `mirror` and `subset`
+ * and refuses everything else, and its refusal reads as *this geometry has no attributes*.
+ * Minting through it here would drop the source's per-face material assignment on the floor
+ * and draw, which is [[H512]]'s collapse arriving by a new road.
+ *
+ * 🔴 THE PROJECTED LAYER IS DELIBERATELY NOT IN THIS KEY, and that is not an omission. An
+ * attribute key is CONTENT-derived, and the projected values are a function of built
+ * positions that no evaluate can reach (`src/nodes/` imports no registry — measured 0 of 97).
+ * The layer is minted and stored on the READ road, exactly as `readMeshUVs` mints the UV0
+ * lift, keyed by this handle. What identifies it here is the pair (source, size), which is
+ * what this key already says.
+ */
+export function uvProjectGeometryRef(source: GeometryRef, size: number): GeometryRef {
+  // 🔴 A NON-POSITIVE CUBE HAS NO CONSTRUCTOR, refused for the reason `bevelGeometryRef`
+  // refuses a non-positive amount. The projection divides by this: at `0` every corner in a
+  // finite mesh maps to a non-finite UV, and at a negative size the map mirrors, which is a
+  // legible picture of a wrong answer rather than an error. Both are silent at the buffer and
+  // visible only as a texture nobody can explain.
+  if (!(size > 0)) {
+    throw new Error(
+      `uvProjectGeometryRef: a cube projection needs a positive size and got ${size}. Zero sends every corner to a non-finite UV, and a negative size mirrors the map — neither is a projection.`,
+    );
+  }
+  const descriptor = { kind: 'uvProject' as const, source, size };
+  return withAttributeComponent(
+    { key: `uvProject|${keyWithoutAttributeComponent(source)}|${size}`, descriptor },
+    source.attributeKey ?? null,
+  );
+}
+
 // ── #537 — REBUILDING A HANDLE THE ANIMATION OVERLAY HAS WRITTEN THROUGH ───────────────
 //
 // The four builders above are called by the EVALUATOR, once per evaluation, from the node's
@@ -639,6 +680,10 @@ export function rebuildGeometryRef(
     // written. The source is a handle, not a param.
     case 'bevel':
       return bevelGeometryRef(d.source, (values.amount ?? d.amount) as number);
+    // #994 — `size` is the only writable field, as `amount` is for a bevel. The source is a
+    // handle, not a param.
+    case 'uvProject':
+      return uvProjectGeometryRef(d.source, (values.size ?? d.size) as number);
     case 'gltf':
     case 'baked':
       return ref;

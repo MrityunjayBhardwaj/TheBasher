@@ -33,6 +33,7 @@ import {
   mirrorGeometryRef,
   sphereGeometryRef,
   subsetGeometryRef,
+  uvProjectGeometryRef,
 } from './modifierGeometry';
 import { getForRead } from './geometryRegistry';
 import { builtFaceNormals, edgeAnglesOf } from './edgeAngle';
@@ -350,6 +351,11 @@ describe('#848 — the premise the angle-limit cache key rests on', () => {
       mirror: 'keyed',
       subset: 'keyed',
       bevel: 'keyed',
+      // #994 — keyed, and it inherits the classification rather than earning a new one: a
+      // projection's positions ARE its source's, and the source's key is folded into its own.
+      // It authors an attribute layer and moves nothing, so the edge walk answers for it
+      // exactly as it answers for the handle underneath.
+      uvProject: 'keyed',
       gltf: 'outside',
       baked: 'outside',
     };
@@ -360,12 +366,13 @@ describe('#848 — the premise the angle-limit cache key rests on', () => {
       mirror: mirrorGeometryRef(box, 'x', 1),
       subset: subsetGeometryRef(box, '0-2', true),
       bevel: bevelGeometryRef(box, 0.1),
+      uvProject: uvProjectGeometryRef(box, 2),
       gltf: gltfRef,
       baked: bakedRef,
     };
 
     const kinds = Object.keys(keying) as GeometryDescriptor['kind'][];
-    expect(kinds.length, 'every descriptor kind is classified').toBe(8);
+    expect(kinds.length, 'every descriptor kind is classified').toBe(9);
 
     for (const kind of kinds) {
       const accepted = edgeFaceAdjacencyOf(sample[kind].descriptor) !== null;

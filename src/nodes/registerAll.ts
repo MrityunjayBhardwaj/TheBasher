@@ -60,6 +60,7 @@ import { SetMaterialOpNode } from './SetMaterialOp';
 import { MirrorModifierNode } from './MirrorModifier';
 import { MaskModifierNode } from './MaskModifier';
 import { BevelModifierNode } from './BevelModifier';
+import { UVProjectModifierNode } from './UVProjectModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
@@ -194,6 +195,12 @@ const ALL: NodeDefinition[] = [
   // those faces came from no source face at all. It is also the only modifier here that
   // declares no scope, which is a deferral rather than a fact — see its header.
   BevelModifierNode as unknown as NodeDefinition,
+  // #994 — THE FIFTH MODIFIER, AND THE FIRST THAT RESHAPES NOTHING. The four above all answer
+  // "what shape is this?"; this one hands its input's shape through untouched and authors a
+  // corner-domain UV layer instead. It is in this list rather than beside the material
+  // operators because it stands in the MODIFIER stack — the reference's UV Project is a
+  // modifier — and because it is a geometry-lane operator: what flows through it is ObjectData.
+  UVProjectModifierNode as unknown as NodeDefinition,
   // #394 S3c — the MATERIAL half of the same lane. Both are `ObjectData → ObjectData`
   // operators standing between the data and the Object that wears it (Houdini's Material
   // SOP / Blender GN `Set Material`): SetMaterialOp replaces wholesale from a Material

@@ -119,10 +119,34 @@ export function detectUnsupportedGltfFeatures(json: {
   //     the replaced-map road, and is tracked as its own defect (#553), not as a
   //     footnote on what the importer captured.
   // A slot with no captured entry uses the shared placement; that is what replacement
-  // means, not a gap. TEXCOORD_1+ below keeps its entry — that one really is captured
-  // on the descriptor and not applied.
-  // Secondary UV sets: the texCoord index is captured on the map descriptor, but
-  // a DAG-replaced map currently binds UV0 only — so flag UV1+ as a limitation.
+  // means, not a gap. TEXCOORD_1+ below keeps its entry, but for a NARROWER reason than
+  // it used to give — see below.
+  //
+  // Secondary UV sets. The clause that stood here read *"the texCoord index is captured
+  // on the map descriptor, but a DAG-replaced map currently binds UV0 only"*, and the
+  // second half of that is no longer true (#997): the set is captured per slot onto the
+  // material (`InlineMaterialSpec.mapUvSets`, which survives replacement where the map
+  // descriptor did not) and a replaced map now samples it. The inherited road never had
+  // the problem — three's own loader binds a captured texture to its set
+  // (`GLTFLoader.js:3354-3357`).
+  //
+  // 🔴 THE ENTRY STAYS, AND ITS REMAINING REASON IS STATED RATHER THAN INHERITED. What a
+  // director still cannot do is SEE or CHANGE the binding: there is no inspector control
+  // for a slot's UV set, and the 2D UV view draws one anonymous set
+  // (`resolveMeshUVSpace.ts` — its extension point says so), so a slot sampling set 1 is
+  // shown against set 0's layout. A second set also still reaches no ELEMENT data: the
+  // corner lift refuses for every imported mesh, first set included, because a `gltf`
+  // descriptor states no face arity (#738).
+  //
+  // ✅ THE OBSERVATION IS TAKEN, AND IT DID NOT LICENSE DELETING THIS ENTRY. The browser
+  // check this comment used to ask for — a replaced map on `two-uv-quad.gltf` drawing the
+  // centre quarter rather than the whole texture — now runs as
+  // `tests/e2e/p997-replaced-map-uv-set.spec.ts`, on real composited pixels, in both
+  // directions (the control on the default set draws the whole image), and it reds when
+  // either half of the wiring is deleted. What that discharged is the reason this entry
+  // USED to give. The three above are untouched by it and were each re-measured when the
+  // observation landed, so the notice keeps firing and its words stay true: the feature
+  // renders, and it is not editable.
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),

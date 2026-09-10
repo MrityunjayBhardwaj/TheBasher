@@ -152,9 +152,18 @@ export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
  * it and mean something by it.** Admitting a domain on the strength of a count is exactly the
  * mistake that entry's own doc block was rewritten to stop.
  *
- * That is why this is a `why`/`until` record rather than a comment: it mirrors
- * `CLASS_CARRIAGE.edge`, which carries the same shape for the same reason one level up, and
- * it names the issue that would supply the missing consumer.
+ * That is why this is a record rather than a comment: it mirrors `CLASS_CARRIAGE.edge`, which
+ * carries the same shape for the same reason one level up.
+ *
+ * 🔴 THE TWO ABSENCES ARE NOT THE SAME KIND OF ABSENCE, AND SAYING SO IS THE POINT. Both
+ * entries used to read `until: '#959'` — the issue that exists to DECIDE the question, not a
+ * consumer that would supply one. A self-referential `until` can never be discharged: close
+ * that issue and the record points at a closed one, which is the failure #958 is open about
+ * one file over. `corner` genuinely awaits a filed consumer (#786, the authored layer its own
+ * reason already argues for). `point` awaits NOTHING FILED — the whole open backlog was
+ * censused and nothing would author a point-domain layer — so it carries no `until` at all
+ * rather than a target invented to fill the field. The union makes the empty case
+ * REPRESENTABLE, so the next author is not forced to point somewhere false.
  *
  * 🔑 THE TYPE MAKES THE TWO SETS PARTITION {@link KNOWN_DOMAINS}. `Exclude<KnownDomain,
  * ScopeDomain>` means adding a domain to `SCOPE_DOMAINS` without deleting its entry here is a
@@ -163,22 +172,27 @@ export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
  * while the code said another. This is the half a gate cannot do — a gate reds after the fact,
  * a type refuses to build.
  */
-export const SCOPE_ABSENT: Readonly<
-  Record<Exclude<KnownDomain, ScopeDomain>, { readonly why: string; readonly until: string }>
-> = {
+export type ScopeAbsence =
+  /** A consumer is FILED; admitting the domain waits on it. `until` names that issue. */
+  | { readonly kind: 'awaits-consumer'; readonly why: string; readonly until: string }
+  /** Nothing filed would supply a consumer. There is no honest `until` to carry. */
+  | { readonly kind: 'no-candidate'; readonly why: string };
+
+export const SCOPE_ABSENT: Readonly<Record<Exclude<KnownDomain, ScopeDomain>, ScopeAbsence>> = {
   point: {
+    kind: 'no-candidate',
     why:
       'a point count has been derivable since #716 and total since #754, but no operator has ' +
       'a per-point semantic anybody has stated — a point selection would be a subset of a set ' +
-      'nothing consumes',
-    until: '#959',
+      'nothing consumes, and no open issue would author a point-domain layer',
   },
   corner: {
+    kind: 'awaits-consumer',
     why:
       'a corner count has been derivable since #776, but the two issues that want corner data ' +
       'want a whole authored LAYER (#786) or a blend plan (#881), neither of which names a ' +
       'subset; and a fragment shader has no corner input to resolve one against',
-    until: '#959',
+    until: '#786',
   },
 };
 
@@ -361,6 +375,29 @@ export const MATERIAL_INDEX = 'material_index';
  * disagree about where they are in texture space, so a per-point layout cannot express one.
  */
 export const UV_MAP = 'UVMap';
+
+/**
+ * The corner-domain UV layer a cube projection AUTHORS (#994) — distinct from {@link UV_MAP},
+ * and the distinction is load-bearing rather than a naming preference.
+ *
+ * `UVMap` is what `readMeshUVs` LIFTS off a built geometry's `uv` buffer. That lift is a
+ * pullback along loop → vertex: its value is a function of the render vertex, so two loops
+ * meeting at one vertex agree by construction, on every mesh, forever ([[V449]]). A projection
+ * is the opposite thing — it picks its cube side per FACE, so those two loops can and do
+ * disagree — and it is the substrate's first producer of a corner value that is not a lift.
+ *
+ * 🔴 IF THE TWO SHARED A NAME THE LIFT WOULD OVERWRITE THE AUTHORED LAYER AND NOTHING WOULD
+ * SAY SO. Both mint into the same store; the buffer under a projected handle still carries the
+ * SOURCE's unprojected `uv` (the projection writes no buffer — that is #786), so a `UVMap` read
+ * of a projected mesh would answer with the values the projection exists to replace. Under one
+ * name that is a silent wrong answer; under two it is two questions with two answers, and the
+ * question of which one a material samples is #881's, asked out loud.
+ *
+ * Not Blender's spelling, because Blender has no equivalent: there, UV Project writes INTO a
+ * chosen UV map because a mesh owns named UV layers the modifier can target. This substrate has
+ * no layer table yet, so the name is the layer.
+ */
+export const UV_PROJECT = 'UVProject';
 
 /**
  * The attributes a geometry value carries, keyed by name (`material_index`, `UVMap`, …).

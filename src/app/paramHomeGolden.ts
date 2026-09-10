@@ -237,6 +237,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
+  // #994 — every param routed, and there are only two. A modifier that reshapes nothing still
+  // owes the inspector the same card every other modifier draws.
+  UVProjectModifier: '[modifier] size=modifier muted=modifier',
   Vec3Math: '[] op=(unrouted) scalar=(unrouted)',
   VecBreak3: '[]',
   VideoStitch: '[render] codec=render fps=render outputPath=render',
@@ -295,7 +298,14 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-// 84 -> 85 at #974 (PoseOverride), which contributes five unrouted cells.
-// #1001 appended two unrouted cells to KeyframeChannelVec3: `unrouted` 231 → 233,
-// `routed` untouched — the append arm's derived half.
-export const GOLDEN_TOTALS = { types: 85, routed: 133, unrouted: 233 } as const;
+// 84 -> 86 types, and the two arrivals are independent: #974 (`PoseOverride`) contributes
+// five unrouted cells and routes none, #994 (`UVProjectModifier`) routes BOTH of its cells
+// (`size`, `muted` -> modifier) and adds no unrouted. #1001 appended two more unrouted cells
+// to `KeyframeChannelVec3` — the append arm's derived half.
+//
+// So each side of this merge moved a DIFFERENT number and neither moved the other's:
+// routed 133 -> 135 came entirely from #994, unrouted 226 -> 233 entirely from #974/#1001.
+// That independence IS the claim this file exists to make — nothing existing was re-homed
+// to make room for either, and a re-home would have shown up as one total moving without
+// its own arrival to explain it.
+export const GOLDEN_TOTALS = { types: 86, routed: 135, unrouted: 233 } as const;

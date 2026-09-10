@@ -86,7 +86,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all nine operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all ten operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
@@ -97,6 +97,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'MirrorModifier', // data lane — geometry
       'SetMaterialOp', // data lane — material
       'Transform', // scene lane
+      'UVProjectModifier', // data lane — geometry (#994, the first that RESHAPES NOTHING)
     ]);
 
     for (const [type, chain] of operators()) {
@@ -173,7 +174,19 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // by declaring a scope it does not honour, which is exactly how `MaterialOverrideOp` got
     // in. `operatorScopeHonouring.gate.test.ts` is the row that would catch that, and it now
     // carries a `BevelModifier` fixture for the same reason.
-    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([]);
+    //
+    // 🔴 AND IT IS NOT EMPTY ANY MORE — #994 is the THIRD entry, and it arrives the way
+    // `BevelModifier` did rather than the way `MaterialOverrideOp` did: a truthful deferral,
+    // not a correction. `UVProjectModifier` stands on an `ObjectData` spine, so it HAS a
+    // component domain and could be scoped; what stops it is that a scoped projection would
+    // have to say what the unprojected corners carry, and the materialisation of a corner layer
+    // is #786's open question. Declaring `'no-component-domain'` would have been the false
+    // spelling and would have made this row empty and wrong — which is precisely the failure
+    // the two-armed `why` exists to prevent, now exercised by a live member rather than by a
+    // fixture.
+    expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
+      'UVProjectModifier',
+    ]);
   });
 
   it('BYPASS is declared, and `none` is an ANSWER rather than an omission', () => {
@@ -197,6 +210,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'BevelModifier',
       'MaskModifier',
       'MirrorModifier',
+      'UVProjectModifier',
     ]);
     expect(where((c) => c.section === 'material')).toEqual(['MaterialOverrideOp', 'SetMaterialOp']);
     expect(where((c) => c.section === 'effect')).toEqual(['ColorCorrect']);

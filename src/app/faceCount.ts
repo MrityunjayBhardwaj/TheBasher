@@ -148,6 +148,12 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       const verdict = bevelLayoutOf(descriptor);
       return verdict.kind === 'laid-out' ? verdict.layout.faceOrder.length : null;
     }
+    // #994 — THE SOURCE'S OWN ANSWER, UNCHANGED. A projection authors an attribute layer and
+    // touches no topology, so every arithmetic in this file is its source's. Delegating rather
+    // than deriving is what keeps that a definition instead of a coincidence: there is no second
+    // spelling here that could drift from the operator's actual output.
+    case 'uvProject':
+      return faceCountOf(descriptor.source.descriptor);
     case 'gltf':
     case 'baked':
       return null;

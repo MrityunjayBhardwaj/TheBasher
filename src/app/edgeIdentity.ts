@@ -284,6 +284,10 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
       const verdict = bevelLayoutOf(descriptor);
       return verdict.kind === 'laid-out' ? verdict.layout.rims : null;
     }
+    // #994 — the source's welded rims verbatim. Same rule as `faceCountOf` and `pointCountOf`:
+    // the projection changes what each corner READS, never what joins what.
+    case 'uvProject':
+      return weldedPolygonsOf(descriptor.source.descriptor);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`weldedPolygonsOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

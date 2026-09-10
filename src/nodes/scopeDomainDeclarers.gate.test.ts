@@ -154,8 +154,31 @@ describe('#962 — a scopable domain has a declarer, and an absent one has a rea
     for (const [domain, record] of Object.entries(SCOPE_ABSENT)) {
       // A reason that is not a sentence is a reason nobody has to justify again.
       expect(record.why.length, `SCOPE_ABSENT.${domain} needs a real reason`).toBeGreaterThan(40);
-      // An `until` that names no issue cannot be checked when the issue closes.
-      expect(record.until, `SCOPE_ABSENT.${domain}.until must name an issue`).toMatch(/^#\d+$/);
+      // An `until` that names no issue cannot be checked when the issue closes — asserted on
+      // the arm that HAS one. The `no-candidate` arm carries none by design, and the type is
+      // what keeps the two apart, so this reads the discriminant rather than probing the shape.
+      if (record.kind === 'awaits-consumer') {
+        expect(record.until, `SCOPE_ABSENT.${domain}.until must name an issue`).toMatch(/^#\d+$/);
+      }
+    }
+  });
+
+  it('F — an `until` is named by its own `why`, so the reason justifies the target', () => {
+    // 🔴 THE RULE ROW E COULD NOT MAKE. `/^#\d+$/` accepts ANY issue, including the very issue
+    // that exists to DECIDE the absence — which is what both entries said (`until: '#959'`).
+    // A self-referential `until` can never be discharged: closing that issue leaves the record
+    // pointing at a closed one, which is #958's live complaint one file over.
+    //
+    // The checkable form of "names a first consumer" is that the `why` ALREADY ARGUES for the
+    // target. A reason that never mentions the issue it defers to is not a reason for
+    // deferring THERE. Measured: this reds on both entries before the fix — corner's `why`
+    // named #786 and #881 while its `until` said #959, and point's named #716 and #754.
+    for (const [domain, record] of Object.entries(SCOPE_ABSENT)) {
+      if (!('until' in record)) continue; // the `no-candidate` arm defers to nothing by design
+      expect(
+        record.why,
+        `SCOPE_ABSENT.${domain}.until is ${record.until}, which its own why never argues for`,
+      ).toContain(record.until);
     }
   });
 });
