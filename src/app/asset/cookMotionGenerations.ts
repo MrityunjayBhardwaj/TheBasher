@@ -228,8 +228,16 @@ export interface StrandedBone {
   /** What the director reads. Unique within an offer, sorted. */
   readonly childName: string;
   /** Every channel behind the clip under that name — per character, per
-   *  component. Never empty: a bone with no stale channel is not stranded. */
-  readonly targets: readonly { readonly assetRef: string; readonly component: BakedComponent }[];
+   *  component. Never empty: a bone with no stale channel is not stranded.
+   *
+   *  WHOLE addresses, `childName` repeated on each, so a surface hands them
+   *  straight to the act. Reassembling them in JSX would put the last step of
+   *  "which channel" in the one place this project cannot write a row against. */
+  readonly targets: readonly {
+    readonly assetRef: string;
+    readonly childName: string;
+    readonly component: BakedComponent;
+  }[];
 }
 
 /**
@@ -315,14 +323,17 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
  * whole band exists to report.
  */
 function strandedBonesForClip(state: DagState, clipId: string): StrandedBone[] {
-  const byName = new Map<string, { assetRef: string; component: BakedComponent }[]>();
+  const byName = new Map<
+    string,
+    { assetRef: string; childName: string; component: BakedComponent }[]
+  >();
   for (const skeletonId of riggedSkeletonsForClip(state.nodes, clipId)) {
     const assetRef = assetRefOfSkeleton(state.nodes, skeletonId);
     if (!assetRef) continue;
     for (const row of channelSeedRows(state, assetRef)) {
       if (row.state !== 'stale') continue;
       const bucket = byName.get(row.childName);
-      const target = { assetRef, component: row.component };
+      const target = { assetRef, childName: row.childName, component: row.component };
       if (bucket) bucket.push(target);
       else byName.set(row.childName, [target]);
     }

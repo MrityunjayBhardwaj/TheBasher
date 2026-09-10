@@ -100,14 +100,7 @@ export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId
                   type="button"
                   data-testid={`motion-cook-follow-${bone.childName}`}
                   onClick={() =>
-                    dispatchFollowClip(
-                      bone.targets.map((t) => ({
-                        assetRef: t.assetRef,
-                        childName: bone.childName,
-                        component: t.component,
-                      })),
-                      `Discard edit on ${bone.childName}`,
-                    )
+                    dispatchFollowClip(bone.targets, `Discard edit on ${bone.childName}`)
                   }
                   className="shrink-0 rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/80 hover:bg-muted hover:text-fg"
                 >

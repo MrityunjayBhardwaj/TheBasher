@@ -179,7 +179,9 @@ describe('#1002 — the offer names an ADDRESS, not just a name', () => {
     // position channel is `current` — the clip has not moved under it and the
     // director's edit is still driving — so an action that took the bone would
     // discard a live edit nobody was warned about.
-    expect(offer.stranded[0].targets).toEqual([{ assetRef: ASSET, component: 'rotation' }]);
+    expect(offer.stranded[0].targets).toEqual([
+      { assetRef: ASSET, childName: BONE, component: 'rotation' },
+    ]);
   });
 
   it('says nothing at all when the re-cook moved neither band', () => {
@@ -194,12 +196,7 @@ describe('#1002 — the act', () => {
     const offer = motionCookOffer(useDagStore.getState().state, PRODUCER);
     const bone = offer.stranded[0];
 
-    expect(
-      dispatchFollowClip(
-        bone.targets.map((t) => ({ ...t, childName: bone.childName })),
-        'Discard edit',
-      ),
-    ).toEqual({ ok: true });
+    expect(dispatchFollowClip(bone.targets, 'Discard edit')).toEqual({ ok: true });
 
     const after = useDagStore.getState().state;
     expect(after.nodes[gltfChannelDagId(ASSET, BONE, 'rotation')]).toBeUndefined();
@@ -216,10 +213,7 @@ describe('#1002 — the act', () => {
 
     useDagStore.getState().hydrate(before);
     const bone = motionCookOffer(before, PRODUCER).stranded[0];
-    dispatchFollowClip(
-      bone.targets.map((t) => ({ ...t, childName: bone.childName })),
-      'Discard edit',
-    );
+    dispatchFollowClip(bone.targets, 'Discard edit');
 
     const after = rendererRotation(useDagStore.getState().state, 0);
     // The clip's own first rotation key, in the DEGREES the band reads.
@@ -244,10 +238,7 @@ describe('#1002 — the act', () => {
     const bone = motionCookOffer(both, PRODUCER).stranded[0];
     expect(bone.targets.map((t) => t.component).sort()).toEqual(['position', 'rotation']);
 
-    dispatchFollowClip(
-      bone.targets.map((t) => ({ ...t, childName: bone.childName })),
-      'Discard edit',
-    );
+    dispatchFollowClip(bone.targets, 'Discard edit');
     const after = useDagStore.getState().state;
     expect(after.nodes[gltfChannelDagId(ASSET, BONE, 'position')]).toBeUndefined();
     expect(after.nodes[gltfChannelDagId(ASSET, BONE, 'rotation')]).toBeUndefined();
@@ -260,7 +251,7 @@ describe('#1002 — the act', () => {
   it('clears the signal it was pressed from, and a second press is simply true', () => {
     useDagStore.getState().hydrate(stranded());
     const bone = motionCookOffer(useDagStore.getState().state, PRODUCER).stranded[0];
-    const addresses = bone.targets.map((t) => ({ ...t, childName: bone.childName }));
+    const addresses = bone.targets;
     dispatchFollowClip(addresses, 'Discard edit');
     // The sentence a director just acted on is gone from the card.
     expect(motionCookOffer(useDagStore.getState().state, PRODUCER).stranded).toEqual([]);
