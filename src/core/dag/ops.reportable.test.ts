@@ -86,3 +86,91 @@ describe('applyOp — #423 wrong-half write is REPORTABLE', () => {
     expect(result.reportable).toBeUndefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// #1008 — the same check, one level down
+// ---------------------------------------------------------------------------
+
+describe('applyOp — #1008 a stripped write is caught at every depth', () => {
+  beforeEach(() => {
+    registerAllNodes();
+  });
+
+  function cube() {
+    return applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'n',
+      nodeType: 'Object',
+      params: {},
+    }).next;
+  }
+
+  // THE ROW THIS SECTION EXISTS FOR. #423 compared the ROOT key across the parse,
+  // so a bad key nested under a root the schema DOES own left that root in place
+  // and reported nothing: the write returned success and changed the graph not at
+  // all. `overridden` is a real param of Object; `overridden.bogus` is not.
+  it('flags a bad key NESTED under a root the schema owns', () => {
+    const result = applyOp(cube(), {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'overridden.bogus',
+      value: true,
+    });
+    expect(result.reportable?.badge).toBe('stripped-write');
+    expect(result.reportable?.paramPath).toBe('overridden.bogus');
+    // and it names the PATH, not the root — the root is fine, and blaming it
+    // sends the reader somewhere there is nothing to fix.
+    expect(result.reportable?.reason).toContain("'overridden.bogus'");
+    // The value did not land — which is the claim. Note what it DOES leave behind:
+    // `setAtPath` creates the container on the way down and zod keeps it, so the
+    // params gain an empty `overridden: {}`. So the write is not a clean no-op; it
+    // is a no-op with a residue that still moves the params hash. That is a second
+    // reason to surface it rather than let it pass, and it is asserted here so the
+    // next reader meets the residue in the row instead of in a diff.
+    const params = result.next.nodes.n.params as Record<string, unknown>;
+    expect((params.overridden as Record<string, unknown>).bogus).toBeUndefined();
+    expect(params.overridden).toEqual({});
+    expect(params.position).toEqual([0, 0, 0]);
+  });
+
+  it('CONTROL: a real nested path is NOT flagged', () => {
+    const result = applyOp(cube(), {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'overridden.position',
+      value: true,
+    });
+    expect(result.reportable).toBeUndefined();
+    expect(result.next.nodes.n.params.overridden).toMatchObject({ position: true });
+  });
+
+  it('a bad ROOT key still blames the root, which is the more useful sentence', () => {
+    const result = applyOp(cube(), {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'size',
+      value: 5,
+    });
+    expect(result.reportable?.badge).toBe('stripped-write');
+    expect(result.reportable?.reason).toContain("'size' is not a parameter of Object");
+  });
+
+  // The guard that keeps the product's own cleanup un-badged: `idRefSweep` clears a
+  // dangling reference by writing `undefined` at its path. "No value at the path"
+  // is the INTENT there, so it must not read as a defect.
+  it('CONTROL: a deliberate undefined write is not a strip', () => {
+    const seeded = applyOp(cube(), {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'overridden.position',
+      value: true,
+    }).next;
+    const result = applyOp(seeded, {
+      type: 'setParam',
+      nodeId: 'n',
+      paramPath: 'overridden.position',
+      value: undefined,
+    });
+    expect(result.reportable).toBeUndefined();
+  });
+});

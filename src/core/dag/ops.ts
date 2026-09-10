@@ -399,18 +399,30 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     paramPath: op.paramPath,
     value: prior,
   };
-  // #423 — wrong-half write. `setAtPath` happily creates a root key this node's
-  // schema does not own; a non-strict schema then STRIPS it, so `safeParse`
-  // succeeds and the write silently no-op'd. Detect the strip (root key present
-  // pre-parse, gone post-parse) and mark the op REPORTABLE — accepted, but
-  // surfaced instead of silent. A legitimate same-value write keeps its key
-  // through the parse and is never flagged.
-  const rootKey = paramRootKey(op.paramPath);
-  if (
-    rootKey !== '' &&
-    Object.prototype.hasOwnProperty.call(nextParams as object, rootKey) &&
-    !Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey)
-  ) {
+  // #423 — wrong-half write. `setAtPath` happily creates a key this node's schema
+  // does not own; a non-strict schema then STRIPS it, so `safeParse` succeeds and
+  // the write silently no-op'd. Detect the strip and mark the op REPORTABLE —
+  // accepted, but surfaced instead of silent. A legitimate same-value write keeps
+  // its value through the parse and is never flagged.
+  //
+  // 🔴 #1008 — THE TEST IS THE WHOLE PATH, NOT THE ROOT KEY. #423 compared the ROOT
+  // key before and after the parse, which is exactly the depth its own case needed
+  // and no deeper. A key nested under a root the schema DOES own leaves that root in
+  // place: zod strips the unknown leaf, the root survives, the check looks at the
+  // root, sees it, and says nothing. Measured — `Object.size` was reported while
+  // `Object.overridden.bogus` returned success and changed nothing.
+  //
+  // Reading the value AT THE PATH covers both with one rule: a missing root means
+  // the whole path is missing, so the root case behaves exactly as before, and every
+  // depth below it is covered without a second rule to remember.
+  //
+  // ⚠️ A DELIBERATE `undefined` WRITE IS NOT A STRIP. `idRefSweep` clears a dangling
+  // reference by setting its path to `undefined`; treating "no value at the path"
+  // as a defect would badge the product's own cleanup.
+  if (op.value !== undefined && getAtPath(parsed.data, op.paramPath) === undefined) {
+    const rootKey = paramRootKey(op.paramPath);
+    const rootSurvived =
+      rootKey === '' || Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey);
     return {
       next,
       inverse,
@@ -418,7 +430,12 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
         badge: 'stripped-write',
         nodeId: op.nodeId,
         paramPath: op.paramPath,
-        reason: `'${rootKey}' is not a parameter of ${node.type}`,
+        // Name what is actually wrong. A bad root is the commoner mistake and the
+        // more useful sentence; blaming a root that is fine sends the reader to the
+        // wrong place, which is the failure this whole check exists to prevent.
+        reason: rootSurvived
+          ? `'${op.paramPath}' is not a parameter of ${node.type}`
+          : `'${rootKey}' is not a parameter of ${node.type}`,
       },
     };
   }
