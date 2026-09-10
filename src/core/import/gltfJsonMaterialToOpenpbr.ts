@@ -180,6 +180,29 @@ function captureUvTransform(mat: GltfJsonMaterial): InlineMaterialSpec['uvTransf
  * keys, so a materialised empty bag keys differently from an absent one and would
  * re-mint every already-imported material's identity (#550/H265).
  */
+/**
+ * #997 — the UV set each map slot samples, for the slots that name a non-default one.
+ *
+ * Captured onto the MATERIAL rather than left on the map descriptor's `gltfTexCoord`,
+ * because a descriptor does not survive the edit this exists to serve: replacing a slot
+ * builds a fresh ref from the picked file, so a binding kept there resolves to 0 on
+ * every replaced slot. Same reason `mapUvTransforms` sits here — see the field's doc.
+ *
+ * Returns `undefined` — never an empty object — when every slot uses set 0, so an
+ * ordinary single-UV material keys exactly as it did (`materialKeyOf` walks own
+ * enumerable keys; a materialised empty bag would re-mint every imported material).
+ */
+function capturePerMapUvSets(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvSets'] {
+  const out: { -readonly [K in keyof InlineMaterialMaps]?: number } = {};
+  for (const slot of MAP_UV_SLOTS) {
+    const texCoord = IR_SLOT_SOURCES[slot].info(mat)?.texCoord;
+    // `> 0` rather than `!== undefined`: set 0 IS the default, and writing it out
+    // would materialise the bag for materials that name nothing.
+    if (typeof texCoord === 'number' && texCoord > 0) out[slot] = texCoord;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function capturePerMapUvTransforms(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvTransforms'] {
   if (!materialHasPerMapUvTransform(mat)) return undefined;
   const out: { -readonly [K in keyof InlineMaterialMaps]?: UvPlacement } = {};
@@ -317,6 +340,7 @@ export function gltfJsonMaterialToOpenpbr(
   // gain the key at all: `materialKeyOf` walks own enumerable keys, so spreading
   // `undefined` in unconditionally would re-key every material (H265).
   const perMap = capturePerMapUvTransforms(mat);
+  const perUvSets = capturePerMapUvSets(mat);
   return {
     name: mat.name || 'default',
     base: {
@@ -351,5 +375,6 @@ export function gltfJsonMaterialToOpenpbr(
     // individually below, since one shared placement cannot express them.
     uvTransform: captureUvTransform(mat),
     ...(perMap ? { mapUvTransforms: perMap } : {}),
+    ...(perUvSets ? { mapUvSets: perUvSets } : {}),
   };
 }

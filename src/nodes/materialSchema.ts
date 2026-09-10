@@ -140,6 +140,28 @@ const mapUvTransformsSchema = z
   .optional();
 
 /**
+ * #997 — which UV set each map slot samples. A non-negative integer per slot; absent
+ * means set 0. `.optional()` with NO `.default()`, for the reason `mapUvTransformsSchema`
+ * above states: a materialised empty bag keys differently from an absent one and would
+ * re-mint every existing material's identity.
+ *
+ * `int().nonnegative()` rather than a bare number, because a fractional or negative
+ * channel is not a UV set — three would read it as one and bind whatever `uv{n}`
+ * stringifies to, which is an attribute that does not exist and renders untextured
+ * with nothing said.
+ */
+const mapUvSetsSchema = z
+  .object({
+    albedo: z.number().int().nonnegative().optional(),
+    normal: z.number().int().nonnegative().optional(),
+    roughness: z.number().int().nonnegative().optional(),
+    metalness: z.number().int().nonnegative().optional(),
+    emissive: z.number().int().nonnegative().optional(),
+    ao: z.number().int().nonnegative().optional(),
+  })
+  .optional();
+
+/**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
  * Every field AND every nested object carries a `.default` so a partial `setParam`
  * whole-params re-parse (ops.ts) always fills siblings (R6).
@@ -195,6 +217,7 @@ export function openpbrMaterialSchema() {
       maps: mapsSchema,
       uvTransform: uvTransformSchema,
       mapUvTransforms: mapUvTransformsSchema,
+      mapUvSets: mapUvSetsSchema,
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -282,6 +305,7 @@ export function hydrateInlineMaterial(
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
+    mapUvSets?: Record<string, unknown>;
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -332,7 +356,10 @@ export function hydrateInlineMaterial(
   // a different key and re-mint the whole cache on first load. Absent must mean absent.
   const perMap = hydrateMapUvTransforms(m.mapUvTransforms);
   const withPerMap = perMap ? { ...out, mapUvTransforms: perMap } : out;
-  return m.unsupported ? { ...withPerMap, unsupported: m.unsupported } : withPerMap;
+  // #997 — the per-slot UV set, conditional for exactly the reason above.
+  const uvSets = hydrateMapUvSets(m.mapUvSets);
+  const withUvSets = uvSets ? { ...withPerMap, mapUvSets: uvSets } : withPerMap;
+  return m.unsupported ? { ...withUvSets, unsupported: m.unsupported } : withUvSets;
 }
 
 /**
@@ -341,6 +368,25 @@ export function hydrateInlineMaterial(
  * An empty bag is NOT the same as an absent one to a generic key walk (#550/H265),
  * and "every slot uses the shared placement" is exactly what absence already means.
  */
+/**
+ * #997 — a legacy/serialized per-slot UV-set bag → the IR's, or `undefined` when it
+ * names none. Non-integer, negative and non-numeric entries are DROPPED rather than
+ * coerced: a channel is an index into a list of attributes, so a value that is not one
+ * has no nearest sensible reading, and silently rounding it would bind a slot to a set
+ * the author never named.
+ */
+function hydrateMapUvSets(
+  raw: Record<string, unknown> | undefined,
+): InlineMaterialSpec['mapUvSets'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: Record<string, number> = {};
+  for (const slot of MAP_UV_SLOTS) {
+    const v = raw[slot];
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) out[slot] = v;
+  }
+  return Object.keys(out).length > 0 ? (out as InlineMaterialSpec['mapUvSets']) : undefined;
+}
+
 function hydrateMapUvTransforms(
   raw: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }> | undefined,
 ): InlineMaterialSpec['mapUvTransforms'] | undefined {

@@ -327,6 +327,31 @@ export interface InlineMaterialSpec {
    */
   readonly mapUvTransforms?: { readonly [K in keyof InlineMaterialMaps]?: UvPlacement };
   /**
+   * #997 — WHICH UV SET each map slot samples (`TEXCOORD_n` → three's
+   * `Texture.channel`). Absent, or absent for a slot, means set 0.
+   *
+   * 🔑 IT LIVES ON THE MATERIAL RATHER THAN ON THE MAP REF, AND THAT IS THE WHOLE FIX.
+   * The importer already captures the set on the captured-import descriptor
+   * ({@link BakedTextureRef.gltfTexCoord}), but that descriptor is REPLACED wholesale
+   * the moment a director picks their own file — `attachMapFromFile` builds a fresh ref
+   * from the file alone and never sees the one it supersedes. So a binding stored there
+   * cannot survive the very edit it exists to serve, and reading it back at render time
+   * would resolve to 0 on every replaced slot: a fix that looks right and is a no-op.
+   * Stored here it survives replacement for the same reason
+   * {@link InlineMaterialSpec.mapUvTransforms} does — the slot's binding is a property of
+   * the MATERIAL, not of whichever bytes currently occupy the slot.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()`, for the reason `mapUvTransforms` states directly
+   * above: `materialKeyOf` walks own enumerable keys, so a materialised `{}` keys
+   * differently from an absent one and would re-mint every existing material's identity.
+   * Absent means absent.
+   *
+   * The INHERITED road needs nothing from this — three's own loader already binds a
+   * captured texture to its set (`GLTFLoader.js:3354-3357`). This is only ever consulted
+   * for a slot the director has replaced.
+   */
+  readonly mapUvSets?: { readonly [K in keyof InlineMaterialMaps]?: number };
+  /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
    * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,
