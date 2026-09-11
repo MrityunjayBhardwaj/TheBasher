@@ -1,4 +1,9 @@
-// #1014 — a surfaced no-op has TWO readers, and only one of them was wired.
+// What the product KNOWS about a plan has to reach the model that wrote it. Two
+// instances of that one property live here, because they ride the same message and
+// would otherwise be pinned by two copies of the same turn harness:
+//
+//   #1014 — a surfaced no-op has TWO readers, and only one of them was wired.
+//   #733  — the gates prove a plan is LEGAL; the critic says what it DID.
 //
 // `applyOp` accepts an op that changed nothing and hands back a `Reportable`
 // saying exactly what went wrong. The director reads it in the DiffBar. The
@@ -174,5 +179,45 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
   it('nothing to report renders nothing at all', () => {
     expect(renderNoOpReport([])).toBe('');
     expect(renderNoOpReport([null, null])).toBe('');
+  });
+});
+
+describe('#733 — the critic reaches the model too', () => {
+  it('THE PIN: a plan that adds a node wired to nothing says so in the tool result', async () => {
+    const stranded: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: 'n_scatter',
+        nodeType: 'Scatter',
+        params: { density: 1, seed: 0, bounds: [1, 1, 1], scaleJitter: 0, randomYaw: false },
+      },
+    ] as Op[];
+    const text = toolText(await turnWithOps(stranded, 'scatter the cube'));
+    expect(text).toContain('CRITIC -');
+    expect(text).toContain('n_scatter');
+    expect(text).toContain('connected it to nothing');
+    expect(text).toContain('observations, not rejections');
+  });
+
+  it('CONTROL: a plan that does what it says carries no critique', async () => {
+    const real: Op[] = [
+      { type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: [0, 45, 0] },
+    ] as Op[];
+    const text = toolText(await turnWithOps(real, 'rotate the cube'));
+    expect(text).toContain('Proposed 1 Op');
+    expect(text).not.toContain('CRITIC -');
+  });
+
+  it('the two reports ride the SAME message and do not displace each other', async () => {
+    // Stripped writes (the no-op half) AND an unconsumed addition (the critic half)
+    // in one plan: the model must receive both, not whichever ran last.
+    const both: Op[] = [
+      { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} },
+      { type: 'setParam', nodeId: 'n_shot', paramPath: 'start', value: 0 },
+    ] as Op[];
+    const text = toolText(await turnWithOps(both, 'shot 0-4s'));
+    expect(text).toContain('NOTE -');
+    expect(text).toContain('Shot has no such parameter');
+    expect(text).toContain('CRITIC -');
   });
 });

@@ -35,6 +35,7 @@ import { useDiffStore } from './diff/store';
 import { createFork } from './diff/forkedDag';
 import type { Reportable } from '../core/dag/ops';
 import { badgeLabel } from '../app/badges';
+import { describeEffect, critique, renderCritique } from './critic/effect';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec, EdgeKind } from './closure/types';
 import type { IdentifyResult } from './identify/types';
@@ -499,18 +500,27 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // less legible than it was. So the error waits until the call has been
         // answered and the line written, and is rethrown unchanged.
         let noOpReport = '';
+        let critiqueReport = '';
         let forkError: unknown;
         if (result.ops.length > 0) {
           try {
-            const forked = createFork(effectiveState, result.ops);
+            const before = effectiveState;
+            const forked = createFork(before, result.ops);
             effectiveState = forked.fork;
             noOpReport = renderNoOpReport(forked.reportable);
+            // #733 — the gates proved this plan is LEGAL. This says what it DID.
+            // Both halves answer the same question from different sides, so they
+            // travel together on the one message that answers the tool call.
+            critiqueReport = renderCritique(
+              critique(describeEffect(before, forked.fork, result.ops)),
+            );
           } catch (e) {
             forkError = e;
           }
         }
 
-        const resultMessage = (result.text ?? `OK (${result.ops.length} ops)`) + noOpReport;
+        const resultMessage =
+          (result.text ?? `OK (${result.ops.length} ops)`) + noOpReport + critiqueReport;
         // Wave D telemetry: tool name + outcome + duration only. No
         // args, no DAG content, no prompt text. Killswitch-respecting.
         recordEvent({
