@@ -66,19 +66,6 @@ interface MyImportEntry {
   readonly name: string;
 }
 
-/**
- * Pick the entry file from a directory listing. glTF wins by container priority
- * (.glb single-file over .gltf), then a single motion file (.bvh/.fbx) — Phase
- * 7.14 (#111) D-05: BVH/FBX must list in My Imports like glTF. Returns the
- * matched filename, or null if the listing holds no importable entry.
- */
-function findEntryFile(files: readonly string[]): string | null {
-  // #662 — the precedence lives on the category as `entryPriority`, not in this chain. A
-  // format missing from the chain ingested fine and then never appeared in My Imports, so
-  // the user concluded the import had failed. Silent, and the loudest kind of silent.
-  return pickEntryFile(files);
-}
-
 export function AssetLibrary(): ReactNode {
   // My-Imports freshness: every successful import bumps `tick` (the import core
   // bumps AFTER `dispatchAtomic` returns — see `src/app/asset/importGltf.ts:184`).
@@ -184,12 +171,12 @@ export function AssetLibrary(): ReactNode {
             // one level (nested-entry exports like `<dir>/gltf/scene.gltf`).
             // Motion (Phase 7.14 #111, D-05): a single .bvh/.fbx is a valid
             // entry too — BVH/FBX must list in My Imports like glTF.
-            let entryRel: string | null = findEntryFile(files);
+            let entryRel: string | null = pickEntryFile(files);
             if (!entryRel) {
               for (const sub of files) {
                 try {
                   const innerFiles = await storage.list(`${USER_IMPORTS_ROOT}/${name}/${sub}`);
-                  const inner = findEntryFile(innerFiles);
+                  const inner = pickEntryFile(innerFiles);
                   if (inner) {
                     entryRel = `${sub}/${inner}`;
                     break;

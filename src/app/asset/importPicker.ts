@@ -61,16 +61,17 @@ export function gltfImportNeedsFolder(files: readonly IngestFile[]): GltfFolderN
   return { entryName, missing };
 }
 
-/** True iff the path is a model-family entry (the folder-import trigger). Derived from the
- *  category (#662): the trigger is "does this set contain geometry that may arrive with
- *  sibling files", which is the family, not a hand-spelled pair of extensions. */
-function isGltfPath(path: string): boolean {
-  return isFamilyPath(path, 'model');
-}
-
-/** True iff any picked file is a glTF container. */
-function hasGltfEntry(files: readonly IngestFile[]): boolean {
-  return files.some((f) => isGltfPath(f.relativePath));
+/**
+ * True iff any picked file is a MODEL-family entry — the folder-ingest trigger.
+ *
+ * Named for the family and not for glTF (#662). The predicate here was `isGltfPath`, which
+ * was true of exactly the model formats because glTF is the only one; the day a second
+ * model format lands, a name saying "glTF" over a body meaning "model" is a label that
+ * lies while every behavioural test still passes. The trigger is really "could this set
+ * arrive as a folder of siblings", which is a property of the family.
+ */
+function hasModelEntry(files: readonly IngestFile[]): boolean {
+  return files.some((f) => isFamilyPath(f.relativePath, 'model'));
 }
 
 /**
@@ -96,7 +97,7 @@ function deriveFolderName(firstPath: string): string {
 async function ingestOneModel(files: IngestFile[]): Promise<void> {
   if (files.length === 0) return;
   const folderName = deriveFolderName(files[0].relativePath);
-  if (hasGltfEntry(files)) {
+  if (hasModelEntry(files)) {
     // A multi-glTF folder prompts the user to pick which model; one entry imports
     // straight through (#214). Cancelling the chooser returns null → no-op.
     await ingestAndImportGltf(files, folderName);
