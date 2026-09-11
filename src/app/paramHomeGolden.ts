@@ -135,7 +135,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
   GltfData:
-    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted)',
+    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
     '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
@@ -295,4 +295,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // UNCHANGED, which is the derived half of the claim that nothing existing was re-homed to make
 // room for it. Two cells rather than three for the same reason `BevelModifier`'s row gave
 // before #847: this modifier declares no scope, and its header says the deferral is a decision.
-export const GOLDEN_TOTALS = { types: 85, routed: 135, unrouted: 226 } as const;
+// #1023 — unrouted 226 → 227: `GltfData.faceCount`, the child's captured face count.
+// UNROUTED and deliberately so, on exactly the argument this file's GltfData row already
+// makes for `assetRef`, `childName` and `materialSlots`. A home names the section that
+// RENDERS a param, and there is nothing to render: a face count is not authored, cannot be
+// edited, and has no control. Routing it "for completeness" is the #458 defect this golden
+// exists to catch — a titled, permanently empty cell, declared so a field would not look
+// absent and then believed by machinery that reads declarations and not the comments beside
+// them. `routed` and `types` do not move.
+export const GOLDEN_TOTALS = { types: 85, routed: 135, unrouted: 227 } as const;

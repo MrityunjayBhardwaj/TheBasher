@@ -113,6 +113,24 @@ export const GltfDataParams = z.object({
    * `MeshDataValue.materialSlots` is typed to say so rather than synthesising a grey.
    */
   materialSlots: z.array(openpbrMaterialSchema().nullable()).optional(),
+  /**
+   * HOW MANY FACES THIS CHILD HAS, captured from the glTF JSON at import (#1023) — the
+   * first element fact an imported mesh states about itself.
+   *
+   * OPTIONAL, and absent means WE NEVER CAPTURED IT rather than "no faces". Three
+   * populations have no readout and all three must keep answering as they do today: every
+   * save written before #1023, every child that is not a mesh at all (a bone, an empty),
+   * and every child whose primitives are not all triangles. A reader that treats the
+   * missing key as `0` turns "we cannot say" into a confident wrong answer, which is the
+   * same collapse `MaterialAssignment` exists to prevent for an unanswered material slot.
+   *
+   * Optional rather than required-and-nullable, unlike {@link GltfDataParams.material}:
+   * that key is required so a migration which drops a material FAILS TO PARSE, because a
+   * silently materialless child renders the grey fallback and looks plausible. Nothing
+   * renders from a face count, so a dropped one degrades to today's `null` answer rather
+   * than to a wrong picture — the loudness that argument buys is not needed here.
+   */
+  faceCount: z.number().int().nonnegative().optional(),
 });
 export type GltfDataParams = z.infer<typeof GltfDataParams>;
 
@@ -158,7 +176,15 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
     // survive past C3.
     const geometry: GeometryRef = {
       key: `gltf|${params.assetRef}|${params.childName}`,
-      descriptor: { kind: 'gltf', assetRef: params.assetRef, childName: params.childName },
+      descriptor: {
+        kind: 'gltf',
+        assetRef: params.assetRef,
+        childName: params.childName,
+        // #1023 — omitted rather than written as `undefined`, the same shape
+        // `materialSlots` uses below: a written `undefined` announces a field the
+        // descriptor has no answer for, and descriptors are compared and serialised.
+        ...(params.faceCount === undefined ? {} : { faceCount: params.faceCount }),
+      },
     };
     return {
       kind: 'MeshData',

@@ -155,7 +155,16 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
     case 'uvProject':
       return faceCountOf(descriptor.source.descriptor);
     case 'gltf':
+      // #1023 — the count captured from the glTF JSON at import, when there was one.
+      // `?? null` is load-bearing: an ABSENT readout means the import never captured one
+      // (a pre-#1023 save, a bone, an empty, a child that is not all triangles) and must
+      // answer exactly as it did before this issue. It never means zero faces.
+      return descriptor.faceCount ?? null;
     case 'baked':
+      // Still null, and NOT from `vertexCount`. That field is the RAW BUFFER's vertex
+      // count — it names the OPFS blob and blunts the hash's collision surface — and a
+      // buffer vertex count cannot state a face count without the index buffer it was
+      // serialised beside. Answering from it would be arithmetic on the wrong quantity.
       return null;
     default: {
       const unreachable: never = descriptor;
@@ -505,6 +514,21 @@ const arityCache = new WeakMap<
   WeakMap<readonly number[], readonly number[]>
 >();
 
+/**
+ * HOW MANY CORNERS AN IMPORTED glTF FACE HAS. Three, and it is a property of the FORMAT
+ * rather than of any particular file (#1023).
+ *
+ * glTF has no n-gon primitive mode: `GLTFLoader.js:3788-3811` accepts TRIANGLES,
+ * TRIANGLE_STRIP and TRIANGLE_FAN — converting the last two to triangles at load — and
+ * throws on anything else at `:3832`. So a `gltf` descriptor's captured face count is a
+ * TRIANGLE count, and both of the questions below follow from this one number.
+ *
+ * Stated once, here, because corners and arity are two readings of one fact and writing
+ * them as two literals would let them drift. A box already demonstrates how easily that
+ * hides: 24 corners and 36 triangle corners both look like plausible per-box integers.
+ */
+const GLTF_FACE_CORNERS = 3;
+
 export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] | null {
   const generated = polygonArityOf(descriptor);
   if (generated !== null) return generated;
@@ -524,6 +548,16 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
     // both quantities are plausible per-face integers. The subtraction lives here, at the one
     // boundary between the two vocabularies.
     return verdict.kind === 'laid-out' ? verdict.layout.corners.map((n) => n - 2) : null;
+  }
+
+  // #1023 — an imported child whose face count was captured. `- 2` is the fan rule, the
+  // same one `polygonArityOf` implements in the direction `fanToTriangles` reads it: a
+  // triangle fans to one triangle. This arm exists rather than riding the layout because
+  // the layout needs RIMS, and rims are the index buffer — buffer-scale data a descriptor
+  // has no business carrying. A count plus a format guarantee is all this answer needs.
+  if (descriptor.kind === 'gltf') {
+    const faces = descriptor.faceCount;
+    return faces === undefined ? null : new Array<number>(faces).fill(GLTF_FACE_CORNERS - 2);
   }
 
   // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
@@ -593,6 +627,12 @@ export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[]
   if (descriptor.kind === 'bevel') {
     const verdict = bevelLayoutOf(descriptor);
     return verdict.kind === 'laid-out' ? verdict.layout.corners : null;
+  }
+
+  // #1023 — the same captured count, read as corners. See {@link GLTF_FACE_CORNERS}.
+  if (descriptor.kind === 'gltf') {
+    const faces = descriptor.faceCount;
+    return faces === undefined ? null : new Array<number>(faces).fill(GLTF_FACE_CORNERS);
   }
 
   // Narrowed explicitly for the reason {@link faceArityOf} states one function up.
