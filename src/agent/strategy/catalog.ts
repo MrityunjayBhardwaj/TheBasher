@@ -527,7 +527,7 @@ const COMPONENT_SCOPE: StrategyResource = {
     "The component scope query — restricting an operator to a subset of a mesh's faces or edges.",
   body: `# Component scope
 
-Six operators can be restricted to a SUBSET of the mesh instead of acting on all of it.
+Seven operators can be restricted to a SUBSET of the mesh instead of acting on all of it.
 The subset is written as a query string in the operator's \`scope\` param.
 
 | operator | what \`scope\` selects |
@@ -538,6 +538,7 @@ The subset is written as a query string in the operator's \`scope\` param.
 | \`MaterialOverrideOp\` | faces |
 | \`SetMaterialOp\` | faces |
 | \`BevelModifier\` | **edges**, not faces |
+| \`ComponentGroupOp\` | faces — the faces it gives a NAME to |
 
 **Blank or absent means EVERYTHING.** That is the default and the behaviour these operators
 had before scope existed — clearing the field is how you go back to the whole mesh.
@@ -577,11 +578,28 @@ certainly wanted \`!\` where you wrote \`^\`, or a blank scope.
 
 ## What is NOT implemented, and will be refused by name
 
-- **Wildcards** (\`arm*\`) — they match stored group NAMES, and no group can be named yet.
+- **A group name as a query** (\`arm\`) — see below. A group can be NAMED today; it cannot be
+  SELECTED by that name yet.
+- **Wildcards** (\`arm*\`) — they match stored group names.
 - **Attribute expressions** (\`@v>0\`).
 
 These come back as a named error, not as a silent "everything". If you need one, say so to
 the user rather than substituting a numeric range that only approximates it.
+
+## Naming a set of faces
+
+\`ComponentGroupOp\` (added through \`mutator.geometry.addModifier\`) writes a NAME onto the
+faces its scope selects. Give it \`name\`; without one it does nothing at all. Set WHICH faces
+with \`mutator.setComponentScope\`, exactly as for any other operator in the table above; with
+no scope it names every face.
+
+The name is stored on the geometry, so it survives later topology changes — array the mesh and
+the named faces are still named, per copy.
+
+🔴 **You cannot yet write that name in a \`scope\` query.** Naming and selecting-by-name are two
+separate pieces of work and only the first has shipped, so \`scope: 'arm'\` is refused by name.
+Until it lands, a group is worth creating only when the user asked to name a region; to ACT on a
+subset right now, write the numeric query directly.
 
 ## Setting it
 

@@ -78,6 +78,7 @@ import {
   mintTiledModifierAttributes,
   targetedMaterialAttributes,
   uniformMaterialAttributes,
+  mintGroupAttributes,
 } from './meshAttributes';
 import { MATERIAL_INDEX, UV_MAP, UV_PROJECT, isKnownDomain, type AttributeSet } from './attributes';
 
@@ -147,6 +148,23 @@ const PRODUCERS: readonly Producer[] = [
     // `null` carried set — this census's subject is what a producer MINTS, and a source
     // whose attributes were carried through would put another producer's output in the row.
     probe: () => targetedMaterialAttributes(boxDescriptor(), null, null)!.set,
+  },
+  {
+    module: 'src/nodes/meshAttributes.ts',
+    what: 'mintGroupAttributes',
+    // #1027 — the FIRST producer in this census whose values are AUTHORED rather than
+    // derived, and the first that mints a name the census has not seen before. It stores as
+    // it mints, so the probe reads the set back by key.
+    //
+    // A `null` selection is passed for the reason the row above states: the subject is what
+    // this producer MINTS, and a carried set would put another producer's output in the row.
+    // The source therefore carries no attribute key, which is also what keeps the minted set
+    // to exactly `group:probe`.
+    probe: () =>
+      fromStore(
+        mintGroupAttributes(boxGeometryRef(BOX_SIZE, null), 'probe', null, 'evaluate')?.key ?? null,
+        'the group minter',
+      ),
   },
   {
     module: 'src/nodes/meshAttributes.ts',
@@ -247,7 +265,7 @@ beforeEach(() => {
 });
 
 describe('#688 the face-domain producer census', () => {
-  it('🔴 `material_index` is the ONLY face-domain attribute any producer mints', () => {
+  it('🔴 the face-domain names any producer mints — now TWO, and the second was confirmed', () => {
     // THE FORWARD GUARD. Exact, never a floor: a floor passes forever once the second name
     // lands, which is the entire failure mode.
     //
@@ -260,7 +278,28 @@ describe('#688 the face-domain producer census', () => {
     // is NOT face-domain — that something can lay it out at all, which for the corner
     // domain is #694 and is still open. Update the literal once you have confirmed, not
     // before.
-    expect(faceDomainNames()).toEqual([MATERIAL_INDEX]);
+    //
+    // 🟢 THE GUARD FIRED AT #1027 AND THE CONFIRMATION WAS DONE BEFORE THIS LITERAL MOVED —
+    // which is the whole reason it is written as an instruction rather than a count. Both
+    // things it asks for were measured:
+    //
+    //   the domain can be laid out    `face`, which `CLASS_CARRIAGE` lays out through the
+    //                                 face order. Not the corner case that is still #694.
+    //   the gather carries it E2E     observed, not inferred: a `group:arm` of
+    //                                 `[1,1,1,0,0,0]` on a box comes back from an array x3
+    //                                 as eighteen faces, `[1,1,1,0,0,0]` repeated per copy,
+    //                                 with `material_index` still beside it. Control, so the
+    //                                 survival is not a probe that reports everything: an
+    //                                 `edge`-domain attribute minted in the same set is
+    //                                 DROPPED by that same call.
+    //                                 (`componentGroups.gate.test.ts` rows 2 and 6.)
+    //
+    // The name is PREFIXED, and that is load-bearing for this row's future: every group is
+    // `group:<name>`, so this literal grows by a namespace exactly once rather than by one
+    // entry per group a director ever creates. A bare group name here would have made this
+    // census unmaintainable and it would have been loosened to a floor — the failure mode its
+    // own first line names.
+    expect(faceDomainNames()).toEqual(['group:probe', MATERIAL_INDEX]);
   });
 
   it('pins every producer`s name and domain, so a re-domained attribute cannot slip in', () => {
@@ -285,6 +324,10 @@ describe('#688 the face-domain producer census', () => {
     expect(observed).toEqual([
       `${UV_MAP} @ corner`,
       `${UV_PROJECT} @ corner`,
+      // #1027 — lowercase, so it sorts after both UV names and after `material_index`. It is
+      // the first entry here that is a NAMESPACE rather than a fixed name: every group a
+      // director creates lands under `group:`, and the probe's own name is what appears.
+      `group:probe @ face`,
       `${MATERIAL_INDEX} @ face`,
     ]);
   });

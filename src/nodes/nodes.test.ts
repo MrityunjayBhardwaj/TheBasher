@@ -80,6 +80,7 @@ const ALL_TYPES = [
   'ClipSelect',
   'ColorCorrect',
   'ComfyUIWorkflow',
+  'ComponentGroupOp',
   'Composition',
   'CurveData',
   'CurveRemap',

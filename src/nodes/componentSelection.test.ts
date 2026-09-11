@@ -495,6 +495,9 @@ describe('#607 the query has exactly one reader', () => {
         // here for the same reason as its five siblings: it names the shared identifier in its
         // `paramSchema`, which is a DECLARATION and the opposite of the drift this row catches.
         'src/nodes/BevelModifier.ts',
+        // #1027 — the sixth declaring NODE, and the first that AUTHORS an attribute's values.
+        // It names the constant and reaches past it no further than the others do.
+        'src/nodes/ComponentGroupOp.ts',
         'src/nodes/MaskModifier.ts',
         //
         // #682 — the FOURTH declarer, and the SECOND on the `'target'` lane. It is also the
@@ -554,6 +557,9 @@ describe('#607 the query has exactly one reader', () => {
       // that by design: it asks only whether a declaring node ever reaches past the NAME to the
       // query behind it, which is a question the class does not change.
       'src/nodes/BevelModifier.ts',
+      // #1027 — the seventh. It names the constant in `paramSchema` and in `home` and reaches
+      // past neither: the resolved selection arrives as `evaluate`'s fourth argument.
+      'src/nodes/ComponentGroupOp.ts',
       'src/nodes/MaskModifier.ts',
       'src/nodes/MaterialOverrideOp.ts',
       'src/nodes/MirrorModifier.ts',

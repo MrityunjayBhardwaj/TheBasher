@@ -167,6 +167,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
   MakeVec3: '[]',
+  ComponentGroupOp: '[modifier] name=modifier muted=modifier scope=modifier',
   MaskModifier: '[modifier] keep=modifier muted=modifier scope=modifier',
   Material: '[material] material=material',
   MaterialOverride:
@@ -308,4 +309,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // That independence IS the claim this file exists to make — nothing existing was re-homed
 // to make room for either, and a re-home would have shown up as one total moving without
 // its own arrival to explain it.
-export const GOLDEN_TOTALS = { types: 86, routed: 135, unrouted: 233 } as const;
+export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 233 } as const;

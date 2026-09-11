@@ -378,6 +378,8 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
         // evaluator hands it nothing, which is what makes the omission visible to a type-blind
         // test tier.
         'BevelModifier',
+        // #1027 — the seventh, reaching this list by the same road as the other six.
+        'ComponentGroupOp',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',
@@ -714,6 +716,9 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
         // would have handed this one faces, and a face index and an edge index are both
         // integers, so nothing would have failed.
         'BevelModifier',
+        // #1027 — the seventh. It declares `'face'`, and it is the first declarer that
+        // AUTHORS the values of an attribute rather than deriving them.
+        'ComponentGroupOp',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',

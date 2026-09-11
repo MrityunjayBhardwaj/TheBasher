@@ -106,7 +106,8 @@ describe('#667 — setComponentScope', () => {
     expect({ examined, scoped, accepted }).toEqual({ examined, scoped, accepted: scoped });
     // And the derivation is checked against the registry's answer, not a copy of it —
     // but the count is pinned so a registry that silently lost an operator is visible.
-    expect(scoped.length).toBe(6);
+    // 6 -> 7 at #1027 (ComponentGroupOp).
+    expect(scoped.length).toBe(7);
   });
 
   it('emits one setParam on the scope param, and the write is not silently dropped', () => {
@@ -258,7 +259,7 @@ describe('#667 — the componentScope strategy body tells the truth', () => {
     // Derived: exactly one scoped operator disagrees with the rest on domain.
     const scoped = scopedTypes();
     expect(scoped).toContain('BevelModifier');
-    expect(scoped).toHaveLength(6);
+    expect(scoped).toHaveLength(7);
   });
 });
 

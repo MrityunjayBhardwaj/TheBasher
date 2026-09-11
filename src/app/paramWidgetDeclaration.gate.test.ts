@@ -53,6 +53,7 @@ describe('a param declares its control on its schema (#872)', () => {
       declaringScope: [
         'ArrayModifier',
         'BevelModifier',
+        'ComponentGroupOp',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',
@@ -65,13 +66,14 @@ describe('a param declares its control on its schema (#872)', () => {
       withQueryWidget: [
         'ArrayModifier',
         'BevelModifier',
+        'ComponentGroupOp',
         'MaskModifier',
         'MaterialOverrideOp',
         'MirrorModifier',
         'SetMaterialOp',
       ],
     });
-    expect(declaringScope.length).toBe(6);
+    expect(declaringScope.length).toBe(7);
   });
 
   it('row 2 — a param that declares no widget resolves undefined (negative control)', () => {
