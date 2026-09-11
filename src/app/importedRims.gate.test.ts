@@ -354,9 +354,11 @@ describe('#1025 — every way an imported mesh can refuse says which way it was'
     expect(why, 'the bytes are here; it must not say otherwise').not.toMatch(NOT_ARRIVED);
   });
 
-  it('13 — a NON-INDEXED buffer: it names the missing index, not missing bytes', () => {
-    // A glTF primitive may legally carry no indices, and the importer still captures a count
-    // for it from the POSITION accessor — so this arm is reachable with everything present.
+  it('13 — a NON-INDEXED import recovers its rims by closed form (#1028)', () => {
+    // A glTF primitive may legally carry no `indices`, and the importer still captures a count
+    // for it from the POSITION accessor — so this arrives with everything present and nothing
+    // to walk. #1025 named that absence; #1028 answered it. In a split buffer every corner is
+    // already its own vertex, so face `f` IS `[3f, 3f+1, 3f+2]` — positional, not derived.
     __clearGltfCloneRegistryForTests();
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
@@ -367,13 +369,73 @@ describe('#1025 — every way an imported mesh can refuse says which way it was'
     group.add(mesh);
     registerGltfClone(ASSET, group);
 
-    const buffer = getForRead(importedRef(BOX_TRIANGLES))!;
+    const ref = importedRef(BOX_TRIANGLES);
+    const buffer = getForRead(ref)!;
     expect(buffer.getIndex(), 'the fixture really is non-indexed').toBeNull();
     expect(buffer.getAttribute('position').count, 'and its corners are already split').toBe(36);
 
-    const why = whyFor(importedRef(BOX_TRIANGLES));
-    expect(why).toMatch(/carries no index/);
+    const rims = alignedSplitRims(ref, buffer);
+    expect(rims, 'a non-indexed import answers').not.toBeNull();
+    expect(rims!.length).toBe(BOX_TRIANGLES);
+    // Pinned as VALUES, not just a count: the closed form is the whole claim here, and a walk
+    // that happened to return the right number of rims would pass a count-only check.
+    expect(rims!.slice(0, 3)).toEqual([
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+    ]);
+    expect(rims![BOX_TRIANGLES - 1]).toEqual([33, 34, 35]);
+    expect(whyFor(ref), 'and it no longer refuses at all').toBe('');
+  });
+
+  it('13b — a non-indexed buffer whose POSITIONS disagree with the captured count refuses', () => {
+    // The same cross-source check the indexed road makes, against `position` instead of the
+    // index: the count was captured at import, the buffer arrived from the asset just now.
+    __clearGltfCloneRegistryForTests();
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
+      new THREE.MeshBasicMaterial(),
+    );
+    mesh.name = CHILD;
+    const group = new THREE.Group();
+    group.add(mesh);
+    registerGltfClone(ASSET, group);
+
+    const ref = importedRef(6); // 6 faces claimed, 12 triangles of positions present
+    expect(
+      alignedSplitRims(ref, getForRead(ref)!),
+      'six faces against thirty-six split positions must refuse, not answer with half',
+    ).toBeNull();
+    const why = whyFor(ref);
+    expect(why).toMatch(/6 faces \(6 triangles\).*holds 12/);
     expect(why, 'the bytes are here; it must not say otherwise').not.toMatch(NOT_ARRIVED);
+  });
+
+  it('13c — the multi-triangle guard is UNREACHABLE today, and this is what makes it reachable', () => {
+    // 🔴 A GUARD NOTHING CAN MINT THE STATE FOR. In a split buffer two triangles of one face
+    // share no vertex, so such a face has a boundary in two disjoint pieces and no rim. The
+    // closed form therefore refuses any face of more than one triangle — and no imported mesh
+    // can currently BE that, because `faceArityOf`'s imported arm returns a uniform array of
+    // ones. The guard is not dead; it is un-minted.
+    //
+    // So this row pins the PRECONDITION rather than the guard. The day a kind on the
+    // buffer-only road states a face of two triangles, this reds and names the guard that is
+    // then live — instead of the guard silently becoming reachable with nothing exercising it.
+    for (const faceCount of [1, 12, 100]) {
+      const arity = faceArityOf({
+        kind: 'gltf',
+        assetRef: ASSET,
+        childName: CHILD,
+        faceCount,
+      })!;
+      expect(arity.length, `faceCount ${faceCount} yields one entry per face`).toBe(faceCount);
+      expect(
+        arity.filter((n) => n !== 1).length,
+        `An imported face is no longer always ONE triangle. The split-buffer closed form in ` +
+          `builtRims refuses such a face on purpose — check that its refusal is now reachable ` +
+          `and gated, because nothing has exercised it until now.`,
+      ).toBe(0);
+    }
   });
 });
 
