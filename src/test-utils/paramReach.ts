@@ -84,6 +84,11 @@ const LIGHT_RECOMPOSE = 'src/nodes/lightRecompose.ts';
 const BAKED_RECOMPOSE = 'src/nodes/bakedRecompose.ts';
 const ACTIVE_CAMERA = 'src/app/activeCamera.ts';
 const CURVE_LINE = 'src/viewport/CurveLine.tsx';
+/**
+ * The model's face- and corner-domain questions (#1023). A real reader and not a fold: these
+ * read the captured count OFF the descriptor by name, and a gate pins what they answer.
+ */
+const FACE_QUESTIONS = 'src/app/faceCount.ts';
 
 /**
  * A param folded into the geometry handle at evaluate time. Its reader is the geometry
@@ -194,5 +199,13 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     // The multi-primitive table, indexed slot-by-slot against the clone's meshes in
     // primitive order by the same effect that reads `material`.
     materialSlots: { by: SCENE },
+    // #1023 — the captured face count. A NAMED reader rather than a fold, which is why this
+    // is not `FOLDED_INTO_GEOMETRY` like the sphere's segment counts: those are handed to a
+    // geometry builder and nothing checks that the builder honoured them. This one is folded
+    // into the descriptor and then read back off it BY NAME — `faceCountOf`, `faceCornersOf`
+    // and `faceArityOf` each have a `gltf` arm — and `importedMeshParity.gate.test.ts` pins
+    // exactly what those three answer. No renderer reads it, and none should: it is an
+    // element fact for the model's own questions, not something that draws.
+    faceCount: { by: FACE_QUESTIONS },
   },
 };
