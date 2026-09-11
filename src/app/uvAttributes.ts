@@ -153,9 +153,42 @@ function uvAttributeOf(
  */
 function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): UVAttributeVerdict {
   if (topologyIsBufferOnly(descriptor)) {
+    // 🔴 EVERY SENTENCE BELOW IS ABOUT AN IMPORTED MESH, AND `baked` SHARES THIS ROAD. The
+    // first draft of this block did not separate them and told a baked mesh it had been
+    // "imported before its face count was captured" — false twice over: it was authored here,
+    // not imported, and there is no import to redo. `polygonLayoutOf` already gives it the
+    // right reason (its bytes are in OPFS), so a baked descriptor falls through untouched.
+    // That is the same defect this block exists to remove, made one level up: a sentence
+    // written against the kind in mind and false for the other one on the same road.
     const arity = faceArityOf(descriptor);
-    const index = geometry.getIndex();
-    if (arity !== null && index !== null) {
+    if (arity === null) {
+      // No count captured. The layout's sentence is true of the DESCRIPTOR and reads, to
+      // someone holding a mesh that has plainly loaded, as though the bytes were missing.
+      // What is missing is the readout, and a re-import is what supplies one.
+      if (descriptor.kind === 'gltf')
+        return {
+          kind: 'not-derivable',
+          why:
+            'this mesh was imported before its face count was captured, so nothing says how ' +
+            'to walk its buffer into polygons — re-importing the asset captures one',
+        };
+    } else {
+      const index = geometry.getIndex();
+      // 🔴 A glTF PRIMITIVE MAY CARRY NO INDICES AT ALL, and a count is still captured for it
+      // (the importer falls back to the POSITION accessor). So this arm is reachable with the
+      // buffer fully present, and without it the mesh is told its buffers live elsewhere while
+      // it is holding them. Measured: a non-indexed imported box reports 36 positions and a
+      // null index, and said exactly that.
+      if (index === null)
+        return {
+          kind: 'not-derivable',
+          why:
+            `this mesh's buffer carries no index, and polygon rims are recovered by walking ` +
+            `one. Its ${geometry.getAttribute('position')?.count ?? 0} positions are a ` +
+            `triangle list with every corner already split, which is a shape this walk does ` +
+            `not read yet`,
+        };
+
       let triangles = 0;
       for (const n of arity) triangles += n;
       if (triangles * 3 !== index.count)
@@ -163,9 +196,9 @@ function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): U
           kind: 'not-derivable',
           why:
             `this mesh was imported as ${arity.length} faces (${triangles} triangles) and the ` +
-            `buffer reachable here holds ${index.count / 3}, so the count captured at import is ` +
-            `not this buffer's — either the asset changed since it was imported, or this child ` +
-            `has several primitives and only the first is reachable through a child name`,
+            `buffer reachable here holds ${index.count / 3}, so the count captured at import ` +
+            `is not this buffer's — either the asset changed since it was imported, or this ` +
+            `child has several primitives and only the first is reachable through a child name`,
         };
     }
   }

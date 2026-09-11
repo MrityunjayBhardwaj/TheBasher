@@ -43,7 +43,7 @@ import { captureChildFaceCount } from '../core/import/gltfImportChain';
 import { firstMeshGeometry } from './firstMeshGeometry';
 import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
-import { getForRead, readGeometry } from './geometryRegistry';
+import { getForRead, prime, readGeometry } from './geometryRegistry';
 import { readMeshUVs } from './uvAttributes';
 import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
 
@@ -221,6 +221,31 @@ describe('#1025 — the check that stands in for the alignment one', () => {
     expect(faceArityOf(baked)).toBeNull();
     expect(alignedSplitRims(ref, mountClone())).toBeNull();
   });
+
+  it('6b — and a baked mesh keeps its OWN reason, which is not an imported one', () => {
+    // 🔴 THE NEGATIVE CONTROL FOR THE REFUSAL SENTENCES. `baked` shares the buffer-only road
+    // and none of the imported vocabulary: it was authored here, not imported, so there is no
+    // import to redo and no captured count to be stale. The first draft of the refusal block
+    // did not separate them and told a baked mesh it had been "imported before its face count
+    // was captured". Pinned here because this file's code is what can break it again.
+    const baked: GeometryDescriptor = { kind: 'baked', hash: 'cafebabe', vertexCount: 3 };
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]), 3),
+    );
+    geometry.setAttribute('uv', new THREE.BufferAttribute(new Float32Array([0, 0, 1, 0, 0, 1]), 2));
+    prime({ key: 'k|baked-own-reason', descriptor: baked }, geometry);
+
+    const read = readMeshUVs({ key: 'k|baked-own-reason', descriptor: baked }) as {
+      status: string;
+      attribute?: { why?: string };
+    };
+    if (read.status !== 'ok') return;
+    const why = read.attribute?.why ?? '';
+    expect(why, 'a baked mesh names OPFS, its own reason').toMatch(/OPFS/);
+    expect(why, 'and never the imported vocabulary').not.toMatch(/imported/);
+  });
 });
 
 describe('#1025 — the substrate kinds are untouched', () => {
@@ -302,6 +327,53 @@ describe('#1025 — the corner-domain consumer', () => {
     expect(why, 'names the stale-capture road').toMatch(/asset changed since it was imported/);
     expect(why, 'names the multi-primitive road').toMatch(/several primitives/);
     expect(why, 'and it holds both numbers').toMatch(/6 faces \(6 triangles\).*holds 12/);
+  });
+});
+
+describe('#1025 — every way an imported mesh can refuse says which way it was', () => {
+  // 🔑 THE SELF-REVIEW ROW, AND IT FOUND TWO. `refusalFor` reaches `polygonLayoutOf` for
+  // anything its first arm does not claim, and that sentence — *"a 'gltf' descriptor's buffers
+  // live in a loaded asset clone"* — describes a mesh that has not arrived. Every case below
+  // holds a buffer that HAS arrived, so borrowing it would tell the reader to wait for a load
+  // that already happened. A wrong diagnosis is an instruction, so each arm says its own thing.
+  function whyFor(ref: GeometryRef): string {
+    const read = readMeshUVs(ref) as { status: string; attribute?: { why?: string } };
+    expect(
+      read.status,
+      'the geometry itself resolved — this is about the reason, not the read',
+    ).toBe('ok');
+    return read.attribute?.why ?? '';
+  }
+
+  const NOT_ARRIVED = /buffers live in a loaded asset clone/;
+
+  it('12 — no face count captured: it names the missing readout, not missing bytes', () => {
+    mountClone();
+    const why = whyFor(importedRef(undefined));
+    expect(why).toMatch(/before its face count was captured/);
+    expect(why, 'the bytes are here; it must not say otherwise').not.toMatch(NOT_ARRIVED);
+  });
+
+  it('13 — a NON-INDEXED buffer: it names the missing index, not missing bytes', () => {
+    // A glTF primitive may legally carry no indices, and the importer still captures a count
+    // for it from the POSITION accessor — so this arm is reachable with everything present.
+    __clearGltfCloneRegistryForTests();
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 1, 1).toNonIndexed(),
+      new THREE.MeshBasicMaterial(),
+    );
+    mesh.name = CHILD;
+    const group = new THREE.Group();
+    group.add(mesh);
+    registerGltfClone(ASSET, group);
+
+    const buffer = getForRead(importedRef(BOX_TRIANGLES))!;
+    expect(buffer.getIndex(), 'the fixture really is non-indexed').toBeNull();
+    expect(buffer.getAttribute('position').count, 'and its corners are already split').toBe(36);
+
+    const why = whyFor(importedRef(BOX_TRIANGLES));
+    expect(why).toMatch(/carries no index/);
+    expect(why, 'the bytes are here; it must not say otherwise').not.toMatch(NOT_ARRIVED);
   });
 });
 
