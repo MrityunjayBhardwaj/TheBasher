@@ -489,11 +489,25 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // parallel-call batch like [mesh.add(Sphere), proposePlan(setMaterialColor
         // target=newId)] fails gate-1, because the new id doesn't exist in the
         // round's initial DAG snapshot.
+        //
+        // 🔴 A THROWN FORK IS HELD, NOT PROPAGATED FROM HERE. `createFork` re-validates
+        // every op against the live shape and throws when one references a node or
+        // socket that does not exist — which is a COMMON agent mistake, not a rare
+        // one. Before this moved, the throw happened below the answer, so the chat
+        // still carried `[dag.exec] Proposed N Op(s)` alongside the error. Throwing
+        // here instead would have silently taken that line away and made the failure
+        // less legible than it was. So the error waits until the call has been
+        // answered and the line written, and is rethrown unchanged.
         let noOpReport = '';
+        let forkError: unknown;
         if (result.ops.length > 0) {
-          const forked = createFork(effectiveState, result.ops);
-          effectiveState = forked.fork;
-          noOpReport = renderNoOpReport(forked.reportable);
+          try {
+            const forked = createFork(effectiveState, result.ops);
+            effectiveState = forked.fork;
+            noOpReport = renderNoOpReport(forked.reportable);
+          } catch (e) {
+            forkError = e;
+          }
         }
 
         const resultMessage = (result.text ?? `OK (${result.ops.length} ops)`) + noOpReport;
@@ -517,6 +531,9 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
 
         // Surface the result to the user in the chat too (debuggability).
         sessionStore.appendToLastAssistant(`\n\n[${acc.name}] ${resultMessage}`);
+
+        // The held fork error, now that the call is answered and the line is written.
+        if (forkError) throw forkError;
 
         if (result.ops.length > 0) {
           for (const op of result.ops) {

@@ -25,6 +25,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { registerAllMutators } from './mutators';
 import { registerAllTools } from './tools';
 import { useDagStore } from '../core/dag/store';
+import { useAgentSessionStore } from './session/store';
 import { buildDefaultDagState } from '../core/project/default';
 import { badgeLabel } from '../app/badges';
 import type { Op } from '../core/dag/types';
@@ -79,6 +80,10 @@ registerAllTools();
 
 beforeEach(() => {
   useDagStore.getState().hydrate(buildDefaultDagState());
+  // 🔴 THE SESSION STORE PERSISTS ACROSS TESTS IN A FILE. Without this reset the
+  // throwing-fork row below reads an EARLIER row's `[dag.exec]` line and passes
+  // whether or not the fix is present — measured: its falsifier stayed green.
+  useAgentSessionStore.getState().reset();
   streamMock.mockReset();
 });
 
@@ -120,6 +125,26 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
     expect(text).toContain('1 of 2 ops');
     expect(text).toContain('nosuchparam');
     expect(text).not.toContain('rotation');
+  });
+
+  it('a fork that THROWS still answers the call first — the debug line survives', async () => {
+    // createFork re-validates against the live shape and throws on a bad reference,
+    // which is a common agent mistake. Moving the fork above the answer would have
+    // quietly taken the chat's tool line away on exactly that path.
+    const bad: Op[] = [
+      {
+        type: 'connect',
+        from: { node: 'n_nope', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[];
+    await turnWithOps(bad, 'connect a node that does not exist');
+    const chat = useAgentSessionStore
+      .getState()
+      .session.messages.map((m) => String(m.content))
+      .join('\n');
+    expect(chat).toContain('[dag.exec]');
+    expect(useAgentSessionStore.getState().session.error ?? '').not.toBe('');
   });
 
   it('the sentence the model reads is the sentence the director reads', () => {
