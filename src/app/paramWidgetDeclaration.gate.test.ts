@@ -277,6 +277,110 @@ describe('a param declares its control on its schema (#872)', () => {
     });
   });
 
+  it('row 14 — every read-only string param is ACKNOWLEDGED, with the reason it has no control (#1031)', () => {
+    // 🔑 THE ROW THIS ISSUE EXISTS FOR. The arm that renders an undeclared string as a
+    // read-only span has swallowed a param three times — a component scope (#872), a
+    // material colour (#521), a group's name (#1027) — and each was found by noticing a
+    // symptom, one at a time, because NOTHING DISTINGUISHED "read-only on purpose" from
+    // "read-only by accident". `AnimationClip.sourceHash` and `Prompt.text` landed on the
+    // identical arm and read identically in the source.
+    //
+    // So the fall-through is made to carry a DECISION rather than a silence: every string
+    // param the panel cannot author is listed here with the reason it has none, and a
+    // param that is neither declared nor listed reds. A fourth one cannot arrive quietly —
+    // it has to be answered for at the moment it is added.
+    //
+    // ⚠️ THIS IS A LIST OF ACKNOWLEDGEMENTS, NOT OF APPROVALS. Two of the three classes
+    // below are gaps with a known shape: an identifier wants a PICKER over what exists, and
+    // giving it free text would let a director type a name that silently selects nothing —
+    // worse than read-only, because it looks like it worked. Tracked separately rather than
+    // papered over here — #1032 carries the twenty-five that want one.
+    const MINTED =
+      'machine-minted — a hash, a handle or an id the product writes; typing one is never right';
+    const WIRING =
+      'names another node or a path into it — wants a picker, and free text would accept a target that resolves to nothing';
+    const CHOICE =
+      'selects from what exists at runtime — wants a picker over the live options, for the same reason';
+
+    const ACKNOWLEDGED: Readonly<Record<string, string>> = {
+      'AnimationClip.sourceHash': MINTED,
+      'GltfAsset.assetRef': MINTED,
+      'GltfData.assetRef': MINTED,
+      'GltfData.childName': MINTED,
+      'KeyframeChannelVec3.assetRef': MINTED,
+      'KeyframeChannelVec3.childName': MINTED,
+      'KeyframeChannelVec3.sourceClipId': MINTED,
+      'KeyframeChannelVec3.sourceHash': MINTED,
+      'RenderJob.jobId': MINTED,
+
+      'FollowPath.target': WIRING,
+      'KeyframeChannelColor.paramPath': WIRING,
+      'KeyframeChannelColor.target': WIRING,
+      'KeyframeChannelImage.paramPath': WIRING,
+      'KeyframeChannelImage.target': WIRING,
+      'KeyframeChannelNumber.paramPath': WIRING,
+      'KeyframeChannelNumber.target': WIRING,
+      'KeyframeChannelQuat.paramPath': WIRING,
+      'KeyframeChannelQuat.target': WIRING,
+      'KeyframeChannelText.paramPath': WIRING,
+      'KeyframeChannelText.target': WIRING,
+      'KeyframeChannelVec2.paramPath': WIRING,
+      'KeyframeChannelVec2.target': WIRING,
+      'KeyframeChannelVec3.paramPath': WIRING,
+      'KeyframeChannelVec3.target': WIRING,
+      'ParamDriver.paramPath': WIRING,
+      'ParamDriver.target': WIRING,
+      'Strip.action': WIRING,
+      'Strip.target': WIRING,
+      'TrackTo.target': WIRING,
+
+      'ClipSelect.selectedClipName': CHOICE,
+      'LightData.tex': CHOICE,
+      'LightProfileSelect.selectedProfile': CHOICE,
+      'MotionGenerate.model': CHOICE,
+      'PoseOverride.bone': CHOICE,
+    };
+
+    let examined = 0;
+    const readOnly: string[] = [];
+    for (const type of listNodeTypes()) {
+      const def = getNodeType(type);
+      const schema = def?.paramSchema;
+      if (!(schema instanceof z.ZodObject)) continue;
+      // A declared ref param renders in the inspector's ref block, NOT through `ParamRow`,
+      // so it never reaches the read-only arm. Measured, and it is why this subtraction is
+      // here: without it `FollowPath.curve` and `TrackTo.aimNode` read as gaps they are not.
+      const refParams = (def as { refParams?: Record<string, unknown> } | undefined)?.refParams;
+      const refKeys = new Set(refParams ? Object.keys(refParams) : []);
+      for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
+        examined++;
+        if (!(unwrapZod(field) instanceof z.ZodString)) continue;
+        if (unwrapZod(field) instanceof z.ZodEnum) continue;
+        if (refKeys.has(key)) continue;
+        if (widgetOf(field) !== undefined) continue;
+        readOnly.push(`${type}.${key}`);
+      }
+    }
+
+    const unacknowledged = readOnly.filter((k) => !(k in ACKNOWLEDGED)).sort();
+    const staleAcknowledgements = Object.keys(ACKNOWLEDGED)
+      .filter((k) => !readOnly.includes(k))
+      .sort();
+
+    // Both directions, because each catches a different drift: a NEW undeclared string is
+    // the gap this issue closes, and a STALE entry means a param got a control (or was
+    // deleted) while its excuse stayed behind, which is how a list like this rots into
+    // something nobody trusts.
+    expect({ examined: examined > 0, unacknowledged, staleAcknowledgements }).toEqual({
+      examined: true,
+      unacknowledged: [],
+      staleAcknowledgements: [],
+    });
+    // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
+    // never ran looks exactly like a pass.
+    expect(readOnly.length).toBe(34);
+  });
+
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {
     // 🔴 THIS ROW DID NOT DO WHAT IT SAID, AND #521 IS THE MEASUREMENT (2026-09-03). It read
     //

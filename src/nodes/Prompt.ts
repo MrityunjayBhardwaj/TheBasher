@@ -14,10 +14,11 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { PromptValue } from './types';
+import { widget } from './paramWidget';
 
 export const PromptParams = z.object({
-  text: z.string().default(''),
-  negative: z.string().default(''),
+  text: widget('text', z.string().default('')),
+  negative: widget('text', z.string().default('')),
   tags: z.array(z.string()).default([]),
 });
 export type PromptParams = z.infer<typeof PromptParams>;

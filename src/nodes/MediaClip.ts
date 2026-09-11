@@ -20,7 +20,7 @@ import { hashValue } from '../core/dag/hash';
 import type { NodeDefinition } from '../core/dag/types';
 import type { EvalCtx } from '../core/dag/types';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, widget } from './paramWidget';
 
 export const MEDIA_CLIP_KINDS = ['video', 'image'] as const;
 export type MediaClipKind = (typeof MEDIA_CLIP_KINDS)[number];
@@ -29,7 +29,7 @@ export const MediaClipParams = z.object({
   name: nameParam('Clip'),
   /** OPFS path the imported bytes live at (content-addressed by the ingest path).
    *  Empty default + `?? ''` guards keep legacy projects loading (V10/H14). */
-  src: z.string().default(''),
+  src: widget('text', z.string().default('')),
   mediaKind: z.enum(MEDIA_CLIP_KINDS).default('video'),
   /** Source frame rate (video). Drives the comp-time → source-frame mapping. */
   srcFps: z.number().positive().default(30),

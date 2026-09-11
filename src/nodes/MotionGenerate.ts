@@ -90,7 +90,7 @@ import { hashValue } from '../core/dag/hash';
 import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/generatedClipCache';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, widget } from './paramWidget';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -102,7 +102,7 @@ export const MAX_MOTION_SECONDS = 600;
 
 export const MotionGenerateParams = z.object({
   /** What to generate. Required: a generator with no prompt has nothing to do. */
-  prompt: z.string().trim().min(1, 'must not be empty'),
+  prompt: widget('text', z.string().trim().min(1, 'must not be empty')),
   /**
    * Determinism handle. REQUIRED and un-defaulted — see the header. An integer
    * because the backends take one, and finite because `NaN` hashes to a stable
