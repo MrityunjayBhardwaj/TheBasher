@@ -26,6 +26,7 @@ import { ingestAndImportGltf } from './gltfEntryChoice';
 import { missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResolver';
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
+import { isFamilyPath, IMPORT_ACCEPT, MODEL_ACCEPT } from './importFormats';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { importMediaClipFromFile } from './importMediaClip';
@@ -60,10 +61,11 @@ export function gltfImportNeedsFolder(files: readonly IngestFile[]): GltfFolderN
   return { entryName, missing };
 }
 
-/** True iff the path is a glTF container (the folder-import trigger). */
+/** True iff the path is a model-family entry (the folder-import trigger). Derived from the
+ *  category (#662): the trigger is "does this set contain geometry that may arrive with
+ *  sibling files", which is the family, not a hand-spelled pair of extensions. */
 function isGltfPath(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith('.gltf') || lower.endsWith('.glb');
+  return isFamilyPath(path, 'model');
 }
 
 /** True iff any picked file is a glTF container. */
@@ -136,7 +138,7 @@ function makeHiddenInput(accept: string, directory: boolean): HTMLInputElement {
  * actionable banner so a dismissed escalation is never a silent no-op (V38).
  */
 function openDirectoryImport(opts?: { onCancel?: () => void }): void {
-  const input = makeHiddenInput('.gltf,.glb,.bvh,.fbx', true);
+  const input = makeHiddenInput(IMPORT_ACCEPT, true);
   let handled = false;
   input.onchange = () => {
     handled = true;
@@ -191,7 +193,7 @@ export function openImportPicker(): void {
  * `.glb` or a flat `.gltf` selected together with its siblings imports directly.
  */
 export function openGltfFilePicker(): void {
-  const input = makeHiddenInput('.gltf,.glb', false);
+  const input = makeHiddenInput(MODEL_ACCEPT, false);
   input.onchange = () => {
     void (async () => {
       try {

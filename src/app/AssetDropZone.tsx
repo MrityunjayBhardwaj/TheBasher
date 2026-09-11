@@ -15,27 +15,23 @@ import { type IngestFile } from './asset/importGltf';
 import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
+import { isImportablePath, isFamilyPath } from './asset/importFormats';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
 import { useNotificationStore } from './stores/notificationStore';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 
-/** Lowercased-extension test for the four importable formats (D-04). */
+/** Lowercased-extension test for the importable formats (D-04). Derived from the category
+ *  (#662) — this used to respell the four, and a format missing from the spelling built a
+ *  static chain for it and landed that in undo history as a success. */
 function isImportableEntry(p: string): boolean {
-  const lower = p.toLowerCase();
-  return (
-    lower.endsWith('.gltf') ||
-    lower.endsWith('.glb') ||
-    lower.endsWith('.bvh') ||
-    lower.endsWith('.fbx')
-  );
+  return isImportablePath(p);
 }
 
 /** True for the motion formats that ingest as a single self-contained file. */
 function isMotionEntry(p: string): boolean {
-  const lower = p.toLowerCase();
-  return lower.endsWith('.bvh') || lower.endsWith('.fbx');
+  return isFamilyPath(p, 'motion');
 }
 
 /** The warn toast shown when a library asset is dropped but the project has no

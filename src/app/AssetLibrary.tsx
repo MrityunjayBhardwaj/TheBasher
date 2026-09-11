@@ -41,6 +41,7 @@ import {
 } from './asset/importCommon';
 import { getStorage } from './boot';
 import { useImportRefreshStore } from './stores/importRefreshStore';
+import { pickEntryFile } from './asset/importFormats';
 
 /** OPFS swatch for user-imported entries — a standalone amber chip (#f0b85a).
  * Distinct from every bundled-asset swatch (cube #5af07a green, sphere #7aaaff
@@ -72,8 +73,10 @@ interface MyImportEntry {
  * matched filename, or null if the listing holds no importable entry.
  */
 function findEntryFile(files: readonly string[]): string | null {
-  const byExt = (ext: string) => files.find((f) => f.toLowerCase().endsWith(ext));
-  return byExt('.glb') ?? byExt('.gltf') ?? byExt('.bvh') ?? byExt('.fbx') ?? null;
+  // #662 — the precedence lives on the category as `entryPriority`, not in this chain. A
+  // format missing from the chain ingested fine and then never appeared in My Imports, so
+  // the user concluded the import had failed. Silent, and the loudest kind of silent.
+  return pickEntryFile(files);
 }
 
 export function AssetLibrary(): ReactNode {
