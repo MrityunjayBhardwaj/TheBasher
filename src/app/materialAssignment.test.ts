@@ -11,6 +11,7 @@ import {
   assignedSlots,
   materialAssignmentOf,
   primaryMaterial,
+  primarySlotMaterial,
   slotMaterialAt,
 } from './materialAssignment';
 import type { GeometryRef } from '../nodes/types';
@@ -151,5 +152,42 @@ describe('#605 item 2 — an absent slot says WHICH nothing it is', () => {
     // such slot" is a question about the table, not about a material.
     expect(slotMaterialAt(ours, 9)).toEqual({ status: 'no-such-slot' });
     expect(slotMaterialAt(theirs, 9)).toEqual({ status: 'no-such-slot' });
+  });
+});
+
+describe('#1015 — the primary slot keeps the distinction `primaryMaterial` has no room for', () => {
+  it('answers `none` and `elsewhere` where the narrowing answers `null` twice', () => {
+    const ours = materialAssignmentOf(null, [null], BOX);
+    const theirs = materialAssignmentOf(null, [null], CLONE_BACKED);
+
+    // THE COLLAPSE, stated as a row so it cannot come back quietly. `M | null` is the whole
+    // of the defect: both assignments give the same answer through it, and they are two
+    // different facts about where the material is.
+    expect(primaryMaterial(ours)).toBeNull();
+    expect(primaryMaterial(theirs)).toBeNull();
+
+    // The widened road, same two inputs.
+    expect(primarySlotMaterial(ours)).toEqual({ status: 'none' });
+    expect(primarySlotMaterial(theirs)).toEqual({ status: 'elsewhere' });
+  });
+
+  it('reads the LOWEST ASSIGNED slot, not slot 0 — the same rule `primaryMaterial` uses', () => {
+    // Every face points at slot 1. `slotMaterialAt(a, 0)` would answer about a slot nothing
+    // uses, which is a different question and the easy way to write this wrong: the two roads
+    // must name the same slot or the widening has changed the answer as well as its type.
+    const key = storeIndices([1, 1, 1, 1, 1, 1]);
+    const a = materialAssignmentOf(key, [null, BLUE], BOX);
+
+    expect(assignedSlots(a)).toEqual([1]);
+    expect(primaryMaterial(a)).toBe(BLUE);
+    expect(primarySlotMaterial(a)).toEqual({ status: 'ok', material: BLUE });
+  });
+
+  it('an EMPTY slot table is `no-such-slot`, never an empty slot 0', () => {
+    // The table says this mesh has no slots at all. Answering `none` would claim a slot 0
+    // exists and is empty — a statement about a material where the truth is about the table.
+    const empty = materialAssignmentOf(null, [], BOX);
+    expect(assignedSlots(empty)).toEqual([]);
+    expect(primarySlotMaterial(empty)).toEqual({ status: 'no-such-slot' });
   });
 });

@@ -173,6 +173,14 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // to hold or free, and no door is opened. Deliberately NOT `readGeometry`: that would build
   // a geometry on every material read, where this question needs only the classification.
   'src/app/materialAssignment.ts': 'spec-only',
+  // #1015 — the second spec-only importer, and the SAME classifier read one step further on.
+  // `materialAssignment` asks whether an unanswered slot can be answered elsewhere; the UV
+  // editor's backdrop then has to ask WHICH clone child holds the answer, and a boolean cannot
+  // say. `cloneAddressOf` walks descriptors to descriptors by the recursion `availabilityOf`
+  // already runs — no cache read, no build, no instance — so it opens no door either. It lives
+  // in the registry rather than beside its caller because the whole defect it fixes was a
+  // second rule (`descriptor.kind === 'gltf'`) that agreed with the classifier until it didn't.
+  'src/app/resolveMeshUVSpace.ts': 'spec-only',
 };
 
 /**
@@ -223,7 +231,14 @@ const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetG
 // renderer needs ("is something else already drawing these buffers?"). The alternative was
 // a `descriptor.kind === 'gltf'` test at the draw site, which is the naming tier this
 // module has catalogued twice and which would have gone right on passing when a kind moved.
-const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone'];
+// #1015 — `cloneAddressOf` joins by the same rule again, and it is the one the paragraph above
+// predicted: the `descriptor.kind === 'gltf'` test the comment calls "the naming tier this module
+// has catalogued twice" had in fact gone right on passing when a kind moved — a non-materialising
+// `uvProject` over an imported mesh is drawn by the clone and is not of that kind. This takes a
+// DESCRIPTOR and returns a DESCRIPTOR, reads no cache and builds nothing, and recurses exactly as
+// `availabilityOf` does, so it is that same classification asked the follow-up question a boolean
+// cannot answer: not "is something else drawing these buffers" but "WHICH child is".
+const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone', 'cloneAddressOf'];
 
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {

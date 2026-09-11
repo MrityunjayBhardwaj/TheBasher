@@ -602,6 +602,39 @@ export function drawnByAssetClone(descriptor: GeometryDescriptor): boolean {
 }
 
 /**
+ * WHICH clone child draws this descriptor — the `gltf` descriptor that addresses it, or
+ * `null` when nothing in a clone draws it at all.
+ *
+ * {@link drawnByAssetClone} answers *whether*; this answers *which*, and they are one
+ * question asked twice, so this is derived by the SAME recursion rather than beside it.
+ * A consumer that needs the clone's own meshes — the UV editor reading a backdrop, anything
+ * else that must look where the buffers actually are — cannot get there from a boolean.
+ *
+ * 🔴 AND IT IS NOT `descriptor.kind === 'gltf'`. That test selected the same set until
+ * #738/#786 and does not now: a `uvProject` that cannot materialise passes its source's
+ * availability straight through (see {@link projectionMaterialises}) and {@link get}
+ * delegates its read to that source, so a projected imported mesh IS drawn by the clone
+ * while its kind is `uvProject`. Measured consequence before this existed (#1015): the UV
+ * editor gave such a mesh the same blank answer as a cube with no texture at all.
+ *
+ * The recursion is exactly the one {@link availabilityOf} runs, and the correspondence is
+ * total rather than approximate: `'clone'` is produced by the `gltf` arm alone, and the only
+ * arm that can propagate it upward is the non-materialising `uvProject` — every other
+ * composed arm maps a `clone` source to `'mounting'` through {@link composedOverSource},
+ * because the registry builds those buffers itself. So a `'clone'` descriptor is a `gltf`
+ * one, or a chain of non-materialising projections rooted at a `gltf` one, and this walk
+ * terminates at the address. `src/app/cloneAddress.gate.test.ts` holds the two in step.
+ */
+export function cloneAddressOf(
+  descriptor: GeometryDescriptor,
+): Extract<GeometryDescriptor, { kind: 'gltf' }> | null {
+  if (descriptor.kind === 'gltf') return descriptor;
+  if (descriptor.kind === 'uvProject' && !projectionMaterialises(descriptor))
+    return cloneAddressOf(descriptor.source.descriptor);
+  return null;
+}
+
+/**
  * The result of a read: either the geometry, or the reason there isn't one.
  *
  * Discriminated on `status` so a consumer cannot read a geometry off an empty result, and
