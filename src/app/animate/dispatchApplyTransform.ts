@@ -41,7 +41,7 @@ import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/ty
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
-import { assignedMaterials, primaryMaterial } from '../materialAssignment';
+import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
 import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
@@ -217,6 +217,53 @@ export function multiMaterialBakeRefusal(
   const assigned = assignedMaterials(materials);
   if (assigned.length <= 1) return null;
   return `Apply: "${selectedId}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
+}
+
+/**
+ * Why this Apply must be refused when the material that would be baked is one we never
+ * captured, or `null` when there is nothing uncaptured to lose (#605 item 2).
+ *
+ * ── THE SIBLING REFUSAL, AND WHY IT IS A SECOND ONE RATHER THAN A WIDER FIRST ────────────
+ *
+ * {@link multiMaterialBakeRefusal} stops a bake from flattening TWO materials into one. This
+ * stops it from flattening ONE material into NONE, and the two are different failures with the
+ * same manners: nothing errors, the object keeps rendering, and a material is simply gone from
+ * a file the director now believes is saved. Kept separate because the messages must be —
+ * "reduce it to a single material" is useless advice for a mesh whose one material is fine and
+ * merely unreadable from here.
+ *
+ * ── WHAT WAS MEASURED ────────────────────────────────────────────────────────────────────
+ *
+ * `primaryMaterial` answers `null` for BOTH a genuinely materialless mesh and a clone-drawn one,
+ * because its return type has no room for the difference — the collapse `absentSlot` exists to
+ * end, still standing at the one consumer where it costs something. Observed on two assignments
+ * differing ONLY in where their buffers live:
+ *
+ *     absentSlot           none -> "none"        elsewhere -> "elsewhere"    told apart
+ *     slotMaterialAt(0)    none -> none          elsewhere -> elsewhere      told apart
+ *     primaryMaterial      none -> null          elsewhere -> null           INDISTINGUISHABLE
+ *     the bake at :412     null                  null                        INDISTINGUISHABLE
+ *
+ * So an Apply over an imported mesh wrote a baked spec with no material where the asset clone
+ * has one on screen. The refusal is keyed through {@link slotMaterialAt}, not off
+ * `absentSlot` directly: `absentSlot` says what an absence WOULD mean, and a clone-backed mesh
+ * whose material we DID capture must still bake fine.
+ *
+ * 🔑 THIS REFUSAL IS DISTANCE FROM THE GOAL, AND IT SHOULD ONE DAY BE UNREACHABLE. `elsewhere`
+ * exists only because an imported mesh's material lives in an asset clone instead of on the
+ * mesh. In both reference systems the importer reads the material and puts it ON the geometry,
+ * so the question never arises — a format fills the model and stops existing. When that holds
+ * here, nothing can construct an `elsewhere` assignment and this function returns `null` for
+ * every input. Refusing honestly is the interim; it is not the destination.
+ */
+export function uncapturedMaterialBakeRefusal(
+  selectedId: string,
+  materials: EvaluatedMesh['materials'],
+): string | null {
+  // Slot 0 is the one the bake carries — `primaryMaterial` narrows to it, and the
+  // multi-material refusal above has already stopped anything with more than one assigned.
+  if (slotMaterialAt(materials, 0).status !== 'elsewhere') return null;
+  return `Apply: "${selectedId}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
 }
 
 /**
@@ -409,6 +456,11 @@ export async function dispatchApplyTransform(
   const bakedId = selectedId;
   const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
   if (refusal) return { ok: false, reason: refusal };
+  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
+  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
+  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
+  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
+  if (uncaptured) return { ok: false, reason: uncaptured };
   const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
