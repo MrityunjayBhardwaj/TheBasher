@@ -36,6 +36,8 @@ import { createFork } from './diff/forkedDag';
 import type { Reportable } from '../core/dag/ops';
 import { badgeLabel } from '../app/badges';
 import { describeEffect, critique, renderCritique } from './critic/effect';
+import { maskedWrites, renderMaskedWrites } from './critic/maskedWrites';
+import { useTimeStore } from '../app/stores/timeStore';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec, EdgeKind } from './closure/types';
 import type { IdentifyResult } from './identify/types';
@@ -501,6 +503,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // answered and the line written, and is rethrown unchanged.
         let noOpReport = '';
         let critiqueReport = '';
+        let maskedReport = '';
         let forkError: unknown;
         if (result.ops.length > 0) {
           try {
@@ -514,13 +517,30 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
             critiqueReport = renderCritique(
               critique(describeEffect(before, forked.fork, result.ops)),
             );
+            // #1017 — the third question about the same plan, and the one neither of
+            // the others can answer: a write can be accepted (nothing to report), land
+            // on a node that reaches the output (nothing to critique) and still change
+            // nothing on screen, because an edge-less sidecar overrides it. Judged at
+            // the director's own playhead, since masking is a fact about a moment.
+            maskedReport = renderMaskedWrites(
+              maskedWrites(
+                before,
+                forked.fork,
+                result.ops,
+                forked.reportable,
+                useTimeStore.getState().seconds,
+              ),
+            );
           } catch (e) {
             forkError = e;
           }
         }
 
         const resultMessage =
-          (result.text ?? `OK (${result.ops.length} ops)`) + noOpReport + critiqueReport;
+          (result.text ?? `OK (${result.ops.length} ops)`) +
+          noOpReport +
+          maskedReport +
+          critiqueReport;
         // Wave D telemetry: tool name + outcome + duration only. No
         // args, no DAG content, no prompt text. Killswitch-respecting.
         recordEvent({

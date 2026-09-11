@@ -33,6 +33,8 @@ import { useDagStore } from '../core/dag/store';
 import { useAgentSessionStore } from './session/store';
 import { buildDefaultDagState } from '../core/project/default';
 import { badgeLabel } from '../app/badges';
+import { applyOp } from '../core/dag';
+import { useTimeStore } from '../app/stores/timeStore';
 import type { Op } from '../core/dag/types';
 import type { Reportable } from '../core/dag/ops';
 
@@ -219,5 +221,49 @@ describe('#733 — the critic reaches the model too', () => {
     expect(text).toContain('NOTE -');
     expect(text).toContain('Shot has no such parameter');
     expect(text).toContain('CRITIC -');
+  });
+});
+
+describe('#1017 - a write the scene does not show reaches the model too', () => {
+  /** Seed the store with a live position channel on the cube, playhead at 1s. */
+  const seedAnimatedCube = () => {
+    const withChannel = applyOp(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'n_chan',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'pos',
+        target: 'n_box',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0] },
+          { time: 2, value: [0, 9, 0] },
+        ],
+      },
+    } as Op).next;
+    useDagStore.getState().hydrate(withChannel);
+    useTimeStore.getState().setTime(1);
+  };
+
+  const MOVE: Op[] = [
+    { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [5, 0, 0] },
+  ] as Op[];
+
+  it('THE PIN: the tool result names the mask, the overrider and both values', async () => {
+    seedAnimatedCube();
+    const text = toolText(await turnWithOps(MOVE, 'move the cube to x=5'));
+    expect(text).toContain('did not change what is rendered');
+    expect(text).toContain('n_chan drives it');
+    expect(text).toContain('[0,4.5,0]');
+    expect(text).toContain('[5,0,0]');
+    // It reports; it never refuses. The op still went through.
+    expect(text).toContain('Proposed 1 Op');
+  });
+
+  it('CONTROL: the same write on an UNANIMATED cube carries no such note', async () => {
+    useTimeStore.getState().setTime(1);
+    const text = toolText(await turnWithOps(MOVE, 'move the cube to x=5'));
+    expect(text).toContain('Proposed 1 Op');
+    expect(text).not.toContain('did not change what is rendered');
   });
 });
