@@ -522,7 +522,41 @@ export type GeometryDescriptor =
       readonly widthSegments: number;
       readonly heightSegments: number;
     }
-  | { readonly kind: 'gltf'; readonly assetRef: string; readonly childName: string }
+  | {
+      readonly kind: 'gltf';
+      readonly assetRef: string;
+      readonly childName: string;
+      /**
+       * HOW MANY FACES THE IMPORTED CHILD HAS, captured from the glTF JSON at import (#1023).
+       *
+       * 🔑 THIS IS THE FIRST ELEMENT FACT AN IMPORTED MESH STATES ABOUT ITSELF, and it is
+       * what lets a `gltf` answer the model's face and corner questions at all. Before it,
+       * an imported mesh's triangles were never faces: the geometry was resolved and present
+       * in the asset clone, and every face- and corner-domain consumer still refused, because
+       * the arity that says how to walk an index buffer is a property of the DESCRIPTOR and
+       * this one stated none.
+       *
+       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — NEVER "there are no faces".
+       * Every save written before #1023 has no readout, and a child whose primitives are not
+       * all triangles gets none either (see `captureChildFaceCount`). Both must keep
+       * answering `null` exactly as they did, which is why a missing key may never be read
+       * as a zero. This is the same distinction `MaterialAssignment` draws for an unanswered
+       * material slot, and for the same reason: "we do not have it" and "there is none" are
+       * different claims, and giving them one spelling is how a consumer starts drawing a
+       * confident wrong answer.
+       *
+       * Faces and not corners or arity, because a glTF face is a TRIANGLE by construction —
+       * the format has no n-gon primitive mode (`GLTFLoader.js:3804-3832` takes triangles,
+       * strips and fans and throws on the rest). So corners are `3` per face and arity `1`
+       * per face, both derived at the one site that already states the fan rule. Storing
+       * three numbers where the format guarantees two of them would invite them to disagree.
+       *
+       * NOT part of the geometry cache key: two children of the same asset and child name
+       * are the same geometry and therefore the same count, so the key stays
+       * `gltf|<assetRef>|<childName>`.
+       */
+      readonly faceCount?: number;
+    }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
   // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry
   // operator over a `source` handle. The registry builds the source on demand

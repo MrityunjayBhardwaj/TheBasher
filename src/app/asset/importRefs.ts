@@ -20,6 +20,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import { USER_IMPORTS_ROOT } from './importCommon';
+import { REF_PERSISTING_NODE_TYPES } from './importFormats';
 
 /** The OPFS path prefix that every file of import `name` lives under. */
 export function importPathPrefix(name: string): string {
@@ -28,8 +29,15 @@ export function importPathPrefix(name: string): string {
 
 /**
  * Return the ids of every node whose persistent reference points inside
- * `user-imports/<name>/`. A node matches iff it is a `GltfAsset` and its
- * `params.assetRef` starts with the import's path prefix.
+ * `user-imports/<name>/`. A node matches iff its type is one the importer category marks
+ * as ref-persisting and its `params.assetRef` starts with the import's path prefix.
+ *
+ * 🔴 THIS IS THE SILENT-DATA-LOSS SITE (#662). The subject set was the literal
+ * `'GltfAsset'`, so a fifth format that persisted a reference under any other node type
+ * would have been scanned for and never found: rename would leave its refs pointing at the
+ * old path and delete would never offer to break them, both without a word — discovered at
+ * the next load, when the reference no longer resolves. The set now derives from
+ * `persistsRefAs`, so declaring the format declares its refs.
  *
  * The trailing slash in the prefix is load-bearing: import `foo` must NOT match
  * a node referencing import `foobar` (`user-imports/foo/` is not a prefix of
@@ -39,7 +47,7 @@ export function nodesReferencingImport(name: string, state: DagState): string[] 
   const prefix = importPathPrefix(name);
   const ids: string[] = [];
   for (const node of Object.values(state.nodes)) {
-    if (node.type !== 'GltfAsset') continue;
+    if (!REF_PERSISTING_NODE_TYPES.has(node.type)) continue;
     const ref = (node.params as { assetRef?: unknown } | undefined)?.assetRef;
     if (typeof ref === 'string' && ref.startsWith(prefix)) {
       ids.push(node.id);

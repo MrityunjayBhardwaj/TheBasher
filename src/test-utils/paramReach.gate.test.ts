@@ -233,7 +233,13 @@ describe('param-reach gate (#492)', () => {
     // by-name mesh match, and the per-slot material overlay). So `total` moves by four and
     // the `unverified` ceiling below does not move at all, which is the derived half of the
     // claim that this kind arrived with its readers already known.
-    expect(total).toBe(39);
+    //
+    // 39 → 40 at #1023: `gltf.faceCount`, the captured element count, and it is TRACED for
+    // the same reason — `faceCountOf`, `faceCornersOf` and `faceArityOf` each read it off
+    // the descriptor by name and a gate pins what they answer. So `total` moves by one and
+    // the `unverified` ceiling again does not move. That is the whole signal this pair of
+    // numbers exists to carry: a param arrived knowing who reads it.
+    expect(total).toBe(40);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

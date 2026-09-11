@@ -135,7 +135,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
   GltfData:
-    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted)',
+    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
     '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
@@ -299,14 +299,32 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-// 84 -> 86 types, and the two arrivals are independent: #974 (`PoseOverride`) contributes
-// five unrouted cells and routes none, #994 (`UVProjectModifier`) routes BOTH of its cells
-// (`size`, `muted` -> modifier) and adds no unrouted. #1001 appended two more unrouted cells
-// to `KeyframeChannelVec3` — the append arm's derived half.
+// 84 -> 87 types, and every arrival is INDEPENDENT — which is the claim this file exists to
+// make. Nothing existing was re-homed to make room for any of them, and a re-home would show
+// up as one total moving without its own arrival to explain it.
 //
-// So each side of this merge moved a DIFFERENT number and neither moved the other's:
-// routed 133 -> 135 came entirely from #994, unrouted 226 -> 233 entirely from #974/#1001.
-// That independence IS the claim this file exists to make — nothing existing was re-homed
-// to make room for either, and a re-home would have shown up as one total moving without
-// its own arrival to explain it.
-export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 233 } as const;
+//   #974  `PoseOverride`        +1 type,  +5 unrouted, routes none
+//   #994  `UVProjectModifier`   +1 type,  +2 routed (`size`, `muted` -> modifier). Two cells
+//         rather than three for the same reason `BevelModifier`'s row gave before #847: this
+//         modifier declares no scope, and its header says the deferral is a decision.
+//   #1001 `KeyframeChannelVec3` +2 unrouted — the append arm's derived half.
+//   #1027 `ComponentGroupOp`    +1 type,  +3 routed (`name`, `muted`, scope -> modifier).
+//   #1023 `GltfData.faceCount`  +1 unrouted, and UNROUTED DELIBERATELY, on exactly the
+//         argument this file's GltfData row already makes for `assetRef`, `childName` and
+//         `materialSlots`. A home names the section that RENDERS a param, and there is
+//         nothing to render: a face count is not authored, cannot be edited, and has no
+//         control. Routing it "for completeness" is the #458 defect this golden exists to
+//         catch — a titled, permanently empty cell, declared so a field would not look
+//         absent and then believed by machinery that reads declarations, not the comments
+//         beside them.
+//
+// 🔴 THE MERGE ARITHMETIC, STATED BECAUSE THE CONFLICT WAS A COUNTER ON BOTH SIDES. This
+// file conflicted when the AI stack merged `origin/main`: both sides had appended rows and
+// bumped these totals, so NEITHER side's numbers were correct and taking either wholesale
+// would have laundered the other's rows — the exact failure the deletion-only rule guards.
+// #994 is the one arrival BOTH sides already carried, so the resolution is base plus each
+// side's unique arrivals, counted once:
+//   types    84 +1(#974) +1(#994) +1(#1027)                  = 87
+//   routed  133 +2(#994) +3(#1027)                           = 138
+//   unrouted 226 +5(#974) +2(#1001) +1(#1023)                = 234
+export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 234 } as const;

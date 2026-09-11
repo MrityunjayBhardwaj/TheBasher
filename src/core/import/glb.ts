@@ -126,8 +126,25 @@ export interface GltfJson {
    * #178 (S2) — top-level meshes; each primitive's `material` indexes
    * `materials`. `captureChildMaterials` reads this to map a node's mesh →
    * its per-primitive material definitions.
+   *
+   * #1023 — `mode`, `indices` and `attributes` are declared here because the import chain
+   * now READS them: `captureChildFaceCount` needs the primitive's draw mode and the
+   * accessor that says how many vertices or indices it has. `attributes` was already being
+   * read for `COLOR_0` without being declared, which typechecked only because that
+   * parameter's type also mentioned `material`; a weak-type check on a new all-optional
+   * reader is what surfaced it.
    */
-  meshes?: { primitives?: { material?: number }[] }[];
+  meshes?: {
+    primitives?: {
+      material?: number;
+      /** glTF primitive draw mode. ABSENT MEANS 4 (TRIANGLES) — the spec default. */
+      mode?: number;
+      /** Accessor index of the index buffer; absent for a non-indexed primitive. */
+      indices?: number;
+      /** Attribute name → accessor index (`POSITION`, `COLOR_0`, `TEXCOORD_0`, …). */
+      attributes?: Record<string, number>;
+    }[];
+  }[];
   /** #178 (S2) — material definitions, compiled to OpenPBR IR on import. */
   materials?: GltfJsonMaterial[];
 }

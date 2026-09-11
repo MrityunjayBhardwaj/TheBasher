@@ -21,6 +21,7 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildAssetDropOps } from '../../app/asset/dropChain';
+import { isFamilyPath } from '../../app/asset/importFormats';
 import { buildGltfImportOpsFromOpfs } from '../../app/asset/importGltf';
 
 export const libraryImportSchema = z.object({
@@ -50,8 +51,10 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     // operate on the FORKED ctx.dagState, return ops for the Diff, never
     // dispatch. The helper reads bytes via getStorage() (client-side OPFS,
     // available in the tool handler exactly as in the UI path).
-    const lower = args.assetRef.toLowerCase();
-    if (lower.endsWith('.glb') || lower.endsWith('.gltf')) {
+    // #662 — the family, from the category, not a respelled pair. This site reported
+    // `Imported …` for a format it had built the WRONG chain for, because a format missing
+    // from the spelling fell through to the static branch below and still looked like a win.
+    if (isFamilyPath(args.assetRef, 'model')) {
       const result = await buildGltfImportOpsFromOpfs(args.assetRef, sceneRef.node, ctx.dagState);
       return { ops: result.ops, text: `Imported ${args.assetRef} at [${args.position}]` };
     }
