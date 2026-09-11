@@ -33,6 +33,8 @@ import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
 import { useDagStore } from '../core/dag/store';
 import { useDiffStore } from './diff/store';
 import { createFork } from './diff/forkedDag';
+import type { Reportable } from '../core/dag/ops';
+import { badgeLabel } from '../app/badges';
 import { ClosurePreservationError } from '../agent/closure/expand';
 import type { ClosureSpec, EdgeKind } from './closure/types';
 import type { IdentifyResult } from './identify/types';
@@ -82,6 +84,39 @@ const MAX_HISTORY_MESSAGES = 16;
 
 /** Chars-per-token heuristic for the local fallback estimate. */
 export const CHARS_PER_TOKEN = 4;
+
+/**
+ * The model's half of a surfaced no-op (#1014).
+ *
+ * `applyOp` accepts an op that changed nothing and hands back a `Reportable`
+ * saying so — a wrong param path, a connect that displaced an edge nobody asked
+ * to remove. The director already reads these in the DiffBar. The model that
+ * WROTE the op never did: the speculative fork kept `.fork` and dropped the
+ * report, so a plan whose writes went into the void came back indistinguishable
+ * from one that worked. Nothing errors, nothing is invalid, and the next round
+ * builds on a scene the model believes it authored.
+ *
+ * Rendering goes through `badgeLabel`, not a second formatter here, so the
+ * sentence the model reads is the sentence the director reads, and a badge kind
+ * added to the registry later reaches both without another edit.
+ */
+export function renderNoOpReport(reportable: ReadonlyArray<Reportable | null>): string {
+  const hits = reportable.filter((r): r is Reportable => r !== null);
+  if (hits.length === 0) return '';
+  const lines = hits.map(
+    (r) =>
+      `  - ${badgeLabel(r.badge, { paramPath: r.paramPath, nodeId: r.nodeId, reason: r.reason })}`,
+  );
+  // The closing line stays badge-agnostic on purpose. A stripped write changed
+  // NOTHING; a displaced edge changed the graph and destroyed a connection. A
+  // sentence asserting either one would be false for the other kind.
+  return (
+    `\n\nNOTE - ${hits.length} of ${reportable.length} ops were accepted but did not do ` +
+    `what they say:\n${lines.join('\n')}\n` +
+    `Re-read the affected nodes before continuing; do not assume these ops had ` +
+    `the effect you intended.`
+  );
+}
 
 export function estimateTokensFromChars(chars: number): number {
   return Math.ceil(Math.max(0, chars) / CHARS_PER_TOKEN);
@@ -443,7 +478,25 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         ctx.dagState = effectiveState;
         const result = await executeToolCall(acc, toolDef, ctx, mode);
         const toolDuration = performance.now() - toolStart;
-        const resultMessage = result.text ?? `OK (${result.ops.length} ops)`;
+
+        // #1014 — evolve the speculative state HERE, before the tool call is
+        // answered, so the product's own no-op report can travel back with the
+        // answer. It used to run ~20 lines below, after the tool result had
+        // already been pushed, which left nothing to attach the report to.
+        //
+        // Evolving it at all is what lets the next tool in this round (and any
+        // subsequent round) see the fresh ops as already-applied. Without it a
+        // parallel-call batch like [mesh.add(Sphere), proposePlan(setMaterialColor
+        // target=newId)] fails gate-1, because the new id doesn't exist in the
+        // round's initial DAG snapshot.
+        let noOpReport = '';
+        if (result.ops.length > 0) {
+          const forked = createFork(effectiveState, result.ops);
+          effectiveState = forked.fork;
+          noOpReport = renderNoOpReport(forked.reportable);
+        }
+
+        const resultMessage = (result.text ?? `OK (${result.ops.length} ops)`) + noOpReport;
         // Wave D telemetry: tool name + outcome + duration only. No
         // args, no DAG content, no prompt text. Killswitch-respecting.
         recordEvent({
@@ -472,13 +525,8 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
           }
           turnMutationToolNames.push(acc.name);
 
-          // Evolve the speculative state so the next tool in this round
-          // (and any subsequent rounds) sees the fresh ops as already-
-          // applied. Without this, a parallel-call batch like
-          // [mesh.add(Sphere), proposePlan(setMaterialColor target=newId)]
-          // fails gate-1 because the new id doesn't exist in the round's
-          // initial DAG snapshot.
-          effectiveState = createFork(effectiveState, result.ops).fork;
+          // (the speculative fork ran above, before the tool result was
+          // answered — see #1014)
 
           // Wave C: capture the Mutator-declared closure when
           // agent.proposePlan succeeds. The validator already ran the
