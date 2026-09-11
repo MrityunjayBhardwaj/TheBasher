@@ -154,6 +154,15 @@ describe('#1017 - a write the scene does not show', () => {
     expect(hits).toEqual([]);
   });
 
+  it('A PLAN THAT BRINGS ITS OWN CHANNEL is not reported - the scene did change', () => {
+    // Adding a channel AND writing the base in one plan. The base write is masked by
+    // the plan's own new channel, but what the scene shows DID change, so "did not
+    // change what is rendered" would be false. The criterion answers this for free;
+    // the row exists so the answer is stated rather than discovered later.
+    const { hits } = run(base, [channel('n_chan'), setPos([5, 0, 0])]);
+    expect(hits).toEqual([]);
+  });
+
   it('ONLY THE LIVE overrider is named: a muted sibling is not', () => {
     const seeded = createFork(base, [channel('n_live'), channel('n_muted', { mute: true })]).fork;
     const { hits } = run(seeded, [setPos([5, 0, 0])]);

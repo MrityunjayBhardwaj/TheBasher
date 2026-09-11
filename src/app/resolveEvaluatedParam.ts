@@ -97,7 +97,7 @@ export function resolveEvaluatedParam(
     );
   });
 
-  const matches: KeyframeChannelValue[] = [];
+  let matches: KeyframeChannelValue[] = [];
   for (const node of Object.values(state.nodes)) {
     if (!isKeyframeChannelNode(node)) continue;
     const p = (node.params ?? {}) as ChannelParams & { solo?: boolean };
@@ -138,9 +138,7 @@ export function resolveEvaluatedParam(
   //     overlay kind is gated by arriving in `matches`, not by another copy of this line.
   //     Applied BEFORE the empty check below, so "every channel here is muted" falls
   //     through to the object↔data reach like "no channel here" does.
-  const gated = matches.filter(channelIsActive);
-  matches.length = 0;
-  matches.push(...gated);
+  matches = matches.filter(channelIsActive);
 
   // 3. No channel/driver on the requested node → before giving up, reach through the
   //    object↔data split (#398). A cube's `material`/`size` live on its linked data node,

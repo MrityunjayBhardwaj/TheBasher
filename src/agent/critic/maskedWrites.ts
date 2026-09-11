@@ -37,6 +37,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
+import type { Reportable } from '../../core/dag/ops';
 import { resolveEvaluatedParam } from '../../app/resolveEvaluatedParam';
 import { readBaseParam } from '../../app/readBaseParam';
 import { idRefsByRole } from '../../core/dag/idRefSweep';
@@ -120,7 +121,7 @@ export function maskedWrites(
   before: DagState,
   after: DagState,
   ops: readonly Op[],
-  reportable: ReadonlyArray<unknown | null>,
+  reportable: ReadonlyArray<Reportable | null>,
   seconds: number,
 ): MaskedWrite[] {
   const lastWrite = new Map<string, { nodeId: string; paramPath: string; value: unknown }>();
