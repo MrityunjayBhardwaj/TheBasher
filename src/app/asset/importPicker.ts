@@ -26,6 +26,7 @@ import { ingestAndImportGltf } from './gltfEntryChoice';
 import { missingGltfSiblings, formatMissingSiblingsError } from './opfsGltfResolver';
 import { ingestSingleFile } from './importCommon';
 import { routeImportByExtension } from './importBvhFbx';
+import { isFamilyPath, IMPORT_ACCEPT, MODEL_ACCEPT } from './importFormats';
 import { useAssetErrorStore, formatAssetError } from '../stores/assetErrorStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import { importMediaClipFromFile } from './importMediaClip';
@@ -60,15 +61,17 @@ export function gltfImportNeedsFolder(files: readonly IngestFile[]): GltfFolderN
   return { entryName, missing };
 }
 
-/** True iff the path is a glTF container (the folder-import trigger). */
-function isGltfPath(path: string): boolean {
-  const lower = path.toLowerCase();
-  return lower.endsWith('.gltf') || lower.endsWith('.glb');
-}
-
-/** True iff any picked file is a glTF container. */
-function hasGltfEntry(files: readonly IngestFile[]): boolean {
-  return files.some((f) => isGltfPath(f.relativePath));
+/**
+ * True iff any picked file is a MODEL-family entry — the folder-ingest trigger.
+ *
+ * Named for the family and not for glTF (#662). The predicate here was `isGltfPath`, which
+ * was true of exactly the model formats because glTF is the only one; the day a second
+ * model format lands, a name saying "glTF" over a body meaning "model" is a label that
+ * lies while every behavioural test still passes. The trigger is really "could this set
+ * arrive as a folder of siblings", which is a property of the family.
+ */
+function hasModelEntry(files: readonly IngestFile[]): boolean {
+  return files.some((f) => isFamilyPath(f.relativePath, 'model'));
 }
 
 /**
@@ -94,7 +97,7 @@ function deriveFolderName(firstPath: string): string {
 async function ingestOneModel(files: IngestFile[]): Promise<void> {
   if (files.length === 0) return;
   const folderName = deriveFolderName(files[0].relativePath);
-  if (hasGltfEntry(files)) {
+  if (hasModelEntry(files)) {
     // A multi-glTF folder prompts the user to pick which model; one entry imports
     // straight through (#214). Cancelling the chooser returns null → no-op.
     await ingestAndImportGltf(files, folderName);
@@ -136,7 +139,7 @@ function makeHiddenInput(accept: string, directory: boolean): HTMLInputElement {
  * actionable banner so a dismissed escalation is never a silent no-op (V38).
  */
 function openDirectoryImport(opts?: { onCancel?: () => void }): void {
-  const input = makeHiddenInput('.gltf,.glb,.bvh,.fbx', true);
+  const input = makeHiddenInput(IMPORT_ACCEPT, true);
   let handled = false;
   input.onchange = () => {
     handled = true;
@@ -191,7 +194,7 @@ export function openImportPicker(): void {
  * `.glb` or a flat `.gltf` selected together with its siblings imports directly.
  */
 export function openGltfFilePicker(): void {
-  const input = makeHiddenInput('.gltf,.glb', false);
+  const input = makeHiddenInput(MODEL_ACCEPT, false);
   input.onchange = () => {
     void (async () => {
       try {

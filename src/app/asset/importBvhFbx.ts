@@ -33,6 +33,7 @@ import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore'
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { importGltfFromOpfs } from './importGltf';
 import { bindMotionToCharacter, type BindMotionOutcome } from './bindMotionToCharacter';
+import { importFormatOf, UNSUPPORTED_FORMAT_MESSAGE, type ImportExt } from './importFormats';
 
 /**
  * What a motion import produced, so a caller can act on it (#807).
@@ -110,6 +111,33 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
 }
 
 /**
+ * What each format does with an already-ingested OPFS entry.
+ *
+ * 🔑 THE TYPE IS THE POINT. `Record<ImportExt, …>` is exhaustive, so adding a format to
+ * `IMPORT_EXTENSIONS` without giving it an arm here does not compile. Before #662 the same
+ * omission fell through an `else if` chain to "unsupported format" — a format that had been
+ * added to the picker, the drop zone and the library, and then refused at the one site that
+ * actually imports it. That failure is now unwritable rather than merely tested for.
+ *
+ * The map lives HERE and not in `importFormats.ts` because it needs the importers, and a
+ * category module that imported them would close a new module cycle (#814).
+ */
+const IMPORT_BY_EXT: Readonly<Record<ImportExt, (entryPath: string) => Promise<void>>> = {
+  '.gltf': async (entryPath) => {
+    await importGltfFromOpfs(entryPath);
+  },
+  '.glb': async (entryPath) => {
+    await importGltfFromOpfs(entryPath);
+  },
+  '.bvh': async (entryPath) => {
+    bindImportedMotion(await importBvhFromOpfs(entryPath));
+  },
+  '.fbx': async (entryPath) => {
+    bindImportedMotion(await importFbxFromOpfs(entryPath));
+  },
+};
+
+/**
  * Route an already-ingested OPFS entry to the right per-format importer by its
  * file extension. The single dispatch point that AssetDropZone + MenuBar call
  * after writing bytes to OPFS (D-04: one affordance accepts all four formats).
@@ -118,18 +146,12 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
  * assetErrorStore so a mistaken drop tells the user why nothing happened.
  */
 export async function routeImportByExtension(entryPath: string): Promise<void> {
-  const lower = entryPath.toLowerCase();
-  if (lower.endsWith('.gltf') || lower.endsWith('.glb')) {
-    await importGltfFromOpfs(entryPath);
-  } else if (lower.endsWith('.bvh')) {
-    bindImportedMotion(await importBvhFromOpfs(entryPath));
-  } else if (lower.endsWith('.fbx')) {
-    bindImportedMotion(await importFbxFromOpfs(entryPath));
-  } else {
-    useAssetErrorStore
-      .getState()
-      .report(entryPath, 'import failed: unsupported format (expected .gltf/.glb/.bvh/.fbx)');
+  const format = importFormatOf(entryPath);
+  if (!format) {
+    useAssetErrorStore.getState().report(entryPath, UNSUPPORTED_FORMAT_MESSAGE);
+    return;
   }
+  await IMPORT_BY_EXT[format.ext](entryPath);
 }
 
 /**

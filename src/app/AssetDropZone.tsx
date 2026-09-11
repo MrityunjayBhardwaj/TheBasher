@@ -15,28 +15,12 @@ import { type IngestFile } from './asset/importGltf';
 import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
+import { isImportablePath, isFamilyPath } from './asset/importFormats';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
 import { useNotificationStore } from './stores/notificationStore';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-
-/** Lowercased-extension test for the four importable formats (D-04). */
-function isImportableEntry(p: string): boolean {
-  const lower = p.toLowerCase();
-  return (
-    lower.endsWith('.gltf') ||
-    lower.endsWith('.glb') ||
-    lower.endsWith('.bvh') ||
-    lower.endsWith('.fbx')
-  );
-}
-
-/** True for the motion formats that ingest as a single self-contained file. */
-function isMotionEntry(p: string): boolean {
-  const lower = p.toLowerCase();
-  return lower.endsWith('.bvh') || lower.endsWith('.fbx');
-}
 
 /** The warn toast shown when a library asset is dropped but the project has no
  *  scene to add it into. Exported so the test asserts the exact surfaced text. */
@@ -59,7 +43,7 @@ export type CatalogDropPlan =
 export function planCatalogAssetDrop(state: DagState, path: string): CatalogDropPlan {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return { kind: 'no-scene' };
-  if (isImportableEntry(path)) return { kind: 'import', path };
+  if (isImportablePath(path)) return { kind: 'import', path };
   return { kind: 'ops', ops: buildAssetDropOps({ assetRef: path, sceneNodeId: sceneRef.node }) };
 }
 
@@ -126,7 +110,7 @@ async function routeIngest(files: IngestFile[], items: DataTransferItem[]): Prom
   // BVH/FBX are self-contained motion files — a lone .bvh/.fbx drop ingests
   // as a single file (no sibling resolution) and routes by extension. A
   // glTF (or glTF + sibling .bin/textures) keeps the folder-ingest path.
-  if (files.length === 1 && isMotionEntry(files[0].relativePath)) {
+  if (files.length === 1 && isFamilyPath(files[0].relativePath, 'motion')) {
     const entryPath = await ingestSingleFile(files[0], folderName);
     await routeImportByExtension(entryPath);
     return;

@@ -41,6 +41,7 @@ import {
 } from './asset/importCommon';
 import { getStorage } from './boot';
 import { useImportRefreshStore } from './stores/importRefreshStore';
+import { pickEntryFile } from './asset/importFormats';
 
 /** OPFS swatch for user-imported entries — a standalone amber chip (#f0b85a).
  * Distinct from every bundled-asset swatch (cube #5af07a green, sphere #7aaaff
@@ -63,17 +64,6 @@ interface MyImportEntry {
   readonly path: string;
   /** Display name — the user-imports subdirectory name (sanitized at ingest). */
   readonly name: string;
-}
-
-/**
- * Pick the entry file from a directory listing. glTF wins by container priority
- * (.glb single-file over .gltf), then a single motion file (.bvh/.fbx) — Phase
- * 7.14 (#111) D-05: BVH/FBX must list in My Imports like glTF. Returns the
- * matched filename, or null if the listing holds no importable entry.
- */
-function findEntryFile(files: readonly string[]): string | null {
-  const byExt = (ext: string) => files.find((f) => f.toLowerCase().endsWith(ext));
-  return byExt('.glb') ?? byExt('.gltf') ?? byExt('.bvh') ?? byExt('.fbx') ?? null;
 }
 
 export function AssetLibrary(): ReactNode {
@@ -181,12 +171,12 @@ export function AssetLibrary(): ReactNode {
             // one level (nested-entry exports like `<dir>/gltf/scene.gltf`).
             // Motion (Phase 7.14 #111, D-05): a single .bvh/.fbx is a valid
             // entry too — BVH/FBX must list in My Imports like glTF.
-            let entryRel: string | null = findEntryFile(files);
+            let entryRel: string | null = pickEntryFile(files);
             if (!entryRel) {
               for (const sub of files) {
                 try {
                   const innerFiles = await storage.list(`${USER_IMPORTS_ROOT}/${name}/${sub}`);
-                  const inner = findEntryFile(innerFiles);
+                  const inner = pickEntryFile(innerFiles);
                   if (inner) {
                     entryRel = `${sub}/${inner}`;
                     break;
