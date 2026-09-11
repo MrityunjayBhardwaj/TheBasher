@@ -36,7 +36,7 @@
 import type { BufferAttribute, BufferGeometry } from 'three';
 import { readGeometry } from './geometryRegistry';
 import { polygonLayoutOf } from './polygonLayout';
-import { alignedSplitRims } from './builtRims';
+import { alignedSplitRims, topologyIsBufferOnly } from './builtRims';
 import { faceArityOf } from './faceCount';
 import { insert } from './attributeStore';
 import { extractUVIslands } from './uvIslands';
@@ -105,7 +105,7 @@ function uvAttributeOf(
     // The other way to arrive is a genuine disagreement: an arity exists, rims were recovered,
     // and no rotation of one reproduces the substrate's welded rim. That is a defect rather than
     // a wait, so it says so instead of borrowing a reason that would make it look expected.
-    return refusalFor(ref.descriptor);
+    return refusalFor(ref.descriptor, geometry);
 
   const components = 2;
   let corners = 0;
@@ -132,8 +132,44 @@ function uvAttributeOf(
  * a DEFECT for what is an ordinary missing buffer. That is the same shape of error this module
  * already carries a warning about — a refusal borrowing a reason that belongs to another arm.
  * So the chain is walked to the descriptor that actually owns the absence.
+ *
+ * 🔴 #1025 ADDED THE FIRST ARM, AND IT HAD TO GO FIRST BECAUSE THE LAYOUT'S ANSWER IS WRONG
+ * THERE. An imported mesh now recovers its rims from its buffer, so the only way one of them
+ * arrives here holding a resolved geometry is that its CAPTURED face count disagrees with the
+ * buffer that loaded. `polygonLayoutOf` would answer *"its buffers live in a loaded asset
+ * clone"* — which describes a mesh that has not arrived, and this one has. A reader acting on
+ * that would wait for a load that already happened. A wrong diagnosis is not a silence with
+ * worse manners; it is an instruction.
+ *
+ * 🔴 AND THE SENTENCE NAMES TWO CAUSES RATHER THAN THE LIKELIER ONE, BECAUSE IT CANNOT TELL
+ * THEM APART FROM HERE AND GUESSING WOULD REPEAT THE DEFECT ONE LEVEL DOWN. Measured against a
+ * real `GLTFLoader` parse: a single-primitive child loads as a `Mesh` and the counts AGREE, so
+ * an ordinary import is untouched by this arm. A child with two primitives loads as a `Group`
+ * of two meshes — `captureChildFaceCount` sums both (4) while `firstMeshGeometry` reaches the
+ * first (2). That is not a stale capture and re-importing would not move it; it is the
+ * multi-primitive question `firstMeshGeometry` records as open. This arm has descriptor and
+ * buffer and no view of the clone's shape, so it states what it observed and leaves the reader
+ * both roads instead of sending them down one.
  */
-function refusalFor(descriptor: GeometryDescriptor): UVAttributeVerdict {
+function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): UVAttributeVerdict {
+  if (topologyIsBufferOnly(descriptor)) {
+    const arity = faceArityOf(descriptor);
+    const index = geometry.getIndex();
+    if (arity !== null && index !== null) {
+      let triangles = 0;
+      for (const n of arity) triangles += n;
+      if (triangles * 3 !== index.count)
+        return {
+          kind: 'not-derivable',
+          why:
+            `this mesh was imported as ${arity.length} faces (${triangles} triangles) and the ` +
+            `buffer reachable here holds ${index.count / 3}, so the count captured at import is ` +
+            `not this buffer's — either the asset changed since it was imported, or this child ` +
+            `has several primitives and only the first is reachable through a child name`,
+        };
+    }
+  }
+
   const layout = polygonLayoutOf(descriptor);
   if (layout.kind === 'outside-the-descriptor') return { kind: 'not-derivable', why: layout.why };
 

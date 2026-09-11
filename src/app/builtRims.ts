@@ -29,11 +29,11 @@
 // REF: src/app/polygonLayout.ts (`PolygonRim`, `fanToTriangles` — the inverse);
 //      src/app/faceCount.ts (`faceElementStarts` — the prefix sum, passed in, not re-derived);
 //      src/app/edgeIdentity.ts (`weldedPolygonsOf` — the topological rims this is gated against);
-//      issues #786, #777, #776.
+//      issues #786, #777, #776, #1025.
 
 import type { BufferGeometry } from 'three';
 import type { PolygonRim } from './polygonLayout';
-import type { GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
@@ -45,6 +45,13 @@ import { bevelLayoutOf } from './bevelLayout';
  * Cached per geometry. A built geometry is produced from exactly one descriptor, so its arity —
  * and therefore its rims — are fixed for its lifetime. That is the same assumption
  * `weldByPosition` already makes about a geometry's positions.
+ *
+ * ⚠️ AN ASSET CLONE'S BUFFER IS NOT BUILT FROM A DESCRIPTOR, so #1025 had to earn that sentence
+ * back rather than inherit it: the buffer belongs to the imported asset and the face count
+ * belongs to the descriptor, so two nodes naming one child with different captured counts share
+ * this key. Measured — the second call receives the first's rims. `alignedSplitRims` refuses a
+ * count that disagrees with the buffer before reaching here, and an imported arity is uniform,
+ * so at most one arity gets this far for a given geometry and the assumption holds again.
  */
 const rimCache = new WeakMap<BufferGeometry, readonly PolygonRim[]>();
 
@@ -177,10 +184,47 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
 }
 
 /**
- * Every face's rim in SPLIT numbering, ROTATED so it starts at the same corner the substrate's
- * welded rim does — the split-space counterpart of {@link weldedPolygonsOf}, corner for corner.
+ * The kinds whose topology lives in a BUFFER rather than in the descriptor — the same two
+ * `weldedPolygonsOf`, `faceCountOf` and `pointCountOf` declare as their escape hatch, and
+ * censused with them.
  *
- * ── WHY THE ROTATION IS NOT COSMETIC ─────────────────────────────────────────────────────
+ * 🔴 NARROWED EXPLICITLY, AND IT IS NOT `polygonLayoutOf(d).kind === 'outside-the-descriptor'`.
+ * That verdict covers `bevel` too, for a different reason — a bevel's SPLIT numbering is the
+ * builder's own, while its WELDED rims are stated and its alignment self-check below is real.
+ * Reusing it would put `bevel` on the unaligned road and silently retire a working check.
+ *
+ * 🔴 AND IT IS NOT `weldedPolygonsOf(d) === null`. That is null for genuine refusals as well —
+ * a fractional block, a minted face, a derived kind over an imported source — and each of those
+ * is a named absence a caller must keep receiving. Falling through on a null would widen every
+ * one of them into an answer.
+ */
+export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
+  switch (descriptor.kind) {
+    case 'gltf':
+    case 'baked':
+      return true;
+    case 'box':
+    case 'sphere':
+    case 'array':
+    case 'mirror':
+    case 'subset':
+    case 'bevel':
+    case 'uvProject':
+      return false;
+    default: {
+      const unreachable: never = descriptor;
+      throw new Error(`topologyIsBufferOnly: undeclared descriptor ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/**
+ * Every face's rim in SPLIT numbering, in this mesh's canonical corner order.
+ *
+ * There are two roads to that order, and which one a descriptor takes is a property of where its
+ * topology lives, not of how much is known about it.
+ *
+ * ── ROAD A — THE SUBSTRATE STATES THE ORDER, SO THE WALK IS ROTATED ONTO IT ───────────────
  *
  * A boundary walk starts wherever it happens to start, and a rim rotated by one corner bounds
  * the same face and fans to the same triangles. It is a DIFFERENT loop order, and the corner
@@ -192,15 +236,59 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
  *
  * Returning `null` when no rotation matches is the self-check: the two derivations are supposed
  * to describe the same loop, so a failure to align is a genuine disagreement and not a shrug.
+ *
+ * ── ROAD B — THE BUFFER IS THE ONLY DERIVATION, SO IT IS ALSO THE CONVENTION (#1025) ──────
+ *
+ * 🔴 THE ALIGNMENT SELF-CHECK DOES NOT EXIST FOR AN IMPORTED MESH, AND SAYING SO IS THE POINT.
+ * An imported mesh's topology is its index buffer and nothing else. The obvious way to reach
+ * Road A — synthesise `welded` as `weld.map[raw[f][k]]` — produces an array that IS a function
+ * of `raw`, so `rotateOnto` matches at `s = 0` for every face by construction. Measured: the
+ * mapped rims of a mounted clone are identical to the walked ones. That gate would run, pass,
+ * and mean nothing, and a silently vacuous gate is worse than a stated absent one. So no
+ * synthetic `welded` is built here — the comparison is left unrepresentable rather than
+ * documented and permitted.
+ *
+ * The rotation is not skipped either; it has no referent. Its job is to fix loop 0 to the
+ * substrate's convention, and this kind has no substrate. **The walk's own order IS the
+ * canonical corner order for an imported mesh** — stated here once, so that the next producer
+ * of imported corner order aligns to this one instead of inventing a second.
+ *
+ * 🔑 WHAT REPLACES THE SELF-CHECK IS A CHECK ACROSS TWO REAL SOURCES, NOT A WEAKER VERSION OF
+ * THE SAME ONE. `arity` comes from a face count captured at import and written into a save
+ * file; the index buffer comes from the asset that loaded just now. They can disagree — an
+ * asset re-exported with a different mesh, a save written against another child — and the
+ * dangerous direction is SILENT: measured against a 12-triangle box, a captured count of 6
+ * yields six well-formed rims and no refusal, so half the mesh leaves the corner domain
+ * without a word. (An overcount walks off the end and refuses on its own.) `sum x 3 ===
+ * index.count` is what catches it, and it is a genuine cross-source agreement rather than a
+ * thing compared to itself.
+ *
+ * It also repairs `builtPolygonRims`'s cache rather than leaning on it: `rimCache` keys on the
+ * GEOMETRY alone, on the stated assumption that a built geometry comes from exactly one
+ * descriptor. An asset clone's buffer does not — two nodes can name one imported child with
+ * different captured counts, and measured, the second call receives the first's rims. Because
+ * `faceArityOf`'s imported arm returns a uniform array, the sum pins its length, so at most one
+ * arity can pass this check for a given buffer and the assumption holds again.
  */
 export function alignedSplitRims(
   ref: GeometryRef,
   geometry: BufferGeometry,
 ): readonly PolygonRim[] | null {
   const arity = faceArityOf(ref.descriptor);
+  if (arity === null) return null;
+
+  if (topologyIsBufferOnly(ref.descriptor)) {
+    const index = geometry.getIndex();
+    if (index === null) return null;
+    let triangles = 0;
+    for (const n of arity) triangles += n;
+    if (triangles * 3 !== index.count) return null;
+    return builtPolygonRims(geometry, arity, faceElementStarts(arity));
+  }
+
   const welded = weldedPolygonsOf(ref.descriptor);
   const weld = composedWeldOf(ref);
-  if (arity === null || welded === null || weld === null) return null;
+  if (welded === null || weld === null) return null;
 
   const raw = builtPolygonRims(geometry, arity, faceElementStarts(arity));
   if (raw === null || raw.length !== welded.length) return null;
