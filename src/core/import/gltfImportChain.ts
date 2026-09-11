@@ -771,6 +771,67 @@ function captureChildMaterials(
   );
 }
 
+/**
+ * HOW MANY FACES AN IMPORTED CHILD HAS, read from the glTF JSON at import (#1023).
+ *
+ * The sibling of {@link captureChildMaterials} and deliberately the same shape: read a fact
+ * out of the JSON at import, write it onto the child's params, and let the descriptor state
+ * it afterwards. `GltfData.evaluate` mints its descriptor inside a pure evaluator with only
+ * params in scope, so a fact that is not captured here can never be stated at all — which is
+ * why an imported mesh's triangles were never faces.
+ *
+ * 🔑 NO GEOMETRY LOAD. Counts come from the accessor table, so this costs a few property
+ * reads: the index accessor's `count` when the primitive is indexed, the POSITION
+ * accessor's when it is not.
+ *
+ * ── WHY IT REFUSES RATHER THAN GUESSING ───────────────────────────────────────────────
+ *
+ * `undefined` means WE DID NOT CAPTURE IT, and every caller has to keep reading it that way
+ * — never as "no faces". A child of lines or points is not a polygon mesh, and answering `0`
+ * for it would be a confident wrong answer that every face-domain consumer would believe.
+ * So a single non-triangle primitive refuses the whole child.
+ *
+ * ── THE THREE TRIANGLE MODES, GROUNDED ────────────────────────────────────────────────
+ *
+ * glTF has no n-gon primitive mode. `GLTFLoader.js:3788-3811` accepts TRIANGLES (4, and the
+ * spec default when `mode` is absent), TRIANGLE_STRIP (5) and TRIANGLE_FAN (6), converting
+ * the latter two through `toTrianglesDrawMode`, and throws on anything else at `:3832`.
+ * That conversion's own arithmetic is `numberOfTriangles = index.count - 2`
+ * (`BufferGeometryUtils.js:801`) for BOTH strip and fan — which is the rule below, taken
+ * from the source rather than from the shape of the name.
+ */
+export function captureChildFaceCount(
+  node: { mesh?: number },
+  json: Pick<GltfJson, 'meshes' | 'accessors'>,
+): number | undefined {
+  if (typeof node.mesh !== 'number') return undefined;
+  const prims = json.meshes?.[node.mesh]?.primitives;
+  if (!Array.isArray(prims) || prims.length === 0) return undefined;
+
+  let total = 0;
+  for (const p of prims) {
+    // Absent `mode` is TRIANGLES — the glTF default, not an unknown.
+    const mode = p.mode ?? 4;
+    if (mode !== 4 && mode !== 5 && mode !== 6) return undefined;
+
+    const accessor =
+      typeof p.indices === 'number' ? p.indices : (p.attributes?.POSITION ?? undefined);
+    if (typeof accessor !== 'number') return undefined;
+    const count = json.accessors?.[accessor]?.count;
+    if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) return undefined;
+
+    // A primitive too short to make a single triangle contributes none, and is not a
+    // reason to refuse the child — a degenerate primitive is still a triangle primitive.
+    if (mode === 4) {
+      if (count % 3 !== 0) return undefined; // not a triangle list; do not guess
+      total += count / 3;
+    } else {
+      total += Math.max(0, count - 2);
+    }
+  }
+  return total;
+}
+
 export async function buildGltfImportOps(
   args: GltfImportChainArgs,
   _state: DagState,
@@ -888,6 +949,10 @@ export async function buildGltfImportOps(
     // the renderer/inspector treat them like native materials. `null` material for
     // an empty/bone node → renderer keeps the clone's embedded material.
     const materials = captureChildMaterials(childNodes[i], json);
+    // #1023 — the child's own face count, so its descriptor can state one. Absent for a
+    // child that is not an all-triangle mesh (a bone, an empty, lines or points), which
+    // every reader must keep treating as "not captured" and never as zero.
+    const faceCount = captureChildFaceCount(childNodes[i], json);
     ops.push({
       type: 'addNode',
       nodeId: dataId,
@@ -901,6 +966,7 @@ export async function buildGltfImportOps(
         // `dataSlotsOnly` derives the former from `material` (see GltfData.ts).
         material: materials?.[0] ?? null,
         ...(materials && materials.length > 1 ? { materialSlots: materials } : {}),
+        ...(faceCount === undefined ? {} : { faceCount }),
       },
     });
     ops.push({
