@@ -81,8 +81,9 @@ import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { extractUVIslands } from './uvIslands';
 import { firstMeshGeometry } from './firstMeshGeometry';
 import { getGltfClone } from './asset/gltfCloneRegistry';
+import { cloneAddressOf } from './geometryRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
-import { primaryMaterial } from './materialAssignment';
+import { primarySlotMaterial, type SlotMaterial } from './materialAssignment';
 import type { MeshUVRead } from '../nodes/types';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
@@ -252,6 +253,42 @@ function uvSourceOf(read: MeshUVRead): UVSource {
   }
 }
 
+/**
+ * Narrow the assignment's four-way slot answer into this module's texture facet — the twin of
+ * {@link uvSourceOf}, and the reason this arm no longer calls `primaryMaterial`.
+ *
+ * `primaryMaterial` returns `M | null`, which has no room for the difference between *"there
+ * is no material"* and *"a mounted clone owns what draws and we hold no capture"* — so it
+ * re-merged them here and the panel went blank for a clone-drawn mesh (#1015). Taking the
+ * widened road means the collapse cannot come back by someone editing this body.
+ *
+ * `elsewhere` cannot arrive: the clone arm above takes every descriptor `cloneAddressOf`
+ * answers for, and `absentSlot` is `'elsewhere'` on exactly the same condition — both are
+ * defined in terms of `availabilityOf(descriptor) === 'clone'`, one rule read twice rather
+ * than two that happen to agree. It is written out rather than defaulted anyway, because that
+ * is what makes a fifth status a visible edit, and `cloneAddress.gate.test.ts` reds if the two
+ * ever select different sets.
+ */
+function textureSourceOf(
+  slot: SlotMaterial<InlineMaterialSpec | BakedMaterialSpec>,
+): MeshTextureSource {
+  switch (slot.status) {
+    case 'ok':
+      return textureFromMaterial(slot.material);
+    // No material on the slot, and no slot at all: both are "nothing to draw", and they are
+    // different questions that this facet genuinely answers the same way.
+    case 'none':
+    case 'no-such-slot':
+      return TEX_NONE;
+    case 'elsewhere':
+      return TEX_NONE;
+    default: {
+      const unreachable: never = slot;
+      throw new Error(`textureSourceOf: undeclared slot status ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
 export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace {
   const node = state.nodes[nodeId];
   if (!node) return SPACE_NONE;
@@ -299,7 +336,22 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
   // already consumes two lines down. That is not the re-derived availability class #635
   // removed — it is a question about where this mesh's MATERIALS live, asked of the only
   // thing that can answer it.
-  if (geometry.descriptor.kind === 'gltf') {
+  // 🔴 #1015 — KEYED ON THE CLONE ADDRESS, NOT ON THE KIND, AND THE SET HAS ACTUALLY DIVERGED.
+  // The block below argued its way to the descriptor's own discriminant and that was right for
+  // the question it was then asking. It is a NAMING TIER now: `availabilityOf` is `'clone'` for
+  // a `gltf` descriptor AND for a `uvProject` that cannot materialise over one (#738/#786 — the
+  // projection passes its source's availability through and `get()` delegates its read to the
+  // source), so a projected imported mesh is drawn by the clone while its kind is `uvProject`.
+  // `drawnByAssetClone`'s own doc names this trap; this is the third time and the first where a
+  // kind test and the availability class select different sets.
+  //
+  // MEASURED, on a mounted clone carrying a base-colour map with a UV Project over it: the arm
+  // fell through, the backdrop resolved `none` with a null image, and that is byte-identical to
+  // a cube that genuinely has no map — the panel could neither show the texture nor say why it
+  // was blank. `cloneAddressOf` answers WHICH child draws, by the same recursion that decides
+  // whether one does, so the two cannot drift into disagreement.
+  const cloneAddress = cloneAddressOf(geometry.descriptor);
+  if (cloneAddress) {
     // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED descriptor
     // rather than the node's params — so any node that resolves to a gltf-kind geometry
     // works, not just the GltfChild type.
@@ -310,10 +362,9 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
     // (`childName` absent) would have answered with the whole asset's first mesh: a different
     // question, silently. Keying on the discriminant narrows the descriptor, so both fields
     // are `string` and both fallbacks are gone rather than merely unreachable.
-    const d = geometry.descriptor;
-    const clone = getGltfClone(d.assetRef);
+    const clone = getGltfClone(cloneAddress.assetRef);
     if (!clone) return SPACE_LOADING;
-    const sub = clone.getObjectByName(d.childName);
+    const sub = clone.getObjectByName(cloneAddress.childName);
     const geo = firstMeshGeometry(sub);
     return {
       uvs: geo ? { uvs: extractUVIslands(geo), status: 'ok' } : UV_NONE,
@@ -325,6 +376,6 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
   // ALREADY made the read and typed its absence — nothing here re-derives what a miss means.
   return {
     uvs: uvSourceOf(mesh.uvRead),
-    texture: textureFromMaterial(primaryMaterial(mesh.materials)),
+    texture: textureSourceOf(primarySlotMaterial(mesh.materials)),
   };
 }

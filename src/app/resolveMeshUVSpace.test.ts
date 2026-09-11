@@ -216,6 +216,96 @@ describe('resolveMeshUVSpace — a glTF mesh keeps BOTH facets once its clone mo
   });
 });
 
+describe('resolveMeshUVSpace — a PROJECTED imported mesh is still clone-drawn (#1015)', () => {
+  // ── WHY THIS SUITE EXISTS ────────────────────────────────────────────────────────────
+  //
+  // The suite above pins the glTF arm and was keyed on `descriptor.kind === 'gltf'`, which
+  // selected every clone-drawn mesh until it didn't. A `uvProject` that cannot materialise
+  // passes its source's availability straight through (#738/#786) and the registry delegates
+  // its read to that source — so a UV Project over an imported mesh is drawn by the clone, is
+  // `drawnByAssetClone`, and is NOT of kind `gltf`.
+  //
+  // 🔴 MEASURED before the fix, through the product's own read path: the arm fell through and
+  // the backdrop resolved `status: 'none'` with a null image — byte-identical to a cube that
+  // genuinely has no map. The panel could neither show the texture the clone was drawing nor
+  // say why it was blank, and the whole existing suite stayed green, because every row in it
+  // uses a bare `gltf` descriptor and no row could tell the two sets apart.
+  afterEach(() => __clearGltfCloneRegistryForTests());
+
+  function mountTexturedClone(): void {
+    const group = new Group();
+    const canvas = document.createElement('canvas');
+    canvas.width = 8;
+    canvas.height = 8;
+    const mesh = new Mesh(
+      new BoxGeometry(1, 1, 1),
+      new MeshStandardMaterial({ map: new Texture(canvas) }),
+    );
+    mesh.name = 'Mesh0';
+    group.add(mesh);
+    group.updateMatrixWorld(true);
+    registerGltfClone('asset-1', group);
+  }
+
+  /** An imported child with a UV Project spliced onto its data lane — built through the ops
+   *  road, so the pair under test is one the product can actually author. */
+  function projectedImportedChild(): DagState {
+    let s = emptyDagState();
+    for (const op of importedChildOps('gltf_child', { assetRef: 'asset-1', childName: 'Mesh0' })) {
+      s = applyOp(s, op as never).next;
+    }
+    for (const op of [
+      { type: 'addNode', nodeId: 'proj', nodeType: 'UVProjectModifier', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'gltf_child__data', socket: 'out' },
+        to: { node: 'proj', socket: 'target' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'proj', socket: 'out' },
+        to: { node: 'gltf_child', socket: 'data' },
+      },
+    ]) {
+      s = applyOp(s, op as never).next;
+    }
+    return s;
+  }
+
+  it('keeps BOTH facets on the clone, though its descriptor is no longer a glTF one', () => {
+    mountTexturedClone();
+    const space = resolveMeshUVSpace(projectedImportedChild(), 'gltf_child');
+    // The assertion that reds if this arm is ever re-keyed on the descriptor's kind. `none`
+    // with a null image here is the measured regression — a blank UV editor for a mesh the
+    // viewport is visibly drawing with a texture.
+    expect(space.texture.status).toBe('ok');
+    expect(space.texture.image).not.toBeNull();
+    expect(space.uvs.status).toBe('ok');
+  });
+
+  it('and the answer is DISTINGUISHABLE from a mesh that genuinely has no material', () => {
+    // The discriminator, and the reason the row above is not enough on its own: before the
+    // fix these two returned the same object, and a row asserting only `none` for the cube
+    // would have passed in both worlds.
+    mountTexturedClone();
+    const projected = resolveMeshUVSpace(projectedImportedChild(), 'gltf_child');
+    const { state, objectId } = makeSplitCube(emptyDagState(), { objectId: 'cube' });
+    const plain = resolveMeshUVSpace(state, objectId);
+
+    expect(plain.texture.status).toBe('none');
+    expect(plain.texture.image).toBeNull();
+    expect(projected.texture.status).not.toBe(plain.texture.status);
+  });
+
+  it('reports LOADING on both facets while the clone has not mounted', () => {
+    // The other half of the branch: unmounted, the answer must be "wait", never "none" — the
+    // same pairing the glTF rows above keep, reached through the projected descriptor.
+    const space = resolveMeshUVSpace(projectedImportedChild(), 'gltf_child');
+    expect(space.uvs.status).toBe('loading');
+    expect(space.texture.status).toBe('loading');
+  });
+});
+
 describe('resolveMeshUVSpace — pair coherence', () => {
   it('both facets describe the SAME resolved mesh', () => {
     const { state, objectId } = makeSplitCube(emptyDagState(), { objectId: 'cube' });
