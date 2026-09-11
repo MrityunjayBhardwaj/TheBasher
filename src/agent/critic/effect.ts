@@ -213,10 +213,16 @@ export function describeEffect(
   ]);
   const namedButUnchanged = namedBy(ops).filter((id) => survived.has(id) && !changed.includes(id));
 
+  // A removal cannot show up in the AFTER closure — the node is gone — so the before
+  // closure is the only thing that can say whether what was deleted was visible.
+  // Computed ONCE and only when something was actually removed: calling it inside the
+  // predicate walks the whole graph per removed id, which a delete-cascade turns into
+  // the same per-item rescan the constraint stack was just cured of.
   const closure = outputClosure(after);
+  const beforeClosure = removed.length > 0 ? outputClosure(before) : undefined;
   const reachesOutput =
     hashRestricted(before, closure) !== hashRestricted(after, closure) ||
-    removed.some((id) => outputClosure(before).has(id));
+    removed.some((id) => beforeClosure!.has(id));
 
   return {
     added,

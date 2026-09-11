@@ -144,6 +144,33 @@ describe('#733 critic — what the plan actually did', () => {
     expect(outputClosure(after).has('n_chan')).toBe(true);
   });
 
+  it('🔴 deleting a live SIDECAR registers, and only the before-closure can see it', () => {
+    // The discriminating case for the before-closure branch, and it is narrow. A node
+    // can only be removed once nothing consumes it, so a removable node is usually
+    // outside the closure already. A keyframe channel is the exception: it has no wired
+    // edge at all, yet it is live because it is a sidecar of a live object. Delete it
+    // and NOTHING else moves — no edge is torn down, no surviving node changes — so the
+    // after closure is identical and the before closure is the only witness that
+    // something the render could see has gone.
+    const withChannel = apply(base, [
+      {
+        type: 'addNode',
+        nodeId: 'n_chan',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'c', target: 'n_box', paramPath: 'position.y' },
+      },
+    ] as Op[]);
+    expect(outputClosure(withChannel).has('n_chan')).toBe(true);
+
+    const ops = [{ type: 'removeNode', nodeId: 'n_chan' }] as Op[];
+    const after = apply(withChannel, ops);
+    const report = describeEffect(withChannel, after, ops);
+
+    expect(report.removed).toEqual(['n_chan']);
+    expect(report.changed).toEqual([]); // nothing that survived moved at all
+    expect(report.reachesOutput).toBe(true);
+  });
+
   it('a removal the outputs could see counts as reaching them', () => {
     const { report } = run([
       {
