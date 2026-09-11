@@ -24,7 +24,20 @@
 //   selection inverted                          -> rows 1, 3, 5, 6
 //   charset admits `-`                          -> row 7
 //   groupNameOf trusts the prefix               -> row 8
+//   a missing group resolves to EVERYTHING      -> row 10
+//   a missing group resolves to NOTHING         -> row 10
+//   the lookup ignores the SCOPE's domain       -> row 10
+//   the lookup ignores the ATTRIBUTE's domain   -> row 11
+//   a group term is parsed as a range           -> rows 7, 9, 10
+//   the canonicaliser drops group terms         -> row 7
 //   OVER-BROAD: every face a member, always     -> rows 1, 3, 6
+//
+// 🔴 ROW 11 EXISTS ONLY BECAUSE OF THIS EXERCISE, and it is the entry worth reading twice. The
+// attribute-domain guard survived its own falsifier with every other row green — the state it
+// prevents is never MINTED, so nothing reached it. Reading the code is what separated "untested"
+// from "dead": an attribute set is data, so a `group:` name at the corner domain is
+// constructible even though this writer cannot produce one. A green falsifier is a question,
+// never an answer.
 //
 // Every guard reds a row alone, so none is untested or dead. 🔴 THE OVER-BROAD CONTROL IS THE
 // LINE WORTH READING: it leaves ROW 5 GREEN, because "unscoped names every face" is exactly
@@ -38,13 +51,22 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, getNodeType } from '../core/dag';
 import { registerAllNodes } from './registerAll';
 import { resolveComponentSelection } from './componentSelection';
-import { boxGeometryRef, boxDescriptor, arrayGeometryRef } from '../app/modifierGeometry';
+import {
+  boxGeometryRef,
+  boxDescriptor,
+  arrayGeometryRef,
+  refWithAttributeKey,
+} from '../app/modifierGeometry';
 import { mintMeshAttributes, mintTiledModifierAttributes } from './meshAttributes';
 import { hydrateInlineMaterial } from './materialSchema';
-import { read } from '../app/attributeStore';
-import { canonicalScopeQuery } from './scopeQuery';
+import { insert, read } from '../app/attributeStore';
+import { mintAttributes } from './attributeKey';
+import { canonicalScopeQuery, scopeSelection } from './scopeQuery';
+import { groupLookupFor } from '../app/componentGroupLookup';
+import { faceCountOf } from '../app/faceCount';
 import { groupAttributeName, groupNameOf, isValidGroupName } from './componentGroups';
 import { MATERIAL_INDEX } from './attributes';
+import type { AttributeData } from './attributes';
 import type { MeshDataValue, ObjectData } from './types';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
@@ -133,37 +155,121 @@ describe('#1027 — a named component group', () => {
     ]);
   });
 
-  it('row 7 — THE TIE: the charset is exactly the set of names the grammar reads AS names', () => {
+  it('row 7 — THE TIE: every name this charset admits ROUND-TRIPS through the grammar', () => {
     const valid = ['arm', 'Arm', '_arm', 'arm2', 'arm_left', 'A'];
     const invalid = ['arm-left', 'arm:left', 'arm*', '@arm', '0arm', 'arm left', 'arm,leg', ''];
 
     for (const name of valid) {
       expect(isValidGroupName(name), `${name} should be a valid group name`).toBe(true);
-      // Refused AS A NAME — the grammar recognises it and says the construct is not built
-      // yet. That is what makes it addressable the moment gate 3 lands.
-      expect(() => canonicalScopeQuery(name), name).toThrow(/named groups are not implemented/);
+      // 🔴 THE ROUND TRIP, WHICH IS NOW LITERAL. `componentGroups` says its charset is the set
+      // of names the grammar reads as names; the two modules share no import, so nothing but
+      // this row holds that. A name the grammar read as a RANGE, or refused, would come back
+      // as something other than itself — and at gate 3 that means a group nothing can address.
+      expect(canonicalScopeQuery(name), name).toBe(name);
     }
     for (const name of invalid) {
       expect(isValidGroupName(name), `${name} should NOT be a valid group name`).toBe(false);
     }
-    // The load-bearing direction, asserted as a set relation rather than left to the loop
-    // above: nothing this charset admits may reach the RANGE parser. Every valid name throws
-    // the name refusal, which is only reachable before the range parser runs.
-    for (const name of valid) {
-      expect(() => canonicalScopeQuery(name), `${name} must not parse as a range`).toThrow(
-        /named groups are not implemented/,
-      );
-    }
-    // 🔴 THE CONTAINMENT IS PROPER, AND THIS ROW LEARNED IT THE HARD WAY. It first asserted
-    // that a refused name falls into the GENERIC refusal — i.e. that the charset mirrored the
-    // grammar — and went red: the grammar's name test is a PREFIX test, so `arm-left` is read
-    // as a name too and refused as not-implemented. Pinned in the direction that is actually
-    // true, so the next reader inherits the measurement instead of the guess.
-    expect(() => canonicalScopeQuery('arm-left')).toThrow(/named groups are not implemented/);
+
+    // 🔴 THE CONTAINMENT IS PROPER, AND THIS ROW LEARNED IT THE HARD WAY. It first asserted the
+    // charset MIRRORED the grammar and went red: the grammar decides "is this a name?" with a
+    // PREFIX test, so `arm-left` is read as a name too. It is refused with the NAME's charset
+    // rather than the range's, which is the correct half of being wrong — the author reached
+    // for a group, so they are sent to the group rule.
     expect(isValidGroupName('arm-left')).toBe(false);
-    // And the control that keeps this row honest — a RANGE must not be refused at all,
-    // otherwise every `toThrow` above would pass for a reason unrelated to names.
+    expect(() => canonicalScopeQuery('arm-left')).toThrow(/is not a group name/);
+    // Controls, so none of the above can pass for a reason unrelated to names: a range still
+    // canonicalises untouched, and a name is not silently absorbed into one.
     expect(canonicalScopeQuery('0-2')).toBe('0-2');
+    expect(canonicalScopeQuery('arm 0-2')).toBe('0-2 arm');
+  });
+
+  it('row 9 — THE DISCRIMINATING OBSERVATION: name a region, array it, address it BY NAME', () => {
+    // The whole point of the chain, end to end, with nothing hand-fed between the steps.
+    const named = runGroupOp(boxSource(), { name: 'arm', scope: '0-2', muted: false });
+    const geometry = (named as { geometry: ReturnType<typeof boxGeometryRef> }).geometry;
+
+    // A real topology change: six faces become eighteen.
+    const arrayed = arrayGeometryRef(geometry, 3, [2, 0, 0]);
+    const tiledKey = mintTiledModifierAttributes(arrayed.descriptor)!;
+    const propagated = refWithAttributeKey(arrayed, tiledKey);
+    expect(faceCountOf(propagated.descriptor)).toBe(18);
+
+    // …and the NAME still resolves, against the mesh as it is NOW. Not re-authored, not
+    // re-scoped: the same four letters the director typed before the array existed.
+    const byName = scopeSelection('arm', 18, groupLookupFor(propagated, 'face'));
+    expect([...byName.mask]).toEqual([1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0]);
+    expect(byName.count).toBe(9);
+
+    // The control that makes it an observation rather than a coincidence: the equivalent
+    // NUMERIC query, which is what a director would have had to write instead, names the first
+    // three faces of the arrayed mesh and nothing else. The name tracked the topology; the
+    // index did not, which is the entire difference the feature buys.
+    const byIndex = scopeSelection('0-2', 18, groupLookupFor(propagated, 'face'));
+    expect(byIndex.count).toBe(3);
+  });
+
+  it('row 10 — an unresolvable name is refused BY NAME, never as "everything" or "nothing"', () => {
+    const named = runGroupOp(boxSource(), { name: 'arm', scope: '0-2', muted: false });
+    const geometry = (named as { geometry: ReturnType<typeof boxGeometryRef> }).geometry;
+    const groups = groupLookupFor(geometry, 'face');
+
+    // The founding failure of this module, in both directions: a group nobody created must not
+    // quietly mean the whole mesh (a masked operator would act everywhere) and must not quietly
+    // mean nothing (a mask would delete the mesh).
+    expect(() => scopeSelection('leg', 6, groups)).toThrow(/no group named 'leg'/);
+    // A reader that was never given a lookup is a WIRING defect, and says so rather than
+    // blaming the author's query — different facts, different fixes.
+    expect(() => scopeSelection('arm', 6)).toThrow(/was given no way to resolve one/);
+    // And a face group cannot scope an EDGE selection: the mesh may well carry `arm`, so
+    // "no such group" would be the false sentence.
+    expect(() => scopeSelection('arm', 12, groupLookupFor(geometry, 'edge'))).toThrow(
+      /groups are face-domain/,
+    );
+    // The positive control: with the right lookup at the right class, it resolves.
+    expect(scopeSelection('arm', 6, groups).count).toBe(3);
+  });
+
+  it('row 11 — a group name at the WRONG DOMAIN is not a group, however it is spelled', () => {
+    // 🔴 THIS ROW EXISTS BECAUSE ITS GUARD SURVIVED ITS OWN FALSIFIER. Removing the domain
+    // check in `groupLookupFor` left every other row green — the state is never MINTED here,
+    // since the writer always mints at `face`. It is representable all the same: an attribute
+    // set is data and can arrive from a save file or a future producer, so `group:arm` at the
+    // corner domain is constructible even though nothing constructs it today. Reading the code
+    // is what said "untested" rather than "dead", and this is the case where only that guard
+    // applies.
+    //
+    // What it prevents: corner values read against FACE indices. Both are integers, both are
+    // in range, and the mesh that comes back is simply the wrong one.
+    const faces = faceCountOf(boxDescriptor([1, 1, 1]))!;
+    const corner: AttributeData = {
+      domain: 'corner',
+      type: 'int',
+      count: 24,
+      data: new Int32Array(24).fill(1),
+    };
+    const minted = mintAttributes({ [ARM]: corner })!;
+    insert(minted.key, minted.set, 'evaluate');
+    const geometry = boxGeometryRef([1, 1, 1], minted.key);
+
+    // Refused by name — NOT silently resolved against the wrong domain, and not "everything".
+    expect(() => scopeSelection('arm', faces, groupLookupFor(geometry, 'face'))).toThrow(
+      /no group named 'arm'/,
+    );
+
+    // The positive control, so the refusal is about the DOMAIN and not about the name, the
+    // prefix, or the store: the identical set at `face` resolves.
+    const atFace: AttributeData = {
+      domain: 'face',
+      type: 'int',
+      count: faces,
+      data: new Int32Array(faces).fill(1),
+    };
+    const ok = mintAttributes({ [ARM]: atFace })!;
+    insert(ok.key, ok.set, 'evaluate');
+    expect(
+      scopeSelection('arm', faces, groupLookupFor(boxGeometryRef([1, 1, 1], ok.key), 'face')).count,
+    ).toBe(faces);
   });
 
   it('row 8 — a group name is re-validated on the way OUT, not trusted from the prefix', () => {

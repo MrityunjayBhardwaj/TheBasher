@@ -153,7 +153,14 @@ describe('#607 the three degenerate cases, decided here', () => {
     expect(() => scope('not-a-range!!')).toThrow(/not-a-range!!/);
     expect(() => scope('@v>0')).toThrow(/attribute expressions are not implemented/);
     expect(() => scope('arm*')).toThrow(/wildcards are not implemented/);
-    expect(() => scope('head')).toThrow(/named groups are not implemented/);
+    // #1027 — a NAME now parses, so the refusal it earns moved from "not implemented" to a
+    // question about THIS geometry. Still a named throw and still never "everything": a mesh
+    // carrying no group called `head` is a different fact from a construct that does not
+    // exist, and only the first is the author's to fix.
+    expect(() => scope('head')).toThrow(/no group named 'head' on this geometry/);
+    // And a token that starts like a name and is not one is refused with the NAME's charset,
+    // not the range's — the author reached for a group, so send them to the right rule.
+    expect(() => scope('arm-left')).toThrow(/is not a group name/);
     expect(() => scope('5-2')).toThrow(/inverted range/);
     expect(() => scope('0-10:0')).toThrow(/step must be at least 1/);
   });
@@ -652,12 +659,25 @@ describe('#607 the query has exactly one reader', () => {
       .map((m) => m[1])
       .sort();
     expect(exported).toEqual([
+      // #1027 — a TYPE, and the distinction this row exists to police is intact. `GroupLookup`
+      // is the shape of an answer a CALLER supplies, not a way to obtain one: it cannot be
+      // called to resolve anything and carries no implementation, so an operator importing it
+      // is no closer to interpreting a query than before. The leaf still hands out answers
+      // only, and still imports nothing.
+      'GroupLookup',
       'ScopeMask',
       'canonicalScopeQuery',
       'isParsableScopeQuery',
       // The two answers the descriptor road needs: how many elements a query selects (the
       // scoped face count) and which ones (the scoped build). Both are ANSWERS at a length,
       // never terms, so neither lets a caller re-read the language a second way.
+      // #1027 — a THIRD boolean, joining the two below for the same reason and answering a
+      // question neither could: "does this answer depend on more than the string?" A cache
+      // keyed on (query, length) is complete for a range and INCOMPLETE for a group, because
+      // two meshes can share a face count and a query string and hold different memberships.
+      // One bit, and it hands back nothing a caller could act on — it cannot apply a scope,
+      // only decide what a cache key has to contain.
+      'scopeNamesAGroup',
       'scopeSelectedCount',
       'scopeSelection',
       // #917 — one more BOOLEAN, and it is here for the same reason `isParsableScopeQuery`

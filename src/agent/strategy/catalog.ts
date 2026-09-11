@@ -578,9 +578,7 @@ certainly wanted \`!\` where you wrote \`^\`, or a blank scope.
 
 ## What is NOT implemented, and will be refused by name
 
-- **A group name as a query** (\`arm\`) — see below. A group can be NAMED today; it cannot be
-  SELECTED by that name yet.
-- **Wildcards** (\`arm*\`) — they match stored group names.
+- **Wildcards** (\`arm*\`) — matching several group names at once.
 - **Attribute expressions** (\`@v>0\`).
 
 These come back as a named error, not as a silent "everything". If you need one, say so to
@@ -596,10 +594,22 @@ no scope it names every face.
 The name is stored on the geometry, so it survives later topology changes — array the mesh and
 the named faces are still named, per copy.
 
-🔴 **You cannot yet write that name in a \`scope\` query.** Naming and selecting-by-name are two
-separate pieces of work and only the first has shipped, so \`scope: 'arm'\` is refused by name.
-Until it lands, a group is worth creating only when the user asked to name a region; to ACT on a
-subset right now, write the numeric query directly.
+Then write the NAME as the scope of any operator in the table above — \`scope: 'arm'\` — and it
+resolves against the mesh as it is at that point in the stack. It composes like any other term:
+\`arm ^0\` is the group minus face 0, \`!arm\` is everything outside it, \`arm leg\` is both.
+
+**Why this is worth doing rather than writing indices.** A numeric query names positions, and a
+position means something different after the mesh changes. Name three faces of a box and array it
+x3: \`arm\` names nine faces (the three, in each copy) while \`0-2\` names three. If the user asks
+for a region they will refer to again — or you are about to modify the mesh between two
+operations on the same region — create the group.
+
+A name that no group on that mesh carries is REFUSED by name; it never falls back to selecting
+everything. If you see that refusal, the group was not created, was created on a different mesh,
+or is spelled differently — check rather than substituting a numeric range.
+
+🔴 **Groups name FACES.** A bevel's scope names edges, so a group cannot scope a bevel; that is
+refused by name too.
 
 ## Setting it
 
