@@ -38,6 +38,7 @@ import {
   AxisModifiersSchema,
   migrateExtendParamsToCycles,
 } from './channelModifiers';
+import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -48,7 +49,7 @@ const HandleSchema = z
   .optional();
 
 export const KeyframeChannelVec3Params = z.object({
-  name: z.string().default('channel'),
+  name: nameParam('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);

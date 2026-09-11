@@ -37,6 +37,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { BonePose, PosedSkeletonValue, Vec3 } from './types';
+import { nameParam } from './paramWidget';
 
 // Local, as in TrackTo/FollowPath — the codebase declares this tuple per node
 // rather than sharing one schema object.
@@ -54,7 +55,7 @@ export const PoseOverriddenSet = z
   .default({});
 
 export const PoseOverrideParams = z.object({
-  name: z.string().default('pose-override'),
+  name: nameParam('pose-override'),
   /** The bone to pose, by NAME — the `nodeNameMap` / `childName` key space.
    *  Empty, or absent from the incoming rig, → inert (the pose passes through
    *  untouched, exactly as a muted override would). */

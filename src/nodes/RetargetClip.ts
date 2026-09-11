@@ -76,6 +76,7 @@ import type {
 } from './types';
 import { clipLoopOf } from './clipLoop';
 import { posedSkeletonFromClip } from './AnimationClip';
+import { nameParam } from './paramWidget';
 
 /** Both views of one retarget: the clip, and that same clip as a posed rig.
  *  A `type` and not an `interface` on purpose — only a type alias gets TypeScript's
@@ -94,7 +95,7 @@ function both(out: AnimationClipValue): RetargetOutputs {
 
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
-  name: z.string().default(''),
+  name: nameParam(''),
   /** Is this the clip the director most recently bound? (#907) Mirrors
    *  `AnimationClip.active` — both are clip carriers in the one walk, so a flag
    *  on only one of them would leave the other's binds ordered by id. */

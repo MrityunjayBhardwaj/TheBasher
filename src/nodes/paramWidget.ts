@@ -127,3 +127,45 @@ export function widgetOf(schema: unknown): ParamWidget | undefined {
 export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
   return widget('color', z.string().default(defaultHex));
 }
+
+/**
+ * A node's SEMANTIC name, declared with the text control it is authored by (#1031).
+ *
+ * ── WHY A HELPER RATHER THAN `widget('text', …)` AT TWENTY-SIX SITES ──────────────────
+ *
+ * This is the reasoning this module's header already states, applied to the param it is
+ * most true of. A widget is a property of the PARAM TYPE, and `name` is the same field
+ * wherever it appears: twenty-six node types carry a top-level `name: z.string()` whose
+ * default is a domain label (`'Shot'`, `'clip'`, `'channel'`, `'track-to'`). Declaring the
+ * control per node would spell one fact twenty-six times — the failure the spine comment
+ * names — and a twenty-seventh node would have to remember. Calling this instead gets the
+ * control for free and cannot forget to ask.
+ *
+ * ── WHY THIS IS NOT THE OUTLINER'S RENAME ─────────────────────────────────────────────
+ *
+ * 🔴 `params.name` AND `meta.name` ARE DIFFERENT FIELDS, and only the second one was ever
+ * authorable. A director's double-click in the outliner dispatches `setMeta`
+ * (`src/app/RenameInput.tsx:59`), which writes `meta.name` — rung 1 of `nodeDisplayName`'s
+ * priority ladder. `params.name` is rung 2, documented there as "the SEMANTIC name carried
+ * by Shot / AnimationClip / Character node params — their domain label, not a generic
+ * field", and it has 36 production readers: a light rig is found by it
+ * (`resolveRigLightSources.ts:50`), a studio profile is keyed on it (`studioProfiles.ts:42`),
+ * a composition exports under it (`exportCompositionAction.ts:154`), a retarget names its
+ * output with it (`retargetFromNodes.ts:181`). So renaming the node in the tree did NOT set
+ * the thing those call sites read, and nothing in the panel could.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────
+ *
+ * No `.refine()`, for {@link colorParam}'s reason and one more. A name reaching a reader is
+ * never a throw — every one of the 36 treats it as an opaque label or falls back — and
+ * narrowing here would change what ALREADY-SAVED projects validate against, for a failure
+ * that does not occur. The widget is presentation and must not move validation, which is
+ * the rule {@link widget} states about itself.
+ *
+ * Blank stays accepted, and that is load-bearing rather than incidental: it is the
+ * unconfigured state `nodeDisplayName` falls THROUGH on its way to the next rung, so
+ * refusing it would make a name unclearable once typed and would strand the fallback.
+ */
+export function nameParam(defaultLabel: string): z.ZodDefault<z.ZodString> {
+  return widget('text', z.string().default(defaultLabel));
+}

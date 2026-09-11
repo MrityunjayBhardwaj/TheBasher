@@ -90,6 +90,7 @@ import { hashValue } from '../core/dag/hash';
 import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/generatedClipCache';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
+import { nameParam } from './paramWidget';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -119,7 +120,7 @@ export const MotionGenerateParams = z.object({
    * NOT part of the request hash: renaming a clip must not re-run a paid
    * generation, and two clips differing only in name are the same motion.
    */
-  name: z.string().default(''),
+  name: nameParam(''),
 });
 export type MotionGenerateParams = z.infer<typeof MotionGenerateParams>;
 

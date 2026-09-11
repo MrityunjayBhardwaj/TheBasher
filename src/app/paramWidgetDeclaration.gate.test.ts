@@ -22,8 +22,9 @@ import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { SCOPE_PARAM, scopeParam } from '../nodes/componentSelection';
-import { colorParam, widget, widgetOf, type ParamWidget } from '../nodes/paramWidget';
+import { colorParam, nameParam, widget, widgetOf, type ParamWidget } from '../nodes/paramWidget';
 import { overrideDescriptor } from './overrideDescriptor';
+import { nodeDisplayName } from './sceneTreeWalk';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -35,6 +36,17 @@ function fieldOf(type: string, param: string): z.ZodTypeAny | undefined {
   const schema = getNodeType(type)?.paramSchema;
   if (!(schema instanceof z.ZodObject)) return undefined;
   return (schema.shape as Record<string, z.ZodTypeAny>)[param];
+}
+
+/** The panel's own unwrap, re-spelled here because it is private to `NPanel.tsx`. Kept
+ *  identical on purpose: a census of what the panel draws must unwrap what the panel
+ *  unwraps, or it measures a different question than the one it claims to answer. */
+function unwrapZod(schema: z.ZodTypeAny): z.ZodTypeAny {
+  if (schema instanceof z.ZodDefault) return unwrapZod(schema.removeDefault());
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+    return unwrapZod(schema.unwrap());
+  }
+  return schema;
 }
 
 describe('a param declares its control on its schema (#872)', () => {
@@ -168,6 +180,101 @@ describe('a param declares its control on its schema (#872)', () => {
     // would make the field unclearable once typed.
     expect(field.safeParse('').success).toBe(true);
     expect(field.safeParse('arm').success).toBe(true);
+  });
+
+  it('row 11 — no top-level `name` param is left read-only, stated as an absence (#1031)', () => {
+    // THE DURABLE FORM, and it is deliberately NOT a fixed list of the twenty-six. A node
+    // type added tomorrow with a `name: z.string()` that forgets `nameParam()` reds HERE
+    // rather than shipping a field its director cannot type — which is the whole failure
+    // this row descends from (#1027, found in self-review at the twenty-seventh site).
+    //
+    // A name is identified by what it IS: a top-level param whose schema is a string and
+    // whose key is `name`. That is narrower than the colour rule above needs to be, because
+    // unlike a hex colour a name has no structural signature — the key IS the signature, and
+    // `nodeDisplayName` reads it by that key (`src/app/sceneTreeWalk.ts:99`).
+    const names: string[] = [];
+    const undeclared: string[] = [];
+    let examined = 0;
+    for (const type of listNodeTypes()) {
+      const schema = getNodeType(type)?.paramSchema;
+      if (!(schema instanceof z.ZodObject)) continue;
+      for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
+        examined++;
+        if (key !== 'name') continue;
+        // By FIELD TYPE, not by a parsed default. 🔴 The first version of this census read
+        // `schema.safeParse({})` to find string-VALUED params, and seven node types whose
+        // schema has a required field cannot parse `{}` — so their params were never
+        // examined at all and the count came back eleven short, `MotionGenerate.name`
+        // among them. A zero from an instrument that skipped the subject is not a zero.
+        if (!(unwrapZod(field) instanceof z.ZodString)) continue;
+        names.push(`${type}.${key}`);
+        if (widgetOf(field) !== 'text') undeclared.push(`${type}.${key}`);
+      }
+    }
+    // The denominator and a positive control ride with the verdict, so an empty
+    // `undeclared` can never be read as a pass from a loop that never ran.
+    expect({ examined: examined > 0, nameCount: names.length, undeclared }).toEqual({
+      examined: true,
+      nameCount: 26,
+      undeclared: [],
+    });
+  });
+
+  it('row 12 — `nameParam` declares the control and does NOT narrow what the schema accepts', () => {
+    // Same pairing as row 8, and for the same reason: the widget is presentation, so a
+    // declared name must validate EXACTLY as the bare string it replaced. Twenty-six node
+    // types' saved projects parse through these fields, so a refinement added here would
+    // be a migration, not a decoration.
+    const declared = nameParam('Shot');
+    expect(widgetOf(declared)).toBe('text');
+    for (const value of ['Shot', '', 'a name with spaces', '🎬', 'arm-left']) {
+      expect({ value, ok: declared.safeParse(value).success }).toEqual({ value, ok: true });
+    }
+    expect(declared.parse(undefined)).toBe('Shot');
+    // Blank is ACCEPTED on purpose — it is the unconfigured state `nodeDisplayName` falls
+    // through on its way to the next rung, so refusing it would strand that fallback.
+    expect(declared.safeParse('').success).toBe(true);
+    // Registered per call, like `scopeParam` and `colorParam` — two instances, both declared.
+    expect(nameParam('Track')).not.toBe(declared);
+    expect(widgetOf(nameParam('Track'))).toBe('text');
+  });
+
+  it('row 13 — the name control is NOT the outliner rename, and the two fields both survive', () => {
+    // 🔑 THE REASON THE GAP SURVIVED THIS LONG. A director CAN rename these nodes, so the
+    // panel's read-only `name` row looked redundant rather than broken. It is a DIFFERENT
+    // field: the outliner dispatches `setMeta` -> `meta.name` (`src/app/RenameInput.tsx:59`),
+    // and this is `params.name`, which 36 production call sites read and which no surface
+    // could set.
+    //
+    // 🔴 THIS ROW IS THE SECOND DRAFT. The first pinned the two as a SHAPE — `name` is in the
+    // params, `metaName` is not — and `metaName` is a spelling no node has ever had, so that
+    // half could not have reddened for any edit. An assertion whose subject cannot change is
+    // not a guard. This asserts the BEHAVIOUR the two fields exist to produce instead, which
+    // is what actually breaks if someone collapses them into one.
+    const nodes = {
+      both: {
+        id: 'both',
+        type: 'Shot',
+        params: { name: 'from-params' },
+        meta: { name: 'from-meta' },
+      },
+      paramsOnly: { id: 'paramsOnly', type: 'Shot', params: { name: 'from-params' } },
+      neither: { id: 'neither', type: 'Shot', params: {} },
+    } as unknown as Parameters<typeof nodeDisplayName>[0];
+
+    expect({
+      both: nodeDisplayName(nodes, 'both'),
+      paramsOnly: nodeDisplayName(nodes, 'paramsOnly'),
+      neither: nodeDisplayName(nodes, 'neither'),
+    }).toEqual({
+      // meta wins — a director's rename beats the semantic label rather than losing to it…
+      both: 'from-meta',
+      // …and the semantic label is what shows when there has been no rename, which is
+      // exactly the value this issue made authorable.
+      paramsOnly: 'from-params',
+      // …and with neither, the id. Blank stays the unconfigured state and falls through.
+      neither: 'neither',
+    });
   });
 
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {

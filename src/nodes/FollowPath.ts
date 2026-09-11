@@ -40,9 +40,10 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { FollowPathConstraintValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const FollowPathParams = z.object({
-  name: z.string().default('follow-path'),
+  name: nameParam('follow-path'),
   /** The constrained node id whose position this derives (mirrors a channel's `target`).
    *  Empty → inert (enumerated but no node to place). */
   target: z.string().default(''),

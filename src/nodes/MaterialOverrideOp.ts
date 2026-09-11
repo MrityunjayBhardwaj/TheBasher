@@ -64,9 +64,10 @@ import { hydrateInlineMaterial } from './materialSchema';
 import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 import { mintTargetedAttributes } from './meshAttributes';
 import { refWithAttributeKey } from '../app/modifierGeometry';
+import { nameParam } from './paramWidget';
 
 export const MaterialOverrideOpParams = z.object({
-  name: z.string().default('override'),
+  name: nameParam('override'),
   color: colorParam('#ffffff'),
   roughness: z.number().min(0).max(1).default(0.5),
   metalness: z.number().min(0).max(1).default(0),

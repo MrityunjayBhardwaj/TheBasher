@@ -39,11 +39,12 @@ import type {
 } from './types';
 import { sampleVec3KeyframesExtended, type Vec3Key } from './keyframeInterp';
 import { ClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
+import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 export const AnimationClipParams = z.object({
-  name: z.string().default('clip'),
+  name: nameParam('clip'),
   duration: z.number().positive().default(2),
   /** What the clip does past its authored range — see `clipLoop.ts`. Was a
    *  boolean whose `true` meant cycle-WITH-OFFSET, which made cycle-in-place

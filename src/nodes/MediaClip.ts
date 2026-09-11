@@ -20,12 +20,13 @@ import { hashValue } from '../core/dag/hash';
 import type { NodeDefinition } from '../core/dag/types';
 import type { EvalCtx } from '../core/dag/types';
 import { DEFAULT_IMAGE_DESCRIPTOR, type ImageValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const MEDIA_CLIP_KINDS = ['video', 'image'] as const;
 export type MediaClipKind = (typeof MEDIA_CLIP_KINDS)[number];
 
 export const MediaClipParams = z.object({
-  name: z.string().default('Clip'),
+  name: nameParam('Clip'),
   /** OPFS path the imported bytes live at (content-addressed by the ingest path).
    *  Empty default + `?? ''` guards keep legacy projects loading (V10/H14). */
   src: z.string().default(''),
