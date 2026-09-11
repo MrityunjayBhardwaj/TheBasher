@@ -269,7 +269,13 @@ export function critique(report: EffectReport): string[] {
       `Named but unchanged: ${report.namedButUnchanged.join(', ')} — the ops mention these and they are the same as before.`,
     );
   }
-  if (!report.reachesOutput && !report.vacuous) {
+  // The outputs line is a SUMMARY of the per-node findings whenever those findings
+  // already account for every addition — saying both is the same sentence twice, and
+  // a report that repeats itself is one a reader learns to skim. Measured on the
+  // mutator road: both plans that produced findings produced this line as a duplicate
+  // of the one above it.
+  const explained = stranded.length + halfAttached.length === report.added.length;
+  if (!report.reachesOutput && !report.vacuous && !(explained && report.added.length > 0)) {
     out.push(
       "Nothing the project's outputs can see changed. The graph moved, but not anywhere the render reads from.",
     );

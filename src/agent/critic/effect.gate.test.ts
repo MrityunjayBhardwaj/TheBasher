@@ -100,8 +100,9 @@ describe('#733 critic — what the plan actually did', () => {
     const text = findings.join('\n');
     expect(text).toContain('nothing reads IT');
     expect(text).not.toContain('connected it to nothing');
-    // The cube on screen gets no copies, and the report says so.
-    expect(text).toContain("Nothing the project's outputs can see changed");
+    // The per-node finding already accounts for every addition, so the whole-plan
+    // summary is NOT repeated underneath it — one sentence, not two.
+    expect(text).not.toContain("Nothing the project's outputs can see changed");
     // `n_box_data` is the `from` of a connect — an edge lives on the CONSUMER, so the
     // producer's record is untouched and reporting it would be a false positive.
     expect(text).not.toContain('Named but unchanged');
@@ -124,6 +125,27 @@ describe('#733 critic — what the plan actually did', () => {
     ] as Op[]);
     expect(report.vacuous).toBe(true);
     expect(findings.join('\n')).toContain('changed nothing at all');
+  });
+
+  it('the whole-plan summary fires when no addition explains it', () => {
+    // A Shot has no consumer anywhere in the product yet, so it sits outside
+    // everything the outputs read. Created in SETUP, then edited by the plan: the plan
+    // adds nothing, so there is no per-node finding to make the summary a duplicate.
+    // This is the case the summary exists for.
+    const withShot = apply(base, [
+      { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} },
+    ] as Op[]);
+    expect(outputClosure(withShot).has('n_shot')).toBe(false);
+
+    const ops = [{ type: 'setParam', nodeId: 'n_shot', paramPath: 'endTime', value: 4 }] as Op[];
+    const after = apply(withShot, ops);
+    const findings = critique(describeEffect(withShot, after, ops));
+    const report = describeEffect(withShot, after, ops);
+
+    expect(report.changed).toEqual(['n_shot']);
+    expect(report.added).toEqual([]);
+    expect(report.reachesOutput).toBe(false);
+    expect(findings.join('\n')).toContain("Nothing the project's outputs can see changed");
   });
 
   it('the output closure is taken from the project outputs and spans id-refs', () => {
