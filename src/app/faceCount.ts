@@ -65,9 +65,18 @@ import { arrayCopiesOf } from './arrayCopies';
  * and asserts the built triangle count matches this — including at the clamp edges, where
  * three.js quietly raises a sphere's segments to its own minimum.
  *
- * The two `null` arms are the escape hatch and are censused exactly by that gate:
- *   `gltf`  — the buffers live in a loaded asset clone; nothing on the descriptor says how
- *             many triangles they hold.
+ * ⚠️ THE ESCAPE HATCH IS ABOUT A MISSING CAPTURE, NOT ABOUT A KIND — and this paragraph said
+ * otherwise until #1029. It read *"the two `null` arms"*, naming `gltf` and `baked` as though
+ * refusing were a property of being imported. Since #1023 an imported child carries the face
+ * count read from the glTF JSON, and this function answers from it; measured, a captured
+ * child answers and an uncaptured one refuses, so the arm turns on the readout and not on the
+ * kind. An enumeration in that voice is reached for instead of the code, which is what makes
+ * a stale one act as a wrong answer rather than a missing one.
+ *
+ * What refuses, and why, censused by that gate:
+ *   `gltf` WITHOUT a captured count — every save written before #1023, and every child that
+ *             is not an all-triangle mesh. An absent readout means nobody looked; it never
+ *             means zero faces.
  *   `baked` — the descriptor carries a vertex count, not a face count, and the authoritative
  *             bytes are in OPFS. Deriving faces from vertices would be a guess about
  *             indexing, which is exactly the kind of agrees-today arithmetic this comment

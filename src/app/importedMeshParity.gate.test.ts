@@ -24,13 +24,27 @@
 //
 // ── WHAT THE NUMBERS MEAN TODAY ───────────────────────────────────────────────────────
 //
-//   box    6/6      sphere 6/6      gltf 0/6      baked 0/6
+//   box 6/6     sphere 6/6     gltf 0/6     gltf+captured 3/6     baked 0/6
 //
-// A generated mesh answers every question the model can ask. An imported one answers none
-// of them: `GeometryDescriptor` is build recipes and references with nowhere to put an
-// attribute, so `gltf` carries an `assetRef` and a `childName` and the questions have
-// nothing to read. That is the root defect, and #605 / #607 / #496 are it seen from three
-// sides. When they land, these numbers move and this file must be edited.
+// A generated mesh answers every question the model can ask. An imported one answers none of
+// them UNTIL its import captured a face count: `GeometryDescriptor` is build recipes and
+// references with nowhere to put an attribute, so a bare `gltf` carries an `assetRef` and a
+// `childName` and the questions have nothing to read. That is the root defect, and #605 /
+// #607 / #496 are it seen from three sides.
+//
+// 🔑 THE TWO gltf ROWS ARE THE POINT OF THIS TABLE NOW. They are the same child; the only
+// difference is whether the importer read its face count. Three answers turn on that one
+// fact, which is why the escape hatch these questions declare is a CAPTURE STATE and not a
+// kind — a distinction that had rotted into "the gltf arm has no answer" in two separate
+// modules before #1029 made it a row here.
+//
+// The three a captured child still cannot answer — polygon layout, point count, edge count —
+// all need the RIMS or the WELD, which are the index and position buffers rather than
+// descriptor data. Note what that means and what this table cannot see: #1025 and #1028 DID
+// recover an imported mesh's rims, from the built buffer, and none of these numbers moved,
+// because every question here is asked of a DESCRIPTOR alone. This measures descriptor-side
+// distance. It is the right thing to measure for the root defect and it is not the whole
+// distance to the goal.
 //
 // Two formats are absent from the table rather than scoring zero on it, which is a
 // different and worse thing:
@@ -40,7 +54,7 @@
 //
 // ── MEASURED LIMIT ────────────────────────────────────────────────────────────────────
 //
-// This covers the four LEAF kinds. The operator kinds (`array`, `mirror`, `subset`,
+// This covers the four LEAF kinds (as five subjects — `gltf` appears twice, captured and not). The operator kinds (`array`, `mirror`, `subset`,
 // `bevel`, `uvProject`, `counted`) answer through their source and are out of scope here.
 // A new leaf kind added to the union does NOT red this file — there is no named leaf type
 // to make exhaustive against, so that gap is real and stated rather than assumed away.
@@ -69,7 +83,15 @@ const QUESTIONS: ReadonlyArray<readonly [string, (d: GeometryDescriptor) => bool
 const SUBJECTS: ReadonlyArray<readonly [string, GeometryDescriptor]> = [
   ['box', { kind: 'box', size: [1, 1, 1] }],
   ['sphere', { kind: 'sphere', radius: 1, widthSegments: 8, heightSegments: 6 }],
+  // An imported child whose import captured nothing — every save written before #1023, and
+  // every child that is not an all-triangle mesh. It answers nothing, and must keep doing so.
   ['gltf', { kind: 'gltf', assetRef: 'user-imports/x/x.gltf', childName: 'Cube' }],
+  // #1023 — the same child, imported by a build that captured its face count. THIS is the
+  // row that measures the goal: it is the first imported mesh that answers anything at all.
+  [
+    'gltf+captured',
+    { kind: 'gltf', assetRef: 'user-imports/x/x.gltf', childName: 'Cube', faceCount: 12 },
+  ],
   ['baked', { kind: 'baked', hash: 'abc', vertexCount: 24 }],
 ];
 
@@ -81,6 +103,12 @@ const ANSWERED: Readonly<Record<string, number>> = {
   box: 6,
   sphere: 6,
   gltf: 0,
+  // #1023 moved this from 0 to 3. Face count, corner count and arity now answer from the
+  // captured count plus the format's guarantee that a glTF face is a triangle. The three
+  // that still refuse — polygon layout, point count, edge count — all need RIMS or the
+  // WELD, which are the index and position buffers, not descriptor data. Their refusal is
+  // about the weld and not about arity, and that is the next number to move.
+  'gltf+captured': 3,
   baked: 0,
 };
 
@@ -121,6 +149,15 @@ describe('#1020 — the distance from an imported mesh to a box', () => {
       'point count',
       'edge count',
     ]);
+
+    // #1023 — and the three a CAPTURED child still cannot answer. All three need the rims
+    // or the weld; none of them needs arity any more.
+    const captured = SUBJECTS.find(([n]) => n === 'gltf+captured')?.[1] as GeometryDescriptor;
+    expect(QUESTIONS.filter(([, ask]) => !ask(captured)).map(([n]) => n)).toEqual([
+      'polygon layout',
+      'point count',
+      'edge count',
+    ]);
   });
 
   it('records the one real divergence between the two imported kinds', () => {
@@ -141,7 +178,7 @@ describe('#1020 — the distance from an imported mesh to a box', () => {
     // subjects list were, every assertion above would pass vacuously and report 0/0 as a
     // clean parity result.
     expect(QUESTIONS.length).toBe(6);
-    expect(SUBJECTS.length).toBe(4);
+    expect(SUBJECTS.length).toBe(5);
     expect(Object.keys(ANSWERED).sort()).toEqual(SUBJECTS.map(([n]) => n).sort());
   });
 });

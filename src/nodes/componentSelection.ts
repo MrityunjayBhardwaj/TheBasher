@@ -314,10 +314,18 @@ export function componentCountOf(
 ): CountVerdict {
   switch (domain) {
     case 'face': {
-      // The gltf / baked arms have no answer: their buffers live outside the descriptor, so
-      // nothing here can say how many faces they hold. A ZERO would read as "scope nothing"
-      // on a mesh the author can see, with faces they can count — which is why the absence
-      // is carried as its own value rather than as a number.
+      // 🔴 #1029 — THIS SAID "the gltf / baked arms have no answer" AND A gltf NOW ANSWERS.
+      // Measured: a captured import returns `{ kind: 'counted', count: 12 }` here, because
+      // this arm delegates to `faceCountOf` and #1023 gave that a captured-count arm. The
+      // sentence was the arm's own summary, absolute and enumerated, so it was reached for
+      // instead of the two lines below it — the same defect as #1026 one module over, and
+      // the reason both are worth an entry rather than a quiet edit.
+      //
+      // What holds, and what the refusal actually means: a face count is unavailable when
+      // nobody captured one (an import from before #1023, a child that is not all triangles)
+      // or when the kind cannot state one at all (`baked`). A ZERO would read as "scope
+      // nothing" on a mesh the author can see, with faces they can count — which is why the
+      // absence is carried as its own value rather than as a number.
       //
       // #744 — `faceCountOf` STILL SPEAKS `number | null`, AND THE LIFT HAPPENS HERE. Its
       // `null` has only ever meant one thing: its derived arms recurse, and come back null
@@ -328,7 +336,12 @@ export function componentCountOf(
       return faces === null
         ? {
             kind: 'outside-the-descriptor',
-            why: `descriptor '${descriptor.kind}' resolves to a 'gltf' or 'baked' source, whose triangles live outside the descriptor`,
+            // ⚠️ NAMES BOTH CAUSES RATHER THAN THE LIKELIER ONE. Telling them apart needs a
+            // walk to the leaf of the source chain, and the two walks this repo already has
+            // cover different kind sets for different questions — so a third would be a third
+            // spelling, and guessing which cause fired would repeat the very defect this
+            // sentence was rewritten to remove. It states what is true of both.
+            why: `descriptor '${descriptor.kind}' resolves to a source whose faces this cannot count: either an imported mesh whose face count was never captured (re-importing captures one) or a 'baked' mesh, whose triangles live outside the descriptor`,
           }
         : { kind: 'counted', count: faces };
     }
