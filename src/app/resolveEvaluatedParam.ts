@@ -26,6 +26,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { foldChannelValue, type ChannelContribution } from '../nodes/foldChannel';
+import { channelIsActive } from '../nodes/overlayChannels';
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
@@ -127,6 +128,19 @@ export function resolveEvaluatedParam(
   for (const v of driverChannelValuesForTarget(state, nodeId, ctx, cache)) {
     if (v.paramPath === paramPath) matches.push(v);
   }
+
+  // 2d. The MUTE gate (#1016) — the same predicate `overlayChannels` applies, on the
+  //     same collection, so this fold and the render's fold cannot disagree about which
+  //     channels are live. Without it a muted channel lost in the viewport (the render
+  //     drops it) and WON here, at every read surface: the inspector row, the compositor
+  //     read, a bake, the Comfy batch compile. Applied AFTER strips + drivers, over all
+  //     three kinds at once, exactly where `overlayChannels` applies it — so a future
+  //     overlay kind is gated by arriving in `matches`, not by another copy of this line.
+  //     Applied BEFORE the empty check below, so "every channel here is muted" falls
+  //     through to the object↔data reach like "no channel here" does.
+  const gated = matches.filter(channelIsActive);
+  matches.length = 0;
+  matches.push(...gated);
 
   // 3. No channel/driver on the requested node → before giving up, reach through the
   //    object↔data split (#398). A cube's `material`/`size` live on its linked data node,
