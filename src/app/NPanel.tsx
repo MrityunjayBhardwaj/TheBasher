@@ -69,7 +69,7 @@ import {
 } from './exposeParams';
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
-import { widgetOf, type ParamWidget } from '../nodes/paramWidget';
+import { placeholderOf, type ParamWidget, widgetOf } from '../nodes/paramWidget';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
@@ -716,6 +716,24 @@ function declaredWidget(nodeId: string, paramPath: string): ParamWidget | null {
   if (!(schema instanceof z.ZodObject)) return null;
   const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
   return field ? (widgetOf(field) ?? null) : null;
+}
+
+/**
+ * What a param calls its EMPTY state, or null if it has no opinion (#1031).
+ *
+ * Separate from {@link declaredWidget} because the two answer different questions: the kind
+ * picks the control, the placeholder says what blank MEANS there. Two params can share the
+ * `text` control and still need different words — which is exactly what went wrong when that
+ * arm hardcoded one.
+ */
+function declaredPlaceholder(nodeId: string, paramPath: string): string | null {
+  if (paramPath.includes('.')) return null;
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  return field ? (placeholderOf(field) ?? null) : null;
 }
 
 /** The declared schema for a top-level param, so a control can check a value BEFORE
@@ -3005,7 +3023,13 @@ function ParamRow({
               paramPath={paramPath}
               label={paramPath}
               value={value}
-              placeholder="unnamed"
+              // 🔴 THE PARAM'S OWN WORD, NOT THIS ARM'S. This read `placeholder="unnamed"`
+              // when the arm had exactly one caller (#1027, a group's name). Seven more
+              // params joined it in #1031 — two prompt fields, a media source, three output
+              // paths — and every one of them would have read "unnamed", which is not what
+              // blank means in any of those. `'empty'` is the neutral fallback the control
+              // owns; a param overrides it only when blank has a specific reading there.
+              placeholder={declaredPlaceholder(nodeId, paramPath) ?? 'empty'}
               testidKind="text"
             />
           );

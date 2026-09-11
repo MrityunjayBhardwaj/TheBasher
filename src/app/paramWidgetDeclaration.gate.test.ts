@@ -22,7 +22,14 @@ import { z } from 'zod';
 import { __resetRegistryForTests, getNodeType, listNodeTypes } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { SCOPE_PARAM, scopeParam } from '../nodes/componentSelection';
-import { colorParam, nameParam, widget, widgetOf, type ParamWidget } from '../nodes/paramWidget';
+import {
+  colorParam,
+  nameParam,
+  placeholderOf,
+  widget,
+  widgetOf,
+  type ParamWidget,
+} from '../nodes/paramWidget';
 import { overrideDescriptor } from './overrideDescriptor';
 import { nodeDisplayName } from './sceneTreeWalk';
 
@@ -354,8 +361,9 @@ describe('a param declares its control on its schema (#872)', () => {
       const refKeys = new Set(refParams ? Object.keys(refParams) : []);
       for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
         examined++;
+        // No separate enum arm below: a `ZodEnum` is not a `ZodString`, so the line above
+        // already excludes it. Spelling it twice would read as a second guard and be dead.
         if (!(unwrapZod(field) instanceof z.ZodString)) continue;
-        if (unwrapZod(field) instanceof z.ZodEnum) continue;
         if (refKeys.has(key)) continue;
         if (widgetOf(field) !== undefined) continue;
         readOnly.push(`${type}.${key}`);
@@ -379,6 +387,68 @@ describe('a param declares its control on its schema (#872)', () => {
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
     expect(readOnly.length).toBe(34);
+  });
+
+  it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
+    // 🔴 THIS ROW EXISTS BECAUSE THE DEFECT WAS MINE, FOUND IN SELF-REVIEW OF THE COMMIT
+    // ABOVE. The `text` arm was added with one caller and hardcoded that caller's word —
+    // `placeholder="unnamed"`, right for a group's name. Seven params joined the same arm in
+    // this issue, and every one would have rendered "unnamed": a prompt, a media source,
+    // three output paths. The control and the word are different questions, and this pins
+    // them apart so the next param to join cannot inherit somebody else's sentence.
+    const shotName = fieldOf('Shot', 'name')!;
+    const promptText = fieldOf('Prompt', 'text')!;
+
+    expect({
+      // A name HAS a reading for blank — the node still shows a label from the next rung of
+      // `nodeDisplayName`'s ladder, so the field is empty but the node is not anonymous.
+      name: placeholderOf(shotName),
+      // A prompt does not. It declines, and `ParamRow` supplies the neutral `'empty'`.
+      promptText: placeholderOf(promptText),
+      // Same control for both — which is the whole point: sharing a widget must not mean
+      // sharing a word.
+      nameWidget: widgetOf(shotName),
+      promptWidget: widgetOf(promptText),
+    }).toEqual({
+      name: 'unnamed',
+      promptText: undefined,
+      nameWidget: 'text',
+      promptWidget: 'text',
+    });
+
+    // Declaring a placeholder must not move validation either — the same rule the widget
+    // itself is held to, checked independently rather than assumed to follow from it.
+    const withWord = widget('text', z.string().min(2), 'say something');
+    const without = z.string().min(2);
+    for (const v of ['', 'a', 'ab', 'abc']) {
+      expect({ v, ok: withWord.safeParse(v).success }).toEqual({
+        v,
+        ok: without.safeParse(v).success,
+      });
+    }
+    // …and a schema that was never given one answers undefined rather than a stray word.
+    expect(placeholderOf(z.string())).toBeUndefined();
+    expect(placeholderOf(undefined)).toBeUndefined();
+    expect(placeholderOf('unnamed')).toBeUndefined();
+
+    // The census, so this cannot drift into "every text param declares a word" (which would
+    // make the fallback dead) or "none does" (which is the bug it replaces). Every `name`
+    // carries one because they all come through the one helper; nothing else does yet.
+    const declaredWord: string[] = [];
+    let examined = 0;
+    for (const type of listNodeTypes()) {
+      const schema = getNodeType(type)?.paramSchema;
+      if (!(schema instanceof z.ZodObject)) continue;
+      for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
+        examined++;
+        if (placeholderOf(field) !== undefined) declaredWord.push(`${type}.${key}`);
+      }
+    }
+    expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
+      examined: true,
+      count: 26,
+    });
+    expect(declaredWord.every((k) => k.endsWith('.name'))).toBe(true);
   });
 
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {

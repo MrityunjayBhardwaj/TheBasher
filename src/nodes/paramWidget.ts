@@ -79,6 +79,23 @@ export type ParamWidget = 'query' | 'color' | 'text';
 const WIDGETS = new WeakMap<object, ParamWidget>();
 
 /**
+ * Schema instance → what its EMPTY state should be called, when the param has an opinion.
+ *
+ * 🔴 SEPARATE FROM THE KIND BECAUSE THEY ANSWER DIFFERENT QUESTIONS, and conflating them is
+ * the defect this pair exists to prevent. The kind says which control to draw; the
+ * placeholder says what BLANK MEANS, and blank means something different per param even when
+ * the control is identical. A blank scope is "all", a blank group name is "unnamed", a blank
+ * prompt is just empty. The `text` arm was introduced (#1027) with the group name's word
+ * hardcoded at the draw site, so every param that later asked for the same control inherited
+ * the wrong sentence — a prompt field reading "unnamed". Found in self-review of #1031, at
+ * the moment seven more params joined that arm.
+ *
+ * Weak and keyed by identity for {@link WIDGETS}' reasons. Absent is a real answer: the draw
+ * site supplies the neutral word, so a param only speaks up when it has something better.
+ */
+const PLACEHOLDERS = new WeakMap<object, string>();
+
+/**
  * Declare that `schema` is authored with `kind`, and return the SAME schema.
  *
  * Returns the identical instance rather than a wrapper so it composes with nothing: a
@@ -86,9 +103,25 @@ const WIDGETS = new WeakMap<object, ParamWidget>();
  * function's return value still gets a registered schema. The widget is presentation and
  * must never be able to change what the schema accepts.
  */
-export function widget<S extends z.ZodTypeAny>(kind: ParamWidget, schema: S): S {
+export function widget<S extends z.ZodTypeAny>(
+  kind: ParamWidget,
+  schema: S,
+  placeholder?: string,
+): S {
   WIDGETS.set(schema, kind);
+  if (placeholder !== undefined) PLACEHOLDERS.set(schema, placeholder);
   return schema;
+}
+
+/**
+ * What this schema calls its empty state, or `undefined` if it has no opinion.
+ *
+ * Undefined is the honest answer and the common one: the draw site owns the neutral word for
+ * each control, and a param overrides it only when blank means something specific there.
+ */
+export function placeholderOf(schema: unknown): string | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return PLACEHOLDERS.get(schema);
 }
 
 /**
@@ -167,5 +200,8 @@ export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
  * refusing it would make a name unclearable once typed and would strand the fallback.
  */
 export function nameParam(defaultLabel: string): z.ZodDefault<z.ZodString> {
-  return widget('text', z.string().default(defaultLabel));
+  // "unnamed" rather than the neutral "empty", because for a name blank has a READING: the
+  // node still shows a label, drawn from the next rung of `nodeDisplayName`'s ladder. The
+  // field is empty; the node is not anonymous.
+  return widget('text', z.string().default(defaultLabel), 'unnamed');
 }
