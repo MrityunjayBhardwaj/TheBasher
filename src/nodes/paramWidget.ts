@@ -57,10 +57,17 @@ import { z } from 'zod';
  * 'never'` — rather than assumed, which is the only thing that makes the forcing function a
  * fact rather than an intention.
  *
+ * `'text'` (#1027) is a plain authored string that is not an enum, a colour or a query — a
+ * component group's NAME, the first param of that shape in the repo. It is here because the
+ * fall-through arm this module exists to close was still swallowing it: a bare `z.string()`
+ * renders as a READ-ONLY span, so the operator shipped offered in the Add menu with the one
+ * field that makes it do anything un-typeable. Measured in self-review, not predicted — and it
+ * is the same "advertised action that silently does nothing" shape the panel refuses elsewhere.
+ *
  * A member is still not added on speculation: the name and the row land together, so this
  * union stays a census of what the panel can actually draw rather than a wish list.
  */
-export type ParamWidget = 'query' | 'color';
+export type ParamWidget = 'query' | 'color' | 'text';
 
 /**
  * Schema instance → the control it asks for.

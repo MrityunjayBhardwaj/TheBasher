@@ -812,11 +812,22 @@ function QueryField({
   paramPath,
   label,
   value,
+  placeholder = 'all',
+  testidKind = 'query',
 }: {
   nodeId: string;
   paramPath: string;
   label: string;
   value: string;
+  /** What an EMPTY field means, in the author's words. A scope's blank is "all"; a group's
+   *  name has no such reading — blank is simply unnamed, and the operator is inert. */
+  placeholder?: string;
+  /**
+   * #1027 — the testid's middle segment, defaulted so every existing selector keeps working.
+   * `inspector-query-*` is named by `p872-authorable-selection.spec.ts`, and a rename to
+   * something more general would have been a silent e2e break for a cosmetic gain.
+   */
+  testidKind?: string;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   const [draft, setDraft] = useState(value);
@@ -848,8 +859,8 @@ function QueryField({
           type="text"
           value={draft}
           spellCheck={false}
-          placeholder="all"
-          data-testid={`inspector-query-${nodeId}-${paramPath}`}
+          placeholder={placeholder}
+          data-testid={`inspector-${testidKind}-${nodeId}-${paramPath}`}
           aria-invalid={refusal !== null || undefined}
           className="w-40 rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent aria-[invalid]:border-error"
           onChange={(e) => setDraft(e.target.value)}
@@ -2979,6 +2990,24 @@ function ParamRow({
         case 'query':
           return (
             <QueryField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />
+          );
+        // #1027 — the SAME control, because the two fields want the same thing: free text
+        // validated against the param's own schema, with the refusal shown in place so a typo
+        // is correctable rather than dropped. `setParam` silently rejects a value the schema
+        // will not take, so a field without that feedback would look like nothing happened.
+        // Only the placeholder differs, and it differs because an empty field MEANS different
+        // things: a blank scope is "all", a blank name is "unnamed", and the operator with no
+        // name is inert rather than universal.
+        case 'text':
+          return (
+            <QueryField
+              nodeId={nodeId}
+              paramPath={paramPath}
+              label={paramPath}
+              value={value}
+              placeholder="unnamed"
+              testidKind="text"
+            />
           );
         case 'color':
           return (

@@ -65,6 +65,7 @@ import { refWithAttributeKey } from '../app/modifierGeometry';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
 import { requireResolvedScope, SCOPE_PARAM, scopeParam } from './componentSelection';
 import { isValidGroupName } from './componentGroups';
+import { widget } from './paramWidget';
 import { mintGroupAttributes } from './meshAttributes';
 
 export const ComponentGroupOpParams = z.object({
@@ -80,13 +81,16 @@ export const ComponentGroupOpParams = z.object({
    * happily and can never be written in a query again, which is a silent loss rather than an
    * error. Refusing it at the schema means it never reaches params.
    */
-  name: z
-    .string()
-    .refine((v) => v === '' || isValidGroupName(v), {
-      message:
-        'not a group name — start with a letter or underscore and use only letters, digits and underscores (the query grammar spends `-`, `:`, `*`, `@`, `!` and `^` on other things)',
-    })
-    .default(''),
+  name: widget(
+    'text',
+    z
+      .string()
+      .refine((v) => v === '' || isValidGroupName(v), {
+        message:
+          'not a group name — start with a letter or underscore and use only letters, digits and underscores (the query grammar spends `-`, `:`, `*`, `@`, `!` and `^` on other things)',
+      })
+      .default(''),
+  ),
   /**
    * Stack mute-bypass (V58). The param CARRIES the state; `chain.bypass` below names it and
    * the evaluator honours it, handing the spine value back without running `evaluate`.

@@ -138,6 +138,38 @@ describe('a param declares its control on its schema (#872)', () => {
     }).toEqual({ refusedCount: 3, acceptedCount: 4 });
   });
 
+  it('row 10 — the TEXT control, and the read-only arm it was added to close (#1027)', () => {
+    // 🔴 THIS ROW EXISTS BECAUSE THE GAP WAS FOUND IN SELF-REVIEW, NOT IN REVIEW OF A
+    // SYMPTOM. `ComponentGroupOp` shipped offered in the Add menu with `name` as a bare
+    // `z.string()`, which this panel renders as a READ-ONLY SPAN — so a director could add the
+    // operator and could not type the one field that makes it do anything. The agent road
+    // worked the whole time, which is exactly why nothing else caught it.
+    expect(widgetOf(fieldOf('ComponentGroupOp', 'name'))).toBe('text');
+
+    // The negative control, and it is the specific one that matters here: a bare string on the
+    // same node family still resolves undefined, so this row is about the DECLARATION and not
+    // about `widgetOf` having started answering for everything.
+    expect(widgetOf(z.string())).toBeUndefined();
+    expect(widgetOf(fieldOf('ComponentGroupOp', 'muted'))).toBeUndefined();
+    // …and the scope beside it still asks for the query control, so the two did not merge.
+    expect(widgetOf(fieldOf('ComponentGroupOp', SCOPE_PARAM))).toBe('query');
+
+    // The refusal a director reads, verbatim, for the same reason row 4 pins the scope's: the
+    // panel renders `issues[0].message` and a person reads it.
+    const field = fieldOf('ComponentGroupOp', 'name')!;
+    expect(field.safeParse('arm-left').success).toBe(false);
+    expect(
+      field.safeParse('arm-left').success
+        ? 'ACCEPTED'
+        : (field.safeParse('arm-left') as { error: { issues: { message: string }[] } }).error
+            .issues[0]?.message,
+    ).toContain('not a group name');
+    // Blank is ACCEPTED and is not a refusal: it is the unconfigured state, and refusing it
+    // would make the field unclearable once typed.
+    expect(field.safeParse('').success).toBe(true);
+    expect(field.safeParse('arm').success).toBe(true);
+  });
+
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {
     // 🔴 THIS ROW DID NOT DO WHAT IT SAID, AND #521 IS THE MEASUREMENT (2026-09-03). It read
     //
