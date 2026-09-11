@@ -203,4 +203,87 @@ describe('#733 critic — what the plan actually did', () => {
     ] as Op[]);
     expect(report.reachesOutput).toBe(true);
   });
+
+  // ── #1019 — a sidecar whose NAME is wrong is not a wiring problem ──────────────────
+  //
+  // The old sentence said "connected it to nothing" for these. Every one of these node
+  // types declares `in: -` — no input sockets at all — so that advice can only be
+  // followed by inventing a socket, which is the dominant failure on the raw-op road.
+
+  it('THE PIN: a channel naming a node that does not exist says WHICH param and WHAT it names', () => {
+    const { findings } = run([
+      {
+        type: 'addNode',
+        nodeId: 'n_chan',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'c', target: 'Cube', paramPath: 'position.y' },
+      },
+    ] as Op[]);
+    const text = findings.join('\n');
+    expect(text).toContain('`target` names "Cube"');
+    expect(text).toContain('not a node in this scene');
+    expect(text).toContain('by NAME, not by a wire');
+    // The misdiagnosis must be GONE, not merely joined by the truth.
+    expect(text).not.toContain('connected it to nothing');
+  });
+
+  it('an EMPTY reference is distinguished from a wrong one', () => {
+    const { findings } = run([
+      {
+        type: 'addNode',
+        nodeId: 'n_chan',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'c', target: '', paramPath: 'position.y' },
+      },
+    ] as Op[]);
+    const text = findings.join('\n');
+    expect(text).toContain('`target` is empty');
+    expect(text).not.toContain('names ""');
+    expect(text).not.toContain('connected it to nothing');
+  });
+
+  it('THE REPORT CONTRACT: a LIVE reference is not a bad ref', () => {
+    // Asserted on the report, not on the sentence. Through `critique` the liveness test
+    // is unreachable — a live subject ref puts the node in `attachedFrom`, so it is not
+    // stranded and the sentence is never built. `badRefs` is part of the report's public
+    // shape, so the claim belongs where a future consumer would read it.
+    const { report } = run([
+      {
+        type: 'addNode',
+        nodeId: 'n_chan',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'c', target: 'n_box', paramPath: 'position.y' },
+      },
+    ] as Op[]);
+    expect(report.added.find((a) => a.id === 'n_chan')!.badRefs).toEqual([]);
+  });
+
+  it('CONTROL: a channel naming a LIVE node is silent, as before', () => {
+    const { findings } = run([
+      {
+        type: 'addNode',
+        nodeId: 'n_chan',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'c', target: 'n_box', paramPath: 'position.y' },
+      },
+    ] as Op[]);
+    expect(findings).toEqual([]);
+  });
+
+  it('CONTROL: a node with SOCKETS and no id-refs keeps the wiring sentence', () => {
+    // Scatter declares no `idRefs`, so "connected it to nothing" is the true diagnosis
+    // for it and must survive. This is the row that stops the new branch swallowing the
+    // old one.
+    const { findings } = run([
+      {
+        type: 'addNode',
+        nodeId: 'n_scatter',
+        nodeType: 'Scatter',
+        params: { density: 1, seed: 0, bounds: [1, 1, 1], scaleJitter: 0, randomYaw: false },
+      },
+    ] as Op[]);
+    const text = findings.join('\n');
+    expect(text).toContain('connected it to nothing');
+    expect(text).not.toContain('by NAME');
+  });
 });

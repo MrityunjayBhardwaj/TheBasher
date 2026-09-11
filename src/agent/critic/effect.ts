@@ -49,7 +49,8 @@
 //      (`edges`), src/nodes/Shot.ts (the unconsumed-by-design case); issue #733.
 
 import { edges, type DagState } from '../../core/dag/state';
-import { buildIdRefIndex, idRefsByRole } from '../../core/dag/idRefSweep';
+import { buildIdRefIndex, idRefsByRole, refIdsAt } from '../../core/dag/idRefSweep';
+import { getNodeType } from '../../core/dag/registry';
 import { hashValue } from '../../core/dag/hash';
 import type { NodeId, Op } from '../../core/dag/types';
 
@@ -61,6 +62,18 @@ export interface AddedNode {
   attachedFrom: NodeId[];
   /** Ids this node points at — its edge producers and the ids it names. */
   attachedTo: NodeId[];
+  /**
+   * Declared id-references that name nothing reachable (#1019). `badRefs` is the
+   * discriminating information the stranded sentence was missing: a sidecar reaches its
+   * subject by a NAME in a param, so when the name is wrong the node is stranded for a
+   * reason that has nothing to do with wiring — and most of these node types have no
+   * input sockets at all, so advice to "connect it" can only be followed by inventing a
+   * socket.
+   *
+   * `dangling` — the param holds an id no node in the scene has.
+   * `empty`    — the param is declared and holds nothing.
+   */
+  badRefs: Array<{ path: string; names: string | null }>;
 }
 
 export interface EffectReport {
@@ -199,7 +212,19 @@ export function describeEffect(
         ...roles.subject.filter((t) => !!after.nodes[t]),
       ]),
     ];
-    added.push({ id, type: node.type, attachedFrom, attachedTo });
+    // The liveness filter above already decides this; naming it is the whole fix. Read
+    // off the DECLARATION so an empty ref (which `idRefsByRole` drops, an empty string
+    // naming nothing) is distinguishable from a wrong one.
+    const badRefs: AddedNode['badRefs'] = [];
+    for (const ref of getNodeType(node.type)?.idRefs ?? []) {
+      const named = refIdsAt(node.params, ref.path, ref.shape);
+      if (named.length === 0) {
+        badRefs.push({ path: ref.path, names: null });
+        continue;
+      }
+      for (const t of named) if (!after.nodes[t]) badRefs.push({ path: ref.path, names: t });
+    }
+    added.push({ id, type: node.type, attachedFrom, attachedTo, badRefs });
   }
 
   const removed = Object.keys(before.nodes).filter((id) => !(id in after.nodes));
@@ -238,6 +263,17 @@ export function describeEffect(
  * The findings a reader should be told about. Descriptions, not verdicts — see the
  * module header for the two measured cases that make a blocking rule wrong.
  */
+/** "`target` names \"Cube\", which is not a node in this scene" / "`target` is empty". */
+function describeBadRefs(a: AddedNode): string {
+  return a.badRefs
+    .map((r) =>
+      r.names === null
+        ? `its \`${r.path}\` is empty, so it names nothing`
+        : `its \`${r.path}\` names "${r.names}", which is not a node in this scene`,
+    )
+    .join('; ');
+}
+
 export function critique(report: EffectReport): string[] {
   const out: string[] = [];
   if (report.vacuous) {
@@ -250,6 +286,16 @@ export function critique(report: EffectReport): string[] {
     (a) => a.attachedFrom.length === 0 && a.attachedTo.length === 0,
   );
   for (const a of stranded) {
+    // A bad NAME outranks a missing WIRE. A sidecar reaches its subject through a param,
+    // and telling the author to connect a node whose type declares no input sockets sends
+    // them to invent one — the dominant failure on the raw-op road.
+    if (a.badRefs.length > 0) {
+      out.push(
+        `Added ${a.id} (${a.type}), but ${describeBadRefs(a)}. It reaches its subject by ` +
+          `NAME, not by a wire, so it affects nothing until that names a node that exists.`,
+      );
+      continue;
+    }
     out.push(
       `Added ${a.id} (${a.type}) and connected it to nothing — nothing consumes it and it reads nothing, ` +
         `so it cannot affect the scene on its own. If that is deliberate (a library item wired by a later step), ignore this.`,
