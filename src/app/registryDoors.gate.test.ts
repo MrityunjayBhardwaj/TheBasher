@@ -350,9 +350,16 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // reorders an index in place during construction — on THIS geometry, which is why it must be a
   // copy and why the final index is read back out rather than assumed.
   'src/app/meshBvh.ts': 'builds a private world-space geometry for the BVH from raw arrays',
-  // Viewport helpers: each builds its own line/glyph geometry per render and attaches it to its
-  // own object. None of them can reach a registry instance — they never import the registry.
+  // Viewport helpers: each builds its own line/glyph geometry and attaches it to its own object.
+  // None of them can reach a registry instance — they never import the registry.
   'src/app/Gizmo.tsx': 'builds its own handle line geometry',
+  // Arrived on `main` from the armature work while this gate was being written on the geometry
+  // branch, and the two only met at the merge — which is the case a text merge cannot see and
+  // this gate can. Both of its writes fill a container it made in the same `useMemo`: the
+  // octahedral bone body, and the stick-mode buffer that is re-filled per frame WITHIN a fixed
+  // allocation (`setDrawRange`, never a re-`setIndex`). Nothing it writes was handed to it.
+  'src/viewport/ArmatureHelper.tsx':
+    'builds its own octahedral bone body and stick line buffer',
   'src/viewport/CameraHelpers.tsx': 'builds its own frustum//target line geometries',
   'src/viewport/CurveLine.tsx': 'builds its own polyline geometry',
   'src/viewport/LightHelpers.tsx': 'builds its own light-direction line geometry',
