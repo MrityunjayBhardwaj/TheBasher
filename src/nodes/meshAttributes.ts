@@ -781,7 +781,10 @@ export function carriageForDomain(
             `so a '${data.type}' at the '${domain}' domain has no order to be gathered through. ` +
             `The face and corner domains are unaffected: this refusal is about this datum's ` +
             `domain and not about the geometry`,
-          until: '#712/#605',
+          // #1040, not #605 — the refusal lifts exactly when an imported mesh can STATE a
+          // topological point count, which is measured capturable there. #605 is the
+          // material/UV half and would send a reader to the wrong place.
+          until: '#1040',
         };
       return {
         kind: 'laid-out',

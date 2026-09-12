@@ -30,7 +30,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { AttributeData } from '../nodes/attributes';
 import type { GeometryDescriptor, GeometryRef, ObjectData } from '../nodes/types';
-import { arrayGeometryRef, boxGeometryRef, refWithAttributeKey } from './modifierGeometry';
+import {
+  arrayGeometryRef,
+  bevelGeometryRef,
+  boxGeometryRef,
+  mirrorGeometryRef,
+  refWithAttributeKey,
+  subsetGeometryRef,
+} from './modifierGeometry';
 import { ComponentGroupOpNode } from '../nodes/ComponentGroupOp';
 import { carriageForDomain, mintTiledModifierAttributes } from '../nodes/meshAttributes';
 import { resolveComponentSelection, SCOPE_PARAM } from '../nodes/componentSelection';
@@ -99,6 +106,70 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     // Was `null` before #1036 — the whole set dropped on the point order's absence.
     expect(minted).not.toBeNull();
     expect(membership(arrayed, minted!, 'arm')).toBe('111000000000111000000000111000000000');
+  });
+
+  it('1b — mirror and subset carry it too; BEVEL does not, and for a different reason', () => {
+    // 🔴 THE ROW THAT STOPS THIS READING AS MORE THAN IT IS. A fix at `carriageForDomain`
+    // serves every derived kind, so it is tempting to record "generators carry a group over an
+    // import". Measured, three of four do:
+    //
+    //   array x3     36 faces   9 in
+    //   mirror x     24 faces   6 in
+    //   subset 0-5    6 faces   3 in
+    //   bevel 0.1     faceCountOf NULL — no set at all
+    //
+    // A bevel is not this fix failing: `bevelLayoutOf` needs RIMS, an imported mesh cannot
+    // state them, so there is no face count to build a set on in the first place. That is the
+    // `polygon layout` question, still open on the rims road (#1040 covers only the weld).
+    // Pinned because a covered-but-unhonoured grade is worse than an open gap — it gets
+    // relied on.
+    mountClone();
+    const named = nameAGroup(importedRef(), 'arm', '0-2');
+    const g = named.geometry!;
+
+    const arrayed = arrayGeometryRef(g, 3, [2, 0, 0], null);
+    expect(membership(arrayed, mintTiledModifierAttributes(arrayed.descriptor)!, 'arm')).toBe(
+      '111000000000111000000000111000000000',
+    );
+
+    const mirrored = mirrorGeometryRef(g, 'x', 2, null);
+    const mirrorKey = mintTiledModifierAttributes(mirrored.descriptor);
+    expect(mirrorKey).not.toBeNull();
+    expect(membership(mirrored, mirrorKey!, 'arm')).toBe('111000000000111000000000');
+
+    const subset = subsetGeometryRef(g, '0-5', true);
+    const subsetKey = mintTiledModifierAttributes(subset.descriptor);
+    expect(subsetKey).not.toBeNull();
+    expect(membership(subset, subsetKey!, 'arm')).toBe('111000');
+
+    // The bevel limit, asserted so it cannot quietly become true without a reader noticing.
+    const bevelled = bevelGeometryRef(g, 0.1);
+    expect(faceCountOf(bevelled.descriptor)).toBeNull();
+    expect(mintTiledModifierAttributes(bevelled.descriptor)).toBeNull();
+  });
+
+  it('1c — the name is ADDRESSABLE by a scope after the change, not merely stored', () => {
+    // 🔑 #734's discriminating observation is *re-texture THE SAME NAME* after modifying the
+    // mesh. Surviving in the store is a weaker claim than being addressable, and only this row
+    // tests the one the flagship actually makes.
+    mountClone();
+    const named = nameAGroup(importedRef(), 'arm', '0-2');
+    const arrayed = arrayGeometryRef(named.geometry!, 3, [2, 0, 0], null);
+    const changed = { ...arrayed, attributeKey: mintTiledModifierAttributes(arrayed.descriptor)! };
+
+    const src: ObjectData = {
+      kind: 'MeshData',
+      geometry: changed,
+      material: null,
+    } as unknown as ObjectData;
+    const selection = resolveComponentSelection(src, { [SCOPE_PARAM]: 'arm' }, 'face');
+    expect(selection).not.toBeNull();
+    expect(selection!.length).toBe(IMPORTED_FACES * 3);
+    expect(selection!.count).toBe(9);
+    const picked: number[] = [];
+    for (let f = 0; f < selection!.length; f++) if (selection!.has(f)) picked.push(f);
+    // Faces 0-2 of each copy, which is where the source's named faces landed.
+    expect(picked).toEqual([0, 1, 2, 12, 13, 14, 24, 25, 26]);
   });
 
   it('2 — the box control is unchanged', () => {
