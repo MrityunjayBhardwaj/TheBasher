@@ -20,6 +20,7 @@ import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { ImageValue, TimeValue, VideoCodec, VideoValue } from './types';
+import { widget } from './paramWidget';
 
 export const VIDEO_CODECS: readonly VideoCodec[] = ['h264'] as const;
 
@@ -29,7 +30,7 @@ export const VideoStitchParams = z.object({
   /** OPFS path the stitched video writes to. Mutator authors per D-04
    *  parent dir (e.g. `renders/job1/final.mp4`). Empty default + `??`
    *  guard at every consumer keeps legacy projects loading. */
-  outputPath: z.string().default(''),
+  outputPath: widget('text', z.string().default('')),
 });
 export type VideoStitchParams = z.infer<typeof VideoStitchParams>;
 

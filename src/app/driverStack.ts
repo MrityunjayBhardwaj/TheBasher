@@ -47,8 +47,7 @@ export interface DriverBand {
 }
 
 function nameOf(state: DagState, nodeId: string | undefined): string {
-  const n = nodeId ? state.nodes[nodeId] : undefined;
-  return n ? nodeDisplayName(n) : '?';
+  return nodeId && state.nodes[nodeId] ? nodeDisplayName(state.nodes, nodeId) : '?';
 }
 
 /**

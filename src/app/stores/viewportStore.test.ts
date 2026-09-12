@@ -262,3 +262,32 @@ describe('viewportStore — currentFrameRef escape hatch', () => {
     expect(useViewportStore.getState().currentFrameRef.current).toBe(before);
   });
 });
+
+describe('how the armature helper draws (#973)', () => {
+  it('starts octahedral and IN FRONT, and both defaults are load-bearing', () => {
+    // Octahedral because it is the only one of the two shapes that carries
+    // ROLL — a stick is a head and a tail, which is exactly what makes it
+    // declutter and exactly what makes it useless for the defect the helper was
+    // built for (#854/#960).
+    //
+    // In front because a bone inside a skinned mesh is INVISIBLE: measured on
+    // mixamo-xbot, depth testing on left a few stray fragments at the shins and
+    // nothing else (#972). A default of false would ship a helper that draws
+    // nothing on the one asset it exists for.
+    const s = useViewportStore.getState();
+    expect(s.boneDisplay).toBe('octahedral');
+    expect(s.bonesInFront).toBe(true);
+  });
+
+  it('switches display mode and toggles In Front', () => {
+    useViewportStore.getState().setBoneDisplay('stick');
+    expect(useViewportStore.getState().boneDisplay).toBe('stick');
+    useViewportStore.getState().setBoneDisplay('octahedral');
+    expect(useViewportStore.getState().boneDisplay).toBe('octahedral');
+
+    useViewportStore.getState().toggleBonesInFront();
+    expect(useViewportStore.getState().bonesInFront).toBe(false);
+    useViewportStore.getState().toggleBonesInFront();
+    expect(useViewportStore.getState().bonesInFront).toBe(true);
+  });
+});

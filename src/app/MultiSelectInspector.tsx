@@ -139,7 +139,7 @@ export function MultiSelectInspector() {
     dispatchAtomic(ops, 'user', `set ${field}.${AXES[axis]} on ${ops.length} objects`);
   }
 
-  const names = nodes.map(nodeDisplayName);
+  const names = nodes.map((n) => nodeDisplayName(nodesById, n.id));
   const summary =
     names.length <= 3
       ? names.join(', ')

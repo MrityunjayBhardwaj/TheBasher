@@ -109,30 +109,87 @@ export interface PoseStackMember {
  * third pose operator costs a view + a fold, never another scan — which is precisely the
  * property that makes the stack an abstraction rather than a convention.
  */
+const poseStackIndexMemo = new WeakMap<object, ReadonlyMap<string, readonly PoseStackMember[]>>();
+
+/**
+ * The whole node table's constraint stacks, keyed by the id each one is aimed AT.
+ *
+ * ── WHY THIS EXISTS (#990) ───────────────────────────────────────────────────────────
+ *
+ * `relationalPoseStackForTarget` answered "who constrains me?" by scanning the whole
+ * node table, and every band goes through it — rotation, position, the pose stack, the
+ * authoring panel. The render band recomputes every constrained object whenever `state`
+ * changes, so ONE scan per object over ALL objects is O(n²) in the number of constrained
+ * objects: measured at 20 µs per object at 10 objects and 51 µs at 200, i.e. 20× the
+ * objects costing 51× the time. A camera rig plus a crowd reaches that without being an
+ * unusual scene.
+ *
+ * The stacks are a pure function of the node table, so they are derived ONCE per table
+ * and read O(1) thereafter.
+ *
+ * ── WHY A WeakMap ON THE TABLE'S IDENTITY, AND NOT A CACHE TO INVALIDATE ─────────────
+ *
+ * `applyOp` rebuilds `state.nodes` on every write (`{...state, nodes: {...}}`), so the
+ * table's IDENTITY is already an exact change signal — a new table means new stacks, and
+ * an unchanged table cannot have different ones. Keying on it makes the entry derived and
+ * never maintained: there is no invalidation call to forget, and a stale read is not
+ * expressible rather than merely unlikely. That is the shape every memo in this repo
+ * already has (`paramsHashMemo`, `historyCache`, `tableCache`, `narrowedSections`), and
+ * it is why this is a memo rather than a threaded-through index parameter: an index the
+ * callers pass is one a new call site silently omits, and the omission reads as correct.
+ *
+ * ⚠️ MUTED MEMBERS ARE KEPT, and the sort happens HERE. Filtering per call is what lets
+ * one index serve both views — the "ONE scan, many views" property this file is built
+ * around, now "ONE index, many views". Sorting before the filter is equivalent to the
+ * per-call sort it replaces: a stable sort followed by a filter and a filter followed by
+ * a stable sort agree, because filtering preserves relative order.
+ */
+function poseStackIndex(
+  nodes: Readonly<Record<string, NodeLike>>,
+): ReadonlyMap<string, readonly PoseStackMember[]> {
+  const hit = poseStackIndexMemo.get(nodes);
+  if (hit) return hit;
+
+  const index = new Map<string, PoseStackMember[]>();
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!isRelationalPoseNode(node)) continue;
+    const p = (node.params ?? {}) as Record<string, unknown>;
+    const target = p.target;
+    // A constraint with no target aims at nothing and belongs to no stack. The old scan
+    // expressed this as `p.target !== nodeId`, which excluded it for every caller; an
+    // index has to say so once, or `''` becomes a bucket every unset constraint shares.
+    if (typeof target !== 'string' || target === '') continue;
+    const list = index.get(target);
+    const member: PoseStackMember = {
+      nodeId: id,
+      type: node.type,
+      order: typeof p.order === 'number' ? p.order : 0,
+      muted: p.mute === true,
+      params: p,
+    };
+    if (list) list.push(member);
+    else index.set(target, [member]);
+  }
+  // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
+  for (const list of index.values()) list.sort((a, b) => a.order - b.order);
+
+  poseStackIndexMemo.set(nodes, index);
+  return index;
+}
+
 export function relationalPoseStackForTarget(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   includeMuted = false,
 ): PoseStackMember[] {
   if (!nodeId) return [];
-  const stack: PoseStackMember[] = [];
-  for (const [id, node] of Object.entries(nodes)) {
-    if (!isRelationalPoseNode(node)) continue;
-    const p = (node.params ?? {}) as Record<string, unknown>;
-    if (p.target !== nodeId) continue;
-    const isMuted = p.mute === true;
-    if (isMuted && !includeMuted) continue;
-    stack.push({
-      nodeId: id,
-      type: node.type,
-      order: typeof p.order === 'number' ? p.order : 0,
-      muted: isMuted,
-      params: p,
-    });
-  }
-  // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
-  stack.sort((a, b) => a.order - b.order);
-  return stack;
+  const all = poseStackIndex(nodes).get(nodeId);
+  if (!all) return [];
+  // Copied on the way out, both arms. The scan this replaced handed back a fresh array
+  // every call; returning the index's own would make a caller's `.sort()` or `.push()`
+  // rewrite the stack every OTHER caller then reads, which is a far worse bug than the
+  // one being fixed and would show up somewhere else entirely.
+  return includeMuted ? all.slice() : all.filter((m) => !m.muted);
 }
 
 /**

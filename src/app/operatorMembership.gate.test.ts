@@ -102,6 +102,9 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
       'BevelModifier',
+      // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
+      // of faces. A modifier by its own declaration and nothing else, same as the fifth.
+      'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
       // #994 — the fifth, and the first that reshapes no geometry. It is a MODIFIER by its own
@@ -123,6 +126,9 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
       'BevelModifier',
+      // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
+      // of faces. A modifier by its own declaration and nothing else, same as the fifth.
+      'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',
@@ -131,6 +137,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     expect(addableOperators('modifier', { ArrayModifier: 'Array' }).map((o) => o.type)).toEqual([
       'ArrayModifier',
       'BevelModifier',
+      'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
       'Ns2SyntheticModifier',

@@ -87,6 +87,8 @@ export type SocketTypeName =
   | 'Character'
   | 'Skeleton'
   | 'PosedSkeleton'
+  // #974 — hand-posing: PosedSkeleton -> PosedSkeleton
+  | 'PoseOverride'
   | 'AnimationClip'
   // P7.5 — glTF TRS animation extraction (THESIS §42, issue #81)
   | 'TransformClip'

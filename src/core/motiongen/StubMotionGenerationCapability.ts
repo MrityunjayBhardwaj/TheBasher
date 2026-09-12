@@ -195,6 +195,9 @@ export class StubMotionGenerationCapability implements MotionGenerationCapabilit
       // be the fabrication that reasoning exists to prevent. `null` here is a
       // true statement — nobody asked for a world path — not a placeholder.
       worldOffsetXZ: null,
+      // Null for the same reason and by the same argument: no path means no
+      // facing, so there is no rotation this stub canonicalised away.
+      worldRotationRadians: null,
     };
     // Check the way out too, and for the same reason the licence check runs here
     // rather than only in the HTTP impl: a stub exempt from a rule lets a test

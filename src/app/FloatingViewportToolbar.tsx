@@ -52,7 +52,6 @@ import { useGizmoStore } from './stores/gizmoStore';
 import { centerSurfaceWidthCss } from './layoutIslands';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
 import { useLeftSidebarStore } from './stores/leftSidebarStore';
-import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { useViewportStore, type ShadingMode } from './stores/viewportStore';
 
@@ -94,20 +93,21 @@ const SPACES: readonly SpaceEntry[] = [
   { value: 'uv', label: '2D View', key: 'Tab' },
 ];
 
-/** Click handler for the Home (⌂) button. frameSelected early-returns
- *  when no node is selected — fall back to frameAll() in that case so
- *  the affordance always does something useful.
+/** Click handler for the Home (⌂) button — fall back to frameAll() whenever
+ *  frameSelected could not frame anything, so the affordance always does
+ *  something useful.
+ *
+ *  #856 — this used to ask `primaryNodeId !== null` and call through. That is a
+ *  PROXY for "frameSelected will work", and it is wrong for the case a director
+ *  actually reports: a node IS selected and has no anchor, so frameSelected
+ *  silently did nothing and the fallback that exists for exactly this did not
+ *  fire. Asking the function what it did removes the proxy.
  *
  *  Exported for unit testing (the React shell is covered by Playwright;
  *  this helper carries the routing logic that needs deterministic test
  *  coverage). */
 export function homeFrame(): void {
-  const primary = useSelectionStore.getState().primaryNodeId;
-  if (primary) {
-    frameSelected();
-  } else {
-    frameAll();
-  }
+  if (!frameSelected()) frameAll();
 }
 
 function ToolButton({

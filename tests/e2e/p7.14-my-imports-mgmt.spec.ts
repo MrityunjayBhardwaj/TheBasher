@@ -10,7 +10,7 @@
 // unreferenced/immediate. Both paths are exercised here.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issue #112;
-//      src/app/AssetsPopover.tsx (the ︙ menu + rename input + delete banner);
+//      src/app/AssetLibrary.tsx (the ︙ menu + rename input + delete banner);
 //      src/app/asset/importCommon.ts (rename/delete helpers).
 
 import { test, expect } from './_fixtures';

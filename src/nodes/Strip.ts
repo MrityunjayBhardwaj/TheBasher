@@ -36,9 +36,10 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { StripValue } from './types';
 import { CHANNEL_BLEND_MODES, STRIP_EXTRAPOLATES, type StripExtrapolate } from './types';
+import { nameParam } from './paramWidget';
 
 export const StripParams = z.object({
-  name: z.string().default('Strip'),
+  name: nameParam('Strip'),
   /** Action node id (edge-less ref). Empty → the strip contributes nothing. */
   action: z.string().default(''),
   /** Target node id the placed Action drives (edge-less ref). */

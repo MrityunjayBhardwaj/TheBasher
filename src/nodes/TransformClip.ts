@@ -37,11 +37,12 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TransformClipValue, Vec3 } from './types';
 import { ClipLoopSchema } from './clipLoop';
+import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 export const TransformClipParams = z.object({
-  name: z.string().default('clip'),
+  name: nameParam('clip'),
   duration: z.number().positive().default(2),
   /**
    * What the clip does past its authored range. The FULL tri-state since #934 —

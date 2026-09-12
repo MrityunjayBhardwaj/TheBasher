@@ -15,16 +15,17 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CharacterValue, LocomotionStateValue, PosedSkeletonValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const CharacterParams = z.object({
-  name: z.string().default('character'),
+  name: nameParam('character'),
 });
 export type CharacterParams = z.infer<typeof CharacterParams>;
 
 const EMPTY_POSE: PosedSkeletonValue = {
   kind: 'PosedSkeleton',
   skeleton: { kind: 'Skeleton', bones: [] },
-  poses: [],
+  sample: () => [],
 };
 
 export const CharacterNode: NodeDefinition<CharacterParams, CharacterValue> = {

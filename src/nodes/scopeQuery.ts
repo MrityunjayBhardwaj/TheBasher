@@ -30,13 +30,25 @@
 //
 // The reference's Group field is a query language: numeric ranges `0-10`, step `0-100:2`,
 // wildcards `arm*`, negation `!1-10`, set removal `^pattern`, and attribute expressions
-// `@v>0` (`ref/houdini/SOP.md:51`). v1 ships the subset that needs NO new storage —
-// ranges, step, negation, removal — because a wildcard or a name is a reader over STORED
-// groups, and nothing in this project stores one yet.
+// `@v>0` (`ref/houdini/SOP.md:51`). v1 shipped the subset that needs NO new storage — ranges,
+// step, negation, removal — because a wildcard or a name is a reader over STORED groups.
 //
-// The deferred constructs are REFUSED BY NAME rather than ignored. An unrecognised query
-// that silently means "everything" applies the operation to the whole mesh, which is the
-// loudest possible wrong answer wearing the quietest possible failure.
+// 🔑 #1027 GAVE GROUPS A WRITER, AND NAMES JOINED THE GRAMMAR WITH IT. `ComponentGroupOp`
+// authors a face-domain membership attribute, so a name is now a reader over something that
+// exists. What that costs this module is stated rather than hidden: a range is a function of
+// the INDEX and a name is a function of the GEOMETRY, so evaluating one needs a {@link
+// GroupLookup} the CALLER supplies — see that type on why it is handed in rather than imported,
+// and why that is what keeps the one-parser rule true.
+//
+// Wildcards and attribute expressions stay deferred. A wildcard is now genuinely buildable
+// (there are names to match) and is simply not built; an attribute expression still needs a
+// general attribute reader.
+//
+// The deferred constructs are REFUSED BY NAME rather than ignored, and so is a name no group
+// answers to. An unrecognised query that silently means "everything" applies the operation to
+// the whole mesh, which is the loudest possible wrong answer wearing the quietest possible
+// failure — and silently meaning NOTHING is the same hazard with the sign flipped, because a
+// mask would delete the mesh.
 //
 // ⚠️ HOW THE OPERATORS COMPOSE IS DECIDED HERE, NOT LOOKED UP. The reference documents
 // that `!` and `^` exist and does not state how a query mixing them evaluates; I checked
@@ -61,14 +73,38 @@ function refuse(why: string): never {
 
 type ScopeOp = 'add' | 'remove' | 'complement';
 
+/**
+ * What a term names: a span of indices, or a GROUP by name (#1027).
+ *
+ * 🔴 THE TWO ARE DIFFERENT IN ONE WAY THAT MATTERS EVERYWHERE BELOW. A range is a function of
+ * the INDEX alone, so it can be evaluated, canonicalised and reasoned about at any length with
+ * nothing else in hand. A group is a function of the GEOMETRY, so it cannot be evaluated at all
+ * without the membership — which is why {@link scopeSelection} takes a lookup and why
+ * {@link selectsNothingAtEveryLength} abstains the moment it sees one.
+ */
+type ScopeAtom =
+  | { readonly kind: 'range'; readonly start: number; readonly end: number; readonly step: number }
+  | { readonly kind: 'group'; readonly name: string };
+
 interface ScopeTerm {
   readonly op: ScopeOp;
-  readonly start: number;
-  readonly end: number;
-  readonly step: number;
+  readonly atom: ScopeAtom;
 }
 
 const ATOM = /^(\d+)(?:-(\d+)(?::(\d+))?)?$/;
+
+/**
+ * The names this grammar reads as a GROUP rather than as a range.
+ *
+ * ⚠️ IT IS DELIBERATELY THE SAME PATTERN `componentGroups.isValidGroupName` ENFORCES, AND
+ * THE DUPLICATION IS THE POINT. This module is a LEAF with zero value imports — that is what
+ * keeps the one-parser rule true, since a module an operator could import a resolver from
+ * would defeat it — so it cannot import the writer's charset, and the writer cannot import
+ * this one. Two spellings of one rule is exactly the drift this repo catalogues, so it is not
+ * left to agree by good intentions: `componentGroups.gate.test.ts` row 7 asserts the two
+ * agree, per name, by asking THIS grammar what it does with each one.
+ */
+const GROUP_TERM = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * A scope query as terms, or a named refusal. NOT EXPORTED — see the module header.
@@ -108,14 +144,23 @@ function parseScopeQuery(query: string): ScopeTerm[] {
         `wildcards are not implemented ('${token}') — they match STORED group names, and no group can be named yet`,
       );
     }
+    // A NAME (#1027). Parsing it is a statement about SHAPE only: whether a group of this
+    // name exists is a question about a geometry, which this module never holds and a param
+    // schema cannot see. It is answered at resolution, by name, in {@link scopeSelection}.
+    if (GROUP_TERM.test(body)) {
+      return { op, atom: { kind: 'group', name: body } };
+    }
+    // Starts like a name and is not one — `arm-left`, `arm.2`. Refused with the NAME's
+    // charset rather than the range's, because that is what the author was reaching for; the
+    // generic "not an index or range" below would send them to fix the wrong thing.
     if (/^[A-Za-z_]/.test(body)) {
       return refuse(
-        `named groups are not implemented ('${token}') — v1's query is a range expression over component indices`,
+        `'${token}' is not a group name — a name starts with a letter or underscore and uses only letters, digits and underscores`,
       );
     }
 
     const m = ATOM.exec(body);
-    if (!m) return refuse(`'${token}' is not a component index or range`);
+    if (!m) return refuse(`'${token}' is not a component index, range or group name`);
 
     const start = Number(m[1]);
     const end = m[2] === undefined ? start : Number(m[2]);
@@ -131,13 +176,21 @@ function parseScopeQuery(query: string): ScopeTerm[] {
     }
     if (step < 1) return refuse(`'${token}' has a step of ${step}; a step must be at least 1`);
 
-    return { op, start, end, step };
+    return { op, atom: { kind: 'range', start, end, step } };
   });
 }
 
-/** Is `i` inside this term's range, honouring its step? */
-function inTerm(term: ScopeTerm, i: number): boolean {
-  return i >= term.start && i <= term.end && (i - term.start) % term.step === 0;
+/**
+ * Is `i` named by this term's atom?
+ *
+ * A group's membership is handed in already resolved, because this module cannot reach a
+ * geometry and must not learn how: the whole reason it is a leaf is that a module able to
+ * turn a name into a set is a module an operator could import to interpret a query.
+ */
+function inAtom(atom: ScopeAtom, i: number, membership: ArrayLike<number> | null): boolean {
+  if (atom.kind === 'group')
+    return membership !== null && i < membership.length && membership[i] === 1;
+  return i >= atom.start && i <= atom.end && (i - atom.start) % atom.step === 0;
 }
 
 /**
@@ -252,24 +305,45 @@ function canonicaliseTerms(terms: readonly ScopeTerm[]): ScopeTerm[] {
 function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
   const coalescible = run[0].op !== 'complement';
 
+  const ranges = run.filter(
+    (t): t is ScopeTerm & { atom: Extract<ScopeAtom, { kind: 'range' }> } =>
+      t.atom.kind === 'range',
+  );
+  // 🔴 A GROUP NEVER MERGES WITH ANYTHING, AND NOT ONLY BECAUSE IT IS A DIFFERENT SHAPE
+  // (#1027). Coalescing is valid above precisely because a range's membership is derivable
+  // from the query — two touching ranges ARE their union at every length. A group's is not
+  // derivable here at all, so `arm leg` cannot be shown to equal any third term, and even
+  // `arm arm` is only removable because a name resolves to one answer per geometry. Sorted
+  // and de-duplicated by name; nothing else.
+  const groups = run
+    .filter(
+      (t): t is ScopeTerm & { atom: Extract<ScopeAtom, { kind: 'group' }> } =>
+        t.atom.kind === 'group',
+    )
+    .sort((a, b) => (a.atom.name < b.atom.name ? -1 : a.atom.name > b.atom.name ? 1 : 0));
+
   // Even within a coalescible run, only CONTIGUOUS ranges merge: a stepped range cannot
   // absorb or be absorbed without changing which elements it names, so stepped terms are
   // sorted and de-duplicated and otherwise left exactly as written.
-  const contiguous = run
-    .filter((t) => t.step === 1)
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-  const stepped = run
-    .filter((t) => t.step !== 1)
-    .sort((a, b) => a.start - b.start || a.end - b.end || a.step - b.step);
+  const contiguous = ranges
+    .filter((t) => t.atom.step === 1)
+    .sort((a, b) => a.atom.start - b.atom.start || a.atom.end - b.atom.end);
+  const stepped = ranges
+    .filter((t) => t.atom.step !== 1)
+    .sort(
+      (a, b) => a.atom.start - b.atom.start || a.atom.end - b.atom.end || a.atom.step - b.atom.step,
+    );
 
-  const merged: ScopeTerm[] = [];
+  const merged: (ScopeTerm & { atom: Extract<ScopeAtom, { kind: 'range' }> })[] = [];
   for (const term of contiguous) {
     const last = merged[merged.length - 1];
     // `start <= last.end + 1` merges ADJACENT ranges too: `0-2 3-5` is `0-5`.
-    const mergeable = coalescible && last !== undefined && term.start <= last.end + 1;
+    const mergeable = coalescible && last !== undefined && term.atom.start <= last.atom.end + 1;
     if (mergeable) {
-      if (term.end > last.end) merged[merged.length - 1] = { ...last, end: term.end };
-    } else if (last && last.start === term.start && last.end === term.end) {
+      if (term.atom.end > last.atom.end) {
+        merged[merged.length - 1] = { ...last, atom: { ...last.atom, end: term.atom.end } };
+      }
+    } else if (last && last.atom.start === term.atom.start && last.atom.end === term.atom.end) {
       // A duplicate is removable for every operator — `!0-5 !0-5` is `!0-5`.
       continue;
     } else {
@@ -280,22 +354,40 @@ function canonicaliseRun(run: readonly ScopeTerm[]): ScopeTerm[] {
   const dedupedSteps: ScopeTerm[] = [];
   for (const term of stepped) {
     const last = dedupedSteps[dedupedSteps.length - 1];
-    if (last && last.start === term.start && last.end === term.end && last.step === term.step) {
+    if (
+      last &&
+      last.atom.kind === 'range' &&
+      last.atom.start === term.atom.start &&
+      last.atom.end === term.atom.end &&
+      last.atom.step === term.atom.step
+    ) {
       continue;
     }
     dedupedSteps.push(term);
   }
 
-  return [...merged, ...dedupedSteps];
+  const dedupedGroups: ScopeTerm[] = [];
+  for (const term of groups) {
+    const last = dedupedGroups[dedupedGroups.length - 1];
+    if (last && last.atom.kind === 'group' && last.atom.name === term.atom.name) continue;
+    dedupedGroups.push(term);
+  }
+
+  // Groups come LAST within a run, which is a spelling choice and safe for the reason the run
+  // exists: everything in one run shares an operator, and union and difference are each
+  // commutative with themselves. Across runs the order is preserved, because they are not.
+  return [...merged, ...dedupedSteps, ...dedupedGroups];
 }
 
 function formatTerms(terms: readonly ScopeTerm[]): string {
   return terms
     .map((t) => {
       const prefix = t.op === 'remove' ? '^' : t.op === 'complement' ? '!' : '';
-      if (t.step !== 1) return `${prefix}${t.start}-${t.end}:${t.step}`;
-      if (t.start === t.end) return `${prefix}${t.start}`;
-      return `${prefix}${t.start}-${t.end}`;
+      if (t.atom.kind === 'group') return `${prefix}${t.atom.name}`;
+      const { start, end, step } = t.atom;
+      if (step !== 1) return `${prefix}${start}-${end}:${step}`;
+      if (start === end) return `${prefix}${start}`;
+      return `${prefix}${start}-${end}`;
     })
     .join(' ');
 }
@@ -303,6 +395,19 @@ function formatTerms(terms: readonly ScopeTerm[]): string {
 // ---------------------------------------------------------------------------
 // The ONE evaluation of a query at a length
 // ---------------------------------------------------------------------------
+
+/**
+ * How a caller answers "which elements does the group `name` hold?" — `null` for a name this
+ * geometry does not carry (#1027).
+ *
+ * 🔴 IT IS A FUNCTION HANDED IN, NOT A MODULE THIS ONE IMPORTS, and that is the whole shape of
+ * the feature. Turning a name into a set requires the geometry's attribute set; importing the
+ * store here would make this module able to resolve a query from nothing but a string, and an
+ * operator could then import it and interpret its own scope — which is the exact defect the
+ * one-parser rule exists to prevent. Handed in as DATA, the leaf stays a leaf: the knowledge
+ * of where a group lives stays with the callers that already hold a geometry.
+ */
+export type GroupLookup = (name: string) => ArrayLike<number> | null;
 
 /** Which elements of `[0, length)` a query selects, and how many. */
 export interface ScopeMask {
@@ -331,26 +436,60 @@ export interface ScopeMask {
  * 12-960 faces. Transient, so it enters neither the geometry registry's resident bytes nor
  * the attribute store's growth ([[V163]]).
  */
-export function scopeSelection(query: string, length: number): ScopeMask {
+export function scopeSelection(query: string, length: number, groups?: GroupLookup): ScopeMask {
   if (!Number.isInteger(length) || length < 0) {
     return refuse(`a selection length must be a non-negative integer, got ${String(length)}`);
   }
   const terms = parseScopeQuery(query);
   const mask = new Uint8Array(length);
   for (const term of terms) {
+    const atom = term.atom;
+    // 🔴 RESOLVED ONCE PER TERM, NEVER PER INDEX. A lookup reads the attribute store, and
+    // calling it inside the walk would turn an O(length) pass into O(length) store reads for
+    // a value that cannot change during the pass.
+    const membership = atom.kind === 'group' ? resolveGroup(atom.name, groups) : null;
+
     if (term.op === 'complement') {
-      for (let i = 0; i < length; i += 1) if (!inTerm(term, i)) mask[i] = 1;
+      for (let i = 0; i < length; i += 1) if (!inAtom(atom, i, membership)) mask[i] = 1;
       continue;
     }
     const value = term.op === 'add' ? 1 : 0;
-    const from = Math.max(0, term.start);
-    const to = Math.min(length - 1, term.end);
-    for (let i = from; i <= to; i += 1) if (inTerm(term, i)) mask[i] = value;
+    // A group's membership gives no bounds to narrow the walk with, so it walks the whole
+    // length. A range still narrows, which is the common case and the hot one.
+    const from = atom.kind === 'range' ? Math.max(0, atom.start) : 0;
+    const to = atom.kind === 'range' ? Math.min(length - 1, atom.end) : length - 1;
+    for (let i = from; i <= to; i += 1) if (inAtom(atom, i, membership)) mask[i] = value;
   }
 
   let count = 0;
   for (let i = 0; i < length; i += 1) if (mask[i] === 1) count += 1;
   return { mask, count };
+}
+
+/**
+ * A group's membership, or a NAMED refusal — never a silent empty set (#1027).
+ *
+ * ⚠️ THE TWO FAILURES ARE DIFFERENT FACTS AND GET DIFFERENT SENTENCES, because they are fixed
+ * in different places. No lookup at all means the CALLER has not been given the geometry — a
+ * bug in the wiring, and the author of the query can do nothing about it. A lookup that misses
+ * means the query names a group this mesh does not carry, which is the author's to fix.
+ *
+ * 🔴 NEITHER MAY RESOLVE TO "EVERYTHING" OR TO "NOTHING". An unrecognised group silently
+ * meaning the whole mesh is this module's founding failure — the loudest possible wrong answer
+ * wearing the quietest possible failure — and silently meaning nothing is the same hazard with
+ * the sign flipped, because a mask modifier would delete the mesh.
+ */
+function resolveGroup(name: string, groups: GroupLookup | undefined): ArrayLike<number> {
+  if (groups === undefined) {
+    return refuse(
+      `'${name}' names a group, and this reader was given no way to resolve one. A group is a property of a geometry, so whoever evaluates a query naming one has to supply the lookup`,
+    );
+  }
+  const membership = groups(name);
+  if (membership === null) {
+    return refuse(`no group named '${name}' on this geometry`);
+  }
+  return membership;
 }
 
 /**
@@ -362,6 +501,37 @@ export function scopeSelection(query: string, length: number): ScopeMask {
  * uses this to ADVISE, and a missed advisory is a smaller cost than a wrong one.
  */
 const EMPTINESS_PROBE_CAP = 65536;
+
+/**
+ * Does this query name a GROUP? A BOOLEAN, and nothing else (#1027).
+ *
+ * ── WHY A CALLER NEEDS THIS, AND WHY IT IS NOT A HOLE IN THE ONE-PARSER RULE ──────────
+ *
+ * A range query's answer is a function of the query and the length, so a cache keyed on those
+ * two is complete. A query naming a group is a function of the GEOMETRY as well: two meshes
+ * with the same face count and the same query string `arm` can hold different memberships, and
+ * a cache that did not know the difference would hand the second mesh the first one's layout.
+ * That is the over-coalescing hazard {@link canonicalScopeQuery} is written against, arriving
+ * one level down in a cache key instead of in a geometry key.
+ *
+ * So a caller that caches needs ONE BIT — "does this answer depend on more than the string?" —
+ * and the alternative was to widen every such key with the source's attribute key
+ * unconditionally, which would split cache entries for every numeric query in the product to
+ * fix a case none of them has. This keeps those keys byte-identical and widens only the ones
+ * that genuinely vary.
+ *
+ * ⚠️ IT RETURNS A BOOLEAN AND CAN NEVER RETURN TERMS, exactly as {@link isParsableScopeQuery}
+ * does and for the same reason: "is a name involved?" cannot be used to act on a scope, only to
+ * decide what a key must contain. An unparseable query answers `false` — it is refused at the
+ * authoring door and has no terms to inspect.
+ */
+export function scopeNamesAGroup(query: string): boolean {
+  try {
+    return parseScopeQuery(query).some((t) => t.atom.kind === 'group');
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Does this query select NOTHING, at every possible element count? (#917)
@@ -407,7 +577,13 @@ export function selectsNothingAtEveryLength(query: string): boolean {
   }
   if (terms.length === 0) return false;
   if (terms.some((t) => t.op === 'complement')) return false;
-  const maxEnd = terms.reduce((m, t) => Math.max(m, t.end), 0);
+  // #1027 — A GROUP MAKES THIS UNANSWERABLE HERE, AND ABSTAINING IS THE CORRECT ANSWER. This
+  // predicate exists for an authoring surface with no geometry in hand, so it cannot know what
+  // a name holds; a group could be empty on one mesh and not on the next. `false` is "cannot
+  // prove", which is the direction the doc above already commits to — the caller ADVISES, and
+  // a missed advisory costs less than a wrong one.
+  if (terms.some((t) => t.atom.kind === 'group')) return false;
+  const maxEnd = terms.reduce((m, t) => Math.max(m, t.atom.kind === 'range' ? t.atom.end : 0), 0);
   if (maxEnd + 1 > EMPTINESS_PROBE_CAP) return false;
   return scopeSelection(query, maxEnd + 1).count === 0;
 }
@@ -419,6 +595,6 @@ export function selectsNothingAtEveryLength(query: string): boolean {
  * what a derived face count needs and reading `.count` off a mask at each call site would
  * put the same expression in two files.
  */
-export function scopeSelectedCount(query: string, length: number): number {
-  return scopeSelection(query, length).count;
+export function scopeSelectedCount(query: string, length: number, groups?: GroupLookup): number {
+  return scopeSelection(query, length, groups).count;
 }

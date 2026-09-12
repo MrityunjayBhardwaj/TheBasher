@@ -14,6 +14,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
+import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 
 export interface TreeRow {
@@ -48,29 +49,60 @@ function pushRow(ctx: WalkCtx, row: TreeRow): void {
 /**
  * The canonical user-facing identity for a node, in priority order:
  *   1. meta.name — the canonical user-facing name (what the inspector header
- *      and the a11y selection summary resolve to: meta.name ?? id). Honoring
- *      it first keeps every surface 1:1 with the inspector identity.
+ *      and the a11y selection summary resolve to). Honoring it first keeps
+ *      every surface 1:1 with the inspector identity, and it is what makes a
+ *      director's rename beat an imported name rather than lose to it.
  *   2. params.name — the SEMANTIC name carried by Shot / AnimationClip /
  *      Character node params (their domain label, not a generic field).
- *   3. node.id — the unique, stable fallback. Previously this fell back to
+ *   3. the imported child's `childName` — see below.
+ *   4. node.id — the unique, stable fallback. Previously this fell back to
  *      `node.type`, which rendered every unnamed BoxMesh as the indistinct
  *      label "BoxMesh"; two boxes were unidentifiable while the inspector
  *      showed "n_box_2". The type is conveyed by the row's icon, so the label
  *      carries identity, not category.
  *
+ * ── WHY IT TAKES THE TABLE AND AN ID, NOT A NODE (#1010) ────────────────────
+ *
+ * An imported glTF child is addressed by a CONTENT HASH — `gltfChildDagId` is
+ * `hashId('gltfChild', assetRef, childName)`, and that is deliberate (#389):
+ * the id survives a re-import, so every clip target, channel target, constraint
+ * target and saved selection that named the child keeps resolving. The id
+ * therefore cannot be made readable, and rung 4 above rendered
+ * `n_gltfChild_bcf19259` at every surface that reached a bone by anything other
+ * than the outliner. A director pressed a row labelled `mixamorig_LeftArm` and
+ * landed somewhere that did not say `mixamorig_LeftArm`.
+ *
+ * The name was never missing — it lives on the child's DATA half as `childName`,
+ * the same string the asset's `nodeNameMap` uses as its key. Reaching it means
+ * following the Object's `data` edge, and a node-shaped signature cannot express
+ * that hop at all: it needs the other nodes. That is the same reason
+ * `importedChild.ts` takes `(nodes, id)` — and it is why this took the table
+ * rather than growing a second resolver beside this one. Two answers to "what is
+ * this node called" is precisely the drift the paragraph below promises not to
+ * have; before this change the outliner already had its own answer, and only its
+ * rows showed bone names.
+ *
+ * Seven of the nine call sites already held the table on the line above and were
+ * discarding it to pass a node, so the change made most of them shorter.
+ *
  * ONE source so the outliner, the inspector header, the a11y summary AND the
  * dopesheet channel row all agree on a node's name (V34 — single identity).
+ *
+ * Total: an id no node answers to resolves to the id itself, so no caller has to
+ * guard before asking. `display` below still distinguishes a MISSING node, which
+ * is a different question and its own answer.
  */
-export function nodeDisplayName(node: Node): string {
+export function nodeDisplayName(nodes: Readonly<Record<NodeId, Node>>, nodeId: NodeId): string {
+  const node = nodes[nodeId];
+  if (!node) return nodeId;
   const params = node.params as Record<string, unknown>;
   const paramName = typeof params?.name === 'string' ? params.name : undefined;
-  return node.meta?.name ?? paramName ?? node.id;
+  return node.meta?.name ?? paramName ?? importedChildOf(nodes, nodeId)?.childName ?? node.id;
 }
 
 function display(state: DagState, nodeId: NodeId): string {
-  const node = state.nodes[nodeId];
-  if (!node) return `<missing:${nodeId}>`;
-  return nodeDisplayName(node);
+  if (!state.nodes[nodeId]) return `<missing:${nodeId}>`;
+  return nodeDisplayName(state.nodes, nodeId);
 }
 
 function walkOneAsChild(
@@ -188,7 +220,17 @@ function projectGltfChildren(
       // draw the generic dot, because no branch matches it any more.
       nodeType: 'Object',
       depth,
-      display: key,
+      // Through the ONE resolver (#1010), not the map key. The two agree for a child
+      // nobody has renamed — `childName` IS this key — and they DISAGREE the moment a
+      // director renames the bone, where `meta.name` has to win. Spelling `key` here was
+      // the outliner having its own answer to a question `nodeDisplayName` already owns,
+      // which is how it came to be the only surface showing bone names at all.
+      // Through the ONE resolver (#1010) when the node is there, and the map key when it
+      // is not. Nothing prunes `nodeNameMap`, so a key pointing at a removed node is
+      // reachable, and `display` answers `<missing:…>` for it — a different claim from
+      // the one this issue is about. The key stays that row's answer until something
+      // decides what a stale entry should do.
+      display: ctx.state.nodes[childNodeId] ? display(ctx.state, childNodeId) : key,
       // NO `parent` — glTF children are non-reorderable (no scene edge). The
       // outliner collapses them by row-key prefix (the key nests under the
       // asset's), so no owner back-reference is needed.

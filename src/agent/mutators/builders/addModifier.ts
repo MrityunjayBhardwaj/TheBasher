@@ -15,6 +15,7 @@
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §2.2/§5; vyapti V58.
 
 import { z } from 'zod';
+import { isValidGroupName } from '../../../nodes/componentGroups';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
@@ -49,6 +50,7 @@ const ModifierType = z.enum([
   'MaskModifier',
   'BevelModifier',
   'UVProjectModifier',
+  'ComponentGroupOp',
 ]);
 type ModifierType = z.infer<typeof ModifierType>;
 
@@ -79,6 +81,28 @@ const AddModifierSpec = z.object({
    * on the render walk for exactly this, so it is refused here where nothing is drawing.
    */
   size: z.number().positive().optional(),
+  /**
+   * ComponentGroupOp param — THE GROUP'S NAME, and the only member of this spec without
+   * which its operator does nothing at all.
+   *
+   * Optional here for the reason every other param above is: the node schema defaults it, and
+   * a mutator that required it would diverge from the node. But the default is `''`, which is
+   * the unconfigured state and passes the mesh straight through — so an agent that adds this
+   * modifier without a name has added a no-op. The description below says that in as many
+   * words, because the model is the reader who can act on it.
+   *
+   * Letters, digits and underscores only, starting with a letter or underscore: the query
+   * grammar spends `-`, `:`, `*`, `@`, `!` and `^` on other constructs, so a name outside that
+   * set could be authored and never addressed again. Refused by the node's own schema; refused
+   * here too so the refusal reaches the agent at the surface it is writing through.
+   */
+  name: z
+    .string()
+    .refine((v) => v === '' || isValidGroupName(v), {
+      message:
+        'not a group name — start with a letter or underscore and use only letters, digits and underscores',
+    })
+    .optional(),
   /** Caller-supplied modifier id; auto-derived from target + type when omitted. */
   modifierId: z.string().optional(),
 });
@@ -86,7 +110,9 @@ export type AddModifierSpec = z.infer<typeof AddModifierSpec>;
 
 /** A deterministic, collision-free modifier id (target + short type + counter). */
 function defaultModifierId(target: NodeId, modifierType: string, used: Set<NodeId>): NodeId {
-  const short = modifierType.replace(/Modifier$/, '').toLowerCase(); // ArrayModifier → array
+  // #1027 — `Op$` joins `Modifier$` because the enum gained its first member spelled that
+  // way, and `n_box_componentgroupop` is the id a director would otherwise read in the graph.
+  const short = modifierType.replace(/(Modifier|Op)$/, '').toLowerCase(); // ArrayModifier → array
   const base = `${target}_${short}`;
   if (!used.has(base)) return base;
   let n = 1;
@@ -107,6 +133,8 @@ function specParams(spec: AddModifierSpec): Record<string, unknown> {
     if (spec.amount !== undefined) p.amount = spec.amount;
   } else if (spec.modifierType === 'UVProjectModifier') {
     if (spec.size !== undefined) p.size = spec.size;
+  } else if (spec.modifierType === 'ComponentGroupOp') {
+    if (spec.name !== undefined) p.name = spec.name;
   }
   return p;
 }
@@ -116,7 +144,13 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
   description:
     'Add a geometry MODIFIER (the SOP / geometry-operator stack) on top of a ' +
     "mesh's modifier stack — a non-destructive, re-orderable operation over the " +
-    'mesh geometry. modifierType "ArrayModifier" replicates the mesh `count` ' +
+    // 🔴 THE BACKTICK IS LOAD-BEARING, not decoration. `firstSentence` (catalog.ts)
+    // ends the picker summary at a period followed by an upper-case letter, digit
+    // or quote — a period followed by a BARE lower-case identifier is not a
+    // boundary, and the summary then ran on to the next capital: measured at 803
+    // characters, the single largest entry in the picker payload and most of what
+    // pushed it against its byte ceiling.
+    'mesh geometry. `modifierType` "ArrayModifier" replicates the mesh `count` ' +
     'times along `offset` (local space) and merges; "MirrorModifier" reflects the ' +
     'mesh across the local-origin plane on `axis` (x|y|z) and merges → a symmetric ' +
     'whole; "MaskModifier" keeps the faces its `scope` names and drops the rest (or ' +
@@ -126,7 +160,11 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     'mesh untouched. "UVProjectModifier" leaves the shape completely alone and authors a ' +
     'corner-domain UV layer instead, projecting each face onto the nearest side of a ' +
     'virtual cube of edge length `size` centred on the local origin — use it to texture a ' +
-    'mesh that has no usable UVs. target may be the mesh or any modifier already in its stack (the base ' +
+    'mesh that has no usable UVs. "ComponentGroupOp" also leaves the shape alone and NAMES a set ' +
+    'of faces, writing a face-domain group attribute that survives later topology changes — ' +
+    'give it `name` (letters, digits, underscores; no dashes or colons), then set its `scope` ' +
+    'with mutator.geometry.setComponentScope to say WHICH faces; without a `name` it does ' +
+    'nothing at all, and with no scope it names every face. target may be the mesh or any modifier already in its stack (the base ' +
     'is resolved automatically). Returns a deterministic modifierId; tune it later ' +
     'with dag.exec setParam (count / offset / axis / amount / size / keep / muted) or stack it with ' +
     'another addModifier call.',

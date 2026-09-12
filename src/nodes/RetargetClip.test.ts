@@ -7,8 +7,15 @@
 
 import { describe, expect, it } from 'vitest';
 import { RetargetClipNode, RetargetClipParams } from './RetargetClip';
+import { posedSkeletonFromClip } from './AnimationClip';
 import { retargetClip } from '../core/import/retarget';
-import type { AnimationClipValue, AnimationKeyframe, BoneNameMapValue, BoneSpec } from './types';
+import type {
+  AnimationClipValue,
+  AnimationKeyframe,
+  BoneNameMapValue,
+  BoneSpec,
+  PosedSkeletonValue,
+} from './types';
 
 /**
  * Fresh operands per call — subject and expectation must never share an object.
@@ -54,11 +61,23 @@ function boneMapValue(): BoneNameMapValue {
   return { kind: 'BoneNameMap', name: 'test bridge', map: nameMap() };
 }
 
+// The node emits TWO views of one retarget (#992/#974), so a test that wants the
+// clip names the socket rather than taking the whole record. `evaluatePosed` is
+// its twin; both go through the same call so they can never be given different
+// operands by accident.
+const evaluateBoth = (
+  inputs: Record<string, unknown>,
+  params = RetargetClipParams.parse({}),
+): { out: AnimationClipValue; posed: PosedSkeletonValue } =>
+  RetargetClipNode.evaluate(params, inputs as never, undefined as never) as {
+    out: AnimationClipValue;
+    posed: PosedSkeletonValue;
+  };
+
 const evaluate = (
   inputs: Record<string, unknown>,
   params = RetargetClipParams.parse({}),
-): AnimationClipValue =>
-  RetargetClipNode.evaluate(params, inputs as never, undefined as never) as AnimationClipValue;
+): AnimationClipValue => evaluateBoth(inputs, params).out;
 
 describe('RetargetClip — the operator', () => {
   it('reproduces retargetClip() exactly, from independently allocated operands', () => {
@@ -106,7 +125,7 @@ describe('RetargetClip — the operator', () => {
     expect('time' in (RetargetClipNode.inputs ?? {})).toBe(false);
   });
 
-  it('carries no `pose` — a clip describes motion, it does not sample it', () => {
+  it('the CLIP carries no `pose` field — sampling lives on the separate `posed` output', () => {
     // This used to read `expect(value.pose).toBeUndefined()`, guarding a field
     // that was OPTIONAL: RetargetClip omitted it while AnimationClip answered
     // one. #920 made both producers time-free and removed the field, so the
@@ -116,6 +135,11 @@ describe('RetargetClip — the operator', () => {
     // and the reason is measurable: `npm run typecheck` cannot see `*.test.*`,
     // so a `@ts-expect-error` here would be a gate CI never runs. `in` is
     // checked when the suite executes, which CI does.
+    //
+    // #992/#974 did NOT weaken this. The node now also emits a posed rig, but on
+    // its own `posed` SOCKET — the clip value itself still carries no pose, so a
+    // reader of `out` cannot mistake a description of motion for a sample of it.
+    // The row below pins the two as views of one computation.
     const value = evaluate({
       sourceClip: sourceClipValue(),
       boneMap: boneMapValue(),
@@ -125,6 +149,28 @@ describe('RetargetClip — the operator', () => {
     // …while still answering everything a clip IS asked for.
     expect(value.kind).toBe('AnimationClip');
     expect(value.keyframes.length).toBeGreaterThan(0);
+  });
+
+  it('`posed` is the SAME motion as `out`, sampled — the two cannot disagree', () => {
+    // The point of emitting both from one evaluate. If `posed` were built from
+    // anything but the clip `out` carries, the pose lane and the clip lane would
+    // be two answers to where a bone is at t, which is the exact defect the
+    // shared sampler factory exists to prevent.
+    const { out, posed } = evaluateBoth({
+      sourceClip: sourceClipValue(),
+      boneMap: boneMapValue(),
+      skeleton: { kind: 'Skeleton', bones: targetBones() },
+    });
+    expect(posed.kind).toBe('PosedSkeleton');
+    // Same rig object, not merely an equal one.
+    expect(posed.skeleton).toBe(out.skeleton);
+    // One pose per target bone, index-aligned.
+    const at0 = posed.sample(0);
+    expect(at0).toHaveLength(out.skeleton.bones.length);
+    expect(at0.map((p) => p.bone)).toEqual(out.skeleton.bones.map((_, i) => i));
+    // Independently sampling the clip through the shared factory agrees.
+    const viaClip = posedSkeletonFromClip(out).sample(0.5);
+    expect(posed.sample(0.5)).toEqual(viaClip);
   });
 
   it('carries the TARGET rig, because the emitted indices are the target’s', () => {

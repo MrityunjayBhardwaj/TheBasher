@@ -35,14 +35,15 @@
 //
 // REF: issue #339; src/nodes/TrackTo.ts (the template); src/app/nodeConstraints.ts (the
 //      enumeration + the position fold); src/app/curveSampleSource.ts (the arc-length
-//      seam); src/nodes/Curve.ts.
+//      seam); src/nodes/CurveData.ts.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { FollowPathConstraintValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const FollowPathParams = z.object({
-  name: z.string().default('follow-path'),
+  name: nameParam('follow-path'),
   /** The constrained node id whose position this derives (mirrors a channel's `target`).
    *  Empty → inert (enumerated but no node to place). */
   target: z.string().default(''),

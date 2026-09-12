@@ -20,6 +20,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { ImageValue, JobResultValue } from './types';
+import { widget } from './paramWidget';
 
 export const RenderJobParams = z.object({
   jobId: z.string().default('job'),
@@ -28,7 +29,7 @@ export const RenderJobParams = z.object({
   frameEnd: z.number().int().nonnegative().default(60),
   fps: z.number().int().positive().default(30),
   /** Output prefix in StorageCapability. Frames append `${pass}_${frame}.png`. */
-  outputPath: z.string().default('renders/job'),
+  outputPath: widget('text', z.string().default('renders/job')),
 });
 export type RenderJobParams = z.infer<typeof RenderJobParams>;
 

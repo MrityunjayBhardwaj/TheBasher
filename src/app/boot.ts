@@ -530,6 +530,13 @@ export function boot(): Promise<void> {
       void import('./stores/selectionStore').then((m) => {
         w.__basher_selection = m.useSelectionStore;
       });
+      // #973 — the BONE sub-selection, beside the node selection for the same
+      // reason: a spec that drives a real viewport click needs to read what the
+      // click actually picked, and reading it off the inspector's text would be
+      // reading the panel's rendering of the answer rather than the answer.
+      void import('./stores/boneSelectionStore').then((m) => {
+        w.__basher_bone = m.useBoneSelectionStore;
+      });
       // v0.6 #4 W5 — threeRef (editor camera + controls target) exposed so the
       // click-to-select regression e2e (p6-w5-first-run) can project a box's
       // world position to canvas pixels and dispatch a REAL viewport click —

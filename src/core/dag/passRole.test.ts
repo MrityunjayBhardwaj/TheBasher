@@ -9,7 +9,7 @@
 // the degenerate population. The only instrument is a member that DISAGREES with
 // itself, which has to be minted here.
 //
-// REF: issue #608; `src/nodes/passes/passRole.ts`; `src/core/dag/types.ts`
+// REF: issue #608; `src/core/dag/passRole.ts`; `src/core/dag/types.ts`
 // (`PassRole`, `OutputDescriptor.role`).
 
 import { beforeEach, describe, expect, it } from 'vitest';

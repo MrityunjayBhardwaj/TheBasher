@@ -249,6 +249,36 @@ describe('D1 extend / extrapolation (#269, V88 D1)', () => {
     // vec3 hold default matches the legacy clamp.
     expect(sampleVec3KeyframesExtended(pos, 9)).toEqual([2, 0, 0]);
   });
+
+  it('#952 — the domain is half-open at the top, and that is a no-op for every rule but cycle', () => {
+    // `planExtend` used to return `in` for t == lastKey.time, so the FIRST seam
+    // re-read the last key while every LATER seam folded. Same phase, two
+    // answers — the curve disagreed with itself, before any other carrier was
+    // brought into the room:
+    //
+    //     cycle, keys 0@0 → 10@2      t=2 -> 10   (in-range)
+    //                                 t=4 ->  0   (folded)
+    //
+    // Half-open makes the first seam behave like all the others.
+    expect(sampleScalarKeyframesExtended(keys, 2, 'hold', 'cycle')).toBeCloseTo(0, 9);
+    for (const k of [1, 2, 3, 50]) {
+      expect(sampleScalarKeyframesExtended(keys, k * 2, 'hold', 'cycle')).toBeCloseTo(0, 9);
+    }
+
+    // 🔑 THE REASON THIS IS SAFE TO CHANGE IN A SHARED SAMPLER. At t == end the
+    // other four rules all reproduce the last key by their own route — hold
+    // clamps to it, slope extrapolates with dt = 0, mirror reflects onto it, and
+    // cycle-offset folds to the first key plus exactly one period of travel. So
+    // the only rule whose reading moves is `cycle`, which is the defect. If a
+    // future rule breaks that, this row is where it says so.
+    expect(sampleScalarKeyframesExtended(keys, 2, 'hold', 'hold')).toBeCloseTo(10, 9);
+    expect(sampleScalarKeyframesExtended(keys, 2, 'hold', 'slope')).toBeCloseTo(10, 9);
+    expect(sampleScalarKeyframesExtended(keys, 2, 'hold', 'mirror')).toBeCloseTo(10, 9);
+    expect(sampleScalarKeyframesExtended(keys, 2, 'hold', 'cycle-offset')).toBeCloseTo(10, 9);
+
+    // A single-key curve has no span, so half-open must not strand it.
+    expect(sampleScalarKeyframesExtended([{ time: 1, value: 7 }], 1, 'cycle', 'cycle')).toBe(7);
+  });
 });
 
 describe('#272 — per-keyframe interpolation modes (Blender F-Curve interps)', () => {

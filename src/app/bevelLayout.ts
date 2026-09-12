@@ -44,7 +44,8 @@ import type { PolygonRim } from './polygonLayout';
 import type { SourceFace } from './faceCount';
 import { edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
 import { pointCountOf } from './pointIdentity';
-import { scopeSelection } from '../nodes/scopeQuery';
+import { scopeSelection, type GroupLookup } from '../nodes/scopeQuery';
+import { groupLookupFor } from './componentGroupLookup';
 
 /**
  * Everything a bevel's output topology is, in one record.
@@ -337,7 +338,11 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
   const hit = layoutCache.get(cacheKey);
   if (hit !== undefined) return hit;
 
-  const resolved = deriveLayout(source, descriptor.scope);
+  const resolved = deriveLayout(
+    source,
+    descriptor.scope,
+    groupLookupFor(descriptor.source, 'edge'),
+  );
   if (layoutCache.size >= LAYOUT_CACHE_LIMIT) layoutCache.clear();
   layoutCache.set(cacheKey, resolved);
   return resolved;
@@ -541,7 +546,11 @@ function planPoint(fan: { readonly crossings: readonly number[] }, beveled: Uint
 }
 
 /** {@link bevelLayoutOf}'s body, split out so the cache above is the whole of the caching. */
-function deriveLayout(source: GeometryDescriptor, scope: string | undefined): BevelVerdict {
+function deriveLayout(
+  source: GeometryDescriptor,
+  scope: string | undefined,
+  groups: GroupLookup,
+): BevelVerdict {
   const rims = weldedPolygonsOf(source);
   if (rims === null)
     return refused(
@@ -587,7 +596,12 @@ function deriveLayout(source: GeometryDescriptor, scope: string | undefined): Be
   const beveled = new Uint8Array(sourceEdges);
   if (scope === undefined) beveled.fill(1);
   else {
-    const selected = scopeSelection(scope, sourceEdges);
+    // #1027 — the lookup refuses a NAME by name here rather than reporting a missing group:
+    // a bevel's scope indexes EDGES and v1 groups are face-domain, so `arm` on a bevel is not
+    // "this mesh has no group called arm" (it may well have one) but "a face group cannot
+    // scope an edge selection". The cache key above already carries `source.key`, which
+    // includes the attribute component, so a group-scoped entry could not be shared anyway.
+    const selected = scopeSelection(scope, sourceEdges, groups);
     beveled.set(selected.mask);
     if (selected.count === 0)
       return refused(

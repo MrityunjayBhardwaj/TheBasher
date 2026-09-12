@@ -14,9 +14,10 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelTextValue } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
 import { sampleStepKeyframes } from './keyframeInterp';
+import { nameParam } from './paramWidget';
 
 export const KeyframeChannelTextParams = z.object({
-  name: z.string().default('channel'),
+  name: nameParam('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
   mute: z.boolean().default(false),

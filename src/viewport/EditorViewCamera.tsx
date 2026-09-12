@@ -45,10 +45,13 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore, DEFAULT_VIEWPORT_CLIP } from '../app/stores/viewportStore';
 import { loadEditorView } from '../app/editorViewPersistence';
+import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
 import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
 import { computeSceneBounds } from './sceneBounds';
+import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
+import { applyTarget } from '../app/character/framing';
 
 // Default free-mode clip planes (three's near-ish / the pre-#186 constants).
 // The bounds-fit overrides them per-load so large/tiny models don't clip.
@@ -66,6 +69,14 @@ const DEFAULT_FREE_FAR = 1000;
 // camera thereafter (explicit camera constraints are a future feature).
 const SETTLE_STILL_FRAMES = 45;
 const MAX_FRAMES = 300;
+
+/** How often the view lock re-traverses the scene for armatures, in frames.
+ *  The whole-scene walk is the expensive part of following, so it runs on a
+ *  cadence while the bone matrices — the part that actually moves — are read
+ *  every frame. The same trade, and the same number, as the armature helper's
+ *  own rescan: ~0.25s at 60fps is the longest a rig that was just loaded or
+ *  swapped can go unfollowed. */
+const LOCK_RESCAN_INTERVAL = 15;
 
 /** Orthographic zoom that makes the ortho framing match the perspective
  *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
@@ -184,6 +195,32 @@ export function EditorViewCamera() {
   // each frame as async bounds arrive, so a large model still clears `far`.
   const fit = useRef({ active: false, poseToo: false, frames: 0, still: 0, lastR: -1 });
 
+  // #856 — the view lock. Subscribed rather than snapshot-read, because taking
+  // one has to be able to CANCEL an in-progress bounds-fit: the fit is a
+  // one-time framing and the lock is a constraint, and two writers on the same
+  // camera in the same frame is the arbitration this file exists to avoid.
+  const viewLock = useViewportStore((s) => s.viewLock);
+  // What the lock resolved to, refreshed on a cadence (LOCK_RESCAN_INTERVAL)
+  // while the matrices — the part that actually moves — are read every frame.
+  // BOTH lookups sit on the one cadence: `getObjectByName` walks the whole scene
+  // exactly as `scanArmatures` does, so throttling one and not the other would
+  // have been a cost decision made twice and answered differently. Starts at the
+  // interval so the first locked frame resolves rather than following nothing
+  // for a quarter second.
+  const lockScan = useRef<FollowScan | null>(null);
+  const sinceLockScan = useRef(LOCK_RESCAN_INTERVAL);
+  // A new lock names a different node, so what was resolved is about the old
+  // one. Re-resolving on the next frame rather than up to a quarter second later
+  // is the difference between a toggle that acts and one that hesitates.
+  useEffect(() => {
+    sinceLockScan.current = LOCK_RESCAN_INTERVAL;
+    // ...and the previous lock's scan is about a different node, so it is
+    // dropped rather than read once more against the new one.
+    lockScan.current = null;
+  }, [viewLock]);
+  // Reused so the follow allocates nothing per frame.
+  const lockPoint = useMemo(() => new THREE.Vector3(), []);
+
   useEffect(() => {
     const cam = ref.current;
     if (!cam) return;
@@ -253,7 +290,43 @@ export function EditorViewCamera() {
   useFrame((state) => {
     const f = fit.current;
     const cam = ref.current;
-    if (!f.active || lookThrough || !cam) return;
+    // DEV observation seam (the ArmatureHelper/LightHelpers pattern). The fit MOVES THE
+    // CAMERA while it is active, so "is it still running?" is the difference between a
+    // camera the user aimed and one the fit aimed — and from outside there is nothing
+    // else to tell them apart. #989 is exactly that ambiguity, read as a view lock
+    // firing unasked.
+    //
+    // 🔴 PUBLISHED BEFORE THE EARLY RETURN, AND THAT IS THE WHOLE POINT (#989). Written
+    // at the END of the body it only ever described a fit that was RUNNING: the frame a
+    // fit stops on — cancelled by canvas input, skipped in look-through, or with no
+    // camera yet — returns above the write and leaves the LAST value standing. So a
+    // stopped fit went on publishing `active: true` forever, and "running", "cancelled"
+    // and "not mounted" were one output. Measured: with a restored view lock the seam
+    // froze at `{active: true, frames: 1}` indefinitely while the fit was doing nothing,
+    // and a spec waiting for it to settle waited out its timeout.
+    //
+    // A description surface has to be TOTAL to be a description. Reporting every frame
+    // costs one object allocation in DEV and makes "the fit is not touching the camera"
+    // an observable state rather than an absence.
+    // TWO questions, published separately, because conflating them is how this seam came
+    // to lie. `active` is whether the fit is touching the camera THIS frame — what a spec
+    // reading the camera needs. `wants` is the fit's own intent, which outlives a frame
+    // skipped for look-through or a camera ref that has not landed. `lookThrough` and
+    // `hasCamera` say WHICH of those is holding it, so a hang is diagnosable from outside
+    // instead of by adding logs to the product.
+    const fitStopped = !f.active || lookThrough || !cam;
+    if (import.meta.env.DEV) {
+      (window as unknown as { __basher_view_fit?: unknown }).__basher_view_fit = {
+        active: !fitStopped,
+        wants: f.active,
+        lookThrough: Boolean(lookThrough),
+        hasCamera: Boolean(cam),
+        poseToo: f.poseToo,
+        frames: f.frames,
+        still: f.still,
+      };
+    }
+    if (fitStopped) return;
     f.frames += 1;
     const bounds = computeSceneBounds(state.scene);
     if (bounds) {
@@ -310,6 +383,64 @@ export function EditorViewCamera() {
       if (f.still >= SETTLE_STILL_FRAMES) f.active = false;
     }
     if (f.frames >= MAX_FRAMES) f.active = false; // empty / slow scene — stop waiting
+  });
+
+  // #856 — THE VIEW LOCK: keep the view CENTRE on something that moves, so a
+  // walking character stays framed instead of leaving the viewport in a second.
+  //
+  // Runs only in free mode. Blender's own lock is skipped in camera view for the
+  // same reason — `view3d_viewmatrix_set` returns from the `RV3D_CAMOB` branch
+  // before it reads `ob_center` (view3d_view.cc:399, tag v5.1.1) — and here
+  // look-through is a mirror of the DAG camera's pose, which is not ours to move.
+  //
+  // WHY THIS SURVIVES ORBITCONTROLS AND A DIRECT CAMERA WRITE DOES NOT: drei
+  // runs `controls.update()` at priority -1, so it has already rewritten
+  // `position = target + offset` and `lookAt(target)` by the time this default-
+  // priority callback runs. Re-centring moves BOTH ends together, which is a
+  // fixed point of that arithmetic — the next update reproduces it, and the
+  // user's orbit angle and dolly distance are never touched. That is also what
+  // Blender's lock does: it substitutes the followed point for `rv3d->ofs` while
+  // `viewquat` and `rv3d->dist` are applied untouched (view3d_view.cc:414-427).
+  useFrame((state) => {
+    const cam = ref.current;
+    if (!viewLock) return;
+    const dag = useDagStore.getState().state;
+    // The locked node left the graph (deleted, or a project switched under us).
+    // Cleared HERE, at the one place that looks: a lock naming nothing would
+    // otherwise sit in the store looking active while the view never moves,
+    // which is the shape of the defect this issue is about.
+    //
+    // 🔴 ABOVE the camera-view return, not below it (#985). Whether the node
+    // still exists has nothing to do with whether we are looking through a
+    // camera, and a director who reloads into camera view was left with a
+    // checkmark beside a lock on a node that is gone — which is exactly the
+    // "leaves no checkmark behind" this persistence would otherwise reintroduce
+    // on every reload rather than once per session.
+    if (dag.nodes[viewLock.nodeId] === undefined) {
+      useViewportStore.getState().setViewLock(null);
+      return;
+    }
+    if (lookThrough || !cam) return;
+    if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
+      sinceLockScan.current = 0;
+      const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
+      lockScan.current = scanForFollow(state.scene, isLiveNodeId, viewLock.nodeId);
+    }
+    const found = lockScan.current
+      ? pointFromScan(lockScan.current, viewLock.nodeId, viewLock.boneName)
+      : null;
+    // 🔴 NULL IS NOT CLEARED HERE, and that is a decision rather than an
+    // omission (#984). From inside this callback "nothing to follow" and
+    // "nothing to follow YET" are the same observation, and a lock restored
+    // from a previous session (#985) reads as the second for as long as its
+    // asset is loading. Clearing on emptiness would drop exactly the lock a
+    // director asked to be remembered. The question is answered where it CAN
+    // be — at the click, in `viewLock.ts`, with the scene already settled.
+    if (!found) return;
+    // A lock outranks the one-time bounds fit; ending the settle here is what
+    // keeps the two from writing the camera in the same frame.
+    fit.current.active = false;
+    applyTarget(lockPoint.set(found.point[0], found.point[1], found.point[2]));
   });
 
   // #190 — while looking THROUGH the production camera, follow the EVALUATED
@@ -400,6 +531,26 @@ export function EditorViewCamera() {
     useViewportStore
       .getState()
       .setViewportClipOverride(loadViewportClip(projectId) ?? DEFAULT_VIEWPORT_CLIP);
+  }, [projectId]);
+
+  // #985 — the view lock, restored per project and kept in step with it.
+  //
+  // ONE effect, and it both hydrates and subscribes, because the two halves must
+  // agree about WHICH project they are talking about. Written as a hydrate
+  // effect plus a separate save-on-change effect, the save fires once with the
+  // NEW project id and the OLD project's lock still in the store, filing one
+  // project's node id under another's key.
+  //
+  // Subscribed rather than saved at the toggle, because the toggle is not the
+  // only writer: the applier below clears a lock whose node has left the graph,
+  // and a lock that cleared itself must not come back on the next reload. The
+  // store is where every writer meets, so it is where the persistence listens.
+  useEffect(() => {
+    // Before the subscription, so hydrating does not echo straight back out.
+    useViewportStore.getState().setViewLock(loadViewLock(projectId));
+    return useViewportStore.subscribe((state, prev) => {
+      if (state.viewLock !== prev.viewLock) saveViewLock(projectId, state.viewLock);
+    });
   }, [projectId]);
 
   // DEV-only observation seam for the #165 e2e: read the live view camera so

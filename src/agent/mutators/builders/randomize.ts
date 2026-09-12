@@ -15,8 +15,8 @@
 //     seed?: number,
 //   }
 //
-// `position` is EXCLUDED from `PropertyName` (D-05 hard scope — ScatterNode
-// owns position-randomization; mixing surfaces duplicates intent). It MAY
+// `position` is EXCLUDED from `PropertyName` (D-05 hard scope — the `Scatter`
+// node owns position-randomization; mixing surfaces duplicates intent). It MAY
 // appear in `contract.preserves` as an honest disclosure of what this
 // Mutator never touches — `'position'` is a pre-existing `PreservedAspect`
 // token already used at setMaterialColor.ts:34 (NOT an H36-invented one).
@@ -227,7 +227,18 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
     'Ranges are direct (`{h:[0,360], s:[0,1], l:[0,1]}` for color; ' +
     '`{axis,degRange:[min,max]}` for rotation; `{factor:[min,max]}` for scale). ' +
     'Optional `seed` makes the entire sample sequence byte-identically ' +
-    'reproducible. Use ScatterNode for position randomization.',
+    // #1006 — name the REGISTERED TYPE ID, not the TypeScript export. The file and
+    // the export are `ScatterNode`; the id a reader can look up is `Scatter`, and
+    // `getNodeType('ScatterNode')` is undefined. A pointer nobody can resolve reads
+    // as a capability that was never built.
+    //
+    // ⚠️ AND IT IS STILL A DEAD END ON THIS ROAD, WHICH THE SENTENCE NOW SAYS. No
+    // mutator reaches that node — censused all 43 builders, zero hits, with this
+    // file found by the same grep as the control. A model choosing from the catalog
+    // cannot get there however the node is spelled, so the honest sentence names the
+    // limit rather than offering a route that does not exist.
+    'reproducible. Position randomization is not available through a mutator; ' +
+    'the `Scatter` node does it in the graph.',
   spec: RandomizeSpec,
   specExample: {
     targetSelectors: ['node_id_a', 'node_id_b'],

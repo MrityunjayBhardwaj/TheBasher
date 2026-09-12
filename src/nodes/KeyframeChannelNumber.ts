@@ -43,6 +43,7 @@ import {
   migrateExtendParamsToCycles,
   type FChannelModifier,
 } from './channelModifiers';
+import { nameParam } from './paramWidget';
 
 const HandleSchema = z
   .object({
@@ -52,7 +53,7 @@ const HandleSchema = z
   .optional();
 
 export const KeyframeChannelNumberParams = z.object({
-  name: z.string().default('channel'),
+  name: nameParam('channel'),
   /** Target node id (resolved at apply time, not at evaluator time). */
   target: z.string().default(''),
   /** Param path on the target — e.g. 'intensity', 'fov'. */

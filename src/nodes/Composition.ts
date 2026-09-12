@@ -17,9 +17,10 @@ import { z } from 'zod';
 import { colorParam } from './paramWidget';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CompositionValue, LayerValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const CompositionParams = z.object({
-  name: z.string().default('Composition'),
+  name: nameParam('Composition'),
   width: z.number().int().positive().default(1280),
   height: z.number().int().positive().default(720),
   fps: z.number().positive().default(30),

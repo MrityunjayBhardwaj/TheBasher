@@ -58,6 +58,21 @@ export interface GeneratedClip {
    * `[0, 0]` means one was asked for and happened to start at the origin.
    */
   readonly worldOffsetXZ: readonly [number, number] | null;
+
+  /**
+   * The facing the clip was generated FROM, in radians about world Y in the
+   * waypoint frame (+X = 0, +Z = +pi/2), or null when no facing was asked for.
+   *
+   * Carried for the same reason `worldOffsetXZ` is, and against a quieter
+   * failure. A misplaced character is obvious the moment anyone looks at the
+   * scene; a character standing in the right place facing the wrong way reads as
+   * a retarget or bind fault, and sends the next person to the wrong sector
+   * entirely (#897).
+   *
+   * `null` is not `0`: null means nobody asked for a facing, while `0` means one
+   * was asked for and happened to be the canonical direction.
+   */
+  readonly worldRotationRadians: number | null;
 }
 
 /**

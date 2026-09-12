@@ -114,7 +114,7 @@ export function materialCandidates(state: DagState): MaterialCandidate[] {
   const out: MaterialCandidate[] = [];
   for (const node of Object.values(state.nodes)) {
     if (getNodeType(node.type)?.outputs?.[OUT]?.type !== 'Material') continue;
-    out.push({ id: node.id, label: nodeDisplayName(node) });
+    out.push({ id: node.id, label: nodeDisplayName(state.nodes, node.id) });
   }
   out.sort((a, b) => a.label.localeCompare(b.label));
   return out;

@@ -131,6 +131,43 @@ export interface ModelGenerationResult extends ModelTaskResult {
   readonly glb: ArrayBuffer;
 }
 
+/**
+ * A task that HAS RUN — finished and billed — whose output has not been fetched.
+ *
+ * The distinction `generateTaskOnly` needs and `ModelTaskResult` cannot make. A
+ * caller that asked for a task id has already paid for a mesh; whether it wants
+ * the bytes is a question it may only be able to answer LATER, after asking the
+ * service something else about the task.
+ *
+ * 🔑 THIS IS NOT A SECOND TASK, AND MUST NEVER BECOME ONE. Re-running to collect
+ * an output already produced would bill the director twice, which is a worse bug
+ * than the one this exists to fix (#835). The collector closes over the finished
+ * task's own output, so it downloads and does nothing else.
+ *
+ * A METHOD RATHER THAN A URL, deliberately. A URL on the result would need a
+ * public downloader beside it, and would then accept any URL at all; this can
+ * only ever fetch the output of the task that produced it. It also keeps WHICH
+ * field holds the URL a dialect question, which is where that answer already
+ * lives — v2 and v3 disagree, and the caller should never learn that.
+ */
+export interface CompletedModelTask extends ModelTaskResult {
+  /**
+   * Fetch the mesh this task already produced.
+   *
+   * The download happens ONLY when this is called — that laziness is the whole
+   * contract. #833 removed an eager fetch from the rigged road because the bytes
+   * were never used, and it was the step that made rigged generation unreachable
+   * from a browser at all. This is that fix kept, not reversed: the road still
+   * runs narrowly, and pays for the download only on the branch that has a use
+   * for it.
+   *
+   * Throws if the task carried no usable output, for the same reason `generate`
+   * does — a task that succeeded while carrying no model URL is a service
+   * contract violation, not an empty mesh.
+   */
+  collectGlb(): Promise<ArrayBuffer>;
+}
+
 /** Coarse progress, mirroring the plugin's progress bar. `progress` is 0..100.
  *  REF: ref/sources/tripo-3d-for-blender/task.py — TaskPropertyGroup. */
 export interface ModelGenerationProgress {
@@ -179,7 +216,7 @@ export interface ModelGenerationCapability {
   generateTaskOnly(
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<ModelTaskResult>;
+  ): Promise<CompletedModelTask>;
 
   /** Best-effort cancel. May no-op when the task already finished. */
   cancel(taskId: string): Promise<void>;

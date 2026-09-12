@@ -70,6 +70,12 @@ export interface GeneratedMotionResult extends BvhImportChainResult {
    * genuinely starts at the origin.
    */
   readonly worldOffsetXZ: readonly [number, number] | null;
+  /** The facing half of the same placement — radians about world Y, or null when
+   *  no facing was requested. Carried alongside `worldOffsetXZ` rather than
+   *  separately, because applying one without the other is worse than applying
+   *  neither: rotation alone walks the character down a path rotated off the one
+   *  drawn, and translation alone reinstates the strafing #897 records. */
+  readonly worldRotationRadians: number | null;
 }
 
 /**
@@ -102,6 +108,10 @@ export async function buildGeneratedMotionOps(
   // to move. Deleting the gate outright would have turned its refusal into a
   // silent origin-placement — trading a loud failure for the quiet wrong answer
   // this comment was written to prevent.
+  // The rotation rides on the SAME gate as the offset, deliberately not its own.
+  // They are one placement, and a caller that can apply half of it can apply
+  // both; a second flag would let the two drift apart, which is the single
+  // failure this pairing exists to make unrepresentable.
   if (generated.worldOffsetXZ !== null && !args.appliesWorldOffset) {
     const [x, z] = generated.worldOffsetXZ;
     throw new Error(
@@ -129,5 +139,6 @@ export async function buildGeneratedMotionOps(
     jobId: generated.jobId,
     bvh: generated.bvh,
     worldOffsetXZ: generated.worldOffsetXZ,
+    worldRotationRadians: generated.worldRotationRadians,
   };
 }

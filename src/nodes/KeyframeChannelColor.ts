@@ -22,9 +22,10 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Easing, KeyframeChannelColorValue } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
+import { nameParam } from './paramWidget';
 
 export const KeyframeChannelColorParams = z.object({
-  name: z.string().default('channel'),
+  name: nameParam('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);

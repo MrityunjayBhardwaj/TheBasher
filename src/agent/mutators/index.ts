@@ -36,6 +36,7 @@ import { addChannelMutator } from './builders/addChannel';
 import { keyframeMutator } from './builders/keyframe';
 import { simplifyChannelMutator } from './builders/simplifyChannel';
 import { removeKeyframesMutator } from './builders/removeKeyframes';
+import { cameraTrajectoryMutator } from './builders/cameraTrajectory';
 import { shotCreateMutator } from './builders/shotCreate';
 import { retargetMutator } from './builders/retarget';
 import { addPassMutator } from './builders/addPass';
@@ -53,6 +54,7 @@ import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
 import { setComponentScopeMutator } from './builders/setComponentScope';
+import { poseBoneMutator } from './builders/poseBone';
 
 export {
   rotateMutator,
@@ -66,6 +68,7 @@ export {
   simplifyChannelMutator,
   removeKeyframesMutator,
   shotCreateMutator,
+  cameraTrajectoryMutator,
   retargetMutator,
   addPassMutator,
   addAIPassMutator,
@@ -83,6 +86,7 @@ export {
   setTrackStateMutator,
   setObjectSlotMaterialMutator,
   setComponentScopeMutator,
+  poseBoneMutator,
 };
 
 export function registerAllMutators(): void {
@@ -108,6 +112,10 @@ export function registerAllMutators(): void {
   registerMutator(simplifyChannelMutator);
   registerMutator(removeKeyframesMutator);
   registerMutator(shotCreateMutator);
+  // A3 (#774) — a named shot becomes a wired, aimed camera path. A mutator rather
+  // than a capability: a trajectory is about five Vec3s, which is what a language
+  // model emits well, so no service, stub or transport is involved.
+  registerMutator(cameraTrajectoryMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);
   // P4 Wave C — render graph
@@ -156,4 +164,9 @@ export function registerAllMutators(): void {
   // registry (does the target declare a `scope` param?), so requiredNodeTypes is empty
   // and a seventh scoped operator needs no edit here.
   registerMutator(setComponentScopeMutator);
+
+  // #993 — the pose lane's AUTHOR. `PoseOverride` was registered, evaluated and
+  // consumed by the render band while nothing in the codebase could bring one into
+  // existence; a lane is not shipped until something can author it.
+  registerMutator(poseBoneMutator);
 }

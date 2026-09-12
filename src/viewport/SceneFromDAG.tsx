@@ -118,6 +118,8 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
+import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
+import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
   resolveCameraDofAt,
@@ -188,6 +190,8 @@ import type {
   SpotLightValue,
   TransformValue,
   Vec3,
+  AnimationClipValue,
+  SkeletonValue,
 } from '../nodes/types';
 
 let rectAreaInit = false;
@@ -297,6 +301,40 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // here so the top-level result re-renders when the user toggles modes.
   const shading = useViewportStore((s) => s.shading);
   const showLightHelpers = shading !== 'rendered';
+  // #977 — the SOURCE rig of each retarget, so it can be drawn beside the
+  // character it drives. Evaluated here (this component is the one read path)
+  // and handed down; the helper samples it at the playhead per frame.
+  //
+  // Off by default: a reference rig is a diagnostic for judging the retarget by
+  // eye, not scene furniture.
+  const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
+  const sourceRigs = useMemo<ReferenceRigInput[]>(() => {
+    if (!sourceRigVisible) return [];
+    const out: ReferenceRigInput[] = [];
+    for (const pair of retargetPairs(state.nodes)) {
+      try {
+        const clip = evaluate(state, pair.sourceClipId, { cache }).value as
+          | AnimationClipValue
+          | undefined;
+        const target = evaluate(state, pair.targetSkeletonId, { cache }).value as
+          | SkeletonValue
+          | undefined;
+        if (!clip || clip.kind !== 'AnimationClip' || !clip.skeleton?.bones?.length) continue;
+        if (!target || !target.bones?.length) continue;
+        out.push({
+          id: pair.retargetId,
+          clip,
+          targetBoneNames: target.bones.map((b) => b.name),
+        });
+      } catch {
+        // A half-wired or mid-edit graph draws no reference rig. This runs in a
+        // render path; throwing here would take the whole viewport down for a
+        // diagnostic overlay.
+        continue;
+      }
+    }
+    return out;
+  }, [state, cache, sourceRigVisible]);
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -572,6 +610,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
             return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
           })
         : null}
+      {/* #972 — octahedral bones for every rig in the scene. A camera gets a
+          frustum and a light gets a gizmo; until now a rig got nothing, so a
+          character animating wrongly and a character not animating at all
+          looked the same (#970). Reads the LIVE `Bone` objects, so it follows
+          the playhead; orients each bone by its own basis, so ROLL is visible
+          (#854/#960). Hidden in `rendered` mode like every other helper. */}
+      {showLightHelpers ? (
+        <ArmatureHelper sourceRigs={sourceRigs} showSourceRigs={sourceRigVisible} />
+      ) : null}
       {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
           MEMOIZED SceneChildNode so a single param edit re-renders ONE node, not
@@ -4139,13 +4186,23 @@ function ScatterR({ value, override }: { value: ScatterValue; override?: Materia
 // resolved into world transforms via parent indices declared on the
 // skeleton itself.
 function CharacterR({ value }: { value: CharacterValue }) {
+  // #992 — the pose is a FUNCTION OF TIME, so this surface supplies the time
+  // rather than receiving an answer at one instant. Subscribed rather than read
+  // through `getState()` because this road draws declaratively (a <group> tree
+  // per bone) instead of writing transforms imperatively in a useFrame the way
+  // GltfAssetR does. That is not a new per-frame cost: `LocomotionState` carries
+  // a `Time` input, so the CharacterValue upstream of here is already rebuilt
+  // every frame. Making this road lazy is the P2 placeholder rig's own job (real
+  // skinning lands in P3), not this change's.
+  const seconds = useTimeStore((s) => s.seconds);
   const boneTransforms: {
     position: [number, number, number];
     rotation: [number, number, number];
   }[] = [];
   const skel = value.pose.skeleton;
+  const poses = value.pose.sample(seconds);
   for (let i = 0; i < skel.bones.length; i++) {
-    const pose = value.pose.poses[i];
+    const pose = poses[i];
     boneTransforms.push({
       position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
       rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],

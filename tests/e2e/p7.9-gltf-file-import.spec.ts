@@ -45,7 +45,7 @@
 //      `src/app/asset/importGltf.ts` (ingestGltfFolder + importGltfFromOpfs);
 //      `src/viewport/SceneFromDAG.tsx` GltfAssetR (the
 //      `__basher_gltf_meshes` DEV seam added for this gate);
-//      `src/app/AssetsPopover.tsx` (the `library-popover-my-imports` list).
+//      `src/app/AssetLibrary.tsx` (the `library-popover-my-imports` list).
 
 import { test, expect } from './_fixtures';
 
@@ -333,7 +333,7 @@ test('P7.9 (b) — My Imports refresh: entry appears in an already-open popover 
   page,
 }) => {
   // 1. Open the popover BEFORE the ingest. The freshness contract (C3 +
-  //    AssetsPopover.tsx:122-182) says the `[open, tick]` effect re-runs
+  //    AssetLibrary.tsx) says the `[open, tick]` effect re-runs
   //    on every bump from importGltfFromOpfs — so the entry must appear
   //    without a manual close/reopen.
   // The popover trigger lives in TopToolbar; click it to anchor + open.

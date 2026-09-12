@@ -12,7 +12,7 @@
 // slightly above the equator — derived through the SAME placement core the panel
 // drags through, so "+ Light" lands exactly where a puck at that spot would.
 //
-// REF: src/app/resolveStudioLightTransform.ts (the placement core); src/nodes/AreaLight.ts;
+// REF: src/app/resolveStudioLightTransform.ts (the placement core); src/nodes/LightData.ts;
 //      src/nodes/TrackTo.ts; src/app/addPrimitives.ts (the builder discipline); vyapti V60.
 
 import type { DagState } from '../core/dag/state';

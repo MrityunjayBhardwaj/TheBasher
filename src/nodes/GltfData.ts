@@ -63,8 +63,8 @@
 // works — this node has no TRS rows, and the Object has no bit. Splitting them would
 // need a hop that call site does not have.
 //
-// REF: src/nodes/SphereData.ts (the node template); src/nodes/GltfChild.ts (the fused
-//      kind this splits); src/app/resolveGltfChildTransform.ts (the precedence rule);
+// REF: src/nodes/SphereData.ts (the node template);
+//      src/app/resolveGltfChildTransform.ts (the precedence rule);
 //      src/app/geometryRegistry.ts (`drawnByAssetClone` — why the Object does not draw);
 //      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issues #389, #383, #367.
 

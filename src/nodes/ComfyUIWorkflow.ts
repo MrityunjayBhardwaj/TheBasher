@@ -38,6 +38,7 @@ import {
   type PromptValue,
   type TimeValue,
 } from './types';
+import { widget } from './paramWidget';
 
 /**
  * v0.5 ships exactly one preset (D-02 — stylizedRealism only). v0.6
@@ -106,7 +107,7 @@ export const ComfyUIWorkflowParams = z.object({
    * default is empty so legacy projects don't crash; consumers `?? ''`
    * and refuse-with-error when path is missing at execute time.
    */
-  outputPath: z.string().default(''),
+  outputPath: widget('text', z.string().default('')),
   /**
    * Output descriptor — stylized output dimensions. Defaults to 1280x720
    * rgba8 to match raw passes; ComfyUI-side workflow JSON may upscale.

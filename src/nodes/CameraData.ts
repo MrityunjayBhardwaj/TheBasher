@@ -36,12 +36,15 @@
 // an undefined lens field. `fov` is the ONE exception and it is deliberate — see the
 // note on the schema field.
 //
-// Coexists with the fused Perspective/OrthographicCamera; nothing migrates in
-// C4-Slice-1.
+// The fused PerspectiveCamera / OrthographicCamera nodes it was written to coexist
+// with have since been RETIRED — this node plus CameraSelect is the whole camera
+// road now. `cameraRecompose` still spells the old kind names as VALUES, which is
+// what a flat CameraValue's consumers read.
 //
-// REF: src/nodes/PerspectiveCamera.ts / OrthographicCamera.ts (the fused nodes and
-//      their lens fields); src/nodes/cameraRecompose.ts (the flat-CameraValue
-//      reconstruction); src/app/activeCamera.ts (the pose road); issue #387.
+// REF: src/nodes/CameraSelect.ts (the other half of the split);
+//      src/nodes/cameraRecompose.ts (the flat-CameraValue reconstruction, and where
+//      the retired kind names survive as values); src/app/activeCamera.ts (the pose
+//      road); issue #387.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';

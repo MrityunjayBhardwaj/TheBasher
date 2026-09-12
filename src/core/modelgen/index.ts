@@ -93,6 +93,7 @@ export {
   type ModelGenerationRequest,
   type ModelGenerationResult,
   type ModelTaskResult,
+  type CompletedModelTask,
   type MultiviewModelRequest,
   type PoseControl,
   type SourceImage,

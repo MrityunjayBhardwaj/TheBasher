@@ -100,7 +100,9 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
   name: 'mutator.timeline.addChannelModifier',
   description:
     'Add a Blender-style F-MODIFIER to a KeyframeChannel{Number,Vec2,Vec3} — a ' +
-    'procedural operator layered on top of the evaluated curve. modifierType: ' +
+    // The backtick ends the picker summary here — see addModifier.ts for the
+    // measurement. Without it this summary ran on to 413 characters.
+    'procedural operator layered on top of the evaluated curve. `modifierType`: ' +
     '"noise" (fractal value-noise jitter), "cycles" (repeat/mirror the range ' +
     'before/after), "generator" (add/replace with a polynomial y=c0+c1·t+…), ' +
     '"limits" (clamp value and/or time), "stepped" (stop-motion hold every N ' +

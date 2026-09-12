@@ -87,6 +87,9 @@ describe('#638 the count is a leaf', () => {
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',
+      // #1027 — a scope may NAME a group, and a group's membership lives on the source handle's
+      // attribute set rather than in the query, so the count road had to gain a way to read one.
+      './componentGroupLookup',
       './polygonLayout',
       './bevelLayout',
       './arrayCopies',
@@ -170,6 +173,9 @@ describe('#638 the count is a leaf', () => {
       './pointIdentity',
       './materialGroups',
       '../nodes/scopeQuery',
+      // #1027 — a scope may NAME a group, and a group's membership lives on the source handle's
+      // attribute set rather than in the query, so the count road had to gain a way to read one.
+      './componentGroupLookup',
       './bevelLayout',
       './builtRims',
       // 🔴 WIDENED AGAIN at #786, by TWO, and BOTH are leaves — the bar #814's two additions
@@ -236,12 +242,33 @@ describe('#638 the count is a leaf', () => {
     expect(importsOf('src/app/faceCount.ts')).toEqual([
       '../nodes/types',
       '../nodes/scopeQuery',
+      // #1027 — a scope may NAME a group, and a group's membership lives on the source handle's
+      // attribute set rather than in the query, so the count road had to gain a way to read one.
+      './componentGroupLookup',
       './polygonLayout',
       // #814 — the one that is NOT a leaf. See the first row in this file for why it was taken
       // anyway and what replaced the property it broke.
       './bevelLayout',
       './arrayCopies',
     ]);
+    // #1027 — and the claim that made taking it safe, checked rather than asserted. It sits on
+    // three modules that are each leaves in their own right: the store (one type import, pinned
+    // above), the name rule (nothing at all, pinned below) and two type-only imports. The day it
+    // reaches for a count, a registry or a resolver it stops being safe for the four roads that
+    // read it, and nothing else in the repo would say so.
+    expect(importsOf('src/app/componentGroupLookup.ts')).toEqual([
+      './attributeStore',
+      '../nodes/componentGroups',
+      // The remaining three are TYPE-ONLY and carry no runtime edge — which is the whole reason
+      // this module can sit under `faceCount` while naming `scopeQuery`, the very module whose
+      // leafness the row below pins. A type import cannot be called, so importing the SHAPE of a
+      // lookup is not a way to obtain one, and the one-parser rule is untouched. If any of these
+      // ever becomes a value import, this row is where that shows up.
+      '../nodes/scopeQuery',
+      '../nodes/types',
+      '../nodes/attributes',
+    ]);
+    expect(importsOf('src/nodes/componentGroups.ts')).toEqual([]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
     // #367 — the claim made in the widening note above, checked. `gltfCloneRegistry` is the
     // registry's one reach toward the renderer, so it is the addition with the most room to

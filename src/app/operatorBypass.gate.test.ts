@@ -146,10 +146,13 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this phase's own thesis — the most expensive kind.
     expect(unreadableSchemas()).toEqual([]);
-    // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), 84 -> 85 at #994
-    // (UVProjectModifier). Stated exactly, not floored: the count is
+    // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), then 84 -> 86 by two
+    // independent arrivals: #974 (PoseOverride) and #994 (UVProjectModifier). Stated exactly,
+    // not floored: the count is
     // the instrument's denominator, and a floor would not catch an over-deletion.
-    expect(listNodeTypes()).toHaveLength(85);
+    // 86 -> 87 at #1027 (ComponentGroupOp), which is also an OPERATOR, so the operator
+    // census next door moves with it rather than independently.
+    expect(listNodeTypes()).toHaveLength(87);
   });
 
   it('`muted` is declared TEN times in source, and that is three different populations', () => {
@@ -159,6 +162,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // not by being added to a list, which is the whole property this row measures.
       ['src/nodes/BevelModifier.ts', 1],
       ['src/nodes/ColorCorrect.ts', 1],
+      // #1027 — the sixth geometry modifier, joining the same way the fourth and fifth did:
+      // by declaring the field, never by being added here.
+      ['src/nodes/ComponentGroupOp.ts', 1],
       ['src/nodes/MaskModifier.ts', 1],
       ['src/nodes/MaterialOverrideOp.ts', 1],
       ['src/nodes/MirrorModifier.ts', 1],
@@ -180,6 +186,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
+      'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -197,6 +204,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
+      'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverrideOp',
       'MirrorModifier',
@@ -232,7 +240,10 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // this row measures the absence of for everything that predates it. It moves the same way
     // again at #994, for the same reason and with no second mechanism: 21 -> 22, all on the
     // `muted` side, because `UVProjectModifier` names the param its own `chain.bypass` names.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(22);
+    // 22 -> 23 at #1027, by the same mechanism and no second one: `ComponentGroupOp` names
+    // `muted` because its own `chain.bypass` names it, and registration refuses a declaration
+    // whose named param the schema does not declare.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(23);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -284,6 +295,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
+      'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverride',
       'MaterialOverrideOp',
@@ -326,6 +338,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     expect(operatorTypesInSection('modifier')).toEqual([
       'ArrayModifier',
       'BevelModifier',
+      'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
       'UVProjectModifier',
@@ -346,7 +359,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // line, so the formatter breaks it one member per line and adds the comma the style
       // requires. This row extracts SOURCE TEXT, so it sees formatting as well as membership —
       // worth knowing before someone "cleans up" the expectation and reds the gate.
-      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier',",
+      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier', 'ComponentGroupOp',",
     );
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines

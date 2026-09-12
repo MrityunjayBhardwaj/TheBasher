@@ -9,6 +9,7 @@ import { z } from 'zod';
 import { colorParam } from './paramWidget';
 import type { NodeDefinition } from '../core/dag/types';
 import type { MaterialOverrideValue, SceneChild } from './types';
+import { nameParam } from './paramWidget';
 
 // The sparse per-field "authored" set (#124, V28). Default `{}` = legacy #99
 // map-aware behaviour (D-03): a field absent from the set inherits the source
@@ -29,7 +30,7 @@ export const MaterialOverriddenSet = z
   .default({});
 
 export const MaterialOverrideParams = z.object({
-  name: z.string().default('override'),
+  name: nameParam('override'),
   color: colorParam('#ffffff'),
   roughness: z.number().min(0).max(1).default(0.5),
   metalness: z.number().min(0).max(1).default(0),

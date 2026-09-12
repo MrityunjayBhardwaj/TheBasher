@@ -35,7 +35,8 @@
 // two-layer `?? default` guard, matching the fused `BakedMesh`, whose `geometry`
 // and `material` are likewise undefaulted.
 //
-// REF: src/nodes/BakedMesh.ts (the fused node + the shared handle/material schemas);
+// REF: src/nodes/bakedRecompose.ts (the reconstruction that replaced the fused
+//      BakedMesh node, which is retired);
 //      src/app/geometryRegistry.ts (why a baked ref resolves to null synchronously);
 //      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issue #388.
 

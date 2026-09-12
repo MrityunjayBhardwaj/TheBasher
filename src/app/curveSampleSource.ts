@@ -29,7 +29,7 @@
 // resolve in the seam rather than in `evaluate`: cross-object world reads only exist after
 // composition. The node bakes the local polyline; the seam measures it in world.
 //
-// REF: src/nodes/curveMath.ts (the pure local sampler); src/nodes/Curve.ts;
+// REF: src/nodes/curveMath.ts (the pure local sampler); src/nodes/CurveData.ts;
 //      src/app/geometrySampleSource.ts (the sibling seam + the BVH-cache precedent);
 //      src/app/resolveWorldTransform.ts (the one world resolver — never a parallel walk).
 

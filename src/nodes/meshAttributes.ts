@@ -55,6 +55,7 @@ import {
   type KnownDomain,
 } from './attributes';
 import { mintAttributes, type MintedAttributes } from './attributeKey';
+import { groupAttributeName } from './componentGroups';
 import { Vector3 } from 'three';
 import { transformRuleFor } from '../app/attributeTransform';
 import { copyMatrixOf } from '../app/copyTransform';
@@ -289,6 +290,69 @@ export function mintTargetedAttributes(
   let covered = 0;
   for (let face = 0; face < faces; face++) if (assigned[face] === 1) covered += 1;
   return { key: minted.key, covered, faces };
+}
+
+/**
+ * Write a NAMED COMPONENT GROUP onto a geometry: a face-domain `int` that is 1 on the faces
+ * the selection names and 0 elsewhere, carried over everything the source already had (#1027).
+ *
+ * ── THE FIRST MINT IN THIS MODULE THAT IS NOT A PROJECTION ────────────────────────────
+ *
+ * Every other mint here DERIVES its values — from params, from a scope query, from carriage,
+ * or lifted off built geometry — and the module header says so in as many words. This one is
+ * AUTHORED: a director says "these faces are called `arm`", and there is no other place that
+ * fact could be read from. That is the gap #734's chain calls the binding one, and it is why
+ * the function is here rather than beside its node: the store insert, the carry-forward and
+ * the `via` attribution are this module's job, and a node that did them itself would be a
+ * second minting road.
+ *
+ * ⚠️ AN UNSCOPED GROUP NAMES EVERY FACE, AND THAT IS THE REFERENCE BEHAVIOUR, NOT A FALLBACK.
+ * A `null` selection is the resolver's declared "this value has no component domain" and a
+ * `canonicalQuery` of `null` is "nothing authored yet"; both mean every face here, which is
+ * what a Group SOP with an empty base group does. It is worth stating because the sibling
+ * decision went the other way: {@link MaskModifier} stays TRANSPARENT while unconfigured,
+ * because reading its total selection naively would delete the whole mesh before the author
+ * had said anything. Naming every face is not destructive, so the reference default stands.
+ *
+ * 🔴 THE GROUP GOES ON LAST, for the same reason `material_index` does in
+ * {@link targetedMaterialAttributes}: re-authoring a group that already exists must REPLACE
+ * it rather than lose to the carried copy. Two writers of one name are the author changing
+ * their mind, and the later one is the one they meant.
+ *
+ * It takes the HANDLE and not the descriptor (#722) — the carry-forward needs the source's
+ * shape AND the key of the set it carries, and those are one fact about one handle.
+ */
+export function mintGroupAttributes(
+  geometry: GeometryRef,
+  name: string,
+  selection: ComponentSelection | null,
+  via: AttributeGrowthSource,
+): { readonly key: string; readonly members: number; readonly faces: number } | null {
+  refuseUnattributedGrowth(via);
+  const faces = faceCountOf(geometry.descriptor);
+  // No derivable face count (a glTF or baked source: its buffers live in an asset clone or
+  // in OPFS) means there is no face domain to write onto. Declared limit, not an oversight —
+  // it lifts when those roads get a data half of their own (#605).
+  if (faces === null) return null;
+  const carried = geometry.attributeKey === undefined ? null : read(geometry.attributeKey);
+
+  const data = new Int32Array(faces);
+  let members = 0;
+  for (let face = 0; face < faces; face++) {
+    if (selection === null || selection.has(face)) {
+      data[face] = 1;
+      members += 1;
+    }
+  }
+  const membership: AttributeData = { domain: 'face', type: 'int', count: faces, data };
+  const minted = mintAttributes({ ...carried, [groupAttributeName(name)]: membership });
+  // Unreachable by construction — `mintAttributes` returns `null` only for an EMPTY set, and
+  // this one carries the membership whatever the source had. Handled rather than asserted
+  // away with a `!`: the non-null claim is not one the type supports, and a later editor who
+  // widened the mint would inherit the assertion without ever being asked about it.
+  if (minted === null) return null;
+  insert(minted.key, minted.set, via);
+  return { key: minted.key, members, faces };
 }
 
 /**

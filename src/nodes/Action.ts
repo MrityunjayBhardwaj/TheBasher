@@ -24,6 +24,7 @@ import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
 import { KeyframeChannelColorParams } from './KeyframeChannelColor';
 import { KeyframeChannelTextParams } from './KeyframeChannelText';
 import { KeyframeChannelImageParams } from './KeyframeChannelImage';
+import { nameParam } from './paramWidget';
 
 /** A relative-path channel spec = the channel schema minus the bound `target`,
  *  plus a `valueType` discriminant. `mute`/`weight`/`blendMode`/`order` are inert
@@ -43,7 +44,7 @@ export const ActionChannelSchema = z.discriminatedUnion('valueType', [
 export type ActionChannel = z.infer<typeof ActionChannelSchema>;
 
 export const ActionParams = z.object({
-  name: z.string().default('Action'),
+  name: nameParam('Action'),
   channels: z.array(ActionChannelSchema).default([]),
 });
 export type ActionParams = z.infer<typeof ActionParams>;

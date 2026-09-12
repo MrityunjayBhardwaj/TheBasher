@@ -713,8 +713,7 @@ function withMaterialMasking(
 
   const owners = resolveMaterialFieldOwners(state, selectedId);
   const labelOf = (nodeId: string) => {
-    const n = state.nodes[nodeId];
-    return n ? nodeDisplayName(n) : nodeId;
+    return nodeDisplayName(state.nodes, nodeId);
   };
 
   return rows.map((row) => {

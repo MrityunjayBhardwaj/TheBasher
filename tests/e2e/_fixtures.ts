@@ -92,3 +92,46 @@ export const test = base.extend({
 });
 
 export { expect };
+
+/**
+ * Wait until the initial bounds-fit has finished moving the camera (#989).
+ *
+ * ── WHY ANY SPEC THAT READS THE CAMERA NEEDS THIS ────────────────────────────────────
+ *
+ * On boot `EditorViewCamera` runs a one-time fit that re-frames the scene, and it does
+ * not stop on a clock — it stops after the scene bounds hold steady for 45 consecutive
+ * FRAMES. While it runs it OWNS the camera, and moving an object changes the bounds, so
+ * an active fit re-frames on the new centre.
+ *
+ * That is indistinguishable from a view lock following, and it breaks a spec in BOTH
+ * directions:
+ *
+ *   · a control arm asserting the object LEFT frame unlocked fails, because the fit
+ *     centred it — measured 6 of 6 with `active: true` at the read;
+ *   · a locked arm asserting the object STAYED framed passes for the wrong reason,
+ *     because the fit produces the same readings. Measured with NO lock taken at all:
+ *     the pivot moved 14.000 and ndc x was 0.000 — exactly what the locked arm cites as
+ *     evidence the lock works.
+ *
+ * The second is the worse one: a green that means nothing.
+ *
+ * A longer sleep moves the odds and fixes neither, because 45 still frames is not a
+ * duration — a slower runner or a heavier scene pushes it out again. Waiting for the
+ * condition is the only form that cannot flake.
+ *
+ * ⚠️ The fit exits for good; it is a one-time pass, not a constraint. Measured: after it
+ * settles, eight further edits leave the pivot pinned while the object walks off to
+ * ndc −2.03. So await this ONCE after each load, and never again.
+ *
+ * REF: src/viewport/EditorViewCamera.tsx (the fit callback and its `__basher_view_fit`
+ *      seam); issues #989, #856.
+ */
+export async function settleViewFit(page: import('@playwright/test').Page): Promise<void> {
+  await page.waitForFunction(
+    () =>
+      (window as unknown as { __basher_view_fit?: { active: boolean } }).__basher_view_fit
+        ?.active === false,
+    undefined,
+    { timeout: 20_000 },
+  );
+}

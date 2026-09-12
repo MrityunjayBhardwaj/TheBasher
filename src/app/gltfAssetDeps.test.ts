@@ -341,4 +341,73 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     }).next;
     expect(shallow(before, gltfAssetDepNodes(unrelated.nodes, ASSET, NODE_NAME_MAP))).toBe(true);
   });
+
+  // ── #995 — the authored-pose band's half of the same pair ────────────────
+  //
+  // The enumerator learned to read `PoseOverride` in #974 and this collector was
+  // not widened, so on the render path the override was absent from the table AND
+  // the memo's dependency array never flipped. Measured in a browser: the mutator
+  // accepted, the node in the DAG, and 0 of 67 bones moved.
+
+  /** One `PoseOverride` on `retarget`'s pose chain, plus a second stacked on it. */
+  function withPose(state: DagState, count = 1): DagState {
+    let s = state;
+    let upstream = { node: 'retarget', socket: 'posed' };
+    for (let i = 0; i < count; i++) {
+      const id = `pose${i}`;
+      s = applyOp(s, {
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'PoseOverride',
+        params: { bone: `bone${i}`, rotation: [0, 0, 45], overridden: { rotation: true } },
+      }).next;
+      s = applyOp(s, { type: 'connect', from: upstream, to: { node: id, socket: 'pose' } }).next;
+      upstream = { node: id, socket: 'out' };
+    }
+    return s;
+  }
+
+  it('#995 — an override on the rig IS in the subscription scope', () => {
+    const s = withPose(withRetarget(buildScene()));
+    expect(gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP).map((n) => n.id)).toContain('pose0');
+  });
+
+  it('#995 — overrides STACK, so the whole chain is collected, not just the first hop', () => {
+    const s = withPose(withRetarget(buildScene()), 3);
+    const ids = gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP).map((n) => n.id);
+    expect(ids).toEqual(expect.arrayContaining(['pose0', 'pose1', 'pose2']));
+  });
+
+  it('#995 — an override reaching NO clip of this rig is EXCLUDED', () => {
+    // THE ABSENCE OF THE STRAY. A collector that simply swept up every
+    // `PoseOverride` in the table would satisfy the two rows above while
+    // delivering another asset's poses to this asset — and since a superset is
+    // legal here, nothing else in the file would notice.
+    let s = withRetarget(buildScene());
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'strayPose',
+      nodeType: 'PoseOverride',
+      params: { bone: 'bone0', rotation: [0, 0, 45], overridden: { rotation: true } },
+    }).next;
+    expect(gltfAssetDepNodes(s.nodes, ASSET, NODE_NAME_MAP).map((n) => n.id)).not.toContain(
+      'strayPose',
+    );
+  });
+
+  it('#995 — editing an override flips a ref, so the viewport re-applies the pose', () => {
+    // The half that the browser actually caught: membership alone is not enough,
+    // because the band is a memo keyed on THIS array. An override that is
+    // collected but whose edit does not flip the array is a pose authored once
+    // and then frozen.
+    const base = withPose(withRetarget(buildScene()));
+    const before = gltfAssetDepNodes(base.nodes, ASSET, NODE_NAME_MAP);
+    const after = applyOp(base, {
+      type: 'setParam',
+      nodeId: 'pose0',
+      paramPath: 'rotation',
+      value: [0, 0, 90],
+    }).next;
+    expect(shallow(before, gltfAssetDepNodes(after.nodes, ASSET, NODE_NAME_MAP))).toBe(false);
+  });
 });

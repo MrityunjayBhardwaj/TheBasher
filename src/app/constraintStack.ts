@@ -56,7 +56,7 @@ export function constraintStackEntries(state: DagState, targetId: string): Stack
   return relationalPoseStackForTarget(state.nodes, targetId, true).map((m) => ({
     nodeId: m.nodeId,
     muted: m.muted,
-    label: nodeDisplayName(state.nodes[m.nodeId]),
+    label: nodeDisplayName(state.nodes, m.nodeId),
   }));
 }
 

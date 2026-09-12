@@ -17,9 +17,10 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { BoneNameMapValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const BoneNameMapParams = z.object({
-  name: z.string().default('Mixamo to glTF'),
+  name: nameParam('Mixamo to glTF'),
   /** Plain record — keys are source names, values are target names. */
   map: z.record(z.string(), z.string()).default({}),
 });

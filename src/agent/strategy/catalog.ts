@@ -527,7 +527,7 @@ const COMPONENT_SCOPE: StrategyResource = {
     "The component scope query — restricting an operator to a subset of a mesh's faces or edges.",
   body: `# Component scope
 
-Six operators can be restricted to a SUBSET of the mesh instead of acting on all of it.
+Seven operators can be restricted to a SUBSET of the mesh instead of acting on all of it.
 The subset is written as a query string in the operator's \`scope\` param.
 
 | operator | what \`scope\` selects |
@@ -538,6 +538,7 @@ The subset is written as a query string in the operator's \`scope\` param.
 | \`MaterialOverrideOp\` | faces |
 | \`SetMaterialOp\` | faces |
 | \`BevelModifier\` | **edges**, not faces |
+| \`ComponentGroupOp\` | faces — the faces it gives a NAME to |
 
 **Blank or absent means EVERYTHING.** That is the default and the behaviour these operators
 had before scope existed — clearing the field is how you go back to the whole mesh.
@@ -577,11 +578,38 @@ certainly wanted \`!\` where you wrote \`^\`, or a blank scope.
 
 ## What is NOT implemented, and will be refused by name
 
-- **Wildcards** (\`arm*\`) — they match stored group NAMES, and no group can be named yet.
+- **Wildcards** (\`arm*\`) — matching several group names at once.
 - **Attribute expressions** (\`@v>0\`).
 
 These come back as a named error, not as a silent "everything". If you need one, say so to
 the user rather than substituting a numeric range that only approximates it.
+
+## Naming a set of faces
+
+\`ComponentGroupOp\` (added through \`mutator.geometry.addModifier\`) writes a NAME onto the
+faces its scope selects. Give it \`name\`; without one it does nothing at all. Set WHICH faces
+with \`mutator.setComponentScope\`, exactly as for any other operator in the table above; with
+no scope it names every face.
+
+The name is stored on the geometry, so it survives later topology changes — array the mesh and
+the named faces are still named, per copy.
+
+Then write the NAME as the scope of any operator in the table above — \`scope: 'arm'\` — and it
+resolves against the mesh as it is at that point in the stack. It composes like any other term:
+\`arm ^0\` is the group minus face 0, \`!arm\` is everything outside it, \`arm leg\` is both.
+
+**Why this is worth doing rather than writing indices.** A numeric query names positions, and a
+position means something different after the mesh changes. Name three faces of a box and array it
+x3: \`arm\` names nine faces (the three, in each copy) while \`0-2\` names three. If the user asks
+for a region they will refer to again — or you are about to modify the mesh between two
+operations on the same region — create the group.
+
+A name that no group on that mesh carries is REFUSED by name; it never falls back to selecting
+everything. If you see that refusal, the group was not created, was created on a different mesh,
+or is spelled differently — check rather than substituting a numeric range.
+
+🔴 **Groups name FACES.** A bevel's scope names edges, so a group cannot scope a bevel; that is
+refused by name too.
 
 ## Setting it
 

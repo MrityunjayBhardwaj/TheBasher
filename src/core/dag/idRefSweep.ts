@@ -161,6 +161,32 @@ export function buildIdRefIndex(nodes: Readonly<Record<string, NodeLike>>): Map<
   return index;
 }
 
+/**
+ * The ids `node` names, SPLIT BY WHAT THE REFERENCE MEANS (#733).
+ *
+ * `role` is already the declared answer to "the referent was deleted — what happens to
+ * me?", and that is the same question a reachability walk needs:
+ *   • 'subject'  — this node is a sidecar OWNED BY the referent and meaningless without
+ *                  it (a channel's target, a constraint's constrained object). Its effect
+ *                  reaches the scene THROUGH the referent's own resolution, so a live
+ *                  referent makes this node both live and consumed.
+ *   • 'argument' — this node merely reads a referent that exists independently (the curve
+ *                  a Follow-Path follows). That is an input, like a wired edge.
+ *
+ * Exported so a reader needing the distinction does not re-walk the declaration and
+ * drift from `idRefsOutOf`; both read `NodeDefinition.idRefs` and nothing else.
+ */
+export function idRefsByRole(node: NodeLike): { subject: string[]; argument: string[] } {
+  const out = { subject: [] as string[], argument: [] as string[] };
+  for (const ref of getNodeType(node.type)?.idRefs ?? []) {
+    const bucket = ref.role === 'subject' ? out.subject : out.argument;
+    for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+      if (!bucket.includes(target)) bucket.push(target);
+    }
+  }
+  return out;
+}
+
 /** The node ids `node` names through its declared refs (the outward direction). */
 export function idRefsOutOf(node: NodeLike): string[] {
   const out: string[] = [];

@@ -52,3 +52,10 @@ blockbench/
 
 # Ānvīkṣikī — catalogues live in ~/.anvideck (anvi_artifacts); .anvi here is a symlink
 .anvi
+
+# Agent scratch. The repo states its own scratch conventions rather than leaving
+# each clone to configure them: these two were carried in .git/info/exclude, which
+# is machine-local and shared with nobody, so the model scan was red by default on
+# any clone that had run an agent session and green only by accident elsewhere.
+scratchpad/
+.claude/worktrees/

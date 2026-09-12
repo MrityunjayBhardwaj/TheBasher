@@ -16,9 +16,10 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TrackValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const TrackParams = z.object({
-  name: z.string().default('Track'),
+  name: nameParam('Track'),
   /** Ordered Strip node ids (edge-less refs). Position in this array = the
    *  strip's within-track fold rank. */
   strips: z.array(z.string()).default([]),

@@ -71,7 +71,7 @@ import {
   type ModelGenerationProgress,
   type ModelGenerationRequest,
   type ModelGenerationResult,
-  type ModelTaskResult,
+  type CompletedModelTask,
   type SourceImage,
 } from './ModelGenerationCapability';
 import {
@@ -322,14 +322,61 @@ export function tripoFallbackOf(probe: TripoUnavailable): TripoFallback {
 /** Thrown when a task reaches a terminal non-success status. Distinct from a
  *  transport error, because the two ask the caller for different things: retry
  *  versus change the request. */
+/** At most this many characters of vendor detail reach a user-facing message.
+ *  A failed task's payload is not a size we control. */
+const DETAIL_BUDGET = 200;
+
+/**
+ * Everything a failed task carried BESIDES the three fields we read by name.
+ *
+ * #799 — v2 said what went wrong in the STATUS (`banned`, `expired`). v3 folded
+ * those into `failed` plus a code, so a prompt refused by moderation and a task
+ * that sat in the queue too long became the same sentence, and the fields that
+ * tell them apart were read off the response and dropped on the floor. One of
+ * those asks the director to rewrite their prompt; the other asks them to retry
+ * unchanged, so one sentence sends half of them to the wrong action.
+ *
+ * 🔑 THIS PASSES THE DETAIL THROUGH; IT DOES NOT INTERPRET IT. #799's own
+ * grounding caveat is that the field names and the two codes come from v3
+ * DOCUMENTATION, not from source — there is no v3 SDK and the schema sits behind
+ * authentication. Naming `error_code` here would be asserting a fact nobody has
+ * confirmed against the wire, so nothing is named: whatever the service sent that
+ * we did not ask for is repeated verbatim. Two different causes then read
+ * differently, which is the whole of the reported defect, and interpreting the
+ * codes stays owed until a key exists to confirm them against.
+ *
+ * SCALARS ONLY, and budgeted. A nested object is the vendor's shape rather than
+ * a message, and an unbounded string in a banner is a different bug.
+ */
+function failureDetail(task: Readonly<Record<string, unknown>>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(task)) {
+    if (k === 'status' || k === 'progress' || k === 'output') continue;
+    if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') continue;
+    if (v === '' || v === null) continue;
+    out[k] = String(v).slice(0, DETAIL_BUDGET);
+  }
+  return out;
+}
+
 export class TripoTaskFailedError extends Error {
   readonly taskId: string;
   readonly status: string;
-  constructor(taskId: string, status: string) {
-    super(`Tripo task ${taskId} ended as "${status}".`);
+  /** What the service said beyond the status. Empty when it said nothing — and
+   *  the message is then byte-identical to what it has always been, which is
+   *  what keeps every v2 failure reading as it did. */
+  readonly detail: Readonly<Record<string, string>>;
+  constructor(taskId: string, status: string, detail: Readonly<Record<string, string>> = {}) {
+    const said = Object.entries(detail)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(', ');
+    super(
+      `Tripo task ${taskId} ended as "${status}".${said ? ` The service also said: ${said}` : ''}`,
+    );
     this.name = 'TripoTaskFailedError';
     this.taskId = taskId;
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -478,9 +525,18 @@ export class TripoModelGenerationCapability
   async generateTaskOnly(
     request: ModelGenerationRequest,
     onProgress?: (p: ModelGenerationProgress) => void,
-  ): Promise<ModelTaskResult> {
-    const { taskId, modelVersion } = await this.runTask(request, onProgress);
-    return { taskId, modelVersion };
+  ): Promise<CompletedModelTask> {
+    const { taskId, modelVersion, output, deadline } = await this.runTask(request, onProgress);
+    // The output is ALREADY IN HAND here — `runTask` polled the task to
+    // completion to learn that it finished. Binding only the id threw it away,
+    // and the caller that later wanted the mesh had no way back to it short of
+    // running a second task and billing the director twice (#835).
+    //
+    // So the output is kept in a closure rather than fetched. Nothing is
+    // downloaded unless `collectGlb` is called, which preserves exactly what
+    // #833 bought: the narrow road stays narrow, and only the branch with a use
+    // for the bytes pays for them.
+    return { taskId, modelVersion, collectGlb: () => this.glbOf(taskId, output, deadline) };
   }
 
   async generate(
@@ -488,6 +544,21 @@ export class TripoModelGenerationCapability
     onProgress?: (p: ModelGenerationProgress) => void,
   ): Promise<ModelGenerationResult> {
     const { taskId, modelVersion, output, deadline } = await this.runTask(request, onProgress);
+    const glb = await this.glbOf(taskId, output, deadline);
+    return { taskId, glb, modelVersion };
+  }
+
+  /**
+   * The bytes of a finished task's output. The ONE definition of "collect the
+   * mesh", so the wide road and the deferred collector cannot drift on which
+   * field holds the URL or on what an absent one means — the same discipline
+   * `runTask` applies to what running a task means.
+   */
+  private async glbOf(
+    taskId: string,
+    output: TripoTaskOutput,
+    deadline: number,
+  ): Promise<ArrayBuffer> {
     // WHICH field holds the URL is version-specific — v3 renamed it — so the
     // dialect answers rather than this method guessing across both vocabularies.
     const url = this.dialect.modelUrlOf(output);
@@ -498,9 +569,7 @@ export class TripoModelGenerationCapability
           `${this.dialect.version === 'v2' ? 'pbr_model, model or base_model' : 'model_url or model_urls'}).`,
       );
     }
-
-    const glb = await this.download('Downloading the generated model', url, deadline);
-    return { taskId, glb, modelVersion };
+    return this.download('Downloading the generated model', url, deadline);
   }
 
   /**
@@ -615,18 +684,23 @@ export class TripoModelGenerationCapability
         );
       }
 
-      const task = await this.request<{
-        status?: string;
-        progress?: number;
-        output?: TripoTaskOutput;
-      }>('GET', this.dialect.taskPath(taskId));
+      // Read as an open record. The three fields below are the ones we read by
+      // NAME; declaring only those made every other field the service sent
+      // invisible to this reader, which is #799.
+      const task = await this.request<
+        {
+          status?: string;
+          progress?: number;
+          output?: TripoTaskOutput;
+        } & Record<string, unknown>
+      >('GET', this.dialect.taskPath(taskId));
 
       const status = task.status ?? 'unknown';
       onProgress?.({ taskId, status, progress: task.progress ?? 0 });
 
       if (status === 'success') return task.output ?? {};
       if (TERMINAL_FAILURE_STATUSES.has(status)) {
-        throw new TripoTaskFailedError(taskId, status);
+        throw new TripoTaskFailedError(taskId, status, failureDetail(task));
       }
       await this.sleepImpl(this.pollIntervalMs);
     }
