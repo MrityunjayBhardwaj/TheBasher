@@ -549,3 +549,46 @@ describe('#1025 — measured against a real glTF parse, not a hand-built clone',
     // stale capture from a multi-primitive child. What matters here is that it refuses at all.
   });
 });
+
+// ── #1042 — THE REGISTRY'S OWNERSHIP RULE, PINNED AS IT NOW BEHAVES ──────────────────────
+//
+// `geometryRegistry.ts`'s #630 ownership block said a `gltf` ref resolves to `null` ALWAYS, and
+// that stopped being true at #367 when `get` gained its clone delegation, leaving the sentence
+// contradicting the code forty lines below it.
+//
+// ⚠️ AND THE HONEST VERSION IS NOT "NOTHING TESTED THIS" — MEASURED, SIX GROUNDS ALREADY DID.
+// Breaking the delegation (`get`'s glTF arm returned to `null`) reds grounds 2, 8, 9, 12, 13 and
+// 13b along with the one below, because every one of them reaches a mounted buffer on its way to
+// what it actually asserts. So the behaviour was covered INCIDENTALLY and the rule was nowhere
+// NAMED, which is the gap that let a false sentence survive in the file that owns it: a ground
+// that reds for a downstream reason tells a reader their rims broke, never that the ownership
+// rule moved. What is added here is the name, not the coverage.
+//
+// The reason this is worth a gate and not just a corrected comment: the false sentence is
+// load-bearing on DESIGN. A reader deciding how an imported mesh should get buffer-scale data
+// reads "ALWAYS null / LOOK ELSEWHERE" and concludes the descriptor must carry it — which is
+// the conclusion #1025 closed against, and which the #1041 census nearly re-derived from this
+// sentence before measuring. So what is pinned here is the MOUNTED direction, because that is
+// the half that went false; the unmounted half is asserted beside it so a green cannot come
+// from a harness that mounted nothing.
+describe('#1042 — a mounted glTF ref resolves through the registry', () => {
+  it('14 — MOUNTED resolves and UNMOUNTED refuses, with a box control', () => {
+    // UNMOUNTED first, deliberately: it is measured on the same ref shape BEFORE any clone
+    // exists, so the pair below differs in exactly one thing — whether a clone is mounted.
+    const ref = importedRef(BOX_TRIANGLES);
+    expect(getForRead(ref)).toBeNull();
+    expect(readGeometry(ref)).toMatchObject({ status: 'elsewhere' });
+
+    const mounted = mountClone();
+    const resolved = getForRead(ref);
+    // The datum that falsifies "ALWAYS null". Identity, not merely non-null: the registry is
+    // meant to hand back the CLONE'S buffer, and a fresh instance carrying the same vertex
+    // count would satisfy a count-only assertion while meaning something else entirely.
+    expect(resolved).toBe(mounted);
+    expect(readGeometry(ref)).toMatchObject({ status: 'ok' });
+
+    // The control — a kind that needs no clone at all, so a row going quiet says which of the
+    // two is at fault rather than leaving the whole table ambiguous.
+    expect(getForRead(box)).not.toBeNull();
+  });
+});

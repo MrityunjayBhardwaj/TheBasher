@@ -356,8 +356,24 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 // `get` returns null for THREE unrelated reasons, and which one it is changes what the
 // caller must do:
 //
-//   a `gltf` ref        → ALWAYS null. The registry does not own loaded glTF geometry; the
-//                         asset clone does. Null means LOOK ELSEWHERE.
+//   a `gltf` ref        → null only until the asset MOUNTS. The registry does not own loaded
+//                         glTF geometry; the asset clone does — and `get` DELEGATES to it
+//                         (`:220`), so a mounted child RESOLVES and an unmounted one reads
+//                         null. Null means WAIT FOR THE MOUNT.
+//
+//                         🔴 THIS READ "ALWAYS null / LOOK ELSEWHERE" UNTIL #1042, AND IT
+//                         WAS FALSE FROM #367 ONWARD. That change gave `get` the delegation
+//                         and updated {@link GeometryAvailability} forty lines below; this
+//                         block — the registry's own statement of who owns what — kept the
+//                         pre-#367 rule. Measured against a mounted clone with a box control:
+//                         `getForRead` returns a 24-vertex geometry and `readGeometry` reads
+//                         `ok`. A false constraint in the file that OWNS the rule is not inert:
+//                         it is the sentence that nearly argued #1041 into carrying
+//                         buffer-scale rims in the document, which #1025 had already closed
+//                         against. Named by `importedRims.gate.test.ts` ground 14 — named
+//                         rather than merely covered: six grounds there already red if this
+//                         delegation breaks, but each reds about RIMS, so none of them would
+//                         tell a reader the ownership rule had moved.
 //   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
 //                         not happened yet. Null means WAIT — and it may well arrive.
 //   a procedural miss   → the registry builds procedural geometry synchronously on demand,
