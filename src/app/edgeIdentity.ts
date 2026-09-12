@@ -27,13 +27,15 @@
 //      node_modules/three/src/geometries/BoxGeometry.js (the plane table quoted below);
 //      issues #718, #607, #716, #777.
 
-import type { CountVerdict, GeometryDescriptor } from '../nodes/types';
+import type { CountVerdict, GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { type PolygonRim, polygonLayoutOf, reverseRim } from './polygonLayout';
 import { tiledFaceOrder, mappedFacesOf } from './faceCount';
-import { pointCountOf } from './pointIdentity';
+import { pointCountOf, weldByPosition } from './pointIdentity';
 // #814 — closes the ring `faceCount -> bevelLayout -> edgeIdentity -> faceCount`. Call-time only;
 // `bevelLayout.ts`'s header carries the measurement and the rule.
 import { bevelLayoutOf } from './bevelLayout';
+import { alignedSplitRims, topologyIsBufferOnly } from './builtRims';
+import { getForRead } from './geometryRegistry';
 
 /**
  * A geometry's edges, as pairs of TOPOLOGICAL point ids.
@@ -185,7 +187,50 @@ function sphereSplitToWelded(widthSegments: number, heightSegments: number): Uin
  * cannot. It is recorded twice on purpose — a refusal is about a representation, and the right
  * question is always what the consumer actually reads.
  */
-export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly PolygonRim[] | null {
+/**
+ * The welded rims of a mesh whose topology IS its buffer — an import or a bake (#1041).
+ *
+ * ── WHY THIS IS NOT "rims in the descriptor" ───────────────────────────────────
+ *
+ * #1025 settled that a rim is O(corners) — the index buffer reshaped — and closed against
+ * putting one in the document. A census of every rim consumer (#1041) then measured the thing
+ * that makes the alternative free: no consumer is descriptor-only by NECESSITY. Each holds a
+ * `GeometryRef` or sits one field from one, because all five derived kinds declare
+ * `source: GeometryRef`. So the buffer is reachable wherever the question is asked, and the
+ * document never has to carry it.
+ *
+ * ── EVERY STEP IS PRODUCTION'S OWN INSTRUMENT, AND THAT IS LOAD-BEARING ─────────────
+ *
+ * The split rims come from `alignedSplitRims` — which already carries the imported road's
+ * cross-source agreement check (`sum(arity) x 3 === index.count`) and its non-indexed closed
+ * form — and the split→topological map from `weldByPosition`. Neither is re-derived here.
+ * A hand-rolled weld in a probe split a sphere's seam on NEGATIVE ZERO and produced five false
+ * disagreements before anyone looked at the instrument rather than the result; the same rule
+ * that keeps a capture and its reader on one function keeps this on one too.
+ *
+ * ⚠️ NO ALIGNMENT SELF-CHECK, FOR THE REASON #1025 STATED RATHER THAN BY OVERSIGHT. Rotating
+ * these onto a substrate's convention is meaningless for a kind with no substrate, and
+ * synthesising one from the same buffer would compare a thing to itself and pass by
+ * construction. The walk's own order IS the canonical corner order here — stated once in
+ * `alignedSplitRims` and inherited, not restated.
+ */
+function weldedRimsFromBuffer(ref: GeometryRef): readonly PolygonRim[] | null {
+  if (!topologyIsBufferOnly(ref.descriptor)) return null;
+  const geometry = getForRead(ref);
+  // Null here is a WAIT, not a refusal: an unmounted clone and an unprimed bake both read this
+  // way and both may arrive. `readGeometry` is where that distinction is owned; this door only
+  // needs "is there a buffer yet".
+  if (geometry === null) return null;
+  const split = alignedSplitRims(ref, geometry);
+  if (split === null) return null;
+  const weld = weldByPosition(geometry);
+  return split.map((rim) => rim.map((v) => weld.map[v]));
+}
+
+export function weldedPolygonsOf(
+  descriptor: GeometryDescriptor,
+  ref?: GeometryRef,
+): readonly PolygonRim[] | null {
   switch (descriptor.kind) {
     case 'box':
     case 'sphere': {
@@ -202,13 +247,16 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
     }
     case 'gltf':
     case 'baked':
-      // The same escape hatch `faceCountOf` and `pointCountOf` declare, and censused with them:
-      // these buffers live outside the descriptor, so nothing here can say what joins what.
-      return null;
+      // The escape hatch `faceCountOf` and `pointCountOf` declare, and censused with them: these
+      // buffers live outside the descriptor. That is still true OF A DESCRIPTOR — and #1041
+      // measured that it was never true of the CALL SITES. So the refusal now turns on whether a
+      // ref was supplied rather than on the kind, and `null` here means "nobody handed me a way
+      // to reach the buffer", not "this kind can never answer".
+      return ref === undefined ? null : weldedRimsFromBuffer(ref);
     case 'array':
     case 'mirror':
     case 'subset': {
-      const sourceRims = weldedPolygonsOf(descriptor.source.descriptor);
+      const sourceRims = weldedPolygonsOf(descriptor.source.descriptor, descriptor.source);
       if (sourceRims === null) return null;
       const sourcePoints = pointCountOf(descriptor.source.descriptor);
       if (sourcePoints.kind !== 'counted') return null;
@@ -287,7 +335,7 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
     // #994 — the source's welded rims verbatim. Same rule as `faceCountOf` and `pointCountOf`:
     // the projection changes what each corner READS, never what joins what.
     case 'uvProject':
-      return weldedPolygonsOf(descriptor.source.descriptor);
+      return weldedPolygonsOf(descriptor.source.descriptor, descriptor.source);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`weldedPolygonsOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

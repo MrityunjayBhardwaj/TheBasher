@@ -32,6 +32,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import {
+  arrayGeometryRef,
   bevelGeometryRef,
   boxGeometryRef,
   mirrorGeometryRef,
@@ -42,7 +43,9 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { captureChildFaceCount } from '../core/import/gltfImportChain';
 import { firstMeshGeometry } from './firstMeshGeometry';
 import { faceArityOf, faceElementStarts } from './faceCount';
-import { weldedPolygonsOf } from './edgeIdentity';
+import { edgeCountOf, weldedPolygonsOf } from './edgeIdentity';
+import { bevelLayoutOf } from './bevelLayout';
+import { weldByPosition } from './pointIdentity';
 import { getForRead, prime, readGeometry } from './geometryRegistry';
 import { readMeshUVs } from './uvAttributes';
 import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
@@ -590,5 +593,83 @@ describe('#1042 — a mounted glTF ref resolves through the registry', () => {
     // The control — a kind that needs no clone at all, so a row going quiet says which of the
     // two is at fault rather than leaving the whole table ambiguous.
     expect(getForRead(box)).not.toBeNull();
+  });
+});
+
+// ── #1041 — A DERIVED KIND OVER AN IMPORT REACHES THE IMPORT'S BUFFER ────────────────────
+//
+// The rim-consumer census for #1041 found no consumer that is descriptor-only by necessity: each
+// holds a `GeometryRef` or is one field from one, because every derived descriptor carries
+// `source: GeometryRef`. So the welded-rim door takes an OPTIONAL ref, and the derived arms pass
+// their own `source` down — which is what lets an array over an import answer with its call site
+// untouched.
+//
+// Every row mounts a real clone and carries a box control, and the point count is taken from
+// production's weld over a SEPARATE BoxGeometry instance, so the fixture cannot hand the subject
+// and the expectation the same object.
+describe('#1041 — the welded-rim door reaches an imported mesh through the ref it holds', () => {
+  const CAPTURED_POINTS = weldByPosition(new THREE.BoxGeometry(1, 1, 1)).points;
+
+  function capturedRef(asset: string): GeometryRef {
+    const descriptor: GeometryDescriptor = {
+      kind: 'gltf',
+      assetRef: asset,
+      childName: CHILD,
+      faceCount: BOX_TRIANGLES,
+      pointCount: CAPTURED_POINTS,
+    };
+    return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
+  }
+
+  it('15 — top level: a ref over a MOUNTED clone answers; no ref, or no clone, refuses', () => {
+    const asset = 'u/1041-top.gltf';
+    const ref = capturedRef(asset);
+    expect(weldedPolygonsOf(ref.descriptor, ref)).toBeNull();
+
+    mountClone(asset);
+    // Without a ref the door is exactly what it was: a descriptor alone cannot reach a buffer.
+    expect(weldedPolygonsOf(ref.descriptor)).toBeNull();
+    const rims = weldedPolygonsOf(ref.descriptor, ref);
+    expect(rims?.length).toBe(BOX_TRIANGLES);
+    expect(new Set(rims?.flat()).size).toBe(CAPTURED_POINTS);
+
+    expect(weldedPolygonsOf(box.descriptor)?.length).toBe(6);
+  });
+
+  it('16 — an array over an import supplies the ref itself, and its edge count agrees with Euler', () => {
+    const asset = 'u/1041-array.gltf';
+    mountClone(asset);
+    const arr = arrayGeometryRef(capturedRef(asset), 3, [2, 0, 0]);
+
+    expect(weldedPolygonsOf(arr.descriptor)?.length).toBe(3 * BOX_TRIANGLES);
+    // Three disjoint closed copies: E = F + V - 2 per copy. A count derived from the rims and a
+    // count derived from Euler are two routes, so agreement is not the rims agreeing with
+    // themselves.
+    expect(edgeCountOf(arr.descriptor)).toEqual({
+      kind: 'counted',
+      count: 3 * (BOX_TRIANGLES + CAPTURED_POINTS - 2),
+    });
+
+    expect(edgeCountOf(arrayGeometryRef(box, 3, [2, 0, 0]).descriptor)).toEqual({
+      kind: 'counted',
+      count: 36,
+    });
+  });
+
+  it('17 — a cached bevel verdict follows the mount in BOTH directions', () => {
+    // The defect this pins: `bevelLayoutOf` caches refusals, and once a source rooted at an import
+    // could answer, a refusal cached before the mount was served after it. Asked mount-first, the
+    // same bevel laid out — so the only difference was the order, which is the cache.
+    const asset = 'u/1041-bevel.gltf';
+    const bev = bevelGeometryRef(arrayGeometryRef(capturedRef(asset), 3, [2, 0, 0]), 0.05);
+    const control = bevelGeometryRef(arrayGeometryRef(box, 3, [2, 0, 0]), 0.05);
+
+    expect(bevelLayoutOf(bev.descriptor).kind).toBe('refused');
+    mountClone(asset);
+    expect(bevelLayoutOf(bev.descriptor).kind).toBe('laid-out');
+    __clearGltfCloneRegistryForTests();
+    expect(bevelLayoutOf(bev.descriptor).kind).toBe('refused');
+
+    expect(bevelLayoutOf(control.descriptor).kind).toBe('laid-out');
   });
 });

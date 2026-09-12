@@ -158,7 +158,8 @@ function cyclicComponents(): string[][] {
 }
 
 /**
- * The module's top-level statements — everything outside a `function` or `class` body.
+ * The module's top-level statements — everything outside a `function` or `class` body, and
+ * outside an `import` statement however many lines it spans.
  *
  * ⚠️ IT LEANS ON THE FORMATTER, AND SAYS SO. A body is skipped from its opening line to the next
  * `}` at COLUMN 0, which is true of every file here because `prettier --check .` runs in CI over
@@ -167,10 +168,31 @@ function cyclicComponents(): string[][] {
  * someone investigates, not a hazard that ships.
  */
 function topLevelStatements(file: string): string {
-  const lines = stripComments(sourceOf(file)).split('\n');
+  return topLevelStatementsOf(stripComments(sourceOf(file)));
+}
+
+/**
+ * {@link topLevelStatements} over text rather than a path, so the parser can be pinned against
+ * synthetic sources instead of planted edits to product files.
+ *
+ * 🔴 #1043 — AN IMPORT IS SKIPPED THROUGH TO ITS `from`, NOT JUST ITS FIRST LINE. Dropping only
+ * lines that START with `import` kept the continuation lines of a multi-line clause, so every
+ * name imported that way read as a module-level use. Measured when #1041 merged the two geometry
+ * rings: 8 violations in `geometryRegistry.ts`, every one an import continuation, while a scan
+ * that shares no code with this parser put all 8 names inside function bodies. It had never
+ * fired because all 10 peer imports in the old rings were single-line — so it was waiting for the
+ * first ring change, which is exactly when a false alarm here is most expensive.
+ */
+function topLevelStatementsOf(source: string): string {
+  const lines = source.split('\n');
   const kept: string[] = [];
   let skipping = false;
+  let inImport = false;
   for (const line of lines) {
+    if (inImport) {
+      if (/\bfrom\s*['"]/.test(line)) inImport = false;
+      continue;
+    }
     if (skipping) {
       if (/^\}/.test(line)) skipping = false;
       continue;
@@ -179,7 +201,12 @@ function topLevelStatements(file: string): string {
       skipping = true;
       continue;
     }
-    if (/^\s*import\b/.test(line)) continue;
+    if (/^\s*import\b/.test(line)) {
+      // A one-line import names its source on the same line, and a side-effect import
+      // (`import './x';`) has no `from` at all — neither opens a span.
+      if (!/\bfrom\s*['"]|^\s*import\s*['"]/.test(line)) inImport = true;
+      continue;
+    }
     kept.push(line);
   }
   return kept.join('\n');
@@ -219,23 +246,44 @@ function namesImportedFrom(file: string, from: string): string[] {
   return names;
 }
 
-// The two rings #814 created, named rather than discovered. Both are geometry-side and both exist
+// ONE geometry ring, and it used to be two. #814 created a descriptor-side ring (bevelLayout,
+// edgeIdentity, faceCount, pointIdentity) and a built-side one (builtRims, geometryRegistry), both
 // for the same reason: a descriptor-side answer needs a built-side fact, or the reverse.
+//
+// 🔴 #1041 MERGED THEM, AND IT WAS MEASURED RATHER THAN ALLOWED. An imported mesh's topology IS
+// its buffer, so a welded rim over one — and every edge answer composed from it, including a
+// derived kind over an import — has to reach the buffer from the descriptor side. At HEAD there
+// were 0 value imports from the descriptor ring into the built one and 17 names across 8
+// file-pairs the other way, so ANY such import closes the loop. Measured with this file's own
+// component check: removing either of the two new imports alone still merges them; removing both
+// restores the old pair. `cornerMaterialisation.ts` joins because it sits on
+// `geometryRegistry -> cornerMaterialisation -> faceCount`.
+//
+// The alternatives were costed, not dismissed: cutting the built-to-descriptor side is 17 names
+// across 8 file-pairs against 3 across 2; injecting the buffer reader instead of importing it
+// needs at least 22 call sites to carry a value that can only ever be `getForRead`.
+//
+// What makes the merge acceptable is the rule below, and it had to be repaired first (#1043): it
+// compares files only within one ring entry, so it never saw the import that merged them, and it
+// read multi-line imports as module-level uses. Merged and repaired, it is green on the real code
+// and red on a planted single-line AND a planted multi-line module-level read.
 const GEOMETRY_RINGS = [
   [
     'src/app/bevelLayout.ts',
+    'src/app/builtRims.ts',
+    'src/app/cornerMaterialisation.ts',
     'src/app/edgeIdentity.ts',
     'src/app/faceCount.ts',
+    'src/app/geometryRegistry.ts',
     'src/app/pointIdentity.ts',
   ],
-  ['src/app/builtRims.ts', 'src/app/geometryRegistry.ts'],
 ];
 
 describe('#814 the import cycles, enumerated and held', () => {
   it('the product has exactly these runtime cycles — a new one anywhere is a red', () => {
     // 🔴 THE EXACT SET, NOT A COUNT AND NOT AN UPPER BOUND. Two of these predate this work by a
-    // long way and are listed so they are KNOWN rather than merely present; the two geometry ones
-    // arrived with #814 and are the trade this file documents. Anything else appearing here is a
+    // long way and are listed so they are KNOWN rather than merely present; the geometry one
+    // arrived with #814 as two rings, became one at #1041, and is the trade this file documents. Anything else appearing here is a
     // cycle someone added without noticing, which is the state that produced the `undefined`.
     expect(cyclicComponents()).toEqual([
       [
@@ -273,7 +321,6 @@ describe('#814 the import cycles, enumerated and held', () => {
         'src/app/transformChannelSource.ts',
       ],
       GEOMETRY_RINGS[0],
-      GEOMETRY_RINGS[1],
     ]);
   });
 
@@ -309,6 +356,55 @@ describe('#814 the import cycles, enumerated and held', () => {
         expect(peers.length + importers.length).toBeGreaterThan(0);
       }
     }
+  });
+
+  it('#1043 — the parser skips a whole import and still sees a multi-line module-level read', () => {
+    // Synthetic on purpose: a planted edit to a product file is the falsifier that keeps this
+    // honest, and it cannot live in the tree. Each row fails a DIFFERENT wrong parser.
+    const read = (text: string) => /\bfaceArityOf\b/.test(topLevelStatementsOf(text));
+
+    // The false positive #1043 is about: a multi-line import and a call-time use only.
+    expect(
+      read(
+        [
+          'import {',
+          '  faceArityOf,',
+          '  faceCountMismatch,',
+          "} from './faceCount';",
+          'export function f() {',
+          '  return faceArityOf(x);',
+          '}',
+        ].join('\n'),
+      ),
+    ).toBe(false);
+
+    // A fix that swallows too much would miss this: a REAL module-level read, formatted multi-line.
+    expect(
+      read(
+        [
+          'import {',
+          '  faceArityOf,',
+          "} from './faceCount';",
+          'const TABLE = [',
+          '  faceArityOf,',
+          '];',
+        ].join('\n'),
+      ),
+    ).toBe(true);
+
+    // And the single-line shape the rule always caught.
+    expect(
+      read(["import { faceArityOf } from './faceCount';", 'const x = faceArityOf;'].join('\n')),
+    ).toBe(true);
+
+    // A side-effect import has no `from`; treating it as opening a span would swallow the next
+    // statement, which is a module-level read here.
+    expect(read(["import './sideEffect';", 'const x = faceArityOf;'].join('\n'))).toBe(true);
+
+    // A type-only multi-line import is skipped the same way and must not swallow what follows.
+    expect(
+      read(['import type {', '  Foo,', "} from './types';", 'const x = faceArityOf;'].join('\n')),
+    ).toBe(true);
   });
 });
 

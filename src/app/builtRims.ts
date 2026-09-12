@@ -38,7 +38,7 @@ import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
 import type { PointWeld } from './pointIdentity';
-import { getForRead } from './geometryRegistry';
+import { getForRead, readGeometry } from './geometryRegistry';
 import { bevelLayoutOf } from './bevelLayout';
 
 /**
@@ -214,6 +214,58 @@ export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
     default: {
       const unreachable: never = descriptor;
       throw new Error(`topologyIsBufferOnly: undeclared descriptor ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/**
+ * What a cache keyed on a DERIVED descriptor has to add to its key once its answer can depend on
+ * a buffer that has not arrived yet (#1041) — `''` for a chain rooted at a procedural kind, and
+ * the root buffer's read status (`ok` / `elsewhere` / `pending`) for one rooted at an import or
+ * a bake.
+ *
+ * 🔴 WHY THIS EXISTS: A CACHED REFUSAL OUTLIVED THE WAIT IT DESCRIBED. #1041 let the welded-rim
+ * door reach an imported mesh's buffer through the ref a derived descriptor carries, which made
+ * an answer over an import depend on whether its clone is MOUNTED. `bevelLayoutOf` caches every
+ * verdict, refusals included, on `source.key|scope`. Measured: a bevel over an array over an
+ * import, asked before the mount, refused — and kept refusing after the mount, while the same
+ * question asked mount-first laid out, and the uncached edge count over the same array flipped
+ * from absent to 54. That is #708's defect — a wait reported as final and disproved a call later —
+ * arriving by the rim road.
+ *
+ * The fix follows `bevelLayoutOf`'s own rule (#827): the key is the whole of what the layout
+ * depends on, so what it newly depends on joins the key. A procedural chain contributes nothing
+ * and its key stays byte-identical.
+ *
+ * ⚠️ ONLY THE ROOT IS READ, AND ONLY WHEN IT IS A BUFFER KIND. `readGeometry` on a procedural or
+ * derived ref BUILDS it — from inside a pure descriptor function, and through `buildBevel` back
+ * into `bevelLayoutOf` itself. On a `gltf` or `baked` root it only looks: the clone, or the
+ * primed cache. The walk is a `never` switch so a tenth kind is a type error here, not a chain
+ * that silently answers `''`.
+ */
+export function bufferReachabilityOf(ref: GeometryRef): string {
+  const root = bufferRootOf(ref);
+  return root === null ? '' : readGeometry(root).status;
+}
+
+function bufferRootOf(ref: GeometryRef): GeometryRef | null {
+  const d = ref.descriptor;
+  switch (d.kind) {
+    case 'gltf':
+    case 'baked':
+      return ref;
+    case 'box':
+    case 'sphere':
+      return null;
+    case 'array':
+    case 'mirror':
+    case 'subset':
+    case 'bevel':
+    case 'uvProject':
+      return bufferRootOf(d.source);
+    default: {
+      const unreachable: never = d;
+      throw new Error(`bufferRootOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
     }
   }
 }

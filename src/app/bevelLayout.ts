@@ -43,6 +43,7 @@ import type { GeometryDescriptor } from '../nodes/types';
 import type { PolygonRim } from './polygonLayout';
 import type { SourceFace } from './faceCount';
 import { edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
+import { bufferReachabilityOf } from './builtRims';
 import { pointCountOf } from './pointIdentity';
 import { scopeSelection, type GroupLookup } from '../nodes/scopeQuery';
 import { groupLookupFor } from './componentGroupLookup';
@@ -334,7 +335,13 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
   // The empty string for "unscoped" is safe rather than merely convenient: `scopeField` turns a
   // blank query into an ABSENT field, so no scoped descriptor can carry `scope: ''` and collide
   // with an unscoped one.
-  const cacheKey = `${descriptor.source.key}|${descriptor.scope ?? ''}`;
+  //
+  // 🔴 #1041 — AND SO DOES WHETHER THE BUFFER UNDER IT HAS ARRIVED. A source rooted at an import
+  // now reaches that import's buffer for its rims, so the same `source.key|scope` is refused
+  // before the clone mounts and laid out after — and caching the first verdict served it forever.
+  // A procedural chain adds nothing, so its key is byte-identical to what it was.
+  const reach = bufferReachabilityOf(descriptor.source);
+  const cacheKey = `${descriptor.source.key}|${descriptor.scope ?? ''}${reach === '' ? '' : `|${reach}`}`;
   const hit = layoutCache.get(cacheKey);
   if (hit !== undefined) return hit;
 
