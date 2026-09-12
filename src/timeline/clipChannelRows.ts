@@ -20,7 +20,7 @@
 //
 // REF: src/core/import/gltfImportChain.ts:294,345 (targetNodeId = targetKey);
 //      src/core/import/gltfImportChain.ts:120 (dagId = hashId('gltfChild',…));
-//      src/nodes/GltfChild.ts:60-61 (childName param = nodeNameMap key);
+//      src/nodes/GltfData.ts:81 (childName param = nodeNameMap key);
 //      src/nodes/TransformClip.ts:48-65 (keyframes schema); PLAN.md Wave B (B1).
 //
 // PURE / V8-clean: args in, rows out. No store access, no DAG read, no

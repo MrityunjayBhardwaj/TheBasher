@@ -113,7 +113,25 @@ export type PrimitiveKind = SceneObjectKind | ComputeKind | ResourceKind;
 export interface AddResult {
   ops: Op[];
   description: string;
+  /** The node a director SELECTS and refers to — the Object half of a split kind. */
   newNodeId: string;
+  /**
+   * The DATA node of a split kind, when the kind has one (#772).
+   *
+   * Every split kind mints two nodes and until now returned only one, so a caller
+   * that wanted to write the thing it had just created had to go and find the
+   * other — `points` lives on the `CurveData`, not on the `Object` posing it. That
+   * cost the agent one `dag.inspect` round trip on every curve, and a trajectory is
+   * the case where the data params ARE the substance: "put a camera path here" is
+   * entirely a statement about `points`.
+   *
+   * `undefined` for a FUSED kind (AmbientLight, the empties, the compute nodes,
+   * Material), which has no second node. Undefined rather than repeating
+   * `newNodeId`: a caller asking "which node holds the params" must be able to tell
+   * "this one does" from "there isn't a separate one", and a duplicate id answers
+   * the first question with the second one's value.
+   */
+  dataNodeId?: string;
 }
 
 type Vec3 = [number, number, number];
@@ -177,6 +195,7 @@ export function buildAddPrimitiveOps(
       ],
       description: `Add ${humanLabel('Cube')}`,
       newNodeId: objId,
+      dataNodeId: dataId,
     };
   }
 
@@ -224,6 +243,7 @@ export function buildAddPrimitiveOps(
       ],
       description: `Add ${humanLabel('Sphere')}`,
       newNodeId: objId,
+      dataNodeId: dataId,
     };
   }
 
@@ -257,6 +277,7 @@ export function buildAddPrimitiveOps(
       ],
       description: `Add ${humanLabel('Curve')}`,
       newNodeId: objId,
+      dataNodeId: dataId,
     };
   }
 
@@ -302,6 +323,7 @@ export function buildAddPrimitiveOps(
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
+      dataNodeId: dataId,
     };
   }
 
@@ -346,6 +368,7 @@ export function buildAddPrimitiveOps(
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
+      dataNodeId: dataId,
     };
   }
 

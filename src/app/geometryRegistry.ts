@@ -61,7 +61,8 @@ import { groupsFromMaterialIndex, groupsRefusal } from './materialGroups';
 // ns-2 step 12.5 — which triangles a scoped generator keeps. A LEAF with zero value
 // imports, which is what keeps the registry's declared import set honest: every module
 // here is one, and that is the property `faceCountLeaf.gate.test.ts` holds.
-import { scopeSelection } from '../nodes/scopeQuery';
+import { scopeSelection, type GroupLookup } from '../nodes/scopeQuery';
+import { groupLookupFor } from './componentGroupLookup';
 import { bevelLayoutOf, type BevelLayout } from './bevelLayout';
 import { alignedSplitRims } from './builtRims';
 import { cubeProjectedLayer } from './cubeProjection';
@@ -1013,7 +1014,10 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
     // ns-2 step 12.5 — copy 0 is the PRESERVED INPUT and copies 1..n-1 are GENERATED, so
     // only the generated ones take the subset. That is §2.2's rule, and it is what makes a
     // scope selecting nothing the identity rather than an empty mesh.
-    const copy = i === 0 ? source.clone() : elementSubset(source, sourceArity, d.scope, d.domain);
+    const copy =
+      i === 0
+        ? source.clone()
+        : elementSubset(source, groupLookupFor(d.source, 'face'), sourceArity, d.scope, d.domain);
     if (copy === null) return null;
     copies.push(copy.applyMatrix4(m));
   }
@@ -1059,6 +1063,11 @@ function buildArray(d: Extract<GeometryDescriptor, { kind: 'array' }>): BufferGe
  */
 function elementSubset(
   source: BufferGeometry,
+  // #1027 — HOW A NAME IN THE SCOPE BECOMES A SET. Threaded from the caller for exactly the
+  // reason `sourceArity` above is: the builders hold the descriptor (and therefore the source
+  // HANDLE, which is where a group's membership is reachable from) while this function holds a
+  // `BufferGeometry`, and a geometry cannot be walked back to the attribute set it came from.
+  groups: GroupLookup,
   // #770 — THE SOURCE'S POLYGON ARITY, because a scope names polygons now and a polygon owns a
   // variable number of triangles. Threaded from the caller rather than derived here for the
   // reason every other descriptor fact in this module is: the builders hold the descriptor and
@@ -1083,7 +1092,7 @@ function elementSubset(
   if (scope === undefined || domain === undefined) return source.clone();
   switch (domain) {
     case 'face':
-      return faceSubset(source, sourceArity, scope, keep);
+      return faceSubset(source, sourceArity, scope, keep, groups);
     case 'edge':
       // 🔴 REFUSED BY NAME, AND IT IS A PRODUCER DEFECT RATHER THAN AN AUTHORING STATE. #827
       // widened `ScopeDomain` to admit `'edge'` so a Bevel can name WHICH edges it chamfers,
@@ -1133,6 +1142,7 @@ function faceSubset(
   sourceArity: readonly number[] | null,
   scope: string,
   keep: boolean,
+  groups: GroupLookup,
 ): BufferGeometry | null {
   const index = source.getIndex();
   if (index === null) {
@@ -1162,7 +1172,7 @@ function faceSubset(
   }
 
   const starts = faceElementStarts(sourceArity);
-  const { mask } = scopeSelection(scope, sourceArity.length);
+  const { mask } = scopeSelection(scope, sourceArity.length, groups);
   const kept: number[] = [];
   for (let f = 0; f < sourceArity.length; f++) {
     if ((mask[f] === 1) !== keep) continue;
@@ -1192,7 +1202,14 @@ function faceSubset(
 function buildSubset(d: Extract<GeometryDescriptor, { kind: 'subset' }>): BufferGeometry | null {
   const source = get(d.source, 'internal');
   if (!source) return null;
-  return elementSubset(source, faceArityOf(d.source.descriptor), d.scope, d.domain, d.keep);
+  return elementSubset(
+    source,
+    groupLookupFor(d.source, 'face'),
+    faceArityOf(d.source.descriptor),
+    d.scope,
+    d.domain,
+    d.keep,
+  );
 }
 
 /**
@@ -1216,7 +1233,13 @@ function buildMirror(d: Extract<GeometryDescriptor, { kind: 'mirror' }>): Buffer
   // ns-2 step 12.5 — *Keep Original* preserves the WHOLE input and *Group* names the
   // primitives to mirror, so the original is never subset and the reflection always is.
   const original = source.clone();
-  const subset = elementSubset(source, faceArityOf(d.source.descriptor), d.scope, d.domain);
+  const subset = elementSubset(
+    source,
+    groupLookupFor(d.source, 'face'),
+    faceArityOf(d.source.descriptor),
+    d.scope,
+    d.domain,
+  );
   if (subset === null) return null;
   const reflected = reverseWinding(subset.applyMatrix4(reflect));
   const merged = mergeGeometries([original, reflected]);

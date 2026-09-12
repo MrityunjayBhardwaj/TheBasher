@@ -23,9 +23,10 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { LightRigValue, LightValue } from './types';
 import { recomposeLightObject } from './lightRecompose';
+import { nameParam } from './paramWidget';
 
 export const LightRigParams = z.object({
-  name: z.string().default('Light Rig'),
+  name: nameParam('Light Rig'),
   /** The rig sphere origin every light on the rig aims at (the BLS "handle"). */
   center: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   /** The rig sphere radius — the default puck distance from the centre. */

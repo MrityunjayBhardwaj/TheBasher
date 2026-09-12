@@ -444,16 +444,12 @@ export interface RevertGltfChannelArgs {
  */
 export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): DispatchResult {
   const { assetRef, childName, component } = args;
-  const base = useDagStore.getState().state;
-
-  // Collect the deterministic baked-channel ids that EXIST for this bone —
-  // narrowed to one component when the caller named one.
   const components = component
     ? ([component] as const)
     : (['position', 'rotation', 'scale'] as const);
-  const targets = components
-    .map((c) => gltfChannelDagId(assetRef, childName, c))
-    .filter((id) => base.nodes[id]);
+  const targets = existingChannelIds(
+    components.map((c) => ({ assetRef, childName, component: c })),
+  );
 
   // Nothing baked → already on the clip; revert is a no-op (not an error).
   if (targets.length === 0) return { ok: true };
@@ -463,6 +459,78 @@ export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): Dispatch
     { targetSelectors: targets },
     `Revert ${childName}${component ? `.${component}` : ''} to imported clip`,
   );
+}
+
+/** One channel to remove: which character, which bone, which component. */
+export interface ChannelAddress {
+  readonly assetRef: string;
+  readonly childName: string;
+  readonly component: 'position' | 'rotation' | 'scale';
+}
+
+/**
+ * The deterministic ids of the named channels that ACTUALLY EXIST in the graph.
+ *
+ * 🔴 THE ONE PLACE THAT TURNS AN ADDRESS INTO AN ID, and both entry points below
+ * reach it. `gltfChannelDagId` is how a minted channel is named, and a second
+ * spelling of that derivation — a hand-built id, a different argument order —
+ * would produce delete ops that hit nothing while reporting ok, which is a
+ * button that silently does nothing.
+ */
+function existingChannelIds(addresses: readonly ChannelAddress[]): string[] {
+  const base = useDagStore.getState().state;
+  const out: string[] = [];
+  for (const a of addresses) {
+    const id = gltfChannelDagId(a.assetRef, a.childName, a.component);
+    // NOT deduplicated here, and that is measured rather than assumed:
+    // `mutator.deleteNode` handed the same target twice plans ONE op and
+    // returns ok. A guard here would be a second spelling of a rule that
+    // already has one — and a second spelling is what this area keeps paying
+    // for. Two characters built from the same assetRef therefore collapse
+    // downstream, where the collapsing already lives.
+    if (base.nodes[id]) out.push(id);
+  }
+  return out;
+}
+
+/**
+ * Put a set of stranded bones back on the clip, in ONE gesture (#1002).
+ *
+ * 🔴 IT IS DESTRUCTIVE AND THE CALLER MUST SAY SO. This deletes the channels
+ * named, which is where the director's edited keys live; there is no third road
+ * that keeps them. Measured, twice over:
+ *
+ *   1. The keys the channel was seeded from are recorded as a HASH, not as
+ *      content, and after a re-cook the pre-cook track exists nowhere in the
+ *      graph — a scan of every array on every node finds it 0 times, against a
+ *      positive control that finds it 1 time before the cook. So "re-apply the
+ *      director's delta over the new track" cannot be built from what is there.
+ *   2. Even given the old track, a delta assumes the edit was RELATIVE, and the
+ *      keys cannot say whether it was. Measured on two real cooks of one
+ *      character: for a director who FLATTENED a curve to hold a pose — an
+ *      edited range of 0.0° — the delta shape returns a track carrying 26.96°
+ *      of motion, more than either clip had (23.27° and 14.38°), because it is
+ *      the difference of two motions and nobody authored that. It is the same
+ *      indistinguishability the provenance itself exists for, one level up: a
+ *      copy cannot say whether it was edited, and an edit cannot say whether it
+ *      meant "above the clip" or "here".
+ *
+ * So the honest action is the destructive one, said out loud, with undo behind
+ * it — which it has, because this is ONE atomic dispatch.
+ *
+ * Addresses rather than bone names, because a clip can drive two characters and
+ * a name is not an address: the card shows `LeftArm` once and two channels have
+ * to go, or the sentence stays on the card after the press.
+ */
+export function dispatchFollowClip(
+  addresses: readonly ChannelAddress[],
+  label: string,
+): DispatchResult {
+  const targets = existingChannelIds(addresses);
+  // Nothing left to remove — the bone already follows the clip. Not an error:
+  // a director can press this twice, and the second press is simply true.
+  if (targets.length === 0) return { ok: true };
+  return dispatchMutatorFromUI('mutator.deleteNode', { targetSelectors: targets }, label);
 }
 
 export interface ClearBakedMotionArgs {

@@ -36,7 +36,11 @@ import type { BakedChannel } from './resolveGltfChildTransform';
 // edited — otherwise the bone visibly jumps on its first keyframe. Two
 // conversion sites are two chances to drift, which is why they name each other.
 import { radVec3ToDeg } from '../viewport/rotation';
-import { boundClipsForAsset, type GraphNodeLike } from './animate/boundClipsForAsset';
+import {
+  boundClipsForAsset,
+  overrideReachesRig,
+  type GraphNodeLike,
+} from './animate/boundClipsForAsset';
 import { clipLoopOf } from '../nodes/clipLoop';
 
 type ChannelSampler = (seconds: number) => Vec3;
@@ -231,6 +235,74 @@ function clipBandSamplersForAsset(
 }
 
 /**
+ * The authored-pose band: constant per-component samplers from the
+ * `PoseOverride` nodes hanging off this asset's rig (#974).
+ *
+ * PARAMS-SIDE, like every other band here, and for the same reason — an
+ * override's authored values ARE its params, so nothing has to be evaluated to
+ * read them. The value lane (`PosedSkeletonValue.sample`) is the graph-facing
+ * road for nodes that consume a pose; this is the render-facing road, and they
+ * agree because both read the same authored numbers.
+ *
+ * MEMBERSHIP IS AN EDGE WALK, not a name match, exactly as the clip band's is:
+ * an override reaches this asset only by chaining up its `pose` input to a clip
+ * that `boundClipsForAsset` already resolved to this rig. Overrides stack, so the
+ * walk follows a chain of them; a bone named by a nearer override wins, which is
+ * the same first-wins rule the clip band applies.
+ *
+ * CONSTANT, not time-varying: a hand-pose is one value held for the whole clip.
+ * A sampler that ignores `seconds` is the honest shape for that, and it keeps the
+ * band's type identical to the other two.
+ *
+ * 🔴 UNITS: `PoseOverride.rotation` is DEGREES — the codebase convention for an
+ * authored rotation param (`Transform.rotation`, `GltfChild`) — and this band is
+ * degrees, so unlike the clip band there is NO conversion here. The clip band
+ * converts because an `AnimationKeyframe` rotation is radians; copying that call
+ * across would scale every authored pose by π/180.
+ */
+function poseBandForAsset(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  nodeNameMap: Readonly<Record<string, string>>,
+  assetRef: string,
+): Record<string, BakedChannelSamplers> {
+  const bound = new Set(boundClipsForAsset(nodes, assetRef).map((c) => c.clipId));
+  if (bound.size === 0) return {};
+  const out: Record<string, BakedChannelSamplers> = {};
+  // Sorted for the same reason the clip walk sorts (V22): with two overrides on
+  // one bone, WHICH one wins must not depend on object-key order.
+  for (const id of Object.keys(nodes).sort()) {
+    const node = nodes[id];
+    if (node.type !== 'PoseOverride') continue;
+    if (!overrideReachesRig(nodes, id, bound)) continue;
+    const p = (node.params ?? {}) as {
+      bone?: unknown;
+      position?: unknown;
+      rotation?: unknown;
+      overridden?: { position?: boolean; rotation?: boolean };
+    };
+    const childName = p.bone;
+    // A bone this asset cannot name is scoped to no asset and silently never
+    // applies — the same skip the clip band makes, for the same reason.
+    if (typeof childName !== 'string' || !(childName in nodeNameMap)) continue;
+    const authored = p.overridden ?? {};
+    const slot = (out[childName] ??= {});
+    if (authored.position === true && isVec3(p.position)) {
+      const v = p.position;
+      slot.position ??= () => v;
+    }
+    if (authored.rotation === true && isVec3(p.rotation)) {
+      const v = p.rotation;
+      slot.rotation ??= () => v;
+    }
+  }
+  return out;
+}
+
+function isVec3(v: unknown): v is Vec3 {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
+}
+
+/**
  * Enumerate the motion bands belonging to ONE glTF asset, keyed by childName →
  * per-component sampler closures.
  *
@@ -270,7 +342,19 @@ export function bakedChannelSamplersForAsset(
       node.params as KeyframeChannelVec3Params,
     );
   }
-  // The clip band fills only what no channel node supplied. `??=` is the
+  // #974 — the authored-pose band sits between the channel nodes and the clip:
+  // a materialised per-bone channel is the most specific authoring there is, a
+  // graph pose is an operator-level authored override, and the clip is the source
+  // motion both of them are edits to. Same `??=`, same per-component rule.
+  for (const [childName, fromPose] of Object.entries(
+    poseBandForAsset(nodes as Readonly<Record<string, GraphNodeLike>>, nodeNameMap, assetRef),
+  )) {
+    const slot = (out[childName] ??= {});
+    slot.position ??= fromPose.position;
+    slot.rotation ??= fromPose.rotation;
+  }
+
+  // The clip band fills only what no channel node OR pose supplied. `??=` is the
   // precedence rule in one character: a real channel is an authored (or
   // materialised) track and outranks the clip it came from, per-component —
   // the same presence-not-value rule the resolver applies one layer up.

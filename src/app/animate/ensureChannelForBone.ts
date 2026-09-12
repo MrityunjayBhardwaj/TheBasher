@@ -60,8 +60,7 @@ import {
   type BakedKey,
 } from '../../agent/mutators/builders/bakeChannelOps';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
-import type { AnimationClipParams } from '../../nodes/AnimationClip';
-import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
+import { provenanceOf, seedKeysFromClip, type ClipSeed } from './clipSeedProvenance';
 // 🔴 THE RADIANS→DEGREES BOUNDARY, AND THIS FILE IS NOW ONE OF THE TWO PLACES
 // THAT KNOWS IT. An `AnimationKeyframe.rotation` is RADIANS —
 // `quaternionToEulerVec3` returns a raw `Euler` and nothing converts it on the
@@ -81,8 +80,13 @@ import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
 // `TransformClip`, which is already degrees. The two clip families differ in
 // units, and this road is the one that has to say so — the other place is the
 // read band's `clipBandSamplersForAsset`, which converts for the same reason.
-import { radVec3ToDeg } from '../../viewport/rotation';
-import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
+//
+// 🔴 THIS FILE IS NOW ONE OF THE TWO PLACES ONLY BY DELEGATION (#1001).
+// The conversion itself now lives with the seed walk in `clipSeedProvenance`,
+// which is also what recomputes the hash — so the unit boundary is crossed in
+// exactly one place and the mint and the staleness read cannot disagree about
+// which side of it a number is on.
+import type { ClipLoop } from '../../nodes/clipLoop';
 
 /** What minting decided. `ops` is empty when the channel already existed — the
  *  caller appends it either way and never branches on which happened. */
@@ -132,59 +136,6 @@ function seedKeysFromBase(state: DagState, boneId: string, component: BakedCompo
 }
 
 /**
- * The clip's own track for one bone and one component, in the channel's units.
- *
- * Returns `[]` when no bound clip carries the bone — not a failure, just nothing
- * to copy. The caller falls back to the base pose rather than to emptiness.
- */
-/** The keys copied from the bound clip, and whether that clip REPEATS.
- *
- *  Returned together on purpose (#913): the keys and the time domain are two
- *  halves of one answer, and a caller that could take the first without the
- *  second is a caller that can mint a copy which stops where its source wraps. */
-interface ClipSeed {
-  readonly keys: BakedKey[];
-  /** How the source clip extends (#930) — carried, not collapsed to a boolean,
-   *  so a clip cycling IN PLACE mints a channel that also cycles in place. */
-  readonly loop: ClipLoop;
-}
-
-function seedKeysFromClip(
-  state: DagState,
-  assetRef: string,
-  childName: string,
-  component: BakedComponent,
-): ClipSeed {
-  // Scale is never seeded: `AnimationClipParams.keyframes` carries no scale, and
-  // the read band omits it for the same reason. Claiming the component would
-  // SUPPRESS the asset's own scale track underneath it, because the resolver
-  // reads presence rather than value.
-  if (component === 'scale') return { keys: [], loop: 'hold' };
-
-  for (const clip of boundClipsForAsset(state.nodes, assetRef)) {
-    const index = boneIndexOf(clip, childName);
-    if (index === null) continue;
-    const keyframes = (clip.params as Partial<AnimationClipParams>).keyframes ?? [];
-    const mine = keyframes.filter((k) => k.bone === index);
-    if (mine.length === 0) continue;
-    // Sorted by time so the minted channel's keys are ordered the way the node's
-    // own sampler expects, rather than in whatever order the clip stored them.
-    const sorted = mine.slice().sort((a, b) => a.time - b.time);
-    return {
-      keys: sorted.map((k) => ({
-        time: k.time,
-        value: component === 'rotation' ? radVec3ToDeg(k.rotation) : k.position,
-      })),
-      // Normalised through the ONE helper rather than with a local fallback:
-      // five readers each spelling their own default, all disagreeing with the
-      // schema, is the defect #930 records.
-      loop: clipLoopOf((clip.params as Partial<AnimationClipParams>).loop),
-    };
-  }
-  return { keys: [], loop: 'hold' };
-}
-
-/**
  * The channel for `boneId`'s `component`, minting it from the clip if it does
  * not exist yet.
  *
@@ -224,7 +175,7 @@ export function ensureChannelForBone(
 
   // Clip first, base second. Never empty: an empty channel is present-and-zero,
   // not absent, so it would suppress the pose underneath it.
-  const fromClip = seedKeysFromClip(state, assetRef, childName, component);
+  const fromClip: ClipSeed = seedKeysFromClip(state, assetRef, childName, component);
   const keys =
     fromClip.keys.length > 0 ? fromClip.keys : seedKeysFromBase(state, boneId, component);
   // Only a clip seed carries a time domain. The base-pose fallback is a single
@@ -242,6 +193,17 @@ export function ensureChannelForBone(
     byComponent: { [component]: keys } as Partial<Record<BakedComponent, readonly BakedKey[]>>,
     state,
     loop,
+    // WHAT THE CLIP SAID AT THE MOMENT OF THE COPY (#1001), keyed per component
+    // exactly as `byComponent` is, so a caller emitting two components cannot
+    // stamp one component's revision onto the other.
+    //
+    // 🔴 IT DESCRIBES THE CONSULTATION, NOT THE KEYS STORED. On the base-pose
+    // fallback the stored keys are the bone's own pose and the recorded hash is
+    // still the CLIP's — the empty track. Hashing what was stored instead would
+    // read `stale` the instant it was minted for the fallback, and `current`
+    // forever for a bone whose keys the director then rewrote. Both are the
+    // comparison this whole mechanism exists to avoid, wearing the other face.
+    provenance: { [component]: provenanceOf(fromClip) },
   });
   return { channelId, ops };
 }

@@ -35,7 +35,7 @@
 //
 // REF: src/app/asset/importCommon.ts (`ingestSingleFile` — the shared write);
 //      src/app/stores/generatedMotionStore.ts (what is on offer);
-//      src/app/asset/generateMotion.ts (what records it); issue #819.
+//      src/app/asset/generateMotionAsNode.ts (what records it); issue #819.
 
 import { ingestSingleFile } from './importCommon';
 import { formatAssetError } from '../stores/assetErrorStore';

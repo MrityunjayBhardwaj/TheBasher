@@ -825,7 +825,20 @@ function planExtend(
   cyclesBefore = 0,
   cyclesAfter = 0,
 ): ExtendPlan {
-  if (t >= start && t <= end) return { kind: 'in' };
+  // HALF-OPEN at the top (#952). `t === end` is the START of the next period, not
+  // a re-reading of the last key. Closed at the top, the FIRST seam re-read the
+  // last key while every LATER seam folded — the same phase giving two answers,
+  // which is a curve disagreeing with itself. It also put this carrier a whole
+  // travel away from the TransformClip minted beside it, whose fold has always
+  // been [0, duration); the reference's cycle modifier repeats the authored range
+  // rather than re-including its endpoint, and this now matches both.
+  //
+  // A no-op for every rule but `cycle`: below, hold clamps to the boundary value,
+  // slope extrapolates with dt = 0, mirror reflects onto the endpoint, and
+  // cycle-offset folds to the first key plus exactly one period of travel — all
+  // of which reproduce the last key. Pinned in keyframeInterp.test.ts so a new
+  // rule that breaks it reds rather than drifting.
+  if (t >= start && t < end) return { kind: 'in' };
   const isBefore = t < start;
   const at: 'first' | 'last' = isBefore ? 'first' : 'last';
   const rule = isBefore ? before : after;

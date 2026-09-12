@@ -31,14 +31,15 @@
 //      src/app/faceCount.gate.test.ts (the count is checked against BUILT geometry);
 //      issues #633, #638.
 
-import type { GeometryDescriptor } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 // ns-2 step 12.5 — a scoped generator's count needs to know how many elements its query
 // names. `scopeQuery.ts` is a LEAF with zero value imports, which is what keeps this one a
 // leaf too: the property this module holds is not "one import" for its own sake, it is that
 // nothing it depends on can depend back on it. `componentSelection.ts` could not have
 // served, because it imports this module — a measured cycle, and the reason the language
 // moved below all three of its consumers rather than into one of them.
-import { scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
+import { scopeNamesAGroup, scopeSelectedCount, scopeSelection } from '../nodes/scopeQuery';
+import { groupLookupFor } from './componentGroupLookup';
 // #770 — the ARITY of a generated polygon, which is where the polygon claim is grounded.
 // `polygonLayout.ts` imports one TYPE and nothing else, so this edge cannot come back: the
 // property this module holds is not a number of imports, it is that nothing it depends on can
@@ -126,7 +127,10 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
     case 'mirror': {
       const tiling = faceTilingOf(descriptor);
       if (tiling === null) return null;
-      return tiling.sourceFaces + subsetCountOf(tiling.scope, tiling.sourceFaces) * tiling.repeats;
+      return (
+        tiling.sourceFaces +
+        subsetCountOf(tiling.scope, tiling.sourceFaces, tiling.source) * tiling.repeats
+      );
     }
     // #671 — THE SUBSET ARM, AND IT IS NOT A GENERATOR'S. The arms above are
     // `source + subset x repeats` because a scoped generator PRESERVES its whole input.
@@ -135,7 +139,11 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
     case 'subset': {
       const sourceFaces = faceCountOf(descriptor.source.descriptor);
       if (sourceFaces === null) return null;
-      const selected = scopeSelectedCount(descriptor.scope, sourceFaces);
+      const selected = scopeSelectedCount(
+        descriptor.scope,
+        sourceFaces,
+        groupLookupFor(descriptor.source, 'face'),
+      );
       // The complement is derived rather than counted a second way: `scopeSelectedCount` is
       // the ONE door from a query to a count, and inverting its answer keeps it that way.
       return descriptor.keep ? selected : sourceFaces - selected;
@@ -181,8 +189,10 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
  * cases cannot drift: an unscoped generator is one whose subset is everything, which is
  * exactly what makes `source + subset x (count - 1)` collapse back to `source x count`.
  */
-function subsetCountOf(scope: string | undefined, total: number): number {
-  return scope === undefined ? total : scopeSelectedCount(scope, total);
+function subsetCountOf(scope: string | undefined, total: number, source: GeometryRef): number {
+  return scope === undefined
+    ? total
+    : scopeSelectedCount(scope, total, groupLookupFor(source, 'face'));
 }
 
 /**
@@ -221,8 +231,40 @@ interface FaceTiling {
   readonly sourceFaces: number;
   /** The generator's canonical scope query, or `undefined` when it is unscoped. */
   readonly scope: string | undefined;
+  /**
+   * The SOURCE HANDLE, carried because a scope may NAME a group (#1027) and a group's
+   * membership lives on the handle's attribute set, not in the query. Carried rather than
+   * re-derived from the descriptor at each consumer for the reason this whole structure
+   * exists: the rule is stated once and both answers come from it.
+   */
+  readonly source: GeometryRef;
   /** How many copies of the subset follow the preserved source. */
   readonly repeats: number;
+}
+
+/**
+ * What an order cache key must carry BEYOND the query, so two meshes cannot share one layout
+ * (#1027).
+ *
+ * 🔴 THE HAZARD THIS CLOSES, MEASURED RATHER THAN FEARED. These caches key on
+ * `(sourceFaces, scope, repeats)`, which is complete while a scope is a range: the same query
+ * over the same count names the same faces on every mesh in the product. A query naming a
+ * GROUP breaks that — two boxes both have six faces and both may be scoped `arm`, while their
+ * memberships differ — and the second one would be handed the first one's layout. That is the
+ * over-coalescing hazard the canonicaliser is written against, arriving one level down.
+ *
+ * ⚠️ AND IT WIDENS ONLY WHEN A NAME IS INVOLVED, which is the reason `scopeNamesAGroup` is a
+ * one-bit export rather than this function reaching for the attribute key unconditionally.
+ * Every scope authored in the product today is a range, and appending an attribute key to
+ * their entries would split the cache for all of them to fix a case none of them has —
+ * a measured cost (the cache is cleared wholesale at its limit) for no correctness gain.
+ */
+function membershipKeyFor(scope: string | undefined, source: GeometryRef): string {
+  if (scope === undefined || !scopeNamesAGroup(scope)) return '';
+  // The handle's attribute key is CONTENT-derived, so it already varies with anything a group
+  // could hold. `-` for a source carrying no attributes: it has no group either, so the query
+  // is about to be refused by name — the entry is keyed distinctly and never reused.
+  return source.attributeKey ?? '-';
 }
 
 function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
@@ -230,7 +272,7 @@ function faceTilingOf(descriptor: GeometryDescriptor): FaceTiling | null {
   const sourceFaces = faceCountOf(descriptor.source.descriptor);
   if (sourceFaces === null) return null;
   const repeats = descriptor.kind === 'array' ? arrayCopiesOf(descriptor.count) - 1 : 1;
-  return { sourceFaces, scope: descriptor.scope, repeats };
+  return { sourceFaces, scope: descriptor.scope, repeats, source: descriptor.source };
 }
 
 /**
@@ -408,11 +450,11 @@ function subsetFaceOrder(
 
   // Prefixed so it cannot collide with a generator's `${sourceFaces}|${scope}|${repeats}`,
   // and carrying `keep` because the two polarities are different layouts over one query.
-  const cacheKey = `subset|${sourceFaces}|${d.scope}|${d.keep}`;
+  const cacheKey = `subset|${sourceFaces}|${d.scope}|${d.keep}|${membershipKeyFor(d.scope, d.source)}`;
   const hit = orderCache.get(cacheKey);
   if (hit !== undefined) return hit;
 
-  const { mask } = scopeSelection(d.scope, sourceFaces);
+  const { mask } = scopeSelection(d.scope, sourceFaces, groupLookupFor(d.source, 'face'));
   const order: number[] = [];
   // The SAME survival test the registry's `faceSubset` applies, so the attribute and the
   // geometry cannot disagree about which faces survived.
@@ -450,7 +492,7 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
   // An ANIMATED `count`, by contrast, moves `repeats` every frame and thrashes this — and that
   // is the honest outcome, not a failure of the cache: the layout genuinely differs per frame,
   // so there is no redundancy to exploit and it degrades to exactly the uncached cost.
-  const cacheKey = `${sourceFaces}|${scope ?? '*'}|${repeats}`;
+  const cacheKey = `${sourceFaces}|${scope ?? '*'}|${repeats}|${membershipKeyFor(scope, tiling.source)}`;
   const hit = orderCache.get(cacheKey);
   if (hit !== undefined) return hit;
 
@@ -459,7 +501,10 @@ export function tiledFaceOrder(descriptor: GeometryDescriptor): TiledFaceOrder |
   const order: number[] = [];
   for (let face = 0; face < sourceFaces; face++) order.push(face);
 
-  const mask = scope === undefined ? null : scopeSelection(scope, sourceFaces).mask;
+  const mask =
+    scope === undefined
+      ? null
+      : scopeSelection(scope, sourceFaces, groupLookupFor(tiling.source, 'face')).mask;
   for (let copy = 0; copy < repeats; copy++) {
     for (let face = 0; face < sourceFaces; face++) {
       if (mask !== null && mask[face] !== 1) continue;

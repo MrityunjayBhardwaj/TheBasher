@@ -127,8 +127,8 @@ describe('the two rests, on the tracked stand-in pair', () => {
     const target = await targetRig();
     const preset = getBoneNameMapPreset('somaToMixamo')!;
     for (const [label, path, expected] of [
-      ['degenerate', DEGENERATE, false],
-      ['anatomical', TPOSE, true],
+      ['degenerate', DEGENERATE, 'direction'],
+      ['anatomical', TPOSE, 'aligned'],
     ] as const) {
       const parsed = clip(path);
       const nameMap = resolveNameMapToTarget(
@@ -142,7 +142,16 @@ describe('the two rests, on the tracked stand-in pair', () => {
         specToThreeSkeleton(target).bones,
         targetToSource,
       );
-      expect(alignment !== null, `${label} rest`).toBe(expected);
+      expect(alignment.kind, `${label} rest`).toBe(expected);
+      // ...and the degenerate one is refused for the reason a director can act
+      // on: this clip's own rest, not the pairing. The remedy is #855's T-pose
+      // conditioning, which is what the anatomical fixture beside it already is.
+      if (alignment.kind === 'direction') {
+        expect(alignment.reason.kind, `${label} rest`).toBe('flat-rest');
+        if (alignment.reason.kind === 'flat-rest') {
+          expect(alignment.reason.side, `${label} rest`).toBe('source');
+        }
+      }
     }
   });
 

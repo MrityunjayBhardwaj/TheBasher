@@ -1,7 +1,7 @@
 // Text-to-3D / image-to-3D ingestion surface — the HUMAN half of A4's three-way
 // parity.
 //
-// Deliberately shaped as a sibling of `generateMotion.ts`, which is itself shaped
+// Deliberately shaped as a sibling of `generateMotionAsNode.ts`, which is itself shaped
 // as a sibling of the import chokepoint, because the phase's claim is that a
 // generated mesh is indistinguishable from an imported one and this is the file
 // where a director's route to it is decided.
@@ -31,7 +31,7 @@
 //   - silent-failure: a licence refusal, a malformed request, an unreachable
 //     service or a rejected key surfaces in the banner, never console-only.
 //
-// REF: src/app/asset/generateMotion.ts (the sibling);
+// REF: src/app/asset/generateMotionAsNode.ts (the sibling);
 //      src/app/asset/importGltf.ts (the chokepoint);
 //      src/agent/tools/modelGenerate.ts (the agent half);
 //      ref/architecture/ai-track.md phase A4.

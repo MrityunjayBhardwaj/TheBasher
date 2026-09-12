@@ -11,9 +11,10 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CameraValue, SceneValue, ShotValue } from './types';
 import { recomposeCameraObject } from './cameraRecompose';
+import { nameParam } from './paramWidget';
 
 export const ShotParams = z.object({
-  name: z.string().default('Shot'),
+  name: nameParam('Shot'),
   startTime: z.number().nonnegative().default(0),
   endTime: z.number().nonnegative().default(2),
 });

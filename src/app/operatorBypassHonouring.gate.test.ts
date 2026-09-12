@@ -209,6 +209,16 @@ const ROWS = [
     hash: '0adbd52f',
   },
   {
+    // #1027 — the sixth geometry modifier and the eleventh operator. Like the fifth it
+    // reshapes nothing, and like the fifth that is not what this row is about: it freezes the
+    // PASSTHROUGH, which is the same machinery whatever the operator does when it runs. The
+    // hash is measured at introduction; there is no earlier tree to re-base from.
+    type: 'ComponentGroupOp',
+    src: meshSrc('#666666'),
+    params: { name: 'arm' },
+    hash: '0c8c55e1',
+  },
+  {
     type: 'SetMaterialOp',
     src: meshSrc('#444444'),
     // ns-2 step 14 — the retired face range, and its default meant EVERY face; a blank
@@ -255,8 +265,13 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
   it('THE INSTRUMENT CONTROL: the registry and the corpus both answered', () => {
     // A probe reaching through a field name it guessed reports a clean zero, and a zero
     // here would agree with this step's own thesis — the most expensive kind of agreement.
-    expect(listNodeTypes()).toHaveLength(85); // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), 84 -> 85 at #994 (UVProjectModifier);
-    expect(operators()).toHaveLength(10);
+    // 82 -> 83 at #901 (RetargetClip), 83 -> 84 at #902 (MotionGenerate), then 84 -> 86 by two
+    // independent arrivals: #974 (PoseOverride) and #994 (UVProjectModifier). Only the second
+    // is an OPERATOR, which is why the type count moved by two and the operator count by one.
+    // 86 -> 87 at #1027 (ComponentGroupOp), and it IS an operator, so both counts move by
+    // one together — unlike the #974/#994 pair above, where only one of the two was.
+    expect(listNodeTypes()).toHaveLength(87);
+    expect(operators()).toHaveLength(11);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

@@ -152,8 +152,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
   KeyframeChannelVec2:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) keyframes=channel',
+  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` record
+  // which clip a minted channel was seeded from. Machine provenance, so both are
+  // unrouted, the same standing as `childName`/`assetRef` beside them: a director
+  // never edits them and no card draws them.
   KeyframeChannelVec3:
-    '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) keyframes=channel',
+    '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',
   Layer:
     '[layout,animate] name=layout enabled=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
@@ -163,6 +167,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
   MakeVec3: '[]',
+  ComponentGroupOp: '[modifier] name=modifier muted=modifier scope=modifier',
   MaskModifier: '[modifier] keep=modifier muted=modifier scope=modifier',
   Material: '[material] material=material',
   MaterialOverride:
@@ -196,6 +201,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
+  // #974 — hand-posing. No `home` declared: the params are the override itself,
+  // not a routed view of somebody else's, so every cell is honestly unrouted.
+  PoseOverride:
+    '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
@@ -290,17 +299,32 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // The re-home this file exists to catch is therefore VISIBLE in it: the three TRS cells do
 // not reappear anywhere, because `Object` already routed position/rotation/scale before
 // this change. A re-home would have moved `routed` by a different number than 2.
-// 84 → 85 types and 133 → 135 routed at #994: `UVProjectModifier`'s whole row arrives under
-// the fifth arm above, and BOTH of its cells route (`size`, `muted` → modifier). `unrouted` is
-// UNCHANGED, which is the derived half of the claim that nothing existing was re-homed to make
-// room for it. Two cells rather than three for the same reason `BevelModifier`'s row gave
-// before #847: this modifier declares no scope, and its header says the deferral is a decision.
-// #1023 — unrouted 226 → 227: `GltfData.faceCount`, the child's captured face count.
-// UNROUTED and deliberately so, on exactly the argument this file's GltfData row already
-// makes for `assetRef`, `childName` and `materialSlots`. A home names the section that
-// RENDERS a param, and there is nothing to render: a face count is not authored, cannot be
-// edited, and has no control. Routing it "for completeness" is the #458 defect this golden
-// exists to catch — a titled, permanently empty cell, declared so a field would not look
-// absent and then believed by machinery that reads declarations and not the comments beside
-// them. `routed` and `types` do not move.
-export const GOLDEN_TOTALS = { types: 85, routed: 135, unrouted: 227 } as const;
+// 84 -> 87 types, and every arrival is INDEPENDENT — which is the claim this file exists to
+// make. Nothing existing was re-homed to make room for any of them, and a re-home would show
+// up as one total moving without its own arrival to explain it.
+//
+//   #974  `PoseOverride`        +1 type,  +5 unrouted, routes none
+//   #994  `UVProjectModifier`   +1 type,  +2 routed (`size`, `muted` -> modifier). Two cells
+//         rather than three for the same reason `BevelModifier`'s row gave before #847: this
+//         modifier declares no scope, and its header says the deferral is a decision.
+//   #1001 `KeyframeChannelVec3` +2 unrouted — the append arm's derived half.
+//   #1027 `ComponentGroupOp`    +1 type,  +3 routed (`name`, `muted`, scope -> modifier).
+//   #1023 `GltfData.faceCount`  +1 unrouted, and UNROUTED DELIBERATELY, on exactly the
+//         argument this file's GltfData row already makes for `assetRef`, `childName` and
+//         `materialSlots`. A home names the section that RENDERS a param, and there is
+//         nothing to render: a face count is not authored, cannot be edited, and has no
+//         control. Routing it "for completeness" is the #458 defect this golden exists to
+//         catch — a titled, permanently empty cell, declared so a field would not look
+//         absent and then believed by machinery that reads declarations, not the comments
+//         beside them.
+//
+// 🔴 THE MERGE ARITHMETIC, STATED BECAUSE THE CONFLICT WAS A COUNTER ON BOTH SIDES. This
+// file conflicted when the AI stack merged `origin/main`: both sides had appended rows and
+// bumped these totals, so NEITHER side's numbers were correct and taking either wholesale
+// would have laundered the other's rows — the exact failure the deletion-only rule guards.
+// #994 is the one arrival BOTH sides already carried, so the resolution is base plus each
+// side's unique arrivals, counted once:
+//   types    84 +1(#974) +1(#994) +1(#1027)                  = 87
+//   routed  133 +2(#994) +3(#1027)                           = 138
+//   unrouted 226 +5(#974) +2(#1001) +1(#1023)                = 234
+export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 234 } as const;

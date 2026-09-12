@@ -38,7 +38,6 @@
 //
 // REF: src/app/asset/mintMotionGenerate.ts (the chain);
 //      src/app/asset/cookMotionGenerations.ts (the cook + the placement step);
-//      src/app/asset/generateMotion.ts (the one-shot road this supersedes);
 //      src/app/asset/importBvhFbx.ts (`bindImportedMotion`, the shared continuation);
 //      issues #935, #902, #730.
 
@@ -125,7 +124,7 @@ export async function generateMotionAsNode(
     // The same continuation a dropped file takes (#807/#820): a generated clip
     // that stopped short of the bind was measured leaving a character standing
     // still while the same bytes dropped as a file animated it.
-    bindImportedMotion({ skeletonId: mint.skeletonId, clipId: mint.clipId });
+    bindImportedMotion({ skeletonId: mint.skeletonId, clipId: mint.clipId }, 'generated');
     // ...and only now can placement find the character the bind just chose.
     placeCookedMotion();
 

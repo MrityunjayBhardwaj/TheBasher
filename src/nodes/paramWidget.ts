@@ -57,10 +57,17 @@ import { z } from 'zod';
  * 'never'` — rather than assumed, which is the only thing that makes the forcing function a
  * fact rather than an intention.
  *
+ * `'text'` (#1027) is a plain authored string that is not an enum, a colour or a query — a
+ * component group's NAME, the first param of that shape in the repo. It is here because the
+ * fall-through arm this module exists to close was still swallowing it: a bare `z.string()`
+ * renders as a READ-ONLY span, so the operator shipped offered in the Add menu with the one
+ * field that makes it do anything un-typeable. Measured in self-review, not predicted — and it
+ * is the same "advertised action that silently does nothing" shape the panel refuses elsewhere.
+ *
  * A member is still not added on speculation: the name and the row land together, so this
  * union stays a census of what the panel can actually draw rather than a wish list.
  */
-export type ParamWidget = 'query' | 'color';
+export type ParamWidget = 'query' | 'color' | 'text';
 
 /**
  * Schema instance → the control it asks for.
@@ -72,6 +79,23 @@ export type ParamWidget = 'query' | 'color';
 const WIDGETS = new WeakMap<object, ParamWidget>();
 
 /**
+ * Schema instance → what its EMPTY state should be called, when the param has an opinion.
+ *
+ * 🔴 SEPARATE FROM THE KIND BECAUSE THEY ANSWER DIFFERENT QUESTIONS, and conflating them is
+ * the defect this pair exists to prevent. The kind says which control to draw; the
+ * placeholder says what BLANK MEANS, and blank means something different per param even when
+ * the control is identical. A blank scope is "all", a blank group name is "unnamed", a blank
+ * prompt is just empty. The `text` arm was introduced (#1027) with the group name's word
+ * hardcoded at the draw site, so every param that later asked for the same control inherited
+ * the wrong sentence — a prompt field reading "unnamed". Found in self-review of #1031, at
+ * the moment seven more params joined that arm.
+ *
+ * Weak and keyed by identity for {@link WIDGETS}' reasons. Absent is a real answer: the draw
+ * site supplies the neutral word, so a param only speaks up when it has something better.
+ */
+const PLACEHOLDERS = new WeakMap<object, string>();
+
+/**
  * Declare that `schema` is authored with `kind`, and return the SAME schema.
  *
  * Returns the identical instance rather than a wrapper so it composes with nothing: a
@@ -79,9 +103,25 @@ const WIDGETS = new WeakMap<object, ParamWidget>();
  * function's return value still gets a registered schema. The widget is presentation and
  * must never be able to change what the schema accepts.
  */
-export function widget<S extends z.ZodTypeAny>(kind: ParamWidget, schema: S): S {
+export function widget<S extends z.ZodTypeAny>(
+  kind: ParamWidget,
+  schema: S,
+  placeholder?: string,
+): S {
   WIDGETS.set(schema, kind);
+  if (placeholder !== undefined) PLACEHOLDERS.set(schema, placeholder);
   return schema;
+}
+
+/**
+ * What this schema calls its empty state, or `undefined` if it has no opinion.
+ *
+ * Undefined is the honest answer and the common one: the draw site owns the neutral word for
+ * each control, and a param overrides it only when blank means something specific there.
+ */
+export function placeholderOf(schema: unknown): string | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return PLACEHOLDERS.get(schema);
 }
 
 /**
@@ -119,4 +159,49 @@ export function widgetOf(schema: unknown): ParamWidget | undefined {
  */
 export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
   return widget('color', z.string().default(defaultHex));
+}
+
+/**
+ * A node's SEMANTIC name, declared with the text control it is authored by (#1031).
+ *
+ * ── WHY A HELPER RATHER THAN `widget('text', …)` AT TWENTY-SIX SITES ──────────────────
+ *
+ * This is the reasoning this module's header already states, applied to the param it is
+ * most true of. A widget is a property of the PARAM TYPE, and `name` is the same field
+ * wherever it appears: twenty-six node types carry a top-level `name: z.string()` whose
+ * default is a domain label (`'Shot'`, `'clip'`, `'channel'`, `'track-to'`). Declaring the
+ * control per node would spell one fact twenty-six times — the failure the spine comment
+ * names — and a twenty-seventh node would have to remember. Calling this instead gets the
+ * control for free and cannot forget to ask.
+ *
+ * ── WHY THIS IS NOT THE OUTLINER'S RENAME ─────────────────────────────────────────────
+ *
+ * 🔴 `params.name` AND `meta.name` ARE DIFFERENT FIELDS, and only the second one was ever
+ * authorable. A director's double-click in the outliner dispatches `setMeta`
+ * (`src/app/RenameInput.tsx:59`), which writes `meta.name` — rung 1 of `nodeDisplayName`'s
+ * priority ladder. `params.name` is rung 2, documented there as "the SEMANTIC name carried
+ * by Shot / AnimationClip / Character node params — their domain label, not a generic
+ * field", and it has 36 production readers: a light rig is found by it
+ * (`resolveRigLightSources.ts:50`), a studio profile is keyed on it (`studioProfiles.ts:42`),
+ * a composition exports under it (`exportCompositionAction.ts:154`), a retarget names its
+ * output with it (`retargetFromNodes.ts:181`). So renaming the node in the tree did NOT set
+ * the thing those call sites read, and nothing in the panel could.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────────────────
+ *
+ * No `.refine()`, for {@link colorParam}'s reason and one more. A name reaching a reader is
+ * never a throw — every one of the 36 treats it as an opaque label or falls back — and
+ * narrowing here would change what ALREADY-SAVED projects validate against, for a failure
+ * that does not occur. The widget is presentation and must not move validation, which is
+ * the rule {@link widget} states about itself.
+ *
+ * Blank stays accepted, and that is load-bearing rather than incidental: it is the
+ * unconfigured state `nodeDisplayName` falls THROUGH on its way to the next rung, so
+ * refusing it would make a name unclearable once typed and would strand the fallback.
+ */
+export function nameParam(defaultLabel: string): z.ZodDefault<z.ZodString> {
+  // "unnamed" rather than the neutral "empty", because for a name blank has a READING: the
+  // node still shows a label, drawn from the next rung of `nodeDisplayName`'s ladder. The
+  // field is empty; the node is not anonymous.
+  return widget('text', z.string().default(defaultLabel), 'unnamed');
 }

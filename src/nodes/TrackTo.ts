@@ -21,11 +21,12 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TrackToConstraintValue } from './types';
+import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 export const TrackToParams = z.object({
-  name: z.string().default('track-to'),
+  name: nameParam('track-to'),
   /** The constrained node id whose rotation this derives (mirrors a channel's
    *  `target`). Empty → inert (enumerated but no node to aim). */
   target: z.string().default(''),

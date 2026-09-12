@@ -21,7 +21,7 @@
 // V8: app-layer. V18 N/A — deliberately NOT persisted: an offer to save bytes
 // that no longer exist after a reload would be a button that cannot work.
 //
-// REF: src/app/asset/generateMotion.ts (records); src/app/asset/saveGeneratedMotion.ts
+// REF: src/app/asset/generateMotionAsNode.ts (records); src/app/asset/saveGeneratedMotion.ts
 //      (consumes); src/app/GeneratePanel.tsx (renders the offer); issue #819.
 
 import { create } from 'zustand';

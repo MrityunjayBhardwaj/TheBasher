@@ -7,6 +7,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
+import type { Op } from '../../core/dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDagStore } from '../../core/dag/store';
@@ -25,6 +26,7 @@ import {
 } from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 import { paramAnimationState } from './paramAnimationState';
+import { transformClipCarriesChild } from './clipRowMint';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
 const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const ASSET = 'asset-generated';
@@ -523,5 +525,139 @@ describe('#912 — what a diamond activation means', () => {
     for (const st of ['none', 'animated', 'on-key'] as const) {
       expect(diamondActivation(true, st)).not.toBe('key');
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #911 — the SECOND clip road: a glTF asset's OWN embedded animation.
+//
+// #908 taught the diamond the `AnimationClip` band. A `.glb` that animates
+// itself arrives on a `TransformClip` instead, and stayed gray. These rows use a
+// separate assetRef from `generatedScene()` so the two roads cannot be confused
+// for one another — and so the sibling road's rows above keep meaning what they
+// say.
+// ─────────────────────────────────────────────────────────────────────────
+
+const EMBEDDED_ASSET = 'asset-embedded';
+const EMBEDDED_CHILD = 'Torso';
+const EMBEDDED_UNANIMATED = 'Antenna';
+
+/** A glTF asset whose OWN animation drives EMBEDDED_CHILD, wired the way the
+ *  importer wires it: GltfAsset ← ClipSelect ← TransformClip. */
+function embeddedAnimationScene(): DagState {
+  let s = emptyDagState();
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_gltf_e',
+    nodeType: 'GltfAsset',
+    params: { assetRef: EMBEDDED_ASSET },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_tclip_e',
+    nodeType: 'TransformClip',
+    params: {
+      name: 'spin',
+      duration: 1,
+      keyframes: [
+        {
+          targetNodeId: EMBEDDED_CHILD,
+          time: 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+        },
+        {
+          targetNodeId: EMBEDDED_CHILD,
+          time: 1,
+          position: [0, 1, 0],
+          rotation: [0, 90, 0],
+          scale: [2, 2, 2],
+        },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_sel_e',
+    nodeType: 'ClipSelect',
+    params: { selectedClipName: 'spin' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_tclip_e', socket: 'out' },
+    to: { node: 'n_sel_e', socket: 'clips' },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_sel_e', socket: 'out' },
+    to: { node: 'n_gltf_e', socket: 'transformClip' },
+  }).next;
+  for (const child of [EMBEDDED_CHILD, EMBEDDED_UNANIMATED]) {
+    for (const op of importedChildOps(gltfChildDagId(EMBEDDED_ASSET, child), {
+      assetRef: EMBEDDED_ASSET,
+      childName: child,
+    })) {
+      s = applyOp(s, op as Op).next;
+    }
+  }
+  return s;
+}
+
+describe("#911 — the diamond reads a glTF's own embedded animation", () => {
+  const CHILD_ID = gltfChildDagId(EMBEDDED_ASSET, EMBEDDED_CHILD);
+
+  it('an embedded-clip child reports animated, where the narrow reader says none', () => {
+    const s = embeddedAnimationScene();
+    // The narrow reader is not wrong — there is no authored channel here, and
+    // ParamDiamond's delete gate still depends on that answer.
+    expect(paramAnimationState(s, CHILD_ID, 'rotation', 30)).toBe('none');
+    expect(paramAnimationDisplayState(s, CHILD_ID, 'rotation', 30)).toBe('animated');
+    expect(paramAnimationDisplayState(s, CHILD_ID, 'position', 30)).toBe('animated');
+  });
+
+  it('SCALE is animated here and NOT on the AnimationClip road — the roads differ', () => {
+    // 🔑 The row that stops one shared component filter being used for both. A
+    // TransformClip key carries full TRS; an AnimationClip key has no scale at
+    // all. Both answers below are correct, and they disagree — so a helper that
+    // gave one answer would be lying on one of the two roads.
+    expect(paramAnimationDisplayState(embeddedAnimationScene(), CHILD_ID, 'scale', 30)).toBe(
+      'animated',
+    );
+    expect(
+      paramAnimationDisplayState(sceneWithNeighbours(), gltfChildDagId(ASSET, BONE), 'scale', 30),
+    ).toBe('none');
+  });
+
+  it('a child the embedded clip never targets still reports none', () => {
+    // Without this row a fix that returned 'animated' for every child of an
+    // animated asset passes.
+    const s = embeddedAnimationScene();
+    expect(
+      paramAnimationDisplayState(
+        s,
+        gltfChildDagId(EMBEDDED_ASSET, EMBEDDED_UNANIMATED),
+        'rotation',
+        30,
+      ),
+    ).toBe('none');
+  });
+
+  it('never reports on-key from the embedded clip alone', () => {
+    // The clip has a key at t=0, so frame 0 is ON one. Same reasoning as the
+    // sibling road: the clip is the asset's, not the director's, so yellow —
+    // which reads as "click to unkey" — would be an invitation to a delete that
+    // cannot happen.
+    expect(paramAnimationDisplayState(embeddedAnimationScene(), CHILD_ID, 'rotation', 0)).toBe(
+      'animated',
+    );
+  });
+
+  it('the probe answers about the CHILD, not about the asset having any clip at all', () => {
+    const s = embeddedAnimationScene();
+    expect(transformClipCarriesChild(s, EMBEDDED_ASSET, EMBEDDED_CHILD)).toBe(true);
+    expect(transformClipCarriesChild(s, EMBEDDED_ASSET, EMBEDDED_UNANIMATED)).toBe(false);
+    // …and an asset with no embedded clip at all is false rather than throwing.
+    expect(transformClipCarriesChild(sceneWithNeighbours(), ASSET, BONE)).toBe(false);
   });
 });

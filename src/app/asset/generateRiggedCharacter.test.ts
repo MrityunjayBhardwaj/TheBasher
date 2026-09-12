@@ -52,6 +52,11 @@ function seedScene(): void {
 beforeEach(() => {
   registerAllNodes();
   useAssetErrorStore.getState().clearAll();
+  // 🔴 `rigging` is REPLACED each time, so a spy on it dies with the object.
+  // `generation` is a module-level const and a spy on it does NOT — one row's
+  // `mockRejectedValue` was still in force two describes later, which reads as
+  // the code under test failing rather than as the previous row still talking.
+  vi.restoreAllMocks();
   rigging = new StubRiggingCapability();
   seedScene();
 });
@@ -59,8 +64,8 @@ beforeEach(() => {
 describe('the happy road', () => {
   it('lands a rigged character and reports the spec that ARRIVED', async () => {
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    expect(result.outcome).toBe('rigged');
+    if (result.outcome !== 'rigged') return;
     expect(result.opfsPath).toMatch(/\.glb$/);
     // Read off the returned bytes, never from the request. A result echoing the
     // spec it ASKED for is a label, and a label can be wrong while every test
@@ -77,8 +82,8 @@ describe('the happy road', () => {
     const rigSpy = vi.spyOn(rigging, 'rig');
 
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    expect(result.outcome).toBe('rigged');
+    if (result.outcome !== 'rigged') return;
 
     const rigged = new Uint8Array(
       await rigSpy.mock.results[0].value.then((r: { glb: ArrayBuffer }) => r.glb),
@@ -104,8 +109,8 @@ describe('the happy road', () => {
     const rigSpy = vi.spyOn(rigging, 'rig');
     const checkSpy = vi.spyOn(rigging, 'checkRiggable');
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    expect(result.outcome).toBe('rigged');
+    if (result.outcome !== 'rigged') return;
 
     // 🔑 `RigSubject` is `{ sourceTaskId }` — Tripo rigs a TASK, not a mesh. The
     // id must be the generation's own, and it must be the SAME one both calls
@@ -129,8 +134,8 @@ describe('the happy road', () => {
     });
 
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
+    expect(result.outcome).toBe('rigged');
+    if (result.outcome !== 'rigged') return;
     expect(result.arrivedSpec).toBe('unknown');
   });
 
@@ -162,10 +167,12 @@ describe('the refusals', () => {
     const rigSpy = vi.spyOn(rigging, 'rig');
 
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(false);
-    // The load-bearing half: the SECOND billable call never happened.
+    // #835 — NOT a failure. A mesh was generated and BILLED; only the skeleton
+    // is missing, and the director gets the thing they paid for.
+    expect(result.outcome).toBe('unrigged');
+    // The load-bearing half, unchanged: the SECOND billable call never happened.
     expect(rigSpy).not.toHaveBeenCalled();
-    expect(result.ok === false && result.reason).toContain('others');
+    expect(result.outcome === 'unrigged' && result.reason).toContain('others');
   });
 
   it('a pre-check that did not answer says so, rather than naming a body plan', async () => {
@@ -177,8 +184,8 @@ describe('the refusals', () => {
       detectedRigType: null,
     });
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
+    expect(result.outcome).toBe('unrigged');
+    if (result.outcome !== 'unrigged') return;
     expect(result.reason).toContain('did not say');
     expect(result.reason).not.toContain('others');
     expect(result.reason).not.toContain('biped');
@@ -187,7 +194,7 @@ describe('the refusals', () => {
   it('a failure reaches the banner, never console-only', async () => {
     vi.spyOn(rigging, 'rig').mockRejectedValue(new Error('transport exploded'));
     const result = await generateRiggedCharacter(TEXT, { name: 'dwarf' });
-    expect(result.ok).toBe(false);
+    expect(result.outcome).toBe('failed');
     expect(useAssetErrorStore.getState().errors.dwarf).toContain('transport exploded');
   });
 
@@ -204,7 +211,7 @@ describe('the refusals', () => {
     const narrow = vi.spyOn(generation, 'generateTaskOnly');
 
     const result = await generateRiggedCharacter(TEXT);
-    expect(result.ok).toBe(true);
+    expect(result.outcome).toBe('rigged');
 
     expect(narrow).toHaveBeenCalledTimes(1);
     expect(wide).not.toHaveBeenCalled();
@@ -213,9 +220,108 @@ describe('the refusals', () => {
   it('never throws — the surface that invoked it must be able to return to idle', async () => {
     vi.spyOn(generation, 'generateTaskOnly').mockRejectedValue(new Error('boom'));
     await expect(generateRiggedCharacter(TEXT)).resolves.toEqual({
-      ok: false,
+      outcome: 'failed',
       reason: 'boom',
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #835 — A REFUSED RIG LANDS THE MESH THE DIRECTOR ALREADY PAID FOR
+// ─────────────────────────────────────────────────────────────────────────────
+// By the time the pre-check refuses, a generation task has RUN and been BILLED
+// and a real mesh exists on the service. It throwing left the director with a
+// sentence and no way to see what they bought except by hunting the task down
+// outside Basher.
+//
+// 🔴 THIS REVERSES A NAMED PRIOR DECISION, and the reversal is the issue. A row
+// in GeneratePanel.test.ts read "a refused RIG comes back the same way, not as a
+// success with no skeleton" — right while the mesh was being discarded, because
+// then there really was nothing. Now there is something, and calling it a
+// failure would discard it a second time. What that row was guarding against —
+// a director being told they have a character when they have a bare mesh — is
+// held instead by the banner and by the outcome being `unrigged` rather than
+// `rigged`.
+
+describe('a refused rig still lands the mesh (#835)', () => {
+  beforeEach(() => {
+    vi.spyOn(rigging, 'checkRiggable').mockResolvedValue({
+      taskId: 'c1',
+      riggable: false,
+      detectedRigType: 'others',
+    });
+  });
+
+  it('puts the generated mesh in the scene rather than discarding it', async () => {
+    const before = Object.keys(useDagStore.getState().state.nodes).length;
+    const result = await generateRiggedCharacter(TEXT);
+
+    expect(result.outcome).toBe('unrigged');
+    if (result.outcome !== 'unrigged') return;
+    // A real path with the RIGHT bytes behind it — read back through the storage
+    // the import road reads from, not the value the action held in a variable.
+    // Byte identity rather than "non-empty": a non-empty assertion is satisfied
+    // by any mesh at all, including the wrong one, which is the whole hazard on
+    // a road where two GLBs are in play.
+    expect(result.opfsPath).toBeTruthy();
+    const onDisk = await (await getStorage()).read(result.opfsPath);
+    // The stub is deterministic in its request, so this is the same mesh that
+    // task produced — asked for here rather than spied off the road, because the
+    // road deliberately does not fetch it except on this branch (#833).
+    const generated = new Uint8Array((await generation.generate(TEXT)).glb);
+    expect(onDisk).toEqual(generated);
+    // And it reached the graph, which is the thing the director can actually see.
+    expect(Object.keys(useDagStore.getState().state.nodes).length).toBeGreaterThan(before);
+  });
+
+  it('says the skeleton is missing — a bare mesh in the scene is otherwise silent', async () => {
+    await generateRiggedCharacter(TEXT, { name: 'dwarf' });
+    const said = useAssetErrorStore.getState().errors.dwarf ?? '';
+    // WHY it could not be rigged, and that the model is nonetheless there. A
+    // mesh with no skeleton looks entirely correct in the viewport until someone
+    // tries to animate it, so nothing about the scene will raise the question.
+    expect(said).toContain('others');
+    expect(said).toContain('in your scene');
+  });
+
+  it('a salvage that FAILS keeps the refusal — it is the actionable half (#963)', async () => {
+    // Reachable only by injecting the failure: the stub cannot fail to collect.
+    // Made straightforward by `collectGlb` being a method on the returned task —
+    // there is something to replace.
+    vi.spyOn(generation, 'generateTaskOnly').mockImplementation(async () => ({
+      taskId: 'stub_x',
+      modelVersion: 'v1',
+      collectGlb: async () => {
+        throw new Error('the asset host is unreachable');
+      },
+    }));
+
+    const result = await generateRiggedCharacter(TEXT, { name: 'dwarf' });
+    expect(result.outcome).toBe('failed');
+    if (result.outcome !== 'failed') return;
+
+    // BOTH facts, and the refusal first. Reporting only the fetch error tells a
+    // director to retry something that will fail identically, while the refusal
+    // tells them what to change — so losing it to keep the incidental one is the
+    // wrong trade at the moment things are already going badly.
+    expect(result.reason).toContain('others');
+    expect(result.reason).toContain('single full-body character');
+    expect(result.reason).toContain('unreachable');
+    expect(useAssetErrorStore.getState().errors.dwarf).toContain('others');
+  });
+
+  it('🔑 collects the mesh WITHOUT running a second generation task', async () => {
+    // The bug this must not become. Re-running to recover an output already
+    // produced would bill the director twice — worse than the discard it fixes —
+    // and would look identical from the outside, because a second task returns a
+    // perfectly good mesh.
+    const wide = vi.spyOn(generation, 'generate');
+    const narrow = vi.spyOn(generation, 'generateTaskOnly');
+
+    await generateRiggedCharacter(TEXT);
+
+    expect(narrow).toHaveBeenCalledTimes(1);
+    expect(wide).not.toHaveBeenCalled();
   });
 });
 

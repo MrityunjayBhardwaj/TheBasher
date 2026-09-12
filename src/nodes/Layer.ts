@@ -19,13 +19,14 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { ImageValue, LayerBlendMode, LayerValue } from './types';
+import { nameParam } from './paramWidget';
 
 export const LAYER_BLEND_MODES = ['normal', 'add', 'multiply', 'screen'] as const;
 
 const Vec2 = z.tuple([z.number(), z.number()]);
 
 export const LayerParams = z.object({
-  name: z.string().default('Layer'),
+  name: nameParam('Layer'),
   /** Visibility (AE's eyeball). A disabled layer is skipped by the compositor. */
   enabled: z.boolean().default(true),
   /** Solo (AE): when any layer in a comp is solo, only solo layers composite. */

@@ -40,6 +40,24 @@ export interface MotionConstraints {
    * object across as-is is the defect #826 records.
    */
   readonly waypoints?: readonly { readonly x: number; readonly z: number }[];
+  /**
+   * Facing per waypoint, as a ground direction in the SAME frame and units as
+   * `waypoints`. One per waypoint, or omitted entirely.
+   *
+   * Omitted is not "face along the path" — it is "say nothing", and the server's
+   * answer to saying nothing is to keep the canonical frame-0 heading for the
+   * whole clip, which makes the character travel a non-canonical path SIDEWAYS
+   * (#897, measured: a +Z path holds yaw at -1.4° while walking to z=2.07). So
+   * `HttpMotionGenerationCapability` derives tangents when a caller supplies
+   * waypoints and no headings; this field is for a caller that wants a facing
+   * the path does not imply — walking backwards, or watching something while
+   * moving past it.
+   *
+   * The wire shape is `[cos, sin]` per the server's own wording, which measures
+   * as (x, z) in this frame — see `pathHeadings.ts`, where the mapping was
+   * established against the live service rather than read off the names.
+   */
+  readonly headings?: readonly { readonly x: number; readonly z: number }[];
 }
 
 export interface MotionGenerationRequest {
@@ -118,6 +136,35 @@ export interface MotionGenerationResult {
    * them cannot tell "nobody asked" from "it belongs here".
    */
   readonly worldOffsetXZ: readonly [number, number] | null;
+
+  /**
+   * The rotation, in radians about the world Y axis in the waypoint frame
+   * (+X = 0, +Z = +π/2), that a caller must apply to the clip to put its FACING
+   * where it was asked for. `null` when no facing was requested.
+   *
+   * The THIRD thing this result declares that the clip cannot say, and the exact
+   * twin of `worldOffsetXZ`: generation canonicalises frame 0's HEADING to zero
+   * as well as its position, so a clip whose character should set off toward +Z
+   * comes back setting off toward +X. Where `worldOffsetXZ` is the translation
+   * that was rebased away, this is the rotation that was.
+   *
+   * It differs from `worldOffsetXZ` in ONE way worth stating: the server neither
+   * performs nor reports it. The canonical heading is a known constant, so the
+   * caller can rotate the request into that frame itself — which is what an
+   * implementation returning a non-null value here has done. The value is
+   * therefore a promise about the REQUEST that was issued, and a consumer that
+   * ignores it gets a character that walks a path rotated off the drawn one.
+   *
+   * The two are ONE placement and must be applied together, to the same node, in
+   * the order rotate-then-translate. Applying only the rotation walks the
+   * character down the wrong path; applying only the translation reproduces the
+   * defect #897 records.
+   *
+   * `null` is NOT `0`, for the same reason `worldOffsetXZ`'s null is not
+   * `[0, 0]`: null means no facing was requested and there is nothing to apply,
+   * while `0` means one was requested and happened to be the canonical direction.
+   */
+  readonly worldRotationRadians: number | null;
 }
 
 export interface MotionGenerationCapability {
@@ -147,6 +194,18 @@ export interface MotionGenerationCapability {
  * caller supplies that decides how much motion gets synthesised.
  */
 export const MAX_MOTION_SECONDS = 600;
+
+/**
+ * Shortest vector still readable as a facing.
+ *
+ * Numerically equal to `pathHeadings.MIN_SEGMENT` and deliberately NOT shared
+ * with it: that one is a distance in metres between two waypoints, this one is
+ * the magnitude of a unitless direction. They answer the same question at two
+ * points on two different quantities, and tying them to one symbol would claim a
+ * relationship the units do not support — if the waypoint threshold ever moves
+ * for a reason about scene scale, this must not move with it.
+ */
+export const MIN_HEADING_LENGTH = 1e-6;
 
 /**
  * Upper bound on a clip's sampling rate, checked on the RESULT rather than on the
@@ -191,6 +250,35 @@ export const MotionGenerationRequestSchema = z
     constraints: z
       .object({
         waypoints: z.array(z.object({ x: z.number().finite(), z: z.number().finite() })).optional(),
+        // 🔴 A DIRECTION, AND `{x: 0, z: 0}` IS FINITE WITHOUT BEING ONE (#961).
+        //
+        // `tangentHeadings` guards its own output against this — a curve shorter
+        // than its sample count repeats a point, and normalising that is NaN,
+        // "which the server would accept as a heading and the model would honour
+        // as garbage". A caller supplying headings explicitly bypasses that
+        // guard, and the explicit road is the whole reason the field exists.
+        //
+        // It decides more than one direction now: `headings[0]` sets the rotation
+        // the placement will undo, and `atan2(0, 0)` is 0 — indistinguishable
+        // from a caller who genuinely asked for the canonical facing. So a
+        // degenerate first heading is wrong on both halves at once and says
+        // nothing about it. Refused here rather than normalised, because a
+        // zero-length direction is not a facing anyone can be given: inventing
+        // one would be the fabrication the refusal exists to prevent.
+        //
+        // An un-normalised but non-zero heading is deliberately ALLOWED —
+        // `headingAngle` is scale-invariant, so it is unambiguous.
+        headings: z
+          .array(
+            z
+              .object({ x: z.number().finite(), z: z.number().finite() })
+              .refine((h) => Math.hypot(h.x, h.z) >= MIN_HEADING_LENGTH, {
+                message:
+                  'must be a direction with a length — [0, 0] states no facing rather than ' +
+                  'the canonical one, and there is no facing to derive from it',
+              }),
+          )
+          .optional(),
       })
       .optional(),
   })
@@ -275,6 +363,20 @@ export function assertValidMotionResult(result: MotionGenerationResult): void {
           `${JSON.stringify(offset)}`,
       );
     }
+  }
+  // The facing half, checked with the same firmness and for a sharper reason: a
+  // rotation is the one placement value whose wrongness is INVISIBLE in a still.
+  // A character standing in the right place facing the wrong way reads as a bind
+  // or retarget fault and sends the next person to the wrong sector entirely
+  // (#897). NaN is the specific value to refuse — it is what an un-normalised or
+  // zero-length heading produces, and it would reach a transform as a silent
+  // identity.
+  const rotation = result.worldRotationRadians;
+  if (rotation !== null && !Number.isFinite(rotation)) {
+    issues.push(
+      `worldRotationRadians: must be null (no facing requested) or a finite angle in ` +
+        `radians — got ${JSON.stringify(rotation)}`,
+    );
   }
   // Only worth reading the clip's own rate once the payload is known to be there.
   if (issues.length === 0) {

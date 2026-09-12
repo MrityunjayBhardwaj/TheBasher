@@ -49,26 +49,54 @@ beforeEach(() => {
 });
 
 describe('homeFrame routing', () => {
-  it('calls frameSelected when a primary node is selected', () => {
+  // #856 — the routing now asks frameSelected WHAT IT DID rather than asking the
+  // selection store whether it will probably work. `primaryNodeId !== null` was a
+  // proxy for that, and it is wrong for the one case a director reports: a node
+  // is selected, it has no anchor, frameSelected silently does nothing, and the
+  // fallback that exists to make this button always act never fires.
+  //
+  // So these rows drive the mock's RETURN, because that is what the routing
+  // reads. A selection is set where it makes the scenario legible, and the third
+  // row is the one that could not have passed before.
+  it('does not fall back when frameSelected reports that it framed', () => {
     useSelectionStore.getState().select('cube-1');
+    vi.mocked(frameSelected).mockReturnValue(true);
     homeFrame();
     expect(frameSelected).toHaveBeenCalledTimes(1);
     expect(frameAll).not.toHaveBeenCalled();
   });
 
-  it('falls back to frameAll when no primary node is selected', () => {
+  it('falls back to frameAll when nothing is selected', () => {
     expect(useSelectionStore.getState().primaryNodeId).toBeNull();
+    vi.mocked(frameSelected).mockReturnValue(false);
     homeFrame();
+    expect(frameSelected).toHaveBeenCalledTimes(1);
     expect(frameAll).toHaveBeenCalledTimes(1);
-    expect(frameSelected).not.toHaveBeenCalled();
   });
 
-  it('switches from frameAll to frameSelected after a selection lands', () => {
+  it('#856 — falls back when a node IS selected but cannot be framed', () => {
+    // The row that could not have passed before: the old guard saw a non-null
+    // primaryNodeId, called through, and stopped. The button did nothing at all
+    // on a selection whose node has no anchor.
+    useSelectionStore.getState().select('imported-group-1');
+    expect(useSelectionStore.getState().primaryNodeId).not.toBeNull();
+    vi.mocked(frameSelected).mockReturnValue(false);
+    homeFrame();
+    expect(frameSelected).toHaveBeenCalledTimes(1);
+    expect(
+      frameAll,
+      'a selected-but-unframeable node must still reach Frame All',
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('switches from frameAll to frameSelected once the selection can be framed', () => {
+    vi.mocked(frameSelected).mockReturnValue(false);
     homeFrame();
     expect(frameAll).toHaveBeenCalledTimes(1);
     useSelectionStore.getState().select('light-2');
+    vi.mocked(frameSelected).mockReturnValue(true);
     homeFrame();
-    expect(frameSelected).toHaveBeenCalledTimes(1);
+    expect(frameSelected).toHaveBeenCalledTimes(2);
     // frameAll should NOT have been called a second time.
     expect(frameAll).toHaveBeenCalledTimes(1);
   });

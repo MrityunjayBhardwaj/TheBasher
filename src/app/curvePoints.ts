@@ -15,7 +15,8 @@
 // pattern for every array param in the codebase (a glTF's `materials`, a channel's
 // `keyframes`), and undo comes free: the inverse op carries the prior array.
 //
-// REF: src/nodes/Curve.ts (the schema + MIN_CURVE_POINTS); src/core/dag/ops.ts (why the
+// REF: src/nodes/CurveData.ts (the schema + MIN_CURVE_POINTS, since the fused Curve
+//      node was retired); src/core/dag/ops.ts (why the
 //      whole-array write); src/app/constraintStack.ts (the pure-Op[] builder convention).
 
 import type { DagState } from '../core/dag/state';

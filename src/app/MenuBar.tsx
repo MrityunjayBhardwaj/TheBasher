@@ -34,6 +34,8 @@ import {
 import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
+import { canToggleViewLock, toggleViewLock } from './viewLock';
+import { useNotificationStore } from './stores/notificationStore';
 import { exportDagJson } from './exportDag';
 import { renderToViewWithFeedback } from './renderImageAction';
 import { renderAnimationWithFeedback } from './renderAnimationAction';
@@ -385,6 +387,10 @@ export function MenuBar() {
   const gridVisible = useViewportStore((s) => s.gridVisible);
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
+  const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
+  const boneDisplay = useViewportStore((s) => s.boneDisplay);
+  const bonesInFront = useViewportStore((s) => s.bonesInFront);
+  const viewLock = useViewportStore((s) => s.viewLock);
   const setShading = useViewportStore((s) => s.setShading);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const space = useEditorStore((s) => s.space);
@@ -449,6 +455,9 @@ export function MenuBar() {
   const selectedId = useSelectionStore((s) =>
     s.selectedNodeIds.size === 1 ? s.selectedNodeId : null,
   );
+  // #856 — the lock is taken against the PRIMARY selection, so the menu item's
+  // enabled state has to read the same thing `toggleViewLock` will.
+  const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const currentFrame = useTimeStore((s) => s.frame);
   // #376 follow-up: ask the ONE shared predicate rather than re-spelling the types here.
   // Admitting every `Object` by type left this enabled for an Empty, which then failed with
@@ -701,10 +710,49 @@ export function MenuBar() {
         <Item
           label="Frame Selected"
           shortcut="F"
-          onSelect={frameSelected}
+          // frameSelected reports whether it framed anything (#856). The MENU
+          // deliberately does not fall back — Frame All is the next item down,
+          // and a menu entry that quietly did the neighbouring thing would be
+          // harder to reason about than one that does nothing. The Home button
+          // in the viewport toolbar is the affordance that promises to always
+          // act, and that is where the fallback lives.
+          onSelect={() => {
+            frameSelected();
+          }}
           testId="menu-view-frame-selected"
         />
         <Item label="Frame All" shortcut="Home" onSelect={frameAll} testId="menu-view-frame-all" />
+        {/* #856 — Blender's View ▸ View Lock ▸ Lock to Object, which is the
+            answer to "a walking character leaves the viewport in a second".
+            Sits under the two framing items because it is the same question
+            asked continuously: Frame Selected is a pose, this is a constraint.
+            Disabled with nothing selected rather than silently doing nothing —
+            the whole of this issue's first half was an affordance that looked
+            live and was not. The enabled state asks the SAME predicate the
+            toggle does (`canToggleViewLock`) rather than re-spelling it here,
+            which is the shape that half found broken. */}
+        <Item
+          label={`${viewLock ? '✓ ' : '   '}Lock View to Selected`}
+          disabled={!canToggleViewLock(viewLock, primaryNodeId)}
+          onSelect={() => {
+            // #984 — a refusal SAYS so. Locking to a light, an empty or a
+            // data-only node used to latch a checkmark beside a view that never
+            // moved, which is the affordance-that-reads-as-live this item's own
+            // issue was filed for. Only the followability arm is spoken: the
+            // other refusal is "nothing selected", which the disabled state
+            // already carries, and a toast repeating a greyed-out item is how a
+            // surface teaches people to stop reading it.
+            const outcome = toggleViewLock();
+            if (outcome.kind === 'refused' && outcome.why === 'nothing-to-follow') {
+              useNotificationStore.getState().notify({
+                severity: 'warn',
+                message:
+                  'Nothing to follow here — this draws no geometry or bones the view can centre on.',
+              });
+            }
+          }}
+          testId="menu-view-lock-to-selected"
+        />
         <Divider />
         <Item
           label={lookThrough ? '✓ Look Through Camera' : '   Look Through Camera'}
@@ -759,6 +807,40 @@ export function MenuBar() {
             testId="menu-view-toggle-fps"
           />
         ) : null}
+        {/* #977 — the SOURCE rig of each retargeted clip, drawn beside the
+            character it drives. A diagnostic for judging the retarget by eye
+            (the leg-chain roll of #854/#960), not scene furniture, so it is
+            off by default and lives here rather than in the always-visible
+            floating toolbar. */}
+        <Item
+          label={`${sourceRigVisible ? '✓ ' : '   '}Show Source Rig`}
+          onSelect={() => useViewportStore.getState().toggleSourceRigVisible()}
+          testId="menu-view-toggle-source-rig"
+        />
+        {/* #973 — Blender's own list is OCTAHEDRAL, STICK, BBONE, ENVELOPE,
+            WIRE (read live off `arm.data.bl_rna`). We ship the two that answer
+            different questions — octahedral SHOWS ROLL, stick declutters a
+            78-bone hand — and the rest wait for a reason to exist. */}
+        <Submenu label="Bones" testId="menu-view-bones">
+          {(['octahedral', 'stick'] as const).map((mode) => (
+            <Item
+              key={mode}
+              label={`${mode === boneDisplay ? '✓ ' : '   '}${mode.charAt(0).toUpperCase() + mode.slice(1)}`}
+              onSelect={() => useViewportStore.getState().setBoneDisplay(mode)}
+              testId={`menu-view-bone-display-${mode}`}
+            />
+          ))}
+          <Divider />
+          {/* Blender's "In Front". ON by default here because a bone inside a
+              skinned mesh is invisible, which is the whole helper defeated
+              (#972) — the switch is for the opposite question: is this bone
+              actually inside its limb? */}
+          <Item
+            label={`${bonesInFront ? '✓ ' : '   '}In Front`}
+            onSelect={() => useViewportStore.getState().toggleBonesInFront()}
+            testId="menu-view-bones-in-front"
+          />
+        </Submenu>
         <Divider />
         <Submenu label="Shading" testId="menu-view-shading">
           {(['studio', 'wireframe', 'rendered'] as ShadingMode[]).map((s) => (

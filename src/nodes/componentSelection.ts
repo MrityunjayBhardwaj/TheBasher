@@ -128,7 +128,13 @@ import { cornerCountOf, faceCountOf } from '../app/faceCount';
 import { edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
-import { canonicalScopeQuery, isParsableScopeQuery, scopeSelection } from './scopeQuery';
+import {
+  canonicalScopeQuery,
+  isParsableScopeQuery,
+  scopeSelection,
+  type GroupLookup,
+} from './scopeQuery';
+import { groupLookupFor } from '../app/componentGroupLookup';
 import { widget } from './paramWidget';
 import { edgeIndicesByAngle } from '../app/edgeAngleSelection';
 
@@ -476,9 +482,14 @@ function selectionFromQuery(
   query: string,
   domain: KnownDomain,
   length: number,
+  groups: GroupLookup,
 ): ComponentSelection {
   const canonicalQuery = canonicalScopeQuery(query);
-  const { mask, count } = scopeSelection(canonicalQuery, length);
+  // #1027 — the lookup is REQUIRED here rather than optional, and the omission is what that
+  // closes. This function is the ONE road from an authored query to a resolved selection, so a
+  // call without it could only mean "resolve a name against nothing" — which throws by name in
+  // `scopeQuery`, on the render walk. Required, the wiring is checked where it is written.
+  const { mask, count } = scopeSelection(canonicalQuery, length, groups);
   return {
     domain,
     length,
@@ -573,6 +584,11 @@ export function resolveComponentSelection(
     );
   }
   const length = count.count;
+  // #1027 — built ONCE per resolve, from the geometry this selection is being resolved
+  // against. The two synthetic queries below carry no name and never consult it; the authored
+  // one may. At a non-face class it refuses by name rather than reporting a missing group —
+  // see `groupLookupFor` on why those are different facts.
+  const groups = groupLookupFor(source.geometry, domain);
 
   // ── #847 — THE ANGLE ARM. A SECOND PRODUCER OF ONE SELECTION, SO IT IS EXCLUSIVE ──────
   //
@@ -616,11 +632,11 @@ export function resolveComponentSelection(
     // fallback is therefore "chamfer nothing", never "chamfer everything" — the failure
     // direction the blank-query hazard above is entirely about.
     if (verdict.edges.length === 0)
-      return selectionFromQuery(EMPTY_SELECTION_QUERY, domain, length);
+      return selectionFromQuery(EMPTY_SELECTION_QUERY, domain, length, groups);
     // Through the same canonicaliser as a typed query, so one spelling of a set exists:
     // the canonical form collapses runs into ranges, which is what keeps a rim loop's key
     // short rather than one index per edge.
-    return selectionFromQuery(verdict.edges.join(' '), domain, length);
+    return selectionFromQuery(verdict.edges.join(' '), domain, length, groups);
   }
 
   // No scope authored at all — the operator applies to everything. This is the ONLY road
@@ -628,7 +644,7 @@ export function resolveComponentSelection(
   // distinguishable from an absent one.
   if (authored === null) return totalSelection(domain, length);
 
-  return selectionFromQuery(authored, domain, length);
+  return selectionFromQuery(authored, domain, length, groups);
 }
 
 /**

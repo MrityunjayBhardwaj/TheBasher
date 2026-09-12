@@ -156,7 +156,7 @@ export function MaterialLinkControls({ nodeId }: { nodeId: string }) {
             data-testid="material-link-goto"
             onClick={() => select(linkedId)}
           >
-            {nodeDisplayName(linkedNode)}
+            {nodeDisplayName(state.nodes, linkedId)}
           </button>{' '}
           ·{' '}
           {users > 1 ? (

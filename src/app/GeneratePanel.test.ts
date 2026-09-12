@@ -34,7 +34,10 @@ const { generateMotionAsNode, generateModelIntoScene, generateRiggedCharacter } 
       taskId: 't1',
     })),
     generateRiggedCharacter: vi.fn(async (_request: unknown, _options?: unknown) => ({
-      ok: true as const,
+      // #835 — three outcomes, and `ok` is not one of them. The union names the
+      // middle case (a mesh landed, unrigged) so no caller can collapse it into
+      // either neighbour by accident.
+      outcome: 'rigged' as const,
       opfsPath: 'user-imports/x/character.glb',
       taskId: 't2',
       arrivedSpec: 'mixamo' as const,
@@ -197,15 +200,39 @@ describe('runGeneration', () => {
     });
   });
 
-  it('a refused RIG comes back the same way, not as a success with no skeleton', async () => {
+  it('a FAILED character generation comes back as a failure', async () => {
     generateRiggedCharacter.mockResolvedValueOnce({
-      ok: false,
-      reason: 'the service will not rig this mesh',
+      outcome: 'failed',
+      reason: 'the service is unreachable',
     } as never);
     await expect(runGeneration('character', 'a chair')).resolves.toEqual({
       ok: false,
-      reason: 'the service will not rig this mesh',
+      reason: 'the service is unreachable',
     });
+  });
+
+  // 🔴 THIS ROW REVERSES THE ONE ABOVE IT, ON PURPOSE (#835).
+  //
+  // It used to read "a refused RIG comes back the same way, not as a success
+  // with no skeleton" — correct while the mesh was being DISCARDED, because then
+  // a refusal really did leave the director with nothing. Now the mesh is
+  // generated, billed, and imported, so reporting a failure would tell someone
+  // nothing happened while they are looking at the thing that did.
+  //
+  // What that row guarded — a director being told they have a character when
+  // they have a bare mesh — did not go away; it moved. It is held by the outcome
+  // being `unrigged` rather than `rigged`, and by the banner
+  // `generateRiggedCharacter` writes. This surface has ONE register for "you
+  // should know something", so repeating it here would make a degraded success
+  // and a hard failure look identical.
+  it('a refused RIG is NOT a failure — the mesh it generated is in the scene', async () => {
+    generateRiggedCharacter.mockResolvedValueOnce({
+      outcome: 'unrigged',
+      opfsPath: 'user-imports/x/model.glb',
+      taskId: 't2',
+      reason: 'the service will not rig this mesh',
+    } as never);
+    await expect(runGeneration('character', 'a chair')).resolves.toEqual({ ok: true });
   });
 
   it('reports success without inventing a payload the panel does not use', async () => {

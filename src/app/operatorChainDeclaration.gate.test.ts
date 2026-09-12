@@ -86,11 +86,12 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all ten operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all eleven operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
       'ColorCorrect', // effect lane
+      'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
       'MaterialOverride', // scene lane
       'MaterialOverrideOp', // data lane — material
@@ -123,6 +124,10 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     expect(where((c) => c.scope.kind === 'target')).toEqual([
       // #668 — survival IS the write. The selection names the faces the mask acts on, and
       // nothing is merged back, which is what separates it from the two generators above.
+      // #1027 — membership IS the write. Like the mask it acts on the faces its selection
+      // names and merges nothing back; unlike the mask, what it writes is data rather than
+      // survival, which is why it sits in the modifier stack and changes no shape.
+      'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverrideOp',
       'SetMaterialOp',
@@ -208,6 +213,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     expect(where((c) => c.section === 'modifier')).toEqual([
       'ArrayModifier',
       'BevelModifier',
+      'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
       'UVProjectModifier',

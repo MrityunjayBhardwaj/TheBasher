@@ -117,6 +117,12 @@ const FIXTURES: Record<
   // both — keeping 6 of 12 faces and keeping 12 differ, and so do dropping 6 and dropping 0.
   MaskModifier: { params: { keep: true, muted: false } },
   MirrorModifier: { params: { axis: 'x', offset: 3, muted: false } },
+  // #1027. `name` MUST be non-blank, and that is the whole fixture. A blank name is this
+  // operator's unconfigured state and it passes its source straight through — so with `name:
+  // ''` BOTH legs would return the identical source object, the row would report a
+  // dishonouring operator that in fact honours, and the failure would look like a real
+  // finding. Named, the two legs mint memberships over 48 faces and over 40, which key apart.
+  ComponentGroupOp: { params: { name: 'arm', muted: false } },
   SetMaterialOp: { params: { muted: false }, material: true },
   // #682. `overridden` is what makes the override non-empty — without a field marked, the
   // composition is the identity and BOTH legs would come back equal, so the row would report

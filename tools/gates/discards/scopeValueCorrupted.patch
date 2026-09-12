@@ -1,8 +1,8 @@
 diff --git a/src/nodes/componentSelection.ts b/src/nodes/componentSelection.ts
-index 2637215..063b45e 100644
+index 56818474..c2cec64f 100644
 --- a/src/nodes/componentSelection.ts
 +++ b/src/nodes/componentSelection.ts
-@@ -422,7 +422,10 @@ export function resolveComponentSelection(
+@@ -642,7 +642,10 @@ export function resolveComponentSelection(
    // No scope authored at all — the operator applies to everything. This is the ONLY road
    // to "everything" that does not go through a query, which is what keeps a LOST scope
    // distinguishable from an absent one.
@@ -12,5 +12,5 @@ index 2637215..063b45e 100644
 +  // and the only thing that can notice is something that READS the value.
 +  if (authored === null) return totalSelection(domain, 1);
  
-   return selectionFromQuery(authored, domain, length);
+   return selectionFromQuery(authored, domain, length, groups);
  }

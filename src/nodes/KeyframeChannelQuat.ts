@@ -26,11 +26,12 @@ import { CHANNEL_BLEND_MODES } from './types';
 // slerp lives in quatMath now — the ONE shared unit-quat slerp, also consumed by
 // the NLA layer-fold reducer (foldChannel.ts). No drift (H40).
 import { slerp } from './quatMath';
+import { nameParam } from './paramWidget';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
 export const KeyframeChannelQuatParams = z.object({
-  name: z.string().default('channel'),
+  name: nameParam('channel'),
   target: z.string().default(''),
   paramPath: z.string().default(''),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);

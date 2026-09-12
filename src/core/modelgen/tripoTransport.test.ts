@@ -235,6 +235,78 @@ describe('terminal statuses and transport failures are distinguished', () => {
     });
   }
 
+  // ── #799 — a failed task says WHAT failed, not only THAT it failed ──────────
+
+  const failWith = (data: Record<string, unknown>) =>
+    vi.fn(async (url: string | URL, init?: RequestInit) =>
+      String(url).endsWith('/task') && init?.method === 'POST'
+        ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
+        : new Response(
+            JSON.stringify({ code: 0, data: { status: 'failed', progress: 0, ...data } }),
+            {
+              status: 200,
+            },
+          ),
+    );
+
+  const failureOf = async (data: Record<string, unknown>) => {
+    try {
+      await client(failWith(data)).generate(TEXT);
+    } catch (e) {
+      return e as InstanceType<typeof TripoTaskFailedError>;
+    }
+    throw new Error('expected the task to fail');
+  };
+
+  it('#799 — two different causes of "failed" no longer read as the same sentence', async () => {
+    // The defect. v2 said what went wrong in the STATUS (`banned`, `expired`);
+    // v3 folded both into `failed` plus a code, and the reader declared only
+    // status/progress/output — so moderation and a queue expiry produced one
+    // identical string. One asks the director to rewrite their prompt, the other
+    // to retry unchanged, and one sentence sends half of them to the wrong action.
+    const moderation = await failureOf({ error_code: 2008, error_message: 'moderation' });
+    const expired = await failureOf({ error_code: 2018, error_message: 'queue expired' });
+
+    expect(moderation.message).not.toBe(expired.message);
+    expect(moderation.message).toContain('2008');
+    expect(expired.message).toContain('2018');
+    expect(moderation.detail).toMatchObject({ error_code: '2008', error_message: 'moderation' });
+  });
+
+  it('#799 — repeats what the service said WITHOUT claiming to know what it means', async () => {
+    // Deliberately not interpreting. The field names and the two codes come from
+    // v3 DOCUMENTATION — there is no v3 SDK and the schema is behind auth — so
+    // naming `error_code` in the implementation would assert a fact nobody has
+    // checked against the wire. A field nobody predicted is carried just as well,
+    // which is the property that makes this grounded rather than a guess.
+    const odd = await failureOf({ some_field_we_never_heard_of: 'hello' });
+    expect(odd.message).toContain('some_field_we_never_heard_of=hello');
+    expect(odd.detail).toEqual({ some_field_we_never_heard_of: 'hello' });
+  });
+
+  it('#799 — a failure that says nothing extra reads exactly as it always did', async () => {
+    // The v2 population, and the reason this is safe: every existing failure
+    // message is byte-identical, so nothing that reads these strings has to move.
+    const plain = await failureOf({});
+    expect(plain.message).toBe('Tripo task t1 ended as "failed".');
+    expect(plain.detail).toEqual({});
+  });
+
+  it('#799 — carries scalars only, and budgets them', async () => {
+    // A nested object is the vendor's shape rather than a message, and an
+    // unbounded string in a user-facing banner is a different bug from this one.
+    const noisy = await failureOf({
+      error_code: 2008,
+      nested: { deep: 'structure' },
+      empty: '',
+      long: 'x'.repeat(500),
+    });
+    expect(noisy.detail.nested, 'a nested object is not a message').toBeUndefined();
+    expect(noisy.detail.empty, 'an empty string says nothing').toBeUndefined();
+    expect(noisy.detail.long.length, 'an unbounded string in a banner is its own bug').toBe(200);
+    expect(noisy.detail.error_code).toBe('2008');
+  });
+
   it('surfaces the API message and suggestion on an error response', async () => {
     const fetchImpl = vi.fn(
       async () =>
@@ -549,9 +621,42 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
     const seen: string[] = [];
     const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
 
-    expect(result).toEqual({ taskId: 't1', modelVersion: 'unspecified' });
+    expect(result.taskId).toBe('t1');
+    expect(result.modelVersion).toBe('unspecified');
     expect(seen).toEqual(['POST /__tripo/v2/task', 'GET /__tripo/v2/task/t1']);
     expect(seen.some((c) => c.includes('tripo-asset') || c.includes(ASSET))).toBe(false);
+  });
+
+  // ── #835 — THE OUTPUT IS COLLECTABLE LATER, WITHOUT A SECOND TASK ─────────
+  // A refused rig leaves a real, billed mesh on the service. Binding only the id
+  // threw the output away, so the only route back to those bytes was running a
+  // second task — billing the director twice to recover something they had
+  // already paid for. These two rows are a pair: the collector must download,
+  // and it must not re-run.
+
+  it('collects the mesh of the task it already ran, on demand', async () => {
+    const seen: string[] = [];
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    const before = seen.length;
+
+    const glb = await task.collectGlb();
+
+    expect(glb.byteLength).toBeGreaterThan(0);
+    // Exactly ONE new call, and it is the asset fetch.
+    expect(seen.length).toBe(before + 1);
+    expect(seen[seen.length - 1]).toContain('/__tripo-asset?url=');
+  });
+
+  it('🔑 collecting does NOT create a second task — it would bill twice', async () => {
+    const seen: string[] = [];
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    await task.collectGlb();
+
+    // The thing that costs money is `POST /task`. It happens once, for the whole
+    // run-then-collect sequence. Asserting on the POST count rather than on the
+    // returned bytes is what makes a re-run visible: a second task would return a
+    // perfectly good mesh and look identical from the caller's side.
+    expect(seen.filter((c) => c === 'POST /__tripo/v2/task')).toHaveLength(1);
   });
 
   it('FALSIFICATION: `generate` on the same script DOES download', async () => {

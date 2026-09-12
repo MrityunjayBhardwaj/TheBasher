@@ -18,7 +18,7 @@
 // it — the panel and the viewport can't disagree about which point you are editing.
 //
 // REF: src/app/curvePointCommands.ts (the commit layer) + src/app/curvePoints.ts (the pure
-//      op-builders); src/app/CurvePointHandles.tsx (the viewport twin); src/nodes/Curve.ts
+//      op-builders); src/app/CurvePointHandles.tsx (the viewport twin); src/nodes/CurveData.ts
 //      (MIN_CURVE_POINTS); issues #321, #322.
 
 import { useDagStore } from '../core/dag/store';

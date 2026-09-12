@@ -42,7 +42,7 @@
 // V8: app-layer, no `src/viewport/` imports. No DAG mutation here — the callees
 // dispatch (K6: one atomic batch each).
 //
-// REF: src/app/asset/generateMotion.ts, src/app/asset/generateModel.ts,
+// REF: src/app/asset/generateMotionAsNode.ts, src/app/asset/generateModel.ts,
 //      src/app/asset/generateRiggedCharacter.ts (the three surfaces);
 //      src/app/LeftSidebar.tsx (the Assets tab that mounts it);
 //      ref/architecture/ai-track.md phases A1 and A4.
@@ -162,7 +162,28 @@ export async function runGeneration(
       onProgress: (p) =>
         onProgress?.({ label: PHASE_LABEL[p.phase] ?? p.phase, percent: p.percent }),
     });
-    return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+    // Three outcomes, named one at a time (#835). The union dropped `ok` on
+    // purpose so this site could not quietly pick a side for the middle one.
+    switch (result.outcome) {
+      case 'rigged':
+        return { ok: true };
+      case 'unrigged':
+        // 🔑 `ok: true` because something IS in the scene. A refused rig still
+        // generated — and billed for — a real mesh, and it has just been
+        // imported; reporting a failure here would tell the director nothing
+        // happened while they look at the thing that did.
+        //
+        // What is missing is a skeleton, and that is said on the banner by
+        // `generateRiggedCharacter` rather than repeated here. This surface has
+        // exactly ONE register for "something you should know", so a degraded
+        // success and an outright failure would look identical if it were said
+        // twice. Whether that register should be split is the open question on
+        // #835; until it is answered, saying it once in the persistent place
+        // beats saying it twice in two voices.
+        return { ok: true };
+      case 'failed':
+        return { ok: false, reason: result.reason };
+    }
   }
 
   const result = await generateModelIntoScene(request, {

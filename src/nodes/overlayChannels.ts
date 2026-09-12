@@ -43,6 +43,25 @@ import { foldChannelValue, type ChannelContribution } from './foldChannel';
  * The body is structurally generic (JSON clone + `writeAt` at the paramPath); the
  * type param keeps the caller's shape on the way out.
  */
+/**
+ * Does this channel contribute to a fold at all? The gate every overlay road must
+ * apply, spelled ONCE (#1016).
+ *
+ * It used to live only inside `overlayChannels` below. `resolveEvaluatedParam` folds a
+ * SINGLE param path and so could not call `overlayChannels` (which overlays a whole
+ * base object); it re-implemented the fold and reproduced everything except this line,
+ * so a muted channel lost in the viewport and won at every read surface — the inspector,
+ * the compositor, a bake. Exported so the two folds read the same predicate instead of
+ * keeping two copies of it.
+ *
+ * Per-channel SOLO (#263) is deliberately NOT here: it is filtered UPSTREAM, per TARGET,
+ * in `channelValuesFromNodes`, because a fold sees only a param-subset and cannot answer
+ * a per-target question.
+ */
+export function channelIsActive(ch: KeyframeChannelValue): boolean {
+  return !ch.mute && !!ch.paramPath;
+}
+
 export function overlayChannels<T>(
   base: T | null,
   channels: readonly KeyframeChannelValue[],
@@ -55,7 +74,7 @@ export function overlayChannels<T>(
   // remain, return the base unchanged (skip the clone cost). (Per-channel SOLO
   // (#263) is filtered UPSTREAM in `channelValuesFromNodes` — per TARGET, so the
   // render and read roads agree — not here, where a fold sees only a param-subset.)
-  const active = channels.filter((ch) => !ch.mute && ch.paramPath);
+  const active = channels.filter(channelIsActive);
   if (active.length === 0) return base;
   const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
   // #283 Phase 1 (NLA) — the multi-writer fold. Group channels by paramPath so

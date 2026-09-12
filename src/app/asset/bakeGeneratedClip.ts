@@ -111,12 +111,25 @@ export function clipBakeStates(state: DagState): ClipBakeState[] {
     const value = evaluate(state, producerId).value as AnimationClipValue;
     const generation = value.generation;
     const bakedHash = (state.nodes[clipId].params as { sourceHash?: unknown }).sourceHash;
+    const stale = generation !== undefined && bakedHash !== generation.requestHash;
+    const baked = typeof bakedHash === 'string' && bakedHash !== '';
     out.push({
       clipId,
       producerId,
-      status: generation?.status ?? null,
-      stale: generation !== undefined && bakedHash !== generation.requestHash,
-      baked: typeof bakedHash === 'string' && bakedHash !== '',
+      // 🔴 A BAKED, CURRENT CLIP IS NOT `pending` (#964). The producer answers
+      // from a module-level cache that no reload survives, so after one it says
+      // `pending` for every generated clip in the project — including ones whose
+      // keys are in the graph and playing. A director then reads "pending" beside
+      // a button reading "Up to date".
+      //
+      // This row is about the CLIP/producer pair, not about what the cache
+      // happens to still hold, and the pair is answered: `baked` says the keys
+      // are there and `stale` says they match the current request. Reported as
+      // the producer's own status in every other case, which is the honest one
+      // while there is nothing materialised to appeal to.
+      status: baked && !stale ? 'ready' : (generation?.status ?? null),
+      stale,
+      baked,
     });
   }
   return out;

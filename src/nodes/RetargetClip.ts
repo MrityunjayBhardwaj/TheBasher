@@ -28,18 +28,30 @@
 // re-evaluates every frame. `pure: true` WITH NO `time` INPUT is what makes this
 // recompute per graph change, and the content-addressed cache does the rest.
 //
-// That is why this node returns a CLIP and not a pose. A pose is an answer at one
-// instant, so producing one would require a `Time` input, which would put ~12ms
-// on the frame path. It is also why `AnimationClipValue.pose` is optional: a
-// time-free producer omits it rather than inventing an answer at t=0.
+// ─────────────────────────────────────────────────────────────────────────
+// IT EMITS BOTH A CLIP AND A POSED RIG (#992/#974, rung 2 of #900)
+// ─────────────────────────────────────────────────────────────────────────
+// This node used to return only a CLIP, and the reason recorded here was that a
+// pose is an answer at one INSTANT, so producing one would need a `Time` input
+// and put ~12ms on the frame path. That was true of the instant shape and is no
+// longer true of the value: `PosedSkeletonValue` is now a function of time
+// (`sample(seconds)`), so a posed rig can be emitted by a node that takes no
+// `Time` input at all. The objection dissolved rather than being traded against.
 //
-// WHY A CLIP AND NOT A POSED RIG (the placement fork #901 asked to be answered in
-// writing). Every reader that actually drives pixels today is params-side, behind
-// the one `boundClipsForAsset` edge walk: the render band, the dopesheet, the
-// channel mint, the format migration. `AnimationClipValue` has no production
-// consumer at all and `PosedSkeletonValue` has no input socket anywhere — so a
-// node emitting a posed rig would typecheck, validate, evaluate, and drive
-// nothing. See the answer posted on #901.
+// The other half of the old reason was that `PosedSkeletonValue` had no input
+// socket anywhere, so a node emitting one would typecheck, validate, evaluate and
+// drive nothing. That was an accurate description of a gap, not a design
+// principle — and the gap was owned by this epic's own next rung. `PoseOverride`
+// (#974) is the consumer, so the lane now terminates somewhere.
+//
+// THE `posed` OUTPUT IS ADDITIVE, and deliberately so. `out` stays an
+// `AnimationClip`: 47 production sites and 19 test files treat this node as a
+// clip carrier — the dep walk, `boundClipsForAsset`, the dopesheet, the bone-map
+// editor, the agent builder all pair it with `AnimationClip` by TYPE. Replacing
+// the output would have broken every one of them to add a lane none of them read.
+// Both outputs are views of ONE computation: `posed` closes over the same
+// retargeted keyframes through the same shared sampler factory, so the two can
+// never disagree about where a bone is at t.
 //
 // WHY THE SOURCE RIG COMES OFF THE CLIP AND NOT OFF A FOURTH INPUT. A keyframe's
 // `bone` is an index, meaningful only against the skeleton it was authored for.
@@ -56,12 +68,34 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import { retargetClip } from '../core/import/retarget';
-import type { AnimationClipValue, BoneNameMapValue, SkeletonValue } from './types';
+import type {
+  AnimationClipValue,
+  BoneNameMapValue,
+  PosedSkeletonValue,
+  SkeletonValue,
+} from './types';
 import { clipLoopOf } from './clipLoop';
+import { posedSkeletonFromClip } from './AnimationClip';
+import { nameParam } from './paramWidget';
+
+/** Both views of one retarget: the clip, and that same clip as a posed rig.
+ *  A `type` and not an `interface` on purpose — only a type alias gets TypeScript's
+ *  implicit index signature, which is what makes it assignable to the
+ *  `Record<string, O>` multi-output form `NodeDefinition.evaluate` declares. */
+type RetargetOutputs = {
+  readonly out: AnimationClipValue;
+  readonly posed: PosedSkeletonValue;
+};
+
+/** Pair a clip with its posed view through the ONE shared adapter, so `out` and
+ *  `posed` are guaranteed to be the same motion in two shapes. */
+function both(out: AnimationClipValue): RetargetOutputs {
+  return { out, posed: posedSkeletonFromClip(out) };
+}
 
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
-  name: z.string().default(''),
+  name: nameParam(''),
   /** Is this the clip the director most recently bound? (#907) Mirrors
    *  `AnimationClip.active` — both are clip carriers in the one walk, so a flag
    *  on only one of them would leave the other's binds ordered by id. */
@@ -71,7 +105,14 @@ export type RetargetClipParams = z.infer<typeof RetargetClipParams>;
 
 const EMPTY_SKELETON: SkeletonValue = { kind: 'Skeleton', bones: [] };
 
-export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipValue> = {
+// `O` is the union of the SOCKET value types, not the record — a multi-output
+// node's evaluate returns `Record<string, O>` (types.ts:523), and this is how
+// `SampleGeometry` declares its three. `RetargetOutputs` names that record for
+// readers and for the return annotation below.
+export const RetargetClipNode: NodeDefinition<
+  RetargetClipParams,
+  AnimationClipValue | PosedSkeletonValue
+> = {
   type: 'RetargetClip',
   version: 1,
   pure: true,
@@ -84,9 +125,12 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
     boneMap: { type: 'BoneNameMap', cardinality: 'single' },
     skeleton: { type: 'Skeleton', cardinality: 'single' },
   },
-  outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
+  outputs: {
+    out: { type: 'AnimationClip', cardinality: 'single' },
+    posed: { type: 'PosedSkeleton', cardinality: 'single' },
+  },
   inspectorSections: ['animate'],
-  evaluate(params, inputs: ResolvedInputs): AnimationClipValue {
+  evaluate(params, inputs: ResolvedInputs): RetargetOutputs {
     const sourceClip = inputs.sourceClip as AnimationClipValue | undefined;
     const boneMap = inputs.boneMap as BoneNameMapValue | undefined;
     const target = inputs.skeleton as SkeletonValue | undefined;
@@ -96,14 +140,14 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
     // unretargeted would drive the target rig with another rig's bone indices,
     // which is the one failure this node exists to make unrepresentable.
     if (!sourceClip || !boneMap || !target || target.bones.length === 0) {
-      return {
+      return both({
         kind: 'AnimationClip',
         name: params.name || (sourceClip?.name ?? 'clip'),
         duration: sourceClip?.duration ?? 0,
         loop: clipLoopOf(sourceClip?.loop),
         keyframes: [],
         skeleton: target ?? EMPTY_SKELETON,
-      };
+      });
     }
 
     const result = retargetClip({
@@ -121,7 +165,7 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
       ...(params.name ? { outputName: params.name } : {}),
     });
 
-    return {
+    return both({
       kind: 'AnimationClip',
       name: result.clipParams.name,
       duration: result.clipParams.duration,
@@ -129,6 +173,6 @@ export const RetargetClipNode: NodeDefinition<RetargetClipParams, AnimationClipV
       keyframes: result.clipParams.keyframes,
       // The TARGET rig — the indices in the emitted keys are the target's.
       skeleton: target,
-    };
+    });
   },
 };

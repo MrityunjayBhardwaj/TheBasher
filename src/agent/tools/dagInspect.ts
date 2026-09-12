@@ -7,7 +7,11 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from './types';
-import { getNodeType, listNodeTypes } from '../../core/dag/registry';
+import { getNodeType } from '../../core/dag/registry';
+import { renderNodeCatalog } from '../nodeCatalog';
+import { idRefsByRole } from '../../core/dag/idRefSweep';
+import { readBaseParam } from '../../app/readBaseParam';
+import type { DagState } from '../../core/dag/state';
 
 export const dagInspectSchema = z.object({
   scope: z
@@ -26,7 +30,11 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
   description:
     'Inspect the DAG (scene graph). Read-only. Returns structured JSON describing ' +
     'the current state of nodes, outputs, and available node types. ' +
-    'Call this FIRST to understand what exists before modifying anything.',
+    'Call this FIRST to understand what exists before modifying anything. ' +
+    'scope=node also lists referencedBy: the nodes that name this one in a param ' +
+    'rather than by a wire - animation channels, constraints, drivers. A param with ' +
+    'a channel on it is driven at playback, so writing it changes the base value ' +
+    'and not what is rendered.',
   paramSchema: dagInspectSchema,
   handler(args: DagInspectArgs, ctx: ToolContext): { ops: []; text: string } {
     const { dagState } = ctx;
@@ -67,6 +75,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           return { ops: [], text: `Error: node "${args.nodeId}" not found` };
         }
         const def = getNodeType(node.type);
+        const referencedBy = referencesInto(dagState, node.id);
         const text = JSON.stringify(
           {
             id: node.id,
@@ -74,6 +83,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             params: node.params,
             inputs: listInputs(node.inputs),
             outputs: def ? Object.keys(def.outputs) : [],
+            referencedBy: referencedBy.length > 0 ? referencedBy : undefined,
           },
           null,
           2,
@@ -93,19 +103,13 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
       }
 
       case 'types': {
-        // List every registered node type with its param schema and I/O shape
-        const types = listNodeTypes().map((typeId) => {
-          const def = getNodeType(typeId);
-          if (!def) return { type: typeId };
-          return {
-            type: typeId,
-            params: summarizeZodSchema(def.paramSchema),
-            inputs: def.inputs,
-            outputs: def.outputs,
-          };
-        });
-        const text = JSON.stringify({ types }, null, 2);
-        return { ops: [], text };
+        // The node vocabulary, as ONE projection of the registry (#1007) rather than
+        // a description this file maintains beside it. The local summarizer that used
+        // to live here knew eight zod constructors and printed `{type:'unknown'}` for
+        // the rest — 34 param paths across 13 node types, including a seven-field
+        // subtree lost six times over, with nothing in the output saying so. It also
+        // ran to 120,813 B, which is why no agent road ever carried this answer.
+        return { ops: [], text: renderNodeCatalog() };
       }
 
       default:
@@ -117,6 +121,51 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * The nodes that NAME `nodeId` in a param rather than reaching it by a wire (#1018).
+ *
+ * An edge lives on its consumer, so asking about a node already shows what feeds it.
+ * An id-reference lives on the REFERRER, so asking about the referent showed nothing
+ * at all - a model about to edit an animated param was never told a channel drives it.
+ *
+ * The direction is the declaration's and travels with each entry:
+ *   'subject'  - a sidecar OWNED BY this node (a channel, a constraint, a driver). Its
+ *                effect reaches the scene through this node's own resolution, so this
+ *                node is downstream of it.
+ *   'argument' - a node that merely READS this one, which is an input like a wire.
+ * Flattening the two into one "related" list would invert half of them.
+ *
+ * Read off `NodeDefinition.idRefs` through the shared walker, so a node kind appears
+ * here the moment it declares its refs, with no list of types to keep current.
+ */
+function referencesInto(
+  state: DagState,
+  nodeId: string,
+): Array<{ id: string; type: string; role: 'subject' | 'argument'; paramPath?: string }> {
+  const out: Array<{ id: string; type: string; role: 'subject' | 'argument'; paramPath?: string }> =
+    [];
+  for (const node of Object.values(state.nodes)) {
+    if (node.id === nodeId) continue;
+    const refs = idRefsByRole(node);
+    const role = refs.subject.includes(nodeId)
+      ? ('subject' as const)
+      : refs.argument.includes(nodeId)
+        ? ('argument' as const)
+        : null;
+    if (!role) continue;
+    // Which param it drives, when the node carries one. A sidecar that keeps its
+    // channels elsewhere (an NLA Strip holds them inside its Action) simply omits it.
+    const paramPath = readBaseParam(node, 'paramPath');
+    out.push({
+      id: node.id,
+      type: node.type,
+      role,
+      ...(typeof paramPath === 'string' && paramPath ? { paramPath } : {}),
+    });
+  }
+  return out;
+}
 
 function listInputs(inputs: Record<string, unknown>): Array<{ socket: string; from: string }> {
   const result: Array<{ socket: string; from: string }> = [];
@@ -131,61 +180,4 @@ function listInputs(inputs: Record<string, unknown>): Array<{ socket: string; fr
     }
   }
   return result;
-}
-
-/**
- * Produce a compact JSON-schema-like summary of a zod schema.
- * Gives the LLM enough info to construct valid params for dag.exec.
- */
-function summarizeZodSchema(schema: unknown): Record<string, unknown> {
-  const def = (schema as Record<string, unknown>)?._def as Record<string, unknown> | undefined;
-  if (!def) return {};
-
-  const typeName = def.typeName as string;
-
-  if (typeName === 'ZodObject') {
-    const shapeFn = def.shape as (() => Record<string, unknown>) | undefined;
-    const shape = shapeFn?.() ?? {};
-    const props: Record<string, unknown> = {};
-    for (const [key, field] of Object.entries(shape)) {
-      props[key] = summarizeZodSchema(field);
-    }
-    return { type: 'object', properties: props };
-  }
-
-  if (typeName === 'ZodString') return { type: 'string' };
-  if (typeName === 'ZodNumber') return { type: 'number' };
-  if (typeName === 'ZodBoolean') return { type: 'boolean' };
-
-  if (typeName === 'ZodArray') {
-    const innerType = def.type;
-    return {
-      type: 'array',
-      items: innerType ? summarizeZodSchema(innerType) : { type: 'unknown' },
-    };
-  }
-
-  if (typeName === 'ZodTuple') {
-    // Handle z.tuple([...])
-    const items = def.items as unknown[] | undefined;
-    return {
-      type: 'array',
-      items: items?.map((i) => summarizeZodSchema(i)) ?? [],
-    };
-  }
-
-  if (typeName === 'ZodEnum') {
-    return { type: 'string', enum: def.values as string[] | undefined };
-  }
-
-  if (typeName === 'ZodDefault' || typeName === 'ZodOptional') {
-    const inner = ((def.innerType ?? def.type) as unknown) ?? {};
-    return summarizeZodSchema(inner);
-  }
-
-  if (typeName === 'ZodObject' || typeName === 'ZodRecord') {
-    return { type: 'object' };
-  }
-
-  return { type: 'unknown' };
 }

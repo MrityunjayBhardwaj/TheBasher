@@ -54,6 +54,17 @@ export type ShadingMode = 'studio' | 'rendered' | 'wireframe';
  *  camera between projections (no 2nd camera path → no makeDefault race). */
 export type CameraProjection = 'perspective' | 'orthographic';
 
+/** What the view centre follows while the lock is on (#856). Blender's
+ *  `lock_object` + `lock_bone`, kept as one value because the bone is only ever
+ *  meaningful against the object it belongs to. */
+export interface ViewLock {
+  /** The DAG node the director locked to. */
+  readonly nodeId: string;
+  /** A bone of that node's rig, spelled as the LIVE three.js tree spells it, or
+   *  null to follow the rig as a whole. */
+  readonly boneName: string | null;
+}
+
 export interface ViewportStore {
   /** Currently-active pivot. v0.5 ships median-only. */
   pivot: Pivot;
@@ -77,6 +88,35 @@ export interface ViewportStore {
   gridVisible: boolean;
   /** Whether the bottom-right axis widget renders. */
   axisWidgetVisible: boolean;
+  /** Whether the SOURCE rig of each retargeted clip draws beside the character
+   *  it drives (#977). A diagnostic for judging the retarget by eye, not scene
+   *  furniture — default OFF. */
+  sourceRigVisible: boolean;
+  /** How the armature helper draws each bone (#973).
+   *
+   *  Blender's own set is `["OCTAHEDRAL","STICK","BBONE","ENVELOPE","WIRE"]`;
+   *  we ship the first two and the rest wait for a reason. Octahedral is the
+   *  default because it is the only one of the two that shows ROLL — a stick is
+   *  a head and a tail and nothing else, which is exactly why it declutters. */
+  boneDisplay: 'octahedral' | 'stick';
+  /** Whether bones draw THROUGH the skin (Blender's "In Front").
+   *
+   *  Default ON, and that is not a preference: with depth testing on, the bones
+   *  of a skinned character sit inside the mesh and only stray fragments at the
+   *  shins are visible, so the one thing the helper exists for cannot be done
+   *  (#972). The switch exists for the case Blender's exists for — judging
+   *  whether a bone is actually inside its limb. */
+  bonesInFront: boolean;
+  /** What the view centre is locked to, or null for a free pivot (#856).
+   *
+   *  Blender's `View3D.lock_object` / `lock_bone` pair, and a POINTER rather
+   *  than "whatever is selected" for the reason Blender's is one: a lock that
+   *  tracked the selection would yank the camera off the character the moment a
+   *  director clicked anything else. It is captured when the lock is taken.
+   *
+   *  Session-only, like the orbit pose itself — the editor view persists per
+   *  project, a lock does not (yet). */
+  viewLock: ViewLock | null;
   /** Editor shading mode — see ShadingMode for semantics. */
   shading: ShadingMode;
   /** Whether the viewport renders THROUGH the active DAG scene camera
@@ -165,6 +205,8 @@ export interface ViewportStore {
   toggleSnapAffect(mode: 'move' | 'rotate' | 'scale'): void;
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
+  setSourceRigVisible(visible: boolean): void;
+  setBoneDisplay(display: 'octahedral' | 'stick'): void;
   setShading(shading: ShadingMode): void;
   setLookThroughCamera(on: boolean): void;
   setCameraProjection(projection: CameraProjection): void;
@@ -179,6 +221,9 @@ export interface ViewportStore {
   setViewportClipReadout(clip: { near: number; far: number }): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
+  toggleSourceRigVisible(): void;
+  toggleBonesInFront(): void;
+  setViewLock(lock: ViewLock | null): void;
   toggleSnapEnabled(): void;
   toggleTimelineDrawer(): void;
   toggleLookThroughCamera(): void;
@@ -203,6 +248,11 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   scaleSnapStep: 0.1,
   gridVisible: true,
   axisWidgetVisible: true,
+  sourceRigVisible: false,
+  boneDisplay: 'octahedral',
+  bonesInFront: true,
+  // Default null — the pivot is the director's until they ask for it to travel.
+  viewLock: null,
   // Default 'studio' so a fresh seed scene with one DirectionalLight still
   // looks lit. Production renders (P4) read 'rendered' to match.
   shading: 'studio',
@@ -240,6 +290,8 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
     set((s) => ({ snapAffect: { ...s.snapAffect, [mode]: !s.snapAffect[mode] } })),
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
+  setSourceRigVisible: (sourceRigVisible) => set({ sourceRigVisible }),
+  setBoneDisplay: (boneDisplay) => set({ boneDisplay }),
   setShading: (shading) => set({ shading }),
   setLookThroughCamera: (lookThroughCamera) => set({ lookThroughCamera }),
   setCameraProjection: (cameraProjection) => {
@@ -262,6 +314,9 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   },
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),
+  toggleSourceRigVisible: () => set({ sourceRigVisible: !get().sourceRigVisible }),
+  toggleBonesInFront: () => set({ bonesInFront: !get().bonesInFront }),
+  setViewLock: (viewLock) => set({ viewLock }),
   toggleSnapEnabled: () => set({ snapEnabled: !get().snapEnabled }),
   toggleTimelineDrawer: () => set({ timelineDrawerOpen: !get().timelineDrawerOpen }),
   toggleLookThroughCamera: () => set({ lookThroughCamera: !get().lookThroughCamera }),

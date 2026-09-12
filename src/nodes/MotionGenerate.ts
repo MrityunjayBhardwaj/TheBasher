@@ -90,6 +90,7 @@ import { hashValue } from '../core/dag/hash';
 import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/generatedClipCache';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
+import { nameParam, widget } from './paramWidget';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -101,7 +102,7 @@ export const MAX_MOTION_SECONDS = 600;
 
 export const MotionGenerateParams = z.object({
   /** What to generate. Required: a generator with no prompt has nothing to do. */
-  prompt: z.string().trim().min(1, 'must not be empty'),
+  prompt: widget('text', z.string().trim().min(1, 'must not be empty')),
   /**
    * Determinism handle. REQUIRED and un-defaulted — see the header. An integer
    * because the backends take one, and finite because `NaN` hashes to a stable
@@ -119,7 +120,7 @@ export const MotionGenerateParams = z.object({
    * NOT part of the request hash: renaming a clip must not re-run a paid
    * generation, and two clips differing only in name are the same motion.
    */
-  name: z.string().default(''),
+  name: nameParam(''),
 });
 export type MotionGenerateParams = z.infer<typeof MotionGenerateParams>;
 
@@ -208,7 +209,18 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         loop: 'hold',
         keyframes: clip.keyframes,
         skeleton: clip.skeleton,
-        generation: { status: 'ready', requestHash, worldOffsetXZ: clip.worldOffsetXZ },
+        // BOTH halves of the placement, always together. `worldRotationRadians`
+        // is optional on the state — a clip cached before the facing half existed
+        // genuinely states none — and optional is exactly what let it be dropped
+        // here without a word from the typechecker. The node road reads this
+        // block and nothing else, so a half written here is a character that
+        // stands in the right place facing the wrong way (#897).
+        generation: {
+          status: 'ready',
+          requestHash,
+          worldOffsetXZ: clip.worldOffsetXZ,
+          worldRotationRadians: clip.worldRotationRadians,
+        },
       };
     }
 

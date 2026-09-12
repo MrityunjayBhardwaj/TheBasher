@@ -63,7 +63,7 @@ export function enumerateStudioLights(nodes: Readonly<Record<string, Node>>): St
     out.push({
       nodeId,
       position: isVec3(p.position) ? p.position : [0, 0, 0],
-      name: nodeDisplayName(node),
+      name: nodeDisplayName(nodes, nodeId),
       tex: typeof tex === 'string' ? tex : undefined,
     });
   }
@@ -96,7 +96,7 @@ function entryFor(nodes: Readonly<Record<string, Node>>, nodeId: string): Studio
   return {
     nodeId,
     position: isVec3(p.position) ? p.position : [0, 0, 0],
-    name: nodeDisplayName(node),
+    name: nodeDisplayName(nodes, nodeId),
     tex: typeof tex === 'string' ? tex : undefined,
   };
 }

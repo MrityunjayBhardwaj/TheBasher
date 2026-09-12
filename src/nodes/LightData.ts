@@ -33,9 +33,10 @@
 // `?? default`, so a hand-authored or migrated param bag never yields an undefined
 // shading field.
 //
-// REF: src/nodes/DirectionalLight.ts / PointLight.ts / SpotLight.ts / AreaLight.ts
-//      (the fused per-kind nodes + their shading fields); src/nodes/lightRecompose.ts
-//      (the flat-LightValue reconstruction); issue #386.
+// REF: src/nodes/LightRig.ts and src/nodes/LightProfileSelect.ts (the rest of the
+//      split that replaced the fused per-kind nodes); src/nodes/lightRecompose.ts
+//      (the flat-LightValue reconstruction, and where the retired per-kind names
+//      survive as VALUES rather than as node types); issue #386.
 
 import { z } from 'zod';
 import { colorParam } from './paramWidget';

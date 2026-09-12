@@ -51,7 +51,12 @@ import {
   paramsToThreeClip,
   specToThreeSkeleton,
 } from './threeAdapter';
-import { solveRestAlignment, alignedLocalOffsets } from './restAlignment';
+import {
+  solveRestAlignment,
+  alignedLocalOffsets,
+  ANTIPARALLEL_REFUSAL_COSINE,
+} from './restAlignment';
+import type { RestReconciliation } from './restAlignment';
 import { clipLoopOf, type ClipLoop } from '../../nodes/clipLoop';
 
 export interface RetargetArgs {
@@ -95,6 +100,38 @@ export interface RetargetResult {
   readonly unmappedSourceBones: readonly string[];
   /** Target bones that no source bone mapped to — surface to UI. */
   readonly unboundTargetBones: readonly string[];
+  /**
+   * How the two rests were reconciled — and therefore whether the roll ABOUT
+   * each bone survived the transfer.
+   *
+   * `aligned` means the source rest supplied a body frame, so every bone got its
+   * third rotational degree of freedom and its twist away from its own bind is
+   * carried across (measured: within 0.5°).
+   *
+   * `direction` means it could not, and only bone DIRECTIONS were matched. A
+   * direction is two degrees of freedom out of three, so the roll is
+   * undetermined and lost — up to 153° on a rest that lays every bone on one
+   * axis. Nothing can recover it from such a rest: there is no second axis in it
+   * to recover it FROM, not even the shoulder line, which on one measured rest
+   * runs within 15° of 61 of its 62 bones (#854).
+   *
+   * The `direction` arm carries its REASON, and the reason is what makes this
+   * actionable: the four tracked fixtures that land here are two different
+   * failures. Two yield no mapped pairs at all and retarget to 0 and 2 keyframe
+   * tracks — loud, and already described by `unmappedSourceBones`. The other two
+   * have a flat rest and retarget to 713 tracks of complete, plausible motion
+   * with the roll gone. Only the second needs saying, and only the reason
+   * distinguishes them.
+   *
+   * It describes the clip in hand rather than the export flag we hoped the other
+   * side set — `serve.py` currently passes `standard_tpose=True` and we never
+   * ask it to.
+   *
+   * This is `solveRestAlignment`'s own return, forwarded rather than projected:
+   * a projection would be a second copy of the branch decision, free to drift
+   * from the one that actually chose the offsets.
+   */
+  readonly restReconciliation: RestReconciliation;
 }
 
 /**
@@ -353,14 +390,10 @@ export function referenceWorldRotations(
   return out;
 }
 
-/**
- * How nearly opposite two rest directions may be before the minimal rotation
- * between them stops being a usable correction. cos(168.5 deg), the angle at
- * which a nudge to either direction is amplified about tenfold in the result.
- * Derived from the measured amplification curve rather than chosen for roundness
- * -- see the refusal site in `restDirectionLocalOffsets` for the table.
- */
-export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
+// The antiparallel refusal now lives beside the other offset builder, since #866
+// made both branches refuse on it. Re-exported so this module's callers keep
+// their import; the table that derives the value is at the refusal site below.
+export { ANTIPARALLEL_REFUSAL_COSINE };
 
 export function restDirectionLocalOffsets(
   sourceBoneObjs: readonly Bone[],
@@ -666,21 +699,45 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // animates the bones, so a rotation put on the root BONE would be overwritten
   // frame by frame, while the wrapper is untouched by the mixer.
   //
-  // `solveRestAlignment` returns null for the rests this project receives today
-  // (they lay every bone on one axis, so there is no orientation to solve for),
-  // and the per-bone direction alignment is kept unchanged for them.
+  // WHICH BRANCH RUNS, MEASURED RATHER THAN ASSUMED. This comment used to say
+  // null was the answer for the rests this project receives today. That was true
+  // when written and is now false, and two probes went into the dead arm on the
+  // strength of it. Censused over the TRACKED fixtures — and gated as a row in
+  // `retargetRoll.gate.test.ts`, because a count in prose has no detector, which
+  // is how this comment went wrong in the first place: SEVEN of eleven solve
+  // non-null and take `alignedLocalOffsets`, the whole `assets/motion` library
+  // plus the T-pose-conditioned soma clip. The untracked served output solves
+  // non-null too, when it is present.
+  // Null is now the exception, and it means a rank-1 rest that #855's
+  // conditioning did not reach. On that arm the roll is genuinely lost (up to
+  // 153° measured) and nothing reports it — see #960.
+  // Gated in `retargetRoll.gate.test.ts`, which asserts the branch for one
+  // fixture of each kind so a future probe is aimed before it is fired.
   const restAlignment = solveRestAlignment(sourceBoneObjs, targetBoneObjs, targetToSource);
-  if (restAlignment) {
+
+  // 🔴 OFFSETS FIRST, THEN THE WRAPPER — the order is load-bearing (#866). The
+  // aligned builder reads the SOURCE's rest directions off its live bones and
+  // turns them by `R` itself. Turning the wrapper first means those bones already
+  // carry `R` when they are read, and the heading is applied twice: measured on
+  // the live vendor pair, that put every arm and foot 82-90° from where it
+  // belonged. `alignedLocalOffsets` refuses a source whose wrapper is already
+  // turned, so this cannot regress silently.
+  const localOffsets =
+    restAlignment.kind === 'aligned'
+      ? // Every mapped bone gets its third degree of freedom from the rest
+        // alignment, chain ends included, so nothing here needs the clip's first
+        // frame as a stand-in neutral — and since #866 every bone WITH a mapped
+        // child also gets a per-bone direction term, so the two rests' remaining
+        // disagreement (the vendor pair's 21° arm droop, 30° at the feet) is
+        // absorbed rather than carried through the whole clip.
+        alignedLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, restAlignment.rotation)
+          .offsets
+      : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
+
+  if (restAlignment.kind === 'aligned') {
     sourceWrap.quaternion.copy(restAlignment.rotation);
     sourceWrap.updateMatrixWorld(true);
   }
-
-  const localOffsets = restAlignment
-    ? // Uniform across every mapped bone, chain ends included: a rest that
-      // supplies a body frame gives a leaf its third degree of freedom too, so
-      // nothing here needs the clip's first frame as a stand-in neutral.
-      alignedLocalOffsets(targetBoneObjs, targetToSource, restAlignment.rotation)
-    : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);
 
   const retargetOptions: RetargetClipOptionsWithOffsets = {
     names: targetToSource,
@@ -712,6 +769,10 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     // lookup that did not happen and calls a bound bone unmapped.
     unmappedSourceBones: findUnmappedSource(args.sourceBones, nameMap, args.targetBones),
     unboundTargetBones: findUnboundTarget(args.sourceBones, nameMap, args.targetBones),
+    // Which builder ran, reported from the branch itself rather than re-derived
+    // by a caller — a second copy of this decision would be free to drift from
+    // the one that actually chose the offsets.
+    restReconciliation: restAlignment,
   };
 }
 

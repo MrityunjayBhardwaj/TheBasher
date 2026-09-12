@@ -39,7 +39,9 @@ export const meshAddTool: ToolDefinition<MeshAddArgs> = {
     'Returns an Op[] that creates and optionally wires the node into the Scene aggregator. ' +
     `Supports: ${SCENE_OBJECT_KINDS.join(', ')}. ` +
     'Null is an empty controller/target (Blender Empty); Curve is a path of control points ' +
-    'that objects can follow.',
+    'that objects can follow. Returns newNodeId (the object you select and refer to) and, ' +
+    'for a kind that has one, dataNodeId — the node holding the params that describe the ' +
+    "thing itself: a Curve's points, a light's colour, a camera's fov.",
   paramSchema: meshAddSchema,
   handler(args: MeshAddArgs, ctx: ToolContext): ToolResult {
     const result = buildAddPrimitiveOps(
@@ -53,11 +55,22 @@ export const meshAddTool: ToolDefinition<MeshAddArgs> = {
     // Surface newNodeId so chained Mutators (e.g. setMaterialColor) can
     // target it without a follow-up dag.inspect. JSON-shaped so the LLM
     // parses unambiguously — see strategy 'spawnWithProperties'.
+    //
+    // ...and `dataNodeId` beside it (#772). A split kind mints two nodes and the
+    // agent was told about one: the POSE. Every param that describes the thing
+    // itself — a curve's `points`, a light's colour, a camera's `fov` — lives on
+    // the other one, whose id was discarded one call earlier. The id was
+    // recoverable through `dag.inspect`'s `data` edge, so this is a round trip
+    // saved rather than a capability gained — except that an LLM has to KNOW to
+    // make that round trip, which is the kind of thing learned by failing first.
+    // Omitted entirely for a fused kind, so its absence means "there is no second
+    // node" rather than "I did not tell you".
     return {
       ops: result.ops,
       text: JSON.stringify({
         kind: args.kind,
         newNodeId: result.newNodeId,
+        ...(result.dataNodeId !== undefined ? { dataNodeId: result.dataNodeId } : {}),
         position: args.position,
       }),
     };

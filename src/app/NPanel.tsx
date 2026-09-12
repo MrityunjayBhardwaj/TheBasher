@@ -69,7 +69,7 @@ import {
 } from './exposeParams';
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
-import { widgetOf, type ParamWidget } from '../nodes/paramWidget';
+import { placeholderOf, type ParamWidget, widgetOf } from '../nodes/paramWidget';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
@@ -88,7 +88,16 @@ import {
 } from './animate/dispatchApplyTransform';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
-import { boneMapView, elidePrefix, mapWithRow } from './animate/boneMapRows';
+import { useActiveBone } from './boneSelection';
+import { useBoneSelectionStore } from './stores/boneSelectionStore';
+import {
+  boneMapView,
+  elidePrefix,
+  mapWithRow,
+  REST_GAP_ALARM_DEG,
+  REST_GAP_MENTION_DEG,
+  restSignal,
+} from './animate/boneMapRows';
 import { useAnimatableField } from './animate/useAnimatableField';
 import { useColorPickerInteraction } from './useColorPickerInteraction';
 import { useDragScrub } from './dragScrub';
@@ -709,6 +718,24 @@ function declaredWidget(nodeId: string, paramPath: string): ParamWidget | null {
   return field ? (widgetOf(field) ?? null) : null;
 }
 
+/**
+ * What a param calls its EMPTY state, or null if it has no opinion (#1031).
+ *
+ * Separate from {@link declaredWidget} because the two answer different questions: the kind
+ * picks the control, the placeholder says what blank MEANS there. Two params can share the
+ * `text` control and still need different words — which is exactly what went wrong when that
+ * arm hardcoded one.
+ */
+function declaredPlaceholder(nodeId: string, paramPath: string): string | null {
+  if (paramPath.includes('.')) return null;
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  return field ? (placeholderOf(field) ?? null) : null;
+}
+
 /** The declared schema for a top-level param, so a control can check a value BEFORE
  *  dispatching it. Same lookup as {@link declaredWidget}, minus the widget read. */
 function fieldSchemaOf(nodeId: string, paramPath: string): z.ZodTypeAny | null {
@@ -803,11 +830,22 @@ function QueryField({
   paramPath,
   label,
   value,
+  placeholder = 'all',
+  testidKind = 'query',
 }: {
   nodeId: string;
   paramPath: string;
   label: string;
   value: string;
+  /** What an EMPTY field means, in the author's words. A scope's blank is "all"; a group's
+   *  name has no such reading — blank is simply unnamed, and the operator is inert. */
+  placeholder?: string;
+  /**
+   * #1027 — the testid's middle segment, defaulted so every existing selector keeps working.
+   * `inspector-query-*` is named by `p872-authorable-selection.spec.ts`, and a rename to
+   * something more general would have been a silent e2e break for a cosmetic gain.
+   */
+  testidKind?: string;
 }) {
   const dispatch = useDagStore((s) => s.dispatch);
   const [draft, setDraft] = useState(value);
@@ -839,8 +877,8 @@ function QueryField({
           type="text"
           value={draft}
           spellCheck={false}
-          placeholder="all"
-          data-testid={`inspector-query-${nodeId}-${paramPath}`}
+          placeholder={placeholder}
+          data-testid={`inspector-${testidKind}-${nodeId}-${paramPath}`}
           aria-invalid={refusal !== null || undefined}
           className="w-40 rounded border border-border bg-muted px-2 py-0.5 font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent aria-[invalid]:border-error"
           onChange={(e) => setDraft(e.target.value)}
@@ -1457,6 +1495,26 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
             {view.danglingCount} dangling
           </span>
         ) : null}
+        {/* #960/#987 — the faults a CORRECT map cannot fix, so they belong beside
+            the mapping counts rather than inside them. The wording and the
+            threshold both live in `restSignal`, because the same angle means two
+            different things on the two branches and a condition restated here
+            printed the aligned branch's promise on the branch where it is false. */}
+        {(() => {
+          const signal = restSignal(view);
+          if (!signal) return null;
+          return (
+            <span
+              className={`rounded-full bg-bg-2 px-2 py-0.5 font-mono ${
+                signal.tone === 'warn' ? 'text-warn' : 'text-fg/40'
+              }`}
+              data-testid={`npanel-bone-map-rest-${signal.branch}`}
+              title={signal.detail}
+            >
+              {signal.label}
+            </span>
+          );
+        })()}
       </div>
 
       {/* Blender cannot create this situation — its mapping is duplicated per rig —
@@ -1528,19 +1586,58 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
                 </option>
               ))}
             </select>
-            <span
-              className={`text-right font-mono text-[9px] uppercase ${
-                row.state !== 'mapped'
-                  ? 'text-warn'
-                  : // A person's decision has to out-read the machine's proposal. The UAT
-                    // showed both rendering equally dim, which makes the column decorative:
-                    // scanning 78 rows for "what did I change" was no easier than before it.
-                    row.origin === 'edited'
-                    ? 'text-accent'
-                    : 'text-fg/40'
-              }`}
-            >
-              {row.state === 'mapped' ? row.origin : row.state}
+            {/* THE ANGLE SITS IN THE STATUS CELL, not in a column of its own. A
+                fifth column was built and looked at: it fits, and it pays for
+                itself out of the target picker, which then truncates its own
+                text — the control a director has to READ to correct a mapping.
+                The status cell is where the eye already goes for "is this row
+                all right", and a gap is exactly that question.
+
+                Quiet unless it is worth reading: a 0° on seventy-eight rows is
+                the same mistake as a red chip on a healthy bind (#923) and would
+                train a director to scan past the two rows that carry the fault.
+                `null` is not zero — a chain end has no rest direction at all —
+                so it prints nothing rather than a dash-shaped claim of
+                agreement. */}
+            <span className="flex items-center justify-end gap-1 overflow-hidden">
+              {row.restGapDeg !== null && row.restGapDeg >= REST_GAP_MENTION_DEG ? (
+                <span
+                  // An ABSORBED gap is never coloured as a defect (#866): the
+                  // retarget folds it into the bone's offset, so it is a fact
+                  // about the two anatomies and a warn chip here would be a
+                  // lying label of the kind #923 already removed once.
+                  className={`font-mono text-[9px] ${
+                    !row.restGapAbsorbed && row.restGapDeg >= REST_GAP_ALARM_DEG
+                      ? 'text-warn'
+                      : 'text-fg/40'
+                  }`}
+                  data-testid={`npanel-bone-map-gap-${row.source}`}
+                  data-absorbed={row.restGapAbsorbed ? 'true' : 'false'}
+                  title={
+                    row.restGapAbsorbed
+                      ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; absorbed by the retarget`
+                      : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
+                  }
+                >
+                  {row.restGapDeg.toFixed(0)}°
+                </span>
+              ) : (
+                <span data-testid={`npanel-bone-map-gap-${row.source}`} />
+              )}
+              <span
+                className={`text-right font-mono text-[9px] uppercase ${
+                  row.state !== 'mapped'
+                    ? 'text-warn'
+                    : // A person's decision has to out-read the machine's proposal. The UAT
+                      // showed both rendering equally dim, which makes the column decorative:
+                      // scanning 78 rows for "what did I change" was no easier than before it.
+                      row.origin === 'edited'
+                      ? 'text-accent'
+                      : 'text-fg/40'
+                }`}
+              >
+                {row.state === 'mapped' ? row.origin : row.state}
+              </span>
             </span>
           </div>
         ))}
@@ -2912,6 +3009,30 @@ function ParamRow({
           return (
             <QueryField nodeId={nodeId} paramPath={paramPath} label={paramPath} value={value} />
           );
+        // #1027 — the SAME control, because the two fields want the same thing: free text
+        // validated against the param's own schema, with the refusal shown in place so a typo
+        // is correctable rather than dropped. `setParam` silently rejects a value the schema
+        // will not take, so a field without that feedback would look like nothing happened.
+        // Only the placeholder differs, and it differs because an empty field MEANS different
+        // things: a blank scope is "all", a blank name is "unnamed", and the operator with no
+        // name is inert rather than universal.
+        case 'text':
+          return (
+            <QueryField
+              nodeId={nodeId}
+              paramPath={paramPath}
+              label={paramPath}
+              value={value}
+              // 🔴 THE PARAM'S OWN WORD, NOT THIS ARM'S. This read `placeholder="unnamed"`
+              // when the arm had exactly one caller (#1027, a group's name). Seven more
+              // params joined it in #1031 — two prompt fields, a media source, three output
+              // paths — and every one of them would have read "unnamed", which is not what
+              // blank means in any of those. `'empty'` is the neutral fallback the control
+              // owns; a param overrides it only when blank has a specific reading there.
+              placeholder={declaredPlaceholder(nodeId, paramPath) ?? 'empty'}
+              testidKind="text"
+            />
+          );
         case 'color':
           return (
             <ColorParamField
@@ -3635,6 +3756,58 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   objectSlots: (ctx) => <ObjectSlotRows nodeId={ctx.objectNodeId} />,
 };
 
+/**
+ * The bone under the cursor, once one has been clicked (#973).
+ *
+ * WHY IT SITS AT THE TOP OF THE NODE'S INSPECTOR rather than in a panel of its
+ * own: a bone is not a node, and a second panel would ask a director to look in
+ * two places to answer one question. It appears only while a bone of the
+ * SELECTED node is live, so it takes no room the rest of the time.
+ *
+ * The CHAIN is the point. `LeftHandIndex1` says almost nothing on its own, and
+ * `Hips → Spine → … → LeftHand → LeftHandIndex1` says where in the body the
+ * director is — which is the question they clicked to ask.
+ */
+function SelectedBoneSection() {
+  const bone = useActiveBone();
+  if (!bone) return null;
+  // Root first, and the bone itself is the last entry — shown emphasised rather
+  // than repeated above the chain, so the same name is never printed twice.
+  const above = bone.chain.slice(0, -1);
+  return (
+    <div className="border-b border-border px-3 py-2" data-testid="inspector-selected-bone">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">bone</span>
+        <button
+          type="button"
+          className="font-mono text-[10px] text-fg/40 hover:text-fg"
+          data-testid="inspector-selected-bone-clear"
+          onClick={() => useBoneSelectionStore.getState().clear()}
+          title="Clear the bone selection"
+        >
+          clear
+        </button>
+      </div>
+      <div
+        className="truncate font-mono text-[12px] text-accent"
+        data-testid="inspector-selected-bone-name"
+        title={bone.boneName}
+      >
+        {bone.boneName}
+      </div>
+      {above.length > 0 ? (
+        <div
+          className="mt-0.5 break-words font-mono text-[10px] leading-tight text-fg/40"
+          data-testid="inspector-selected-bone-chain"
+          title={bone.chain.join(' → ')}
+        >
+          {above.join(' → ')}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function NPanel() {
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
   const node = useDagStore((s) => (selectedId ? s.state.nodes[selectedId] : null));
@@ -3769,7 +3942,11 @@ export function NPanel() {
   const makeOverrideInfo = (paramPath: string): OverrideInfo | undefined =>
     overrideInfoFor(node, paramPath);
 
-  const inspectorLabel = `Inspector — ${node?.meta?.name ?? (node ? node.id : 'no selection')}`;
+  // Through the ONE resolver (#1010), like the header two hundred lines below. Spelling
+  // `meta.name ?? id` here was a third answer to a question `nodeDisplayName` owns, and it
+  // read an imported bone's content hash aloud to a screen reader while the outliner row
+  // that reached it said `mixamorig_LeftArm`.
+  const inspectorLabel = `Inspector — ${node ? nodeDisplayName(dagState.nodes, node.id) : 'no selection'}`;
 
   if (collapsed) {
     // Collapsed strip: 28px wide, chevron-only (mirrors LeftSidebar's collapsed
@@ -3860,13 +4037,14 @@ export function NPanel() {
                 title="Double-click to rename"
                 onDoubleClick={() => beginRename(node.id, 'inspector')}
               >
-                {nodeDisplayName(node)}
+                {nodeDisplayName(dagState.nodes, node.id)}
               </div>
             )}
             <div className="font-mono text-[10px] text-fg/40">
               {node.type} v{node.version} · {node.id}
             </div>
           </div>
+          <SelectedBoneSection />
           {refParamMeta && (
             // The general node-ref picker block — one NodeRefField per declared ref param,
             // shown regardless of section mode (and even when the ref is unset).
