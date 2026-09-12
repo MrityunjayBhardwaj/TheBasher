@@ -325,12 +325,31 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
   // reads `ok`. One status was answering two questions: where the UVs come from, and where
   // the TEXTURE comes from. Only the first moved.
   //
-  // The texture did not move because glTF materials have no data half at all (#389/#605):
-  // `resolveEvaluatedMesh` gives a glTF mesh `EMPTY_ASSIGNMENT`, so the registry-backed arm
-  // below resolves its texture to `none`. MEASURED, on a mounted clone carrying a base-colour
-  // map: keyed on the status, the arm flipped and the UV editor's backdrop went from `ok`
-  // with an image to `none` — and NOTHING IN THE SUITE REDDENED. The row below is what makes
-  // that observable, because nothing else did.
+  // 🔴 #1037 CORRECTS WHY THE TEXTURE DID NOT MOVE. This paragraph used to say glTF materials
+  // "have no data half at all (#389/#605)" and that `resolveEvaluatedMesh` hands a glTF mesh
+  // `EMPTY_ASSIGNMENT`. Both were true once and neither is now: `EMPTY_ASSIGNMENT` is gone with
+  // its only caller (`resolveEvaluatedMesh.ts` says so where it stood), and #389 gave an
+  // imported mesh a data half that DOES carry materials — `GltfData` holds the captured
+  // primary plus `materialSlots`. Left uncorrected, the comment argues the road is shut using
+  // the very change that opened it, which invites either a false "no" or a confident wrong "yes".
+  //
+  // THE REAL REASON IS BYTE OWNERSHIP, and it is the stronger one. The import capture DOES fill
+  // the base-colour slot — measured, with a material carrying `baseColorTexture` and the
+  // texture/sampler tables the import road supplies:
+  //
+  //     maps.albedo = { hash: '', colorSpace: 'srgb', flipY: false, wrap*: 10497, gltfTexture: 0 }
+  //
+  // and `null` both without the tables and for a material with no `baseColorTexture`, so that is
+  // the capture working rather than a default. But `hash: ''` + a `gltfTexture` index is the
+  // IMPORTED-TEXTURE descriptor, and `gltfMapOverlay.ts` defines it as "INHERIT the clone's
+  // imported texture … the bytes ride in the embedded `.glb`". The data half NAMES the texture
+  // and deliberately does not carry its pixels, because an unedited import is meant to pay zero
+  // map cost. A backdrop needs pixels, so the mounted clone is not a side-channel here — it is
+  // the only place they exist.
+  //
+  // MEASURED when this arm was keyed on the status instead: the arm flipped and the UV editor's
+  // backdrop went from `ok` with an image to `none` — and NOTHING IN THE SUITE REDDENED. The row
+  // below is what makes that observable, because nothing else did.
   //
   // So the branch keys on the descriptor's own discriminant, which is the fact its body
   // already consumes two lines down. That is not the re-derived availability class #635
