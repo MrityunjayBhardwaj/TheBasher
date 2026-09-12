@@ -150,9 +150,17 @@ export const ComponentGroupOpNode: NodeDefinition<ComponentGroupOpParams, Object
     if (!source) return src;
 
     const minted = mintGroupAttributes(source.geometry, params.name, selection, 'evaluate');
-    // `null` is "this geometry has no derivable face count" — a glTF or baked source. There
-    // is no domain to write onto, so the source rides through unchanged rather than carrying
-    // a group that names nothing. Declared limit; it lifts with #605.
+    // `null` is "this geometry has no derivable face count". There is no domain to write onto,
+    // so the source rides through unchanged rather than carrying a group that names nothing.
+    //
+    // 🔴 #1036 — HALF OF THIS LIFTED, AND WHICH HALF IS THE PART WORTH KNOWING. This read
+    // *"a glTF or baked source … it lifts with #605"*. For `gltf` it has ALREADY lifted:
+    // #1023/#1025 capture the child's face count at import, so an imported mesh reaches here
+    // with a derivable count and this operator MINTS on it — measured, a named group over an
+    // imported child surviving an array ×3. `baked` is still `null`, deliberately and for a
+    // stated reason (`src/app/faceCount.ts`: a buffer VERTEX count cannot state a face count
+    // without its index buffer), so the limit is real but it is now one kind wide, not two.
+    // Left uncorrected this sends the next reader to #605 for something that already works.
     if (minted === null) return src;
 
     const geometry = refWithAttributeKey(source.geometry, minted.key);
