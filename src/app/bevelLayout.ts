@@ -39,7 +39,7 @@
  * path is worse than a stated absence.
  */
 
-import type { GeometryDescriptor } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 import type { PolygonRim } from './polygonLayout';
 import type { SourceFace } from './faceCount';
 import { edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
@@ -323,7 +323,6 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
   if (descriptor.kind !== 'bevel')
     return refused(`'${descriptor.kind}' is not a bevel, so it has no bevel layout`);
 
-  const source = descriptor.source.descriptor;
   // 🔴 THE SCOPE JOINS THE KEY, AND ITS ABSENCE FROM IT WOULD HAVE BEEN SILENT (#827). The
   // layout used to depend on the source alone, so the source handle WAS the whole of what it
   // depended on. It now also depends on which edges are chamfered — two scopes over one source
@@ -346,7 +345,7 @@ export function bevelLayoutOf(descriptor: GeometryDescriptor): BevelVerdict {
   if (hit !== undefined) return hit;
 
   const resolved = deriveLayout(
-    source,
+    descriptor.source,
     descriptor.scope,
     groupLookupFor(descriptor.source, 'edge'),
   );
@@ -554,25 +553,40 @@ function planPoint(fan: { readonly crossings: readonly number[] }, beveled: Uint
 
 /** {@link bevelLayoutOf}'s body, split out so the cache above is the whole of the caching. */
 function deriveLayout(
-  source: GeometryDescriptor,
+  sourceRef: GeometryRef,
   scope: string | undefined,
   groups: GroupLookup,
 ): BevelVerdict {
-  const rims = weldedPolygonsOf(source);
+  // #1041 — THE SOURCE ARRIVES AS A REF, SO AN IMPORTED ONE CAN STATE ITS RIMS. Its topology is
+  // its buffer, and only a ref reaches a buffer; a descriptor stops one step short. Taken as the
+  // ref ALONE and its descriptor read off it, so no caller can pair a descriptor with the wrong
+  // mesh's ref — the mismatch the rim door's first shape allowed.
+  const source = sourceRef.descriptor;
+  const rims = weldedPolygonsOf(sourceRef);
   if (rims === null)
+    // 🔴 THIS READ "its topology is not derivable from the descriptor", which became half false at
+    // #1041: an import whose clone has not mounted refuses here too, and that is a WAIT, not a
+    // verdict. Saying it was final is #708's defect in a sentence. Both causes are named.
     return refused(
-      `a bevel needs its source's welded rims and '${source.kind}' has none — its topology is not derivable from the descriptor`,
+      `a bevel needs its source's welded rims and '${source.kind}' cannot state them — its topology is either not derivable, or lives in a buffer that has not arrived`,
     );
 
-  const edges = edgeSetOf(source);
-  const adjacency = edgeFaceAdjacencyOf(source);
+  // 🔴 THE POINT COUNT IS ASKED BEFORE THE EDGE SET, BECAUSE THE EDGE SET NEEDS IT (#1041). The
+  // edge walk keys each pair on the point count as its radix, so when the count is absent the edge
+  // set is absent BECAUSE of it — and asking in the other order refused an import saved before its
+  // point count was captured with "has no edge set", which names the symptom and gives a director
+  // nothing to act on. Asked first, the refusal quotes `pointCountOf`'s own reason, which says what
+  // is missing. Every source that states a point count is unaffected: only the wording of this
+  // one refusal moves.
   const sourcePointCount = pointCountOf(source);
-  if (edges === null || adjacency === null)
-    return refused(`a bevel needs its source's edge set and '${source.kind}' has none`);
   if (sourcePointCount.kind !== 'counted')
     return refused(
       `a bevel needs its source's point count and '${source.kind}' cannot state one: ${sourcePointCount.why}`,
     );
+  const edges = edgeSetOf(sourceRef);
+  const adjacency = edgeFaceAdjacencyOf(sourceRef);
+  if (edges === null || adjacency === null)
+    return refused(`a bevel needs its source's edge set and '${source.kind}' has none`);
 
   const sourceFaces = rims.length;
   const sourcePoints = sourcePointCount.count;

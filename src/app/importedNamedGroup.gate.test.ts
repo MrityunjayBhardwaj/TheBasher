@@ -42,7 +42,9 @@ import { ComponentGroupOpNode } from '../nodes/ComponentGroupOp';
 import { carriageForDomain, mintTiledModifierAttributes } from '../nodes/meshAttributes';
 import { resolveComponentSelection, SCOPE_PARAM } from '../nodes/componentSelection';
 import { tiledFaceOrder, tiledCornerOrder, faceCountOf } from './faceCount';
-import { tiledPointOrder } from './pointIdentity';
+import { pointCountOf, tiledPointOrder, weldByPosition } from './pointIdentity';
+import { bevelLayoutOf } from './bevelLayout';
+import { edgeCountOf } from './edgeIdentity';
 import { groupLookupFor } from './componentGroupLookup';
 import { insert } from './attributeStore';
 import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
@@ -68,6 +70,21 @@ function importedRef(): GeometryRef {
     assetRef: ASSET,
     childName: CHILD,
     faceCount: IMPORTED_FACES,
+  };
+  return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
+}
+
+/**
+ * The same child, imported by a build that ALSO captured its point count (#1040) — taken from
+ * production's weld over a separate BoxGeometry instance, not written as a literal.
+ */
+function capturedImportedRef(): GeometryRef {
+  const descriptor: GeometryDescriptor = {
+    kind: 'gltf',
+    assetRef: ASSET,
+    childName: CHILD,
+    faceCount: IMPORTED_FACES,
+    pointCount: weldByPosition(new THREE.BoxGeometry(1, 1, 1)).points,
   };
   return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
 }
@@ -108,21 +125,20 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     expect(membership(arrayed, minted!, 'arm')).toBe('111000000000111000000000111000000000');
   });
 
-  it('1b — mirror and subset carry it too; BEVEL does not, and for a different reason', () => {
-    // 🔴 THE ROW THAT STOPS THIS READING AS MORE THAN IT IS. A fix at `carriageForDomain`
-    // serves every derived kind, so it is tempting to record "generators carry a group over an
-    // import". Measured, three of four do:
+  it('1b — mirror and subset carry it too; a bevel does not while the import lacks a point count', () => {
+    // 🔴 THE ROW THAT STOPS THIS READING AS MORE THAN IT IS — AND ITS OWN RATIONALE ROTTED ONCE.
+    // Measured when written, three of four generators carried the name over this fixture:
     //
     //   array x3     36 faces   9 in
     //   mirror x     24 faces   6 in
     //   subset 0-5    6 faces   3 in
     //   bevel 0.1     faceCountOf NULL — no set at all
     //
-    // A bevel is not this fix failing: `bevelLayoutOf` needs RIMS, an imported mesh cannot
-    // state them, so there is no face count to build a set on in the first place. That is the
-    // `polygon layout` question, still open on the rims road (#1040 covers only the weld).
-    // Pinned because a covered-but-unhonoured grade is worse than an open gap — it gets
-    // relied on.
+    // This comment used to say the bevel failed because "an imported mesh cannot state its rims".
+    // #1041 made that false — rims now come off the buffer through the ref — and THIS ROW KEPT
+    // PASSING, because this fixture never captured a point count and a bevel needs one. Same
+    // green, different cause, and nothing said. So the refusal is now pinned by its REASON below,
+    // and the capturing import that DOES carry the name is row 1d.
     mountClone();
     const named = nameAGroup(importedRef(), 'arm', '0-2');
     const g = named.geometry!;
@@ -142,10 +158,13 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     expect(subsetKey).not.toBeNull();
     expect(membership(subset, subsetKey!, 'arm')).toBe('111000');
 
-    // The bevel limit, asserted so it cannot quietly become true without a reader noticing.
+    // The bevel limit, asserted so it cannot quietly become true without a reader noticing — and
+    // pinned by WHY, so it cannot quietly start refusing for some other reason either.
     const bevelled = bevelGeometryRef(g, 0.1);
     expect(faceCountOf(bevelled.descriptor)).toBeNull();
     expect(mintTiledModifierAttributes(bevelled.descriptor)).toBeNull();
+    const verdict = bevelLayoutOf(bevelled.descriptor);
+    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toMatch(/point count/);
   });
 
   it('1c — the name is ADDRESSABLE by a scope after the change, not merely stored', () => {
@@ -170,6 +189,59 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     for (let f = 0; f < selection!.length; f++) if (selection!.has(f)) picked.push(f);
     // Faces 0-2 of each copy, which is where the source's named faces landed.
     expect(picked).toEqual([0, 1, 2, 12, 13, 14, 24, 25, 26]);
+  });
+
+  it('1d — #1041: a bevel carries the name over an import that captured its point count, addressably', () => {
+    mountClone();
+    const captured = capturedImportedRef();
+
+    // A bevel reads the name through production's REPRESENTATIVE map (the reference's `facerep`
+    // rule: a minted face copies one source face's data). So the expected pattern is the source
+    // pattern read through that map, derived here rather than copied from a probe's output — and
+    // the SAME derivation is run on a box below, so it cannot be something only an import passes.
+    function carried(source: GeometryRef) {
+      const named = nameAGroup(source, 'arm', '0-2');
+      const pattern = membership(named.geometry!, named.attributeKey!, 'arm')!;
+      const bevelled = bevelGeometryRef(named.geometry!, 0.1);
+      const key = mintTiledModifierAttributes(bevelled.descriptor);
+      const inherit = tiledFaceOrder(bevelled.descriptor)?.representative;
+      return { pattern, bevelled, key, inherit };
+    }
+
+    const imported = carried(captured);
+    expect(imported.pattern).toBe('111000000000');
+
+    // The face count against Blender's closed form, from counts derived WITHOUT the layout.
+    const edges = edgeCountOf(captured);
+    const points = pointCountOf(captured.descriptor);
+    if (edges.kind !== 'counted' || points.kind !== 'counted')
+      throw new Error('a captured, mounted import must state its edge and point counts');
+    expect(faceCountOf(imported.bevelled.descriptor)).toBe(
+      IMPORTED_FACES + edges.count + points.count,
+    );
+
+    for (const [label, row] of [
+      ['import', imported],
+      ['box control', carried(boxGeometryRef([1, 1, 1], null))],
+    ] as const) {
+      expect(row.key, label).not.toBeNull();
+      expect(row.inherit?.length, label).toBe(faceCountOf(row.bevelled.descriptor));
+      const expected = row.inherit!.map((face) => row.pattern[face]).join('');
+      expect(membership(row.bevelled, row.key!, 'arm'), label).toBe(expected);
+
+      // ADDRESSABLE, which is #734's claim — a scope resolves the name on the bevelled mesh.
+      const selection = resolveComponentSelection(
+        {
+          kind: 'MeshData',
+          geometry: { ...row.bevelled, attributeKey: row.key! },
+          material: null,
+        } as unknown as ObjectData,
+        { [SCOPE_PARAM]: 'arm' },
+        'face',
+      );
+      expect(selection?.length, label).toBe(row.inherit!.length);
+      expect(selection?.count, label).toBe([...expected].filter((c) => c === '1').length);
+    }
   });
 
   it('2 — the box control is unchanged', () => {

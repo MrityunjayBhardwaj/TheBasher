@@ -188,6 +188,16 @@ function sphereSplitToWelded(widthSegments: number, heightSegments: number): Uin
  * question is always what the consumer actually reads.
  */
 /**
+ * The descriptor a rim or edge door is being asked about, whether it was handed the descriptor or
+ * a ref to one (#1041). One spelling for every door in this module, so "which mesh is this
+ * question about" cannot be answered two ways — the mismatch the first `(descriptor, ref?)` shape
+ * allowed is exactly two answers to it.
+ */
+function descriptorOf(subject: GeometryDescriptor | GeometryRef): GeometryDescriptor {
+  return 'descriptor' in subject ? subject.descriptor : subject;
+}
+
+/**
  * The welded rims of a mesh whose topology IS its buffer — an import or a bake (#1041).
  *
  * ── WHY THIS IS NOT "rims in the descriptor" ───────────────────────────────────
@@ -250,7 +260,7 @@ export function weldedPolygonsOf(
   // ref carries its own descriptor, so taking one or the other leaves no pair to mismatch.
   // (No member of the descriptor union has a `descriptor` field, so the test is unambiguous.)
   const ref = 'descriptor' in subject ? subject : undefined;
-  const descriptor = 'descriptor' in subject ? subject.descriptor : subject;
+  const descriptor = descriptorOf(subject);
   switch (descriptor.kind) {
     case 'box':
     case 'sphere': {
@@ -398,9 +408,9 @@ export function weldedPolygonsOf(
  * wants this per build or per gather; `tiledFaceOrder` records the same reasoning and the same
  * outcome, having measured its own road before adding its cache.
  */
-export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
+export function edgeSetOf(subject: GeometryDescriptor | GeometryRef): EdgeSet | null {
   const pairs: number[] = [];
-  const count = walkEdgeIncidences(descriptor, (_edge, _face, lo, hi, first) => {
+  const count = walkEdgeIncidences(subject, (_edge, _face, lo, hi, first) => {
     if (first) pairs.push(lo, hi);
   });
   return count === null ? null : { pairs: Uint32Array.from(pairs), count };
@@ -429,12 +439,12 @@ export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
  * result.
  */
 function walkEdgeIncidences(
-  descriptor: GeometryDescriptor,
+  subject: GeometryDescriptor | GeometryRef,
   visit: (edge: number, face: number, lo: number, hi: number, first: boolean) => void,
 ): number | null {
-  const rims = weldedPolygonsOf(descriptor);
+  const rims = weldedPolygonsOf(subject);
   if (rims === null) return null;
-  const points = pointCountOf(descriptor);
+  const points = pointCountOf(descriptorOf(subject));
   if (points.kind !== 'counted') return null;
 
   // ⚠️ THE RADIX IS THE POINT COUNT, NOT 2^32, AND THAT IS A CORRECTNESS FIX RATHER THAN A
@@ -499,9 +509,11 @@ export interface EdgeAdjacency {
  * Every edge's incident faces. `null` for exactly the descriptors {@link edgeSetOf} refuses,
  * because it is the same walk and the same refusals.
  */
-export function edgeFaceAdjacencyOf(descriptor: GeometryDescriptor): EdgeAdjacency | null {
+export function edgeFaceAdjacencyOf(
+  subject: GeometryDescriptor | GeometryRef,
+): EdgeAdjacency | null {
   const faces: number[][] = [];
-  const count = walkEdgeIncidences(descriptor, (edge, face, _lo, _hi, first) => {
+  const count = walkEdgeIncidences(subject, (edge, face, _lo, _hi, first) => {
     if (first) faces.push([face]);
     else faces[edge].push(face);
   });
@@ -515,13 +527,14 @@ export function edgeFaceAdjacencyOf(descriptor: GeometryDescriptor): EdgeAdjacen
  * the absence has a REASON a caller should be able to quote: a `gltf` or `baked` anywhere up the
  * source chain, propagated verbatim so the verdict still names the link that could not answer.
  */
-export function edgeCountOf(descriptor: GeometryDescriptor): CountVerdict {
+export function edgeCountOf(subject: GeometryDescriptor | GeometryRef): CountVerdict {
+  const descriptor = descriptorOf(subject);
   const points = pointCountOf(descriptor);
   // Propagated rather than re-minted: an edge is a pair of points, so a descriptor whose points
   // are outside it has its edges outside it too, for exactly the same reason and at the same
   // link. Re-wording it here would make a caller read a second sentence about one absence.
   if (points.kind !== 'counted') return points;
-  const edges = edgeSetOf(descriptor);
+  const edges = edgeSetOf(subject);
   if (edges === null)
     return {
       kind: 'outside-the-descriptor',
