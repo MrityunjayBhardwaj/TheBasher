@@ -239,7 +239,13 @@ describe('param-reach gate (#492)', () => {
     // the descriptor by name and a gate pins what they answer. So `total` moves by one and
     // the `unverified` ceiling again does not move. That is the whole signal this pair of
     // numbers exists to carry: a param arrived knowing who reads it.
-    expect(total).toBe(40);
+    //
+    // 40 → 41 at #1040: `gltf.pointCount`, the welded point count, TRACED for the same reason
+    // again — `pointCountOf`'s `gltf` arm reads it off the descriptor by name and the parity
+    // gate pins the answer. `total` moves by one; the `unverified` ceiling still does not.
+    // Three imported element facts have now arrived in a row each knowing its own reader,
+    // which is the pattern this pair of numbers was put here to detect.
+    expect(total).toBe(41);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

@@ -135,7 +135,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
   GltfData:
-    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted)',
+    '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
     '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
@@ -326,5 +326,11 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // side's unique arrivals, counted once:
 //   types    84 +1(#974) +1(#994) +1(#1027)                  = 87
 //   routed  133 +2(#994) +3(#1027)                           = 138
-//   unrouted 226 +5(#974) +2(#1001) +1(#1023)                = 234
-export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 234 } as const;
+//   unrouted 226 +5(#974) +2(#1001) +1(#1023) +1(#1040)      = 235
+//
+// #1040 adds `gltf.pointCount` UNROUTED, which is the correct home for it and not an omission:
+// a home names what RENDERS, and nothing renders a point count — it is an element fact for the
+// model's own questions. Its reader is named in `paramReach.ts` (`pointCountOf`), which is the
+// table that asks "who reads this"; this one asks "where does it show", and the honest answer
+// is nowhere. Same shape as `faceCount` one arrival earlier.
+export const GOLDEN_TOTALS = { types: 87, routed: 138, unrouted: 235 } as const;

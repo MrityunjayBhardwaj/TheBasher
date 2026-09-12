@@ -439,11 +439,23 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
       // the pole fans are what the split buffer duplicates; welding removes both.
       return counted(w * (h - 1) + 2);
     }
-    case 'gltf':
-      return {
-        kind: 'outside-the-descriptor',
-        why: "a 'gltf' descriptor's buffers live in a loaded asset clone, so nothing on it says how many points they hold",
-      };
+    // #1040 — AN IMPORTED CHILD WHOSE POINT COUNT WAS WELDED AT IMPORT. The sibling of
+    // `faceCountOf`'s captured arm, and the reason it is a stored number rather than a
+    // derivation: a topological point is a WELD over the position bytes, and a descriptor
+    // carries no bytes. Measured against the loaded buffer on every fixture the real
+    // `GLTFLoader` can parse — 15 of 15 children agree, because both sides weld through
+    // `weldByPosition` rather than through two spellings of it.
+    case 'gltf': {
+      const points = descriptor.pointCount;
+      // 🔴 ABSENT IS NOT ZERO. A pre-#1040 save, a non-triangle child and a multi-primitive
+      // child all keep answering exactly as they did, which is what the escape hatch is for.
+      if (points === undefined)
+        return {
+          kind: 'outside-the-descriptor',
+          why: "a 'gltf' descriptor's buffers live in a loaded asset clone, and this child's import captured no point count, so nothing on it says how many points they hold",
+        };
+      return counted(points);
+    }
     case 'baked':
       return {
         kind: 'outside-the-descriptor',

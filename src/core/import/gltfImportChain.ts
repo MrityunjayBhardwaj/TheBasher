@@ -26,7 +26,7 @@
 // REF: PLAN.md Wave D; CONTEXT D-01/D-02/D-03/D-06;
 // fbxImportChain.ts:7 (the abstraction note that earns its keep here).
 
-import { Matrix4, Quaternion, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
 import { sanitizeBoneName, quaternionToEulerVec3, continuousEuler } from './threeAdapter';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
@@ -44,6 +44,10 @@ import type { DagState } from '../dag/state';
 // rather than re-spelled here for the reason its own header gives: the fused kind's
 // spelling used to live in fifteen places, and this module was one of them.
 import { importedChildDataId, importedChildrenOf } from '../../app/importedChild';
+// #1040 — PRODUCTION's weld, not a second spelling of it: the number this capture writes
+// is compared against `weldByPosition` of the loaded buffer at the read door, so both
+// sides must quantise, handle negative zero and join a seam column identically.
+import { weldByPosition } from '../../app/pointIdentity';
 
 export interface GltfImportChainResult {
   readonly ops: Op[];
@@ -832,6 +836,88 @@ export function captureChildFaceCount(
   return total;
 }
 
+/**
+ * HOW MANY TOPOLOGICAL POINTS a child's mesh holds, welded from its POSITION bytes at import
+ * (#1040) — or `undefined` when this import cannot say.
+ *
+ * ── WHY THIS ONE READS BYTES WHERE ITS SIBLING READS THE TABLE ───────────────────────────
+ *
+ * {@link captureChildFaceCount} needs only accessor COUNTS, so it never materialises a
+ * vertex. A topological point cannot be counted that way: two buffer positions at one
+ * coordinate are ONE point, and which ones coincide is a property of the numbers. A box
+ * arrives as 24 split positions and welds to 8; a sphere 32x16 as 425 and welds to 362. So
+ * this pays a weld, and the cost is stated rather than assumed: ~220-500 ns per point,
+ * ~66 ms for a 131k-point mesh, once, at import. The weld is PRODUCTION's
+ * {@link weldByPosition} and not a second spelling of it — quantisation, negative zero and
+ * the seam-column rule all have to answer identically here and at the read door, or the
+ * descriptor states a number the geometry disagrees with.
+ *
+ * ── 🔴 SINGLE-PRIMITIVE CHILDREN ONLY, AND THAT IS THE WHOLE OF THE POPULATION DECISION ──
+ *
+ * A glTF node with two primitives loads as a GROUP of two Meshes, and `firstMeshGeometry` —
+ * the read door — reaches only the FIRST. So a count welded across every primitive describes
+ * a buffer that no reader ever holds. `two-material-quad.gltf` cannot show this: its two
+ * primitives sit on the same four corners, so the door and a unioning capture both say 4 by
+ * accident. Constructed with DISJOINT primitives, they part: door 3, union 6.
+ *
+ * `captureChildFaceCount` sums its primitives and leans on `alignedSplitRims`'s cross-source
+ * check to refuse the disagreement later. This refuses to MINT the disagreement at all,
+ * which is the stronger position of the two: a state with no constructor needs no guard. It
+ * is why the two fields have deliberately different populations.
+ *
+ * ── WHAT ELSE ANSWERS `undefined`, ALL DELIBERATE ────────────────────────────────────────
+ *
+ * A node that is not a mesh (a bone, an empty); a child whose primitives are not all
+ * triangle modes, matching its sibling's gate so the two captures describe one population;
+ * a primitive with no POSITION or a POSITION that is not `VEC3`; and anything whose accessor
+ * cannot be read at all — Draco-compressed geometry hides its bytes behind an extension and
+ * `readAccessor` throws, which is caught here and reported as "not captured" rather than
+ * failing the import of an otherwise good file.
+ *
+ * REF: src/app/pointIdentity.ts (`weldByPosition`, `pointCountOf`); src/core/import/glb.ts
+ *      (`readAccessor`); issue #1040, and #1023/#1025 for the face-count sibling.
+ */
+export function captureChildPointCount(
+  node: { mesh?: number },
+  json: GltfJson,
+  buffers: Uint8Array[],
+): number | undefined {
+  if (typeof node.mesh !== 'number') return undefined;
+  const prims = json.meshes?.[node.mesh]?.primitives;
+  if (!Array.isArray(prims) || prims.length === 0) return undefined;
+  // The population decision, and the one line that enforces it.
+  if (prims.length !== 1) return undefined;
+
+  const prim = prims[0];
+  // Absent `mode` is TRIANGLES — the glTF default, not an unknown. The same gate the face
+  // count applies, so a lines or points child is refused WHOLE by both.
+  const mode = prim.mode ?? 4;
+  if (mode !== 4 && mode !== 5 && mode !== 6) return undefined;
+
+  const accessorIndex = prim.attributes?.POSITION;
+  if (typeof accessorIndex !== 'number') return undefined;
+  const accessor = json.accessors?.[accessorIndex];
+  // `VEC3` checked rather than trusted: `readAccessor` widens whatever it finds into a flat
+  // float array, so a `VEC2` POSITION would weld pairs as though they were triplets and
+  // return a plausible wrong number.
+  if (accessor?.type !== 'VEC3') return undefined;
+
+  let positions: Float32Array;
+  try {
+    positions = readAccessor(json, buffers, accessorIndex);
+  } catch {
+    // Draco and any other unreadable encoding. Not captured, not an import failure.
+    return undefined;
+  }
+  if (positions.length !== accessor.count * 3) return undefined;
+
+  const geometry = new BufferGeometry();
+  geometry.setAttribute('position', new BufferAttribute(positions, 3));
+  const { points } = weldByPosition(geometry);
+  geometry.dispose();
+  return points;
+}
+
 export async function buildGltfImportOps(
   args: GltfImportChainArgs,
   _state: DagState,
@@ -953,6 +1039,10 @@ export async function buildGltfImportOps(
     // child that is not an all-triangle mesh (a bone, an empty, lines or points), which
     // every reader must keep treating as "not captured" and never as zero.
     const faceCount = captureChildFaceCount(childNodes[i], json);
+    // #1040 — the child's own topological point count, so its descriptor can state one.
+    // Absent for a pre-#1040 save, a non-triangle child, and a MULTI-PRIMITIVE child, whose
+    // read door holds only the first primitive's buffer — see `captureChildPointCount`.
+    const pointCount = captureChildPointCount(childNodes[i], json, buffers);
     ops.push({
       type: 'addNode',
       nodeId: dataId,
@@ -967,6 +1057,7 @@ export async function buildGltfImportOps(
         material: materials?.[0] ?? null,
         ...(materials && materials.length > 1 ? { materialSlots: materials } : {}),
         ...(faceCount === undefined ? {} : { faceCount }),
+        ...(pointCount === undefined ? {} : { pointCount }),
       },
     });
     ops.push({

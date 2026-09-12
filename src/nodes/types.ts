@@ -556,6 +556,34 @@ export type GeometryDescriptor =
        * `gltf|<assetRef>|<childName>`.
        */
       readonly faceCount?: number;
+      /**
+       * HOW MANY TOPOLOGICAL POINTS THE IMPORTED CHILD HAS, welded at import (#1040).
+       *
+       * 🔑 THE SECOND ELEMENT FACT AN IMPORTED MESH STATES, and unlike the face count it is
+       * not read off the accessor TABLE — it needs the position bytes, because a topological
+       * point is a WELD and two buffer positions at one coordinate are one point. A box
+       * arrives as 24 split positions and 8 points; a sphere as 425 and 362. So this is the
+       * one capture that reads geometry rather than metadata.
+       *
+       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — the same rule
+       * {@link GeometryDescriptor} states for `faceCount` one field up, and it has three
+       * populations here: every save written before #1040, every child whose primitives are
+       * not all triangles, and — the one that is specific to this field — every
+       * MULTI-PRIMITIVE child.
+       *
+       * ⚠️ WHY MULTI-PRIMITIVE CHILDREN ARE EXCLUDED WHERE `faceCount` SUMS THEM. A glTF node
+       * with two primitives loads as a GROUP of two Meshes and `firstMeshGeometry` reaches
+       * only the FIRST, so a count welded across both primitives describes a buffer no reader
+       * holds. Measured with disjoint primitives: the read door sees 3 points, a unioning
+       * capture says 6. `faceCount` sums and relies on a cross-source check to refuse the
+       * disagreement; this field makes the disagreement UNREPRESENTABLE instead, which is the
+       * stronger of the two and the reason the populations of the two fields differ on
+       * purpose rather than by oversight.
+       *
+       * NOT part of the geometry cache key, for the reason `faceCount` is not: one asset and
+       * child name is one geometry and therefore one count.
+       */
+      readonly pointCount?: number;
     }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
   // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry

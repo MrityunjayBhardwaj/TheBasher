@@ -358,8 +358,14 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // this gate can. Both of its writes fill a container it made in the same `useMemo`: the
   // octahedral bone body, and the stick-mode buffer that is re-filled per frame WITHIN a fixed
   // allocation (`setDrawRange`, never a re-`setIndex`). Nothing it writes was handed to it.
-  'src/viewport/ArmatureHelper.tsx':
-    'builds its own octahedral bone body and stick line buffer',
+  'src/viewport/ArmatureHelper.tsx': 'builds its own octahedral bone body and stick line buffer',
+  // #1040 — the import capture, and it is the safe category by construction rather than by
+  // care: it is reached during IMPORT, before any descriptor for this child exists, so there
+  // is no registry instance for it to write through to even in principle. It fills a throwaway
+  // container with the POSITION accessor's floats, welds it to get a point count, disposes it,
+  // and returns an integer. Nothing it touches outlives the function.
+  'src/core/import/gltfImportChain.ts':
+    'fills a throwaway BufferGeometry from POSITION bytes to weld a point count, then disposes it',
   'src/viewport/CameraHelpers.tsx': 'builds its own frustum//target line geometries',
   'src/viewport/CurveLine.tsx': 'builds its own polyline geometry',
   'src/viewport/LightHelpers.tsx': 'builds its own light-direction line geometry',

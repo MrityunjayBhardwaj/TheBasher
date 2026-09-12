@@ -92,6 +92,21 @@ const SUBJECTS: ReadonlyArray<readonly [string, GeometryDescriptor]> = [
     'gltf+captured',
     { kind: 'gltf', assetRef: 'user-imports/x/x.gltf', childName: 'Cube', faceCount: 12 },
   ],
+  // #1040 — the same child again, imported by a build that welded its POINT count too. The
+  // row above is NOT superseded by this one and must stay: a face-count-only child is still
+  // an ordinary, reachable state — every save written before #1040, and every MULTI-PRIMITIVE
+  // child, whose read door holds only the first primitive's buffer so no point count may be
+  // minted for it at all. Two populations, two rows.
+  [
+    'gltf+captured+welded',
+    {
+      kind: 'gltf',
+      assetRef: 'user-imports/x/x.gltf',
+      childName: 'Cube',
+      faceCount: 12,
+      pointCount: 8,
+    },
+  ],
   ['baked', { kind: 'baked', hash: 'abc', vertexCount: 24 }],
 ];
 
@@ -109,6 +124,16 @@ const ANSWERED: Readonly<Record<string, number>> = {
   // WELD, which are the index and position buffers, not descriptor data. Their refusal is
   // about the weld and not about arity, and that is the next number to move.
   'gltf+captured': 3,
+  // #1040 moved this to 4. The WELD arrived — a point count is one integer, captured from the
+  // POSITION accessor at import and welded through production's own `weldByPosition`, so both
+  // sides of the comparison quantise identically. Measured against the loaded buffer on every
+  // fixture the real GLTFLoader can parse: 15 of 15 children agree.
+  //
+  // The two that still refuse — polygon layout and edge count — need RIMS, which is the index
+  // buffer and not a number a descriptor can carry. That is the next thing to move, and it
+  // moves both of them at once: `edgeCountOf` needs a counted point total (it now has one) AND
+  // welded rims, so rims are the whole of the remaining distance.
+  'gltf+captured+welded': 4,
   baked: 0,
 };
 
@@ -150,12 +175,20 @@ describe('#1020 — the distance from an imported mesh to a box', () => {
       'edge count',
     ]);
 
-    // #1023 — and the three a CAPTURED child still cannot answer. All three need the rims
-    // or the weld; none of them needs arity any more.
+    // #1023 — and the three a FACE-COUNT-ONLY child still cannot answer. All three need the
+    // rims or the weld; none of them needs arity any more.
     const captured = SUBJECTS.find(([n]) => n === 'gltf+captured')?.[1] as GeometryDescriptor;
     expect(QUESTIONS.filter(([, ask]) => !ask(captured)).map(([n]) => n)).toEqual([
       'polygon layout',
       'point count',
+      'edge count',
+    ]);
+
+    // #1040 — and the TWO a fully captured child still cannot answer. Both need rims, and
+    // stating them as a pair is the point: they are one acquisition, not two tasks.
+    const welded = SUBJECTS.find(([n]) => n === 'gltf+captured+welded')?.[1] as GeometryDescriptor;
+    expect(QUESTIONS.filter(([, ask]) => !ask(welded)).map(([n]) => n)).toEqual([
+      'polygon layout',
       'edge count',
     ]);
   });
@@ -178,7 +211,9 @@ describe('#1020 — the distance from an imported mesh to a box', () => {
     // subjects list were, every assertion above would pass vacuously and report 0/0 as a
     // clean parity result.
     expect(QUESTIONS.length).toBe(6);
-    expect(SUBJECTS.length).toBe(5);
+    // 5 → 6 at #1040: the fully-captured imported child joined as its own subject rather than
+    // replacing the face-count-only one, because both populations are still reachable.
+    expect(SUBJECTS.length).toBe(6);
     expect(Object.keys(ANSWERED).sort()).toEqual(SUBJECTS.map(([n]) => n).sort());
   });
 });
