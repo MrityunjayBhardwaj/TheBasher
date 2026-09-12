@@ -293,6 +293,18 @@ describe('#638 the count is a leaf', () => {
       './bevelLayout',
       // #755 — the point arithmetic reads the SAME copy count the builder does.
       './arrayCopies',
+      // #712 — `keptSourcePoints` needs the SOURCE's rims to say which of its points a
+      // subset's kept faces actually reference, and the rims live one module over. This
+      // closes the `pointIdentity -> edgeIdentity` direction of a ring that was already
+      // closed the other way, so `importCycles.gate.test.ts`'s component set is unmoved —
+      // checked there, not assumed here. Read at CALL TIME inside `keptSourcePoints` and
+      // nowhere else, which is the rule that keeps every ring in that gate safe.
+      './edgeIdentity',
+      // #712 — which faces the scope names. The same two doors `faceCount` and the registry
+      // already use, for the same descriptor-road reason; enumerated as a named interpreter
+      // in `componentScopeChannel.gate.test.ts`.
+      './componentGroupLookup',
+      '../nodes/scopeQuery',
     ]);
     expect(importsOf('src/app/geometryRegistry.ts')).not.toContain('./modifierGeometry');
   });
