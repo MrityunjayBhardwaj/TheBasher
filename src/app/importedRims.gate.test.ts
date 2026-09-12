@@ -624,12 +624,12 @@ describe('#1041 — the welded-rim door reaches an imported mesh through the ref
   it('15 — top level: a ref over a MOUNTED clone answers; no ref, or no clone, refuses', () => {
     const asset = 'u/1041-top.gltf';
     const ref = capturedRef(asset);
-    expect(weldedPolygonsOf(ref.descriptor, ref)).toBeNull();
+    expect(weldedPolygonsOf(ref)).toBeNull();
 
     mountClone(asset);
     // Without a ref the door is exactly what it was: a descriptor alone cannot reach a buffer.
     expect(weldedPolygonsOf(ref.descriptor)).toBeNull();
-    const rims = weldedPolygonsOf(ref.descriptor, ref);
+    const rims = weldedPolygonsOf(ref);
     expect(rims?.length).toBe(BOX_TRIANGLES);
     expect(new Set(rims?.flat()).size).toBe(CAPTURED_POINTS);
 
@@ -671,5 +671,73 @@ describe('#1041 — the welded-rim door reaches an imported mesh through the ref
     expect(bevelLayoutOf(bev.descriptor).kind).toBe('refused');
 
     expect(bevelLayoutOf(control.descriptor).kind).toBe('laid-out');
+  });
+
+  it('18 — a captured point count that disagrees with the buffer refuses, in BOTH directions (#1044)', () => {
+    // Measured before the check existed: 4 against a buffer welding to 8 gave an array over the
+    // import `counted 44` edges where the mesh has 54. Every row here was a plausible answer.
+    function refWith(asset: string, faceCount: number, pointCount: number): GeometryRef {
+      const descriptor: GeometryDescriptor = {
+        kind: 'gltf',
+        assetRef: asset,
+        childName: CHILD,
+        faceCount,
+        pointCount,
+      };
+      return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
+    }
+    const disagreeing = [CAPTURED_POINTS + 1, CAPTURED_POINTS - 1, 4];
+    for (const pointCount of disagreeing) {
+      const asset = `u/1044-${pointCount}.gltf`;
+      mountClone(asset);
+      const ref = refWith(asset, BOX_TRIANGLES, pointCount);
+      expect(weldedPolygonsOf(ref), `captured ${pointCount}`).toBeNull();
+      expect(
+        edgeCountOf(arrayGeometryRef(ref, 3, [2, 0, 0]).descriptor).kind,
+        `captured ${pointCount}`,
+      ).not.toBe('counted');
+    }
+    // The row that must NOT move, so a check refusing everything cannot pass.
+    mountClone('u/1044-agree.gltf');
+    const agreeing = refWith('u/1044-agree.gltf', BOX_TRIANGLES, CAPTURED_POINTS);
+    expect(edgeCountOf(arrayGeometryRef(agreeing, 3, [2, 0, 0]).descriptor)).toEqual({
+      kind: 'counted',
+      count: 3 * (BOX_TRIANGLES + CAPTURED_POINTS - 2),
+    });
+    // The face-count twin still refuses, so the two halves are checked side by side.
+    mountClone('u/1044-faces.gltf');
+    expect(weldedPolygonsOf(refWith('u/1044-faces.gltf', 6, CAPTURED_POINTS))).toBeNull();
+  });
+
+  it('19 — a descriptor cannot be paired with another mesh’s ref', () => {
+    // Measured on the first shape, `(descriptor, ref?)`: a box descriptor handed a sphere's ref
+    // returned the sphere's 80 rims under the box's name.
+    mountClone('u/1041-pair-A.gltf');
+    const a = capturedRef('u/1041-pair-A.gltf');
+
+    const sphere = new THREE.SphereGeometry(1, 8, 6);
+    const mesh = new THREE.Mesh(sphere, new THREE.MeshBasicMaterial());
+    mesh.name = CHILD;
+    const group = new THREE.Group();
+    group.add(mesh);
+    registerGltfClone('u/1041-pair-B.gltf', group);
+    const bDescriptor: GeometryDescriptor = {
+      kind: 'gltf',
+      assetRef: 'u/1041-pair-B.gltf',
+      childName: CHILD,
+      faceCount: (sphere.getIndex()?.count ?? 0) / 3,
+      pointCount: weldByPosition(new THREE.SphereGeometry(1, 8, 6)).points,
+    };
+    const b: GeometryRef = { key: `k|${JSON.stringify(bDescriptor)}`, descriptor: bDescriptor };
+
+    // Each ref answers with its OWN mesh — there is no second argument to disagree with it.
+    expect(weldedPolygonsOf(a)?.length).toBe(BOX_TRIANGLES);
+    expect(weldedPolygonsOf(b)?.length).toBe(bDescriptor.faceCount);
+
+    // The type pin: if the loose `(descriptor, ref?)` shape comes back, this directive is unused
+    // and the test-file typecheck reds. At runtime the extra argument is ignored, so a bare
+    // descriptor still cannot reach a buffer — the mismatch leaks nothing either way.
+    // @ts-expect-error — a descriptor and a ref for a different mesh cannot be passed together
+    expect(weldedPolygonsOf(a.descriptor, b)).toBeNull();
   });
 });

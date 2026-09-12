@@ -221,16 +221,36 @@ function weldedRimsFromBuffer(ref: GeometryRef): readonly PolygonRim[] | null {
   // way and both may arrive. `readGeometry` is where that distinction is owned; this door only
   // needs "is there a buffer yet".
   if (geometry === null) return null;
+  const weld = weldByPosition(geometry);
+  // 🔴 #1044 — THE CAPTURED POINT COUNT MUST AGREE WITH THE BUFFER, OR THE RIMS ARE A LIE. These ids
+  // come from the LIVE weld, but a derived kind above offsets its copies by the CAPTURED count and
+  // the edge walk uses it as a radix. Measured with the capture disagreeing on a buffer that welds
+  // to 8: at 9 the ids gap, at 7 two copies share a point, and at 4 an array's edge count came back
+  // `counted 44` where the mesh has 54 — every row a plausible answer, none refused, the only
+  // signal a console warning on the build path. The face-count half already refuses a
+  // disagreement (`alignedSplitRims`'s `sum x 3 === index.count`); this is its point-count twin,
+  // and it refuses for the same reason: a disagreement handed on becomes a wrong number, while a
+  // refusal is recoverable. An ABSENT capture (a save from before #1040) is not a disagreement —
+  // these rims are consistent with the live weld, and every consumer needing a count refuses itself.
+  const captured = pointCountOf(ref.descriptor);
+  if (captured.kind === 'counted' && captured.count !== weld.points) return null;
   const split = alignedSplitRims(ref, geometry);
   if (split === null) return null;
-  const weld = weldByPosition(geometry);
   return split.map((rim) => rim.map((v) => weld.map[v]));
 }
 
 export function weldedPolygonsOf(
-  descriptor: GeometryDescriptor,
-  ref?: GeometryRef,
+  subject: GeometryDescriptor | GeometryRef,
 ): readonly PolygonRim[] | null {
+  // 🔴 ONE PARAMETER, SO A DESCRIPTOR CANNOT BE PAIRED WITH ANOTHER MESH'S REF (#1041 self-review).
+  // The first shape was `(descriptor, ref?)`, and nothing tied the two together: measured, a box
+  // descriptor handed an 8x6 sphere's ref returned the SPHERE'S 80 rims under the box's name.
+  // Nothing reached it — the only two-argument callers were this function's own recursions,
+  // passing a matched pair — but a state nothing mints is still a state a caller can write. A
+  // ref carries its own descriptor, so taking one or the other leaves no pair to mismatch.
+  // (No member of the descriptor union has a `descriptor` field, so the test is unambiguous.)
+  const ref = 'descriptor' in subject ? subject : undefined;
+  const descriptor = 'descriptor' in subject ? subject.descriptor : subject;
   switch (descriptor.kind) {
     case 'box':
     case 'sphere': {
@@ -256,7 +276,7 @@ export function weldedPolygonsOf(
     case 'array':
     case 'mirror':
     case 'subset': {
-      const sourceRims = weldedPolygonsOf(descriptor.source.descriptor, descriptor.source);
+      const sourceRims = weldedPolygonsOf(descriptor.source);
       if (sourceRims === null) return null;
       const sourcePoints = pointCountOf(descriptor.source.descriptor);
       if (sourcePoints.kind !== 'counted') return null;
@@ -335,7 +355,7 @@ export function weldedPolygonsOf(
     // #994 — the source's welded rims verbatim. Same rule as `faceCountOf` and `pointCountOf`:
     // the projection changes what each corner READS, never what joins what.
     case 'uvProject':
-      return weldedPolygonsOf(descriptor.source.descriptor, descriptor.source);
+      return weldedPolygonsOf(descriptor.source);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`weldedPolygonsOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
