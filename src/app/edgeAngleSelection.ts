@@ -76,7 +76,8 @@ export function edgeIndicesByAngle(ref: GeometryRef, limitDegrees: number): Edge
       why: `'${ref.descriptor.kind}' has no readable built geometry, so no edge angle can be measured — a glTF ref lives in its asset clone, and a baked one behind an async read`,
     };
 
-  const adjacency = edgeFaceAdjacencyOf(ref.descriptor);
+  // #1046 — the ref, so an imported mesh's edges are walkable; the descriptor stops one step short.
+  const adjacency = edgeFaceAdjacencyOf(ref);
   const angles = edgeAnglesOf(ref, geometry);
   if (adjacency === null || angles === null)
     return {

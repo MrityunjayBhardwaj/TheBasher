@@ -123,9 +123,9 @@ import type { KnownDomain, ScopeDomain } from './attributes';
  * the resolver below is the thing that consumes it.
  */
 export type { ScopeDomain };
-import type { CountVerdict, GeometryDescriptor, ObjectData } from './types';
+import type { CountVerdict, GeometryDescriptor, ObjectData, GeometryRef } from './types';
 import { cornerCountOf, faceCountOf } from '../app/faceCount';
-import { edgeCountOf } from '../app/edgeIdentity';
+import { descriptorOf, edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import {
@@ -316,8 +316,9 @@ function refuse(why: string): never {
  */
 export function componentCountOf(
   domain: KnownDomain,
-  descriptor: GeometryDescriptor,
+  subject: GeometryDescriptor | GeometryRef,
 ): CountVerdict {
+  const descriptor = descriptorOf(subject);
   switch (domain) {
     case 'face': {
       // 🔴 #1029 — THIS SAID "the gltf / baked arms have no answer" AND A gltf NOW ANSWERS.
@@ -375,7 +376,9 @@ export function componentCountOf(
       // widened `ScopeDomain` — #667 closed, #827 did the widening, and `BevelModifier`
       // declares `'edge'` to bevel a SUBSET of its source's edges. So this is an ordinary
       // shipped road with a director on the other end of it, not a test-only arm.
-      return edgeCountOf(descriptor);
+      // #1046 — the SUBJECT, not its descriptor: an imported mesh's edges are read off its buffer,
+      // and only a ref reaches one. Every other arm answers from the descriptor alone.
+      return edgeCountOf(subject);
     case 'corner': {
       // #776 gave this arm an answer, and it is the fourth and last. A corner is a POLYGON
       // corner — Blender's loop — so a box has 24 and not the 36 `tiledCornerOrder` laid out
@@ -585,7 +588,13 @@ export function resolveComponentSelection(
     );
   }
 
-  const count = componentCountOf(domain, source.geometry.descriptor);
+  // 🔴 #1046 — ASKED WITH THE REF THIS FUNCTION ALREADY HOLDS, NOT ITS DESCRIPTOR. With the
+  // descriptor, an imported mesh's edge count was refused even once its rims could be read, and
+  // the two consequences were both silent in their own way: an angle limit took the unauthored
+  // branch below and resolved to the WHOLE mesh without a word (on an imported box the six flat
+  // triangulation diagonals were bevelled), and an authored edge scope reached `refuse()`, which
+  // throws. The same ref goes to `edgeIndicesByAngle` further down; the count now agrees with it.
+  const count = componentCountOf(domain, source.geometry);
   if (count.kind !== 'counted') {
     if (authored === null) return null;
     // #744 — the verdict's OWN words, quoted rather than restated. The sentence that used to

@@ -30,7 +30,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
+import type { GeometryDescriptor, GeometryRef, ObjectData } from '../nodes/types';
 import {
   arrayGeometryRef,
   bevelGeometryRef,
@@ -42,9 +42,15 @@ import { alignedSplitRims, builtPolygonRims, topologyIsBufferOnly } from './buil
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { captureChildFaceCount } from '../core/import/gltfImportChain';
 import { firstMeshGeometry } from './firstMeshGeometry';
-import { faceArityOf, faceElementStarts } from './faceCount';
+import { faceArityOf, faceElementStarts, faceCountOf } from './faceCount';
 import { edgeCountOf, weldedPolygonsOf } from './edgeIdentity';
 import { bevelLayoutOf } from './bevelLayout';
+import {
+  ANGLE_LIMIT_PARAM,
+  LIMIT_METHOD_PARAM,
+  resolveComponentSelection,
+  SCOPE_PARAM,
+} from '../nodes/componentSelection';
 import { weldByPosition } from './pointIdentity';
 import { getForRead, prime, readGeometry } from './geometryRegistry';
 import { readMeshUVs } from './uvAttributes';
@@ -739,5 +745,80 @@ describe('#1041 — the welded-rim door reaches an imported mesh through the ref
     // descriptor still cannot reach a buffer — the mismatch leaks nothing either way.
     // @ts-expect-error — a descriptor and a ref for a different mesh cannot be passed together
     expect(weldedPolygonsOf(a.descriptor, b)).toBeNull();
+  });
+});
+
+// ── #1046 — THE SELECTION RESOLVER ASKS WITH THE REF IT HOLDS ─────────────────────────────
+//
+// Before this, `resolveComponentSelection` asked an import's edge count with a DESCRIPTOR, which
+// cannot reach a buffer. So once a bevel over an import could build, two things went wrong
+// silently: an angle limit resolved to the WHOLE mesh (an imported box's six flat triangulation
+// diagonals got bevelled), and an authored edge scope threw on the render walk.
+//
+// ⚠️ WHAT THIS DOES NOT PIN, ON PURPOSE. Over an UNMOUNTED import, what a selection should BE is
+// still open on #1046 — a "not arrived yet" answer given before the mount may stick, because the
+// clone registry notifies nothing when a clone mounts. #862 set the precedent that a not-yet state
+// resolves EMPTY ("chamfer nothing"), never WHOLE and never a throw; today an angle limit there
+// resolves whole and an authored scope throws. Pinning either value would lock in a direction the
+// precedent rules out, so only the safety property every design must keep is asserted: unscoped
+// and angle-limited resolution does not throw.
+describe('#1046 — a bevel’s edge selection over an import is resolved against its buffer', () => {
+  function spine(geometry: GeometryRef): ObjectData {
+    return { kind: 'MeshData', geometry, material: null } as unknown as ObjectData;
+  }
+  function capturedAt(asset: string): GeometryRef {
+    const descriptor: GeometryDescriptor = {
+      kind: 'gltf',
+      assetRef: asset,
+      childName: CHILD,
+      faceCount: BOX_TRIANGLES,
+      pointCount: weldByPosition(new THREE.BoxGeometry(1, 1, 1)).points,
+    };
+    return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
+  }
+  const angle = (deg: number) => ({ [LIMIT_METHOD_PARAM]: 'angle', [ANGLE_LIMIT_PARAM]: deg });
+
+  it('20 — an angle limit selects the non-flat edges, and the bevel changes because of it', () => {
+    const asset = 'u/1046-angle.gltf';
+    mountClone(asset);
+    const imported = capturedAt(asset);
+
+    const selection = resolveComponentSelection(spine(imported), angle(30), 'edge');
+    // An imported box is the procedural box's 12 edges plus 6 flat diagonals. The expected count
+    // comes from the PROCEDURAL box — a different topology — so it is not the import agreeing
+    // with itself.
+    const realEdges = edgeCountOf(box.descriptor);
+    const allEdges = edgeCountOf(imported);
+    expect(realEdges).toEqual({ kind: 'counted', count: 12 });
+    expect(allEdges).toEqual({ kind: 'counted', count: 18 });
+    expect(selection?.length).toBe(18);
+    expect(selection?.count).toBe(12);
+
+    const limited = bevelGeometryRef(imported, 0.05, selection?.canonicalQuery, 'edge');
+    const unscoped = bevelGeometryRef(imported, 0.05);
+    expect(faceCountOf(limited.descriptor)).not.toBeNull();
+    expect(faceCountOf(limited.descriptor)).not.toBe(faceCountOf(unscoped.descriptor));
+  });
+
+  it('21 — an authored edge scope resolves instead of throwing', () => {
+    const asset = 'u/1046-scope.gltf';
+    mountClone(asset);
+    const selection = resolveComponentSelection(
+      spine(capturedAt(asset)),
+      { [SCOPE_PARAM]: '0-3' },
+      'edge',
+    );
+    expect(selection?.count).toBe(4);
+    expect(selection?.length).toBe(18);
+    // The box control answers the same scope against its own 12 edges.
+    expect(resolveComponentSelection(spine(box), { [SCOPE_PARAM]: '0-3' }, 'edge')?.length).toBe(
+      12,
+    );
+  });
+
+  it('22 — over an UNMOUNTED import, unscoped and angle-limited resolution do not throw', () => {
+    const unmounted = capturedAt('u/1046-never-mounted.gltf');
+    expect(() => resolveComponentSelection(spine(unmounted), {}, 'edge')).not.toThrow();
+    expect(() => resolveComponentSelection(spine(unmounted), angle(30), 'edge')).not.toThrow();
   });
 });

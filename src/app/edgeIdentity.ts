@@ -34,7 +34,7 @@ import { pointCountOf, weldByPosition } from './pointIdentity';
 // #814 — closes the ring `faceCount -> bevelLayout -> edgeIdentity -> faceCount`. Call-time only;
 // `bevelLayout.ts`'s header carries the measurement and the rule.
 import { bevelLayoutOf } from './bevelLayout';
-import { alignedSplitRims, topologyIsBufferOnly } from './builtRims';
+import { alignedSplitRims, bufferReachabilityOf, topologyIsBufferOnly } from './builtRims';
 import { getForRead } from './geometryRegistry';
 
 /**
@@ -193,8 +193,25 @@ function sphereSplitToWelded(widthSegments: number, heightSegments: number): Uin
  * question about" cannot be answered two ways — the mismatch the first `(descriptor, ref?)` shape
  * allowed is exactly two answers to it.
  */
-function descriptorOf(subject: GeometryDescriptor | GeometryRef): GeometryDescriptor {
+export function descriptorOf(subject: GeometryDescriptor | GeometryRef): GeometryDescriptor {
   return 'descriptor' in subject ? subject.descriptor : subject;
+}
+
+/** Why an edge count is absent, naming which of the three absences it is (#1046). */
+function edgeCountAbsence(
+  subject: GeometryDescriptor | GeometryRef,
+  descriptor: GeometryDescriptor,
+  points: number,
+): string {
+  const lead = `'${descriptor.kind}' has ${points} points`;
+  if ('descriptor' in subject) {
+    const reach = bufferReachabilityOf(subject);
+    if (reach !== '' && reach !== 'ok')
+      return `${lead}, but the buffer its rims come from has not arrived (read status '${reach}'), so what joins them cannot be read YET`;
+  } else if (topologyIsBufferOnly(descriptor)) {
+    return `${lead}, but its rims live in its buffer and a bare descriptor cannot reach one — this question has to be asked with the mesh's ref`;
+  }
+  return `${lead} but no derivable polygon rims, so what joins them is not stated`;
 }
 
 /**
@@ -538,7 +555,10 @@ export function edgeCountOf(subject: GeometryDescriptor | GeometryRef): CountVer
   if (edges === null)
     return {
       kind: 'outside-the-descriptor',
-      why: `'${descriptor.kind}' has ${points.count} points but no derivable polygon rims, so what joins them is not stated`,
+      // #1046 — THREE DIFFERENT ABSENCES REACHED THIS ONE SENTENCE. A director saw it inside a throw
+      // for an edge scope over an import, where it said the rims were not derivable — false since
+      // #1041, when the rims came off the buffer. Each cause now says which it is.
+      why: edgeCountAbsence(subject, descriptor, points.count),
     };
   return counted(edges.count);
 }
