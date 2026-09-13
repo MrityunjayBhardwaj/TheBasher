@@ -22,10 +22,15 @@
 //
 // metalness is the composable field here precisely because the override leaves it
 // `null` (map-defended): the channel drives it THROUGH the tint, observable on the
-// live three.js material via __basher_gltf_meshes (side A == the rendered surface).
+// live three.js material via `_importedMesh.ts` (side A == the rendered surface).
+//
+// #1072 — the fixture now arrives as native geometry (#1050): the channel targets the
+// `PolyMeshData` that owns the material, and the override wraps the ordinary Object
+// (`_importOverride.ts`). The road is asserted.
 
 import { test, expect } from './_fixtures';
-import { firstMaterialChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
+import { wrapImportInOverride } from './_importOverride';
 
 interface Op {
   type: string;
@@ -46,12 +51,6 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => {
-    name: string;
-    color: string | null;
-    metalness: number | null;
-    hasMetalnessMap: boolean;
-  }[];
 }
 
 const FIXTURE_FILES = ['scene.gltf', 'scene.bin', 'texture.png'];
@@ -70,11 +69,12 @@ async function ingestMetal(page: import('@playwright/test').Page): Promise<void>
   }, FIXTURE_FILES);
 }
 
-// #389 — the DATA half's id. A material channel targets the node that OWNS the param,
-// and after the split that is `GltfData`; aiming it at the Object would resolve to a
-// node that exists and a param that does not — visible in the dopesheet, driving nothing.
+// #389 — the DATA half's id. A material channel targets the node that OWNS the param —
+// `PolyMeshData` on the native road, `GltfData` on the clone one; aiming it at the Object
+// would resolve to a node that exists and a param that does not — visible in the
+// dopesheet, driving nothing.
 async function boxChildId(page: import('@playwright/test').Page) {
-  return (await firstMaterialChild(page))?.dataId ?? null;
+  return (await firstMaterialMesh(page))?.dataId ?? null;
 }
 
 async function setTime(page: import('@playwright/test').Page, seconds: number) {
@@ -83,14 +83,10 @@ async function setTime(page: import('@playwright/test').Page, seconds: number) {
   }, seconds);
 }
 
-const boxSlot = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0];
-    return m
-      ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap }
-      : null;
-  });
+const boxSlot = async (page: import('@playwright/test').Page) => {
+  const m = (await drawnImportMeshes(page))[0];
+  return m ? { color: m.color, metalness: m.metalness, hasMetalnessMap: m.hasMetalnessMap } : null;
+};
 
 async function ready(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -102,6 +98,7 @@ async function ready(page: import('@playwright/test').Page) {
   );
   await ingestMetal(page);
   await expect.poll(() => boxChildId(page)).not.toBeNull();
+  expect((await firstMaterialMesh(page))?.road).toBe('native');
   // The fixture must carry a metalnessMap, else the override would FORCE metalness
   // and there would be nothing to compose (the test's premise).
   await expect.poll(async () => (await boxSlot(page))?.hasMetalnessMap).toBe(true);
@@ -114,46 +111,10 @@ test.describe('#198 — channel-over-MaterialOverride composition (boundary-pair
     await ready(page);
     const childId = await boxChildId(page);
 
-    // Wire a MaterialOverride (#ff0000) between the imported GltfAsset and its
-    // Transform — the SAME op path the app uses (p7.13). Whole-child (no slotIndex)
-    // → tints the slot; metalness is map-defended so the tint leaves it untouched.
-    await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      const dag = w.__basher_dag.getState();
-      const nodes = dag.state.nodes;
-      const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-      // V67: import root is a transformable Group (was a Transform); the asset
-      // wires into Group.children (a list socket, was Transform.target/single).
-      const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
-      if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
-      dag.dispatchAtomic(
-        [
-          {
-            type: 'disconnect',
-            from: { node: gltfId, socket: 'out' },
-            to: { node: groupId, socket: 'children' },
-          },
-          {
-            type: 'addNode',
-            nodeId: 'p198_mo',
-            nodeType: 'MaterialOverride',
-            params: { color: '#ff0000' },
-          },
-          {
-            type: 'connect',
-            from: { node: gltfId, socket: 'out' },
-            to: { node: 'p198_mo', socket: 'target' },
-          },
-          {
-            type: 'connect',
-            from: { node: 'p198_mo', socket: 'out' },
-            to: { node: groupId, socket: 'children' },
-          },
-        ],
-        'user',
-        'p198 apply material override',
-      );
-    });
+    // Wire a MaterialOverride (#ff0000) between the import root Group and its content —
+    // the SAME op path the app uses (p7.13). Whole-child (no slotIndex) → tints the
+    // slot; metalness is map-defended so the tint leaves it untouched.
+    await wrapImportInOverride(page, 'p198_mo', { color: '#ff0000' });
 
     // The tint lands BEFORE any animation (composition starts from a tint).
     await expect.poll(async () => (await boxSlot(page))?.color).toBe('#ff0000');
