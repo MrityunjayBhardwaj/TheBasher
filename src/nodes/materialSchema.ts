@@ -68,6 +68,8 @@ const bakedTextureRefSchema = z.object({
   // #1050 — declared for the same reason: stripped, a project image would be looked up in the
   // global store and never found.
   store: z.literal('project').optional(),
+  magFilter: z.number().optional(),
+  minFilter: z.number().optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
 /**

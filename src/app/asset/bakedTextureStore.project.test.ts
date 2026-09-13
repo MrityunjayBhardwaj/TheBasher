@@ -49,6 +49,25 @@ describe('#1050 — loading a project image', () => {
     expect(texture.flipY).toBe(false);
   });
 
+  it('applies the captured filters, and leaves three’s defaults when none were captured', async () => {
+    const storage = new MemoryStorage();
+    const key = await writeProjectImage(storage, 'open', PNG, 'image/png');
+    useProjectStore.getState().setCurrent({ ...buildDefaultProject(), id: 'open' });
+    const decode = async () => new THREE.Texture();
+
+    const sharp = await loadBakedTexture(
+      storage,
+      { ...refFor(key), magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter },
+      { decode },
+    );
+    expect(sharp.magFilter).toBe(THREE.NearestFilter);
+    expect(sharp.minFilter).toBe(THREE.NearestFilter);
+
+    const plain = await loadBakedTexture(storage, refFor(key), { decode });
+    expect(plain.magFilter).toBe(THREE.LinearFilter);
+    expect(plain.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+  });
+
   it('does not find another project’s image', async () => {
     const storage = new MemoryStorage();
     const key = await writeProjectImage(storage, 'other', PNG, 'image/png');

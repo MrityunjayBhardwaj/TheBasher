@@ -245,6 +245,11 @@ export async function loadBakedTexture(
     texture.flipY = ref.flipY;
     texture.wrapS = ref.wrapS as THREE.Wrapping;
     texture.wrapT = ref.wrapT as THREE.Wrapping;
+    // #1050 — only when captured: a ref written before it keeps three's defaults, as it always did.
+    if (ref.magFilter !== undefined)
+      texture.magFilter = ref.magFilter as THREE.MagnificationTextureFilter;
+    if (ref.minFilter !== undefined)
+      texture.minFilter = ref.minFilter as THREE.MinificationTextureFilter;
     texture.needsUpdate = true;
     return texture;
   } finally {

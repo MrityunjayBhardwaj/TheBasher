@@ -58,6 +58,8 @@ const BakedTextureRefSchema = z.object({
   // #1050 — a bake of a native textured import keeps pointing at the project's image; zod strips
   // an undeclared key, which would send the load to the global store instead.
   store: z.literal('project').optional(),
+  magFilter: z.number().optional(),
+  minFilter: z.number().optional(),
 });
 
 /** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */

@@ -129,6 +129,27 @@ describe('resolveBakedTexture — two consumers of one hash get ONE decoded text
     expect(loadBakedTexture).toHaveBeenCalledTimes(1);
   });
 
+  it('#1050 — one image under two samplers is two textures, not whichever loaded first', async () => {
+    // A cached Texture carries its wrap and filters into every material clone, so sharing one
+    // instance across samplers would make the first material decide how the second samples.
+    loadBakedTexture.mockImplementation(async () => new THREE.Texture());
+    const nearest: BakedTextureRef = {
+      ...REF,
+      magFilter: THREE.NearestFilter,
+      minFilter: THREE.NearestFilter,
+    };
+
+    expect(peekBakedTexture(REF)).toBeNull();
+    expect(peekBakedTexture(nearest)).toBeNull();
+    await flush();
+    const smooth = peekBakedTexture(REF);
+    const sharp = peekBakedTexture(nearest);
+    expect(smooth).not.toBeNull();
+    expect(sharp).not.toBeNull();
+    expect(sharp).not.toBe(smooth);
+    expect(loadBakedTexture).toHaveBeenCalledTimes(2);
+  });
+
   it('hands the peek road the same instance as the Suspense road', async () => {
     const tex = new THREE.Texture();
     loadBakedTexture.mockResolvedValue(tex);

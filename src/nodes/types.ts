@@ -403,6 +403,13 @@ export interface BakedTextureRef {
    * store, as every ref written before #1050 does.
    */
   readonly store?: 'project';
+  /**
+   * #1050 — the sampler's filters, as three.js constants (`NearestFilter` …). Absent means three's
+   * texture defaults, as every ref written before #1050 has. A native import writes both, because
+   * glTF files routinely sample NEAREST and the native draw would otherwise smooth them.
+   */
+  readonly magFilter?: number;
+  readonly minFilter?: number;
 }
 
 /**
