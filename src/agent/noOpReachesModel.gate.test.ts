@@ -38,8 +38,9 @@ import { applyOp } from '../core/dag';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { Op } from '../core/dag/types';
 import type { Reportable } from '../core/dag/ops';
+import type { LLMConfig } from './transport/types';
 
-const CONFIG = { baseUrl: 'http://x', model: 'm', apiKey: 'k' } as never;
+const CONFIG: LLMConfig = { baseUrl: 'http://x', model: 'm', apiKey: 'k' };
 
 // 🔴 TYPED, NOT CAST (#1058). This was `{ …, selectedNodeIds: [] } as never`. The
 // selection is a SET: an array has no `.size`, so `inferClosureSpec` read it as a
