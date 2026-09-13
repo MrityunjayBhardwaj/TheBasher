@@ -2,24 +2,20 @@
 // model(s) into the CURRENT scene (additive). Distinct from File ▸ Import
 // Folder… (the webkitdirectory picker for multi-file glTF + textures).
 //
-// Falsifiable against the real DOM via the live GltfAsset node count: opening
-// the menu item, choosing a real .glb through the OS file chooser, and watching
-// a GltfAsset appear in the DAG. Unwiring the menu item (or breaking the
-// multi-model loop) drops the count back → these fail.
+// Falsifiable against the real DOM via the live import count: opening the menu
+// item, choosing real files through the OS file chooser, and watching an import
+// root appear in the scene. Unwiring the menu item (or breaking the multi-model
+// loop) drops the count back → these fail.
+//
+// #1071 — counted on EITHER road. The two .glb fixtures are still refused by the
+// native reader (skinned; Draco) and arrive through the file's copy; the flat
+// multi-file .gltf is a file the native model holds and arrives as native geometry.
+// The picker under test is the same for both, so the count must not care.
 
 import { expect, test } from './_fixtures';
+import { importCount } from './_importedMesh';
 
-interface DagWindow {
-  __basher_dag?: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
-}
-
-async function gltfAssetCount(page: import('@playwright/test').Page): Promise<number> {
-  return page.evaluate(() => {
-    const w = window as unknown as DagWindow;
-    const nodes = w.__basher_dag?.getState().state.nodes ?? {};
-    return Object.values(nodes).filter((n) => n.type === 'GltfAsset').length;
-  });
-}
+const gltfAssetCount = importCount;
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');

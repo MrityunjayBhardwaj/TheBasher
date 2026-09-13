@@ -1,30 +1,33 @@
 // glTF spec/gloss direct-import (#214, V53 "REAL-WORLD FINDING — SPEC/GLOSS").
 // three.js dropped the KHR_materials_pbrSpecularGlossiness GLTFLoader plugin at
-// ~r150 (we're on r169), so a spec/gloss model imports flat-gray: the render
-// clone gets a default white material with NO textures AND the captured IR reads
-// only pbrMetallicRoughness (absent → all-default). The fix converts spec/gloss
-// → metal-rough AT INGEST (one point before both readers of the OPFS bytes), so
-// render == capture.
+// ~r150 (we're on r169), so a spec/gloss model imports flat-gray unless the
+// material is converted: roughness from glossiness, an albedo from diffuse, and —
+// for a combined specularGlossinessTexture — a per-pixel BAKED metallicRoughness
+// image. The conversion runs AT INGEST, one point before everything that reads the
+// file, so render == capture.
 //
 // THE BOUNDARY-PAIR PROOF (falsifiable). The fixture has TWO spec/gloss
 // materials: one with a diffuseTexture + factors (the common case, increment 1),
 // one with a combined specularGlossinessTexture (the per-pixel pass, increment 2).
-//   side A (the DAG IR) — each GltfChild's captured material is normal metal-rough
-//     (roughness from glossiness, a baseColor/albedo from diffuse, and — for the
-//     combined material — a BAKED metallicRoughness map descriptor).
-//   side B (the live clone) — the rendered three.js material carries the base map
-//     (diffuse) and, for the combined material, a metalnessMap/roughnessMap.
-// Pre-fix both materials would be default-white with null maps (and the required
-// extension would break the loader). The two sides agreeing = render == capture.
+//   side A (the DAG) — each mesh's captured material is normal metal-rough, and the
+//     combined material's roughness and metalness maps are ONE baked image.
+//   side B (the draw) — the drawn three.js material carries the base map (diffuse)
+//     and, for the combined material, a metalnessMap/roughnessMap.
+// Pre-fix both materials would be default-white with null maps.
+//
+// #1071 — the file arrives as native geometry (#1050): every image, including the
+// baked one, is stored in the project and named by content hash, so "one baked
+// image" is "the same hash". The browser run matters here: the bake draws through a
+// canvas that a node probe does not have.
 
 import { test, expect } from './_fixtures';
-import { importedChildren } from './_importedChild';
+import { drawnImportMeshes, importedMeshes } from './_importedMesh';
 
 interface CapturedMap {
   hash: string;
   colorSpace: string;
   flipY: boolean;
-  gltfTexture?: number;
+  store?: string;
 }
 interface CapturedMaterial {
   name: string;
@@ -37,23 +40,10 @@ interface CapturedMaterial {
   };
 }
 interface BasherWindow {
-  __basher_dag: {
-    getState: () => {
-      state: {
-        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
-      };
-    };
-  };
   __basher_ingestGltfFolder: (
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => {
-    name: string;
-    hasMap: boolean;
-    hasMetalnessMap: boolean;
-    hasRoughnessMap: boolean;
-  }[];
 }
 
 async function ingestSpecGlossQuad(page: import('@playwright/test').Page): Promise<void> {
@@ -69,30 +59,19 @@ async function ingestSpecGlossQuad(page: import('@playwright/test').Page): Promi
   });
 }
 
-/** Every captured GltfChild material, keyed by material name. */
-// #389 — one `Object` + `GltfData` pair per child, and the captured table is now the
-// `material` + `materialSlots` pair. `slots` is that pair flattened by the one rule, so
-// a multi-primitive child still contributes every material it captured. Null entries are
-// skipped for the same reason the old predicate skipped children with no `materials`
-// array: a bone has no material and would key this map under `undefined`.
+/** Every captured material, keyed by material name, with the road each mesh took. */
 const capturedMaterials = async (page: import('@playwright/test').Page) => {
-  const out: Record<string, CapturedMaterial> = {};
-  for (const child of await importedChildren(page)) {
-    for (const m of child.slots as (CapturedMaterial | null)[]) {
-      if (m) out[m.name] = m;
+  const out: Record<string, CapturedMaterial & { road: string }> = {};
+  for (const mesh of await importedMeshes(page)) {
+    for (const m of mesh.slots as (CapturedMaterial | null)[]) {
+      if (m) out[m.name] = { ...m, road: mesh.road };
     }
   }
   return out;
 };
 
-const meshes = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-  });
-
 test.describe('glTF spec/gloss → metal-rough at ingest (#214)', () => {
-  test('factor + diffuseTexture material converts; clone renders textured', async ({ page }) => {
+  test('factor + diffuseTexture material converts; the draw is textured', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
@@ -103,42 +82,47 @@ test.describe('glTF spec/gloss → metal-rough at ingest (#214)', () => {
     await expect
       .poll(async () => (await capturedMaterials(page))['SGDiffuse']?.name)
       .toBe('SGDiffuse');
-    const mats = await capturedMaterials(page);
-    const diffuse = mats['SGDiffuse'];
+    const diffuse = (await capturedMaterials(page))['SGDiffuse'];
+    expect(diffuse.road).toBe('native');
     expect(diffuse.base.metalness).toBe(0); // specularFactor 0 → dielectric
     expect(diffuse.specular.roughness).toBeCloseTo(0.6, 5); // 1 - glossiness 0.4
-    // diffuseTexture → baseColorTexture, captured as an sRGB imported descriptor.
-    expect(diffuse.maps.albedo).toMatchObject({ hash: '', colorSpace: 'srgb', gltfTexture: 0 });
+    // diffuseTexture → baseColorTexture, stored in the project as sRGB.
+    expect(diffuse.maps.albedo).toMatchObject({ store: 'project', colorSpace: 'srgb' });
 
-    // side B — a clone mesh still carries the base map (render byte-faithful).
-    await expect.poll(async () => (await meshes(page)).some((m) => m.hasMap)).toBe(true);
+    // side B — a drawn mesh carries a decoded base map.
+    await expect
+      .poll(async () => (await drawnImportMeshes(page)).some((m) => m.hasMap && m.mapImageOk))
+      .toBe(true);
   });
 
-  test('combined specularGlossinessTexture bakes an MR map; clone renders it', async ({ page }) => {
+  test('combined specularGlossinessTexture bakes an MR map; the draw carries it', async ({
+    page,
+  }) => {
     await page.goto('/');
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
     await ingestSpecGlossQuad(page);
 
-    // side A — the combined material has BAKED roughness + metalness map
-    // descriptors (a new glTF texture, index ≥ 2, beyond the fixture's two),
-    // both linear, and the factors are 1× (the value lives in the texture).
+    // side A — the combined material has BAKED roughness + metalness maps, both
+    // linear, and the factors are 1× (the value lives in the texture).
     await expect
-      .poll(async () => (await capturedMaterials(page))['SGCombined']?.maps?.metalness?.gltfTexture)
-      .toBeGreaterThanOrEqual(2);
+      .poll(async () => (await capturedMaterials(page))['SGCombined']?.maps?.metalness?.store)
+      .toBe('project');
     const combined = (await capturedMaterials(page))['SGCombined'];
-    expect(combined.maps.roughness).toMatchObject({ hash: '', colorSpace: 'srgb-linear' });
-    expect(combined.maps.metalness).toMatchObject({ hash: '', colorSpace: 'srgb-linear' });
-    // roughness + metalness share the ONE baked metallicRoughness texture.
-    expect(combined.maps.roughness?.gltfTexture).toBe(combined.maps.metalness?.gltfTexture);
+    expect(combined.road).toBe('native');
+    expect(combined.maps.roughness).toMatchObject({ store: 'project', colorSpace: 'srgb-linear' });
+    expect(combined.maps.metalness).toMatchObject({ store: 'project', colorSpace: 'srgb-linear' });
+    // roughness + metalness share the ONE baked metallicRoughness image.
+    expect(combined.maps.roughness?.hash).toBe(combined.maps.metalness?.hash);
     expect(combined.base.metalness).toBe(1); // metallicFactor 1 (texture carries the value)
     expect(combined.specular.roughness).toBe(1); // roughnessFactor 1
 
-    // side B — the rendered clone carries a metalness/roughness map (the baked
-    // sibling loaded; render == capture).
+    // side B — the drawn material carries a metalness/roughness map (render == capture).
     await expect
-      .poll(async () => (await meshes(page)).some((m) => m.hasMetalnessMap || m.hasRoughnessMap))
+      .poll(async () =>
+        (await drawnImportMeshes(page)).some((m) => m.hasMetalnessMap || m.hasRoughnessMap),
+      )
       .toBe(true);
   });
 });

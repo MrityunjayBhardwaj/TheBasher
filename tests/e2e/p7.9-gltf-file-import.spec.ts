@@ -33,8 +33,8 @@
 //   (d)  No-glTF folder → error banner + zero dispatch + scene unchanged.
 //
 // Boundary-pair observation (H40 — "which side did I observe?"): we
-// observe on the RENDERER side (the cloned Mesh tree's material.map via
-// the `__basher_gltf_meshes` DEV seam) plus OPFS (storage.list /
+// observe on the RENDERER side (the drawn Mesh's material.map, read off the
+// live scene by `_importedMesh.ts` on either road) plus OPFS (storage.list /
 // storage.exists) plus the Library popover DOM. The producer side
 // (importGltfFromOpfs / ingestGltfFolder return values) is asserted only
 // where it adds incremental signal (the entry-path layout claim). The Op
@@ -43,17 +43,13 @@
 // REF: PLAN.md Wave F Task 12; CONTEXT 7.9 D-01..D-05; issue #110;
 //      `src/app/boot.ts:283-297` (the new ingest seam);
 //      `src/app/asset/importGltf.ts` (ingestGltfFolder + importGltfFromOpfs);
-//      `src/viewport/SceneFromDAG.tsx` GltfAssetR (the
-//      `__basher_gltf_meshes` DEV seam added for this gate);
+//      `tests/e2e/_importedMesh.ts` (the drawn-mesh reader, #1071);
 //      `src/app/AssetLibrary.tsx` (the `library-popover-my-imports` list).
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, type DrawnImportMesh } from './_importedMesh';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -71,7 +67,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -104,10 +99,12 @@ async function ingestFixtures(
   );
 }
 
-/** Poll for a Mesh whose material has a non-null map AND a loaded image
- *  (decoded width > 0). useGLTF is suspense-driven + the image decode is
- *  async; the mesh summary is empty until GltfAssetR mounts and the
- *  texture image finishes decoding. Returns the matched summary entries. */
+/** Poll for a drawn Mesh whose material has a non-null map AND a loaded image
+ *  (decoded width > 0). The mount and the image decode are async; the summary
+ *  is empty until the import has drawn and the texture image finishes decoding.
+ *  Read on either road (#1071): these fixtures now arrive as native geometry,
+ *  so the texture is the project's stored copy, not the file's. Returns the
+ *  matched summary entries. */
 async function pollForTexturedMesh(
   page: import('@playwright/test').Page,
   timeoutMs = 8_000,
@@ -115,10 +112,7 @@ async function pollForTexturedMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     if (summary.some((m) => m.hasMap && m.mapImageOk)) return summary;
     await page.waitForTimeout(120);

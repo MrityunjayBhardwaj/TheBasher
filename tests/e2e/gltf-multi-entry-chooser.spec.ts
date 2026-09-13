@@ -9,13 +9,13 @@
 // interact with the modal mid-flight, then await the result.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importCount } from './_importedMesh';
 
 interface BasherWindow {
   __basher_ingestGltfFolder: (
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => { name: string; hasMap: boolean }[];
   __basher_dag: {
     getState: () => { state: { nodes: Record<string, { type: string }> } };
   };
@@ -74,17 +74,12 @@ test.describe('multi-glTF entry chooser (#214)', () => {
     await expect(options).toHaveCount(2);
     await expect(options.first()).toContainText('a_textured.gltf'); // 1 material · 1 texture
 
-    // Pick the textured entry → it imports, and a clone mesh carries a base map.
+    // Pick the textured entry → it imports, and the drawn mesh carries a decoded base map.
     await options.first().click();
     const entryPath = await page.evaluate(() => (window as unknown as BasherWindow).__p);
     expect(entryPath).toContain('a_textured.gltf');
     await expect
-      .poll(async () =>
-        page.evaluate(() => {
-          const w = window as unknown as BasherWindow;
-          return (w.__basher_gltf_meshes?.() ?? []).some((m) => m.hasMap);
-        }),
-      )
+      .poll(async () => (await drawnImportMeshes(page)).some((m) => m.hasMap && m.mapImageOk))
       .toBe(true);
   });
 
@@ -93,6 +88,7 @@ test.describe('multi-glTF entry chooser (#214)', () => {
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
+    const importsBefore = await importCount(page);
     const assetsBefore = await nodeTypeCount(page, 'GltfAsset');
     const meshesBefore = await nodeTypeCount(page, 'PolyMeshData');
     await startMultiEntryImport(page);
@@ -102,13 +98,14 @@ test.describe('multi-glTF entry chooser (#214)', () => {
     await page.getByTestId('gltf-entry-import-all').click();
 
     // The seam resolves to the LAST imported entry's path, and BOTH entries landed
-    // as separate models — each whole on its own road (#1049): the textured entry
-    // through the file's copy (textures are not native yet, #1050), the plain one
-    // as native mesh data.
+    // as separate models. Both are files the native model holds (#1049, and #1050 for
+    // the textured one), so each is its own import root over native mesh data, and
+    // nothing lands on the clone road.
     await page.evaluate(() => (window as unknown as BasherWindow).__p);
     await expect(chooser).toBeHidden();
-    await expect.poll(() => nodeTypeCount(page, 'GltfAsset')).toBe(assetsBefore + 1);
-    await expect.poll(() => nodeTypeCount(page, 'PolyMeshData')).toBe(meshesBefore + 1);
+    await expect.poll(() => importCount(page)).toBe(importsBefore + 2);
+    await expect.poll(() => nodeTypeCount(page, 'PolyMeshData')).toBe(meshesBefore + 2);
+    expect(await nodeTypeCount(page, 'GltfAsset')).toBe(assetsBefore);
   });
 
   test('dismissing the chooser aborts the import (no model added)', async ({ page }) => {
