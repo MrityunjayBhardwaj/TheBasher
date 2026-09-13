@@ -45,6 +45,11 @@ export async function streamChatCompletion(
     model: config.model,
     messages: messages.map(serializeMessage),
     stream: true,
+    // #1057 — ask for usage. The spec only streams it on request, and Ollama
+    // follows the spec: measured, no usage chunk arrives without this. Without it
+    // the orchestrator's prompt-read check has no count to read and never runs,
+    // so a cut prompt goes through exactly as it did before.
+    stream_options: { include_usage: true },
     max_tokens: config.maxTokens ?? 4096,
     temperature: config.temperature ?? 0.7,
   };

@@ -132,6 +132,62 @@ export function estimateRequestTokens(messages: ChatMessage[], toolSchemas: Tool
   );
 }
 
+// --- Did the model read the prompt it was sent? (#1057) ----------------------
+//
+// Not every provider refuses an over-long prompt. Ollama shortens it from the
+// FRONT to fit the loaded window and answers normally: HTTP 200, a fluent reply,
+// nothing in the stream saying so. The front is the system prompt, so the turn
+// goes on acting on instructions the model never saw. Measured on the product's
+// own requests against `qwen3:4b` at a 4,096-token window: every round read only
+// 47–64% of what was sent, and the turn looked healthy throughout.
+//
+// The provider's reported `prompt_tokens` is the only witness an OpenAI-compatible
+// API offers, and it already arrives for the cost guard above. It is read two ways:
+//
+//   1. SHORT — the count is far below the request's own estimate. On those same
+//      captured requests an uncut prompt counts 0.88–0.95 of the estimate across
+//      three tokenizers (qwen3, o200k, cl100k); the cut ones counted 0.42–0.57.
+//      The floor sits between the two, below the lowest real tokenizer measured.
+//   2. FLAT — each round re-sends the whole conversation plus what the last round
+//      added, so a real count grows with it. A count that stays put while the
+//      request grew is a window being hit. This assumes nothing about the
+//      tokenizer, so it catches the milder cuts the floor lets through.
+//
+// ⚠️ THE LIMIT: a first round that loses less than the floor's margin is not
+// caught until the second round. A single-round turn with a mild cut is missed.
+
+/** Below this share of the request's estimate, a reported prompt count is a cut prompt. */
+export const MIN_PROMPT_READ_RATIO = 0.75;
+/** Growth, in estimated tokens, below which a count that did not move proves nothing. */
+export const MIN_PROMPT_GROWTH_TOKENS = 32;
+
+/** One round's prompt: what the provider says it read, and what we estimate we sent. */
+export interface PromptRead {
+  readonly reported: number;
+  readonly estimated: number;
+}
+
+/**
+ * Why the model evidently did not read the whole prompt, or `null` when nothing
+ * says so. `previous` is the prior round of the same turn, when there was one.
+ * A missing or zero count is no reading at all, never a short one.
+ */
+export function promptReadShortfall(read: PromptRead, previous?: PromptRead): string | null {
+  const { reported, estimated } = read;
+  if (!(reported > 0)) return null;
+  if (reported < estimated * MIN_PROMPT_READ_RATIO) {
+    return `it read ${reported} prompt tokens of the ~${estimated} sent`;
+  }
+  const growth = previous ? estimated - previous.estimated : 0;
+  if (previous && growth >= MIN_PROMPT_GROWTH_TOKENS && reported <= previous.reported) {
+    return (
+      `the prompt grew by ~${growth} tokens since the last round, but it read ${reported} ` +
+      `tokens, no more than the ${previous.reported} it read before`
+    );
+  }
+  return null;
+}
+
 /**
  * Token cost of one round. Prefers the provider's reported `usage`; falls back
  * to the local estimate (request input + streamed output chars) when the
@@ -278,6 +334,9 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
   // stop never masquerades as an exact one (V38).
   let estimatedAccounting = false;
   const turnBudget = config.maxTurnTokens ?? DEFAULT_TURN_TOKEN_BUDGET;
+  // #1057 — the last round's prompt read, for the FLAT check. Only a provider-
+  // reported count is kept; an estimate compared with itself proves nothing.
+  let previousRead: PromptRead | undefined;
 
   // Wave B (Identify pre-stage). When the user phrase references existing
   // nodes ("the cube", "this", "selected"), round 1 is forced through
@@ -418,6 +477,28 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
       if (acct.total > 0) {
         sessionStore.addTokenUsage(acct.promptTokens, acct.completionTokens);
         totalTokens += acct.total;
+      }
+
+      // #1057 — refuse a round the model answered without reading all of it. The
+      // tokens were spent (accounted above), but nothing it asked for runs: its
+      // tool calls were chosen against a prompt with its start cut off. Thrown, not
+      // `break`, so the turn's earlier ops are not proposed either — a FLAT reading
+      // means the previous round was already at the window, and a half-finished
+      // plan is no safer to hand the director than a wrong one.
+      if (!acct.estimated) {
+        const read: PromptRead = { reported: acct.promptTokens, estimated: requestTokens };
+        const shortfall = promptReadShortfall(read, previousRead);
+        if (shortfall) {
+          const refusal =
+            `The model did not read the whole prompt: ${shortfall}. Its context window is ` +
+            `smaller than this request, so it would be acting on a prompt with its start cut ` +
+            `off. Nothing from this turn was run. Use a model or window that holds at least ` +
+            `~${requestTokens} tokens (for Ollama, raise the model's context length).`;
+          // Thrown only: the catch below sets the session error, which the chat
+          // already renders. Appending it as well printed the sentence twice.
+          throw new Error(refusal);
+        }
+        previousRead = read;
       }
 
       // A5 / #333: hard cost guard AFTER the round — catches a round whose
