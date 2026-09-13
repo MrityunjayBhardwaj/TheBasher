@@ -79,6 +79,7 @@ import { getGltfClone } from './asset/gltfCloneRegistry';
 // UV editor cannot disagree about which mesh a glTF child is. See that module's header.
 import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
+import { buildMeshGeometry } from './meshGeometryData';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -497,6 +498,10 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
       return projectionMaterialises(descriptor)
         ? composedOverSource(availabilityOf(descriptor.source.descriptor))
         : availabilityOf(descriptor.source.descriptor);
+    // #1049 — built synchronously from the data the descriptor carries, exactly like a box. A miss
+    // is malformed data, never a wait: nothing is loaded and nothing is mounted.
+    case 'mesh':
+      return 'procedural';
     default: {
       const unreachable: never = descriptor;
       return unreachable;
@@ -1027,6 +1032,9 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
     // has no caller."* The delegation is gone; a projection builds.
     case 'uvProject':
       return buildUVProject(d);
+    // #1049 — a stored mesh builds from its own data, here, like any other kind this registry owns.
+    case 'mesh':
+      return buildMeshGeometry(d.data).geometry;
     default: {
       const unreachable: never = d;
       console.error(

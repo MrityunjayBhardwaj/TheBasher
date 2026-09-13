@@ -219,6 +219,16 @@ describe('#638 the count is a leaf', () => {
       // from one mesh and the UV editor draw another, each correct alone. A leaf by the
       // strictest bar in this file, asserted in the row below.
       './firstMeshGeometry',
+      // #1049 — how a stored polygon mesh becomes a buffer. NOT a leaf, and said plainly: it
+      // imports `three`, the hasher and `polygonLayout`. What keeps the widening safe is that none
+      // of those reach back here — `polygonLayout` is a pinned leaf and the hasher imports nothing
+      // from the geometry model — so it opens no ring, and its exact set is pinned in the row
+      // below. The pure half (the data check and the split layout) was deliberately kept OUT of
+      // this module and in `polygonLayout`, because the count reads it and may only reach leaves.
+      //
+      // Why the registry needs it: a stored mesh is built HERE like every kind the registry owns,
+      // which is the whole difference from the clone road it replaces.
+      './meshGeometryData',
     ]);
   });
 
@@ -282,7 +292,18 @@ describe('#638 the count is a leaf', () => {
     expect(importsOf('src/app/firstMeshGeometry.ts')).toEqual(['three']);
     // #770 — the leaf added by the polygon flip, and a leaf by the strictest measure here:
     // one type import, no value imports at all.
+    // #1049 — still exactly that, with a stored mesh's layout added: its data type is the same
+    // single type import, which is why that half lives here rather than beside the build.
     expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
+    // #1049 — the registry's newest import, pinned so the claim in its widening note is checked:
+    // the day it reaches for the registry, a count or a store, it can close a ring through the
+    // registry, and this row is what says so.
+    expect(importsOf('src/app/meshGeometryData.ts')).toEqual([
+      'three',
+      '../nodes/types',
+      '../core/dag/hash',
+      './polygonLayout',
+    ]);
     // #716 — the leaf added at P2. Two type imports, no value imports at all, which is what
     // made widening the registry's set above safe rather than merely convenient.
     // #814 — `pointIdentity` stopped being a leaf too: its `bevel` arms read the same layout.

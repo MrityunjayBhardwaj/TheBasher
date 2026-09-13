@@ -36,6 +36,7 @@ import { pointCountOf, weldByPosition } from './pointIdentity';
 import { bevelLayoutOf } from './bevelLayout';
 import { alignedSplitRims, bufferReachabilityOf, topologyIsBufferOnly } from './builtRims';
 import { getForRead } from './geometryRegistry';
+import { meshWeldedRims } from './polygonLayout';
 
 /**
  * A geometry's edges, as pairs of TOPOLOGICAL point ids.
@@ -383,6 +384,10 @@ export function weldedPolygonsOf(
     // the projection changes what each corner READS, never what joins what.
     case 'uvProject':
       return weldedPolygonsOf(descriptor.source);
+    // #1049 — a stored mesh's corners already cite topological points, so these are its rims as
+    // stored. No buffer, no weld, and no ref needed.
+    case 'mesh':
+      return meshWeldedRims(descriptor.data);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`weldedPolygonsOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

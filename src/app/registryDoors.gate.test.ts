@@ -355,6 +355,9 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // The PRODUCE door — rehydrates OPFS bytes into a fresh instance, which is its output rather
   // than something it took.
   'src/app/asset/bakedGeometryStore.ts': 'fills a fresh BufferGeometry from OPFS bytes',
+  // #1049 — a stored mesh's build. Every call makes a new container from the mesh's own arrays and
+  // hands it to the registry, which owns it from there; nothing it writes was handed to it.
+  'src/app/meshGeometryData.ts': 'fills a fresh BufferGeometry from stored mesh data on each build',
   // A private world-space copy assembled from raw arrays, never a registry instance. three-mesh-bvh
   // reorders an index in place during construction — on THIS geometry, which is why it must be a
   // copy and why the final index is read back out rather than assumed.

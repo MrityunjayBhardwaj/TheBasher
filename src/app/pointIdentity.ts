@@ -501,6 +501,9 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
     // and different claims, and only the second is true here.
     case 'uvProject':
       return pointCountOf(descriptor.source.descriptor);
+    // #1049 — a stored mesh's points are topological by construction, so they are counted, not welded.
+    case 'mesh':
+      return counted(descriptor.data.points.length / 3);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`pointCountOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

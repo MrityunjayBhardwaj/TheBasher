@@ -40,6 +40,7 @@ import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity'
 import type { PointWeld } from './pointIdentity';
 import { getForRead, readGeometry } from './geometryRegistry';
 import { bevelLayoutOf } from './bevelLayout';
+import { meshSplitLayout } from './polygonLayout';
 
 /**
  * Cached per geometry. A built geometry is produced from exactly one descriptor, so its arity —
@@ -170,6 +171,16 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
     for (const rim of rims) for (const point of rim) map[cursor++] = point;
     return { map, points };
   }
+  // #1049 — READ OFF THE STORED CORNERS, NOT WELDED BY POSITION, for the bevel's reason above: a
+  // stored mesh may hold two distinct points at one position (a seam cut on purpose), and a
+  // position weld would merge them. Each split vertex was minted by a corner, and that corner
+  // names its point.
+  if (d.kind === 'mesh') {
+    const { vertexCorner } = meshSplitLayout(d.data);
+    const map = new Uint32Array(vertexCorner.length);
+    for (let v = 0; v < vertexCorner.length; v++) map[v] = d.data.cornerPoints[vertexCorner[v]];
+    return { map, points: d.data.points.length / 3 };
+  }
   if (d.kind !== 'array' && d.kind !== 'mirror' && d.kind !== 'subset') {
     const geometry = getForRead(ref);
     return geometry === undefined || geometry === null ? null : weldByPosition(geometry);
@@ -210,6 +221,7 @@ export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
     case 'subset':
     case 'bevel':
     case 'uvProject':
+    case 'mesh': // #1049 — a stored mesh states its topology in its data, the opposite of buffer-only.
       return false;
     default: {
       const unreachable: never = descriptor;
@@ -256,6 +268,7 @@ function bufferRootOf(ref: GeometryRef): GeometryRef | null {
       return ref;
     case 'box':
     case 'sphere':
+    case 'mesh': // #1049 — a stored mesh is its data; there is no buffer to wait for.
       return null;
     case 'array':
     case 'mirror':

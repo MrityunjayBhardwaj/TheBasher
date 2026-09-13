@@ -69,6 +69,7 @@ import { polygonLayoutOf } from './polygonLayout';
 import { pointCountOf } from './pointIdentity';
 import { edgeCountOf } from './edgeIdentity';
 import { availabilityOf, drawnByAssetClone } from './geometryRegistry';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
 
 /** The questions the model answers for a box. An imported mesh should answer all of them. */
 const QUESTIONS: ReadonlyArray<readonly [string, (d: GeometryDescriptor) => boolean]> = [
@@ -108,6 +109,20 @@ const SUBJECTS: ReadonlyArray<readonly [string, GeometryDescriptor]> = [
     },
   ],
   ['baked', { kind: 'baked', hash: 'abc', vertexCount: 24 }],
+  // #1049 — the kind an import writes from now on: a stored polygon mesh, owned by no format. A
+  // tetrahedron, so every question has faces, corners, points and edges to count.
+  [
+    'mesh',
+    meshGeometryRef(
+      packMeshData({
+        points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+        faceSizes: Uint32Array.from([3, 3, 3, 3]),
+        cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+        cornerUVs: null,
+        cornerNormals: null,
+      }),
+    ).descriptor,
+  ],
 ];
 
 /**
@@ -135,6 +150,10 @@ const ANSWERED: Readonly<Record<string, number>> = {
   // welded rims, so rims are the whole of the remaining distance.
   'gltf+captured+welded': 4,
   baked: 0,
+  // #1049 — the distance closed by changing what an import IS rather than by capturing more about
+  // a reference: a stored mesh carries its points, faces and corners, so it answers all six from
+  // its own data with nothing mounted. `baked` stays at 0 on purpose — it is not this kind.
+  mesh: 6,
 };
 
 function answeredBy(d: GeometryDescriptor): string[] {
@@ -213,7 +232,8 @@ describe('#1020 — the distance from an imported mesh to a box', () => {
     expect(QUESTIONS.length).toBe(6);
     // 5 → 6 at #1040: the fully-captured imported child joined as its own subject rather than
     // replacing the face-count-only one, because both populations are still reachable.
-    expect(SUBJECTS.length).toBe(6);
+    // 6 → 7 at #1049: the stored mesh an import now writes, which is the row the goal is about.
+    expect(SUBJECTS.length).toBe(7);
     expect(Object.keys(ANSWERED).sort()).toEqual(SUBJECTS.map(([n]) => n).sort());
   });
 });

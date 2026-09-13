@@ -43,6 +43,7 @@ import { componentCountOf } from '../nodes/componentSelection';
 import { getForRead } from './geometryRegistry';
 import { arrayGeometryRef, bevelGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { weldByPosition } from './pointIdentity';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
 import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
 import { stripComments } from '../test-utils/sourceScan';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
@@ -86,6 +87,17 @@ const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
   subset: arrayGeometryRef(box, 2, [1, 0, 0]), // a generator stands in; see the note below
   bevel: arrayGeometryRef(sphere, 2, [1, 0, 0]),
   uvProject: arrayGeometryRef(box, 2, [0, 1, 0]),
+  // #1049 — the kind this file was written to watch for: an imported mesh that states its edge
+  // count. It states one AND always builds, from its own data, so the pair cannot come apart.
+  mesh: meshGeometryRef(
+    packMeshData({
+      points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      faceSizes: Uint32Array.from([3, 3, 3, 3]),
+      cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+      cornerUVs: null,
+      cornerNormals: null,
+    }),
+  ),
 };
 
 /** Composed refs over BUFFER sources — where a count and a buffer are most likely to diverge. */
@@ -184,7 +196,9 @@ describe('#1039 — a derivable edge count implies readable geometry', () => {
     rows.push(...mounted);
 
     const bad = rows.filter(([, ref]) => dangerous(ref)).map(([label]) => label);
-    expect(rows.length, 'control: the census examined every row').toBe(17);
+    // 17 → 18 at #1049: the stored-mesh representative, the first imported shape that states an
+    // edge count without anything to mount.
+    expect(rows.length, 'control: the census examined every row').toBe(18);
     expect(
       bad,
       'A descriptor now states an edge count while its geometry cannot be read. That combination ' +

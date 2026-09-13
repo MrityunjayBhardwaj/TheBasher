@@ -30,10 +30,109 @@
 // REF: node_modules/three/src/geometries/{Sphere,Box}Geometry.js; src/app/faceCount.ts (the
 //      counts this must not contradict); issues #769, #770, #736, #718.
 
-import type { GeometryDescriptor } from '../nodes/types';
+import type { GeometryDescriptor, MeshGeometryData } from '../nodes/types';
 
 /** One polygon's rim: source vertex indices, in the winding order the fan must follow. */
 export type PolygonRim = readonly number[];
+
+// ── #1049 — A STORED MESH'S LAYOUT, HERE AND NOT BESIDE ITS BUILD ─────────────────────────
+//
+// A stored mesh states its polygons, so every layout question about it is arithmetic over its
+// arrays. That arithmetic lives in this module because this module is a LEAF (one type import,
+// pinned by `faceCountLeaf.gate.test.ts`) and the count modules that ask the questions may only
+// reach leaves. Homing it beside the buffer build instead put `three` and the hasher under the
+// count and opened a ring back into this file — both measured red by the standing gates.
+
+/** Why this data is not a mesh, or `null` when it is. Checked before anything is derived from it. */
+export function meshDataProblem(data: MeshGeometryData): string | null {
+  if (data.points.length % 3 !== 0)
+    return `points holds ${data.points.length} numbers, not a multiple of 3`;
+  const pointCount = data.points.length / 3;
+  let corners = 0;
+  for (let f = 0; f < data.faceSizes.length; f++) {
+    if (data.faceSizes[f] < 3) return `face ${f} has ${data.faceSizes[f]} corners; a face needs 3`;
+    corners += data.faceSizes[f];
+  }
+  if (corners !== data.cornerPoints.length)
+    return `faces declare ${corners} corners but ${data.cornerPoints.length} corner points are stored`;
+  for (let c = 0; c < data.cornerPoints.length; c++) {
+    if (data.cornerPoints[c] >= pointCount)
+      return `corner ${c} cites point ${data.cornerPoints[c]} of ${pointCount}`;
+  }
+  if (data.cornerUVs !== null && data.cornerUVs.length !== corners * 2)
+    return `cornerUVs holds ${data.cornerUVs.length} numbers for ${corners} corners`;
+  if (data.cornerNormals !== null && data.cornerNormals.length !== corners * 3)
+    return `cornerNormals holds ${data.cornerNormals.length} numbers for ${corners} corners`;
+  return null;
+}
+
+/**
+ * Which render vertex every corner of a stored mesh lands on, without allocating a buffer.
+ *
+ * A render vertex carries one uv and one normal, so two corners on one point share a vertex
+ * exactly when both of those agree. The split key is the point plus the corner's own attribute
+ * VALUES: a stored mesh keeps values per corner, so equality of values is the only identity there
+ * is. `vertexCorner[v]` is the first corner that minted vertex `v`; the build reads every
+ * attribute of `v` from that corner, so these rims and the drawn buffer cannot disagree.
+ */
+export interface MeshSplitLayout {
+  readonly splitRims: readonly PolygonRim[];
+  readonly vertexCorner: Uint32Array;
+}
+
+const splitLayoutCache = new WeakMap<MeshGeometryData, MeshSplitLayout>();
+
+export function meshSplitLayout(data: MeshGeometryData): MeshSplitLayout {
+  const hit = splitLayoutCache.get(data);
+  if (hit !== undefined) return hit;
+  const problem = meshDataProblem(data);
+  if (problem !== null) throw new Error(`meshSplitLayout: ${problem}`);
+
+  const { faceSizes, cornerPoints, cornerUVs, cornerNormals } = data;
+  const vertexOf = new Map<string, number>();
+  const vertexCorner: number[] = [];
+  const splitRims: PolygonRim[] = [];
+  let corner = 0;
+  for (let f = 0; f < faceSizes.length; f++) {
+    const rim: number[] = [];
+    for (let k = 0; k < faceSizes[f]; k++, corner++) {
+      let key = String(cornerPoints[corner]);
+      if (cornerUVs !== null) key += `/${cornerUVs[corner * 2]},${cornerUVs[corner * 2 + 1]}`;
+      if (cornerNormals !== null) {
+        key += `/${cornerNormals[corner * 3]},${cornerNormals[corner * 3 + 1]},${cornerNormals[corner * 3 + 2]}`;
+      }
+      let vertex = vertexOf.get(key);
+      if (vertex === undefined) {
+        vertex = vertexCorner.length;
+        vertexOf.set(key, vertex);
+        vertexCorner.push(corner);
+      }
+      rim.push(vertex);
+    }
+    splitRims.push(rim);
+  }
+  const layout = { splitRims, vertexCorner: Uint32Array.from(vertexCorner) };
+  splitLayoutCache.set(data, layout);
+  return layout;
+}
+
+const weldedRimsCache = new WeakMap<MeshGeometryData, readonly PolygonRim[]>();
+
+/** Each face's corners as point indices — a stored mesh's rims in TOPOLOGICAL numbering. */
+export function meshWeldedRims(data: MeshGeometryData): readonly PolygonRim[] {
+  const hit = weldedRimsCache.get(data);
+  if (hit !== undefined) return hit;
+  const problem = meshDataProblem(data);
+  if (problem !== null) throw new Error(`meshWeldedRims: ${problem}`);
+  const rims: PolygonRim[] = [];
+  let cursor = 0;
+  for (let f = 0; f < data.faceSizes.length; f++) {
+    rims.push(Array.from(data.cornerPoints.subarray(cursor, cursor + data.faceSizes[f])));
+    cursor += data.faceSizes[f];
+  }
+  weldedRimsCache.set(data, rims);
+  return rims;
+}
 
 /**
  * What a descriptor can say about its polygons — three answers, not two.
@@ -373,6 +472,11 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
     // a projected handle as over the handle underneath it.
     case 'uvProject':
       return polygonLayoutOf(descriptor.source.descriptor);
+    // #1049 — a stored mesh lays out from its own corners. The rims are in the SPLIT numbering the
+    // build writes, the same numbering a box's rims use, and they are computed without building a
+    // buffer. The array is cached per mesh, so the arity and corner caches keyed on it stay warm.
+    case 'mesh':
+      return { kind: 'laid-out', polygons: meshSplitLayout(descriptor.data).splitRims };
     default: {
       const unreachable: never = descriptor;
       throw new Error(`polygonLayoutOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

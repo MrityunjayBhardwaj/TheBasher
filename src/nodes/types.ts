@@ -508,6 +508,29 @@ export interface MeshTransform {
 }
 
 /**
+ * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
+ *
+ * Points are TOPOLOGICAL (a cube has 8), matching what `pointCountOf` means for a box. What makes
+ * a render vertex split — a UV seam, a hard normal — lives on the CORNER, which is where Blender
+ * keeps it too (`UVMap` is a corner attribute). Faces are listed in order; face `f` owns the next
+ * `faceSizes[f]` entries of every corner array.
+ *
+ * Immutable by contract: instances are shared by every descriptor minted from one params object.
+ */
+export interface MeshGeometryData {
+  /** xyz per point. */
+  readonly points: Float32Array;
+  /** Corners per face, each at least 3. */
+  readonly faceSizes: Uint32Array;
+  /** The point each corner sits on. Length = the sum of `faceSizes`. */
+  readonly cornerPoints: Uint32Array;
+  /** uv per corner, or `null` when the mesh has no UV map. */
+  readonly cornerUVs: Float32Array | null;
+  /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
+  readonly cornerNormals: Float32Array | null;
+}
+
+/**
  * A deterministic handle into the geometry registry (§48). The `key` is built
  * by the resolver from producer identity + params (deterministic string), so
  * identical params yield an identical key (cache hit, no false sharing). The
@@ -586,6 +609,22 @@ export type GeometryDescriptor =
       readonly pointCount?: number;
     }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
+  /**
+   * #1049 — A STORED POLYGON MESH: geometry that IS its data rather than a recipe for it.
+   *
+   * This is what an imported mesh becomes, and it is deliberately owned by no format. Blender's
+   * glTF importer produces an ordinary Mesh datablock saved inside the `.blend`, indistinguishable
+   * from one modelled by hand; this kind is that datablock. Any producer may write it — a reader,
+   * and later Apply Transform or an edit — and nothing downstream may ask which one did.
+   *
+   * It carries the mesh ITSELF, which the handle rule above ("NEVER the buffers themselves") does
+   * not forbid in spirit: that rule exists because descriptors of recipes are rebuilt from params,
+   * and the buffers are derived. Here the data is authored, the descriptor is still never
+   * persisted (the owning node's params are), and the typed arrays are shared, immutable and
+   * decoded once per params object. So every question a box answers from `size`, this answers
+   * from `data`, synchronously, with nothing to load or mount.
+   */
+  | { readonly kind: 'mesh'; readonly data: MeshGeometryData }
   // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry
   // operator over a `source` handle. The registry builds the source on demand
   // (geometryRegistry.getForRead(source)) then applies the op. `array` replicates the

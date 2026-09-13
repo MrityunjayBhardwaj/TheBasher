@@ -183,6 +183,9 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
       // buffer vertex count cannot state a face count without the index buffer it was
       // serialised beside. Answering from it would be arithmetic on the wrong quantity.
       return null;
+    // #1049 — a stored mesh lists its faces, so the count is the list's length.
+    case 'mesh':
+      return descriptor.data.faceSizes.length;
     default: {
       const unreachable: never = descriptor;
       throw new Error(`faceCountOf: undeclared descriptor kind ${JSON.stringify(unreachable)}`);
