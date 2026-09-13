@@ -724,11 +724,13 @@ export function boot(): Promise<void> {
             throw new Error('__basher_importGltfNative: project has no `scene` output');
           }
           const native = await import('../core/import/nativeGltfImport');
+          const { storeImageInOpenProject } = await import('./asset/importGltf');
           const result = await native.buildNativeGltfImportOps({
             buffer,
             assetRef,
             sceneNodeId: sceneRef.node,
             resolveBuffer,
+            storeImage: storeImageInOpenProject,
           });
           if ('refused' in result) {
             throw new Error(`native import refused: ${result.refused} (${result.issue})`);

@@ -13,12 +13,20 @@
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
 // is refused WHOLE, by name, with the issue that brings it across: skinning (#393), clips and
-// nesting (#1051), textures (#1050), several primitives on one mesh (#1052), morph targets (#1060),
+// nesting (#1051), several primitives on one mesh (#1052), morph targets (#1060),
 // a mesh shared by several nodes (#1061), and vertex attributes or extensions the native model
 // would drop (#1062). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
 // handover the decision on #1049 rules out. The refusals are the distance still to go, stated where
 // an import meets it.
+//
+// ── IMAGES COME ACROSS AS THE PROJECT'S OWN FILES (#1050) ───────────────────────────────────────
+//
+// Every image a material samples is written into the project's image folder as the file's own
+// PNG/JPEG bytes, and the material's texture refs name those files, with the sampler translated into
+// three's constants by the loader's own table. Everything that can refuse — every mesh, every
+// material, every image — is read before the first image is written, so a refused import leaves no
+// file behind.
 //
 // ── THE READER IS NOT THE LOADER, AND WHERE IT FOLLOWS THE LOADER IT SAYS SO ────────────────────
 //
@@ -32,10 +40,33 @@
 //      (container + accessors), src/app/meshGeometryData.ts (packing), src/nodes/PolyMeshData.ts;
 //      issues #1049, #1054, #1050, #1051, #1052, #393.
 
-import { BufferAttribute, BufferGeometry } from 'three';
-import type { MeshGeometryData, Vec3 } from '../../nodes/types';
+import {
+  BufferAttribute,
+  BufferGeometry,
+  ClampToEdgeWrapping,
+  LinearFilter,
+  LinearMipmapLinearFilter,
+  LinearMipmapNearestFilter,
+  MirroredRepeatWrapping,
+  NearestFilter,
+  NearestMipmapLinearFilter,
+  NearestMipmapNearestFilter,
+  RepeatWrapping,
+} from 'three';
+import type {
+  BakedTextureRef,
+  InlineMaterialSpec,
+  MeshGeometryData,
+  Vec3,
+} from '../../nodes/types';
 import type { Op } from '../dag/types';
-import { parseGltfContainer, readAccessor, resolveBuffers, type GltfJson } from './glb';
+import {
+  decodeDataUri,
+  parseGltfContainer,
+  readAccessor,
+  resolveBuffers,
+  type GltfJson,
+} from './glb';
 import {
   buildNodeNameMap,
   computeGltfBoundsCenter,
@@ -63,9 +94,9 @@ export interface NativeImportResult {
 type NativeGltfJson = GltfJson & {
   extensionsUsed?: string[];
   extensionsRequired?: string[];
-  textures?: unknown[];
-  images?: unknown[];
-  samplers?: { wrapS?: number; wrapT?: number }[];
+  textures?: { source?: number; sampler?: number }[];
+  images?: { uri?: string; bufferView?: number; mimeType?: string }[];
+  samplers?: { wrapS?: number; wrapT?: number; magFilter?: number; minFilter?: number }[];
   meshes?: {
     primitives?: {
       material?: number;
@@ -98,6 +129,34 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_emissive_strength',
 ]);
 
+// #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures
+// (`IR_SLOT_SOURCES` in the converter). A texture anywhere else, such as a clearcoat texture inside
+// an extension this road holds for its factors, would be read past and left behind.
+const HELD_TEXTURE_SLOTS = new Set([
+  'pbrMetallicRoughness.baseColorTexture',
+  'pbrMetallicRoughness.metallicRoughnessTexture',
+  'normalTexture',
+  'occlusionTexture',
+  'emissiveTexture',
+]);
+
+// A glTF sampler's GL enums as three.js constants, by GLTFLoader's own tables and defaults
+// (`GLTFLoader.js:2198-2211`, `:3229-3232`, three r169), so a native texture samples as the clone
+// road's does. An absent or unknown value takes the loader's default.
+const THREE_FILTER_OF: Readonly<Record<number, number>> = {
+  9728: NearestFilter,
+  9729: LinearFilter,
+  9984: NearestMipmapNearestFilter,
+  9985: LinearMipmapNearestFilter,
+  9986: NearestMipmapLinearFilter,
+  9987: LinearMipmapLinearFilter,
+};
+const THREE_WRAP_OF: Readonly<Record<number, number>> = {
+  33071: ClampToEdgeWrapping,
+  33648: MirroredRepeatWrapping,
+  10497: RepeatWrapping,
+};
+
 /** The file-level reasons an import cannot be native yet, checked before any bytes are read. */
 function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
   if ((json.extensionsRequired?.length ?? 0) > 0) {
@@ -118,14 +177,9 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1051',
     };
   }
-  if ((json.textures?.length ?? 0) > 0 || (json.images?.length ?? 0) > 0) {
-    return {
-      refused: 'it carries textures, whose pixels are not stored in the project yet',
-      issue: '#1050',
-    };
-  }
-  // After textures, so a textured file names the texture step first (texture transforms only mean
-  // anything once its pixels come across).
+  // `KHR_texture_transform` is not held: the converter captures its placement, but the native material
+  // pivots a placement about the texture centre where glTF pivots about the UV origin
+  // (`materialRegistry.ts`, `build`), so a transformed texture would draw shifted.
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
   if (unheld.length > 0) {
     return {
@@ -338,6 +392,173 @@ export function readGltfMesh(
   };
 }
 
+/** #1050 — the native road's own arguments: the shared ones, plus where its images go. */
+export interface NativeGltfImportArgs extends GltfImportChainArgs {
+  /**
+   * Store an image's encoded bytes in the project and return the key its texture ref names.
+   * Required, so there is no road on which a textured file arrives with nowhere to put its pixels.
+   */
+  readonly storeImage: (bytes: Uint8Array, mime: string) => Promise<string>;
+}
+
+interface TextureSite {
+  /** Where the reference sits in the material, as a dotted path. */
+  readonly path: string;
+  readonly info: { readonly index: number } & Readonly<Record<string, unknown>>;
+}
+
+/** Every texture reference in a material, found by shape wherever it nests. */
+function textureSites(value: unknown, path = '', out: TextureSite[] = []): TextureSite[] {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return out;
+  const o = value as Record<string, unknown>;
+  if (path !== '' && typeof o.index === 'number') {
+    out.push({ path, info: o as TextureSite['info'] });
+  }
+  for (const [key, child] of Object.entries(o)) {
+    textureSites(child, path === '' ? key : `${path}.${key}`, out);
+  }
+  return out;
+}
+
+function materialOf(json: NativeGltfJson, materialIndex: number): unknown {
+  return (json.materials as unknown[] | undefined)?.[materialIndex] ?? {};
+}
+
+/** Why a material's textures cannot come across whole, or null. */
+function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImportRefusal | null {
+  for (const { path, info } of textureSites(materialOf(json, materialIndex))) {
+    const where = `material ${materialIndex} ${path}`;
+    if (!HELD_TEXTURE_SLOTS.has(path)) {
+      return { refused: `${where} is a texture the native material does not hold`, issue: '#1062' };
+    }
+    if ((info.texCoord ?? 0) !== 0) {
+      return {
+        refused: `${where} samples UV set ${String(info.texCoord)}, and a native mesh holds one`,
+        issue: '#1062',
+      };
+    }
+    const extensions = Object.keys((info.extensions as object | undefined) ?? {});
+    if (extensions.length > 0) {
+      return {
+        refused: `${where} uses ${extensions.join(', ')}, which a native import would drop`,
+        issue: '#1062',
+      };
+    }
+    if (path === 'normalTexture' && (info.scale ?? 1) !== 1) {
+      return {
+        refused: `${where} scales its normals by ${String(info.scale)}, which the native material does not hold`,
+        issue: '#1062',
+      };
+    }
+    if (path === 'occlusionTexture' && (info.strength ?? 1) !== 1) {
+      return {
+        refused: `${where} has occlusion strength ${String(info.strength)}, which the native material does not hold`,
+        issue: '#1062',
+      };
+    }
+  }
+  return null;
+}
+
+interface ReadImage {
+  readonly bytes: Uint8Array;
+  readonly mime: string;
+}
+
+/** The image type the bytes ARE, by signature. A declared `mimeType` is a claim; this is the file. */
+function sniffImage(bytes: Uint8Array): string | null {
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 &&
+    bytes[1] === 0x50 &&
+    bytes[2] === 0x4e &&
+    bytes[3] === 0x47
+  ) {
+    return 'image/png';
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return 'image/jpeg';
+  }
+  return null;
+}
+
+/** The image a texture samples, as the file's own encoded bytes, or why it cannot be read. */
+async function readTextureImage(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  textureIndex: number,
+  resolveBuffer: GltfImportChainArgs['resolveBuffer'],
+): Promise<ReadImage | NativeImportRefusal> {
+  const texture = json.textures?.[textureIndex];
+  if (typeof texture?.source !== 'number') {
+    return {
+      refused: `texture ${textureIndex} has no image of its own (a source inside an extension is not decoded)`,
+      issue: '#1063',
+    };
+  }
+  const image = json.images?.[texture.source];
+  let bytes: Uint8Array | null = null;
+  if (typeof image?.bufferView === 'number') {
+    const view = json.bufferViews?.[image.bufferView];
+    const bin = view ? buffers[view.buffer] : undefined;
+    const offset = view?.byteOffset ?? 0;
+    if (view && bin && offset + view.byteLength <= bin.byteLength) {
+      bytes = bin.subarray(offset, offset + view.byteLength);
+    }
+  } else if (typeof image?.uri === 'string') {
+    if (image.uri.startsWith('data:')) bytes = decodeDataUri(image.uri);
+    else if (resolveBuffer) bytes = await resolveBuffer(image.uri);
+  }
+  if (bytes === null) {
+    return { refused: `image ${texture.source} could not be read`, issue: '#1063' };
+  }
+  const mime = sniffImage(bytes);
+  if (mime === null) {
+    return { refused: `image ${texture.source} is neither PNG nor JPEG`, issue: '#1063' };
+  }
+  return { bytes, mime };
+}
+
+/**
+ * A material with every captured texture pointing at the project's copy of its image. The captured
+ * refs say "inherit the clone's texture" and carry GL enums; a native material has no clone, so each
+ * becomes a project ref sampled the way the file asks.
+ */
+function withProjectImages(
+  material: InlineMaterialSpec,
+  json: NativeGltfJson,
+  imageKeys: ReadonlyMap<number, string>,
+): InlineMaterialSpec {
+  const maps = {} as { -readonly [K in keyof InlineMaterialSpec['maps']]: BakedTextureRef | null };
+  for (const slot of Object.keys(material.maps) as (keyof InlineMaterialSpec['maps'])[]) {
+    const captured = material.maps[slot];
+    if (captured === null) {
+      maps[slot] = null;
+      continue;
+    }
+    const textureIndex = captured.gltfTexture;
+    const key = textureIndex === undefined ? undefined : imageKeys.get(textureIndex);
+    if (textureIndex === undefined || key === undefined) {
+      throw new Error(
+        `nativeGltfImport: the ${slot} map was captured but its image was never stored`,
+      );
+    }
+    const samplerIndex = json.textures?.[textureIndex]?.sampler;
+    const sampler = samplerIndex === undefined ? undefined : json.samplers?.[samplerIndex];
+    maps[slot] = {
+      hash: key,
+      store: 'project',
+      colorSpace: captured.colorSpace,
+      flipY: false,
+      wrapS: THREE_WRAP_OF[sampler?.wrapS ?? -1] ?? RepeatWrapping,
+      wrapT: THREE_WRAP_OF[sampler?.wrapT ?? -1] ?? RepeatWrapping,
+      magFilter: THREE_FILTER_OF[sampler?.magFilter ?? -1] ?? LinearFilter,
+      minFilter: THREE_FILTER_OF[sampler?.minFilter ?? -1] ?? LinearMipmapLinearFilter,
+    };
+  }
+  return { ...material, maps };
+}
+
 /**
  * Build the native import's ops, or refuse the whole file by name.
  *
@@ -345,7 +566,7 @@ export function readGltfMesh(
  * re-importing a file yields the same op stream.
  */
 export async function buildNativeGltfImportOps(
-  args: GltfImportChainArgs,
+  args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
   const json = parsed as NativeGltfJson;
@@ -374,18 +595,47 @@ export async function buildNativeGltfImportOps(
   const objectIds: string[] = [];
   const materialTables = { textures: json.textures as never, samplers: json.samplers };
 
+  // #1050 — everything that can refuse is read before anything is stored: every mesh, every
+  // material, every image. A refused import leaves no file behind in the project.
+  const meshes: MeshGeometryData[] = [];
+  const textures = new Set<number>();
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const data = readGltfMesh(json, buffers, node.mesh as number);
     if ('refused' in data) return data;
+    meshes.push(data);
+    const materialIndex = json.meshes![node.mesh as number].primitives![0].material;
+    if (typeof materialIndex !== 'number') continue;
+    const unheld = materialRefusal(json, materialIndex);
+    if (unheld !== null) return unheld;
+    for (const { info } of textureSites(materialOf(json, materialIndex))) textures.add(info.index);
+  }
+  const images = new Map<number, ReadImage>();
+  for (const texture of [...textures].sort((a, b) => a - b)) {
+    const image = await readTextureImage(json, buffers, texture, args.resolveBuffer);
+    if ('refused' in image) return image;
+    images.set(texture, image);
+  }
+  const imageKeys = new Map<number, string>();
+  for (const [texture, image] of images) {
+    imageKeys.set(texture, await args.storeImage(image.bytes, image.mime));
+  }
+
+  for (let i = 0; i < json.nodes.length; i++) {
+    const node = json.nodes[i];
+    const data = meshes[i];
     const prim = json.meshes![node.mesh as number].primitives![0];
     const key = keyByGltfNodeIndex[i];
     const dataId = hashId('nativeMesh', args.assetRef, key);
     const objectId = hashId('nativeObject', args.assetRef, key);
-    const material = gltfJsonMaterialToOpenpbr(
-      typeof prim.material === 'number' ? (json.materials?.[prim.material] ?? {}) : {},
-      materialTables,
-      { vertexColors: prim.attributes?.COLOR_0 !== undefined },
+    const material = withProjectImages(
+      gltfJsonMaterialToOpenpbr(
+        typeof prim.material === 'number' ? (json.materials?.[prim.material] ?? {}) : {},
+        materialTables,
+        { vertexColors: prim.attributes?.COLOR_0 !== undefined },
+      ),
+      json,
+      imageKeys,
     );
     const trs = defaultTRS(node);
     ops.push(

@@ -16,6 +16,15 @@ import { emptyDagState, type DagState } from '../dag/state';
 import { PolyMeshDataNode, PolyMeshDataParams } from '../../nodes/PolyMeshData';
 import type { Op } from '../dag/types';
 import type { MeshDataValue } from '../../nodes/types';
+import { join } from 'node:path';
+import * as THREE from 'three';
+import { MemoryStorage } from '../storage';
+import { listProjectImages, projectImagePath, writeProjectImage } from '../project/projectImages';
+
+/** A store an import must never reach: a file with no images, or one refused before storing. */
+async function noImages(): Promise<string> {
+  throw new Error('storeImage was reached');
+}
 
 function fixture(path: string): ArrayBuffer {
   const bytes = readFileSync(path);
@@ -32,6 +41,17 @@ function jsonFixture(mutate: (json: Record<string, unknown>) => void): ArrayBuff
 }
 
 const CUBE = 'public/assets/cube.gltf';
+const TEXTURED = 'public/assets/albedo-textured-quad.gltf';
+
+/** The textured quad, edited. Its one material samples texture 0 as base colour. */
+function texturedFixture(mutate: (json: Record<string, unknown>) => void): ArrayBuffer {
+  const json = JSON.parse(readFileSync(TEXTURED, 'utf8')) as Record<string, unknown>;
+  mutate(json);
+  return new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer;
+}
+
+type MaterialJson = Record<string, unknown> & { pbrMetallicRoughness: Record<string, unknown> };
+const materialOf = (json: Record<string, unknown>) => (json.materials as MaterialJson[])[0];
 
 describe('readGltfMesh — the cube', () => {
   it('reads 8 welded points, 12 triangles and a corner each for UVs and normals', async () => {
@@ -84,6 +104,7 @@ describe('buildNativeGltfImportOps', () => {
       buffer: fixture(CUBE),
       assetRef: 'user-imports/native/cube.gltf',
       sceneNodeId: 'n_scene',
+      storeImage: noImages,
     });
     if ('refused' in result) throw new Error(result.refused);
 
@@ -119,6 +140,7 @@ describe('buildNativeGltfImportOps', () => {
       buffer: fixture(CUBE),
       assetRef: 'user-imports/native/cube.gltf',
       sceneNodeId: 'n_scene',
+      storeImage: noImages,
     };
     expect(JSON.stringify(await buildNativeGltfImportOps(args))).toBe(
       JSON.stringify(await buildNativeGltfImportOps(args)),
@@ -127,7 +149,80 @@ describe('buildNativeGltfImportOps', () => {
 
   const refusals: ReadonlyArray<readonly [string, () => ArrayBuffer, string]> = [
     ['a mesh with two primitives', () => fixture('public/assets/two-material-quad.gltf'), '#1052'],
-    ['a textured mesh', () => fixture('public/assets/albedo-textured-quad.gltf'), '#1050'],
+    // #1050 — a texture comes across only as the native material holds it; each guard gets a case
+    // only it can refuse.
+    [
+      'a texture in a slot the native material does not hold',
+      () =>
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_clearcoat'];
+          materialOf(json).extensions = {
+            KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatTexture: { index: 0 } },
+          };
+        }),
+      '#1062',
+    ],
+    [
+      'a texture on a second UV set',
+      () =>
+        texturedFixture((json) => {
+          (
+            materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
+          ).texCoord = 1;
+        }),
+      '#1062',
+    ],
+    [
+      'a texture reference carrying an extension',
+      () =>
+        texturedFixture((json) => {
+          (
+            materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
+          ).extensions = { KHR_texture_transform: { offset: [0.5, 0] } };
+        }),
+      '#1062',
+    ],
+    [
+      'a normal map with a scale',
+      () =>
+        texturedFixture((json) => {
+          materialOf(json).normalTexture = { index: 0, scale: 2 };
+        }),
+      '#1062',
+    ],
+    [
+      'an occlusion map with a strength',
+      () =>
+        texturedFixture((json) => {
+          materialOf(json).occlusionTexture = { index: 0, strength: 0.5 };
+        }),
+      '#1062',
+    ],
+    ['the UV-transform quad', () => fixture('public/assets/uv-transform-quad.gltf'), '#1062'],
+    [
+      'an image that is neither PNG nor JPEG',
+      () =>
+        texturedFixture((json) => {
+          json.images = [{ uri: 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAw' }];
+        }),
+      '#1063',
+    ],
+    [
+      'a texture whose image lives only inside an extension',
+      () =>
+        texturedFixture((json) => {
+          json.textures = [{ sampler: 0, extensions: { KHR_texture_basisu: { source: 0 } } }];
+        }),
+      '#1063',
+    ],
+    [
+      'an image in a buffer view that does not exist',
+      () =>
+        texturedFixture((json) => {
+          json.images = [{ bufferView: 99, mimeType: 'image/png' }];
+        }),
+      '#1063',
+    ],
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
     [
       'a nested hierarchy',
@@ -202,6 +297,89 @@ describe('buildNativeGltfImportOps', () => {
     ],
   ];
 
+  it('#1050 — a textured quad arrives native: its image stored in the project, its map sampled as the file asks', async () => {
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TEXTURED),
+      assetRef: 'user-imports/native/albedo.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: (bytes, mime) => writeProjectImage(storage, 'p', bytes, mime),
+    });
+    if ('refused' in result) throw new Error(result.refused);
+
+    // One image, byte for byte the PNG the file embeds.
+    const keys = await listProjectImages(storage, 'p');
+    expect(keys).toHaveLength(1);
+    const embedded = (JSON.parse(readFileSync(TEXTURED, 'utf8')) as { images: { uri: string }[] })
+      .images[0].uri;
+    const png = Buffer.from(embedded.slice(embedded.indexOf(',') + 1), 'base64');
+    expect(Buffer.from(await storage.read(projectImagePath('p', keys[0])))).toEqual(png);
+
+    // The material names that file, sampled NEAREST and repeating as the file's sampler says, and
+    // nothing in the ops still speaks glTF or carries the pixels.
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const albedo = PolyMeshDataParams.parse(data.params).material?.maps.albedo;
+    expect(albedo).toEqual({
+      hash: keys[0],
+      store: 'project',
+      colorSpace: 'srgb',
+      flipY: false,
+      wrapS: THREE.RepeatWrapping,
+      wrapT: THREE.RepeatWrapping,
+      magFilter: THREE.NearestFilter,
+      minFilter: THREE.NearestFilter,
+    });
+    const ops = JSON.stringify(result.ops);
+    expect(ops).not.toContain('gltfTexture');
+    expect(ops).not.toContain('data:image');
+  });
+
+  it('#1050 — a multi-file glTF reads the image beside it', async () => {
+    const entry = 'public/fixtures/multifile/spaced/scene.gltf';
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(entry),
+      assetRef: 'user-imports/spaced/scene.gltf',
+      sceneNodeId: 'n_scene',
+      resolveBuffer: async (uri) =>
+        readFileSync(join('public/fixtures/multifile/spaced', decodeURIComponent(uri))),
+      storeImage: (bytes, mime) => writeProjectImage(storage, 'p', bytes, mime),
+    });
+    expect('refused' in result ? result.refused : 'native').toBe('native');
+    expect(await listProjectImages(storage, 'p')).toHaveLength(1);
+  });
+
+  it('#1050 — one image sampled by two slots is stored once', async () => {
+    const entry = 'public/fixtures/multifile/metal/scene.gltf';
+    const stored: string[] = [];
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(entry),
+      assetRef: 'user-imports/metal/scene.gltf',
+      sceneNodeId: 'n_scene',
+      resolveBuffer: async (uri) =>
+        readFileSync(join('public/fixtures/multifile/metal', decodeURIComponent(uri))),
+      storeImage: async (bytes, mime) => {
+        const key = await writeProjectImage(storage, 'p', bytes, mime);
+        stored.push(key);
+        return key;
+      },
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    expect(stored).toHaveLength(1);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const maps = PolyMeshDataParams.parse(data.params).material?.maps;
+    expect(maps?.albedo?.hash).toBe(stored[0]);
+    expect(maps?.roughness?.hash).toBe(stored[0]);
+    expect(maps?.metalness?.hash).toBe(stored[0]);
+  });
+
   it.each(['cube', 'cone', 'sphere'])(
     '%s.gltf, which carries only what a stored mesh holds, still imports natively',
     async (name) => {
@@ -209,6 +387,7 @@ describe('buildNativeGltfImportOps', () => {
         buffer: fixture(`public/assets/${name}.gltf`),
         assetRef: `user-imports/native/${name}.gltf`,
         sceneNodeId: 'n_scene',
+        storeImage: noImages,
       });
       expect('refused' in result ? result.refused : 'native').toBe('native');
     },
@@ -221,6 +400,8 @@ describe('buildNativeGltfImportOps', () => {
         buffer: buffer(),
         assetRef: 'user-imports/native/x.gltf',
         sceneNodeId: 'n_scene',
+        // A refused file stores nothing: every refusal is read before the first image is written.
+        storeImage: noImages,
       });
       expect('refused' in result).toBe(true);
       if (!('refused' in result)) return;

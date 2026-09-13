@@ -60,6 +60,8 @@ import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMate
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
 import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
+import { writeProjectImage } from '../../core/project/projectImages';
+import { useProjectStore } from '../../core/project/store';
 import {
   opfsSiblingPath,
   missingGltfSiblings,
@@ -194,6 +196,7 @@ export async function buildGltfImportOpsFromOpfs(
     assetRef: path,
     sceneNodeId,
     resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
+    storeImage: storeImageInOpenProject,
   };
   // A reader failure is a refusal like any other: the file still arrives, through the road that
   // can hold it, and the notice says what the native reader could not do.
@@ -208,6 +211,17 @@ export async function buildGltfImportOpsFromOpfs(
   }
   if (!('refused' in native)) return { road: 'native', ...native };
   return { road: 'clone', nativeRefusal: native, ...(await buildGltfImportOps(args, state)) };
+}
+
+/**
+ * #1050 — where a native import's images go: the open project's image folder. Every product entry
+ * point imports into the project on screen, so an import with no project open has nowhere to put
+ * what it read, and says so rather than storing it somewhere nobody owns.
+ */
+export async function storeImageInOpenProject(bytes: Uint8Array, mime: string): Promise<string> {
+  const projectId = useProjectStore.getState().current?.id;
+  if (!projectId) throw new Error('there is no open project to store its images in');
+  return writeProjectImage(await getStorage(), projectId, bytes, mime);
 }
 
 /**
