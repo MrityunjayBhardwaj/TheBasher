@@ -152,7 +152,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // the instrument's denominator, and a floor would not catch an over-deletion.
     // 86 -> 87 at #1027 (ComponentGroupOp), which is also an OPERATOR, so the operator
     // census next door moves with it rather than independently.
-    expect(listNodeTypes()).toHaveLength(87);
+    // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator.
+    expect(listNodeTypes()).toHaveLength(88);
   });
 
   it('`muted` is declared TEN times in source, and that is three different populations', () => {

@@ -247,11 +247,43 @@ describe('R9 — every kind owns its own step on the migration ladder', () => {
     registerAllNodes();
   });
 
+  // #1049 — the two populations, and both are ASKED. A kind that was split from a fused
+  // predecessor owns a numbered step; a kind born split asserts it has no predecessor at all.
+  const migrating = SPLIT_KIND_NAMES.flatMap((kind) => {
+    const from = SPLIT_KINDS[kind].migratesFromVersion;
+    return typeof from === 'number' ? [{ kind, from }] : [];
+  });
+  const bornSplit = SPLIT_KIND_NAMES.filter(
+    (kind) => typeof SPLIT_KINDS[kind].migratesFromVersion !== 'number',
+  );
+
+  it('every kind is in exactly one population, and each population is asked', () => {
+    expect(migrating.length + bornSplit.length).toBe(SPLIT_KIND_NAMES.length);
+    expect(migrating.length, 'the ladder checks below would examine nothing').toBeGreaterThan(5);
+  });
+
+  it('a kind born split names no predecessor, and says why — a split kind always names one', () => {
+    for (const kind of bornSplit) {
+      const answer = SPLIT_KINDS[kind].migratesFromVersion;
+      expect(
+        SPLIT_KINDS[kind].fusedTypes,
+        `${kind} claims no migration but names a fused predecessor — a project holding one ` +
+          `would never be split`,
+      ).toEqual([]);
+      expect(typeof answer === 'object' && answer.why.length > 0).toBe(true);
+      expect(typeof answer === 'object' && /^#\d+$/.test(answer.issue)).toBe(true);
+    }
+    for (const { kind } of migrating) {
+      expect(SPLIT_KINDS[kind].fusedTypes.length, `${kind} migrates from nothing`).toBeGreaterThan(
+        0,
+      );
+    }
+  });
+
   it('each kind has a migration registered at its version', () => {
     // The ladder THROWS on a gap ("No migration registered for formatVersion N"), so
     // stepping an empty project from each kind's version is the whole assertion.
-    for (const kind of SPLIT_KIND_NAMES) {
-      const from = SPLIT_KINDS[kind].migratesFromVersion;
+    for (const { kind, from } of migrating) {
       expect(
         () =>
           migrateProjectFormat({
@@ -265,7 +297,7 @@ describe('R9 — every kind owns its own step on the migration ladder', () => {
   });
 
   it('no two kinds share a migration step', () => {
-    const versions = SPLIT_KIND_NAMES.map((k) => SPLIT_KINDS[k].migratesFromVersion);
+    const versions = migrating.map(({ from }) => from);
     expect(
       new Set(versions).size,
       `two kinds claim the same format version (${versions.join(', ')}). Folding a later ` +
@@ -275,8 +307,8 @@ describe('R9 — every kind owns its own step on the migration ladder', () => {
   });
 
   it("each kind's split has already happened by the current format version", () => {
-    for (const kind of SPLIT_KIND_NAMES) {
-      expect(SPLIT_KINDS[kind].migratesFromVersion).toBeLessThan(PROJECT_FORMAT_VERSION);
+    for (const { from } of migrating) {
+      expect(from).toBeLessThan(PROJECT_FORMAT_VERSION);
     }
   });
 

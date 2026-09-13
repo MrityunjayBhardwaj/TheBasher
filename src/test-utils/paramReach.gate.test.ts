@@ -245,7 +245,10 @@ describe('param-reach gate (#492)', () => {
     // gate pins the answer. `total` moves by one; the `unverified` ceiling still does not.
     // Three imported element facts have now arrived in a row each knowing its own reader,
     // which is the pattern this pair of numbers was put here to detect.
-    expect(total).toBe(41);
+    //
+    // 41 → 43 at #1049: `PolyMeshData`'s two params, both TRACED — `mesh` by the module that
+    // decodes and keys it, `material` by the scene. The `unverified` ceiling does not move.
+    expect(total).toBe(43);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

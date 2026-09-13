@@ -39,6 +39,47 @@ export interface PackedMeshData {
   readonly cornerNormals: string | null;
 }
 
+/** Is this value a packed mesh? Recognised by SHAPE, so nothing that reads it asks who holds it. */
+export function isPackedMeshData(value: unknown): value is PackedMeshData {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.points === 'string' &&
+    typeof v.faceSizes === 'string' &&
+    typeof v.cornerPoints === 'string' &&
+    (v.cornerUVs === null || typeof v.cornerUVs === 'string') &&
+    (v.cornerNormals === null || typeof v.cornerNormals === 'string')
+  );
+}
+
+/** The byte length a base64 string decodes to, without decoding it. */
+function decodedBytes(text: string): number {
+  const padding = text.endsWith('==') ? 2 : text.endsWith('=') ? 1 : 0;
+  return Math.floor((text.length * 3) / 4) - padding;
+}
+
+/**
+ * A packed mesh's element counts, read off the string lengths alone.
+ *
+ * For surfaces that describe a mesh to a reader who cannot use its bytes — an agent above all,
+ * where megabytes of base64 would cost the context window and say nothing.
+ */
+export function packedMeshSummary(packed: PackedMeshData): {
+  readonly points: number;
+  readonly faces: number;
+  readonly corners: number;
+  readonly uvs: boolean;
+  readonly normals: boolean;
+} {
+  return {
+    points: decodedBytes(packed.points) / 12,
+    faces: decodedBytes(packed.faceSizes) / 4,
+    corners: decodedBytes(packed.cornerPoints) / 4,
+    uvs: packed.cornerUVs !== null,
+    normals: packed.cornerNormals !== null,
+  };
+}
+
 function toBase64(view: ArrayBufferView): string {
   const bytes = new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
   let binary = '';

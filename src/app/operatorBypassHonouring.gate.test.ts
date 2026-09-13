@@ -270,7 +270,9 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // is an OPERATOR, which is why the type count moved by two and the operator count by one.
     // 86 -> 87 at #1027 (ComponentGroupOp), and it IS an operator, so both counts move by
     // one together — unlike the #974/#994 pair above, where only one of the two was.
-    expect(listNodeTypes()).toHaveLength(87);
+    // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator, so the operator
+    // count below does not move.
+    expect(listNodeTypes()).toHaveLength(88);
     expect(operators()).toHaveLength(11);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

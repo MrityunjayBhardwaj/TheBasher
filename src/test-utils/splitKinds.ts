@@ -40,7 +40,15 @@ import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 
 /** The kinds that have actually been split. One name per `ObjectData` producer. */
-export type SplitKindName = 'box' | 'sphere' | 'curve' | 'light' | 'camera' | 'baked' | 'gltf';
+export type SplitKindName =
+  | 'box'
+  | 'sphere'
+  | 'curve'
+  | 'light'
+  | 'camera'
+  | 'baked'
+  | 'gltf'
+  | 'mesh';
 
 /** As much of a node definition as the data-lane predicates below read. Declared
  *  structurally so this module still never imports the registry (see the header).
@@ -133,8 +141,12 @@ export interface SplitKindSpec {
   readonly fusedTypes: readonly string[];
   /** The project format version whose migration performs THIS kind's split. Each kind
    *  owns its own step: folding a later kind into an earlier version's migration would
-   *  silently skip every project already saved past it. */
-  readonly migratesFromVersion: number;
+   *  silently skip every project already saved past it.
+   *
+   *  #1049 — OR an asserted NO, for a kind that was never fused and so has no split to
+   *  perform. That is not a way out of R9: R9 asserts of such a kind that it names no
+   *  predecessor and says why, so a kind that DOES replace something cannot claim it. */
+  readonly migratesFromVersion: number | NoMigration;
   /** Params required to mint a VALID data node — only the schema-required ones with no
    *  zod default. Empty for kinds whose every param defaults. (BoxData's `size` is a
    *  required tuple, which is why `paramSchema.safeParse({})` FAILS for a box: a fixture
@@ -214,6 +226,14 @@ export interface SplitKindSpec {
   readonly roadAnswers?: {
     readonly management?: RoadAnswer;
   };
+}
+
+/** See `SplitKindSpec.migratesFromVersion`. Shaped like a `RoadAnswer` NO, for the same
+ *  reason: the absence carries its reason and its issue. */
+export interface NoMigration {
+  readonly none: true;
+  readonly why: string;
+  readonly issue: string;
 }
 
 /** See `SplitKindSpec.roadAnswers`. A NO must carry its reason and its issue, so the
@@ -621,6 +641,48 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
       'recolour an imported mesh',
       'pose an imported bone over its clip',
       'stack a modifier on an imported child',
+    ],
+  },
+  // #1049 — a stored polygon mesh: the kind an import writes so that it stops being special.
+  // The first imported-geometry kind whose pair CAN be hand-authored, because its geometry is
+  // the data in its params rather than a reference into a clone or a blob — so its rows use the
+  // ordinary builder, exactly like a box.
+  mesh: {
+    dataType: 'PolyMeshData',
+    band: 'children',
+    fusedTypes: [],
+    migratesFromVersion: {
+      none: true,
+      why:
+        'born split: nothing was ever fused into a stored mesh, so no saved project holds a ' +
+        'predecessor to migrate',
+      issue: '#1049',
+    },
+    // A tetrahedron, packed exactly as `packMeshData` writes it (4 points, 4 triangles, no UVs
+    // or normals). Spelled as literals because this module may not import the geometry code —
+    // see the header. `material` is required and nullable, as on GltfData.
+    baseDataParams: {
+      mesh: {
+        points: 'AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/',
+        faceSizes: 'AwAAAAMAAAADAAAAAwAAAA==',
+        cornerPoints: 'AAAAAAIAAAABAAAAAAAAAAEAAAADAAAAAAAAAAMAAAACAAAAAQAAAAIAAAADAAAA',
+        cornerUVs: null,
+        cornerNormals: null,
+      },
+      material: null,
+    },
+    // The mesh itself folds into an opaque GeometryRef, so the material leaf is the observable,
+    // as it is for every other mesh kind.
+    observableDataParam: 'material.base.color',
+    distinctValues: ['#c81e5a', '#1e9ac8'],
+    channelValueType: 'color',
+    readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
+    customSections: [],
+    dataSections: ['material'],
+    primaryWorkflows: [
+      'import a model as native geometry',
+      'recolour a stored mesh',
+      'stack a modifier on a stored mesh',
     ],
   },
 };

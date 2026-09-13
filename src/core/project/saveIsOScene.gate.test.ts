@@ -37,6 +37,9 @@ import { MemoryStorage } from '../storage';
 import { composeProject, loadProject, projectPath } from './io';
 import { ProjectSchema, type Project } from './schema';
 import { readPreNs1FixtureBytes } from '../../../tools/gates/preNs1Fixture';
+import { applyOp } from '../dag/ops';
+import { emptyDagState } from '../dag/state';
+import { packMeshData } from '../../app/meshGeometryData';
 
 /** The largest run of numbers a legitimate param carries in this scene. Calibrated
  *  against the fixture, and reported by the scan below so the denominator is visible
@@ -89,6 +92,41 @@ function findBulkNumericRuns(root: unknown): BulkFinding[] {
   };
   walk(root, '$');
   return found;
+}
+
+/** A string long enough to be data rather than a label, a path or an id. */
+const LONG_STRING_CHARS = 1024;
+
+/** Every string in the payload longer than {@link LONG_STRING_CHARS}, by path. */
+function findLongStrings(root: unknown): string[] {
+  const found: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (typeof value === 'string') {
+      if (value.length > LONG_STRING_CHARS) found.push(path);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => walk(v, `${path}[${i}]`));
+      return;
+    }
+    if (value && typeof value === 'object') {
+      for (const [k, v] of Object.entries(value as Record<string, unknown>))
+        walk(v, `${path}.${k}`);
+    }
+  };
+  walk(root, '$');
+  return found;
+}
+
+/**
+ * #1049 — the ONE place authored mesh data may sit: a field of the `mesh` param of a
+ * `PolyMeshData` node. Anything else long is data leaking into a param.
+ */
+function isAuthoredMeshPath(payload: unknown, path: string): boolean {
+  const m = /^\$\.state\.nodes\.([^.]+)\.params\.mesh\.[A-Za-z]+$/.exec(path);
+  if (m === null) return false;
+  const nodes = (payload as { state?: { nodes?: Record<string, { type?: string }> } }).state?.nodes;
+  return nodes?.[m[1]]?.type === 'PolyMeshData';
 }
 
 /** The exact bytes `saveProject` would write for this project. Mirrors io.ts:
@@ -152,6 +190,68 @@ describe('#631 — project save is O(scene), not O(vertices)', () => {
         `this number; a per-vertex or per-face array in a param is what this bound exists ` +
         `to catch, and it is the one growth that does not stop.`,
     ).toBeLessThanOrEqual(SIZE_BOUND_BYTES);
+  });
+
+  // ── #1049 — THE PREMISE IS NARROWED, NOT DROPPED ─────────────────────────────────────────
+  //
+  // "Node params are persisted, geometry buffers are not" was written when every mesh was a
+  // recipe or a reference. An imported mesh is neither: it is AUTHORED data, and the decision on
+  // #1049 is Blender's — the mesh is saved inside the project, the way a `.blend` holds its Mesh
+  // datablocks (measured: a 130,553-vertex import grows the `.blend` by 7.46 MB). So a save may
+  // now grow with an imported mesh's size. What still may not persist is anything DERIVED — a
+  // built buffer, a weld, an attribute array beside a recipe — and the two scans above keep
+  // guarding that. This row states where authored mesh data may live, and a control proves the
+  // allowance cannot quietly widen to any long string in any param.
+  it('authored mesh data persists, and only inside a stored mesh’s `mesh` param', () => {
+    // A 12x12 grid: 169 points, 144 quads — packed, well past the long-string threshold.
+    const n = 12;
+    const points: number[] = [];
+    for (let y = 0; y <= n; y++) for (let x = 0; x <= n; x++) points.push(x, y, 0);
+    const faceSizes: number[] = [];
+    const cornerPoints: number[] = [];
+    for (let y = 0; y < n; y++) {
+      for (let x = 0; x < n; x++) {
+        const p = y * (n + 1) + x;
+        faceSizes.push(4);
+        cornerPoints.push(p, p + 1, p + n + 2, p + n + 1);
+      }
+    }
+    const mesh = packMeshData({
+      points: Float32Array.from(points),
+      faceSizes: Uint32Array.from(faceSizes),
+      cornerPoints: Uint32Array.from(cornerPoints),
+      cornerUVs: null,
+      cornerNormals: null,
+    });
+    const added = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'n_grid',
+      nodeType: 'PolyMeshData',
+      params: { mesh, material: null },
+    });
+    const project = composeProject({ id: 'p1049', name: 'grid', state: added.next });
+    const payload = JSON.parse(serializeAsSaveWould(project));
+
+    expect(findBulkNumericRuns(payload)).toEqual([]);
+    const longStrings = findLongStrings(payload);
+    expect(longStrings.length, 'the grid must actually exercise the allowance').toBeGreaterThan(0);
+    expect(longStrings.filter((path) => !isAuthoredMeshPath(payload, path))).toEqual([]);
+    // And what was saved is the mesh, not a lossy copy of it.
+    expect(payload.state.nodes.n_grid.params.mesh).toEqual(mesh);
+  });
+
+  it('CONTROL — a long string anywhere but a stored mesh’s `mesh` param is still caught', () => {
+    const payload = {
+      state: {
+        nodes: {
+          a: { type: 'PolyMeshData', params: { material: { note: 'x'.repeat(5000) } } },
+          b: { type: 'BoxData', params: { mesh: { points: 'x'.repeat(5000) } } },
+        },
+      },
+    };
+    const paths = findLongStrings(payload);
+    expect(paths).toHaveLength(2);
+    expect(paths.filter((path) => !isAuthoredMeshPath(payload, path))).toHaveLength(2);
   });
 
   it('the scan is not vacuous — it finds a typed array written into a param', async () => {
