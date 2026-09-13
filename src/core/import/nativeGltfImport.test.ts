@@ -148,7 +148,71 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1049',
     ],
+    // #1062 — each guard gets a case only it can refuse, then the real files that tripped it.
+    [
+      'a mesh with vertex colours',
+      () =>
+        jsonFixture((json) => {
+          const meshes = json.meshes as { primitives: { attributes: Record<string, number> }[] }[];
+          meshes[0].primitives[0].attributes.COLOR_0 = meshes[0].primitives[0].attributes.NORMAL;
+        }),
+      '#1062',
+    ],
+    [
+      'a mesh with a second UV set',
+      () =>
+        jsonFixture((json) => {
+          const meshes = json.meshes as { primitives: { attributes: Record<string, number> }[] }[];
+          const attributes = meshes[0].primitives[0].attributes;
+          attributes.TEXCOORD_1 = attributes.TEXCOORD_0;
+        }),
+      '#1062',
+    ],
+    [
+      'a material extension the native material does not draw',
+      () =>
+        jsonFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_sheen'];
+        }),
+      '#1062',
+    ],
+    ['the vertex-colour quad', () => fixture('public/assets/vertex-color-quad.gltf'), '#1062'],
+    ['the sheen quad', () => fixture('public/assets/sheen-quad.gltf'), '#1062'],
+    [
+      'two nodes sharing one mesh',
+      () =>
+        jsonFixture((json) => {
+          const nodes = json.nodes as Record<string, unknown>[];
+          nodes.push({ name: 'twin', mesh: 0, translation: [3, 0, 0] });
+          (json.scenes as { nodes: number[] }[])[0].nodes.push(1);
+        }),
+      '#1061',
+    ],
+    [
+      'a mesh with morph targets',
+      () =>
+        jsonFixture((json) => {
+          const meshes = json.meshes as {
+            primitives: { attributes: Record<string, number>; targets?: unknown[] }[];
+          }[];
+          const prim = meshes[0].primitives[0];
+          prim.targets = [{ POSITION: prim.attributes.POSITION }];
+        }),
+      '#1060',
+    ],
   ];
+
+  it.each(['cube', 'cone', 'sphere'])(
+    '%s.gltf, which carries only what a stored mesh holds, still imports natively',
+    async (name) => {
+      const result = await buildNativeGltfImportOps({
+        buffer: fixture(`public/assets/${name}.gltf`),
+        assetRef: `user-imports/native/${name}.gltf`,
+        sceneNodeId: 'n_scene',
+      });
+      expect('refused' in result ? result.refused : 'native').toBe('native');
+    },
+  );
 
   it.each(refusals)(
     'refuses %s whole, naming the issue that brings it across',

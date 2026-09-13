@@ -13,7 +13,9 @@
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
 // is refused WHOLE, by name, with the issue that brings it across: skinning (#393), clips and
-// nesting (#1051), textures (#1050), several primitives on one mesh (#1052). Making the importable
+// nesting (#1051), textures (#1050), several primitives on one mesh (#1052), morph targets (#1060),
+// a mesh shared by several nodes (#1061), and vertex attributes or extensions the native model
+// would drop (#1062). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
 // handover the decision on #1049 rules out. The refusals are the distance still to go, stated where
 // an import meets it.
@@ -59,6 +61,7 @@ export interface NativeImportResult {
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
 type NativeGltfJson = GltfJson & {
+  extensionsUsed?: string[];
   extensionsRequired?: string[];
   textures?: unknown[];
   images?: unknown[];
@@ -78,6 +81,22 @@ type NativeGltfJson = GltfJson & {
 const TRIANGLES = 4;
 const TRIANGLE_STRIP = 5;
 const TRIANGLE_FAN = 6;
+
+// What a stored mesh holds per vertex (#1062). Anything else in a primitive (vertex colours, a
+// second UV set, skin weights) would be read past and left behind, so its file is refused instead.
+const HELD_ATTRIBUTES = new Set(['POSITION', 'NORMAL', 'TEXCOORD_0']);
+
+// The extensions a native import carries all the way to the screen: the material lobes the
+// converter captures into the IR and `openpbrToThree` draws. The clone road's supported list is
+// wider because three's loader decodes compression and quantization for it; this reader does not,
+// so those are refused here too. A missing entry refuses a file that could have come across, which
+// is the safe direction.
+const HELD_EXTENSIONS = new Set([
+  'KHR_materials_ior',
+  'KHR_materials_clearcoat',
+  'KHR_materials_transmission',
+  'KHR_materials_emissive_strength',
+]);
 
 /** The file-level reasons an import cannot be native yet, checked before any bytes are read. */
 function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
@@ -105,6 +124,15 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1050',
     };
   }
+  // After textures, so a textured file names the texture step first (texture transforms only mean
+  // anything once its pixels come across).
+  const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
+  if (unheld.length > 0) {
+    return {
+      refused: `it uses ${unheld.join(', ')}, which a native import would drop`,
+      issue: '#1062',
+    };
+  }
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     if ((node.children?.length ?? 0) > 0) {
@@ -119,6 +147,20 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
         issue: '#1051',
       };
     }
+  }
+  // After the hierarchy, so a nested file is refused for its nesting first. Every node has a mesh
+  // by here.
+  const nodeOfMesh = new Map<number, number>();
+  for (let i = 0; i < json.nodes.length; i++) {
+    const mesh = json.nodes[i].mesh as number;
+    const first = nodeOfMesh.get(mesh);
+    if (first !== undefined) {
+      return {
+        refused: `nodes ${first} and ${i} share mesh ${mesh}, which would be stored as two separate copies`,
+        issue: '#1061',
+      };
+    }
+    nodeOfMesh.set(mesh, i);
   }
   return null;
 }
@@ -214,7 +256,16 @@ export function readGltfMesh(
   if ((prim.targets?.length ?? 0) > 0) {
     return {
       refused: `mesh ${meshIndex} has morph targets, which the native model does not hold yet`,
-      issue: '#1054',
+      issue: '#1060',
+    };
+  }
+  const unheldAttributes = Object.keys(prim.attributes ?? {}).filter(
+    (name) => !HELD_ATTRIBUTES.has(name),
+  );
+  if (unheldAttributes.length > 0) {
+    return {
+      refused: `mesh ${meshIndex} carries ${unheldAttributes.join(', ')}, which the stored mesh does not hold yet`,
+      issue: '#1062',
     };
   }
   const positionAccessor = prim.attributes?.POSITION;
