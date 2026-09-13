@@ -396,6 +396,13 @@ export interface BakedTextureRef {
    *  Captured so the UV set is never silently dropped; UV1+ APPLY is a later
    *  slice (the clone already binds the right set, so render is unaffected). */
   readonly gltfTexCoord?: number;
+  /**
+   * #1050 — where the bytes live. `'project'` means the image belongs to the project that holds
+   * this ref: `hash` is a key (`<sha256>.<ext>`) relative to that project's image folder, so a
+   * project copied under a new id reads its refs unchanged. Absent means the global baked-texture
+   * store, as every ref written before #1050 does.
+   */
+  readonly store?: 'project';
 }
 
 /**

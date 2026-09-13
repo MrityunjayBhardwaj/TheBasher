@@ -39,6 +39,8 @@ import * as THREE from 'three';
 import { hashValue } from '../../core/dag/hash';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { BakedTextureRef } from '../../nodes/types';
+import { projectImagePath } from '../../core/project/projectImages';
+import { useProjectStore } from '../../core/project/store';
 
 /** Root OPFS directory for baked texture blobs. */
 export const BAKED_TEXTURE_ROOT = 'baked-texture';
@@ -195,6 +197,17 @@ export async function persistTexture(
 
 /** Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. */
 function refToPath(ref: BakedTextureRef): string {
+  // #1050 — an image the project owns. Its key is relative to the project, so it resolves against
+  // whichever project is open, and a project copied under a new id reads the same refs.
+  if (ref.store === 'project') {
+    const projectId = useProjectStore.getState().current?.id;
+    if (!projectId) {
+      throw new Error(
+        `bakedTextureStore: project image ${ref.hash} has no open project to load from`,
+      );
+    }
+    return projectImagePath(projectId, ref.hash);
+  }
   const dot = ref.hash.lastIndexOf('.');
   if (dot <= 0) return bakedTexturePath(ref.hash, 'png');
   return bakedTexturePath(ref.hash.slice(0, dot), ref.hash.slice(dot + 1));

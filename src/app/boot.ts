@@ -41,6 +41,7 @@ import {
   type ProjectMetadata,
 } from '../core/project';
 import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
+import { projectImagePath } from '../core/project/projectImages';
 import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
@@ -82,6 +83,8 @@ import {
   base64ToBytes,
   collectAssetRefs,
   resolveAssetFiles,
+  projectImageBundlePath,
+  bundleAssetStoragePath,
   type SceneBundle,
 } from './sceneBundle';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
@@ -1317,6 +1320,16 @@ export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
       missingAssets.push(path);
     }
   }
+  // #1050 — the images this project owns, under a bundle path with no project id in it: the
+  // bundle opens as a project with a new one.
+  for (const key of refs.projectImages) {
+    const path = projectImagePath(meta.id, key);
+    try {
+      assets[projectImageBundlePath(key)] = bytesToBase64(await storage.read(path));
+    } catch {
+      missingAssets.push(path);
+    }
+  }
 
   const detached = detachGraph(dag);
   const bundle: SceneBundle = {
@@ -1349,10 +1362,15 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
   // Don't lose the project we're leaving.
   await saveCurrent();
 
+  // #1050 — the id first: a project image in the bundle is written into the folder of the project
+  // it opens as.
+  const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
   // 1. Rehydrate embedded assets to OPFS BEFORE hydrating the DAG, so the
   //    renderer's async loaders find the bytes on first mount.
   if (bundle.assets) {
-    for (const [path, b64] of Object.entries(bundle.assets)) {
+    for (const [bundlePath, b64] of Object.entries(bundle.assets)) {
+      const path = bundleAssetStoragePath(bundlePath, newId);
       if (await storage.exists(path)) continue;
       await storage.write(path, base64ToBytes(b64));
     }
@@ -1360,7 +1378,6 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
 
   // 2. Compose a brand-new project (fresh id + timestamps) through the same
   //    ladder loadProject uses (migrate → validate → migrate-nodes).
-  const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const project = bundleToProject(bundle, newId, Date.now());
   await saveProject(storage, project);
   persistLastProjectId(project.id);
