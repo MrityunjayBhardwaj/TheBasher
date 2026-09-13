@@ -17,7 +17,7 @@
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { importedChildren } from './_importedChild';
+import { drawnImportMeshes, importRoots, importedMeshes } from './_importedMesh';
 
 const KEY = 'basher.lastProjectId';
 
@@ -132,7 +132,9 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
     dag.dispatch({ type: 'removeNode', nodeId: 'n_light' }, 'user', 'rm light');
   });
 
-  // Import the flat glTF (→ GltfAsset + one GltfChild "Box", under a Group root).
+  // Import the flat glTF. #1071 — it is a file the native model holds, so it arrives as one
+  // `Object` over `PolyMeshData` under a `Group` root: the leaf is that Object, the level
+  // above it the Group.
   await page.evaluate(
     async ({ files: f, name }) => {
       const w = window as unknown as BasherWindow;
@@ -159,39 +161,44 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
   // The object under test is the mesh, so that is what is waited on. Keeping the node and
   // camera checks costs nothing and keeps the failure message specific about which half is
   // missing when it times out.
-  await page.waitForFunction(
-    () => {
-      const w = window as unknown as BasherWindow;
-      const nodes = w.__basher_dag?.getState().state.nodes ?? {};
-      const hasChild = Object.values(nodes).some((n) => n.type === 'GltfData');
-      const three = w.__basher_three?.getState();
-      if (!hasChild || three?.scene == null || three.camera == null) return false;
-      let mounted = false;
-      three.scene.traverse((o) => {
-        if (!mounted && o.name === 'Box' && (o as import('three').Mesh).isMesh) mounted = true;
-      });
-      return mounted;
-    },
-    undefined,
-    { timeout: 20_000 },
-  );
+  //
+  // #1071 — the mesh is found through the import root on either road (a native mesh has no
+  // name to find it by), and the road is asserted so a silent fall-back is visible.
+  //
+  // ⚠️ RED UNTIL #1075: on a native import a single click selects the import Group, because the
+  // leaf chain (`buildGltfDrillChain`) only knows the glTF clone's stamps and name map. The
+  // spec asserts the promise, not today's behaviour.
+  await expect
+    .poll(async () => (await importedMeshes(page)).map((m) => m.road), { timeout: 20_000 })
+    .toEqual(['native']);
+  const [{ rootId }] = await importRoots(page);
+  await expect
+    .poll(
+      async () => {
+        const hasCamera = await page.evaluate(
+          () => (window as unknown as BasherWindow).__basher_three?.getState().camera != null,
+        );
+        return hasCamera && (await drawnImportMeshes(page, rootId)).some((m) => m.visible);
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
 
-  // Project the imported model's actual "Box" mesh (in the live scene clone) to
-  // canvas pixels — the distractors are moved far aside, so this point hits only
-  // the model.
+  // Project the imported model's drawn mesh to canvas pixels — the distractors are moved
+  // far aside, so this point hits only the model.
   //
   // ⚠️ The sentence removed here read "Poll: the clone may still be settling right after
   // import." There was no poll — this is a single `evaluate`, and it always was. The
   // comment described the defence the spec needed and did not have, which is exactly how
   // it read as covered. The settling it worried about is now handled where it belongs, in
   // the wait above.
-  const pt = await page.evaluate(async () => {
+  const pt = await page.evaluate(async (root) => {
     const w = window as unknown as BasherWindow;
     const cam = w.__basher_three!.getState().camera!;
     const scene = w.__basher_three!.getState().scene!;
     let mesh: import('three').Object3D | undefined;
-    scene.traverse((o) => {
-      if (!mesh && o.name === 'Box' && (o as import('three').Mesh).isMesh) mesh = o;
+    scene.getObjectByName(root)?.traverse((o) => {
+      if (!mesh && (o as import('three').Mesh).isMesh) mesh = o;
     });
     if (!mesh) return null;
     mesh.updateWorldMatrix(true, false);
@@ -203,7 +210,7 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
     const canvas = document.querySelector('[data-testid="viewport"] canvas') as HTMLCanvasElement;
     const r = canvas.getBoundingClientRect();
     return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height };
-  });
+  }, rootId);
   expect(pt).not.toBeNull();
 
   // SINGLE click → selects the LEAF (the imported child under the cursor), NOT the
@@ -216,8 +223,8 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
   await expect
     .poll(async () => {
       const selected = await selectedIdOf(page);
-      const children = await importedChildren(page);
-      return children.some((c) => c.objectId === selected);
+      const meshes = await importedMeshes(page);
+      return meshes.some((m) => m.objectId === selected);
     })
     .toBe(true);
   const leafId = await selectedIdOf(page);
