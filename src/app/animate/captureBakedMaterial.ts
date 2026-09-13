@@ -9,10 +9,12 @@
 //
 // READ-ONLY (H45 / M9): this NEVER mutates the live material or its textures. The
 // clone material is already a per-instance `s.clone()` (#99); we read scalars and
-// copy texture BYTES via persistTexture (path-2 canvas readback — the probe at
-// p151-texture-readback-probe OBSERVED that no source-URI association survives the
+// copy texture BYTES via persistTexture (path-2 canvas readback — the p151
+// texture-readback e2e probe OBSERVED that no source-URI association survives the
 // SkeletonUtils clone, only `texture.source.data`, so path-1 is not viable off the
-// clone; we pass NO resolveSourcePath).
+// clone; we pass NO resolveSourcePath). That probe was retired with #1073, when the
+// fixture it imported started arriving as native geometry; the observation is about
+// the clone and still holds for every file that takes the clone road.
 //
 // materialClass (M1): three.js builds MeshStandard / MeshPhysical (any KHR_materials_*)
 // / MeshBasic (KHR_materials_unlit) per glTF material. We detect the subclass so

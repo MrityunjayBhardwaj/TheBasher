@@ -17,10 +17,10 @@
 //       identical, and it works for ANY texture (procedural, modified, or one
 //       whose source association did not survive the clone).
 //
-// The LOKAYATA PROBE (the `__basher_gltf_meshes.mapProbe` seam + the
-// `p151-texture-readback-probe` e2e) observes which path is available on the
-// clone at runtime BEFORE the bake commits — path (2) is shipped unconditionally
-// so the wave cannot block on the MEDIUM-confidence path-(1) item.
+// The LOKAYATA PROBE (the `__basher_gltf_meshes.mapProbe` seam + a p151
+// texture-readback e2e, retired with #1073 once its fixture imported as native
+// geometry) observed which path is available on the clone — path (2) is shipped
+// unconditionally so the wave cannot block on the MEDIUM-confidence path-(1) item.
 //
 // Colorspace (M5/M8): a map loaded without its sRGB colorspace washes out on
 // reload. `BakedTextureRef.colorSpace` carries it; `loadBakedTexture` sets it
