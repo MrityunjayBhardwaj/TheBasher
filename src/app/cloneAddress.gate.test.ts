@@ -36,6 +36,7 @@ import {
   uvProjectGeometryRef,
 } from './modifierGeometry';
 import { availabilityOf, cloneAddressOf, drawnByAssetClone } from './geometryRegistry';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
 import { materialAssignmentOf } from './materialAssignment';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
@@ -63,6 +64,16 @@ const sample: Record<GeometryDescriptor['kind'], GeometryRef> = {
   uvProject: uvProjectGeometryRef(box, 2),
   gltf: gltfRef,
   baked: bakedRef,
+  // #1049 — a stored polygon mesh builds from its own data: never clone-drawn, never addressed.
+  mesh: meshGeometryRef(
+    packMeshData({
+      points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+      faceSizes: Uint32Array.from([3, 3, 3, 3]),
+      cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+      cornerUVs: null,
+      cornerNormals: null,
+    }),
+  ),
 };
 
 /** The composed refs where the two rules could diverge — the ones a per-kind census cannot
@@ -72,6 +83,19 @@ const composed: readonly (readonly [string, GeometryRef])[] = [
   // has no derivable arity), so it passes the clone availability through and IS clone-drawn,
   // while its kind is `uvProject`.
   ['uvProject over gltf (cannot materialise)', uvProjectGeometryRef(gltfRef, 2)],
+  // What a real import writes since #1023: the child states its face count, so the projection
+  // DOES materialise and is no longer clone-drawn. The row above alone never saw this, because
+  // its glTF ref carries no count.
+  [
+    'uvProject over a captured gltf (materialises)',
+    uvProjectGeometryRef(
+      {
+        key: 'gltf|a|c',
+        descriptor: { kind: 'gltf', assetRef: 'a', childName: 'c', faceCount: 2 },
+      },
+      2,
+    ),
+  ],
   // Two deep — the walk has to recurse, not just peek one level down.
   ['uvProject over uvProject over gltf', uvProjectGeometryRef(uvProjectGeometryRef(gltfRef, 2), 3)],
   // A projection that DOES materialise builds its own buffers, so nothing else draws them.
@@ -89,7 +113,7 @@ const composed: readonly (readonly [string, GeometryRef])[] = [
 describe('#1015 — the clone class is one rule, read three ways', () => {
   it('WHETHER and WHICH select the same set, on every kind', () => {
     const kinds = Object.keys(sample) as GeometryDescriptor['kind'][];
-    expect(kinds.length, 'every descriptor kind is represented').toBe(9);
+    expect(kinds.length, 'every descriptor kind is represented').toBe(10);
 
     for (const kind of kinds) {
       const d = sample[kind].descriptor;
@@ -101,7 +125,7 @@ describe('#1015 — the clone class is one rule, read three ways', () => {
   });
 
   it('…and on the COMPOSED refs, where the answer depends on the source', () => {
-    expect(composed.length, 'composed refs examined').toBe(6);
+    expect(composed.length, 'composed refs examined').toBe(7);
     for (const [name, ref] of composed) {
       const d = ref.descriptor;
       expect(cloneAddressOf(d) !== null, `${name}`).toBe(drawnByAssetClone(d));
@@ -117,7 +141,7 @@ describe('#1015 — the clone class is one rule, read three ways', () => {
       ...(Object.keys(sample) as GeometryDescriptor['kind'][]).map((k) => [k, sample[k]] as const),
       ...composed,
     ];
-    expect(all.length, 'refs examined').toBe(15);
+    expect(all.length, 'refs examined').toBe(17);
 
     for (const [name, ref] of all) {
       const absent = materialAssignmentOf(null, [null], ref).absentSlot;

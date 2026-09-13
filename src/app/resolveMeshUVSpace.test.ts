@@ -27,7 +27,8 @@ import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerGltfClone, __clearGltfCloneRegistryForTests } from './asset/gltfCloneRegistry';
 import { BoxGeometry, Group, Mesh, MeshStandardMaterial, Texture } from 'three';
-import { importedChildOps } from '../test-utils/importedChildFixture';
+import { importedChildOps, type ImportedChildFixture } from '../test-utils/importedChildFixture';
+import { gltfJsonMaterialToOpenpbr } from '../core/import/gltfJsonMaterialToOpenpbr';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -232,7 +233,7 @@ describe('resolveMeshUVSpace — a PROJECTED imported mesh is still clone-drawn 
   // uses a bare `gltf` descriptor and no row could tell the two sets apart.
   afterEach(() => __clearGltfCloneRegistryForTests());
 
-  function mountTexturedClone(): void {
+  function mountTexturedClone(): HTMLCanvasElement {
     const group = new Group();
     const canvas = document.createElement('canvas');
     canvas.width = 8;
@@ -245,13 +246,18 @@ describe('resolveMeshUVSpace — a PROJECTED imported mesh is still clone-drawn 
     group.add(mesh);
     group.updateMatrixWorld(true);
     registerGltfClone('asset-1', group);
+    return canvas;
   }
 
   /** An imported child with a UV Project spliced onto its data lane — built through the ops
    *  road, so the pair under test is one the product can actually author. */
-  function projectedImportedChild(): DagState {
+  function projectedImportedChild(fx: ImportedChildFixture = {}): DagState {
     let s = emptyDagState();
-    for (const op of importedChildOps('gltf_child', { assetRef: 'asset-1', childName: 'Mesh0' })) {
+    for (const op of importedChildOps('gltf_child', {
+      assetRef: 'asset-1',
+      childName: 'Mesh0',
+      ...fx,
+    })) {
       s = applyOp(s, op as never).next;
     }
     for (const op of [
@@ -302,6 +308,36 @@ describe('resolveMeshUVSpace — a PROJECTED imported mesh is still clone-drawn 
     // same pairing the glTF rows above keep, reached through the projected descriptor.
     const space = resolveMeshUVSpace(projectedImportedChild(), 'gltf_child');
     expect(space.uvs.status).toBe('loading');
+    expect(space.texture.status).toBe('loading');
+  });
+
+  // ── WHAT A REAL IMPORT WRITES SINCE #1023 ───────────────────────────────────────────────
+  //
+  // Every row above uses the fixture's defaults: no face count, no material. A real import
+  // captures both, and with a face count the projection MATERIALISES — the registry builds it,
+  // so it is not clone-drawn and the clone arm declines it. Its captured albedo is an
+  // imported-map descriptor whose pixels live only in the clone. MEASURED in the browser before
+  // the fix: the backdrop read `loading` and never settled, while the viewport drew the texture.
+  /** The captured shape: the clone's box has 12 triangle faces, and slot 0's albedo names
+   *  glTF texture 0 through the product's own capture. */
+  const captured: ImportedChildFixture = {
+    faceCount: 12,
+    material: gltfJsonMaterialToOpenpbr(
+      { pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
+      { textures: [{}] },
+    ),
+  };
+
+  it('a CAPTURED child: the projection is built here, and its texture still comes from the clone', () => {
+    const canvas = mountTexturedClone();
+    const space = resolveMeshUVSpace(projectedImportedChild(captured), 'gltf_child');
+    expect(space.texture.status).toBe('ok');
+    expect(space.texture.image).toBe(canvas);
+    expect(space.uvs.status).toBe('ok');
+  });
+
+  it('a CAPTURED child reports LOADING while the clone has not mounted, never a stuck OPFS peek', () => {
+    const space = resolveMeshUVSpace(projectedImportedChild(captured), 'gltf_child');
     expect(space.texture.status).toBe('loading');
   });
 });

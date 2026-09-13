@@ -74,6 +74,7 @@ import type {
   BakedMaterialSpec,
   BakedTextureRef,
   EvaluatedUVs,
+  GeometryDescriptor,
   InlineMaterialSpec,
   UVIsland,
 } from '../nodes/types';
@@ -84,6 +85,7 @@ import { getGltfClone } from './asset/gltfCloneRegistry';
 import { cloneAddressOf } from './geometryRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
 import { primarySlotMaterial, type SlotMaterial } from './materialAssignment';
+import { isImportedMap } from './material/gltfMapOverlay';
 import type { MeshUVRead } from '../nodes/types';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
@@ -393,8 +395,44 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
 
   // Registry-backed geometry. Procedural and primed share this arm because the resolver has
   // ALREADY made the read and typed its absence — nothing here re-derives what a miss means.
+  const slot = primarySlotMaterial(mesh.materials);
   return {
     uvs: uvSourceOf(mesh.uvRead),
-    texture: textureSourceOf(primarySlotMaterial(mesh.materials)),
+    texture: importedTextureOf(slot, geometry.descriptor) ?? textureSourceOf(slot),
   };
+}
+
+/** The glTF child a descriptor chain is rooted at, walking each recipe's `source`. */
+function gltfRootOf(
+  descriptor: GeometryDescriptor,
+): Extract<GeometryDescriptor, { kind: 'gltf' }> | null {
+  if (descriptor.kind === 'gltf') return descriptor;
+  return 'source' in descriptor ? gltfRootOf(descriptor.source.descriptor) : null;
+}
+
+/**
+ * #1015 — the backdrop of a recipe the REGISTRY builds over an imported mesh.
+ *
+ * Once #1023 captured an imported child's face count, a UV Project over it materialises: the
+ * registry builds its buffers, so it is no longer clone-drawn and the clone arm above rightly
+ * declines it. Its UVs are then the projection's own. Its TEXTURE is not: the captured albedo is
+ * an imported-map descriptor (`hash: ''` + `gltfTexture`), which names a texture whose pixels
+ * live only in the asset clone. Handed to the OPFS peek it can never be found, and the panel
+ * reported `loading` for as long as it stayed open — measured in the browser, while the viewport
+ * drew the texture. Byte ownership decides where pixels come from, not who builds the buffers.
+ *
+ * Null when this is not that case, so the caller's ordinary slot answer stands.
+ */
+function importedTextureOf(
+  slot: SlotMaterial<InlineMaterialSpec | BakedMaterialSpec>,
+  descriptor: GeometryDescriptor,
+): MeshTextureSource | null {
+  if (slot.status !== 'ok' || !slot.material) return null;
+  const albedo = 'materialClass' in slot.material ? slot.material.map : slot.material.maps?.albedo;
+  if (!isImportedMap(albedo)) return null;
+  const root = gltfRootOf(descriptor);
+  if (!root) return null;
+  const clone = getGltfClone(root.assetRef);
+  if (!clone) return TEX_LOADING;
+  return fromTexture(firstBaseColorMap(clone.getObjectByName(root.childName))) ?? TEX_NONE;
 }
