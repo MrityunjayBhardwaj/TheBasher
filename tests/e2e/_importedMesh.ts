@@ -72,6 +72,10 @@ export interface DrawnImportMesh {
   /** The base-colour image has decoded (width > 0) — `__basher_gltf_meshes`' own rule. */
   readonly mapImageOk: boolean;
   readonly mapWidth: number | null;
+  /** The base-colour texture's colour space (`'srgb'` for a base map), or null with no map. */
+  readonly mapColorSpace: string | null;
+  /** World-space axis-aligned bounding-box size of the drawn mesh — the clone probe's rule. */
+  readonly worldBounds: [number, number, number];
   readonly hasMetalnessMap: boolean;
   readonly hasRoughnessMap: boolean;
   readonly color: string | null;
@@ -240,7 +244,14 @@ export async function firstMaterialMesh(page: Page): Promise<ImportedMeshRow | n
 export async function drawnImportMeshes(page: Page, rootId?: string): Promise<DrawnImportMesh[]> {
   const roots = rootId ? [rootId] : (await importRoots(page)).map((r) => r.rootId);
   return page.evaluate((rootIds: string[]) => {
-    type Tex = { image?: { width?: number } | null } | null | undefined;
+    type Tex = { image?: { width?: number } | null; colorSpace?: string } | null | undefined;
+    type V3 = { x: number; y: number; z: number };
+    type Box = {
+      min: V3;
+      max: V3;
+      clone: () => Box;
+      applyMatrix4: (m: unknown) => Box;
+    };
     type Mat = {
       map?: Tex;
       metalnessMap?: Tex;
@@ -259,6 +270,9 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
       visible: boolean;
       parent: O3 | null;
       material?: Mat | Mat[];
+      matrixWorld: unknown;
+      updateWorldMatrix: (parents: boolean, children: boolean) => void;
+      geometry?: { boundingBox: Box | null; computeBoundingBox: () => void };
       getObjectByName: (n: string) => O3 | undefined;
       traverse: (f: (o: O3) => void) => void;
     };
@@ -273,6 +287,14 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
         if (!o.isMesh) return;
         let visible = true;
         for (let p: O3 | null = o; p; p = p.parent) if (!p.visible) visible = false;
+        // The geometry's own box carried through the world matrix — what
+        // `Box3.setFromObject` computes for an unskinned mesh, without importing three.
+        o.updateWorldMatrix(true, false);
+        if (o.geometry && !o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        const box = o.geometry?.boundingBox?.clone().applyMatrix4(o.matrixWorld);
+        const worldBounds: [number, number, number] = box
+          ? [box.max.x - box.min.x, box.max.y - box.min.y, box.max.z - box.min.z]
+          : [0, 0, 0];
         for (const mat of Array.isArray(o.material) ? o.material : [o.material]) {
           const width = mat?.map?.image?.width;
           out.push({
@@ -282,6 +304,8 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             hasMap: Boolean(mat?.map),
             mapImageOk: typeof width === 'number' && width > 0,
             mapWidth: typeof width === 'number' ? width : null,
+            mapColorSpace: mat?.map?.colorSpace ?? null,
+            worldBounds,
             hasMetalnessMap: Boolean(mat?.metalnessMap),
             hasRoughnessMap: Boolean(mat?.roughnessMap),
             color: mat?.color ? `#${mat.color.getHexString()}` : null,
