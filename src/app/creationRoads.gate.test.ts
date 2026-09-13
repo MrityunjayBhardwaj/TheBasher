@@ -118,11 +118,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +
     '(ScatterR) and carries a scene-tree icon, and nothing has ever been able to create ' +
     'one — the oldest instance of exactly the gap this gate exists to catch.',
-
-  PolyMeshData:
-    'A stored polygon mesh (#1049), registered with its model answers ahead of the road that ' +
-    'writes one: the native import road is the next step of the same issue, and it is where ' +
-    'this entry is removed. Until then a pair is minted only by the conformance fixtures.',
 };
 
 /**

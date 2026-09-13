@@ -378,6 +378,11 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // and returns an integer. Nothing it touches outlives the function.
   'src/core/import/gltfImportChain.ts':
     'fills a throwaway BufferGeometry from POSITION bytes to weld a point count, then disposes it',
+  // #1049 — the native import reader, the same safe category for the same reason: it runs during
+  // IMPORT, before any descriptor exists, fills a throwaway container with the POSITION floats to
+  // weld the mesh's points, and disposes it. What it hands on is a stored mesh, not a geometry.
+  'src/core/import/nativeGltfImport.ts':
+    'fills a throwaway BufferGeometry from POSITION bytes to weld the stored points, then disposes it',
   'src/viewport/CameraHelpers.tsx': 'builds its own frustum//target line geometries',
   'src/viewport/CurveLine.tsx': 'builds its own polyline geometry',
   'src/viewport/LightHelpers.tsx': 'builds its own light-direction line geometry',

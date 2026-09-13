@@ -190,7 +190,8 @@ function fnv1a32(input: string): string {
   return h.toString(16).padStart(8, '0');
 }
 
-function hashId(prefix: string, ...parts: string[]): string {
+// Exported for #1049's native import road, so its content-addressed ids share this one rule.
+export function hashId(prefix: string, ...parts: string[]): string {
   return `n_${prefix}_${fnv1a32(parts.join('|'))}`;
 }
 
@@ -419,7 +420,9 @@ interface CompleteKeyframe {
   scale: Vec3;
 }
 
-function defaultTRS(node: GltfJson['nodes'][number]): StaticTRS {
+// Exported for #1049's native import road: an Object's base pose comes from the node the same
+// way whichever road the import takes.
+export function defaultTRS(node: GltfJson['nodes'][number]): StaticTRS {
   // P7.11 (#100, FLAG 1) — a glTF node may carry its local transform as a
   // single 4×4 column-major `matrix` INSTEAD of translation/rotation/scale
   // (glTF 2.0 §3.6; Blender exports joints this way). Decompose it into the

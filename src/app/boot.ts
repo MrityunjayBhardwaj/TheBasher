@@ -707,6 +707,32 @@ export function boot(): Promise<void> {
             transformClipIds: result.transformClipIds,
           };
         };
+        // #1049 — the NATIVE road beside it: the file becomes stored polygon meshes and stops
+        // existing. A file the native model cannot hold yet is refused whole, by name, rather
+        // than half-imported. The clone road above is untouched until #1053 retires it.
+        w.__basher_importGltfNative = async (
+          buffer: ArrayBuffer,
+          assetRef: string,
+          resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+        ) => {
+          const dag = useDagStore.getState();
+          const sceneRef = dag.state.outputs.scene;
+          if (!sceneRef) {
+            throw new Error('__basher_importGltfNative: project has no `scene` output');
+          }
+          const native = await import('../core/import/nativeGltfImport');
+          const result = await native.buildNativeGltfImportOps({
+            buffer,
+            assetRef,
+            sceneNodeId: sceneRef.node,
+            resolveBuffer,
+          });
+          if ('refused' in result) {
+            throw new Error(`native import refused: ${result.refused} (${result.issue})`);
+          }
+          dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
+          return { groupId: result.groupId, objectIds: result.objectIds };
+        };
       });
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
       // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry
