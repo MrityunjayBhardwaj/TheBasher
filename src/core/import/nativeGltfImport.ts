@@ -103,7 +103,7 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
   if ((json.extensionsRequired?.length ?? 0) > 0) {
     return {
       refused: `it requires extensions this reader does not implement (${json.extensionsRequired!.join(', ')})`,
-      issue: '#1049',
+      issue: '#1063',
     };
   }
   if ((json.skins?.length ?? 0) > 0) {
@@ -244,13 +244,13 @@ export function readGltfMesh(
   if (mode !== TRIANGLES && mode !== TRIANGLE_STRIP && mode !== TRIANGLE_FAN) {
     return {
       refused: `mesh ${meshIndex} draws lines or points, which are not a polygon mesh`,
-      issue: '#1049',
+      issue: '#1063',
     };
   }
   if (prim.extensions?.KHR_draco_mesh_compression !== undefined) {
     return {
       refused: `mesh ${meshIndex} is Draco-compressed, which this reader does not decode`,
-      issue: '#1049',
+      issue: '#1063',
     };
   }
   if ((prim.targets?.length ?? 0) > 0) {
@@ -270,7 +270,7 @@ export function readGltfMesh(
   }
   const positionAccessor = prim.attributes?.POSITION;
   if (typeof positionAccessor !== 'number' || json.accessors?.[positionAccessor]?.type !== 'VEC3') {
-    return { refused: `mesh ${meshIndex} has no VEC3 POSITION`, issue: '#1049' };
+    return { refused: `mesh ${meshIndex} has no VEC3 POSITION`, issue: '#1063' };
   }
   const uvAccessor = prim.attributes?.TEXCOORD_0;
   const normalAccessor = prim.attributes?.NORMAL;
@@ -282,7 +282,7 @@ export function readGltfMesh(
     if (typeof accessorIndex === 'number' && interleaved(json, accessorIndex, elementBytes)) {
       return {
         refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
-        issue: '#1049',
+        issue: '#1063',
       };
     }
   }
@@ -294,13 +294,13 @@ export function readGltfMesh(
       ? readIndices(json, buffers, prim.indices)
       : Uint32Array.from({ length: vertices }, (_, i) => i);
   if (order === null)
-    return { refused: `mesh ${meshIndex} has an unreadable index accessor`, issue: '#1049' };
+    return { refused: `mesh ${meshIndex} has an unreadable index accessor`, issue: '#1063' };
   const corners = triangulate(order, mode);
   if (corners === null)
-    return { refused: `mesh ${meshIndex} does not form whole triangles`, issue: '#1049' };
+    return { refused: `mesh ${meshIndex} does not form whole triangles`, issue: '#1063' };
   for (const v of corners) {
     if (v >= vertices)
-      return { refused: `mesh ${meshIndex} indexes vertex ${v} of ${vertices}`, issue: '#1049' };
+      return { refused: `mesh ${meshIndex} indexes vertex ${v} of ${vertices}`, issue: '#1063' };
   }
 
   // The weld: split vertices at one position are one point. `map[v]` is vertex v's point.

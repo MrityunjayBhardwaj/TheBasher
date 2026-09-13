@@ -154,10 +154,12 @@ export function summarizeGltfEntry(bytes: Uint8Array): {
 /**
  * Non-dispatching core of the glTF import: read the OPFS bytes at `path`,
  * detach a plain ArrayBuffer, and build the deterministic import Op chain
- * (GltfAsset + per-child GltfChild + Transform + Group + — when the file
- * carries embedded animations — N TransformClip + 1 ClipSelect + connects)
- * against a CALLER-SUPPLIED DAG `state`. Returns the full
- * `GltfImportChainResult`; the caller decides whether to dispatch.
+ * against a CALLER-SUPPLIED DAG `state`, on one of two roads (#1049): the
+ * native road (Group + per-node Object + PolyMeshData) when the file can be
+ * native geometry, otherwise the clone road (GltfAsset + per-child Object +
+ * GltfData + Group + — when the file carries embedded animations — N
+ * TransformClip + 1 ClipSelect + connects). Returns a `GltfImportRoadResult`
+ * saying which; the caller decides whether to dispatch.
  *
  * Two callers, one chokepoint (B12):
  *   - `importGltfFromOpfs` (disk path) passes the live store state and then
@@ -201,7 +203,7 @@ export async function buildGltfImportOpsFromOpfs(
   } catch (err) {
     native = {
       refused: `the native reader could not read it (${formatAssetError(err)})`,
-      issue: '#1049',
+      issue: '#1063',
     };
   }
   if (!('refused' in native)) return { road: 'native', ...native };

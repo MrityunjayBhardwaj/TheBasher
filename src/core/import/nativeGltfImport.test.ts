@@ -146,7 +146,7 @@ describe('buildNativeGltfImportOps', () => {
           const meshes = json.meshes as { primitives: { mode?: number }[] }[];
           meshes[0].primitives[0].mode = 1;
         }),
-      '#1049',
+      '#1063',
     ],
     // #1062 — each guard gets a case only it can refuse, then the real files that tripped it.
     [
