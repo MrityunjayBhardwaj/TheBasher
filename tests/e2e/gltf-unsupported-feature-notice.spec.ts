@@ -37,9 +37,16 @@ test('an import with not-yet-editable features warns to the console, not the err
   });
 
   // The console notice names BOTH limitations (the extension + the secondary UV set).
+  // Found by its own wording: since #1049 a second warning also names the extension —
+  // the one saying why this file took the clone road rather than arriving native.
   await expect
-    .poll(() => warnings.find((t) => t.includes('KHR_materials_sheen')))
-    .toContain('secondary UV set');
+    .poll(() => warnings.find((t) => t.includes("aren't editable in Basher yet")))
+    .toContain('KHR_materials_sheen');
+  expect(warnings.find((t) => t.includes("aren't editable in Basher yet"))).toContain(
+    'secondary UV set',
+  );
+  // …and the road notice says why it is not native, naming the issue that brings it across.
+  expect(warnings.find((t) => t.includes('not as native geometry'))).toContain('#1062');
   // …and the import is NOT presented as a failure (no red error banner).
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });

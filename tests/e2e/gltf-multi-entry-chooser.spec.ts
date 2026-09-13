@@ -22,13 +22,11 @@ interface BasherWindow {
   __p?: Promise<string>;
 }
 
-const gltfAssetCount = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
+const nodeTypeCount = (page: import('@playwright/test').Page, type: string) =>
+  page.evaluate((t) => {
     const w = window as unknown as BasherWindow;
-    return Object.values(w.__basher_dag.getState().state.nodes).filter(
-      (n) => n.type === 'GltfAsset',
-    ).length;
-  });
+    return Object.values(w.__basher_dag.getState().state.nodes).filter((n) => n.type === t).length;
+  }, type);
 
 // Kick off an import of a TWO-entry set (one textured, one plain) built from the
 // known-good albedo fixture, WITHOUT awaiting — so the chooser modal is up while
@@ -95,18 +93,22 @@ test.describe('multi-glTF entry chooser (#214)', () => {
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
-    const before = await gltfAssetCount(page);
+    const assetsBefore = await nodeTypeCount(page, 'GltfAsset');
+    const meshesBefore = await nodeTypeCount(page, 'PolyMeshData');
     await startMultiEntryImport(page);
 
     const chooser = page.getByTestId('gltf-entry-chooser');
     await expect(chooser).toBeVisible();
     await page.getByTestId('gltf-entry-import-all').click();
 
-    // The seam resolves to the LAST imported entry's path, and BOTH entries
-    // landed as separate GltfAsset models.
+    // The seam resolves to the LAST imported entry's path, and BOTH entries landed
+    // as separate models — each whole on its own road (#1049): the textured entry
+    // through the file's copy (textures are not native yet, #1050), the plain one
+    // as native mesh data.
     await page.evaluate(() => (window as unknown as BasherWindow).__p);
     await expect(chooser).toBeHidden();
-    await expect.poll(() => gltfAssetCount(page)).toBe(before + 2);
+    await expect.poll(() => nodeTypeCount(page, 'GltfAsset')).toBe(assetsBefore + 1);
+    await expect.poll(() => nodeTypeCount(page, 'PolyMeshData')).toBe(meshesBefore + 1);
   });
 
   test('dismissing the chooser aborts the import (no model added)', async ({ page }) => {

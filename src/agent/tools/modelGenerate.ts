@@ -130,12 +130,16 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
     // V7 — the FORKED state, never the live store. The tool returns ops for the
     // Diff; the director accepts before anything in the graph changes.
     const chain = await buildGltfImportOpsFromOpfs(opfsPath, sceneRef.node, ctx.dagState);
+    const landed =
+      chain.road === 'native'
+        ? `native geometry under Group ${chain.groupId}`
+        : `GltfAsset ${chain.gltfAssetId} (not native: ${chain.nativeRefusal.refused}, ${chain.nativeRefusal.issue})`;
 
     return {
       ops: chain.ops,
       text:
-        `Generated "${args.name ?? args.prompt}" (task ${taskId}) — imported as ` +
-        `${opfsPath}, GltfAsset ${chain.gltfAssetId}. It is an ordinary imported ` +
+        `Generated "${args.name ?? args.prompt}" (task ${taskId}) — imported from ` +
+        `${opfsPath} as ${landed}. It is an ordinary imported ` +
         `asset, with nothing in the graph marking it as generated.`,
     };
   },

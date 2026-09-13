@@ -50,6 +50,11 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
+import {
+  buildNativeGltfImportOps,
+  type NativeImportRefusal,
+  type NativeImportResult,
+} from '../../core/import/nativeGltfImport';
 import { convertSpecGlossEntry } from './specGlossIngest';
 import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMaterials';
 import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
@@ -174,7 +179,7 @@ export async function buildGltfImportOpsFromOpfs(
   path: string,
   sceneNodeId: string,
   state: DagState,
-): Promise<GltfImportChainResult> {
+): Promise<GltfImportRoadResult> {
   const storage = await getStorage();
   const bytes = await storage.read(path);
   // Detach a non-shared ArrayBuffer view for the importer. Uint8Array.buffer
@@ -182,17 +187,41 @@ export async function buildGltfImportOpsFromOpfs(
   // wants a plain ArrayBuffer. (Verbatim from AssetDropZone.onDrop:74-76.)
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
-  const buffer = copy.buffer;
-  return buildGltfImportOps(
-    {
-      buffer,
-      assetRef: path,
-      sceneNodeId,
-      resolveBuffer: (uri) => storage.read(opfsSiblingPath(path, uri)),
-    },
-    state,
-  );
+  const args = {
+    buffer: copy.buffer,
+    assetRef: path,
+    sceneNodeId,
+    resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
+  };
+  // A reader failure is a refusal like any other: the file still arrives, through the road that
+  // can hold it, and the notice says what the native reader could not do.
+  let native: NativeImportResult | NativeImportRefusal;
+  try {
+    native = await buildNativeGltfImportOps(args);
+  } catch (err) {
+    native = {
+      refused: `the native reader could not read it (${formatAssetError(err)})`,
+      issue: '#1049',
+    };
+  }
+  if (!('refused' in native)) return { road: 'native', ...native };
+  return { road: 'clone', nativeRefusal: native, ...(await buildGltfImportOps(args, state)) };
 }
+
+/**
+ * #1049 — which road an import took. Every product entry point (drop, picker, `library.import`,
+ * `model.generate`, AI generation) comes through `buildGltfImportOpsFromOpfs`, so the road is
+ * chosen once, here: the native road first, and when it refuses, the WHOLE import takes the clone
+ * road instead, carrying the refusal so the caller can say why. One import is never split between
+ * the two. As later steps delete their refusals (#1050, #1051, #393, #1052, #1060, #1061, #1062),
+ * more files arrive native with no change here; #1053 removes the clone arm.
+ */
+export type GltfImportRoadResult =
+  | ({ readonly road: 'native' } & NativeImportResult)
+  | ({
+      readonly road: 'clone';
+      readonly nativeRefusal: NativeImportRefusal;
+    } & GltfImportChainResult);
 
 export async function importGltfFromOpfs(path: string): Promise<void> {
   try {
@@ -218,6 +247,15 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
     //  (2) the rest are FAITHFUL: they render via the clone (the scalar overlay
     //      never strips them); they're just not yet captured into the editable
     //      IR. A console notice, NOT the red `asset failed:` banner.
+    // A native import has nothing to report: the native road refuses a file rather than drop what
+    // it carries (#1062), so everything below is about the clone road's copy of the file.
+    if (result.road === 'native') {
+      useImportRefreshStore.getState().bump();
+      return;
+    }
+    console.warn(
+      `glTF imported (${path}) through the file's own copy, not as native geometry: ${result.nativeRefusal.refused} (${result.nativeRefusal.issue}).`,
+    );
     const specGloss = result.unsupportedFeatures.includes(SPEC_GLOSS_EXTENSION);
     const faithful = result.unsupportedFeatures.filter((f) => f !== SPEC_GLOSS_EXTENSION);
     if (specGloss) {
