@@ -20,21 +20,20 @@
 //   (4) Flatten off → the clone path restores every map (the toggle is the
 //       only lever; nothing in #99/#124 is undone).
 //
-// Observation seam: SceneFromDAG `__basher_gltf_meshes()` (DEV-only, read-only,
-// V8 clean) — exposes each mesh's live map presence + scalar channels.
+// Observation: the drawn three.js material, read on either road by `_importedMesh.ts`;
+// the override is wired by `_importOverride.ts`.
+//
+// #1072 — the fixture now arrives as native geometry (#1050), so the override wraps an
+// ordinary Object. Steps (0), (2) and (4) hold on that road. ⚠️ RED AT STEP (3) UNTIL
+// #1076: flatten was only ever built inside the glTF clone renderer, and the native draw
+// ignores `ignoreSourceMaterial` (measured: maps and scalars unchanged with it on). The
+// spec asserts the promise, not today's behaviour.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
+import { wrapImportInOverride } from './_importOverride';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-  readonly color: string | null;
-  readonly metalness: number | null;
-  readonly roughness: number | null;
-  readonly hasMetalnessMap: boolean;
-  readonly hasRoughnessMap: boolean;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -57,7 +56,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -94,10 +92,7 @@ async function pollForMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     const match = summary.find((m) => accept(m));
     if (match) return match;
@@ -126,43 +121,12 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-/** Wire a MaterialOverride between the imported GltfAsset and its Group (V67). */
+/** Wire a MaterialOverride between the import root Group and its content. */
 async function applyOverride(
   page: import('@playwright/test').Page,
   params: Record<string, unknown>,
 ): Promise<void> {
-  await page.evaluate((p) => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    // V67: import root is a transformable Group (was a Transform); the asset
-    // wires into Group.children (a list socket, was Transform.target/single).
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
-    if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        { type: 'addNode', nodeId: 'mo131', nodeType: 'MaterialOverride', params: p },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: 'mo131', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'mo131', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      '#131 apply material override',
-    );
-  }, params);
+  await wrapImportInOverride(page, 'mo131', params);
 }
 
 async function setFlatten(page: import('@playwright/test').Page, on: boolean): Promise<void> {
@@ -207,15 +171,16 @@ test('#131 (D-05) — ignoreSourceMaterial drops source maps by intent; off rest
     `metal fixture must carry maps; ${JSON.stringify(baseline)}`,
   ).toBe(true);
   expect(baseline.hasRoughnessMap).toBe(true);
+  expect((await importRoots(page)).map((r) => r.road)).toEqual(['native']);
 
-  // (2) Override WITHOUT flatten (#99 + #124 clone path) → every map survives.
+  // (2) Override WITHOUT flatten (#99 + #124 composition) → every map survives.
   //     This is the falsification anchor: if flatten fired unconditionally the
   //     maps would already be gone here.
   await applyOverride(page, { color: '#3399ff', roughness: 0.2, metalness: 0.1 });
-  const cloned = await pollForMesh(page, (m) => m.color === '#3399ff', 'clone-path');
+  const cloned = await pollForMesh(page, (m) => m.color === '#3399ff', 'composed');
   expect(
     cloned.hasMap && cloned.hasMetalnessMap && cloned.hasRoughnessMap,
-    `the clone path must preserve all source maps; ${JSON.stringify(cloned)}`,
+    `composing the override must preserve all source maps; ${JSON.stringify(cloned)}`,
   ).toBe(true);
 
   // (3) THE CAPABILITY — flatten on → the source maps are GONE by intent and the

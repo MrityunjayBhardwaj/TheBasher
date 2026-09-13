@@ -8,17 +8,19 @@
 //       `ignoreSourceMaterial` checkbox (unchecked; maps intact).
 //   (1) check it via the real checkbox → the live material drops its maps by
 //       intent (flatten) — proving the boolean is UI-editable and dispatches.
-//   (2) uncheck it → the maps restore (the clone path is back).
+//   (2) uncheck it → the maps restore (the composed material is back).
+//
+// #1072 — the fixture now arrives as native geometry (#1050); the override wraps an
+// ordinary Object (`_importOverride.ts`) and the drawn material is read by
+// `_importedMesh.ts`. The checkbox half holds on that road. ⚠️ RED AT STEP (1) UNTIL
+// #1076: the native draw ignores `ignoreSourceMaterial`, so checking the box dispatches
+// and changes nothing on screen. The spec asserts the promise, not today's behaviour.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
+import { wrapImportInOverride } from './_importOverride';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-  readonly metalness: number | null;
-  readonly hasMetalnessMap: boolean;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -39,7 +41,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -75,10 +76,7 @@ async function pollForMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     const match = summary.find((m) => accept(m));
     if (match) return match;
@@ -119,37 +117,10 @@ test('#136 — boolean param is UI-editable: ignoreSourceMaterial checkbox flatt
     ],
     'bool-asset',
   );
+  await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['native']);
+  await wrapImportInOverride(page, 'mo136', {});
   await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset')!;
-    // V67: import root is a transformable Group (was a Transform); the asset
-    // wires into Group.children (a list socket, was Transform.target/single).
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group')!;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        { type: 'addNode', nodeId: 'mo136', nodeType: 'MaterialOverride', params: {} },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: 'mo136', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'mo136', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      '#136 wire override',
-    );
-    w.__basher_selection!.getState().select('mo136');
+    (window as unknown as BasherWindow).__basher_selection!.getState().select('mo136');
   });
 
   // Baseline: textured, maps intact.
@@ -169,7 +140,7 @@ test('#136 — boolean param is UI-editable: ignoreSourceMaterial checkbox flatt
   expect(flattened.hasMap, 'checking the box flattens the material (maps dropped)').toBe(false);
   expect(flattened.hasMetalnessMap).toBe(false);
 
-  // (2) Uncheck → the clone path restores every map.
+  // (2) Uncheck → the composed material restores every map.
   await toggle.uncheck();
   await expect(toggle).not.toBeChecked();
   const restored = await pollForMesh(page, (m) => m.hasMap, 'restored-via-checkbox');
