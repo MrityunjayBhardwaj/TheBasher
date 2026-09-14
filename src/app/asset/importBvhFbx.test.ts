@@ -24,6 +24,21 @@ vi.mock('../boot', () => ({
   getStorage: async () => currentStorage,
 }));
 
+// #1056 — the bind decision is the REAL one unless a row forces "will bind". A real character
+// in a unit DAG would need a glTF skin the evaluator can project, which this environment does
+// not load; the bound road is observed end to end by the generated-character e2e instead.
+const bindDecision = vi.hoisted(() => ({ forceBind: false }));
+vi.mock('./bindMotionToCharacter', async (importOriginal) => {
+  const real = await importOriginal<typeof import('./bindMotionToCharacter')>();
+  return {
+    ...real,
+    decideMotionBinding: (...args: Parameters<typeof real.decideMotionBinding>) =>
+      bindDecision.forceBind
+        ? ({ ok: true } as unknown as ReturnType<typeof real.decideMotionBinding>)
+        : real.decideMotionBinding(...args),
+  };
+});
+
 // Imported AFTER vi.mock so the modules pick up the mocked boot.
 import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './importBvhFbx';
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
@@ -70,6 +85,7 @@ function seedTime(): void {
 
 beforeEach(() => {
   registerAllNodes();
+  bindDecision.forceBind = false;
   currentStorage = new MemoryStorage();
   useAssetErrorStore.getState().clearAll();
   useImportRefreshStore.setState({ tick: 0 });
@@ -126,6 +142,70 @@ describe('importBvhFromOpfs', () => {
     expect(result).toBeNull();
     expect(dispatchSpy).not.toHaveBeenCalled();
     expect(useAssetErrorStore.getState().errors[path]).toBeDefined();
+  });
+});
+
+describe('#1056 — a motion nothing binds stands in the scene as an Object', () => {
+  const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
+
+  it('with no character, the SAME dispatch adds an Object pointed at the skeleton', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    const result = await importBvhFromOpfs(path);
+
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    const ops = dispatchSpy.mock.calls[0][0];
+    const objectId = `${result!.skeletonId}_object`;
+    expect(ops).toContainEqual(
+      expect.objectContaining({ type: 'addNode', nodeId: objectId, nodeType: 'Object' }),
+    );
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: result!.skeletonId, socket: 'out' },
+      to: { node: objectId, socket: 'data' },
+    });
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: objectId, socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    });
+    // And it landed: the Object is in the graph, a child of the scene.
+    const state = useDagStore.getState().state;
+    expect(state.nodes[objectId]?.type).toBe('Object');
+    expect(state.nodes.n_scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
+  });
+
+  it('when the motion WILL bind, no Object is added — it arrives exactly as before', async () => {
+    bindDecision.forceBind = true;
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    await importBvhFromOpfs(path);
+    const types = dispatchSpy.mock.calls[0][0]
+      .filter((o) => o.type === 'addNode')
+      .map((o) => o.nodeType);
+    expect(types.sort()).toEqual(['AnimationClip', 'Skeleton']);
+  });
+
+  it('a project with no scene aggregator gets the import alone', async () => {
+    useDagStore.getState().hydrate({ nodes: {}, outputs: {} });
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    await importBvhFromOpfs(path);
+    const types = dispatchSpy.mock.calls[0][0]
+      .filter((o) => o.type === 'addNode')
+      .map((o) => o.nodeType);
+    expect(types).not.toContain('Object');
+  });
+
+  it('an FBX nothing binds gets the same Object', async () => {
+    const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+    await currentStorage.write(fbxPath, RIG_FBX_BYTES);
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    const result = await importFbxFromOpfs(fbxPath);
+    const ops = dispatchSpy.mock.calls[0][0];
+    expect(ops).toContainEqual(
+      expect.objectContaining({ nodeId: `${result!.skeletonId}_object`, nodeType: 'Object' }),
+    );
   });
 });
 

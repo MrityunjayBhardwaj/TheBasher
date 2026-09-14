@@ -1896,7 +1896,12 @@ export type ObjectData =
   | LightDataValue
   | CameraDataValue
   | BakedDataValue
-  | ModifiedDataValue;
+  | ModifiedDataValue
+  // #1056 — a skeleton, pointed at DIRECTLY. An armature is its own Object in Blender, and the
+  // skeleton is already the right noun here (docs/OBJECT-DATA-SPLIT-DESIGN.md §0), so it joins
+  // the union rather than being wrapped in a second data node. It draws no scene geometry: its
+  // bones are editor chrome from the armature band (see ObjectR's arm), like a camera's frustum.
+  | SkeletonValue;
 
 /**
  * The Object half — owns the transform, points at data. Renders `data.geometry`

@@ -301,11 +301,14 @@ function GhostChild({ value }: { value: SceneObject }) {
       // it. Its geometry is a modifier OUTPUT besides — a rebuilt buffer whose
       // descriptor is neither 'box' nor 'sphere', so the synchronous ghost below could
       // not draw it anyway.
+      // #1056 — `Skeleton` opts out for the camera/light reason: it carries NO GEOMETRY to
+      // ghost. Its body is bones, which the armature band draws as chrome.
       if (
         data.kind === 'BakedData' ||
         data.kind === 'LightData' ||
         data.kind === 'CameraData' ||
-        data.kind === 'ModifiedData'
+        data.kind === 'ModifiedData' ||
+        data.kind === 'Skeleton'
       ) {
         return null;
       }

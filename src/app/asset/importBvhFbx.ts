@@ -26,14 +26,19 @@
 //      importers, unchanged).
 
 import { useDagStore } from '../../core/dag/store';
+import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
+import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
+import type { BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useSelectionStore } from '../stores/selectionStore';
 import { importGltfFromOpfs } from './importGltf';
 import {
   bindMotionToCharacter,
+  decideMotionBinding,
   type BindMotionOutcome,
   type MotionArrival,
 } from './bindMotionToCharacter';
@@ -60,6 +65,32 @@ function nameFromPath(path: string): string {
 }
 
 /**
+ * #1056 — the ops that stand a motion nothing will bind in the scene, or none.
+ *
+ * Decided BEFORE the dispatch, with the same decision the bind makes after it
+ * (`decideMotionBinding`), so a motion a character will take arrives exactly as it always
+ * has, and a motion nothing takes arrives with an Object of its own — in the same single undo
+ * step as the import (K6). A project with no scene aggregator has nowhere to stand one, and
+ * gets the import alone.
+ *
+ * `normalise` is true for both file formats: BVH declares no unit, and the FBX road does not
+ * read one either, so neither knows how big the rig is meant to be.
+ */
+function unboundMotionObjectOps(ops: readonly Op[], skeletonId: string): Op[] {
+  const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
+  const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
+  const bones = (params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
+  if (bones.length === 0) return [];
+  const { state } = useDagStore.getState();
+  const sceneNodeId = state.outputs.scene?.node;
+  if (!sceneNodeId) return [];
+  const selected = useSelectionStore.getState().selectedNodeId;
+  const names = bones.map((b) => b.name);
+  if (decideMotionBinding(state, selected, names, 'imported').ok) return [];
+  return buildSkeletonObjectOps({ skeletonId, bones, sceneNodeId, normalise: true }).ops;
+}
+
+/**
  * Read a `.bvh` from OPFS and import it as a Skeleton + AnimationClip.
  *
  * BVH is TEXT: decode the bytes with TextDecoder before parsing. A wrong decode
@@ -73,7 +104,8 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
     const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name: nameFromPath(path) });
-    dag.dispatchAtomic(ops, 'user', `import bvh: ${path}`);
+    const standIn = unboundMotionObjectOps(ops, skeletonId);
+    dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
@@ -105,7 +137,8 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
       data: copy.buffer,
       name: nameFromPath(path),
     });
-    dag.dispatchAtomic(ops, 'user', `import fbx: ${path}`);
+    const standIn = unboundMotionObjectOps(ops, skeletonId);
+    dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, clipId };
   } catch (err) {

@@ -119,6 +119,7 @@ import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
+import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
 import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
@@ -335,6 +336,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     }
     return out;
   }, [state, cache, sourceRigVisible]);
+  // #1056 — skeleton Objects: an Object whose data is a Skeleton draws nothing in its scene
+  // slot (ObjectR's arm), because its body is its bones. Collected here, the one read path,
+  // and handed to the armature band beside the source rigs; the band samples each clip at the
+  // playhead per frame. Always on, unlike the source rig — this is scene content, not a
+  // diagnostic.
+  const skeletonObjects = useMemo<SkeletonObject[]>(
+    () => collectSkeletonObjects(state, cache),
+    [state, cache],
+  );
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -617,7 +627,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           the playhead; orients each bone by its own basis, so ROLL is visible
           (#854/#960). Hidden in `rendered` mode like every other helper. */}
       {showLightHelpers ? (
-        <ArmatureHelper sourceRigs={sourceRigs} showSourceRigs={sourceRigVisible} />
+        <ArmatureHelper
+          sourceRigs={sourceRigs}
+          showSourceRigs={sourceRigVisible}
+          skeletonObjects={skeletonObjects}
+        />
       ) : null}
       {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
@@ -2459,6 +2473,14 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // light split met). Closing it with `as MeshDataValue` also compiles, and would
     // send a camera down the mesh road looking for a geometry it does not have — the
     // cast that silently darkened every grouped light. Return null; never cast.
+    return null;
+  }
+  if (data?.kind === 'Skeleton') {
+    // #1056 — a skeleton Object draws NO scene geometry, for the camera arm's reason: its
+    // visible body is its bones, which are editor chrome from the armature band
+    // (`collectSkeletonObjects` → `ArmatureHelper`), posed at the playhead there. Null here is
+    // the answer, not a stub — and never a fall-through to the mesh road, which would go
+    // looking for a geometry a skeleton does not have.
     return null;
   }
   if (data?.kind === 'BakedData') {

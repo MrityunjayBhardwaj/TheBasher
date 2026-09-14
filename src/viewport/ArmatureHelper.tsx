@@ -46,6 +46,7 @@ import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { assetIdsFor, bonesPickable, ownerNodeId, pickBone } from './armaturePick';
 import type { PickNode } from './armaturePick';
 import type { AnimationClipValue } from '../nodes/types';
+import type { SkeletonObject } from '../app/skeletonObjects';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
 const BONE_COLOR = '#c8d4e4';
@@ -151,6 +152,32 @@ function scanSignature(scans: ArmatureScan[]): string {
   return scans.map((s) => `${s.root.uuid}:${s.bones.length}`).join('|');
 }
 
+const _world = new THREE.Matrix4();
+const _point = new THREE.Vector3();
+
+/**
+ * #1056 — a skeleton Object's bones, carried from the rig's own space into the world by the
+ * Object's matrix. Head, tail and instance matrix all move together, and the length scales
+ * with the Object, so sticks, bounds and picking read the same bone the octahedron draws.
+ */
+function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): BoneFrame[] {
+  _world.fromArray(world);
+  const scale = _world.getMaxScaleOnAxis();
+  return frames.map((f) => {
+    _point.set(f.head[0], f.head[1], f.head[2]).applyMatrix4(_world);
+    const head = [_point.x, _point.y, _point.z] as const;
+    _point.set(f.tail[0], f.tail[1], f.tail[2]).applyMatrix4(_world);
+    const tail = [_point.x, _point.y, _point.z] as const;
+    return {
+      ...f,
+      head,
+      tail,
+      length: f.length * scale,
+      matrix: new THREE.Matrix4().multiplyMatrices(_world, f.matrix),
+    };
+  });
+}
+
 /**
  * One InstancedMesh for ALL armatures in the scene.
  *
@@ -162,11 +189,15 @@ function scanSignature(scans: ArmatureScan[]): string {
 export function ArmatureHelper({
   sourceRigs,
   showSourceRigs = false,
+  skeletonObjects,
 }: {
   /** Source rigs to draw beside their characters. Empty when nothing is
    *  retargeted, or when the diagnostic is off. */
   readonly sourceRigs?: readonly ReferenceRigInput[];
   readonly showSourceRigs?: boolean;
+  /** #1056 — Objects whose data is a Skeleton. They have no live `Bone`s, so the
+   *  scene scan cannot find them; their bones are posed here from the DAG. */
+  readonly skeletonObjects?: readonly SkeletonObject[];
 } = {}) {
   const scene = useThree((s) => s.scene);
   const boneDisplay = useViewportStore((s) => s.boneDisplay);
@@ -185,13 +216,19 @@ export function ArmatureHelper({
   const picks = useRef<{
     offsets: number[];
     frames: BoneFrame[];
-    roots: THREE.Object3D[];
+    /** Per armature: the DAG node a click on it selects, or null when nothing owns it. Held
+     *  per armature rather than walked from a scene root at click time, because a skeleton
+     *  Object (#1056) HAS no scene root — its owner is known when it is collected. */
+    owners: (string | null)[];
+    /** How many leading armatures are LIVE (found by the scene scan). Everything after
+     *  them is a skeleton Object. */
+    liveCount: number;
     /** Per armature: every node id that names a part of the same asset. Built on
      *  the rescan cadence, not per raycast — R3F raycasts the scene on pointer
      *  MOVE as well as on click, and a subtree walk there would cost a traverse
      *  per mouse motion. */
     assetIds: Set<string>[];
-  }>({ offsets: [], frames: [], roots: [], assetIds: [] });
+  }>({ offsets: [], frames: [], owners: [], liveCount: 0, assetIds: [] });
   // Which instance is currently painted as selected, so the colour buffer is
   // rewritten when it CHANGES rather than on every frame of a 4096-instance
   // mesh.
@@ -200,6 +237,9 @@ export function ArmatureHelper({
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
   const assetIdsCache = useRef<Set<string>[]>([]);
+  /** The skeleton-Object set last drawn, for the same stale-bone-selection reason as
+   *  `signature` — those rigs change with the graph, not with the scene scan. */
+  const standaloneSignature = useRef('');
 
   const geometry = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -309,19 +349,25 @@ export function ArmatureHelper({
       const mesh = meshRef.current;
       if (!mesh || !mesh.visible || mesh.count === 0) return;
       const selectedId = useSelectionStore.getState().primaryNodeId;
-      if (!selectedId) return;
+      const { offsets, frames, liveCount, assetIds } = picks.current;
+      // Nothing selected and no skeleton Object drawn ⇒ no bone can pick, so skip the raycast
+      // (R3F calls this on pointer MOVE too).
+      if (!selectedId && liveCount === offsets.length) return;
 
       const hits: THREE.Intersection[] = [];
       THREE.InstancedMesh.prototype.raycast.call(mesh, raycaster, hits);
       if (hits.length === 0) return;
 
-      const { offsets, frames } = picks.current;
       for (const hit of hits) {
         const id = hit.instanceId;
         if (id === undefined) continue;
         const bone = pickBone(id, offsets, frames);
         if (!bone) continue;
-        if (!bonesPickable(picks.current.assetIds[bone.armature] ?? new Set(), selectedId))
+        // #1056 — the gate above protects a SKIN from bones drawn in front of it. A skeleton
+        // Object has no skin: its bones are its whole body, so they pick without it — the way
+        // clicking a bare armature in Blender selects it.
+        const standalone = bone.armature >= liveCount;
+        if (!standalone && !bonesPickable(assetIds[bone.armature] ?? new Set(), selectedId))
           continue;
         intersects.push({ ...hit, distance: hit.distance * PICK_DEPTH_BIAS });
       }
@@ -329,26 +375,30 @@ export function ArmatureHelper({
     [],
   );
 
-  const onBoneClick = useCallback(
-    (e: SelectClickLike & { instanceId?: number | null }) => {
-      const id = e.instanceId;
-      if (id === undefined || id === null) return;
-      const { offsets, frames, roots } = picks.current;
-      const hit = pickBone(id, offsets, frames);
-      if (!hit) return;
-      const nodeId = ownerNodeId(roots[hit.armature] ?? null, isLiveNodeId);
-      // No owning node means nothing to select. The click is deliberately NOT
-      // consumed in that case — `selectNode` leaves propagation alone for a null
-      // id, so an unroutable click still reaches OrbitControls, which is what
-      // every other picker in the viewport does.
-      if (!nodeId) return;
-      useBoneSelectionStore.getState().selectBone(nodeId, hit.name, hit.chain);
-      // The NODE selection goes through the one handler (#211): a helper earns
-      // selection by calling `selectNode`, never by writing the store itself.
+  const onBoneClick = useCallback((e: SelectClickLike & { instanceId?: number | null }) => {
+    const id = e.instanceId;
+    if (id === undefined || id === null) return;
+    const { offsets, frames, owners, liveCount } = picks.current;
+    const hit = pickBone(id, offsets, frames);
+    if (!hit) return;
+    const nodeId = owners[hit.armature] ?? null;
+    // No owning node means nothing to select. The click is deliberately NOT
+    // consumed in that case — `selectNode` leaves propagation alone for a null
+    // id, so an unroutable click still reaches OrbitControls, which is what
+    // every other picker in the viewport does.
+    if (!nodeId) return;
+    // #1056 — a first click on a skeleton Object's bones selects the OBJECT, as a click on an
+    // armature does in object mode. Its bones pick once it is the thing being worked on,
+    // which is the same order a character's already follow.
+    if (hit.armature >= liveCount && useSelectionStore.getState().primaryNodeId !== nodeId) {
       selectNode(nodeId, e);
-    },
-    [isLiveNodeId],
-  );
+      return;
+    }
+    useBoneSelectionStore.getState().selectBone(nodeId, hit.name, hit.chain);
+    // The NODE selection goes through the one handler (#211): a helper earns
+    // selection by calling `selectNode`, never by writing the store itself.
+    selectNode(nodeId, e);
+  }, []);
 
   useFrame(() => {
     const mesh = meshRef.current;
@@ -392,22 +442,46 @@ export function ArmatureHelper({
         s.bones.map((b, i) => ({ name: b.name, parent: s.parents[i], matrix: b.matrixWorld })),
       ),
     );
-    const frames = perArmature.flat();
+    // #1056 — skeleton Objects: rigs the DAG owns with no live `Bone`s behind them, so the scan
+    // above cannot see them. Posed from their one clip at the playhead (the rest pose when
+    // there is none, or several), carried into the world by the Object, and appended AFTER
+    // the live armatures, so the live-only reader below — the source-rig match — keeps
+    // reading `perArmature` and cannot mistake one for a character.
+    const standaloneInputs = skeletonObjects ?? [];
+    const standaloneSig = standaloneInputs.map((o) => `${o.id}:${o.bones.length}`).join('|');
+    if (standaloneSig !== standaloneSignature.current) {
+      if (standaloneSignature.current !== '') useBoneSelectionStore.getState().clear();
+      standaloneSignature.current = standaloneSig;
+    }
+    const playhead = useTimeStore.getState().seconds;
+    const standalone = standaloneInputs.map((o) =>
+      placeInWorld(boneTransforms(o.clip ? posedSourceBones(o.clip, playhead) : o.bones), o.world),
+    );
+    const armatures = [...perArmature, ...standalone];
+    const frames = armatures.flat();
 
     // The offsets ARE the flattening, recorded rather than re-derived: a click
     // handler that recomputed them from `perArmature` would be a second copy of
     // this loop's arithmetic, free to disagree with it by a frame.
     const offsets: number[] = [];
     let running = 0;
-    for (const armature of perArmature) {
+    for (const armature of armatures) {
       offsets.push(running);
       running += armature.length;
     }
+    const owners = [
+      ...current.map((s) => ownerNodeId(s.root, isLiveNodeId)),
+      ...standaloneInputs.map((o) => o.id),
+    ];
     picks.current = {
       offsets,
       frames,
-      roots: current.map((s) => s.root),
-      assetIds: assetIdsCache.current,
+      owners,
+      liveCount: current.length,
+      assetIds: [
+        ...assetIdsCache.current,
+        ...standaloneInputs.map((o) => new Set([o.id, o.skeletonId])),
+      ],
     };
 
     // Instance matrices are in the mesh's LOCAL space; the bone matrices are
@@ -469,11 +543,11 @@ export function ArmatureHelper({
     const wantedBone = active ? normalizeBoneName(active.boneName) : null;
     let highlighted = -1;
     if (wantedBone !== null) {
-      for (let a = 0; a < current.length && highlighted < 0; a++) {
+      for (let a = 0; a < armatures.length && highlighted < 0; a++) {
         // The owner is checked per armature, not per bone: two characters can
         // carry identically named bones, and a name alone would light the wrong
         // one on whichever rig the scan happened to reach first.
-        if (ownerNodeId(current[a].root, isLiveNodeId) !== wantedNode) continue;
+        if (owners[a] !== wantedNode) continue;
         const base = offsets[a];
         const end = a + 1 < offsets.length ? offsets[a + 1] : frames.length;
         for (let i = base; i < end && i < count; i++) {
@@ -598,10 +672,20 @@ export function ArmatureHelper({
           degenerateBases: number;
           degenerateNames: string[];
           highlightedBone: string | null;
+          // #1056 — the skeleton Objects among `armatures`, each with the reason it is or is
+          // not posed: without `clipCount`, a rig resting because two clips are wired reads
+          // the same as a rig whose clip failed to sample.
+          skeletonObjects: { id: string; bones: number; clipCount: number; posed: boolean }[];
         };
       };
       w.__basher_armature = {
-        armatures: current.length,
+        armatures: armatures.length,
+        skeletonObjects: standaloneInputs.map((o, i) => ({
+          id: o.id,
+          bones: standalone[i].length,
+          clipCount: o.clipCount,
+          posed: o.clip !== null,
+        })),
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),
         matrices: frames.slice(0, count).map((f) => [...f.matrix.elements]),
