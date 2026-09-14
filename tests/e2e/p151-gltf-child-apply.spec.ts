@@ -148,7 +148,22 @@ test('SC-2/SC-6: bake a textured imported mesh → three-way verts + lossless ma
   await expect.poll(async () => (await importRoots(page)).length).toBe(1);
   const imp = await importNamed(page, 0);
   expect(imp.road).toBe('native');
-  const before = await waitTextured(page, imp.rootId);
+  await waitTextured(page, imp.rootId);
+  // A non-identity pose, so the bake has something to apply: at identity all three legs read
+  // the same whether or not the pose reached the verts.
+  await page.evaluate((id) => {
+    (window as unknown as BasherWindow)
+      .__basher_dag!.getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: id, paramPath: 'scale', value: [2, 1, 1] }],
+        'user',
+        'p151 pose',
+      );
+  }, imp.objectId);
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
+    .toBeCloseTo(2, 3);
+  const before = (await drawnImportMeshes(page, imp.rootId))[0];
   // Original world bounds — the THIRD leg of the three-way boundary-pair.
   const origBounds = before.worldBounds;
 
