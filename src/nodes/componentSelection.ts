@@ -123,9 +123,9 @@ import type { KnownDomain, ScopeDomain } from './attributes';
  * the resolver below is the thing that consumes it.
  */
 export type { ScopeDomain };
-import type { CountVerdict, GeometryDescriptor, ObjectData } from './types';
+import type { CountVerdict, GeometryDescriptor, ObjectData, GeometryRef } from './types';
 import { cornerCountOf, faceCountOf } from '../app/faceCount';
-import { edgeCountOf } from '../app/edgeIdentity';
+import { descriptorOf, edgeCountOf } from '../app/edgeIdentity';
 import { pointCountOf } from '../app/pointIdentity';
 import { modifierDataSource } from '../app/modifierDataSource';
 import {
@@ -316,14 +316,23 @@ function refuse(why: string): never {
  */
 export function componentCountOf(
   domain: KnownDomain,
-  descriptor: GeometryDescriptor,
+  subject: GeometryDescriptor | GeometryRef,
 ): CountVerdict {
+  const descriptor = descriptorOf(subject);
   switch (domain) {
     case 'face': {
-      // The gltf / baked arms have no answer: their buffers live outside the descriptor, so
-      // nothing here can say how many faces they hold. A ZERO would read as "scope nothing"
-      // on a mesh the author can see, with faces they can count — which is why the absence
-      // is carried as its own value rather than as a number.
+      // 🔴 #1029 — THIS SAID "the gltf / baked arms have no answer" AND A gltf NOW ANSWERS.
+      // Measured: a captured import returns `{ kind: 'counted', count: 12 }` here, because
+      // this arm delegates to `faceCountOf` and #1023 gave that a captured-count arm. The
+      // sentence was the arm's own summary, absolute and enumerated, so it was reached for
+      // instead of the two lines below it — the same defect as #1026 one module over, and
+      // the reason both are worth an entry rather than a quiet edit.
+      //
+      // What holds, and what the refusal actually means: a face count is unavailable when
+      // nobody captured one (an import from before #1023, a child that is not all triangles)
+      // or when the kind cannot state one at all (`baked`). A ZERO would read as "scope
+      // nothing" on a mesh the author can see, with faces they can count — which is why the
+      // absence is carried as its own value rather than as a number.
       //
       // #744 — `faceCountOf` STILL SPEAKS `number | null`, AND THE LIFT HAPPENS HERE. Its
       // `null` has only ever meant one thing: its derived arms recurse, and come back null
@@ -334,7 +343,12 @@ export function componentCountOf(
       return faces === null
         ? {
             kind: 'outside-the-descriptor',
-            why: `descriptor '${descriptor.kind}' resolves to a 'gltf' or 'baked' source, whose triangles live outside the descriptor`,
+            // ⚠️ NAMES BOTH CAUSES RATHER THAN THE LIKELIER ONE. Telling them apart needs a
+            // walk to the leaf of the source chain, and the two walks this repo already has
+            // cover different kind sets for different questions — so a third would be a third
+            // spelling, and guessing which cause fired would repeat the very defect this
+            // sentence was rewritten to remove. It states what is true of both.
+            why: `descriptor '${descriptor.kind}' resolves to a source whose faces this cannot count: either an imported mesh whose face count was never captured (re-importing captures one) or a 'baked' mesh, whose triangles live outside the descriptor`,
           }
         : { kind: 'counted', count: faces };
     }
@@ -362,7 +376,9 @@ export function componentCountOf(
       // widened `ScopeDomain` — #667 closed, #827 did the widening, and `BevelModifier`
       // declares `'edge'` to bevel a SUBSET of its source's edges. So this is an ordinary
       // shipped road with a director on the other end of it, not a test-only arm.
-      return edgeCountOf(descriptor);
+      // #1046 — the SUBJECT, not its descriptor: an imported mesh's edges are read off its buffer,
+      // and only a ref reaches one. Every other arm answers from the descriptor alone.
+      return edgeCountOf(subject);
     case 'corner': {
       // #776 gave this arm an answer, and it is the fourth and last. A corner is a POLYGON
       // corner — Blender's loop — so a box has 24 and not the 36 `tiledCornerOrder` laid out
@@ -572,7 +588,13 @@ export function resolveComponentSelection(
     );
   }
 
-  const count = componentCountOf(domain, source.geometry.descriptor);
+  // 🔴 #1046 — ASKED WITH THE REF THIS FUNCTION ALREADY HOLDS, NOT ITS DESCRIPTOR. With the
+  // descriptor, an imported mesh's edge count was refused even once its rims could be read, and
+  // the two consequences were both silent in their own way: an angle limit took the unauthored
+  // branch below and resolved to the WHOLE mesh without a word (on an imported box the six flat
+  // triangulation diagonals were bevelled), and an authored edge scope reached `refuse()`, which
+  // throws. The same ref goes to `edgeIndicesByAngle` further down; the count now agrees with it.
+  const count = componentCountOf(domain, source.geometry);
   if (count.kind !== 'counted') {
     if (authored === null) return null;
     // #744 — the verdict's OWN words, quoted rather than restated. The sentence that used to

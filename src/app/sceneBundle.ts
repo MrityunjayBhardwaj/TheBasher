@@ -51,6 +51,7 @@ import { USER_IMPORTS_ROOT, listFilesDeep } from './asset/importCommon';
 import { BAKED_GEOMETRY_ROOT, bakedGeometryPath } from './asset/bakedGeometryStore';
 import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
 import { ENV_HDRI_ROOT } from './asset/envHdriStore';
+import { projectImagePath } from '../core/project/projectImages';
 
 /** The current `.basher` envelope (bundle) version — distinct from the project
  *  formatVersion. Bumped when the ENVELOPE shape changes (asset encoding etc),
@@ -103,6 +104,25 @@ export interface CollectedAssetRefs {
    *  `{kind:'file', assetRef}` — the assetRef IS the `env-hdri/<hash>.<ext>`
    *  path, so no dir listing is needed). UX #9. */
   readonly envHdri: string[];
+  /** #1050 — keys of images the project owns (`<sha256>.<ext>`), relative to its image folder. */
+  readonly projectImages: string[];
+}
+
+/** #1050 — where a project image sits inside a bundle: under no project id, because the bundle
+ *  opens as a project with a new one. */
+const PROJECT_IMAGES_BUNDLE_ROOT = 'project-images';
+
+export function projectImageBundlePath(key: string): string {
+  return `${PROJECT_IMAGES_BUNDLE_ROOT}/${key}`;
+}
+
+/** Where a bundle's embedded asset is written when it opens as `projectId`. Every asset except a
+ *  project image keeps its path; a project image lands in that project's folder. A bundled
+ *  path that is not a valid image key is refused rather than written somewhere it names. */
+export function bundleAssetStoragePath(bundlePath: string, projectId: string): string {
+  const prefix = `${PROJECT_IMAGES_BUNDLE_ROOT}/`;
+  if (!bundlePath.startsWith(prefix)) return bundlePath;
+  return projectImagePath(projectId, bundlePath.slice(prefix.length));
 }
 
 /** Extract `user-imports/<folder>` from any path inside that import, else null. */
@@ -122,7 +142,7 @@ function isBakedGeometryDescriptor(
 
 /** A BakedTextureRef `{hash, colorSpace, flipY, ...}` (the OPFS texture handle),
  *  distinguished from a geometry descriptor by its colorSpace+flipY shape. */
-function isBakedTextureRef(o: Record<string, unknown>): o is { hash: string } {
+function isBakedTextureRef(o: Record<string, unknown>): o is { hash: string; store?: unknown } {
   return (
     typeof o.hash === 'string' &&
     // #178 S5 — an EMPTY hash is the glTF "cleared map" sentinel (CLEARED_MAP):
@@ -147,6 +167,7 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
   const bakedGeometry = new Set<string>();
   const bakedTextureHashes = new Set<string>();
   const envHdri = new Set<string>();
+  const projectImages = new Set<string>();
 
   const visit = (val: unknown): void => {
     if (val == null) return;
@@ -170,7 +191,10 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
         bakedGeometry.add(bakedGeometryPath(o.hash, o.vertexCount));
       }
       if (isBakedTextureRef(o)) {
-        bakedTextureHashes.add(o.hash);
+        // #1050 — a project image is not in the global store; listed there it would match nothing
+        // and fall out of the bundle without a missing-asset entry.
+        if (o.store === 'project') projectImages.add(o.hash);
+        else bakedTextureHashes.add(o.hash);
       }
       for (const v of Object.values(o)) visit(v);
     }
@@ -183,6 +207,7 @@ export function collectAssetRefs(state: DagState): CollectedAssetRefs {
     bakedGeometry: [...bakedGeometry],
     bakedTextureHashes: [...bakedTextureHashes],
     envHdri: [...envHdri],
+    projectImages: [...projectImages],
   };
 }
 

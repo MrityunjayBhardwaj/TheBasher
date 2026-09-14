@@ -10,9 +10,8 @@
 //       scene.bin + texture.png) end-to-end through the real ingest pipeline.
 //   (2) Wire a MaterialOverride (#ff0000) into the DAG via the SAME op path the
 //       app uses to build scenes (H58 — not a React-prop injection): insert it
-//       between the imported GltfAsset and its Transform wrapper
-//       (gltfImportChain wires GltfAsset.out → Transform.target → … → scene).
-//   (3) Assert the rendered cloned mesh STILL reports hasMap && mapImageOk
+//       between the import root Group and its content.
+//   (3) Assert the drawn mesh STILL reports hasMap && mapImageOk
 //       (textures survived) AND its material.color is now #ff0000 (the tint
 //       LANDED — both halves of the goal). Reverting the fix to the
 //       wholesale-replace path makes hasMap go false → real regression gate.
@@ -25,17 +24,16 @@
 //       assertion: the __basher_gltf_meshes getter is single-asset / last-writer,
 //       so the restore path is the robust observable here.)
 //
-// Observation seam: SceneFromDAG `__basher_gltf_meshes()` (DEV-only, read-only,
-// V8 clean) — extended in this phase to expose each mesh's live material color.
+// #1072 — the fixture now arrives as native geometry (#1050), so the override wraps
+// an ordinary Object and the tint is applied by the native material, not the clone.
+// The observation is the drawn three.js material, read on either road by
+// `_importedMesh.ts`; the wiring is `_importOverride.ts`. The road is asserted.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
+import { unwrapImportOverride, wrapImportInOverride } from './_importOverride';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-  readonly color: string | null;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -58,7 +56,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -97,10 +94,7 @@ async function pollForTexturedMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     const match = summary.find((m) => m.hasMap && m.mapImageOk && accept(m));
     if (match) return match;
@@ -157,53 +151,11 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
   const baseline = await pollForTexturedMesh(page, () => true, 'baseline');
   const importedColor = baseline.color;
   expect(baseline.hasMap && baseline.mapImageOk).toBe(true);
+  expect((await importRoots(page)).map((r) => r.road)).toEqual(['native']);
 
   // (2) Wire a MaterialOverride (#ff0000) into the DAG via the op path the app
-  //     uses to build scenes. Insert it between the imported GltfAsset and its
-  //     Transform wrapper (gltfImportChain: GltfAsset.out → Transform.target).
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    // V67: import root is a transformable Group (was a Transform); the asset
-    // wires into Group.children (a list socket, was Transform.target/single).
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
-    if (!gltfId || !groupId) {
-      throw new Error(
-        `expected a GltfAsset + Group from import; got ${JSON.stringify(
-          Object.fromEntries(Object.entries(nodes).map(([id, n]) => [id, n.type])),
-        )}`,
-      );
-    }
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'mo99',
-          nodeType: 'MaterialOverride',
-          params: { color: '#ff0000' },
-        },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: 'mo99', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'mo99', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      'p7.13 apply material override',
-    );
-  });
+  //     uses to build scenes, between the import root Group and its content.
+  const wrapped = await wrapImportInOverride(page, 'mo99', { color: '#ff0000' });
 
   // (3) Textures survive AND the tint landed.
   const tinted = await pollForTexturedMesh(page, (m) => m.color === '#ff0000', 'after-override');
@@ -213,30 +165,10 @@ test('P7.13 (#99) — material override tints a textured glTF without dropping i
   ).toBe(true);
   expect(tinted.color).toBe('#ff0000');
 
-  // (4) Source-integrity / restore: remove the override from the chain.
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset')!;
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group')!;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: 'mo99', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      'p7.13 remove material override',
-    );
-  });
+  // (4) Source-integrity / restore: remove the override from the chain. A fix that
+  //     tinted the shared source material in place could not return to the imported
+  //     colour here.
+  await unwrapImportOverride(page, wrapped, 'mo99');
 
   const restored = await pollForTexturedMesh(
     page,

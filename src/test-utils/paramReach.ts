@@ -89,6 +89,7 @@ const CURVE_LINE = 'src/viewport/CurveLine.tsx';
  * read the captured count OFF the descriptor by name, and a gate pins what they answer.
  */
 const FACE_QUESTIONS = 'src/app/faceCount.ts';
+const POINT_QUESTIONS = 'src/app/pointIdentity.ts';
 
 /**
  * A param folded into the geometry handle at evaluate time. Its reader is the geometry
@@ -207,5 +208,21 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     // exactly what those three answer. No renderer reads it, and none should: it is an
     // element fact for the model's own questions, not something that draws.
     faceCount: { by: FACE_QUESTIONS },
+    // #1040 — the captured point count, and TRACED for exactly the reason its sibling above
+    // is: `pointCountOf` has a `gltf` arm that reads it off the descriptor BY NAME, and
+    // `importedMeshParity.gate.test.ts` pins what it answers. No renderer reads it, and none
+    // should — a point count is an element fact for the model's own questions, not something
+    // that draws. It is a SEPARATE reader from `faceCount`'s because the two questions live in
+    // different modules, and naming the module is the whole content of this table.
+    pointCount: { by: POINT_QUESTIONS },
+  },
+  mesh: {
+    // #1049 — the stored mesh itself, read BY NAME: `meshGeometryRef` decodes it and keys the
+    // geometry on it, and everything the model answers about the mesh is read off that decode
+    // (the parity gate pins all six answers). No renderer reads the packed strings — it draws the
+    // buffer the registry builds from them, which is the point.
+    mesh: { by: 'src/app/meshGeometryData.ts' },
+    // The material, drawn by the same object road every MeshData producer's material takes.
+    material: { by: SCENE },
   },
 };

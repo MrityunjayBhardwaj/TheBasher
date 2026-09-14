@@ -499,6 +499,20 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     expectConstrained: { reaches: true, value: '#123456' },
     what: 'the colour the asset clone draws for this child',
   },
+  mesh: {
+    // #1049 — a stored mesh draws through its OWN Object, like a box, so the per-object probe the
+    // mesh bands use applies — the opposite of the glTF row above, which is the point of the kind.
+    // MEASURED (all five mesh rows, alone, 2026-09-13): bare #c81e5a, held #1e9ac8, constrained
+    // #123456 — the box's answers, because the road is the box's.
+    signature: materialColor,
+    expectHeld: () => ({
+      reaches: true,
+      value: String(SPLIT_KINDS.mesh.distinctValues[1]).toLowerCase(),
+    }),
+    expectBare: String(SPLIT_KINDS.mesh.distinctValues[0]).toLowerCase(),
+    expectConstrained: { reaches: true, value: '#123456' },
+    what: "the rendered material's base colour",
+  },
 };
 
 test.beforeEach(async ({ page }) => {
@@ -1355,6 +1369,9 @@ const CONSTRAINT_WITNESS: Record<
     sphere: { took: rendered, how: 'the rendered world quaternion left identity' },
     curve: { took: rendered, how: 'the rendered world quaternion left identity' },
     baked: { took: rendered, how: 'the rendered world quaternion left identity' },
+    // #1049 — a stored mesh's Object draws its own mesh, so it has the rendered orientation the
+    // glTF row below lacks, and takes the box's witness.
+    mesh: { took: rendered, how: 'the rendered world quaternion left identity' },
     light: {
       // THE WEAKEST WITNESS HERE, and both reasons are structural rather than an omission.
       // MEASURED before settling for it: with the identical Track-To attached, the box

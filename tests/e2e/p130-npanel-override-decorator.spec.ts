@@ -21,20 +21,16 @@
 // GltfChild parity (the consolidation dividend — the SAME decorator on the SAME
 // ParamRow) is covered by overrideDescriptor.test.ts (GltfChild is a descriptor
 // consumer) + the shared code path; this spec proves the live-channel half on
-// the material seam (__basher_gltf_meshes exposes .metalness, not TRS).
+// the drawn material (`_importedMesh.ts` exposes .metalness, not TRS).
+//
+// #1072 — the fixture now arrives as native geometry (#1050); the override wraps an
+// ordinary Object (`_importOverride.ts`) and the road is asserted.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
+import { wrapImportInOverride } from './_importOverride';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-  readonly color: string | null;
-  readonly metalness: number | null;
-  readonly roughness: number | null;
-  readonly hasMetalnessMap: boolean;
-  readonly hasRoughnessMap: boolean;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -55,7 +51,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -91,10 +86,7 @@ async function pollForMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     const match = summary.find((m) => m.hasMap && m.mapImageOk && accept(m));
     if (match) return match;
@@ -137,42 +129,10 @@ test('#130 (D-04) — NPanel decorator: edit marks overridden + ✕ reverts, obs
     ],
     'decorator-asset',
   );
+  await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['native']);
+  await wrapImportInOverride(page, 'mo130', { color: '#ffffff', metalness: 0.2 });
   await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset')!;
-    // V67: import root is a transformable Group (was a Transform); the asset
-    // wires into Group.children (a list socket, was Transform.target/single).
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group')!;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'mo130',
-          nodeType: 'MaterialOverride',
-          params: { color: '#ffffff', metalness: 0.2 },
-        },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: 'mo130', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'mo130', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      '#130 wire override',
-    );
-    w.__basher_selection!.getState().select('mo130');
+    (window as unknown as BasherWindow).__basher_selection!.getState().select('mo130');
   });
 
   // Baseline: the metalnessMap defends — rendered metalness stays 1.

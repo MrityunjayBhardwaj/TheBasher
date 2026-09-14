@@ -299,8 +299,9 @@ export function parseGltfContainer(buffer: ArrayBuffer): ParsedGlb {
   return parseGltfJson(buffer);
 }
 
-/** Decode a `data:` URI's payload into raw bytes (base64 or percent-encoded). */
-function decodeDataUri(uri: string): Uint8Array {
+/** Decode a `data:` URI's payload into raw bytes (base64 or percent-encoded). Exported for the
+ *  native reader's data-URI images (#1050), so images and buffers decode through one function. */
+export function decodeDataUri(uri: string): Uint8Array {
   const comma = uri.indexOf(',');
   if (comma < 0) throw new Error('resolveBuffers: malformed data URI (no comma)');
   const meta = uri.slice('data:'.length, comma);

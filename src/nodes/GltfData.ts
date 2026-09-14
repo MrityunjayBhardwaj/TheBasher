@@ -131,6 +131,19 @@ export const GltfDataParams = z.object({
    * than to a wrong picture — the loudness that argument buys is not needed here.
    */
   faceCount: z.number().int().nonnegative().optional(),
+  /**
+   * HOW MANY TOPOLOGICAL POINTS the imported child holds, welded at import (#1040).
+   *
+   * Optional and non-negative on the same reasoning as {@link GltfDataParams.faceCount}
+   * above: nothing RENDERS from a point count, so a migration that drops it degrades to the
+   * pre-capture `outside-the-descriptor` answer rather than to a wrong picture, and the
+   * loudness a required-and-nullable key would buy is not needed.
+   *
+   * Its absent population is one member WIDER than the face count's, and deliberately: a
+   * multi-primitive child gets no point count, because the read door holds only its first
+   * primitive's buffer while a weld across all of them would describe no buffer at all.
+   */
+  pointCount: z.number().int().nonnegative().optional(),
 });
 export type GltfDataParams = z.infer<typeof GltfDataParams>;
 
@@ -184,6 +197,8 @@ export const GltfDataNode: NodeDefinition<GltfDataParams, MeshDataValue> = {
         // `materialSlots` uses below: a written `undefined` announces a field the
         // descriptor has no answer for, and descriptors are compared and serialised.
         ...(params.faceCount === undefined ? {} : { faceCount: params.faceCount }),
+        // #1040 — omitted rather than written as `undefined`, for the reason stated above it.
+        ...(params.pointCount === undefined ? {} : { pointCount: params.pointCount }),
       },
     };
     return {

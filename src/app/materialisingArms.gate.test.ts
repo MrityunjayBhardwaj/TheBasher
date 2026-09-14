@@ -143,8 +143,8 @@ function classify(): { materialisers: string[]; declaredNulls: string[]; leaves:
 describe('#713 — the build arms that materialise their source, counted', () => {
   it('A. EXACTLY four arms resolve a source, and `bevel` is the one that arrived unannounced', () => {
     // Anti-vacuity first: a parse that found no arms would make every assertion below green
-    // over an empty set. 8 kinds reach the switch.
-    expect(ARMS.size, 'the switch parse did not read the build arms').toBe(8);
+    // over an empty set. 9 kinds reach the switch (#1049 added `mesh`, a leaf — see C).
+    expect(ARMS.size, 'the switch parse did not read the build arms').toBe(9);
 
     const { materialisers } = classify();
     expect(
@@ -186,12 +186,15 @@ describe('#713 — the build arms that materialise their source, counted', () =>
   it('C. the three classes PARTITION the union — no kind is left in an unexamined remainder', () => {
     const { materialisers, declaredNulls, leaves } = classify();
     expect(declaredNulls).toEqual(['baked', 'gltf']);
-    expect(leaves).toEqual(['box', 'sphere']);
+    // #1049 — `mesh` is a LEAF, and that is the point of it: a stored mesh builds from the data it
+    // carries and resolves no source, exactly as a box builds from its size. It is not a declared
+    // null either, which is the class an import used to sit in.
+    expect(leaves).toEqual(['box', 'mesh', 'sphere']);
 
     const kinds = descriptorKinds(readFileSync(TYPES, 'utf8')).sort();
-    // 8, and the count is stated so a union parse that silently dropped an arm — which is
+    // 9, and the count is stated so a union parse that silently dropped an arm — which is
     // exactly what a comment-terminated scan did here — cannot pass as a clean partition.
-    expect(kinds.length, 'the GeometryDescriptor union parse looks short').toBe(8);
+    expect(kinds.length, 'the GeometryDescriptor union parse looks short').toBe(9);
     expect([...materialisers, ...declaredNulls, ...leaves].sort()).toEqual(kinds);
   });
 });

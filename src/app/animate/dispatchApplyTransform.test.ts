@@ -34,6 +34,9 @@ import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
+import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
+import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
+import type { InlineMaterialSpec, MeshGeometryData, Vec3 } from '../../nodes/types';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -692,6 +695,436 @@ describe('dispatchApplyTransform (primitives)', () => {
     expect(back.nodes[cube.objectId].type).toBe('Object');
     expect(back.nodes[cube.dataId]).toBeDefined();
     expect(back.nodes[cube.objectId].inputs.data).toEqual({ node: cube.dataId, socket: 'out' });
+  });
+});
+
+describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes', () => {
+  const OBJ = 'n_stored';
+  const DATA = 'n_stored_data';
+  type Pose = { position: Vec3; rotation: Vec3; scale: Vec3 };
+
+  // A cube off the origin, every face wound outward, with per-corner UVs and outward normals, so
+  // every array a transform touches has something to get wrong.
+  function cubeData(turnZDegrees = 0): MeshGeometryData {
+    const corners = [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+    ];
+    const faces = [
+      [0, 3, 2, 1],
+      [4, 5, 6, 7],
+      [0, 1, 5, 4],
+      [2, 3, 7, 6],
+      [1, 2, 6, 5],
+      [3, 0, 4, 7],
+    ];
+    const axes = [
+      [0, 0, -1],
+      [0, 0, 1],
+      [0, -1, 0],
+      [0, 1, 0],
+      [1, 0, 0],
+      [-1, 0, 0],
+    ];
+    // Optionally turned about z IN THE DATA, so its faces are not aligned with a scale axis: under
+    // a scale along an axis a face is aligned with, a normal carried by the plain matrix and one
+    // carried by the normal matrix point the same way, and a test could not tell them apart.
+    const turn = new THREE.Matrix4().makeRotationZ((turnZDegrees * Math.PI) / 180);
+    const turned = (xyz: number[], w: 0 | 1) =>
+      w === 1
+        ? new Vector3(...(xyz as Vec3)).applyMatrix4(turn).toArray()
+        : new Vector3(...(xyz as Vec3)).transformDirection(turn).toArray();
+    return {
+      points: Float32Array.from(
+        corners.flatMap(([x, y, z]) => turned([x * 0.5 + 0.3, y * 0.5 + 0.1, z * 0.5 - 0.2], 1)),
+      ),
+      faceSizes: Uint32Array.from(faces.map((f) => f.length)),
+      cornerPoints: Uint32Array.from(faces.flat()),
+      cornerUVs: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+      cornerNormals: Float32Array.from(axes.flatMap((a) => Array(4).fill(turned(a, 0)).flat())),
+    };
+  }
+
+  // A material an import really writes, carrying the fields a baked spec has no room for, plus a
+  // base map that points at an image the project holds.
+  const MATERIAL: InlineMaterialSpec = (() => {
+    const m = gltfJsonMaterialToOpenpbr({
+      pbrMetallicRoughness: { baseColorFactor: [0.8, 0.8, 0.8, 1], roughnessFactor: 0.8 },
+      doubleSided: true,
+      alphaMode: 'MASK',
+      alphaCutoff: 0.3,
+    });
+    return {
+      ...m,
+      maps: {
+        ...m.maps,
+        albedo: {
+          hash: 'abc.png',
+          store: 'project',
+          colorSpace: 'srgb',
+          flipY: false,
+          wrapS: THREE.RepeatWrapping,
+          wrapT: THREE.RepeatWrapping,
+          magFilter: THREE.NearestFilter,
+          minFilter: THREE.NearestFilter,
+        },
+      },
+    };
+  })();
+
+  /** The id of the `i`th operator `build` splices between the mesh data and the Object. */
+  const opId = (i: number) => `n_stored_op${i}`;
+
+  function build(
+    pose: Pose,
+    opts: {
+      /** A second Object wearing the mesh data (`base`) or the top of the stack (`top`). */
+      sharedAt?: 'base' | 'top';
+      turnZDegrees?: number;
+      /** Operator node types spliced, bottom first, between the mesh data and the Object. */
+      between?: readonly string[];
+    } = {},
+  ): DagState {
+    const s = buildSceneScaffold();
+    const scene = s.outputs.scene!.node;
+    const between = opts.between ?? [];
+    const ops: Op[] = [
+      {
+        type: 'addNode',
+        nodeId: DATA,
+        nodeType: 'PolyMeshData',
+        params: { mesh: packMeshData(cubeData(opts.turnZDegrees)), material: MATERIAL },
+      },
+      { type: 'addNode', nodeId: OBJ, nodeType: 'Object', params: { ...pose } },
+    ];
+    let below = DATA;
+    between.forEach((type, i) => {
+      ops.push(
+        { type: 'addNode', nodeId: opId(i), nodeType: type, params: {} },
+        {
+          type: 'connect',
+          from: { node: below, socket: 'out' },
+          to: { node: opId(i), socket: 'target' },
+        },
+      );
+      below = opId(i);
+    });
+    ops.push(
+      { type: 'connect', from: { node: below, socket: 'out' }, to: { node: OBJ, socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: OBJ, socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      },
+    );
+    if (opts.sharedAt) {
+      ops.push(
+        { type: 'addNode', nodeId: 'n_stored_b', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: opts.sharedAt === 'base' ? DATA : below, socket: 'out' },
+          to: { node: 'n_stored_b', socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_stored_b', socket: 'out' },
+          to: { node: scene, socket: 'children' },
+        },
+      );
+    }
+    return applyAll(s, ops);
+  }
+
+  async function apply(state: DagState, mask: 'all' | 'location' | 'rotation' | 'scale') {
+    const stateRef = { current: state };
+    const { fn, calls } = makeDispatch(stateRef);
+    const cleared: string[] = [];
+    const selected: string[] = [];
+    const storage = new MemoryStorage();
+    const result = await dispatchApplyTransform(OBJ, mask, {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      clearTransients: (id) => cleared.push(id),
+      setSelection: (id) => selected.push(id),
+    });
+    return { result, next: stateRef.current, calls, cleared, selected, storage };
+  }
+
+  /** The Object's matrix as three builds it for the draw (an Object3D, rotation in radians). */
+  function objectMatrix(state: DagState): THREE.Matrix4 {
+    const pose = state.nodes[OBJ].params as Pose;
+    const o = new THREE.Object3D();
+    o.position.set(...pose.position);
+    o.rotation.set(...(pose.rotation.map((d) => (d * Math.PI) / 180) as Vec3));
+    o.scale.set(...pose.scale);
+    o.updateMatrix();
+    return o.matrix;
+  }
+
+  function storedOf(state: DagState): MeshGeometryData {
+    return unpackMeshData(state.nodes[DATA].params.mesh as PackedMeshData);
+  }
+
+  function worldPoints(state: DagState): number[][] {
+    const m = objectMatrix(state);
+    const { points } = storedOf(state);
+    const out: number[][] = [];
+    for (let i = 0; i < points.length; i += 3) {
+      out.push(new Vector3().fromArray(points, i).applyMatrix4(m).toArray());
+    }
+    return out;
+  }
+
+  function expectSameWorld(a: number[][], b: number[][]) {
+    expect(a.length).toBe(b.length);
+    const worst = Math.max(...a.flatMap((p, i) => p.map((x, k) => Math.abs(x - b[i][k]))));
+    expect(worst).toBeLessThan(1e-4);
+  }
+
+  /** Per face, in the stored mesh's own space: is it wound inward, and are its corner normals? */
+  function inwardCounts(data: MeshGeometryData): { faces: number; normals: number } {
+    const at = (p: number) => new Vector3().fromArray(data.points, p * 3);
+    const centre = new Vector3();
+    for (let i = 0; i < data.points.length / 3; i++) centre.add(at(i));
+    centre.divideScalar(data.points.length / 3);
+    let faces = 0;
+    let normals = 0;
+    let start = 0;
+    for (const size of data.faceSizes) {
+      const rim = Array.from(data.cornerPoints.subarray(start, start + size)).map(at);
+      const outward = rim
+        .reduce((acc, p) => acc.add(p), new Vector3())
+        .divideScalar(size)
+        .sub(centre);
+      const winding = new Vector3()
+        .subVectors(rim[1], rim[0])
+        .cross(new Vector3().subVectors(rim[2], rim[0]));
+      if (winding.dot(outward) <= 0) faces++;
+      for (let c = start; c < start + size; c++) {
+        if (
+          data.cornerNormals &&
+          new Vector3().fromArray(data.cornerNormals, c * 3).dot(outward) <= 0
+        )
+          normals++;
+      }
+      start += size;
+    }
+    return { faces, normals };
+  }
+
+  const POSE: Pose = { position: [1, 2, 3], rotation: [10, 20, 30], scale: [2, 1, 0.5] };
+
+  it('moves the pose into the mesh data: the same Object poses the same PolyMeshData, the world shape is unchanged', async () => {
+    const state = build(POSE);
+    const before = worldPoints(state);
+    const { result, next, calls, storage } = await apply(state, 'all');
+
+    expect(result.ok).toBe(true);
+    expect(next.nodes[OBJ].inputs.data).toEqual({ node: DATA, socket: 'out' });
+    expect(next.nodes[DATA].type).toBe('PolyMeshData');
+    expect(Object.values(next.nodes).some((n) => n.type === 'BakedData')).toBe(false);
+    expect(next.nodes[OBJ].params).toMatchObject({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    expectSameWorld(worldPoints(next), before);
+    expect(calls).toHaveLength(1); // one Cmd+Z
+    // Nothing went to the baked stores: there is no bake.
+    expect(await storage.list('')).toEqual([]);
+  });
+
+  it('keeps the material exactly: every scalar, the alpha cutoff, double-siding and the project map ref', async () => {
+    const { result, next } = await apply(build(POSE), 'all');
+    expect(result.ok).toBe(true);
+    expect(next.nodes[DATA].params.material).toEqual(MATERIAL);
+    const kept = next.nodes[DATA].params.material as InlineMaterialSpec;
+    expect(kept.specular.roughness).toBe(0.8);
+    expect(kept.geometry).toMatchObject({ alphaCutoff: 0.3, doubleSided: true });
+    expect(kept.maps.albedo).toMatchObject({ hash: 'abc.png', store: 'project' });
+  });
+
+  it.each(['location', 'rotation', 'scale'] as const)(
+    'Apply %s resets only that band and keeps the world shape (a non-uniform scale stays on for rotation)',
+    async (mask) => {
+      const state = build(POSE);
+      const before = worldPoints(state);
+      const { result, next } = await apply(state, mask);
+      expect(result.ok).toBe(true);
+      const band = { location: 'position', rotation: 'rotation', scale: 'scale' }[
+        mask
+      ] as keyof Pose;
+      const identity = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }[band];
+      const params = next.nodes[OBJ].params as Pose;
+      for (const other of ['position', 'rotation', 'scale'] as const) {
+        expect(params[other]).toEqual(other === band ? identity : POSE[other]);
+      }
+      expectSameWorld(worldPoints(next), before);
+    },
+  );
+
+  it('a mirroring Apply reverses each face (first corner kept) so no face and no normal points inward', async () => {
+    const state = build({ position: [0, 0, 0], rotation: [0, 15, 0], scale: [-1, 1, 1] });
+    expect(inwardCounts(storedOf(state))).toEqual({ faces: 0, normals: 0 }); // the fixture is sound
+    const firstCorners = (d: MeshGeometryData) =>
+      [0, 4, 8, 12, 16, 20].map((c) => d.cornerPoints[c]);
+    const firstBefore = firstCorners(storedOf(state));
+    const before = worldPoints(state);
+
+    const { result, next } = await apply(state, 'all');
+    expect(result.ok).toBe(true);
+    expectSameWorld(worldPoints(next), before);
+    expect(inwardCounts(storedOf(next))).toEqual({ faces: 0, normals: 0 });
+    expect(firstCorners(storedOf(next))).toEqual(firstBefore);
+  });
+
+  it('corner normals follow their faces under a rotation and a non-uniform scale', async () => {
+    const { result, next } = await apply(
+      build({ position: [0, 0, 0], rotation: [0, 0, 30], scale: [3, 1, 1] }, { turnZDegrees: 40 }),
+      'all',
+    );
+    expect(result.ok).toBe(true);
+    const d = storedOf(next);
+    let start = 0;
+    let worst = 1;
+    for (const size of d.faceSizes) {
+      const rim = [0, 1, 2].map((k) =>
+        new Vector3().fromArray(d.points, d.cornerPoints[start + k] * 3),
+      );
+      const face = new Vector3()
+        .subVectors(rim[1], rim[0])
+        .cross(new Vector3().subVectors(rim[2], rim[0]))
+        .normalize();
+      for (let c = start; c < start + size; c++) {
+        worst = Math.min(worst, new Vector3().fromArray(d.cornerNormals!, c * 3).dot(face));
+      }
+      start += size;
+    }
+    expect(worst).toBeGreaterThan(0.9999);
+  });
+
+  it('refuses by name when the mesh data is shared, and changes nothing', async () => {
+    const state = build(POSE, { sharedAt: 'base' });
+    const { result, next, calls } = await apply(state, 'all');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(
+      /shares its mesh data with 1 other consumer \(at "n_stored_data"\)/,
+    );
+    expect(calls).toHaveLength(0);
+    expect(next).toBe(state);
+  });
+
+  // ── Operators on the stack: the Apply reaches the mesh data under them and leaves them alone ──
+
+  it.each([
+    [['ArrayModifier']],
+    [['MaterialOverrideOp']],
+    [['ArrayModifier', 'MaterialOverrideOp']],
+  ])(
+    'applies into the mesh data under %j: the operators stay wired, the material is untouched, nothing bakes',
+    async (between) => {
+      const state = build(POSE, { between });
+      const opsBefore = between.map((_, i) => state.nodes[opId(i)]);
+      const { result, next, cleared } = await apply(state, 'all');
+
+      expect(result.ok).toBe(true);
+      expect(Object.values(next.nodes).some((n) => n.type === 'BakedData')).toBe(false);
+      // The stack is exactly as it was: same nodes, same params, same wiring, Object on top.
+      between.forEach((_, i) => expect(next.nodes[opId(i)]).toEqual(opsBefore[i]));
+      expect(next.nodes[OBJ].inputs.data).toEqual({
+        node: opId(between.length - 1),
+        socket: 'out',
+      });
+      expect(next.nodes[DATA].params.material).toEqual(MATERIAL);
+      expect(next.nodes[OBJ].params).toMatchObject({
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      });
+      // The pose reached the mesh data under the stack.
+      const posedPoints = worldPoints(state);
+      expectSameWorld(worldPoints(next), posedPoints);
+      // The held edits dropped are the Object's and the MESH DATA's, not an operator's.
+      expect(cleared.sort()).toEqual([DATA, OBJ].sort());
+    },
+  );
+
+  it('refuses by name when a second Object wears a shared operator on the stack', async () => {
+    const state = build(POSE, { between: ['ArrayModifier'], sharedAt: 'top' });
+    const { result, next, calls } = await apply(state, 'all');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(
+      /shares its mesh data with 1 other consumer \(at "n_stored_op0"\)/,
+    );
+    expect(calls).toHaveLength(0);
+    expect(next).toBe(state);
+  });
+
+  it('refuses by name when a second Object poses the mesh data under the stack', async () => {
+    const state = build(POSE, { between: ['ArrayModifier'], sharedAt: 'base' });
+    const { result, calls } = await apply(state, 'all');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(/\(at "n_stored_data"\)/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('refuses by name when a scale that stays on the Object is zero', async () => {
+    const state = build({ position: [0, 0, 0], rotation: [0, 0, 30], scale: [0, 1, 1] });
+    const { result, calls } = await apply(state, 'rotation');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(/zero scale/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('undo restores the original mesh data and pose', async () => {
+    const state = build(POSE);
+    const { calls } = await apply(state, 'all');
+    let fwd = state;
+    const inverses: Op[] = [];
+    for (const op of calls[0]) {
+      const r = applyOp(fwd, op);
+      fwd = r.next;
+      inverses.push(r.inverse);
+    }
+    let back = fwd;
+    for (let i = inverses.length - 1; i >= 0; i--) back = applyOp(back, inverses[i]).next;
+    expect(back.nodes[DATA].params.mesh).toEqual(state.nodes[DATA].params.mesh);
+    expect(back.nodes[OBJ].params).toMatchObject(POSE);
+  });
+
+  it('never writes into the decoded arrays cached on the packed mesh it replaces (undo restores that object)', async () => {
+    // Decoding is cached per packed OBJECT. Undo puts that same object back, so arrays written in
+    // place would draw the posed mesh under unposed strings after Cmd+Z. A mirror, so the corner
+    // reversal is exercised too.
+    const state = build({ ...POSE, scale: [-2, 1, 0.5] });
+    const shared = storedOf(state);
+    const snapshot = {
+      points: Array.from(shared.points),
+      cornerPoints: Array.from(shared.cornerPoints),
+      cornerNormals: Array.from(shared.cornerNormals!),
+    };
+    await apply(state, 'all');
+    expect(Array.from(shared.points)).toEqual(snapshot.points);
+    expect(Array.from(shared.cornerPoints)).toEqual(snapshot.cornerPoints);
+    expect(Array.from(shared.cornerNormals!)).toEqual(snapshot.cornerNormals);
+  });
+
+  it('drops held edits on both halves and keeps the Object selected', async () => {
+    const { cleared, selected } = await apply(build(POSE), 'all');
+    expect(cleared.sort()).toEqual([DATA, OBJ].sort());
+    expect(selected).toEqual([OBJ]);
+  });
+
+  it('is offered: canApplyTransform agrees with the dispatcher', () => {
+    expect(canApplyTransform(build(POSE), OBJ)).toBe(true);
   });
 });
 

@@ -137,6 +137,9 @@ export const KIND_MARKERS: Record<SplitKindName, readonly string[]> = {
   // and draw nothing. The producer is the importer, and the marker is the import helper an
   // e2e drives to get one.
   gltf: ['GltfData', 'importGltfFixture'],
+  // #1049 — a stored mesh's pair is hand-authored through the shared builder, so the node type is
+  // the marker; there is no per-kind builder module to name.
+  mesh: ['PolyMeshData'],
 };
 
 const NESTED_UNOBSERVABLE =
@@ -191,6 +194,9 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
       // own: an imported child is ALREADY nested, under the import Group its asset mints,
       // so there is no un-nested arm to control against within the kind.
       gltf: gap(NESTED_UNOBSERVABLE, '#501'),
+      // #1049 — the same instrument blocker as the mesh kinds above; nothing about a stored mesh
+      // changes what a nested object's dev seams can see.
+      mesh: gap(NESTED_UNOBSERVABLE, '#501'),
     },
   },
   R3: {

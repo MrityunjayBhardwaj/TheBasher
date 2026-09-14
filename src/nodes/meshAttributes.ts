@@ -614,7 +614,19 @@ export function carriageForDomain(
   // `null` the moment the corner order was missing, so a bevel's per-FACE materials died of a
   // missing CORNER order. An aggregate refusing on behalf of a domain it was not asked about.
   corners: TiledCornerOrder | null,
-  points: TiledPointOrder,
+  // 🔴 NULLABLE SINCE #1036, FOR THE REASON DIRECTLY ABOVE AND ONE THE CORNER CASE DID NOT HAVE.
+  // `tiledPointOrder` needs its source's POINT COUNT, and an imported mesh answers
+  // `outside-the-descriptor` for that — its buffers live in a loaded asset clone. So a `gltf`
+  // source reaches here with a face order, a corner order and NO point order, and while this
+  // was non-nullable `mintTiledModifierAttributes` returned `null` the moment it was missing:
+  // a NAMED FACE GROUP on an imported mesh was discarded because the POINT domain could not
+  // answer. The same aggregate-refusing-for-an-unasked-domain shape #825 fixed for corners.
+  //
+  // ⚠️ AND THE OLD REASONING WAS SOUND WHEN IT WAS WRITTEN, which is why this is re-derived
+  // rather than called a bug. Taking all three orders unconditionally cost nothing while no
+  // imported mesh could carry any attribute at all; #1023's captured face count made one able
+  // to, and that is what moved the ground under it.
+  points: TiledPointOrder | null,
 ): ClassCarriage {
   const { domain } = data;
   // Before the table, not in it: domains are data and round-trip, so a set carrying one this
@@ -752,6 +764,28 @@ export function carriageForDomain(
         },
       };
     case 'point-order':
+      // #1036 — REFUSED BY NAME, at the one domain that actually cannot be carried. A source
+      // whose point count is not derivable has no point order to gather through, and unlike the
+      // face domain there is no representative to fall back on: which source point a merged
+      // point came from is the whole of the answer, and there is no second field carrying it.
+      //
+      // So this refuses for the POINT domain only, and the face and corner domains above go on
+      // answering — which is the entire difference between "an imported mesh loses its point
+      // attributes" and "an imported mesh loses every attribute because of its point ones".
+      if (points === null)
+        return {
+          kind: 'refused',
+          why:
+            `'${operator}' derives from a source whose topological point count is not derivable ` +
+            `from its descriptor — an imported mesh keeps its buffers in a loaded asset clone — ` +
+            `so a '${data.type}' at the '${domain}' domain has no order to be gathered through. ` +
+            `The face and corner domains are unaffected: this refusal is about this datum's ` +
+            `domain and not about the geometry`,
+          // #1040, not #605 — the refusal lifts exactly when an imported mesh can STATE a
+          // topological point count, which is measured capturable there. #605 is the
+          // material/UV half and would send a reader to the wrong place.
+          until: '#1040',
+        };
       return {
         kind: 'laid-out',
         layout: { order: points.order, sourceElements: points.sourcePoints, noun: verdict.noun },
@@ -910,8 +944,15 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // is a memoised function of two numbers, so a branch on "does this source carry a point
   // attribute?" would buy nothing and would put the three orders on different roads through
   // this function.
+  // #1036 — TRAVELS NULLABLE NOW, AND IT USED TO RETURN `null` FOR THE WHOLE SET HERE. The
+  // note below this line explains why all three orders are taken unconditionally, and that
+  // reasoning still holds — what changed is what ABSENCE means. `null` no longer means "this
+  // descriptor is broken", it means "this source cannot state a point count", which is the
+  // ordinary condition of an imported mesh; it reaches `carriageForDomain` so the POINT arm can
+  // refuse by name while the face and corner arms answer. Refusing the whole set here dropped a
+  // named face group off an imported mesh because of a domain nothing in the operation asked
+  // about — the same defect #825 closed one domain over.
   const points = tiledPointOrder(descriptor);
-  if (points === null) return null;
   // 🔴 NOT FATAL SINCE #825 — see the kind check above. `null` here means "this kind mints", and
   // it travels to `carriageForDomain` so the CORNER arm can refuse by name while the face arm
   // lays out through the representative map. The previous `if (corners === null) return null` was

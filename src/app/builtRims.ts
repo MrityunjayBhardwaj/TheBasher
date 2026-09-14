@@ -29,7 +29,7 @@
 // REF: src/app/polygonLayout.ts (`PolygonRim`, `fanToTriangles` — the inverse);
 //      src/app/faceCount.ts (`faceElementStarts` — the prefix sum, passed in, not re-derived);
 //      src/app/edgeIdentity.ts (`weldedPolygonsOf` — the topological rims this is gated against);
-//      issues #786, #777, #776, #1025.
+//      issues #786, #777, #776, #1025, #1028.
 
 import type { BufferGeometry } from 'three';
 import type { PolygonRim } from './polygonLayout';
@@ -38,8 +38,9 @@ import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
 import type { PointWeld } from './pointIdentity';
-import { getForRead } from './geometryRegistry';
+import { getForRead, readGeometry } from './geometryRegistry';
 import { bevelLayoutOf } from './bevelLayout';
+import { meshSplitLayout } from './polygonLayout';
 
 /**
  * Cached per geometry. A built geometry is produced from exactly one descriptor, so its arity —
@@ -170,6 +171,16 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
     for (const rim of rims) for (const point of rim) map[cursor++] = point;
     return { map, points };
   }
+  // #1049 — READ OFF THE STORED CORNERS, NOT WELDED BY POSITION, for the bevel's reason above: a
+  // stored mesh may hold two distinct points at one position (a seam cut on purpose), and a
+  // position weld would merge them. Each split vertex was minted by a corner, and that corner
+  // names its point.
+  if (d.kind === 'mesh') {
+    const { vertexCorner } = meshSplitLayout(d.data);
+    const map = new Uint32Array(vertexCorner.length);
+    for (let v = 0; v < vertexCorner.length; v++) map[v] = d.data.cornerPoints[vertexCorner[v]];
+    return { map, points: d.data.points.length / 3 };
+  }
   if (d.kind !== 'array' && d.kind !== 'mirror' && d.kind !== 'subset') {
     const geometry = getForRead(ref);
     return geometry === undefined || geometry === null ? null : weldByPosition(geometry);
@@ -210,10 +221,64 @@ export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
     case 'subset':
     case 'bevel':
     case 'uvProject':
+    case 'mesh': // #1049 — a stored mesh states its topology in its data, the opposite of buffer-only.
       return false;
     default: {
       const unreachable: never = descriptor;
       throw new Error(`topologyIsBufferOnly: undeclared descriptor ${JSON.stringify(unreachable)}`);
+    }
+  }
+}
+
+/**
+ * What a cache keyed on a DERIVED descriptor has to add to its key once its answer can depend on
+ * a buffer that has not arrived yet (#1041) — `''` for a chain rooted at a procedural kind, and
+ * the root buffer's read status (`ok` / `elsewhere` / `pending`) for one rooted at an import or
+ * a bake.
+ *
+ * 🔴 WHY THIS EXISTS: A CACHED REFUSAL OUTLIVED THE WAIT IT DESCRIBED. #1041 let the welded-rim
+ * door reach an imported mesh's buffer through the ref a derived descriptor carries, which made
+ * an answer over an import depend on whether its clone is MOUNTED. `bevelLayoutOf` caches every
+ * verdict, refusals included, on `source.key|scope`. Measured: a bevel over an array over an
+ * import, asked before the mount, refused — and kept refusing after the mount, while the same
+ * question asked mount-first laid out, and the uncached edge count over the same array flipped
+ * from absent to 54. That is #708's defect — a wait reported as final and disproved a call later —
+ * arriving by the rim road.
+ *
+ * The fix follows `bevelLayoutOf`'s own rule (#827): the key is the whole of what the layout
+ * depends on, so what it newly depends on joins the key. A procedural chain contributes nothing
+ * and its key stays byte-identical.
+ *
+ * ⚠️ ONLY THE ROOT IS READ, AND ONLY WHEN IT IS A BUFFER KIND. `readGeometry` on a procedural or
+ * derived ref BUILDS it — from inside a pure descriptor function, and through `buildBevel` back
+ * into `bevelLayoutOf` itself. On a `gltf` or `baked` root it only looks: the clone, or the
+ * primed cache. The walk is a `never` switch so a tenth kind is a type error here, not a chain
+ * that silently answers `''`.
+ */
+export function bufferReachabilityOf(ref: GeometryRef): string {
+  const root = bufferRootOf(ref);
+  return root === null ? '' : readGeometry(root).status;
+}
+
+function bufferRootOf(ref: GeometryRef): GeometryRef | null {
+  const d = ref.descriptor;
+  switch (d.kind) {
+    case 'gltf':
+    case 'baked':
+      return ref;
+    case 'box':
+    case 'sphere':
+    case 'mesh': // #1049 — a stored mesh is its data; there is no buffer to wait for.
+      return null;
+    case 'array':
+    case 'mirror':
+    case 'subset':
+    case 'bevel':
+    case 'uvProject':
+      return bufferRootOf(d.source);
+    default: {
+      const unreachable: never = d;
+      throw new Error(`bufferRootOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
     }
   }
 }
@@ -278,10 +343,15 @@ export function alignedSplitRims(
   if (arity === null) return null;
 
   if (topologyIsBufferOnly(ref.descriptor)) {
-    const index = geometry.getIndex();
-    if (index === null) return null;
     let triangles = 0;
     for (const n of arity) triangles += n;
+    const index = geometry.getIndex();
+    // #1028 — a glTF primitive may legally carry no `indices`, and the importer captures a
+    // count for it all the same, from the POSITION accessor. Censused: of the seven kinds the
+    // registry BUILDS, zero arrive without an index, so this belongs on the imported road and
+    // not inside `builtPolygonRims` — widening the shared walk would buy nothing and put a
+    // branch no substrate kind reaches in the path of every one of them.
+    if (index === null) return splitSoupRims(geometry, arity, triangles);
     if (triangles * 3 !== index.count) return null;
     return builtPolygonRims(geometry, arity, faceElementStarts(arity));
   }
@@ -300,6 +370,47 @@ export function alignedSplitRims(
     out.push(aligned);
   }
   return out;
+}
+
+/**
+ * The rims of a geometry with NO index buffer — a triangle soup, where every corner is already
+ * its own vertex, so face `f` occupies exactly `[3f, 3f+1, 3f+2]` (#1028).
+ *
+ * ── WHY THIS IS A CLOSED FORM AND NOT A WALK ─────────────────────────────────────────────
+ *
+ * `rimOfFace` recovers a rim as the boundary cycle of a face's triangles, which works because
+ * an interior fan edge is SHARED — walked once by each of the two triangles that meet on it.
+ * In a split buffer nothing is shared: two triangles that meet along an edge name four distinct
+ * vertices there, so a multi-triangle face's boundary is two disjoint cycles and the walk would
+ * either refuse or return one triangle's rim as though it were the face's.
+ *
+ * 🔴 SO THE ARITY GUARD IS LOAD-BEARING, NOT DEFENSIVE. This answers only where every face is
+ * ONE triangle, and then the rim is positional rather than derived. That holds for every
+ * imported mesh today — `faceArityOf`'s imported arm returns a uniform array of ones, measured
+ * at face counts 1, 12 and 100 — but it holds because of how that arm is written, not because
+ * of anything a buffer guarantees. The day a kind on this road states a face of two triangles,
+ * this refuses instead of quietly answering with a third of it.
+ *
+ * The agreement check is the same cross-source one the indexed road makes, against `position`
+ * rather than the index: the count was captured at import, the buffer arrived from the asset.
+ *
+ * Not cached, deliberately — `builtPolygonRims` memoises because a boundary walk is expensive,
+ * and a second cache keyed on the same geometry is a second place to get the key wrong for an
+ * arithmetic expression that costs nothing.
+ */
+function splitSoupRims(
+  geometry: BufferGeometry,
+  arity: readonly number[],
+  triangles: number,
+): readonly PolygonRim[] | null {
+  const position = geometry.getAttribute('position');
+  if (position === undefined) return null;
+  if (triangles * 3 !== position.count) return null;
+  for (const n of arity) if (n !== 1) return null;
+
+  const rims: PolygonRim[] = [];
+  for (let f = 0; f < arity.length; f++) rims.push([f * 3, f * 3 + 1, f * 3 + 2]);
+  return rims;
 }
 
 /** `split` rotated so that mapping it through `weld` reproduces `target` exactly, or `null`. */

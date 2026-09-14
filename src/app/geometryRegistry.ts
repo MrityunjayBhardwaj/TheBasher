@@ -79,6 +79,7 @@ import { getGltfClone } from './asset/gltfCloneRegistry';
 // UV editor cannot disagree about which mesh a glTF child is. See that module's header.
 import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
+import { buildMeshGeometry } from './meshGeometryData';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -356,8 +357,24 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 // `get` returns null for THREE unrelated reasons, and which one it is changes what the
 // caller must do:
 //
-//   a `gltf` ref        → ALWAYS null. The registry does not own loaded glTF geometry; the
-//                         asset clone does. Null means LOOK ELSEWHERE.
+//   a `gltf` ref        → null only until the asset MOUNTS. The registry does not own loaded
+//                         glTF geometry; the asset clone does — and `get` DELEGATES to it
+//                         (`:220`), so a mounted child RESOLVES and an unmounted one reads
+//                         null. Null means WAIT FOR THE MOUNT.
+//
+//                         🔴 THIS READ "ALWAYS null / LOOK ELSEWHERE" UNTIL #1042, AND IT
+//                         WAS FALSE FROM #367 ONWARD. That change gave `get` the delegation
+//                         and updated {@link GeometryAvailability} forty lines below; this
+//                         block — the registry's own statement of who owns what — kept the
+//                         pre-#367 rule. Measured against a mounted clone with a box control:
+//                         `getForRead` returns a 24-vertex geometry and `readGeometry` reads
+//                         `ok`. A false constraint in the file that OWNS the rule is not inert:
+//                         it is the sentence that nearly argued #1041 into carrying
+//                         buffer-scale rims in the document, which #1025 had already closed
+//                         against. Named by `importedRims.gate.test.ts` ground 14 — named
+//                         rather than merely covered: six grounds there already red if this
+//                         delegation breaks, but each reds about RIMS, so none of them would
+//                         tell a reader the ownership rule had moved.
 //   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
 //                         not happened yet. Null means WAIT — and it may well arrive.
 //   a procedural miss   → the registry builds procedural geometry synchronously on demand,
@@ -481,6 +498,10 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
       return projectionMaterialises(descriptor)
         ? composedOverSource(availabilityOf(descriptor.source.descriptor))
         : availabilityOf(descriptor.source.descriptor);
+    // #1049 — built synchronously from the data the descriptor carries, exactly like a box. A miss
+    // is malformed data, never a wait: nothing is loaded and nothing is mounted.
+    case 'mesh':
+      return 'procedural';
     default: {
       const unreachable: never = descriptor;
       return unreachable;
@@ -600,6 +621,39 @@ function composedOverSource(source: GeometryAvailability): GeometryAvailability 
  */
 export function drawnByAssetClone(descriptor: GeometryDescriptor): boolean {
   return availabilityOf(descriptor) === 'clone';
+}
+
+/**
+ * WHICH clone child draws this descriptor — the `gltf` descriptor that addresses it, or
+ * `null` when nothing in a clone draws it at all.
+ *
+ * {@link drawnByAssetClone} answers *whether*; this answers *which*, and they are one
+ * question asked twice, so this is derived by the SAME recursion rather than beside it.
+ * A consumer that needs the clone's own meshes — the UV editor reading a backdrop, anything
+ * else that must look where the buffers actually are — cannot get there from a boolean.
+ *
+ * 🔴 AND IT IS NOT `descriptor.kind === 'gltf'`. That test selected the same set until
+ * #738/#786 and does not now: a `uvProject` that cannot materialise passes its source's
+ * availability straight through (see {@link projectionMaterialises}) and {@link get}
+ * delegates its read to that source, so a projected imported mesh IS drawn by the clone
+ * while its kind is `uvProject`. Measured consequence before this existed (#1015): the UV
+ * editor gave such a mesh the same blank answer as a cube with no texture at all.
+ *
+ * The recursion is exactly the one {@link availabilityOf} runs, and the correspondence is
+ * total rather than approximate: `'clone'` is produced by the `gltf` arm alone, and the only
+ * arm that can propagate it upward is the non-materialising `uvProject` — every other
+ * composed arm maps a `clone` source to `'mounting'` through {@link composedOverSource},
+ * because the registry builds those buffers itself. So a `'clone'` descriptor is a `gltf`
+ * one, or a chain of non-materialising projections rooted at a `gltf` one, and this walk
+ * terminates at the address. `src/app/cloneAddress.gate.test.ts` holds the two in step.
+ */
+export function cloneAddressOf(
+  descriptor: GeometryDescriptor,
+): Extract<GeometryDescriptor, { kind: 'gltf' }> | null {
+  if (descriptor.kind === 'gltf') return descriptor;
+  if (descriptor.kind === 'uvProject' && !projectionMaterialises(descriptor))
+    return cloneAddressOf(descriptor.source.descriptor);
+  return null;
 }
 
 /**
@@ -978,6 +1032,9 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
     // has no caller."* The delegation is gone; a projection builds.
     case 'uvProject':
       return buildUVProject(d);
+    // #1049 — a stored mesh builds from its own data, here, like any other kind this registry owns.
+    case 'mesh':
+      return buildMeshGeometry(d.data).geometry;
     default: {
       const unreachable: never = d;
       console.error(

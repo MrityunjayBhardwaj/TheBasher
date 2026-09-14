@@ -12,6 +12,7 @@ import { ArrayModifierNode } from './ArrayModifier';
 // (TransformClipNode is imported later in the alphabetical block.)
 import { BakedDataNode } from './BakedData';
 import { GltfDataNode } from './GltfData';
+import { PolyMeshDataNode } from './PolyMeshData';
 import { BeautyPassNode } from './BeautyPass';
 import { BoneNameMapNode } from './BoneNameMap';
 import { RetargetClipNode } from './RetargetClip';
@@ -134,6 +135,9 @@ const ALL: NodeDefinition[] = [
   // registered kind to name a migration that has ALREADY shipped (splitKinds.roads R9).
   // There is no honest descriptor for a split that has migrated nothing.
   GltfDataNode as unknown as NodeDefinition,
+  // #1049 — a stored polygon mesh: the data half an import writes so it stops being special.
+  // Born split, so its conformance descriptor ASSERTS it migrates nothing (splitKinds R9).
+  PolyMeshDataNode as unknown as NodeDefinition,
   TransformNode as unknown as NodeDefinition,
   // #296 — a Null controller: a transformable, geometry-less scene object (Empty).
   NullNode as unknown as NodeDefinition,

@@ -17,10 +17,10 @@
 //       identical, and it works for ANY texture (procedural, modified, or one
 //       whose source association did not survive the clone).
 //
-// The LOKAYATA PROBE (the `__basher_gltf_meshes.mapProbe` seam + the
-// `p151-texture-readback-probe` e2e) observes which path is available on the
-// clone at runtime BEFORE the bake commits — path (2) is shipped unconditionally
-// so the wave cannot block on the MEDIUM-confidence path-(1) item.
+// The LOKAYATA PROBE (the `__basher_gltf_meshes.mapProbe` seam + a p151
+// texture-readback e2e, retired with #1073 once its fixture imported as native
+// geometry) observed which path is available on the clone — path (2) is shipped
+// unconditionally so the wave cannot block on the MEDIUM-confidence path-(1) item.
 //
 // Colorspace (M5/M8): a map loaded without its sRGB colorspace washes out on
 // reload. `BakedTextureRef.colorSpace` carries it; `loadBakedTexture` sets it
@@ -39,6 +39,8 @@ import * as THREE from 'three';
 import { hashValue } from '../../core/dag/hash';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { BakedTextureRef } from '../../nodes/types';
+import { projectImagePath } from '../../core/project/projectImages';
+import { useProjectStore } from '../../core/project/store';
 
 /** Root OPFS directory for baked texture blobs. */
 export const BAKED_TEXTURE_ROOT = 'baked-texture';
@@ -195,6 +197,17 @@ export async function persistTexture(
 
 /** Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. */
 function refToPath(ref: BakedTextureRef): string {
+  // #1050 — an image the project owns. Its key is relative to the project, so it resolves against
+  // whichever project is open, and a project copied under a new id reads the same refs.
+  if (ref.store === 'project') {
+    const projectId = useProjectStore.getState().current?.id;
+    if (!projectId) {
+      throw new Error(
+        `bakedTextureStore: project image ${ref.hash} has no open project to load from`,
+      );
+    }
+    return projectImagePath(projectId, ref.hash);
+  }
   const dot = ref.hash.lastIndexOf('.');
   if (dot <= 0) return bakedTexturePath(ref.hash, 'png');
   return bakedTexturePath(ref.hash.slice(0, dot), ref.hash.slice(dot + 1));
@@ -232,6 +245,11 @@ export async function loadBakedTexture(
     texture.flipY = ref.flipY;
     texture.wrapS = ref.wrapS as THREE.Wrapping;
     texture.wrapT = ref.wrapT as THREE.Wrapping;
+    // #1050 — only when captured: a ref written before it keeps three's defaults, as it always did.
+    if (ref.magFilter !== undefined)
+      texture.magFilter = ref.magFilter as THREE.MagnificationTextureFilter;
+    if (ref.minFilter !== undefined)
+      texture.minFilter = ref.minFilter as THREE.MinificationTextureFilter;
     texture.needsUpdate = true;
     return texture;
   } finally {

@@ -1,49 +1,34 @@
-// p151 (Apply-Transform) Wave 4 — the glTF-child boundary-pair gate (issue #151).
+// p151 (Apply-Transform) — the imported-mesh boundary-pair gate (issue #151).
 //
-// THE PHASE PRE-MORTEM ZONE. An imported child is the R-1 edge-less satellite whose
-// geometry + textured PBR material live BY NAME inside the GltfAsset's
-// SkeletonUtils clone. Baking it converges H40 (band-in-resolver), H45 (clone
-// shared geom), H58/H59 (capture post-override), double-render suppression, and
-// the texture readback onto ONE op. Every named failure mode is an OBSERVATION
-// here — read off the real three.js render objects via the seams, never inferred.
+// Apply moves an imported mesh's pose into its mesh data, and what it leaves has to look exactly
+// like what was on screen, survive undo, not disturb any other import, and outlive the folder it
+// was imported from. Every one of those is an OBSERVATION here, read off the real three.js render
+// objects, never inferred from params.
 //
-// SC-2  verts (H40): baked world bounds == resolver baked bounds == original child
-//       world bounds (THREE-way).
-// SC-6  lossless material: reload → BakedMesh map.image.width>0, srgb base map,
-//       color matches the source resolved material. With a PRE-EXISTING override.
-// SC-7  single render: the baked child renders exactly ONCE (source suppressed).
-// SC-7  H45 isolation: a second asset instance's child is byte-unchanged.
-// SC-5  undo: Apply → Cmd+Z → the imported child restored + visible + BakedMesh gone.
-// M8    self-contained: bake → delete source asset → reload → baked still textured.
-// SC-8  animated guard: a clip/keyframe-driven child → Apply rejected.
+// SC-2  verts (H40): drawn world bounds == stored-mesh bounds == original world bounds.
+// SC-6  lossless material: the mesh draws the same textured material after Apply.
+// SC-7  H45 isolation: applying on one import leaves a second import of the SAME file unchanged.
+// SC-5  undo: Apply → undo → the original mesh data and pose restored, still textured.
+// M8    self-contained: Apply → delete the imported folder → reload → still drawn textured.
+// stacked  Apply under an Array modifier reaches the mesh data, keeps the modifier and the material.
 //
-// REF: PLAN.md Wave 4 Task 11; hetvabhasa H40/H45/H58/H59; vyapti V20/V29; D-04;
-//      p7.13 (textured fixture + tint-lands pattern), p150 (H40 boundary-pair).
+// ── #1073 / #1077: THE IMPORT IS NATIVE GEOMETRY, AND APPLY KEEPS IT THAT WAY ───────────────
+//
+// The fixture arrives as an ordinary `Object` over `PolyMeshData` (#1050). Apply writes the pose
+// into that `PolyMeshData` and resets the Object's pose; it never bakes, so there is no `BakedData`
+// and the material is never re-expressed (#1077 — the bake used to keep only the base colour).
+// Blender does the same: after Apply the object keeps the same Mesh datablock and material.
+// SC-7 isolation STAYS: two imports of one file share one content-addressed mesh in the geometry
+// registry, so an Apply that mutated the shared instance would corrupt the other import.
+//
+// REF: src/app/animate/dispatchApplyTransform.ts (`applyIntoStoredMesh`),
+//      tests/e2e/_importedMesh.ts (lookup + drawn reader); issues #151, #1073, #1077.
 
 import { test, expect } from './_fixtures';
-import { importedChildren } from './_importedChild';
+import type { Page } from '@playwright/test';
+import { drawnImportMeshes, importRoots, importedMeshes } from './_importedMesh';
+import { modifierChainOps } from './_modifierStack';
 
-interface MeshSummary {
-  name: string;
-  hasMap: boolean;
-  mapImageOk: boolean;
-  color: string | null;
-  worldBounds: [number, number, number];
-  visible: boolean;
-}
-interface MeshMaterial {
-  color: string | null;
-  hasMap: boolean;
-  mapImageOk: boolean;
-  mapColorSpace: string | null;
-  roughness: number | null;
-  metalness: number | null;
-}
-interface DagNode {
-  id: string;
-  type: string;
-  params: Record<string, unknown>;
-}
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -51,18 +36,20 @@ interface IngestFileShape {
 interface BasherWindow {
   __basher_dag?: {
     getState: () => {
-      state: { nodes: Record<string, DagNode>; outputs: { scene?: { node: string } } };
+      state: {
+        nodes: Record<
+          string,
+          { type: string; params: Record<string, unknown>; inputs?: Record<string, unknown> }
+        >;
+      };
       undo: () => void;
+      dispatchAtomic: (ops: unknown[], source: string, label: string) => void;
     };
   };
   __basher_ingestGltfFolder?: (
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
-  __basher_mesh_world_bounds?: (nodeId: string) => [number, number, number] | null;
-  __basher_baked_geometry_bounds?: (nodeId: string) => [number, number, number] | null;
-  __basher_mesh_material?: (nodeId: string) => MeshMaterial | null;
 }
 
 const FIXTURE = [
@@ -70,9 +57,8 @@ const FIXTURE = [
   { urlPath: '/fixtures/multifile/flat/scene.bin', relativePath: 'scene.bin' },
   { urlPath: '/fixtures/multifile/flat/texture.png', relativePath: 'texture.png' },
 ];
-const CHILD = 'Box'; // the single textured child of the flat fixture
 
-async function ingest(page: import('@playwright/test').Page, folderName: string): Promise<void> {
+async function ingest(page: Page, folderName: string): Promise<void> {
   await page.evaluate(
     async ({ files: f, name }) => {
       const w = window as unknown as BasherWindow;
@@ -87,59 +73,94 @@ async function ingest(page: import('@playwright/test').Page, folderName: string)
   );
 }
 
-/** Poll until the cloned textured child mesh has a decoded image (render ready). */
-async function waitTextured(page: import('@playwright/test').Page): Promise<MeshSummary> {
-  const start = Date.now();
-  let last: MeshSummary[] = [];
-  while (Date.now() - start < 10_000) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
-    last = summary;
-    const m = summary.find((s) => s.name === CHILD && s.hasMap && s.mapImageOk);
-    if (m) return m;
-    await page.waitForTimeout(120);
-  }
-  throw new Error(`waitTextured timed out; last: ${JSON.stringify(last)}`);
+/** The import at `index` in scene order: its root, its Object, and the road it took. */
+async function importNamed(page: Page, index: number) {
+  const roots = await importRoots(page);
+  const root = roots[index];
+  if (!root) throw new Error(`no import root at index ${index}; roots: ${JSON.stringify(roots)}`);
+  const mesh = (await importedMeshes(page)).find((m) => m.rootId === root.rootId);
+  if (!mesh) throw new Error(`import root ${root.rootId} holds no mesh`);
+  return { rootId: root.rootId, objectId: mesh.objectId, dataId: mesh.dataId, road: root.road };
 }
 
-async function gltfChildId(page: import('@playwright/test').Page, assetRefSubstr: string) {
-  // #389 — the OBJECT half's id. It inherits the fused node's id, so Apply, the
-  // gizmo, every clip target and the selection all still address the child by it.
-  const all = await importedChildren(page);
-  const hit = all.find((c) => c.childName === 'Box' && c.assetRef.includes(assetRefSubstr));
-  return hit?.objectId ?? null;
+/** Poll until the mesh drawn under `rootId` has a decoded base map, and return it. */
+async function waitTextured(page: Page, rootId: string) {
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, rootId)).some((m) => m.hasMap && m.mapImageOk))
+    .toBe(true);
+  return (await drawnImportMeshes(page, rootId))[0];
 }
 
-/** The baked PAIR the child bake mints: the `Object` half plus the `BakedData` it poses.
- *
- *  #388 — the bake mints a pair rather than a fused `BakedMesh`, so the pose lives on the
- *  Object and the buffer handle + captured material live on the data half. Found by
- *  POSSESSION (an Object posing a BakedData) rather than by a type name, which is what a
- *  finder like the old one could not survive. */
-function bakedMeshNode(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes as Record<
-      string,
-      { type: string; params: Record<string, unknown>; inputs?: Record<string, { node: string }> }
-    >;
-    const entry = Object.entries(nodes).find(([, n]) => {
-      const d = n.inputs?.data?.node;
-      return n.type === 'Object' && !!d && nodes[d]?.type === 'BakedData';
-    });
-    if (!entry) return null;
-    const dataId = entry[1].inputs!.data.node;
-    return { id: entry[0], params: entry[1].params, dataId, dataParams: nodes[dataId].params };
-  });
+/**
+ * What an Object poses, read through its `data` edge: the data node's id, type, packed mesh and
+ * material, plus the Object's own pose. Reached by the edge, never by id spelling (#388).
+ */
+function posedDataOf(page: Page, objectId: string) {
+  return page.evaluate((id) => {
+    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    const dataId = (nodes[id]?.inputs?.data as { node?: string } | undefined)?.node ?? null;
+    const data = dataId ? nodes[dataId] : undefined;
+    return {
+      dataId,
+      dataType: data?.type ?? null,
+      mesh: (data?.params.mesh ?? null) as unknown,
+      material: (data?.params.material ?? null) as unknown,
+      pose: {
+        position: nodes[id]?.params.position,
+        rotation: nodes[id]?.params.rotation,
+        scale: nodes[id]?.params.scale,
+      },
+    };
+  }, objectId);
 }
 
-async function applyTransform(page: import('@playwright/test').Page, id: string) {
+/**
+ * The stored mesh's own axis-aligned size, decoded by the product's reader: the MODEL leg of the
+ * verts boundary-pair. Only comparable to a world size while the Object sits at identity, which
+ * is what an Apply-all leaves.
+ */
+function storedMeshSize(page: Page, dataId: string) {
+  return page.evaluate(async (id) => {
+    const { unpackMeshData } = await import('/src/app/meshGeometryData.ts');
+    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    const { points } = unpackMeshData(nodes[id].params.mesh as never);
+    const min = [Infinity, Infinity, Infinity];
+    const max = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < points.length; i++) {
+      min[i % 3] = Math.min(min[i % 3], points[i]);
+      max[i % 3] = Math.max(max[i % 3], points[i]);
+    }
+    return [max[0] - min[0], max[1] - min[1], max[2] - min[2]] as [number, number, number];
+  }, dataId);
+}
+
+const nodeTypes = (page: Page) =>
+  page.evaluate(() =>
+    Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).map(
+      (n) => n.type,
+    ),
+  );
+
+async function applyTransform(page: Page, id: string) {
   return page.evaluate(async (nodeId) => {
     const mod = await import('/src/app/animate/dispatchApplyTransform.ts');
     return mod.dispatchApplyTransform(nodeId, 'all');
   }, id);
+}
+
+async function setScale(page: Page, id: string, value: [number, number, number]) {
+  await page.evaluate(
+    ({ nodeId, v }) => {
+      (window as unknown as BasherWindow)
+        .__basher_dag!.getState()
+        .dispatchAtomic(
+          [{ type: 'setParam', nodeId, paramPath: 'scale', value: v }],
+          'user',
+          'p151 pose',
+        );
+    },
+    { nodeId: id, v: value },
+  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -156,281 +177,252 @@ test.beforeEach(async ({ page }) => {
   });
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  // NOTE: __basher_gltf_meshes registers only AFTER a GltfAsset renders (inside
-  // GltfAssetR), so it is NOT awaited here — waitTextured() polls for it post-ingest.
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(
-      w.__basher_dag &&
-      w.__basher_ingestGltfFolder &&
-      w.__basher_mesh_world_bounds &&
-      w.__basher_baked_geometry_bounds &&
-      w.__basher_mesh_material,
-    );
+    return Boolean(w.__basher_dag && w.__basher_ingestGltfFolder);
   });
 });
 
-test('SC-2/SC-6/SC-7: bake a textured glTF child → three-way verts + lossless material + single render', async ({
+test('SC-2/SC-6: Apply on a textured imported mesh → three-way verts + material kept', async ({
   page,
 }) => {
   await ingest(page, 'p151-child');
-  const before = await waitTextured(page);
-  // Original child world bounds (the THIRD leg of the three-way boundary-pair).
+  await expect.poll(async () => (await importRoots(page)).length).toBe(1);
+  const imp = await importNamed(page, 0);
+  expect(imp.road).toBe('native');
+  await waitTextured(page, imp.rootId);
+  // A non-identity pose, so Apply has something to move: at identity all three legs read the
+  // same whether or not the pose reached the verts.
+  await setScale(page, imp.objectId, [2, 1, 1]);
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
+    .toBeCloseTo(2, 3);
+  const before = (await drawnImportMeshes(page, imp.rootId))[0];
+  const posedBefore = await posedDataOf(page, imp.objectId);
+  // Original world bounds — the THIRD leg of the three-way boundary-pair.
   const origBounds = before.worldBounds;
 
-  const childId = await gltfChildId(page, 'p151-child');
-  expect(childId).not.toBeNull();
-
-  const result = await applyTransform(page, childId!);
+  const result = await applyTransform(page, imp.objectId);
   expect(result.ok).toBe(true);
 
-  // The GltfChild is gone; a BakedMesh exists.
-  await page.waitForFunction(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    return Object.values(nodes).some((n) => n.type === 'BakedData');
-  });
-  const baked = await bakedMeshNode(page);
-  expect(baked).not.toBeNull();
-  expect(baked!.params.scale).toEqual([1, 1, 1]);
+  // The Object keeps posing the SAME mesh data, now carrying the pose; nothing was baked.
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
+  const posed = await posedDataOf(page, imp.objectId);
+  expect(posed.dataId).toBe(imp.dataId);
+  expect(posed.dataType).toBe('PolyMeshData');
+  expect(posed.mesh).not.toEqual(posedBefore.mesh); // the verts moved…
+  expect(posed.material).toEqual(posedBefore.material); // …and the material did not change at all
+  expect(await nodeTypes(page)).not.toContain('BakedData');
 
-  // Wait for the baked geometry + texture to suspense-load + render.
-  await page.waitForFunction(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id) !== null,
-    baked!.id,
-  );
-
-  // SC-2 — THREE-way verts boundary-pair (H40): rendered baked == resolver baked
-  // == original child world bounds.
-  const renderedBaked = await page.evaluate(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_world_bounds!(id),
-    baked!.id,
-  );
-  const resolverBaked = await page.evaluate(
-    (id) => (window as unknown as BasherWindow).__basher_baked_geometry_bounds!(id),
-    baked!.id,
-  );
-  // eslint-disable-next-line no-console
-  console.log(
-    'P151 VERTS three-way =',
-    JSON.stringify({ origBounds, renderedBaked, resolverBaked }),
-  );
-  expect(renderedBaked).not.toBeNull();
-  expect(resolverBaked).not.toBeNull();
+  // SC-2 — THREE-way verts boundary-pair (H40): drawn == stored model == original world bounds.
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
+    .toBeCloseTo(origBounds[0], 3);
+  const drawn = (await drawnImportMeshes(page, imp.rootId))[0].worldBounds;
+  const stored = await storedMeshSize(page, imp.dataId);
+  console.log('P151 VERTS three-way =', JSON.stringify({ origBounds, drawn, stored }));
   for (let i = 0; i < 3; i++) {
-    expect(renderedBaked![i]).toBeCloseTo(resolverBaked![i], 3); // side A == side B
-    expect(renderedBaked![i]).toBeCloseTo(origBounds[i], 2); // == the original child
+    expect(drawn[i]).toBeCloseTo(stored[i], 3); // side A == side B
+    expect(drawn[i]).toBeCloseTo(origBounds[i], 3); // == the original
   }
 
-  // SC-6 — lossless material on the rendered BakedMesh (await the texture load).
-  await page.waitForFunction(
-    (id) => {
-      const mm = (window as unknown as BasherWindow).__basher_mesh_material!(id);
-      return mm !== null && mm.hasMap && mm.mapImageOk;
-    },
-    baked!.id,
-    { timeout: 10_000 },
-  );
-  const bakedMat = await page.evaluate(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_material!(id),
-    baked!.id,
-  );
-  // eslint-disable-next-line no-console
-  console.log('P151 BAKED MATERIAL =', JSON.stringify(bakedMat));
-  expect(bakedMat!.hasMap).toBe(true);
-  expect(bakedMat!.mapImageOk).toBe(true); // map.image.width > 0
-  expect(bakedMat!.mapColorSpace).toBe('srgb'); // base map sRGB (M5)
-  expect(bakedMat!.color).toBe(before.color); // resolved color preserved
-
-  // SC-7 — single render: the source child is now SUPPRESSED (not visible) in the
-  // asset clone, so only the BakedMesh renders that geometry (count == 1).
-  const visibleChildCount = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_gltf_meshes!().filter((m) => m.name === 'Box' && m.visible).length;
-  });
-  expect(visibleChildCount).toBe(0); // the asset no longer renders Box; the BakedMesh does
+  // SC-6 — the drawn material is the one drawn before Apply.
+  const after = await waitTextured(page, imp.rootId);
+  console.log('P151 MATERIAL after Apply =', JSON.stringify(after));
+  expect(after.mapColorSpace).toBe('srgb'); // base map sRGB (M5)
+  expect(after.mapWidth).toBe(before.mapWidth);
+  expect(after.color).toBe(before.color);
+  expect(after.roughness).toBe(before.roughness);
+  expect(after.metalness).toBe(before.metalness);
 });
 
-test('SC-7 isolation (H45): baking one asset instance leaves a second instance unchanged', async ({
+test('SC-7 isolation (H45): Apply on one import leaves a second import of the same file unchanged', async ({
   page,
 }) => {
   await ingest(page, 'p151-iso-a');
   await ingest(page, 'p151-iso-b');
-  await waitTextured(page);
+  await expect.poll(async () => (await importRoots(page)).length).toBe(2);
+  const a = await importNamed(page, 0);
+  const b = await importNamed(page, 1);
+  expect([a.road, b.road]).toEqual(['native', 'native']);
+  const bBefore = await waitTextured(page, b.rootId);
+  const bPosedBefore = await posedDataOf(page, b.objectId);
 
-  // Capture instance B's child bounds + material BEFORE baking A.
-  const bBoundsBefore = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    // Both instances expose a 'Box' mesh; the LAST-mounted clone backs the getter
-    // (single-asset last-writer), so we read the bounds the getter reports now.
-    const boxes = w.__basher_gltf_meshes!().filter((m) => m.name === 'Box');
-    return boxes.map((m) => m.worldBounds);
-  });
+  // Give A a non-identity pose, so an Apply that wrote into the shared geometry instance would
+  // change what B draws — an identity Apply would leave B's bounds equal either way.
+  await setScale(page, a.objectId, [2, 1, 1]);
 
-  // Capture B's GltfChild scale (its seeded base TRS) BEFORE baking A.
-  const bChildIdBefore = await gltfChildId(page, 'p151-iso-b');
-  expect(bChildIdBefore).not.toBeNull();
-  const bScaleBefore = await page.evaluate((id) => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_dag!.getState().state.nodes[id!].params.scale;
-  }, bChildIdBefore);
-
-  const aChildId = await gltfChildId(page, 'p151-iso-a');
-  const result = await applyTransform(page, aChildId!);
+  const result = await applyTransform(page, a.objectId);
   expect(result.ok).toBe(true);
-  await page.waitForFunction(() =>
-    Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedData',
-    ),
-  );
+  await expect
+    .poll(async () => (await posedDataOf(page, a.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
 
-  // Instance B's GltfChild node is byte-unchanged in the DAG (not removed, scale
-  // intact — baking A must not touch B).
-  const bChildId = await gltfChildId(page, 'p151-iso-b');
-  expect(bChildId).not.toBeNull(); // B's child node still exists (not removed)
-  const bScaleAfter = await page.evaluate((id) => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_dag!.getState().state.nodes[id!].params.scale;
-  }, bChildId);
-  expect(bScaleAfter).toEqual(bScaleBefore); // B's seeded base scale, intact
+  // B's Object and mesh data are untouched in the DAG.
+  const bPosedAfter = await posedDataOf(page, b.objectId);
+  expect(bPosedAfter).toEqual(bPosedBefore);
 
-  // B's rendered child bounds unchanged (shared geometry not corrupted by A's bake).
-  const bBoundsAfter = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_gltf_meshes!()
-      .filter((m) => m.name === 'Box' && m.visible)
-      .map((m) => m.worldBounds);
-  });
-  expect(bBoundsAfter.length).toBeGreaterThan(0);
-  // At least one still-visible Box matches a pre-bake bound (B's child).
-  const matches = bBoundsAfter.some((after) =>
-    bBoundsBefore.some((b) => Math.abs(after[0] - b[0]) < 1e-3),
-  );
-  expect(matches).toBe(true);
+  // B still draws at its pre-Apply size (shared geometry not corrupted by A's Apply).
+  const bDrawn = await drawnImportMeshes(page, b.rootId);
+  expect(bDrawn.length).toBe(1);
+  for (let i = 0; i < 3; i++)
+    expect(bDrawn[0].worldBounds[i]).toBeCloseTo(bBefore.worldBounds[i], 3);
 });
 
-test('SC-5 undo: Apply → Cmd+Z → the imported child restored + source child visible + BakedMesh gone', async ({
+test('SC-5 undo: Apply → Cmd+Z → the original mesh data and pose restored, still textured', async ({
   page,
 }) => {
   await ingest(page, 'p151-undo');
-  await waitTextured(page);
-  const childId = await gltfChildId(page, 'p151-undo');
-  await applyTransform(page, childId!);
-  await page.waitForFunction(() =>
-    Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedData',
-    ),
-  );
+  await expect.poll(async () => (await importRoots(page)).length).toBe(1);
+  const imp = await importNamed(page, 0);
+  await waitTextured(page, imp.rootId);
+  await setScale(page, imp.objectId, [2, 1, 1]);
+  const posedBefore = await posedDataOf(page, imp.objectId);
+  await applyTransform(page, imp.objectId);
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
 
   await page.evaluate(() => (window as unknown as BasherWindow).__basher_dag!.getState().undo());
 
-  const restored = await page.evaluate((id) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const gltfAsset = Object.values(nodes).find((n) => n.type === 'GltfAsset');
-    return {
-      childExists: Boolean(nodes[id!]),
-      hasBaked: Object.values(nodes).some((n) => n.type === 'BakedData'),
-      suppressed: gltfAsset ? gltfAsset.params.suppressedChildren : null,
-    };
-  }, childId);
-  expect(restored.childExists).toBe(true); // GltfChild restored
-  expect(restored.hasBaked).toBe(false); // BakedMesh removed (addNode inverse)
-  expect(restored.suppressed).toEqual([]); // un-suppressed (setParam inverse)
+  // The exact packed mesh and pose come back, not merely "a PolyMeshData".
+  expect(await posedDataOf(page, imp.objectId)).toEqual(posedBefore);
+  expect(await nodeTypes(page)).not.toContain('BakedData');
 
-  // The source child is visible again on the render clone.
-  await page.waitForFunction(() => {
-    const w = window as unknown as BasherWindow;
-    return w.__basher_gltf_meshes!().some((m) => m.name === 'Box' && m.visible);
-  });
+  // …and it draws textured at the restored pose.
+  await waitTextured(page, imp.rootId);
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
+    .toBeCloseTo(2, 3);
 });
 
-test('M8 self-contained: bake → delete source asset → reload → baked still renders textured', async ({
+test('M8 self-contained: Apply → delete the imported folder → reload → still renders textured', async ({
   page,
 }) => {
   await ingest(page, 'p151-selfcontained');
-  await waitTextured(page);
-  const childId = await gltfChildId(page, 'p151-selfcontained');
-  await applyTransform(page, childId!);
-  await page.waitForFunction(() =>
-    Object.values((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes).some(
-      (n) => n.type === 'BakedData',
-    ),
-  );
+  await expect.poll(async () => (await importRoots(page)).length).toBe(1);
+  const imp = await importNamed(page, 0);
+  await waitTextured(page, imp.rootId);
+  await setScale(page, imp.objectId, [2, 1, 1]);
+  await applyTransform(page, imp.objectId);
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
+  const posedApplied = await posedDataOf(page, imp.objectId);
 
-  // Delete the source GltfAsset via the SAME path the app uses — the My-Imports
-  // ︙ Delete affordance routes through `deleteImportedAsset(name, {breakRefs})`,
-  // which (1) removes the whole import footprint nodes in one atomic op AND
-  // (2) deletes the `user-imports/<name>/` OPFS tree (the source .gltf/.bin/.png
-  // bytes). After this the source is GONE — no node, no OPFS bytes. This is the
-  // real H60 orphan-avoidance exercise: if the baked texture had referenced back
-  // into `user-imports/`, the reload below would lose its map.
+  // Delete the imported folder via the SAME path the app uses — the My-Imports ︙ Delete
+  // affordance routes through `deleteImportedAsset(name, {breakRefs})`. After this the file's
+  // bytes are GONE, so anything that still reached back into `user-imports/` would lose its map
+  // on the reload below.
   const deletion = await page.evaluate(async () => {
     const importCommon = await import('/src/app/asset/importCommon.ts');
     const boot = await import('/src/app/boot.ts');
     const NAME = 'p151-selfcontained';
     const storage = await boot.getStorage();
-    // The source tree must EXIST before the delete (so the after=0 is a real
-    // transition, not a never-existed dir reading empty).
-    const sourceFilesBefore = (
-      await importCommon.listFilesDeep(storage, `${importCommon.USER_IMPORTS_ROOT}/${NAME}`)
-    ).length;
+    const dir = `${importCommon.USER_IMPORTS_ROOT}/${NAME}`;
+    const sourceFilesBefore = (await importCommon.listFilesDeep(storage, dir)).length;
     const result = await importCommon.deleteImportedAsset(NAME, { breakRefs: true });
-    // OBSERVE that the source OPFS tree is actually gone (the deletion happened).
-    const sourceFilesAfter = (
-      await importCommon.listFilesDeep(storage, `${importCommon.USER_IMPORTS_ROOT}/${NAME}`)
-    ).length;
-    // And that the baked texture lives under `baked-texture/`, NOT user-imports.
-    const bakedTexFiles = await storage.list('baked-texture').catch(() => [] as string[]);
-    return {
-      deleted: result.deleted,
-      sourceFilesBefore,
-      sourceFilesAfter,
-      bakedTexCount: bakedTexFiles.length,
-    };
+    const sourceFilesAfter = (await importCommon.listFilesDeep(storage, dir)).length;
+    return { deleted: result.deleted, sourceFilesBefore, sourceFilesAfter };
   });
-  // The deletion actually removed the source asset + its OPFS bytes — observed as
-  // a real before(>0) → after(0) transition (not a never-existed dir).
+  // A real before(>0) → after(0) transition, not a never-existed dir reading empty.
   expect(deletion.deleted).toBe(true);
-  expect(deletion.sourceFilesBefore).toBeGreaterThan(0); // the source bytes existed
-  expect(deletion.sourceFilesAfter).toBe(0); // user-imports/<name> is now empty/gone
-  expect(deletion.bakedTexCount).toBeGreaterThan(0); // baked texture is self-contained
-  // The source GltfAsset/GltfChild nodes are gone from the DAG.
-  const sourceNodesGone = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    // #389 — the child's DATA half is what the delete has to take with it. `Object` is
-    // deliberately not named: it is also the type of the baked result this test expects
-    // to SURVIVE, so asserting on it would make the row fail for the opposite reason.
-    return !Object.values(nodes).some((n) => n.type === 'GltfAsset' || n.type === 'GltfData');
-  });
-  expect(sourceNodesGone).toBe(true);
+  expect(deletion.sourceFilesBefore).toBeGreaterThan(0);
+  expect(deletion.sourceFilesAfter).toBe(0);
+  // The applied mesh data is still in the scene: a native import holds nothing that referenced the folder.
+  expect(await posedDataOf(page, imp.objectId)).toEqual(posedApplied);
 
-  // Save + reload — the baked geometry + texture bytes live in OPFS, keyed by
-  // hash, independent of the now-deleted source asset.
   await page.evaluate(async () => {
     const boot = await import('/src/app/boot.ts');
     await boot.saveCurrent();
   });
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await page.waitForFunction(() =>
-    Boolean((window as unknown as BasherWindow).__basher_mesh_material),
-  );
 
-  const baked = await bakedMeshNode(page);
-  expect(baked).not.toBeNull();
-  await page.waitForFunction(
-    (id) => {
-      const mm = (window as unknown as BasherWindow).__basher_mesh_material!(id);
-      return mm !== null && mm.hasMap && mm.mapImageOk;
-    },
-    baked!.id,
-    { timeout: 10_000 },
+  // The applied mesh data survives the save + reload byte-for-byte, and still draws textured at
+  // the applied size.
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).dataType)
+    .toBe('PolyMeshData');
+  expect(await posedDataOf(page, imp.objectId)).toEqual(posedApplied);
+  await waitTextured(page, imp.rootId);
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
+    .toBeCloseTo(2, 3);
+});
+
+/**
+ * The mesh data at the BASE of an Object's data lane, found by the product's own walk — under a
+ * modifier the Object's `data` edge names the modifier, not the mesh.
+ */
+function laneBaseOf(page: Page, objectId: string) {
+  return page.evaluate(async (id) => {
+    const { resolveDataLaneBase } = await import('/src/app/operatorChain.ts');
+    const state = (window as unknown as BasherWindow).__basher_dag!.getState().state;
+    const baseId = resolveDataLaneBase(state as never, id);
+    const base = state.nodes[baseId];
+    return {
+      id: baseId,
+      type: base?.type ?? null,
+      mesh: (base?.params.mesh ?? null) as unknown,
+      material: (base?.params.material ?? null) as unknown,
+    };
+  }, objectId);
+}
+
+test('stacked (#1077): Apply under an Array modifier reaches the mesh data, keeps the modifier and the material', async ({
+  page,
+}) => {
+  await ingest(page, 'p151-stacked');
+  await expect.poll(async () => (await importRoots(page)).length).toBe(1);
+  const imp = await importNamed(page, 0);
+  expect(imp.road).toBe('native');
+  const plain = await waitTextured(page, imp.rootId);
+
+  // Splice an Array modifier between the mesh data and its Object — the shape "+ Add Modifier"
+  // builds. Positive control: the drawn mesh grows, so the stack is live before Apply runs.
+  const MOD = 'p151_stacked_array';
+  await page.evaluate(
+    (ops) =>
+      (window as unknown as BasherWindow)
+        .__basher_dag!.getState()
+        .dispatchAtomic(ops, 'user', 'p151 add array'),
+    modifierChainOps({
+      objectId: imp.objectId,
+      dataId: imp.dataId,
+      modifiers: [{ id: MOD, nodeType: 'ArrayModifier', params: { count: 2, offset: [2, 0, 0] } }],
+    }),
   );
-  const mat = await page.evaluate(
-    (id) => (window as unknown as BasherWindow).__basher_mesh_material!(id),
-    baked!.id,
-  );
-  expect(mat!.mapImageOk).toBe(true); // textured baked mesh survives reload
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0] ?? 0)
+    .toBeGreaterThan(plain.worldBounds[0] + 0.5);
+  await setScale(page, imp.objectId, [2, 1, 1]);
+  const baseBefore = await laneBaseOf(page, imp.objectId);
+  expect(baseBefore.id).toBe(imp.dataId);
+  const drawnBefore = await waitTextured(page, imp.rootId);
+
+  const result = await applyTransform(page, imp.objectId);
+  expect(result.ok).toBe(true);
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
+
+  // The Object still wears the modifier, and the modifier still sits on the same mesh data, which
+  // now carries the pose and exactly the material it had.
+  expect((await posedDataOf(page, imp.objectId)).dataId).toBe(MOD);
+  const baseAfter = await laneBaseOf(page, imp.objectId);
+  expect(baseAfter.id).toBe(imp.dataId);
+  expect(baseAfter.type).toBe('PolyMeshData');
+  expect(baseAfter.mesh).not.toEqual(baseBefore.mesh);
+  expect(baseAfter.material).toEqual(baseBefore.material);
+  expect(await nodeTypes(page)).not.toContain('BakedData');
+
+  // …and it still draws the same textured material.
+  const drawnAfter = await waitTextured(page, imp.rootId);
+  console.log('P151 STACKED drawn =', JSON.stringify({ drawnBefore, drawnAfter }));
+  expect(drawnAfter.color).toBe(drawnBefore.color);
+  expect(drawnAfter.roughness).toBe(drawnBefore.roughness);
+  expect(drawnAfter.mapWidth).toBe(drawnBefore.mapWidth);
 });

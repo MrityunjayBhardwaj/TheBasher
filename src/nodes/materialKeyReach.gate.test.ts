@@ -179,6 +179,10 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
   // the same function the other two call over the same IR. One function, three callers,
   // one answer.
   'src/nodes/GltfData.ts': 'mints it after the fold — the imported child (#389)',
+  // #1049 — the fourth minter, on the same argument as the third: a stored mesh's material is
+  // captured by whoever wrote the mesh, so identity is minted where the value is built, through
+  // the same `materialKeyOf`. Still one function deciding identity, now with four callers.
+  'src/nodes/PolyMeshData.ts': 'mints it after the fold — the stored polygon mesh (#1049)',
   // NOT a producer, and listed rather than excused. A fixture that builds a mesh data value
   // by hand has to write every field the type declares, so it appears in a writer census
   // that keys on the field name. Registering it keeps the census COMPLETE — the alternative
@@ -202,12 +206,13 @@ const KEY_FUNCTION_CONSUMERS: Record<string, string> = {
   'src/nodes/BoxData.ts': 'mints — the evaluator side',
   'src/nodes/SphereData.ts': 'mints — the evaluator side',
   'src/nodes/GltfData.ts': 'mints — the evaluator side, the imported child (#389)',
+  'src/nodes/PolyMeshData.ts': 'mints — the evaluator side, the stored polygon mesh (#1049)',
   'src/app/material/primitiveMaterialInputs.ts':
     'the documented fallback: re-derives when the value carries no minted key',
 };
 
 describe('#542 — the reach of render identity, so §4 cannot overstate it', () => {
-  it('mints the material key at exactly three producers, on one declaring type', () => {
+  it('mints the material key at exactly four producers, on one declaring type', () => {
     const writers = sourceFiles()
       .filter(([, src]) => /(?<![\w.])materialKey\s*\??\s*:/.test(stripComments(src)))
       .map(([path]) => path)

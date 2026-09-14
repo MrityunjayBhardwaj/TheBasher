@@ -128,6 +128,8 @@ const ALL_TYPES = [
   'Null',
   'Object',
   'ParamDriver',
+  // #1049 — a stored polygon mesh's data half.
+  'PolyMeshData',
   'PoseOverride',
   'PosedSkeleton',
   'PrevFrame',

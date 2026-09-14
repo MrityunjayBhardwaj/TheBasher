@@ -150,6 +150,15 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // whole job is that one read, so the shared scope resolver stays a pure function of its spine
   // and params and does not join this census.
   'src/app/edgeAngleSelection.ts': 'read',
+  // #1041 — an imported mesh's welded rims are its buffer's rims, so the descriptor-side rim door
+  // reaches the buffer for the kinds whose topology lives there (`gltf`, `baked`) and for derived
+  // kinds over them, through the ref every derived descriptor already carries as `source`. It
+  // takes the geometry to walk its index and weld its positions — `alignedSplitRims` and
+  // `weldByPosition`, both non-mutating — and writes to neither. A `read` for the reason
+  // `builtRims.ts` is one, one module over; the rim-consumer census for #1041 found no consumer
+  // that could not hold a ref, which is why the buffer is reached here rather than carried in the
+  // document.
+  'src/app/edgeIdentity.ts': 'read',
   // #994 — the cube projection takes positions to project and writes to nothing. It is a
   // `read` for the same reason `uvAttributes.ts` is, and it is a SECOND consumer of that shape
   // rather than a widening of the first: the lift gathers a `uv` buffer, this gathers a
@@ -173,6 +182,14 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // to hold or free, and no door is opened. Deliberately NOT `readGeometry`: that would build
   // a geometry on every material read, where this question needs only the classification.
   'src/app/materialAssignment.ts': 'spec-only',
+  // #1015 — the second spec-only importer, and the SAME classifier read one step further on.
+  // `materialAssignment` asks whether an unanswered slot can be answered elsewhere; the UV
+  // editor's backdrop then has to ask WHICH clone child holds the answer, and a boolean cannot
+  // say. `cloneAddressOf` walks descriptors to descriptors by the recursion `availabilityOf`
+  // already runs — no cache read, no build, no instance — so it opens no door either. It lives
+  // in the registry rather than beside its caller because the whole defect it fixes was a
+  // second rule (`descriptor.kind === 'gltf'`) that agreed with the classifier until it didn't.
+  'src/app/resolveMeshUVSpace.ts': 'spec-only',
 };
 
 /**
@@ -223,7 +240,14 @@ const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetG
 // renderer needs ("is something else already drawing these buffers?"). The alternative was
 // a `descriptor.kind === 'gltf'` test at the draw site, which is the naming tier this
 // module has catalogued twice and which would have gone right on passing when a kind moved.
-const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone'];
+// #1015 — `cloneAddressOf` joins by the same rule again, and it is the one the paragraph above
+// predicted: the `descriptor.kind === 'gltf'` test the comment calls "the naming tier this module
+// has catalogued twice" had in fact gone right on passing when a kind moved — a non-materialising
+// `uvProject` over an imported mesh is drawn by the clone and is not of that kind. This takes a
+// DESCRIPTOR and returns a DESCRIPTOR, reads no cache and builds nothing, and recurses exactly as
+// `availabilityOf` does, so it is that same classification asked the follow-up question a boolean
+// cannot answer: not "is something else drawing these buffers" but "WHICH child is".
+const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone', 'cloneAddressOf'];
 
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {
@@ -264,6 +288,105 @@ const SHARED_GEOMETRY_WRITERS: Record<string, string> = {
   // importer census by construction — these two are why this case exists at all.
   'src/viewport/sceneBounds.ts': 'lazily fills boundingBox while walking the live scene',
   'src/render/renderToImage.ts': 'same shape as sceneBounds, on the offline render path',
+};
+
+/**
+ * THE TOPOLOGY VERBS — the ones that change what the mesh IS, not what has been derived from it.
+ *
+ * ── WHY THIS CASE EXISTS (#725) ──────────────────────────────────────────────────────────
+ *
+ * The write case above pins sites that write to a geometry they do not own, and it sees exactly
+ * ONE verb: `computeBounding(Box|Sphere)`. That was the whole population when it was written and
+ * it reads like the general rule — the door map two hundred lines up says *"READ — computes and
+ * discards. None of these may write to what they take."* Nothing checked the other verbs, so an
+ * in-place `setIndex` on a shared instance would have landed in silence.
+ *
+ * 🔴 AND THAT IS PRECISELY THE EVENT #725 IS WAITING FOR. Its invariant — everything derived from
+ * the OLD topology must be rebuilt, not merely interpolated onto the new — is not reachable today,
+ * and the reason is structural rather than lucky: every geometry-producing path in the repo builds
+ * a FRESH instance or clones before it writes, so a changed topology always lands under a new cache
+ * key and every derived read goes to a different entry instead of to a stale one. Censused across
+ * all 632 source files while opening this case; the nine below are the whole population.
+ *
+ * The protection is therefore a property of content-keyed rebuild, and it ends the moment one
+ * operator mutates a topology in place. This case is that tripwire: a tenth file, or a new verb in
+ * an existing one, reds here and sends its author to #725 — where the deform/topology-change
+ * declaration and the per-structure invalidation rule are already written down, waiting for the
+ * first consumer that makes them worth building.
+ *
+ * ⚠️ WHAT IT CATCHES, MEASURED BOTH WAYS RATHER THAN CLAIMED. Keyed by FILE, like the write case
+ * above and for the same reason — two of these reach a geometry without importing anything. So:
+ *   · a NEW FILE writing topology REDS, naming the file (falsified: a module doing
+ *     `shared.setIndex(...)` on a geometry it was handed appears in the diff);
+ *   · a new VERB inside an already-declared file does NOT red (falsified: adding
+ *     `deleteAttribute` to `meshBvh.ts` left all nine green).
+ * The residual hole is therefore a new in-place write inside one of the nine, and it is accepted
+ * rather than overlooked: an operator that changes topology in place arrives as a new build arm or
+ * a new module, which is the case that reds. Pinning a verb SET per file would shrink the hole and
+ * would red on every innocent refactor of the four files that legitimately write their own output.
+ *
+ * ⚠️ `applyMatrix4` AND `computeVertexNormals` ARE DELIBERATELY ABSENT, and the omission is the
+ * point rather than an oversight. Both are DEFORM verbs in the reference's own vocabulary — they
+ * move points or refresh a derivation without creating or destroying points or primitives
+ * (`SOP.md:84`, `duplicateSource` vs `duplicatePointSource`). Sweeping them in would grow the
+ * census by a further ~17 sites and blur the one distinction #725 turns on, leaving a gate that
+ * reds for two unrelated reasons and therefore says nothing precise when it reds.
+ */
+const TOPOLOGY_WRITE = /\.(setIndex|setAttribute|deleteAttribute|clearGroups|addGroup)\s*\(/;
+
+/**
+ * Every file that writes a geometry's topology, and WHY that write is safe. A new entry is not
+ * forbidden — it is a red that forces its author to answer the question in the paragraph above:
+ * does this instance belong to you?
+ */
+const TOPOLOGY_WRITERS: Record<string, string> = {
+  // 🔑 THE CLOSEST THING IN THE REPO TO AN IN-PLACE TOPOLOGY CHANGE, and the reason this case is
+  // worth having. Vertex splitting genuinely changes the mesh — it duplicates the points whose
+  // loops disagree and rewrites the index to send each face at its own copy. It stays safe by
+  // building a NEW container and copying every attribute across by name; the source is read and
+  // never touched. Change that to write through to the source and #725 becomes live.
+  'src/app/cornerMaterialisation.ts':
+    'splits vertices into a fresh BufferGeometry; source untouched',
+  // Owns the cache, so these are writes to its own output: `build` clears groups on what it just
+  // built, the slot-table arm adds groups to that same instance, the bevel fills a fresh
+  // container, and the subset arm CLONES before it rewrites the index.
+  'src/app/geometryRegistry.ts':
+    'writes only what it just built, and clones before the subset rewrite',
+  // The PRODUCE door — rehydrates OPFS bytes into a fresh instance, which is its output rather
+  // than something it took.
+  'src/app/asset/bakedGeometryStore.ts': 'fills a fresh BufferGeometry from OPFS bytes',
+  // #1049 — a stored mesh's build. Every call makes a new container from the mesh's own arrays and
+  // hands it to the registry, which owns it from there; nothing it writes was handed to it.
+  'src/app/meshGeometryData.ts': 'fills a fresh BufferGeometry from stored mesh data on each build',
+  // A private world-space copy assembled from raw arrays, never a registry instance. three-mesh-bvh
+  // reorders an index in place during construction — on THIS geometry, which is why it must be a
+  // copy and why the final index is read back out rather than assumed.
+  'src/app/meshBvh.ts': 'builds a private world-space geometry for the BVH from raw arrays',
+  // Viewport helpers: each builds its own line/glyph geometry and attaches it to its own object.
+  // None of them can reach a registry instance — they never import the registry.
+  'src/app/Gizmo.tsx': 'builds its own handle line geometry',
+  // Arrived on `main` from the armature work while this gate was being written on the geometry
+  // branch, and the two only met at the merge — which is the case a text merge cannot see and
+  // this gate can. Both of its writes fill a container it made in the same `useMemo`: the
+  // octahedral bone body, and the stick-mode buffer that is re-filled per frame WITHIN a fixed
+  // allocation (`setDrawRange`, never a re-`setIndex`). Nothing it writes was handed to it.
+  'src/viewport/ArmatureHelper.tsx': 'builds its own octahedral bone body and stick line buffer',
+  // #1040 — the import capture, and it is the safe category by construction rather than by
+  // care: it is reached during IMPORT, before any descriptor for this child exists, so there
+  // is no registry instance for it to write through to even in principle. It fills a throwaway
+  // container with the POSITION accessor's floats, welds it to get a point count, disposes it,
+  // and returns an integer. Nothing it touches outlives the function.
+  'src/core/import/gltfImportChain.ts':
+    'fills a throwaway BufferGeometry from POSITION bytes to weld a point count, then disposes it',
+  // #1049 — the native import reader, the same safe category for the same reason: it runs during
+  // IMPORT, before any descriptor exists, fills a throwaway container with the POSITION floats to
+  // weld the mesh's points, and disposes it. What it hands on is a stored mesh, not a geometry.
+  'src/core/import/nativeGltfImport.ts':
+    'fills a throwaway BufferGeometry from POSITION bytes to weld the stored points, then disposes it',
+  'src/viewport/CameraHelpers.tsx': 'builds its own frustum//target line geometries',
+  'src/viewport/CurveLine.tsx': 'builds its own polyline geometry',
+  'src/viewport/LightHelpers.tsx': 'builds its own light-direction line geometry',
+  'src/viewport/NullGlyph.tsx': 'builds its own null-glyph line geometry',
 };
 
 const MATERIAL_CONSUMERS: Record<string, Door> = {
@@ -386,6 +509,21 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(writers).toEqual(Object.keys(SHARED_GEOMETRY_WRITERS).sort());
   });
 
+  it('pins every site that changes a geometry TOPOLOGY, so #725 becomes reachable loudly', () => {
+    // Same CONTENT technique as the case above and for the same reason — two of these reach a
+    // geometry without importing anything — but over the verbs that change what the mesh IS.
+    // See TOPOLOGY_WRITE for why the deform verbs are deliberately not swept in.
+    const writers = sourceFiles()
+      .filter(([, src]) => TOPOLOGY_WRITE.test(stripComments(src)))
+      .map(([path]) => path)
+      .sort();
+
+    expect(
+      writers,
+      'A file changes a geometry topology and has not said whose geometry it is. If it builds or clones its own, add it to TOPOLOGY_WRITERS with that reason. If it writes through to an instance it was handed, STOP: every derived structure cached against the old topology (the weld map, tiledFaceOrder/tiledCornerOrder, the rim cache, the UV lift) now answers about a mesh that no longer exists. That is issue #725, and it has been waiting for exactly this commit.',
+    ).toEqual(Object.keys(TOPOLOGY_WRITERS).sort());
+  });
+
   it('neither registry is re-exported through a barrel', () => {
     // The one thing that would defeat an import-keyed sweep: a module a consumer could
     // import the registry FROM without naming the registry's own path. Nothing does this
@@ -470,5 +608,20 @@ describe('#536 S3 — every shared-resource consumer names the door it opens', (
     expect(seesWrite(`mesh.geometry.computeBoundingSphere();`)).toBe(true);
     expect(seesWrite(`// never call computeBoundingBox() on a shared instance`)).toBe(false);
     expect(seesWrite(`/* computeBoundingBox() is forbidden here */`)).toBe(false);
+
+    // …and the TOPOLOGY sweep sees each of its verbs, ignores prose about them, and does NOT
+    // fire on the deform verbs it deliberately excludes. Without this last pair the exclusion
+    // would be invisible: a regex that quietly grew to match `applyMatrix4` would go on passing
+    // while the census it guards stopped meaning what its header says.
+    const seesTopology = (src: string) => TOPOLOGY_WRITE.test(stripComments(src));
+    expect(seesTopology(`geometry.setIndex(new BufferAttribute(rewritten, 1));`)).toBe(true);
+    expect(seesTopology(`g.setAttribute('position', attr);`)).toBe(true);
+    expect(seesTopology(`built.clearGroups();`)).toBe(true);
+    expect(seesTopology(`built.addGroup(0, 3, 1);`)).toBe(true);
+    expect(seesTopology(`geom.deleteAttribute('uv');`)).toBe(true);
+    expect(seesTopology(`// do not call setIndex() on a shared instance`)).toBe(false);
+    expect(seesTopology(`/* setAttribute() is forbidden here */`)).toBe(false);
+    expect(seesTopology(`geometry.applyMatrix4(m);`)).toBe(false);
+    expect(seesTopology(`built.computeVertexNormals();`)).toBe(false);
   });
 });

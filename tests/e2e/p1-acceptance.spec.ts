@@ -478,16 +478,17 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     item.dispatchEvent(new DragEvent('dragend', { dataTransfer: dt, bubbles: true }));
   });
 
-  // #90 — `.gltf` now routes through the ASYNC glTF importer (reads the
-  // bytes from OPFS, parses, resolves the data-URI buffer, emits the
-  // GltfAsset → Transform → Group chain). The drop handler is
-  // fire-and-forget, so wait for the chain to land before asserting
-  // (the static path was synchronous; the importer is not).
+  // #90 — `.gltf` routes through the ASYNC glTF importer (reads the bytes from
+  // OPFS, parses, resolves the data-URI buffer). The drop handler is
+  // fire-and-forget, so wait for the import to land before asserting.
+  // #1049 — cube.gltf is a file the native model holds, so it arrives as native
+  // geometry: one `PolyMeshData` (the mesh, stored in the project) under an
+  // ordinary `Object`, under the transformable import-root `Group`.
   await page.waitForFunction(
     () => {
       const w = window as unknown as DagWindow;
-      return Object.keys(w.__basher_dag!.getState().state.nodes).some((id) =>
-        id.startsWith('n_gltf_'),
+      return Object.values(w.__basher_dag!.getState().state.nodes).some(
+        (n) => n.type === 'PolyMeshData',
       );
     },
     { timeout: 10_000 },
@@ -495,39 +496,43 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
 
   const after = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
-    const s = w.__basher_dag!.getState();
-    const nodes = s.state.nodes;
-    const newNodeIds = Object.keys(nodes).filter((id) => id.startsWith('n_'));
-    // The glTF importer generates ids prefixed with `n_gltf_` and `n_grp_`
-    // (content-addressed). Default project ids are `n_camera`, `n_light`,
-    // `n_box`, `n_scene`, `n_render`.
-    const gltf = newNodeIds.find((id) => id.startsWith('n_gltf_'));
-    const grp = newNodeIds.find((id) => id.startsWith('n_grp_'));
-    // P7.7 (#91) materializes one child per scene child; V67/#222 made the import
-    // root ONE transformable Group (NOT a Group wrapping a separate Transform).
-    // #389 — a child is now a PAIR (`Object` + `GltfData`), so cube.gltf's single
-    // scene node adds GltfAsset + Object + GltfData + Group = 4, one more than before
-    // the split. Counted on the data half: `Object` is also what the default
-    // project's box, light and camera are.
-    const gltfChildCount = Object.values(nodes).filter((n) => n.type === 'GltfData').length;
-    const assetRef = gltf ? (nodes[gltf].params as { assetRef: string }).assetRef : null;
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    const all = Object.entries(nodes);
+    const ofType = (t: string) => all.filter(([, n]) => n.type === t).map(([id]) => id);
+    const refNode = (v: unknown) => (v as { node?: string } | undefined)?.node;
+    const dataIds = ofType('PolyMeshData');
+    // Read the chain off the graph's edges, never re-derived from a hash.
+    const objectId =
+      all.find(
+        ([, n]) => n.type === 'Object' && dataIds.includes(refNode(n.inputs.data) ?? ''),
+      )?.[0] ?? null;
+    const groupId =
+      all.find(
+        ([, n]) =>
+          n.type === 'Group' &&
+          Array.isArray(n.inputs.children) &&
+          n.inputs.children.some((c) => refNode(c) === objectId),
+      )?.[0] ?? null;
+    const sceneId = w.__basher_dag!.getState().state.outputs.scene?.node;
+    const sceneChildren = sceneId ? nodes[sceneId].inputs.children : undefined;
     return {
-      delta: Object.keys(nodes).length - newNodeIds.length, // pre-existing count
-      nodeCount: Object.keys(nodes).length,
-      sawGltf: Boolean(gltf),
-      sawGroup: Boolean(grp),
-      gltfChildCount,
-      assetRef,
-      undoLen: s.undoStack.length,
+      nodeCount: all.length,
+      dataCount: dataIds.length,
+      objectId,
+      groupId,
+      groupInScene:
+        Array.isArray(sceneChildren) && sceneChildren.some((c) => refNode(c) === groupId),
+      cloneRoadNodes: ofType('GltfAsset').length + ofType('GltfData').length,
     };
   });
-  // GltfAsset + the Object/GltfData PAIR for cube.gltf's one scene node (#389) + the
-  // transformable import-root Group (V67/#222 — no separate Transform node).
-  expect(after.nodeCount).toBe(beforeNodeCount + 4);
-  expect(after.sawGltf).toBe(true);
-  expect(after.sawGroup).toBe(true);
-  expect(after.gltfChildCount).toBe(1);
-  expect(after.assetRef).toBe('assets/cube.gltf');
+  // Group + Object + PolyMeshData for cube.gltf's one scene node; nothing on the
+  // clone road (no GltfAsset, no GltfData).
+  expect(after.nodeCount).toBe(beforeNodeCount + 3);
+  expect(after.dataCount).toBe(1);
+  expect(after.objectId).not.toBeNull();
+  expect(after.groupId).not.toBeNull();
+  expect(after.groupInScene).toBe(true);
+  expect(after.cloneRoadNodes).toBe(0);
 });
 
 test('P1#5 setParam on a Transform position propagates within 16ms (gizmo path)', async ({

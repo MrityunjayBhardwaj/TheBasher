@@ -396,6 +396,20 @@ export interface BakedTextureRef {
    *  Captured so the UV set is never silently dropped; UV1+ APPLY is a later
    *  slice (the clone already binds the right set, so render is unaffected). */
   readonly gltfTexCoord?: number;
+  /**
+   * #1050 — where the bytes live. `'project'` means the image belongs to the project that holds
+   * this ref: `hash` is a key (`<sha256>.<ext>`) relative to that project's image folder, so a
+   * project copied under a new id reads its refs unchanged. Absent means the global baked-texture
+   * store, as every ref written before #1050 does.
+   */
+  readonly store?: 'project';
+  /**
+   * #1050 — the sampler's filters, as three.js constants (`NearestFilter` …). Absent means three's
+   * texture defaults, as every ref written before #1050 has. A native import writes both, because
+   * glTF files routinely sample NEAREST and the native draw would otherwise smooth them.
+   */
+  readonly magFilter?: number;
+  readonly minFilter?: number;
 }
 
 /**
@@ -508,6 +522,29 @@ export interface MeshTransform {
 }
 
 /**
+ * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
+ *
+ * Points are TOPOLOGICAL (a cube has 8), matching what `pointCountOf` means for a box. What makes
+ * a render vertex split — a UV seam, a hard normal — lives on the CORNER, which is where Blender
+ * keeps it too (`UVMap` is a corner attribute). Faces are listed in order; face `f` owns the next
+ * `faceSizes[f]` entries of every corner array.
+ *
+ * Immutable by contract: instances are shared by every descriptor minted from one params object.
+ */
+export interface MeshGeometryData {
+  /** xyz per point. */
+  readonly points: Float32Array;
+  /** Corners per face, each at least 3. */
+  readonly faceSizes: Uint32Array;
+  /** The point each corner sits on. Length = the sum of `faceSizes`. */
+  readonly cornerPoints: Uint32Array;
+  /** uv per corner, or `null` when the mesh has no UV map. */
+  readonly cornerUVs: Float32Array | null;
+  /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
+  readonly cornerNormals: Float32Array | null;
+}
+
+/**
  * A deterministic handle into the geometry registry (§48). The `key` is built
  * by the resolver from producer identity + params (deterministic string), so
  * identical params yield an identical key (cache hit, no false sharing). The
@@ -556,8 +593,52 @@ export type GeometryDescriptor =
        * `gltf|<assetRef>|<childName>`.
        */
       readonly faceCount?: number;
+      /**
+       * HOW MANY TOPOLOGICAL POINTS THE IMPORTED CHILD HAS, welded at import (#1040).
+       *
+       * 🔑 THE SECOND ELEMENT FACT AN IMPORTED MESH STATES, and unlike the face count it is
+       * not read off the accessor TABLE — it needs the position bytes, because a topological
+       * point is a WELD and two buffer positions at one coordinate are one point. A box
+       * arrives as 24 split positions and 8 points; a sphere as 425 and 362. So this is the
+       * one capture that reads geometry rather than metadata.
+       *
+       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — the same rule
+       * {@link GeometryDescriptor} states for `faceCount` one field up, and it has three
+       * populations here: every save written before #1040, every child whose primitives are
+       * not all triangles, and — the one that is specific to this field — every
+       * MULTI-PRIMITIVE child.
+       *
+       * ⚠️ WHY MULTI-PRIMITIVE CHILDREN ARE EXCLUDED WHERE `faceCount` SUMS THEM. A glTF node
+       * with two primitives loads as a GROUP of two Meshes and `firstMeshGeometry` reaches
+       * only the FIRST, so a count welded across both primitives describes a buffer no reader
+       * holds. Measured with disjoint primitives: the read door sees 3 points, a unioning
+       * capture says 6. `faceCount` sums and relies on a cross-source check to refuse the
+       * disagreement; this field makes the disagreement UNREPRESENTABLE instead, which is the
+       * stronger of the two and the reason the populations of the two fields differ on
+       * purpose rather than by oversight.
+       *
+       * NOT part of the geometry cache key, for the reason `faceCount` is not: one asset and
+       * child name is one geometry and therefore one count.
+       */
+      readonly pointCount?: number;
     }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
+  /**
+   * #1049 — A STORED POLYGON MESH: geometry that IS its data rather than a recipe for it.
+   *
+   * This is what an imported mesh becomes, and it is deliberately owned by no format. Blender's
+   * glTF importer produces an ordinary Mesh datablock saved inside the `.blend`, indistinguishable
+   * from one modelled by hand; this kind is that datablock. Any producer may write it — a reader,
+   * and later Apply Transform or an edit — and nothing downstream may ask which one did.
+   *
+   * It carries the mesh ITSELF, which the handle rule above ("NEVER the buffers themselves") does
+   * not forbid in spirit: that rule exists because descriptors of recipes are rebuilt from params,
+   * and the buffers are derived. Here the data is authored, the descriptor is still never
+   * persisted (the owning node's params are), and the typed arrays are shared, immutable and
+   * decoded once per params object. So every question a box answers from `size`, this answers
+   * from `data`, synchronously, with nothing to load or mount.
+   */
+  | { readonly kind: 'mesh'; readonly data: MeshGeometryData }
   // SOP / modifier (epic #201, #209) — a RECURSIVE descriptor: a geometry
   // operator over a `source` handle. The registry builds the source on demand
   // (geometryRegistry.getForRead(source)) then applies the op. `array` replicates the

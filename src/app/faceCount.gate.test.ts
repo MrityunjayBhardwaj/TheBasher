@@ -12,8 +12,14 @@
 // minimum without saying so — the arm most likely to drift, and the one a well-chosen
 // "typical" fixture would never exercise.
 //
-// The two non-derivable kinds are censused exactly rather than left implicit: an escape
-// hatch that is not counted is an escape hatch that widens.
+// The non-derivable cases are censused exactly rather than left implicit: an escape hatch
+// that is not counted is an escape hatch that widens.
+//
+// ⚠️ AND SINCE #1023 THE HATCH IS A CAPTURE STATE, NOT A KIND. This header said "the two
+// non-derivable KINDS" while the census below has always built its gltf subject WITHOUT a
+// captured face count — so the rows were measuring an uncaptured import and reading as a
+// statement about imports. A captured one derives. #1029 made that difference a row rather
+// than leaving the distinction to prose that had already drifted twice elsewhere.
 //
 // REF: src/app/faceCount.ts (`faceCountOf` — the leaf it now lives in);
 //      src/app/geometryRegistry.ts (the build); issues #633, #395, #638.
@@ -160,6 +166,19 @@ describe('#633 faceCountOf agrees with the built geometry', () => {
     ).filter((descriptor) => faceCountOf(descriptor) === null);
 
     expect(notDerivable.map((d) => d.kind)).toEqual(['gltf', 'baked']);
+
+    // 🔑 THE SUBJECT ABOVE IS AN UNCAPTURED IMPORT, AND THAT IS THE WHOLE DISTINCTION. The
+    // same child with a count captured at import DERIVES — so what the census counts is
+    // "nobody read the JSON", not "this is a gltf". Written as its own row because the two
+    // read identically at the call site and only this tells them apart.
+    const captured = {
+      kind: 'gltf',
+      assetRef: 'asset',
+      childName: 'child',
+      faceCount: 12,
+    } as const;
+    expect(faceCountOf(captured), 'a captured import derives its face count').toBe(12);
+    expect(faceArityOf(captured), 'and its arity').toHaveLength(12);
     // #770 — AND THE ARITY DECLINES ON THE SAME TWO KINDS, WHICH IS THE WHOLE ESCAPE HATCH.
     // Per-triangle material assignment became unconstructible in this app at #770; where it
     // survives is here, and it survives because these two never reach the group derivation at

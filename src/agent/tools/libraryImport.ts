@@ -37,8 +37,9 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
   name: 'library.import',
   description:
     'Import a library asset into the scene. ' +
-    'Returns an Op[] that creates a GltfAsset + Transform + Group chain ' +
-    "and wires it into the Scene aggregator's children.",
+    "Returns an Op[] that imports the model and wires it into the Scene aggregator's children: " +
+    'a Group of Object + mesh data nodes when the file can become native geometry, otherwise ' +
+    'a GltfAsset + Group chain that reads the file.',
   paramSchema: libraryImportSchema,
   async handler(args: LibraryImportArgs, ctx: ToolContext): Promise<ToolResult> {
     const sceneRef = ctx.dagState.outputs.scene;

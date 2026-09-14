@@ -53,6 +53,7 @@ import {
   bevelGeometryRef,
 } from './modifierGeometry';
 import { declaredParamKeys } from './inspectorSectionBody';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { stripComments } from '../test-utils/sourceScan';
@@ -141,6 +142,22 @@ const HANDLE_KINDS: Record<
       key: 'baked|h',
       descriptor: { kind: 'baked', hash: 'h', vertexCount: 3 },
     },
+    probe: 'z',
+  },
+  // #1049 — a stored mesh has no param-fed field: its one field is the data itself, which changes
+  // only by a new params object and so re-mints a new handle rather than folding into this one.
+  // No producer yet, because the node that holds the data lands in the next step of #1049.
+  mesh: {
+    producer: null,
+    ref: meshGeometryRef(
+      packMeshData({
+        points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        faceSizes: Uint32Array.from([3]),
+        cornerPoints: Uint32Array.from([0, 1, 2]),
+        cornerUVs: null,
+        cornerNormals: null,
+      }),
+    ),
     probe: 'z',
   },
 };

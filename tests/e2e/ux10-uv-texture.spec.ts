@@ -37,6 +37,11 @@ interface BasherWindow {
   __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<{ gltfAssetId: string }>;
   __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
   __basher_gltf_meshes?: () => { slot: number }[];
+  __basher_dispatchMutator?: (
+    name: string,
+    spec: unknown,
+    intent: string,
+  ) => { ok: boolean; reason?: string };
 }
 
 async function importGltf(page: import('@playwright/test').Page, url: string, ref: string) {
@@ -108,6 +113,65 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
       // depends on this flag (V48).
       expect(tex.flipY).toBe(false);
     }
+  });
+
+  // ── #1015 — THE SAME MESH, WITH AN OPERATOR ON IT ──────────────────────────────────
+  //
+  // The row above proves the backdrop for a BARE imported child. This one adds a UV Project
+  // to it and asks again, because that is where the resolver lost it: a projection that
+  // cannot materialise passes its source's availability through, so the mesh is still drawn
+  // by the asset clone while its descriptor is no longer a glTF one. Keyed on the kind, the
+  // clone arm fell through and this seam reported `none` with no image — indistinguishable
+  // from the genuinely-untextured meshes in the test below, which is why neither that row nor
+  // the one above could catch it.
+  //
+  // Authored through `dispatchMutatorFromUI`, the same five-gate path the agent and the
+  // modifier stack use, so what is under test is the product's own road to this state.
+  test('#1015 — a UV Project over the imported child KEEPS the clone backdrop', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await importGltf(page, FIXTURE_URL, ASSET_REF);
+
+    const childId = (await importedChildren(page))[0]?.objectId ?? null;
+    expect(childId).not.toBeNull();
+
+    // Before: the bare child resolves its backdrop off the clone.
+    const before = await readTexture(page, childId!);
+    expect(before.status).toBe('ok');
+    expect(before.hasImage).toBe(true);
+
+    const result = await page.evaluate((target: string) => {
+      const w = window as unknown as BasherWindow;
+      return w.__basher_dispatchMutator!(
+        'mutator.geometry.addModifier',
+        { target, modifierType: 'UVProjectModifier' },
+        'e2e: project UVs onto the imported child',
+      );
+    }, childId!);
+    // A refused mutator would leave the mesh bare and the assertion below would pass for the
+    // wrong reason — the row would then be proving nothing at all.
+    expect(result.ok, `addModifier was refused: ${result.reason ?? ''}`).toBe(true);
+
+    // And the descriptor is now a projection, which is the state the whole row is about.
+    const kind = await page.evaluate(() => {
+      const w = window as unknown as BasherWindow;
+      const nodes = w.__basher_dag.getState().state.nodes;
+      return Object.keys(nodes).some((n) => nodes[n].type === 'UVProjectModifier')
+        ? 'projected'
+        : 'bare';
+    });
+    expect(kind).toBe('projected');
+
+    const after = await readTexture(page, childId!);
+    console.log(`[ux10 tex #1015 projected ${childId}] ${JSON.stringify(after)}`);
+    // The measured regression is `none` / hasImage:false here — a blank UV editor for a mesh
+    // the viewport is still drawing with its texture.
+    expect(after.status).toBe('ok');
+    expect(after.hasImage).toBe(true);
+    expect(after.width).toBe(64);
+    expect(after.height).toBe(64);
+    expect(after.flipY).toBe(false);
   });
 
   test('a mesh with no base-color map → none, no backdrop (grid-only path intact)', async ({
