@@ -237,10 +237,12 @@ test('P7.14 (delete native import) — ︙ Delete is immediate and the scene kee
   await page.getByTestId('library-popover-menu-btn-native-asset').click();
   await page.getByTestId('library-popover-menu-delete-native-asset').click();
 
-  // Not blocked: no banner, the row and the folder go.
+  // Not blocked: no banner, the row and the folder go. The row assertion takes the config's
+  // expect budget (15 s on CI, whose OPFS deletes are slow; 5 s locally) — a 5 s override here
+  // failed on a slow runner while the delete was still finishing.
   await expect(
     page.getByTestId('library-popover-my-import-user-imports/native-asset/scene.gltf'),
-  ).toHaveCount(0, { timeout: 5_000 });
+  ).toHaveCount(0);
   await expect(page.getByTestId('library-popover-delete-banner')).toHaveCount(0);
   await expect.poll(async () => await opfsDirExists(page, 'native-asset')).toBe(false);
 
