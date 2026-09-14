@@ -80,6 +80,7 @@ import { threeSideFor } from './threeSide';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { MAP_SLOTS, type PrimitiveMaterialSpec } from '../materialRegistry';
 import { composeMaterial } from './composeMaterial';
+import { flattenedMaterial, flattens } from './flattenMaterial';
 import { openpbrToThree, type ThreeMaterialParams } from './openpbrToThree';
 
 /** The six map slots after the suspense hooks have resolved them. */
@@ -89,11 +90,18 @@ export type ResolvedMaps = PrimitiveMaterialSpec['textures'];
  * Compose the scene-band override onto the IR and compile it. ONE spelling, shared by
  * the renderer and by the gate — the map refs this returns are what the caller suspends
  * on, which is why compiling and assembling cannot be a single function.
+ *
+ * #1076 — a FLATTEN override is the one case that does not compose: it replaces the source
+ * with a new material built from the override alone (`flattenMaterial.ts`), so its maps
+ * compile to null and nothing is loaded. It is branched here, before the compile, because
+ * every native mesh (box, sphere, native import, modified mesh) reaches its material
+ * through this function — one branch covers them all.
  */
 export function compilePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
 ): ThreeMaterialParams {
+  if (flattens(override)) return openpbrToThree(flattenedMaterial(override));
   return openpbrToThree(override ? composeMaterial(ir, override, 'map-aware') : ir);
 }
 

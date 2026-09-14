@@ -528,3 +528,148 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     }
   });
 });
+
+// ── #1076 — FLATTEN REACHES THE NATIVE DRAW ────────────────────────────────────────────
+//
+// `ignoreSourceMaterial` (#131) asks the renderer to ignore the source material and draw a
+// fresh one from the override's own scalars. The glTF clone road always honoured it; the
+// native road composed the override instead, so every map survived. Boxes, spheres, native
+// imports and modified meshes all compile through `compilePrimitiveMaterial`, which is why
+// the claim is stated here, one tier below the browser specs (p131, p136).
+describe('#1076 — a flatten override draws the override alone on the native road', () => {
+  type MapRef = NonNullable<InlineMaterialSpec['maps']['albedo']>;
+  const ref = (hash: string, colorSpace: MapRef['colorSpace']): MapRef => ({
+    hash,
+    colorSpace,
+    flipY: false,
+    wrapS: 1000,
+    wrapT: 1000,
+  });
+
+  /** A source with an opinion on everything flatten is meant to throw away. */
+  const TEXTURED = irWith({
+    base: { color: '#2244ff', metalness: 0.25 },
+    specular: { roughness: 0.72, ior: 1.9 },
+    coat: { weight: 0.8, roughness: 0.1 },
+    transmission: { weight: 0.3 },
+    geometry: { opacity: 1, alphaCutoff: 0.5, doubleSided: true },
+    maps: {
+      albedo: ref('albedo.png', 'srgb'),
+      normal: ref('normal.png', 'srgb-linear'),
+      roughness: ref('rough.png', 'srgb-linear'),
+      metalness: ref('metal.png', 'srgb-linear'),
+      emissive: ref('emit.png', 'srgb'),
+      ao: ref('ao.png', 'srgb-linear'),
+    },
+    uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 },
+    mapUvTransforms: { albedo: { tiling: [4, 4], offset: [0, 0], rotation: 0 } },
+  });
+
+  const CLAY = override({
+    color: '#3399ff',
+    roughness: 0.2,
+    metalness: 0.1,
+    opacity: 0.6,
+    emissive: '#110000',
+    emissiveIntensity: 2,
+    ignoreSourceMaterial: true,
+  });
+
+  it('drops every source map', () => {
+    const compiled = compilePrimitiveMaterial(TEXTURED, CLAY);
+    expect(compiled.maps).toEqual({
+      map: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+    });
+    expect(compiled.mapUvTransforms).toBeUndefined();
+  });
+
+  it('draws all six of the override’s scalars, whatever it marked as authored', () => {
+    // `CLAY.overridden` names only `color`. Flatten ignores the authored set on purpose: the
+    // source is gone, so there is nothing below for an unauthored field to defer to.
+    const compiled = compilePrimitiveMaterial(TEXTURED, CLAY);
+    expect({
+      color: compiled.color,
+      roughness: compiled.roughness,
+      metalness: compiled.metalness,
+      opacity: compiled.opacity,
+      transparent: compiled.transparent,
+      emissive: compiled.emissive,
+      emissiveIntensity: compiled.emissiveIntensity,
+    }).toEqual({
+      color: '#3399ff',
+      roughness: 0.2,
+      metalness: 0.1,
+      opacity: 0.6,
+      transparent: true,
+      emissive: '#110000',
+      emissiveIntensity: 2,
+    });
+  });
+
+  it('keeps nothing else of the source — every other field is a new material’s', () => {
+    const compiled = compilePrimitiveMaterial(TEXTURED, CLAY);
+    const fresh = compilePrimitiveMaterial(hydrateInlineMaterial(null), undefined);
+    expect({
+      ior: compiled.ior,
+      clearcoat: compiled.clearcoat,
+      clearcoatRoughness: compiled.clearcoatRoughness,
+      transmission: compiled.transmission,
+      thickness: compiled.thickness,
+      alphaTest: compiled.alphaTest,
+      doubleSided: compiled.doubleSided,
+      vertexColors: compiled.vertexColors,
+      uvTransform: compiled.uvTransform,
+    }).toEqual({
+      ior: fresh.ior,
+      clearcoat: fresh.clearcoat,
+      clearcoatRoughness: fresh.clearcoatRoughness,
+      transmission: fresh.transmission,
+      thickness: fresh.thickness,
+      alphaTest: fresh.alphaTest,
+      doubleSided: fresh.doubleSided,
+      vertexColors: fresh.vertexColors,
+      uvTransform: fresh.uvTransform,
+    });
+  });
+
+  it('control: the same override with flatten OFF composes onto the source and keeps its maps', () => {
+    // Without this, "maps dropped" could be a fixture whose maps never reached the compile.
+    const composed = compilePrimitiveMaterial(TEXTURED, { ...CLAY, ignoreSourceMaterial: false });
+    expect(composed.maps.map).toEqual(ref('albedo.png', 'srgb'));
+    expect(composed.maps.roughnessMap).toEqual(ref('rough.png', 'srgb-linear'));
+    expect(composed.ior).toBe(1.9);
+    expect(composed.doubleSided).toBe(true);
+    // Map-aware composition: the source's roughness map defends its channel, because the
+    // override did not author roughness. Flatten, above, drew 0.2 regardless.
+    expect(composed.roughness).toBe(0.72);
+  });
+
+  it('control: an override that does not SAY flatten composes — absent is not a request', () => {
+    // Every other case sets the flag explicitly, so on its own this file could not tell
+    // "flatten when true" from "flatten unless false" (measured: that mutation survived all
+    // of them). The distinction is real: `MaterialOverrideOp`'s value omits the field, and a
+    // hydrated or agent-written override may too.
+    const silent: MaterialValue = { ...CLAY };
+    delete (silent as { ignoreSourceMaterial?: boolean }).ignoreSourceMaterial;
+    expect('ignoreSourceMaterial' in silent).toBe(false);
+    const composed = compilePrimitiveMaterial(TEXTURED, silent);
+    expect(composed.maps.map).toEqual(ref('albedo.png', 'srgb'));
+    expect(composed.ior).toBe(1.9);
+  });
+
+  it('flatten on and off are different registry instances', () => {
+    // Two meshes under one override wrapper, one flattening, must never share a material.
+    const on = world('flatten on', { ir: TEXTURED, override: CLAY });
+    const off = world('flatten off', {
+      ir: TEXTURED,
+      override: { ...CLAY, ignoreSourceMaterial: false },
+    });
+    expect(keyOf(derive(on).spec)).not.toBe(keyOf(derive(off).spec));
+    expect(derive(on).key).not.toBe(derive(off).key);
+  });
+});

@@ -134,6 +134,7 @@ describe('#394 S4 — the IR and the outbound adapter are renderer-agnostic (V32
     'nodes/materialSchema.ts', // the IR + its hydrate seam
     'nodes/materialSocket.ts', // socket-supersedes-param, the resolution rule
     'app/material/composeMaterial.ts', // the fold
+    'app/material/flattenMaterial.ts', // the flatten IR (#1076) — the new material, not a fold
     'app/material/materialOverrideMerge.ts', // the decision
     'app/material/openpbrToThree.ts', // the outbound adapter — names three's fields, imports nothing
   ];

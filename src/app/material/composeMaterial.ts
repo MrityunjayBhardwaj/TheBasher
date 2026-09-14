@@ -40,8 +40,10 @@
 // the explicit refusal to compose, and it drops the source's maps and subclass BY
 // INTENT. It stays the caller's branch, exactly as it is in the glTF road (`clay`
 // vs `tint`, SceneFromDAG.tsx:3040), because folding it in here would give this
-// module two contradictory jobs. The native and baked roads have never honoured
-// it, and this slice does not change that.
+// module two contradictory jobs. The native road honours it since #1076, as a branch
+// in `compilePrimitiveMaterial` over `flattenMaterial.ts`, which builds the new
+// material in the IR vocabulary and never calls this module. The baked road still
+// does not.
 
 import type { BakedMaterialSpec, InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { resolveMaterialOverrideFields, type OverrideAuthority } from './materialOverrideMerge';
