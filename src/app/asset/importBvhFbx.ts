@@ -25,20 +25,20 @@
 //      (the existing seams); bvhImportChain.ts / fbxImportChain.ts (the
 //      importers, unchanged).
 
+import { applyOp, evaluate } from '../../core/dag';
+import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
-import type { BoneSpec } from '../../nodes/types';
+import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
-import { useSelectionStore } from '../stores/selectionStore';
 import { importGltfFromOpfs } from './importGltf';
 import {
   bindMotionToCharacter,
-  decideMotionBinding,
   type BindMotionOutcome,
   type MotionArrival,
 } from './bindMotionToCharacter';
@@ -65,18 +65,25 @@ function nameFromPath(path: string): string {
 }
 
 /**
- * #1056 — the ops that stand a motion nothing will bind in the scene, or none.
+ * #1056 — the ops that stand an imported motion in the scene as an Object of its own, or none.
  *
- * Decided BEFORE the dispatch, with the same decision the bind makes after it
- * (`decideMotionBinding`), so a motion a character will take arrives exactly as it always
- * has, and a motion nothing takes arrives with an Object of its own — in the same single undo
- * step as the import (K6). A project with no scene aggregator has nowhere to stand one, and
- * gets the import alone.
+ * EVERY import gets one, whatever else is in the scene. What an import produces must not
+ * depend on whether a character happens to be there: neither a director nor the agent could
+ * say what a drop will make, and deleting the character later would leave the motion with no
+ * scene presence at all. Blender's BVH importer never reads the scene either — `load()` always
+ * creates an armature Object (io_anim_bvh/import_bvh.py, Blender 5.1.1).
+ *
+ * A bound clip does not leave a second rig standing beside its character: the bind that
+ * follows hides this Object in its own op batch (`mutator.animation.retarget`), so undoing
+ * the bind brings it back. It lands in the import's single dispatch (K6). A project with no
+ * scene aggregator has nowhere to stand one, and gets the import alone.
  *
  * `normalise` is true for both file formats: BVH declares no unit, and the FBX road does not
- * read one either, so neither knows how big the rig is meant to be.
+ * read one either, so neither knows how big the rig is meant to be. The size is measured on
+ * the clip's frame 0 — the pose the director first sees — not on the file's rest pose, which
+ * need not stand up (`normalisedRigScale`).
  */
-function unboundMotionObjectOps(ops: readonly Op[], skeletonId: string): Op[] {
+function skeletonObjectOps(ops: readonly Op[], skeletonId: string, clipId: string): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
   const bones = (params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
@@ -84,10 +91,31 @@ function unboundMotionObjectOps(ops: readonly Op[], skeletonId: string): Op[] {
   const { state } = useDagStore.getState();
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
-  const selected = useSelectionStore.getState().selectedNodeId;
-  const names = bones.map((b) => b.name);
-  if (decideMotionBinding(state, selected, names, 'imported').ok) return [];
-  return buildSkeletonObjectOps({ skeletonId, bones, sceneNodeId, normalise: true }).ops;
+  const clip = importedClip(state, ops, clipId);
+  return buildSkeletonObjectOps({ skeletonId, bones, clip, sceneNodeId, normalise: true }).ops;
+}
+
+/**
+ * The clip this import is about to add, evaluated on a scratch copy of the graph with the
+ * import applied. It has to be read BEFORE the dispatch, because the scale it sets is part of
+ * that same single dispatch. Null when it does not evaluate — the rig is then sized from its
+ * rest pose, which can be wrong for a file whose rest pose lies down, but still draws.
+ */
+function importedClip(
+  state: DagState,
+  ops: readonly Op[],
+  clipId: string,
+): AnimationClipValue | null {
+  try {
+    let scratch = state;
+    for (const op of ops) scratch = applyOp(scratch, op).next;
+    const value = evaluate(scratch, clipId, {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    }).value as AnimationClipValue | undefined;
+    return value?.kind === 'AnimationClip' ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -104,7 +132,7 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
     const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name: nameFromPath(path) });
-    const standIn = unboundMotionObjectOps(ops, skeletonId);
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
@@ -137,7 +165,7 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
       data: copy.buffer,
       name: nameFromPath(path),
     });
-    const standIn = unboundMotionObjectOps(ops, skeletonId);
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, clipId };

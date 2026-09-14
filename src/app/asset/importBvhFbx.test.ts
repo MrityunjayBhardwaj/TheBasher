@@ -24,24 +24,11 @@ vi.mock('../boot', () => ({
   getStorage: async () => currentStorage,
 }));
 
-// #1056 — the bind decision is the REAL one unless a row forces "will bind". A real character
-// in a unit DAG would need a glTF skin the evaluator can project, which this environment does
-// not load; the bound road is observed end to end by the generated-character e2e instead.
-const bindDecision = vi.hoisted(() => ({ forceBind: false }));
-vi.mock('./bindMotionToCharacter', async (importOriginal) => {
-  const real = await importOriginal<typeof import('./bindMotionToCharacter')>();
-  return {
-    ...real,
-    decideMotionBinding: (...args: Parameters<typeof real.decideMotionBinding>) =>
-      bindDecision.forceBind
-        ? ({ ok: true } as unknown as ReturnType<typeof real.decideMotionBinding>)
-        : real.decideMotionBinding(...args),
-  };
-});
-
 // Imported AFTER vi.mock so the modules pick up the mocked boot.
 import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './importBvhFbx';
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
+import { chooseMotionTarget } from './bindMotionToCharacter';
+import { applyOp } from '../../core/dag';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -85,7 +72,6 @@ function seedTime(): void {
 
 beforeEach(() => {
   registerAllNodes();
-  bindDecision.forceBind = false;
   currentStorage = new MemoryStorage();
   useAssetErrorStore.getState().clearAll();
   useImportRefreshStore.setState({ tick: 0 });
@@ -145,10 +131,10 @@ describe('importBvhFromOpfs', () => {
   });
 });
 
-describe('#1056 — a motion nothing binds stands in the scene as an Object', () => {
+describe('#1056 — every imported motion stands in the scene as an Object', () => {
   const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
 
-  it('with no character, the SAME dispatch adds an Object pointed at the skeleton', async () => {
+  it('the SAME dispatch adds an Object pointed at the skeleton', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
     const result = await importBvhFromOpfs(path);
@@ -175,15 +161,54 @@ describe('#1056 — a motion nothing binds stands in the scene as an Object', ()
     expect(state.nodes.n_scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
   });
 
-  it('when the motion WILL bind, no Object is added — it arrives exactly as before', async () => {
-    bindDecision.forceBind = true;
+  it('a project with a character to bind to gets the Object too — the import does not read the scene', async () => {
+    // The row the old "only when nothing binds" rule fails. A character is seeded and the
+    // bind's own choice is asserted to pick it FIRST, so this is not an Object added to a
+    // scene that had nothing to bind to.
+    const names = ['Hips', 'Spine'];
+    let s = useDagStore.getState().state;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_char',
+      nodeType: 'GltfAsset',
+      params: {
+        assetRef: 'assets/char.glb',
+        nodeNameMap: {},
+        childHierarchy: {},
+        skins: [
+          {
+            jointKeys: names,
+            bindTRS: names.map(() => ({
+              position: [0, 0, 0] as [number, number, number],
+              rotation: [0, 0, 0] as [number, number, number],
+              scale: [1, 1, 1] as [number, number, number],
+            })),
+            parentJointIndex: [-1, 0],
+            inverseBindMatrices: [],
+          },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_char_skel',
+      nodeType: 'GltfSkeleton',
+      params: { skinIndex: 0 },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_char', socket: 'out' },
+      to: { node: 'n_char_skel', socket: 'asset' },
+    }).next;
+    useDagStore.getState().hydrate(s);
+    expect(chooseMotionTarget(useDagStore.getState().state, null, 'imported').ok).toBe(true);
+
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    await importBvhFromOpfs(path);
-    const types = dispatchSpy.mock.calls[0][0]
-      .filter((o) => o.type === 'addNode')
-      .map((o) => o.nodeType);
-    expect(types.sort()).toEqual(['AnimationClip', 'Skeleton']);
+    const result = await importBvhFromOpfs(path);
+    expect(dispatchSpy.mock.calls[0][0]).toContainEqual(
+      expect.objectContaining({ nodeId: `${result!.skeletonId}_object`, nodeType: 'Object' }),
+    );
   });
 
   it('a project with no scene aggregator gets the import alone', async () => {
@@ -197,7 +222,7 @@ describe('#1056 — a motion nothing binds stands in the scene as an Object', ()
     expect(types).not.toContain('Object');
   });
 
-  it('an FBX nothing binds gets the same Object', async () => {
+  it('an FBX gets the same Object', async () => {
     const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(fbxPath, RIG_FBX_BYTES);
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');

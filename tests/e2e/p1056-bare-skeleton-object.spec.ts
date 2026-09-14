@@ -16,14 +16,19 @@ interface DagNode {
   type: string;
   params?: Record<string, unknown>;
   inputs: Record<string, unknown>;
+  meta?: { hidden?: boolean };
 }
 interface Win {
   __basher_dag: {
     getState: () => {
       state: { nodes: Record<string, DagNode>; outputs: Record<string, { node: string }> };
       dispatch: (op: unknown) => unknown;
+      undo: () => unknown;
     };
   };
+  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
+  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_gltf_skin?: () => unknown;
   __basher_time: { getState: () => { setTime: (seconds: number) => void } };
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_armature?: {
@@ -59,9 +64,7 @@ async function importWalkAlone(page: import('@playwright/test').Page): Promise<s
   await page.evaluate(async () => {
     const w = window as unknown as Win;
     w.__basher_time.getState().setTime(0);
-    const bytes = new Uint8Array(
-      await fetch('/fixtures/anim/soma-walk.bvh').then((r) => r.arrayBuffer()),
-    );
+    const bytes = new Uint8Array(await (await fetch('/fixtures/anim/soma-walk.bvh')).arrayBuffer());
     await w.__basher_ingestBvhFile!(bytes, 'soma-walk');
   });
   await expect
@@ -118,6 +121,15 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
   expect(rig.bones).toBeGreaterThan(10);
   expect(rig.clipCount).toBe(1);
   expect(rig.posed).toBe(true);
+
+  // …and at the size of a person in the world, read off the drawn bones rather than the scale
+  // param. Measured wrong twice while "scale is not 1" above stayed green: ~27× too big (the
+  // rest pose's Y extent — SOMA lies along +X) and 1.19 m (its longest extent — the arms are
+  // raised). Bone heads, so the top end site is not counted; a 1.8 m figure reads ~1.75.
+  const heads = (await boneMatrices(page)).map((m) => m[13]);
+  const drawnHeight = Math.max(...heads) - Math.min(...heads);
+  expect(drawnHeight).toBeGreaterThan(1.5);
+  expect(drawnHeight).toBeLessThan(2.1);
 });
 
 test('#1056 — the skeleton Object is posed at the playhead', async ({ page }) => {
@@ -160,4 +172,83 @@ test('#1056 — moving the Object moves its bones with it', async ({ page }) => 
   const after = (await boneMatrices(page)).at(-1)!;
   expect(after[13]).toBeCloseTo(before[13], 4);
   expect(after[14]).toBeCloseTo(before[14], 4);
+});
+
+test('#1056 — a motion dropped onto a character still gets its Object, hidden by the bind, and one undo shows it', async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as Win;
+      return Boolean(w.__basher_importGltf && w.__basher_writeOpfsBytes);
+    },
+    { timeout: 60_000 },
+  );
+  // The stand-in character — the bind needs something to choose.
+  await page.evaluate(async () => {
+    const w = window as unknown as Win;
+    const ref = 'fixtures/rig/standin-character.glb';
+    const buf = await (await fetch(`/${ref}`)).arrayBuffer();
+    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
+    await w.__basher_importGltf!(buf, ref);
+  });
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as Win;
+      return Boolean(w.__basher_gltf_skin && w.__basher_gltf_skin() !== null);
+    },
+    { timeout: 120_000 },
+  );
+
+  const landed = await page.evaluate(async () => {
+    const w = window as unknown as Win;
+    const before = new Set(Object.keys(w.__basher_dag.getState().state.nodes));
+    const bytes = new Uint8Array(await (await fetch('/fixtures/anim/soma-walk.bvh')).arrayBuffer());
+    await w.__basher_ingestBvhFile!(bytes, 'soma-walk');
+    const { nodes } = w.__basher_dag.getState().state;
+    const added = Object.keys(nodes).filter((id) => !before.has(id));
+    const objectId = added.find((id) => {
+      const data = nodes[id].inputs.data as { node?: string } | undefined;
+      return nodes[id].type === 'Object' && !!data?.node && nodes[data.node]?.type === 'Skeleton';
+    });
+    return {
+      objectId,
+      retargets: added.filter((id) => nodes[id].type === 'RetargetClip').length,
+      hidden: objectId ? nodes[objectId].meta?.hidden === true : null,
+    };
+  });
+  // The bind happened — otherwise a hidden-or-not reading below says nothing about binding.
+  expect(landed.retargets).toBe(1);
+  // The import did not ask whether a character was there: the Object exists regardless…
+  expect(landed.objectId).toBeDefined();
+  // …and the bind hid it, so no second rig stands beside the character.
+  expect(landed.hidden).toBe(true);
+  // -1 when the seam was never written: a missing band must not read as "nothing drawn".
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as Win).__basher_armature?.skeletonObjects?.length ?? -1,
+      ),
+    )
+    .toBe(0);
+
+  // One undo takes the bind, and with it the hide.
+  await page.evaluate(() => (window as unknown as Win).__basher_dag.getState().undo());
+  const afterUndo = await page.evaluate((id) => {
+    const { nodes } = (window as unknown as Win).__basher_dag.getState().state;
+    return {
+      retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
+      exists: Boolean(nodes[id]),
+      hidden: nodes[id]?.meta?.hidden === true,
+    };
+  }, landed.objectId!);
+  expect(afterUndo).toEqual({ retargets: 0, exists: true, hidden: false });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as Win).__basher_armature?.skeletonObjects?.length ?? -1,
+      ),
+    )
+    .toBe(1);
 });

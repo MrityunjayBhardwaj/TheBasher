@@ -218,41 +218,6 @@ export function chooseMotionTarget(
   };
 }
 
-/**
- * Will this motion bind — and to what, through which bone map? Pure over the graph.
- *
- * #1056 — ONE decision, asked twice. The bind asks it after the motion lands; the import asks
- * it BEFORE dispatching, to know whether the motion needs an Object of its own to be seen.
- * Two copies of the rule would drift, and a motion the import believed would bind and the bind
- * then refused would land invisible — the exact state #1056 exists to end.
- */
-export function decideMotionBinding(
-  state: DagState,
-  selectedNodeId: string | null,
-  sourceBoneNames: readonly string[],
-  arrival: MotionArrival,
-):
-  | {
-      ok: true;
-      target: Candidate;
-      bridge: NonNullable<ReturnType<typeof chooseBoneNameMap>>;
-    }
-  | { ok: false; refusal: BindMotionRefusal; reason: string } {
-  const chosen = chooseMotionTarget(state, selectedNodeId, arrival);
-  if (!chosen.ok) return chosen;
-  const bridge = chooseBoneNameMap(sourceBoneNames, chosen.target.boneNames);
-  if (!bridge) {
-    return {
-      ok: false,
-      refusal: 'no-bridge',
-      reason:
-        `${ARRIVAL[arrival].verb} the motion, but its bones share no naming with ` +
-        `${chosen.target.label}'s rig, so there is no way to map one onto the other.`,
-    };
-  }
-  return { ok: true, target: chosen.target, bridge };
-}
-
 /** The retargeted clip's id — derived from the PAIR, so the same clip can drive
  *  two different characters without the second binding overwriting the first. */
 export function retargetedClipId(sourceClipId: string, targetSkeletonId: string): string {
@@ -277,19 +242,26 @@ export function bindMotionToCharacter(
   const notify = useNotificationStore.getState().notify;
   const state = useDagStore.getState().state;
 
+  const chosen = chooseMotionTarget(state, useSelectionStore.getState().selectedNodeId, arrival);
+  if (!chosen.ok) {
+    notify({ severity: 'warn', message: chosen.reason });
+    return { ok: false, refusal: chosen.refusal, reason: chosen.reason };
+  }
+  const target = chosen.target;
+
   const sourceBones =
     (state.nodes[source.skeletonId]?.params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
-  const decided = decideMotionBinding(
-    state,
-    useSelectionStore.getState().selectedNodeId,
+  const bridge = chooseBoneNameMap(
     sourceBones.map((b) => b.name),
-    arrival,
+    target.boneNames,
   );
-  if (!decided.ok) {
-    notify({ severity: 'warn', message: decided.reason });
-    return { ok: false, refusal: decided.refusal, reason: decided.reason };
+  if (!bridge) {
+    const reason =
+      `${ARRIVAL[arrival].verb} the motion, but its bones share no naming with ` +
+      `${target.label}'s rig, so there is no way to map one onto the other.`;
+    notify({ severity: 'warn', message: reason });
+    return { ok: false, refusal: 'no-bridge', reason };
   }
-  const { target, bridge } = decided;
 
   const outputClipId = retargetedClipId(source.clipId, target.skeletonId);
   const outputName = `${target.label} motion`;

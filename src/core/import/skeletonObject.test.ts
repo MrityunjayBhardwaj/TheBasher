@@ -1,13 +1,15 @@
-// #1056 — a motion nothing binds gets an Object of its own. These rows pin the ops, the
+// #1056 — every imported motion gets an Object of its own. These rows pin the ops, the
 // socket that admits the skeleton, and the scale that stands an unknown-unit rig up.
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
 import type { DagState } from '../dag/state';
 import { registerAllNodes } from '../../nodes/registerAll';
-import type { BoneSpec, ObjectValue } from '../../nodes/types';
+import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
-import { armatureBounds } from '../../viewport/referenceRig';
+import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 import { buildBvhImportOps } from './bvhImportChain';
 import {
   UNBOUND_RIG_HEIGHT_METRES,
@@ -137,10 +139,43 @@ describe('buildSkeletonObjectOps', () => {
 });
 
 describe('normalisedRigScale', () => {
-  it('stands the rest pose at the unbound rig height', () => {
+  it('stands an upright rest pose at the rig height', () => {
     const s = normalisedRigScale(RIG);
     const height = armatureBounds(boneTransforms(scaled(RIG, s))).height;
     expect(height).toBeCloseTo(UNBOUND_RIG_HEIGHT_METRES, 6);
+  });
+
+  // The rest pose a BVH declares need not stand up. The same rig lying along +X is the same
+  // size, and must get the same scale — a Y-extent measure reads its width as its height.
+  it('does not care which way the rest pose faces — a rig lying along +X gets the same scale', () => {
+    const lying = RIG.map((b) => ({
+      ...b,
+      position: [b.position[1], -b.position[0], b.position[2]] as BoneSpec['position'],
+    }));
+    expect(armatureBounds(boneTransforms(lying)).height).toBeLessThan(1);
+    expect(normalisedRigScale(lying)).toBeCloseTo(normalisedRigScale(RIG), 6);
+  });
+
+  // THE ABSOLUTE ROW, on the real file. The rows above are relative (invariance), and every one
+  // of them stayed green while `soma-walk.bvh` drew ~27× too big (rest pose Y extent), and
+  // again at 1.17 m (rest pose longest extent: it lies along +X with its arms raised). So this
+  // reads what is DRAWN — the clip's frame-0 pose, at the scale set from that clip — and asks
+  // that it be the height of a person.
+  it('stands the real soma-walk.bvh at human height as drawn, posed at frame 0', () => {
+    let state = sceneState();
+    const text = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8');
+    const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of imported.ops) state = applyOp(state, op).next;
+    const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
+    const clip = evaluate(state, 'clip', {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    }).value as AnimationClipValue;
+    expect(clip.kind).toBe('AnimationClip');
+
+    const s = normalisedRigScale(bones, clip);
+    const drawn = armatureBounds(boneTransforms(scaled(posedSourceBones(clip, 0), s))).height;
+    expect(drawn).toBeGreaterThan(1.5);
+    expect(drawn).toBeLessThan(2.1);
   });
 
   it('is unit-invariant: the same rig authored 100× larger gets a 100× smaller scale', () => {

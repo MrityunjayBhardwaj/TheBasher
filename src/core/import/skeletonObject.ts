@@ -1,11 +1,11 @@
-// A motion nothing binds, standing in the scene as an Object of its own (#1056).
+// A motion's skeleton, standing in the scene as an Object of its own (#1056).
 //
 // A `.bvh` or `.fbx` lands as a `Skeleton` + an `AnimationClip` — data with no scene
-// presence. When a character takes the clip that is right: the character is what gets looked
-// at. When nothing does, the motion could not be looked at at all — no bones drawn, nothing to
-// select, nothing to scrub. These are the ops that give that skeleton an Object, the same
-// citizen an armature is in Blender (its own Object, pointing at armature data), so a motion
-// can be judged on its own before anything is bound to it.
+// presence, so on its own a motion could not be looked at: no bones drawn, nothing to select,
+// nothing to scrub. These are the ops that give that skeleton an Object, the same citizen an
+// armature is in Blender (its own Object, pointing at armature data). Every import adds one,
+// whatever else is in the scene; a bind hides it (`mutator.animation.retarget`), so a
+// character playing the clip does not have a second rig standing beside it.
 //
 // THE OBJECT POINTS AT THE SKELETON ITSELF. `Object.data` accepts a `Skeleton` directly; no
 // wrapper node is minted, because the skeleton is already the right noun
@@ -22,27 +22,41 @@
 //      socket); src/app/asset/importBvhFbx.ts (the caller); issue #1056.
 
 import type { Op } from '../dag/types';
-import type { BoneSpec } from '../../nodes/types';
+import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
-import { armatureBounds } from '../../viewport/referenceRig';
+import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 
-/** The height an unbound rig of unknown unit is stood at, in metres. */
+/** The size a rig of unknown unit is stood at, in metres, along its longest extent. */
 export const UNBOUND_RIG_HEIGHT_METRES = 1.8;
 
-/** Below this a rig has no height to normalise by (no bones; a collapsed rig still has the
+/** Below this a rig has no extent to normalise by (no bones; a collapsed rig still has the
  *  minimum drawn bone length, so it lands above this). */
 const MIN_HEIGHT = 1e-6;
 
 /**
- * The uniform scale that stands `bones`' rest pose at {@link UNBOUND_RIG_HEIGHT_METRES}.
+ * The uniform scale that makes the rig {@link UNBOUND_RIG_HEIGHT_METRES} along its LONGEST
+ * extent, measured on the pose it is first DRAWN in: the clip's frame 0 when there is a clip,
+ * the rest pose only when there is not.
  *
- * 1 when the rig has no measurable height, so a degenerate rig draws at its own size rather
+ * 🔴 NEITHER THE REST POSE NOR ITS Y EXTENT — both measured wrong on `soma-walk.bvh`. Its
+ * rest pose lies along +X with the arms raised past the head (extents 248 × 6 × 20 units),
+ * while the walk's frame 0 stands 161 tall. The rest pose's Y extent drew the rig ~27× too
+ * big; its longest extent, the lying figure plus the raised arms, drew it at 1.17 m. Frame 0
+ * is what the director sees on import, and its longest extent is the height of an upright
+ * figure or the length of a lying one, whichever way the file's rest pose happens to face.
+ *
+ * 1 when the rig has no measurable extent, so a degenerate rig draws at its own size rather
  * than being blown up by a division by almost nothing.
  */
-export function normalisedRigScale(bones: readonly BoneSpec[]): number {
-  const bounds = armatureBounds(boneTransforms(bones));
-  if (bounds.empty || !(bounds.height >= MIN_HEIGHT)) return 1;
-  return UNBOUND_RIG_HEIGHT_METRES / bounds.height;
+export function normalisedRigScale(
+  bones: readonly BoneSpec[],
+  clip?: AnimationClipValue | null,
+): number {
+  const pose = clip ? posedSourceBones(clip, 0) : bones;
+  const { empty, size } = armatureBounds(boneTransforms(pose));
+  const extent = Math.max(size.x, size.y, size.z);
+  if (empty || !(extent >= MIN_HEIGHT)) return 1;
+  return UNBOUND_RIG_HEIGHT_METRES / extent;
 }
 
 /** The Object's id, derived from the skeleton's — one skeleton, one Object, reproducibly. */
@@ -52,8 +66,10 @@ export function skeletonObjectId(skeletonId: string): string {
 
 export interface SkeletonObjectArgs {
   readonly skeletonId: string;
-  /** The skeleton's rest bones — what the scale is measured on. */
+  /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
   readonly bones: readonly BoneSpec[];
+  /** The clip wired to the skeleton, if any: its frame 0 is what the scale is measured on. */
+  readonly clip?: AnimationClipValue | null;
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
   /** True when the caller does not know the unit and the rig should stand at human height. */
@@ -66,7 +82,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly objectId: string;
 } {
   const objectId = skeletonObjectId(args.skeletonId);
-  const s = args.normalise ? normalisedRigScale(args.bones) : 1;
+  const s = args.normalise ? normalisedRigScale(args.bones, args.clip) : 1;
   return {
     objectId,
     ops: [
