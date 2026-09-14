@@ -24,7 +24,8 @@ vi.mock('./transport/openai', async (importOriginal) => {
   return { ...real, streamChatCompletion: streamMock };
 });
 
-import { runAgentTurn, renderNoOpReport } from './orchestrator';
+import { runAgentTurn, renderNoOpReport, type TurnOptions } from './orchestrator';
+import { useDiffStore } from './diff';
 import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { registerAllMutators } from './mutators';
@@ -37,8 +38,19 @@ import { applyOp } from '../core/dag';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { Op } from '../core/dag/types';
 import type { Reportable } from '../core/dag/ops';
+import type { LLMConfig } from './transport/types';
 
-const CONFIG = { baseUrl: 'http://x', model: 'm', apiKey: 'k' } as never;
+const CONFIG: LLMConfig = { baseUrl: 'http://x', model: 'm', apiKey: 'k' };
+
+// 🔴 TYPED, NOT CAST (#1058). This was `{ …, selectedNodeIds: [] } as never`. The
+// selection is a SET: an array has no `.size`, so `inferClosureSpec` read it as a
+// selection with ZERO roots and every turn in this file ended in
+// `Closure violation: … outside []` — after the tool message these rows read was
+// already written, so nothing here noticed. The cast is what let the array in —
+// and, measured once it came off, a mode that does not exist either: `'agent'` is
+// not an `AgentMode`. It behaved like the full-surface modes only because the
+// orchestrator special-cases `'read-only'` alone. `'copilot'` is the product default.
+const TURN: TurnOptions = { message: 'go', mode: 'copilot', selectedNodeIds: new Set<string>() };
 
 /**
  * Round 1 emits one `dag.exec` carrying `ops`; round 2 records the messages it
@@ -67,7 +79,7 @@ async function turnWithOps(ops: Op[], description: string): Promise<ChatMessage[
       o.onChunk({ type: 'done' });
     },
   );
-  await runAgentTurn(CONFIG, { message: 'go', mode: 'agent', selectedNodeIds: [] } as never);
+  await runAgentTurn(CONFIG, TURN);
   return roundTwo;
 }
 
@@ -123,6 +135,20 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
     expect(text).not.toContain('NOTE -');
   });
 
+  it('THE HARNESS PIN (#1058): a clean turn reaches the end — its plan is proposed, with no error', async () => {
+    // Every row in this file reads the tool message, which is written BEFORE the
+    // end-of-turn propose. So a harness that broke the propose could not red any
+    // of them — and one did, for as long as this file existed. This row reads the
+    // other end of the turn.
+    const real: Op[] = [
+      { type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: [0, 45, 0] },
+    ] as Op[];
+    await turnWithOps(real, 'rotate the cube');
+    expect(useAgentSessionStore.getState().session.error ?? null).toBeNull();
+    expect(useDiffStore.getState().status).toBe('pending');
+    expect(useDiffStore.getState().pendingDiff?.ops).toHaveLength(1);
+  });
+
   it('CONTROL: the detector is not vacuous — it fires on one op and clears its sibling', async () => {
     const mixed: Op[] = [
       { type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: [0, 45, 0] },
@@ -151,7 +177,12 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
       .session.messages.map((m) => String(m.content))
       .join('\n');
     expect(chat).toContain('[dag.exec]');
-    expect(useAgentSessionStore.getState().session.error ?? '').not.toBe('');
+    const error = useAgentSessionStore.getState().session.error ?? '';
+    expect(error).not.toBe('');
+    // #1058 — under the old harness EVERY turn ended in a closure violation, so
+    // "there is an error" held whether or not the fork threw. The error has to be
+    // the fork's.
+    expect(error).not.toContain('Closure violation');
   });
 
   it('the sentence the model reads is the sentence the director reads', () => {

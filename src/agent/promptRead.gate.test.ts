@@ -11,7 +11,7 @@
 // so the numbers below are the measured ratios, applied to this turn's own size.
 
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import type { ChatMessage, StreamChunk, ToolSchema } from './transport/types';
+import type { ChatMessage, LLMConfig, StreamChunk, ToolSchema } from './transport/types';
 
 // Only the network half is mocked; buildToolSchemas stays real.
 const streamMock = vi.hoisted(() => vi.fn());
@@ -25,6 +25,7 @@ import {
   estimateRequestTokens,
   promptReadShortfall,
   MIN_PROMPT_READ_RATIO,
+  type TurnOptions,
 } from './orchestrator';
 import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -35,7 +36,15 @@ import { useAgentSessionStore } from './session/store';
 import { useDiffStore } from './diff';
 import { buildDefaultDagState } from '../core/project/default';
 
-const CONFIG = { baseUrl: 'http://x', model: 'm', apiKey: 'k' } as never;
+const CONFIG: LLMConfig = { baseUrl: 'http://x', model: 'm', apiKey: 'k' };
+
+// Typed, not cast — the same fixture lie #1058 took out of the no-op gate: behind `as never`
+// this file passed `mode: 'agent'`, which is not an `AgentMode`. `'copilot'` is the product
+// default. The selection is a SET: passed as `[]`, `.size` is undefined, the closure is
+// inferred with ZERO roots and every plan is refused at propose time — which a harness that
+// reads only the tool message never notices, and which made this file's controls fail for a
+// reason unrelated to the prompt read.
+const TURN: TurnOptions = { message: 'go', mode: 'copilot', selectedNodeIds: new Set<string>() };
 
 const ROTATE = JSON.stringify({
   ops: [{ type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: [0, 45, 0] }],
@@ -84,15 +93,7 @@ async function turn(reports: [Report, Report]) {
       );
     },
   );
-  // 🔴 The selection is a SET. Passed as `[]` (as the #1014 harness does), `.size`
-  // is undefined, the closure is inferred with ZERO roots, and every plan is
-  // refused at propose time — which that harness never reaches, and which made
-  // this file's controls fail for a reason unrelated to the prompt read.
-  const result = await runAgentTurn(CONFIG, {
-    message: 'go',
-    mode: 'agent',
-    selectedNodeIds: new Set<string>(),
-  } as never);
+  const result = await runAgentTurn(CONFIG, TURN);
   return {
     result,
     rounds: round,
