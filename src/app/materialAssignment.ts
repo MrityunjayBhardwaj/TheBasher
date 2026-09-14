@@ -163,6 +163,29 @@ export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null 
 }
 
 /**
+ * The primary slot with its ABSENCE STILL TOLD APART — the widened twin of
+ * {@link primaryMaterial}, and the road a consumer takes when it can act on the difference.
+ *
+ * ⚠️ {@link primaryMaterial} RETURNS `M | null`, AND THAT SIGNATURE IS WHERE THE DISTINCTION
+ * DIES. `absentSlot` splits one `null` into *"there is no material"* and *"a mounted asset
+ * clone owns what draws and we hold no capture of it"*; a projection narrowing to `M | null`
+ * re-merges them however carefully the split was built upstream, because there is nowhere in
+ * that type for a third answer. No amount of care inside the body could preserve one, and no
+ * reviewer reading the body would see anything wrong — the tell is the return type.
+ *
+ * Measured (#1015): the UV editor resolved its backdrop through `primaryMaterial` and gave a
+ * clone-drawn mesh the SAME answer as a cube with no map at all — a blank panel that could
+ * not say why it was blank. That call site now takes this road instead.
+ *
+ * Same lowest-assigned-slot rule as `primaryMaterial`, stated once here and read through
+ * {@link slotMaterialAt} so the four absences arrive intact: an empty slot table reports
+ * `no-such-slot` rather than pretending slot 0 exists and is empty.
+ */
+export function primarySlotMaterial<M>(assignment: MaterialAssignment<M | null>): SlotMaterial<M> {
+  return slotMaterialAt(assignment, assignedSlots(assignment)[0] ?? 0);
+}
+
+/**
  * The DATA half of the slot table, with no Object consulted — the chain's answer for a mesh
  * before any object-level override lands on it.
  *

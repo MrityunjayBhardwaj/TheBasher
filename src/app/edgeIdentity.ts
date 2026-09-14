@@ -27,13 +27,16 @@
 //      node_modules/three/src/geometries/BoxGeometry.js (the plane table quoted below);
 //      issues #718, #607, #716, #777.
 
-import type { CountVerdict, GeometryDescriptor } from '../nodes/types';
+import type { CountVerdict, GeometryDescriptor, GeometryRef } from '../nodes/types';
 import { type PolygonRim, polygonLayoutOf, reverseRim } from './polygonLayout';
 import { tiledFaceOrder, mappedFacesOf } from './faceCount';
-import { pointCountOf } from './pointIdentity';
+import { pointCountOf, weldByPosition } from './pointIdentity';
 // #814 — closes the ring `faceCount -> bevelLayout -> edgeIdentity -> faceCount`. Call-time only;
 // `bevelLayout.ts`'s header carries the measurement and the rule.
 import { bevelLayoutOf } from './bevelLayout';
+import { alignedSplitRims, bufferReachabilityOf, topologyIsBufferOnly } from './builtRims';
+import { getForRead } from './geometryRegistry';
+import { meshWeldedRims } from './polygonLayout';
 
 /**
  * A geometry's edges, as pairs of TOPOLOGICAL point ids.
@@ -185,7 +188,97 @@ function sphereSplitToWelded(widthSegments: number, heightSegments: number): Uin
  * cannot. It is recorded twice on purpose — a refusal is about a representation, and the right
  * question is always what the consumer actually reads.
  */
-export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly PolygonRim[] | null {
+/**
+ * The descriptor a rim or edge door is being asked about, whether it was handed the descriptor or
+ * a ref to one (#1041). One spelling for every door in this module, so "which mesh is this
+ * question about" cannot be answered two ways — the mismatch the first `(descriptor, ref?)` shape
+ * allowed is exactly two answers to it.
+ */
+export function descriptorOf(subject: GeometryDescriptor | GeometryRef): GeometryDescriptor {
+  return 'descriptor' in subject ? subject.descriptor : subject;
+}
+
+/** Why an edge count is absent, naming which of the three absences it is (#1046). */
+function edgeCountAbsence(
+  subject: GeometryDescriptor | GeometryRef,
+  descriptor: GeometryDescriptor,
+  points: number,
+): string {
+  const lead = `'${descriptor.kind}' has ${points} points`;
+  if ('descriptor' in subject) {
+    const reach = bufferReachabilityOf(subject);
+    if (reach !== '' && reach !== 'ok')
+      return `${lead}, but the buffer its rims come from has not arrived (read status '${reach}'), so what joins them cannot be read YET`;
+  } else if (topologyIsBufferOnly(descriptor)) {
+    return `${lead}, but its rims live in its buffer and a bare descriptor cannot reach one — this question has to be asked with the mesh's ref`;
+  }
+  return `${lead} but no derivable polygon rims, so what joins them is not stated`;
+}
+
+/**
+ * The welded rims of a mesh whose topology IS its buffer — an import or a bake (#1041).
+ *
+ * ── WHY THIS IS NOT "rims in the descriptor" ───────────────────────────────────
+ *
+ * #1025 settled that a rim is O(corners) — the index buffer reshaped — and closed against
+ * putting one in the document. A census of every rim consumer (#1041) then measured the thing
+ * that makes the alternative free: no consumer is descriptor-only by NECESSITY. Each holds a
+ * `GeometryRef` or sits one field from one, because all five derived kinds declare
+ * `source: GeometryRef`. So the buffer is reachable wherever the question is asked, and the
+ * document never has to carry it.
+ *
+ * ── EVERY STEP IS PRODUCTION'S OWN INSTRUMENT, AND THAT IS LOAD-BEARING ─────────────
+ *
+ * The split rims come from `alignedSplitRims` — which already carries the imported road's
+ * cross-source agreement check (`sum(arity) x 3 === index.count`) and its non-indexed closed
+ * form — and the split→topological map from `weldByPosition`. Neither is re-derived here.
+ * A hand-rolled weld in a probe split a sphere's seam on NEGATIVE ZERO and produced five false
+ * disagreements before anyone looked at the instrument rather than the result; the same rule
+ * that keeps a capture and its reader on one function keeps this on one too.
+ *
+ * ⚠️ NO ALIGNMENT SELF-CHECK, FOR THE REASON #1025 STATED RATHER THAN BY OVERSIGHT. Rotating
+ * these onto a substrate's convention is meaningless for a kind with no substrate, and
+ * synthesising one from the same buffer would compare a thing to itself and pass by
+ * construction. The walk's own order IS the canonical corner order here — stated once in
+ * `alignedSplitRims` and inherited, not restated.
+ */
+function weldedRimsFromBuffer(ref: GeometryRef): readonly PolygonRim[] | null {
+  if (!topologyIsBufferOnly(ref.descriptor)) return null;
+  const geometry = getForRead(ref);
+  // Null here is a WAIT, not a refusal: an unmounted clone and an unprimed bake both read this
+  // way and both may arrive. `readGeometry` is where that distinction is owned; this door only
+  // needs "is there a buffer yet".
+  if (geometry === null) return null;
+  const weld = weldByPosition(geometry);
+  // 🔴 #1044 — THE CAPTURED POINT COUNT MUST AGREE WITH THE BUFFER, OR THE RIMS ARE A LIE. These ids
+  // come from the LIVE weld, but a derived kind above offsets its copies by the CAPTURED count and
+  // the edge walk uses it as a radix. Measured with the capture disagreeing on a buffer that welds
+  // to 8: at 9 the ids gap, at 7 two copies share a point, and at 4 an array's edge count came back
+  // `counted 44` where the mesh has 54 — every row a plausible answer, none refused, the only
+  // signal a console warning on the build path. The face-count half already refuses a
+  // disagreement (`alignedSplitRims`'s `sum x 3 === index.count`); this is its point-count twin,
+  // and it refuses for the same reason: a disagreement handed on becomes a wrong number, while a
+  // refusal is recoverable. An ABSENT capture (a save from before #1040) is not a disagreement —
+  // these rims are consistent with the live weld, and every consumer needing a count refuses itself.
+  const captured = pointCountOf(ref.descriptor);
+  if (captured.kind === 'counted' && captured.count !== weld.points) return null;
+  const split = alignedSplitRims(ref, geometry);
+  if (split === null) return null;
+  return split.map((rim) => rim.map((v) => weld.map[v]));
+}
+
+export function weldedPolygonsOf(
+  subject: GeometryDescriptor | GeometryRef,
+): readonly PolygonRim[] | null {
+  // 🔴 ONE PARAMETER, SO A DESCRIPTOR CANNOT BE PAIRED WITH ANOTHER MESH'S REF (#1041 self-review).
+  // The first shape was `(descriptor, ref?)`, and nothing tied the two together: measured, a box
+  // descriptor handed an 8x6 sphere's ref returned the SPHERE'S 80 rims under the box's name.
+  // Nothing reached it — the only two-argument callers were this function's own recursions,
+  // passing a matched pair — but a state nothing mints is still a state a caller can write. A
+  // ref carries its own descriptor, so taking one or the other leaves no pair to mismatch.
+  // (No member of the descriptor union has a `descriptor` field, so the test is unambiguous.)
+  const ref = 'descriptor' in subject ? subject : undefined;
+  const descriptor = descriptorOf(subject);
   switch (descriptor.kind) {
     case 'box':
     case 'sphere': {
@@ -202,13 +295,16 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
     }
     case 'gltf':
     case 'baked':
-      // The same escape hatch `faceCountOf` and `pointCountOf` declare, and censused with them:
-      // these buffers live outside the descriptor, so nothing here can say what joins what.
-      return null;
+      // The escape hatch `faceCountOf` and `pointCountOf` declare, and censused with them: these
+      // buffers live outside the descriptor. That is still true OF A DESCRIPTOR — and #1041
+      // measured that it was never true of the CALL SITES. So the refusal now turns on whether a
+      // ref was supplied rather than on the kind, and `null` here means "nobody handed me a way
+      // to reach the buffer", not "this kind can never answer".
+      return ref === undefined ? null : weldedRimsFromBuffer(ref);
     case 'array':
     case 'mirror':
     case 'subset': {
-      const sourceRims = weldedPolygonsOf(descriptor.source.descriptor);
+      const sourceRims = weldedPolygonsOf(descriptor.source);
       if (sourceRims === null) return null;
       const sourcePoints = pointCountOf(descriptor.source.descriptor);
       if (sourcePoints.kind !== 'counted') return null;
@@ -287,7 +383,11 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
     // #994 — the source's welded rims verbatim. Same rule as `faceCountOf` and `pointCountOf`:
     // the projection changes what each corner READS, never what joins what.
     case 'uvProject':
-      return weldedPolygonsOf(descriptor.source.descriptor);
+      return weldedPolygonsOf(descriptor.source);
+    // #1049 — a stored mesh's corners already cite topological points, so these are its rims as
+    // stored. No buffer, no weld, and no ref needed.
+    case 'mesh':
+      return meshWeldedRims(descriptor.data);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`weldedPolygonsOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
@@ -330,9 +430,9 @@ export function weldedPolygonsOf(descriptor: GeometryDescriptor): readonly Polyg
  * wants this per build or per gather; `tiledFaceOrder` records the same reasoning and the same
  * outcome, having measured its own road before adding its cache.
  */
-export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
+export function edgeSetOf(subject: GeometryDescriptor | GeometryRef): EdgeSet | null {
   const pairs: number[] = [];
-  const count = walkEdgeIncidences(descriptor, (_edge, _face, lo, hi, first) => {
+  const count = walkEdgeIncidences(subject, (_edge, _face, lo, hi, first) => {
     if (first) pairs.push(lo, hi);
   });
   return count === null ? null : { pairs: Uint32Array.from(pairs), count };
@@ -361,12 +461,12 @@ export function edgeSetOf(descriptor: GeometryDescriptor): EdgeSet | null {
  * result.
  */
 function walkEdgeIncidences(
-  descriptor: GeometryDescriptor,
+  subject: GeometryDescriptor | GeometryRef,
   visit: (edge: number, face: number, lo: number, hi: number, first: boolean) => void,
 ): number | null {
-  const rims = weldedPolygonsOf(descriptor);
+  const rims = weldedPolygonsOf(subject);
   if (rims === null) return null;
-  const points = pointCountOf(descriptor);
+  const points = pointCountOf(descriptorOf(subject));
   if (points.kind !== 'counted') return null;
 
   // ⚠️ THE RADIX IS THE POINT COUNT, NOT 2^32, AND THAT IS A CORRECTNESS FIX RATHER THAN A
@@ -431,9 +531,11 @@ export interface EdgeAdjacency {
  * Every edge's incident faces. `null` for exactly the descriptors {@link edgeSetOf} refuses,
  * because it is the same walk and the same refusals.
  */
-export function edgeFaceAdjacencyOf(descriptor: GeometryDescriptor): EdgeAdjacency | null {
+export function edgeFaceAdjacencyOf(
+  subject: GeometryDescriptor | GeometryRef,
+): EdgeAdjacency | null {
   const faces: number[][] = [];
-  const count = walkEdgeIncidences(descriptor, (edge, face, _lo, _hi, first) => {
+  const count = walkEdgeIncidences(subject, (edge, face, _lo, _hi, first) => {
     if (first) faces.push([face]);
     else faces[edge].push(face);
   });
@@ -447,17 +549,21 @@ export function edgeFaceAdjacencyOf(descriptor: GeometryDescriptor): EdgeAdjacen
  * the absence has a REASON a caller should be able to quote: a `gltf` or `baked` anywhere up the
  * source chain, propagated verbatim so the verdict still names the link that could not answer.
  */
-export function edgeCountOf(descriptor: GeometryDescriptor): CountVerdict {
+export function edgeCountOf(subject: GeometryDescriptor | GeometryRef): CountVerdict {
+  const descriptor = descriptorOf(subject);
   const points = pointCountOf(descriptor);
   // Propagated rather than re-minted: an edge is a pair of points, so a descriptor whose points
   // are outside it has its edges outside it too, for exactly the same reason and at the same
   // link. Re-wording it here would make a caller read a second sentence about one absence.
   if (points.kind !== 'counted') return points;
-  const edges = edgeSetOf(descriptor);
+  const edges = edgeSetOf(subject);
   if (edges === null)
     return {
       kind: 'outside-the-descriptor',
-      why: `'${descriptor.kind}' has ${points.count} points but no derivable polygon rims, so what joins them is not stated`,
+      // #1046 — THREE DIFFERENT ABSENCES REACHED THIS ONE SENTENCE. A director saw it inside a throw
+      // for an edge scope over an import, where it said the rims were not derivable — false since
+      // #1041, when the rims came off the buffer. Each cause now says which it is.
+      why: edgeCountAbsence(subject, descriptor, points.count),
     };
   return counted(edges.count);
 }

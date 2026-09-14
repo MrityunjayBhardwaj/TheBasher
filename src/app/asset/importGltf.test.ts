@@ -10,6 +10,7 @@
 // REF: phase 7.9 PLAN Task 2/3; CONTEXT pre-mortem #3 (refresh-bump
 // post-dispatch only); RESEARCH §4 + §6.
 
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
@@ -140,6 +141,41 @@ describe('importGltfFromOpfs', () => {
 // ---------------------------------------------------------------------------
 // Task 2 — ingestGltfFolder
 // ---------------------------------------------------------------------------
+
+describe('importGltfFromOpfs — the road an import takes (#1049)', () => {
+  it('imports a file the native model holds as native geometry, with nothing that reads the file', async () => {
+    const path = 'user-imports/cube/cube.gltf';
+    await currentStorage.write(path, new Uint8Array(readFileSync('public/assets/cube.gltf')));
+    await importGltfFromOpfs(path);
+
+    const types = Object.values(useDagStore.getState().state.nodes)
+      .map((n) => n.type)
+      .sort();
+    expect(types).toEqual(['Group', 'Object', 'PolyMeshData', 'Scene', 'TimeSource']);
+    expect(useImportRefreshStore.getState().tick).toBe(1);
+    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+  });
+
+  it('sends a file the native model cannot hold down the clone road whole, and says why', async () => {
+    const path = 'user-imports/vcolor/vertex-color-quad.gltf';
+    await currentStorage.write(
+      path,
+      new Uint8Array(readFileSync('public/assets/vertex-color-quad.gltf')),
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await importGltfFromOpfs(path);
+      const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
+      expect(types).toContain('GltfAsset');
+      expect(types).not.toContain('PolyMeshData');
+      expect(warn.mock.calls.flat().join('\n')).toMatch(/not as native geometry.*COLOR_0.*#1062/);
+    } finally {
+      warn.mockRestore();
+    }
+    expect(useImportRefreshStore.getState().tick).toBe(1);
+    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+  });
+});
 
 describe('ingestGltfFolder', () => {
   it('reports + throws when no .gltf/.glb is in the file set', async () => {

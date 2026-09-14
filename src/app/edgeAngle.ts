@@ -119,7 +119,8 @@ export function builtFaceNormals(
  * same shape of answer at the same scale.
  */
 export function edgeAnglesOf(ref: GeometryRef, geometry: BufferGeometry): Float32Array | null {
-  const adjacency = edgeFaceAdjacencyOf(ref.descriptor);
+  // #1046 — the ref, for the reason `edgeIndicesByAngle` gives: an import's edges are its buffer's.
+  const adjacency = edgeFaceAdjacencyOf(ref);
   const normals = builtFaceNormals(ref, geometry);
   if (adjacency === null || normals === null) return null;
 

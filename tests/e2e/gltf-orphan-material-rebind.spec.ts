@@ -4,36 +4,25 @@
 // TEXTURED instead of rendering the default white material.
 //
 // THE PROOF (falsifiable, boundary-pair): import orphan-material-quad.gltf →
-// assert BOTH side A (the captured IR material is M_Orphan, not "default") AND
-// side B (the rendered clone carries a base map + the material's doubleSided flag,
-// via __basher_gltf_meshes — the live seam the renderer feeds). Without the rebind
-// the primitive gets three.js's default material → IR "default", clone map=false,
-// side=FrontSide.
+// assert BOTH side A (the captured material is M_Orphan, not "default") AND
+// side B (the drawn mesh carries a base map + the material's doubleSided flag,
+// read off the live three.js material). Without the rebind the primitive gets the
+// default material → captured "default", no map, side=FrontSide.
+//
+// #1071 — the file arrives as native geometry, so both sides are read through the
+// road-agnostic reader, and the road itself is asserted: a file that silently fell
+// back to the clone road must not pass on the other road's readings.
 
 import { test, expect } from './_fixtures';
-import { firstMaterialChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 
 const DOUBLE_SIDE = 2; // THREE.DoubleSide
 
-interface MeshSummary {
-  name: string;
-  color: string;
-  hasMap: boolean;
-  side: number | null;
-}
 interface BasherWindow {
-  __basher_dag: {
-    getState: () => {
-      state: {
-        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
-      };
-    };
-  };
   __basher_ingestGltfFolder: (
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 async function ingest(page: import('@playwright/test').Page, file: string, folder: string) {
@@ -51,29 +40,28 @@ async function ingest(page: import('@playwright/test').Page, file: string, folde
   );
 }
 
-/** The captured-material name of the first imported child that carries one (#389). */
+/** The captured-material name of the first imported mesh that carries one. */
 async function capturedMaterialName(page: import('@playwright/test').Page) {
-  const child = await firstMaterialChild(page);
-  return (child?.slots[0] as { name?: string } | undefined)?.name ?? null;
+  const mesh = await firstMaterialMesh(page);
+  return (mesh?.slots[0] as { name?: string } | undefined)?.name ?? null;
 }
 
-const firstMesh = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0] ?? null;
-  });
+const firstDrawn = async (page: import('@playwright/test').Page) =>
+  (await drawnImportMeshes(page))[0] ?? null;
 
 test.describe('#221 — orphan-material rebind on import', () => {
   test("an unbound primitive is bound to the file's one orphaned material", async ({ page }) => {
     await ingest(page, 'orphan-material-quad.gltf', 'orphan');
 
-    // Side A — the captured IR material is the file's M_Orphan (NOT the three.js
-    // default material the unbound primitive would otherwise have received).
+    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
+
+    // Side A — the captured material is the file's M_Orphan (NOT the default
+    // material the unbound primitive would otherwise have received).
     await expect.poll(async () => await capturedMaterialName(page)).toBe('M_Orphan');
 
-    // Side B — the rendered clone carries the material's base map + doubleSided
-    // flag, i.e. the geometry now uses M_Orphan, not the flat default material.
-    await expect.poll(async () => (await firstMesh(page))?.hasMap).toBe(true);
-    await expect.poll(async () => (await firstMesh(page))?.side).toBe(DOUBLE_SIDE);
+    // Side B — the drawn mesh carries the material's base map + doubleSided flag,
+    // i.e. the geometry now uses M_Orphan, not the flat default material.
+    await expect.poll(async () => (await firstDrawn(page))?.hasMap).toBe(true);
+    await expect.poll(async () => (await firstDrawn(page))?.side).toBe(DOUBLE_SIDE);
   });
 });

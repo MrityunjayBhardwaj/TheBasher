@@ -173,32 +173,43 @@ function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): U
             'to walk its buffer into polygons — re-importing the asset captures one',
         };
     } else {
-      const index = geometry.getIndex();
-      // 🔴 A glTF PRIMITIVE MAY CARRY NO INDICES AT ALL, and a count is still captured for it
-      // (the importer falls back to the POSITION accessor). So this arm is reachable with the
-      // buffer fully present, and without it the mesh is told its buffers live elsewhere while
-      // it is holding them. Measured: a non-indexed imported box reports 36 positions and a
-      // null index, and said exactly that.
-      if (index === null)
-        return {
-          kind: 'not-derivable',
-          why:
-            `this mesh's buffer carries no index, and polygon rims are recovered by walking ` +
-            `one. Its ${geometry.getAttribute('position')?.count ?? 0} positions are a ` +
-            `triangle list with every corner already split, which is a shape this walk does ` +
-            `not read yet`,
-        };
-
       let triangles = 0;
       for (const n of arity) triangles += n;
-      if (triangles * 3 !== index.count)
+
+      // 🔴 #1028 DELETED THE SENTENCE THAT USED TO SIT HERE, rather than leaving it describing
+      // something that no longer happens. It said a non-indexed buffer "is a shape this walk
+      // does not read yet" — it reads it now, by closed form, because a split buffer puts
+      // face `f` at `[3f, 3f+1, 3f+2]`. What remains is the two ways that road can still fail,
+      // and they are different failures that wanted different sentences.
+      const index = geometry.getIndex();
+      const held = index === null ? geometry.getAttribute('position')?.count : index.count;
+      if (held === undefined)
+        return {
+          kind: 'not-derivable',
+          why: 'this mesh carries neither an index buffer nor positions, so there is nothing to read polygons out of',
+        };
+
+      if (triangles * 3 !== held)
         return {
           kind: 'not-derivable',
           why:
             `this mesh was imported as ${arity.length} faces (${triangles} triangles) and the ` +
-            `buffer reachable here holds ${index.count / 3}, so the count captured at import ` +
+            `buffer reachable here holds ${held / 3}, so the count captured at import ` +
             `is not this buffer's — either the asset changed since it was imported, or this ` +
             `child has several primitives and only the first is reachable through a child name`,
+        };
+
+      // A split buffer shares nothing between triangles, so a face of two of them has a
+      // boundary in two disjoint pieces and no rim to recover. Every imported face is one
+      // triangle today, so this is unreachable through the imported road — it is here for the
+      // kind that states otherwise, which would otherwise be answered with a third of a face.
+      if (index === null && arity.some((n) => n !== 1))
+        return {
+          kind: 'not-derivable',
+          why:
+            `this mesh has no index buffer and states faces of more than one triangle. In a ` +
+            `split buffer two triangles of one face share no vertex, so the face has no single ` +
+            `rim to recover — welding its positions is what would join them`,
         };
     }
   }

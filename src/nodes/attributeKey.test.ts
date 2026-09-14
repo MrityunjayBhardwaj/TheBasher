@@ -263,6 +263,11 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
       'bevel',
       'box',
       'gltf',
+      // #1049 — a stored polygon mesh carries its corner UVs and normals INSIDE its data, and its
+      // key is a hash over all of that data, so nothing it holds rides outside the key the way this
+      // check guards against. What it does not carry is an attribute SET: a per-face material
+      // index still enters only through the one folded component above, exactly as for a box.
+      'mesh',
       'mirror',
       'sphere',
       'subset',

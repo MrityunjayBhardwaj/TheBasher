@@ -55,6 +55,8 @@ export interface ImportedChildFixture {
   /** The full table, for a multi-primitive child only. Absent ⇒ one slot, and it is
    *  `material` (the `dataSlotsOnly` rule). */
   readonly materialSlots?: readonly unknown[];
+  /** The face count captured at import (#1023). Absent, as on a save written before it. */
+  readonly faceCount?: number;
 }
 
 /**
@@ -76,6 +78,7 @@ function halves(objectId: string, fx: ImportedChildFixture) {
       childName: fx.childName ?? 'Cube',
       material: fx.material ?? null,
       ...(fx.materialSlots ? { materialSlots: fx.materialSlots } : {}),
+      ...(fx.faceCount === undefined ? {} : { faceCount: fx.faceCount }),
     },
     object: {
       position: fx.position ?? ([0, 0, 0] as Vec3),

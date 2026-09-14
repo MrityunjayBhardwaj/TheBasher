@@ -24,21 +24,17 @@
 //   (4) Revert the field (`overridden:{}`) → metalness returns to 1 (map
 //       defends again). The per-field bit is the ONLY thing that flips behaviour.
 //
-// Observation seam: SceneFromDAG `__basher_gltf_meshes()` (DEV-only, read-only,
-// V8 clean) — exposes each mesh's live .metalness / .roughness + map presence.
+// #1072 — the fixture now arrives as native geometry (#1050): the override wraps an
+// ordinary Object and the native material applies it. Observed on the drawn three.js
+// material through `_importedMesh.ts`; wired through `_importOverride.ts`. Measured
+// before the re-point: unforced metalness stays 1 over the map, forced reads 0 with
+// the map kept — the same promise, on the native road.
 
 import { test, expect } from './_fixtures';
+import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
+import { wrapImportInOverride } from './_importOverride';
 
-interface MeshSummary {
-  readonly name: string;
-  readonly hasMap: boolean;
-  readonly mapImageOk: boolean;
-  readonly color: string | null;
-  readonly metalness: number | null;
-  readonly roughness: number | null;
-  readonly hasMetalnessMap: boolean;
-  readonly hasRoughnessMap: boolean;
-}
+type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
   relativePath: string;
   bytes: Uint8Array;
@@ -61,7 +57,6 @@ interface BasherWindow {
     files: ReadonlyArray<IngestFileShape>,
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
 interface FixtureSpec {
@@ -98,10 +93,7 @@ async function pollForMesh(
   const start = Date.now();
   let last: MeshSummary[] = [];
   while (Date.now() - start < timeoutMs) {
-    const summary = await page.evaluate(() => {
-      const w = window as unknown as BasherWindow;
-      return w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    });
+    const summary = await drawnImportMeshes(page);
     last = summary;
     const match = summary.find((m) => m.hasMap && m.mapImageOk && accept(m));
     if (match) return match;
@@ -130,43 +122,12 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-/** Wire a MaterialOverride between the imported GltfAsset and its Group (V67). */
+/** Wire a MaterialOverride between the import root Group and its content. */
 async function applyOverride(
   page: import('@playwright/test').Page,
   params: Record<string, unknown>,
 ): Promise<void> {
-  await page.evaluate((p) => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const gltfId = Object.keys(nodes).find((id) => nodes[id].type === 'GltfAsset');
-    // V67: import root is a transformable Group (was a Transform); the asset
-    // wires into Group.children (a list socket, was Transform.target/single).
-    const groupId = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
-    if (!gltfId || !groupId) throw new Error('expected GltfAsset + Group from import');
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'disconnect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-        { type: 'addNode', nodeId: 'mo124', nodeType: 'MaterialOverride', params: p },
-        {
-          type: 'connect',
-          from: { node: gltfId, socket: 'out' },
-          to: { node: 'mo124', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'mo124', socket: 'out' },
-          to: { node: groupId, socket: 'children' },
-        },
-      ],
-      'user',
-      '#124 apply material override',
-    );
-  }, params);
+  await wrapImportInOverride(page, 'mo124', params);
 }
 
 test('#124 (V28) — an authored metalness FORCES a mapped metal channel; unset still defers to the map', async ({
@@ -199,6 +160,7 @@ test('#124 (V28) — an authored metalness FORCES a mapped metal channel; unset 
     `metal fixture must carry a metalnessMap; ${JSON.stringify(baseline)}`,
   ).toBe(true);
   expect(baseline.metalness).toBe(1);
+  expect((await importRoots(page)).map((r) => r.road)).toEqual(['native']);
 
   // (2) Override metalness=0 WITHOUT the authored set → the map STILL defends the
   //     channel (the #99 default). This is the gap #124 closes: the metalness=0

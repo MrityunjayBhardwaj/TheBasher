@@ -226,8 +226,8 @@ renderer-side reimplementation of identity the evaluator should be handing down.
 
 The invariant above is stated over the whole `ObjectData` union. It is **enforced on one
 member of it.** `materialKey` exists on `MeshDataValue` and nowhere else, minted at exactly
-three producers (`BoxData`, `SphereData`, `GltfData`), while two other kinds carry a material
-with no key at all. Read the invariant on its own and you would reasonably conclude that every
+four producers (`BoxData`, `SphereData`, `GltfData`, `PolyMeshData`), while two other kinds
+carry a material with no key at all. Read the invariant on its own and you would reasonably conclude that every
 evaluated material carries identity; it does not, and this is where that is written down.
 
 | kind                   | carries a material | carries a minted key | what keeps it non-divergent                                                                       |
@@ -248,6 +248,12 @@ its registration rather than coexisting with the fused kind the way every earlie
 Until the flip, nothing in a production graph produces one, so the sentence above still
 describes what renders. What it stops describing is what the census counts — and the census
 is the thing that goes red, so it is stated here rather than discovered there.
+
+**#1049 — a fourth minter, and the same argument.** `PolyMeshData` holds a stored polygon mesh,
+the representation an import writes so it stops depending on its file. Its material is
+captured by whoever wrote the mesh and resolved by nothing downstream, so, like `GltfData`, it
+mints identity where the value is built — through `materialKeyOf`, the one function every
+minter calls. Four callers, one answer; the mint count above moved with it.
 
 **`ModifiedData` is the one whose safety argument is easy to state wrongly.** It is not safe
 by not sharing: `ModifiedMeshR` calls the same `usePrimitiveMaterial` seam the keyed road

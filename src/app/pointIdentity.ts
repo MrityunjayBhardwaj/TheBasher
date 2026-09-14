@@ -43,6 +43,14 @@ import type { CountVerdict, GeometryDescriptor, GeometryRef } from '../nodes/typ
 // #814 — part of the `faceCount -> bevelLayout -> edgeIdentity` ring; see `bevelLayout.ts`.
 import { bevelLayoutOf } from './bevelLayout';
 import { arrayCopiesOf } from './arrayCopies';
+// #712 — the same ring, and READ AT CALL TIME ONLY. `importCycles.gate.test.ts` records that a
+// call-time read across one of these rings resolves correctly while a module-initialisation-time
+// read across one evaluates to `undefined` with no throw, so this binding is touched inside
+// `keptSourcePoints` and nowhere else. `edgeIdentity` already imports this module, so the edge
+// adds no component to that gate's enumerated set — it closes a ring that is already closed.
+import { weldedPolygonsOf } from './edgeIdentity';
+import { groupLookupFor } from './componentGroupLookup';
+import { scopeSelection } from '../nodes/scopeQuery';
 
 /**
  * A weld: which topological point each split-buffer position belongs to.
@@ -267,6 +275,64 @@ export function derivedSourceOf(descriptor: GeometryDescriptor): GeometryRef | n
   return pointTilingOf(descriptor)?.source ?? null;
 }
 
+/**
+ * WHICH of its source's topological points a subset's kept faces actually reference, in
+ * ascending source-point order — or `null` when the source cannot say (#712).
+ *
+ * 🔴 THIS IS ONE STATEMENT WITH TWO READINGS, AND THAT IS THE WHOLE REASON IT IS A LIST AND
+ * NOT A COUNT. {@link pointCountOf} reads its LENGTH and {@link tiledPointOrder} reads the
+ * list ITSELF as the gather `tiled[i] = source[order[i]]`. Spelled twice — a count here and
+ * an order there — the two would agree today and drift the first time either is touched,
+ * which is precisely the hazard #712's own body names for the corner order.
+ *
+ * ── WHY ASCENDING, AND WHY THAT IS A DECISION RATHER THAN AN OBSERVATION ─────────────────
+ *
+ * A compacted buffer has to put its surviving points in SOME order, and the two candidates do
+ * not coincide. Measured across 12 source/scope pairs, ascending source-point order and
+ * "order of first surviving split appearance" agreed exactly ONCE, on a 3-point degenerate
+ * case: a box keeping face 0 references source points `[0,1,2,3]` ascending and `[0,2,1,3]`
+ * by first appearance. So the build cannot simply filter its source's buffer in place and
+ * hope the numbering lands here — the ORDER IS DEFINED BY THIS FUNCTION and the build follows
+ * it, rather than being read back off whatever the filter happened to produce.
+ *
+ * Ascending is the one of the two that a descriptor can state. First-appearance order needs
+ * the source's SPLIT rims, and `polygonLayoutOf` refuses `array` / `mirror` / `subset` because
+ * a copy's rim in the merged index space needs a built vertex count (#777) — so that
+ * convention would answer for a box and go silent over any derived source. Ascending needs
+ * only {@link weldedPolygonsOf}, which composes through exactly those kinds, so the derivation
+ * answers wherever the seam can actually bite.
+ *
+ * ⚠️ IT IS THE KEPT FACES' POINTS, NOT THE KEPT FACES. Two faces sharing an edge share its
+ * points, so the union is not the sum — a box keeping faces 0 and 1 references 8 points and
+ * not 4 + 4. That is why this walks a set rather than multiplying an arity.
+ */
+export function keptSourcePoints(
+  descriptor: Extract<GeometryDescriptor, { kind: 'subset' }>,
+): readonly number[] | null {
+  // The SOURCE's rims, in topological ids. `null` here is the same escape hatch
+  // `faceCountOf` and `pointCountOf` declare — a `gltf` or `baked` source holds its buffers
+  // elsewhere, so nothing on this side can say which points a face joins.
+  const rims = weldedPolygonsOf(descriptor.source.descriptor);
+  if (rims === null) return null;
+  // `rims.length` IS the source's face count — one rim per polygon — so the scope is resolved
+  // against the same population the rims enumerate rather than against a second derivation of
+  // it. `groupLookupFor` is threaded for the same reason `faceSubset` threads it: a scope may
+  // name a group, and a group's membership lives on the source handle.
+  const { mask } = scopeSelection(
+    descriptor.scope,
+    rims.length,
+    groupLookupFor(descriptor.source, 'face'),
+  );
+  const used = new Set<number>();
+  for (let f = 0; f < rims.length; f++) {
+    // The SAME `(mask[f] === 1) !== keep` reading `faceSubset` walks, so the two cannot
+    // disagree about which side of the mask survives.
+    if ((mask[f] === 1) !== descriptor.keep) continue;
+    for (const p of rims[f]) used.add(p);
+  }
+  return [...used].sort((a, b) => a - b);
+}
+
 /** A counted verdict, so the three producers below spell the shape once. */
 function counted(count: number): CountVerdict {
   return { kind: 'counted', count };
@@ -373,11 +439,23 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
       // the pole fans are what the split buffer duplicates; welding removes both.
       return counted(w * (h - 1) + 2);
     }
-    case 'gltf':
-      return {
-        kind: 'outside-the-descriptor',
-        why: "a 'gltf' descriptor's buffers live in a loaded asset clone, so nothing on it says how many points they hold",
-      };
+    // #1040 — AN IMPORTED CHILD WHOSE POINT COUNT WAS WELDED AT IMPORT. The sibling of
+    // `faceCountOf`'s captured arm, and the reason it is a stored number rather than a
+    // derivation: a topological point is a WELD over the position bytes, and a descriptor
+    // carries no bytes. Measured against the loaded buffer on every fixture the real
+    // `GLTFLoader` can parse — 15 of 15 children agree, because both sides weld through
+    // `weldByPosition` rather than through two spellings of it.
+    case 'gltf': {
+      const points = descriptor.pointCount;
+      // 🔴 ABSENT IS NOT ZERO. A pre-#1040 save, a non-triangle child and a multi-primitive
+      // child all keep answering exactly as they did, which is what the escape hatch is for.
+      if (points === undefined)
+        return {
+          kind: 'outside-the-descriptor',
+          why: "a 'gltf' descriptor's buffers live in a loaded asset clone, and this child's import captured no point count, so nothing on it says how many points they hold",
+        };
+      return counted(points);
+    }
     case 'baked':
       return {
         kind: 'outside-the-descriptor',
@@ -423,6 +501,9 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
     // and different claims, and only the second is true here.
     case 'uvProject':
       return pointCountOf(descriptor.source.descriptor);
+    // #1049 — a stored mesh's points are topological by construction, so they are counted, not welded.
+    case 'mesh':
+      return counted(descriptor.data.points.length / 3);
     default: {
       const unreachable: never = descriptor;
       throw new Error(`pointCountOf: undeclared descriptor ${JSON.stringify(unreachable)}`);

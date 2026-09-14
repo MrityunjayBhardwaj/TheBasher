@@ -18,7 +18,10 @@ import {
   base64ToBytes,
   isSelfContained,
   SCENE_BUNDLE_VERSION,
+  projectImageBundlePath,
+  bundleAssetStoragePath,
 } from './sceneBundle';
+import { projectImagePath } from '../core/project/projectImages';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { BAKED_TEXTURE_ROOT } from './asset/bakedTextureStore';
 
@@ -181,6 +184,41 @@ describe('collectAssetRefs', () => {
   });
 });
 
+describe('#1050 — images the project owns', () => {
+  const KEY = `${'ab'.repeat(32)}.png`;
+  const projectRef = {
+    hash: KEY,
+    colorSpace: 'srgb',
+    flipY: false,
+    wrapS: 10497,
+    wrapT: 10497,
+    store: 'project',
+  };
+
+  it('collects a project image as a project image, not as a global baked texture', () => {
+    const refs = collectAssetRefs(stateFromParams({ m: { maps: { albedo: projectRef } } }));
+    expect(refs.projectImages).toEqual([KEY]);
+    // Listed in the global store it would match no file and leave the bundle with no missing entry.
+    expect(refs.bakedTextureHashes).toEqual([]);
+  });
+
+  it('a bundled project image lands in the folder of the project the bundle opens as', () => {
+    expect(bundleAssetStoragePath(projectImageBundlePath(KEY), 'proj_new')).toBe(
+      projectImagePath('proj_new', KEY),
+    );
+    // Everything else keeps the path it was bundled under.
+    expect(bundleAssetStoragePath('baked-texture/7b7cb53d.png', 'proj_new')).toBe(
+      'baked-texture/7b7cb53d.png',
+    );
+  });
+
+  it('a bundled image path that is not an image key is refused, not written where it points', () => {
+    expect(() => bundleAssetStoragePath('project-images/../project.json', 'proj_new')).toThrow(
+      /not an image key/,
+    );
+  });
+});
+
 describe('resolveAssetFiles — baked-texture hash → OPFS file', () => {
   it('resolves an ext-bearing ref hash (<hash>.<ext>) to its OPFS file', async () => {
     // The regression guard for the bundle drop: a real BakedTextureRef.hash is
@@ -194,6 +232,7 @@ describe('resolveAssetFiles — baked-texture hash → OPFS file', () => {
       bakedGeometry: [],
       bakedTextureHashes: ['7b7cb53d.png'],
       envHdri: [],
+      projectImages: [],
     });
     expect(files).toEqual([`${BAKED_TEXTURE_ROOT}/7b7cb53d.png`]);
   });
@@ -206,6 +245,7 @@ describe('resolveAssetFiles — baked-texture hash → OPFS file', () => {
       bakedGeometry: [],
       bakedTextureHashes: ['cafe'],
       envHdri: [],
+      projectImages: [],
     });
     expect(files).toEqual([`${BAKED_TEXTURE_ROOT}/cafe.jpg`]);
   });
@@ -217,6 +257,7 @@ describe('resolveAssetFiles — baked-texture hash → OPFS file', () => {
       bakedGeometry: [],
       bakedTextureHashes: ['missing.png'],
       envHdri: [],
+      projectImages: [],
     });
     expect(files).toEqual([]);
   });

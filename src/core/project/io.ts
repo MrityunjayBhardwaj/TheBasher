@@ -18,6 +18,7 @@
 import { detachGraph, type DagState } from '../dag/state';
 import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
+import { copyProjectImages, deleteProjectImages } from './projectImages';
 import { repairAndWarn } from './repairRoleBindings';
 import { PROJECT_FILENAME, PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
 
@@ -148,6 +149,9 @@ export async function listProjectMetadata(storage: StorageCapability): Promise<P
 }
 
 export async function deleteProject(storage: StorageCapability, projectId: string): Promise<void> {
+  // #1050 — the images first: a project file that outlives its images is a broken project, while
+  // images that outlive a deleted project file are only unreachable bytes.
+  await deleteProjectImages(storage, projectId);
   await storage.delete(projectPath(projectId));
 }
 
@@ -171,6 +175,8 @@ export async function duplicateProject(
     createdAt: now,
     updatedAt: now,
   };
+  // #1050 — the images before the project file, so the copy never exists without what it draws.
+  await copyProjectImages(storage, sourceId, newId);
   await saveProject(storage, dup);
   return dup;
 }

@@ -41,6 +41,7 @@ import {
   type ProjectMetadata,
 } from '../core/project';
 import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
+import { projectImagePath } from '../core/project/projectImages';
 import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { pickComfyUI, type ComfyUICapability } from '../core/comfy';
@@ -82,6 +83,8 @@ import {
   base64ToBytes,
   collectAssetRefs,
   resolveAssetFiles,
+  projectImageBundlePath,
+  bundleAssetStoragePath,
   type SceneBundle,
 } from './sceneBundle';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
@@ -707,6 +710,34 @@ export function boot(): Promise<void> {
             transformClipIds: result.transformClipIds,
           };
         };
+        // #1049 — the NATIVE road beside it: the file becomes stored polygon meshes and stops
+        // existing. A file the native model cannot hold yet is refused whole, by name, rather
+        // than half-imported. The clone road above is untouched until #1053 retires it.
+        w.__basher_importGltfNative = async (
+          buffer: ArrayBuffer,
+          assetRef: string,
+          resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+        ) => {
+          const dag = useDagStore.getState();
+          const sceneRef = dag.state.outputs.scene;
+          if (!sceneRef) {
+            throw new Error('__basher_importGltfNative: project has no `scene` output');
+          }
+          const native = await import('../core/import/nativeGltfImport');
+          const { storeImageInOpenProject } = await import('./asset/importGltf');
+          const result = await native.buildNativeGltfImportOps({
+            buffer,
+            assetRef,
+            sceneNodeId: sceneRef.node,
+            resolveBuffer,
+            storeImage: storeImageInOpenProject,
+          });
+          if ('refused' in result) {
+            throw new Error(`native import refused: ${result.refused} (${result.issue})`);
+          }
+          dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
+          return { groupId: result.groupId, objectIds: result.objectIds };
+        };
       });
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
       // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry
@@ -1291,6 +1322,16 @@ export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
       missingAssets.push(path);
     }
   }
+  // #1050 — the images this project owns, under a bundle path with no project id in it: the
+  // bundle opens as a project with a new one.
+  for (const key of refs.projectImages) {
+    const path = projectImagePath(meta.id, key);
+    try {
+      assets[projectImageBundlePath(key)] = bytesToBase64(await storage.read(path));
+    } catch {
+      missingAssets.push(path);
+    }
+  }
 
   const detached = detachGraph(dag);
   const bundle: SceneBundle = {
@@ -1323,10 +1364,15 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
   // Don't lose the project we're leaving.
   await saveCurrent();
 
+  // #1050 — the id first: a project image in the bundle is written into the folder of the project
+  // it opens as.
+  const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
   // 1. Rehydrate embedded assets to OPFS BEFORE hydrating the DAG, so the
   //    renderer's async loaders find the bytes on first mount.
   if (bundle.assets) {
-    for (const [path, b64] of Object.entries(bundle.assets)) {
+    for (const [bundlePath, b64] of Object.entries(bundle.assets)) {
+      const path = bundleAssetStoragePath(bundlePath, newId);
       if (await storage.exists(path)) continue;
       await storage.write(path, base64ToBytes(b64));
     }
@@ -1334,7 +1380,6 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
 
   // 2. Compose a brand-new project (fresh id + timestamps) through the same
   //    ladder loadProject uses (migrate → validate → migrate-nodes).
-  const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const project = bundleToProject(bundle, newId, Date.now());
   await saveProject(storage, project);
   persistLastProjectId(project.id);

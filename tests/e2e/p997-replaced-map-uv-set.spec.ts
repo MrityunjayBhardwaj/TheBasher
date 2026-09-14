@@ -46,15 +46,25 @@
 // image is green/magenta, the replacement blue/red) so neither state can be mistaken for
 // the other, and the 64×64 replacement's dimensions identify it independently.
 //
+// ── THE TWO CASES NOW TAKE DIFFERENT ROADS (#1071) ───────────────────────────────────
+//
+// `one-uv-quad` is a file the native model holds, so the control arrives as native geometry
+// and draws the project's copy of its image. `two-uv-quad` binds its map to TEXCOORD_1, which
+// the stored mesh does not hold yet (#1062), so the subject still arrives through the file's
+// copy. Until #1062 lands the centre-point control is weaker than the argument above says: the
+// road is a second difference between subject and control. Each case asserts its road, so the
+// day the subject turns native this file reds and the two cases are back on one road.
+//
 // REF: src/app/material/gltfMapOverlay.ts (`applyEditedMaps` — the write),
 //      src/viewport/SceneFromDAG.tsx (the call site this file is the only cover for),
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts (`capturePerMapUvSets` — the capture),
-//      src/core/import/twoUvFixture.gate.test.ts (the fixture's own gate);
-//      issues #997, #553, #550.
+//      src/core/import/twoUvFixture.gate.test.ts (the fixture's own gate),
+//      tests/e2e/_importedMesh.ts (the lookup + drawn reader, both roads);
+//      issues #997, #553, #550, #1071, #1062.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { firstMaterialChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh, importRoots } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
 /** 64×64: a 16px BLUE border around a RED centre — the same border/centre shape as the
@@ -76,8 +86,9 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => { mapProbe?: { imageWidth?: number } | null }[];
-  __basher_three: { getState: () => { scene: { traverse: (f: (o: unknown) => void) => void } } };
+  __basher_three: {
+    getState: () => { scene: { getObjectByName: (n: string) => unknown } };
+  };
   __basher_project_ndc: (xyz: [number, number, number]) => [number, number, number] | null;
   __basher_view_camera: () => { position: [number, number, number] } | null;
 }
@@ -92,19 +103,21 @@ type RGB = { r: number; g: number; b: number };
  * measured that polling the placement after a replacement returns the OLD texture's answer
  * while the new one is still decoding, which reads exactly like "the feature did nothing".
  */
-function drawnWidth(page: Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const all = w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    return { n: all.length, width: all[0]?.mapProbe?.imageWidth ?? null };
-  });
+async function drawnWidth(page: Page) {
+  const all = await drawnImportMeshes(page);
+  return { n: all.length, width: all[0]?.mapWidth ?? null };
 }
 
 async function materialChild(page: Page) {
-  const child = await firstMaterialChild(page);
-  if (!child) return null;
-  const m0 = child.slots[0] as Record<string, unknown>;
-  return { id: child.dataId, maps: m0.maps as Record<string, unknown> | undefined };
+  const mesh = await firstMaterialMesh(page);
+  if (!mesh) return null;
+  const m0 = mesh.slots[0] as Record<string, unknown>;
+  return {
+    id: mesh.dataId,
+    road: mesh.road,
+    rootId: mesh.rootId,
+    maps: m0.maps as Record<string, unknown> | undefined,
+  };
 }
 
 /**
@@ -176,10 +189,10 @@ async function cameraPose(page: Page): Promise<number[] | null> {
 const sameView = (a: number[] | null, b: number[] | null): boolean =>
   a !== null && b !== null && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) < 1e-6);
 
-async function sampleQuad(page: Page, meshName: string) {
+async function sampleQuad(page: Page, rootId: string) {
   for (let attempt = 0; ; attempt++) {
     const before = await cameraPose(page);
-    const read = await captureQuad(page, meshName);
+    const read = await captureQuad(page, rootId);
     // The capture is only usable if the camera held still across it — see `cameraPose`.
     // Bracketing is cheaper and stricter than waiting a fixed time for stillness first: it
     // guards the race itself rather than a proxy for it, and it costs nothing when there is
@@ -192,15 +205,23 @@ async function sampleQuad(page: Page, meshName: string) {
   }
 }
 
-async function captureQuad(page: Page, meshName: string) {
+/**
+ * The quad is found through its import ROOT, not its name: the renderer names the root's group
+ * with the root's node id on both roads, while the mesh itself carries the file's node name only
+ * on the clone road (a native mesh is unnamed). Each fixture draws exactly one mesh.
+ */
+async function captureQuad(page: Page, rootId: string) {
   const shot = (await page.screenshot()).toString('base64');
   const read = await page.evaluate(
-    async ({ meshName, points, shot }: { meshName: string; points: number[][]; shot: string }) => {
+    async ({ rootId, points, shot }: { rootId: string; points: number[][]; shot: string }) => {
       const w = window as unknown as BasherWindow;
       let mesh: unknown = null;
-      w.__basher_three.getState().scene.traverse((o) => {
-        const m = o as { isMesh?: boolean; name?: string };
-        if (!mesh && m.isMesh && m.name === meshName) mesh = o;
+      const root = w.__basher_three.getState().scene.getObjectByName(rootId) as
+        | { traverse: (f: (o: unknown) => void) => void }
+        | undefined;
+      root?.traverse((o) => {
+        const m = o as { isMesh?: boolean };
+        if (!mesh && m.isMesh) mesh = o;
       });
       if (!mesh) return null;
       const m = mesh as {
@@ -255,9 +276,9 @@ async function captureQuad(page: Page, meshName: string) {
         };
       });
     },
-    { meshName, points: POINTS.map((p) => [...p.at]), shot },
+    { rootId, points: POINTS.map((p) => [...p.at]), shot },
   );
-  if (!read) throw new Error(`mesh ${meshName} is not in the rendered scene`);
+  if (!read) throw new Error(`no mesh is drawn under import root ${rootId}`);
   const out: Record<string, { hue: ReturnType<typeof hue>; rgb: RGB; inFrustum: boolean }> = {};
   POINTS.forEach(({ name }, i) => {
     const r = read[i];
@@ -295,13 +316,15 @@ async function importAndSelect(page: Page, asset: string, folder: string) {
   );
   await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
   const child = (await materialChild(page))!;
+  // ONE import, so its root is the only one.
+  expect((await importRoots(page)).map((r) => r.rootId)).toEqual([child.rootId]);
   await page.evaluate((nid: string) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
   }, child.id);
   await openInspectorSection(page, 'material');
   // The fixture's OWN image has reached the render before any premise is read.
   await expect.poll(async () => (await drawnWidth(page)).width).toBe(4);
-  // ONE glTF mesh, so the probe's `[0]` is unambiguous.
+  // ONE drawn mesh, so the reader's `[0]` is unambiguous.
   expect((await drawnWidth(page)).n).toBe(1);
   return child;
 }
@@ -324,6 +347,8 @@ const CASES = [
     asset: 'two-uv-quad.gltf',
     mesh: 'TwoUvQuad',
     title: 'a map bound to TEXCOORD_1 draws the CENTRE QUARTER',
+    // Refused until the stored mesh holds TEXCOORD_1 (#1062) — see the header.
+    road: 'clone',
     // Set 1 spans the centre quarter, so every corner of the quad shows the image's centre.
     inherited: 'magenta',
     replaced: 'red',
@@ -332,6 +357,7 @@ const CASES = [
     asset: 'one-uv-quad.gltf',
     mesh: 'OneUvQuad',
     title: 'the CONTROL, on the default set, draws the WHOLE image',
+    road: 'native',
     // Set 0 spans the whole image, so the corners show its border.
     inherited: 'green',
     replaced: 'blue',
@@ -341,9 +367,11 @@ const CASES = [
 for (const c of CASES) {
   test(`#997 — ${c.title}`, async ({ page }) => {
     const child = await importAndSelect(page, c.asset, `p997-${c.mesh}`);
+    expect(child.road, `${c.asset} arrived on the ${child.road} road`).toBe(c.road);
 
-    // ── The INHERITED road: three's loader bound the clone's texture to the named set.
-    const before = await sampleQuad(page, c.mesh);
+    // ── The INHERITED image: the file's own texture, bound to the named set — by three's
+    // loader on the clone road, by the native material from the captured set on the native one.
+    const before = await sampleQuad(page, child.rootId);
     for (const [k, v] of Object.entries(before))
       expect(v.inFrustum, `${k} is off screen — the sample would be background`).toBe(true);
     // The centre is where the two sets agree: the same hue on subject and control.
@@ -356,7 +384,7 @@ for (const c of CASES) {
     // ── The REPLACED road: a director's own file, through the production pick.
     await replaceAlbedo(page, child.id);
 
-    const after = await sampleQuad(page, c.mesh);
+    const after = await sampleQuad(page, child.rootId);
     for (const [k, v] of Object.entries(after))
       expect(v.inFrustum, `${k} is off screen — the sample would be background`).toBe(true);
     expect(after.centre.hue, `centre after: ${JSON.stringify(after.centre.rgb)}`).toBe('red');

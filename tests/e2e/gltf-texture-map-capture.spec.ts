@@ -1,26 +1,26 @@
 // glTF direct-import (texture-maps milestone, V53) — the importer captures a
-// material's texture slots into the OpenPBR IR as IMPORTED-TEXTURE descriptors
-// (the "lighter" persistence path: gltfTexture index + colorspace + flipY + wrap,
-// hash EMPTY — bytes ride in the embedded .glb), so a map is inspector-visible +
-// DAG-addressable WITHOUT changing the render.
+// material's texture slots into the OpenPBR IR, so a map is inspector-visible +
+// DAG-addressable, and what is drawn is the captured texture.
+//
+// #1050 / #1071 — a textured file now arrives as native geometry. The captured map is
+// no longer an "inherit the file's texture" descriptor (`gltfTexture` + an empty hash):
+// the image's own bytes are stored in the project, and the map names that file by its
+// content hash. Nothing reads the glTF after import.
 //
 // THE BOUNDARY-PAIR PROOF (falsifiable):
-//   side A (the DAG)        — the GltfChild's captured materials[0].maps.albedo is
-//                             a descriptor { hash:'', gltfTexture:0, colorSpace:'srgb' }.
-//   side B (the live clone) — the rendered three.js material STILL carries .map
-//                             (hasMap), i.e. the captured descriptor inherited the
-//                             imported texture; render is byte-identical.
-// Pre-fix (maps:NULL_MAPS) side A would be null while side B was textured — the
-// exact "inspector shows empty slots even though it renders textured" gap.
+//   side A (the DAG)   — the mesh's captured material has an albedo map stored in the
+//                        project ({ store:'project', hash:'<sha256>.png', srgb, flipY false }).
+//   side B (the draw)  — the drawn three.js material carries a decoded base map.
+// A capture that dropped the map reds side A; a draw that ignored it reds side B.
 
 import { test, expect } from './_fixtures';
-import { firstMaterialChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 
 interface CapturedMap {
   hash: string;
   colorSpace: string;
   flipY: boolean;
-  gltfTexture?: number;
+  store?: string;
 }
 interface CapturedMaps {
   albedo: CapturedMap | null;
@@ -28,19 +28,14 @@ interface CapturedMaps {
   metalness: CapturedMap | null;
 }
 interface BasherWindow {
-  __basher_dag: {
-    getState: () => {
-      state: {
-        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
-      };
-    };
-  };
   __basher_ingestGltfFolder: (
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => { name: string; hasMap: boolean }[];
 }
+
+/** A project image key: the image's sha256 plus the file's own extension. */
+const PROJECT_IMAGE_KEY = /^[0-9a-f]{64}\.(png|jpe?g)$/;
 
 async function ingestAlbedoQuad(page: import('@playwright/test').Page): Promise<void> {
   await page.evaluate(async () => {
@@ -55,44 +50,36 @@ async function ingestAlbedoQuad(page: import('@playwright/test').Page): Promise<
   });
 }
 
-// #389 — the captured table moved to the `GltfData` half; see `_importedChild`.
 const capturedMaps = async (page: import('@playwright/test').Page) => {
-  const child = await firstMaterialChild(page);
-  return (child?.slots[0] as { maps?: CapturedMaps } | undefined)?.maps ?? null;
+  const mesh = await firstMaterialMesh(page);
+  return (mesh?.slots[0] as { maps?: CapturedMaps } | undefined)?.maps ?? null;
 };
 
-const someMeshHasMap = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const meshes = w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    return meshes.some((m) => m.hasMap);
-  });
-
 test.describe('glTF texture-map capture — IR descriptor + byte-identical render', () => {
-  test('captures the albedo texture as an imported descriptor; clone stays textured', async ({
-    page,
-  }) => {
+  test('captures the albedo texture into the project; the draw is textured', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
     await ingestAlbedoQuad(page);
 
-    // side A — the DAG captured an albedo descriptor (was null before the milestone).
-    await expect.poll(async () => (await capturedMaps(page))?.albedo?.gltfTexture).toBe(0);
+    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
+
+    // side A — the captured albedo map names the project's copy of the image.
+    await expect.poll(async () => (await capturedMaps(page))?.albedo?.store).toBe('project');
     const maps = await capturedMaps(page);
     expect(maps?.albedo).toMatchObject({
-      hash: '', // lighter path — no OPFS bytes; the .glb carries them
       colorSpace: 'srgb', // baseColor is sRGB (glTF convention)
       flipY: false, // glTF textures are flipY=false
-      gltfTexture: 0,
     });
-    // This material has only a baseColorTexture → the other slots stay null (inherit).
+    expect(maps?.albedo?.hash).toMatch(PROJECT_IMAGE_KEY);
+    // This material has only a baseColorTexture → the other slots stay null.
     expect(maps?.roughness).toBeNull();
     expect(maps?.metalness).toBeNull();
 
-    // side B — the rendered clone STILL carries the imported texture (render is
-    // byte-identical; the descriptor inherited rather than replaced/cleared).
-    await expect.poll(() => someMeshHasMap(page)).toBe(true);
+    // side B — the drawn material carries the stored image, decoded.
+    await expect
+      .poll(async () => (await drawnImportMeshes(page)).some((m) => m.hasMap && m.mapImageOk))
+      .toBe(true);
   });
 });

@@ -20,11 +20,31 @@ const textureCache = new Map<string, Texture>();
 const promiseCache = new Map<string, Promise<void>>();
 const errorCache = new Map<string, Error>();
 
+/**
+ * #1050 — the cache key is the whole texture state, not the image. A cached Texture carries the
+ * wrap, filters, flip and colour space it was loaded with, and every material clones it with those
+ * intact (`materialRegistry` re-asserts only colour space). Keyed by the image alone, the first
+ * material to load an image decided how every later one sampled it — reachable the moment two
+ * materials share a project image under different samplers.
+ */
+function cacheKeyOf(ref: BakedTextureRef): string {
+  return [
+    ref.store ?? 'global',
+    ref.hash,
+    ref.colorSpace,
+    ref.flipY ? 1 : 0,
+    ref.wrapS,
+    ref.wrapT,
+    ref.magFilter ?? '-',
+    ref.minFilter ?? '-',
+  ].join('|');
+}
+
 function loadAndCache(ref: BakedTextureRef): Promise<void> {
   return (async () => {
     const storage = await getStorage();
     const tex = await loadBakedTexture(storage, ref);
-    textureCache.set(ref.hash, tex);
+    textureCache.set(cacheKeyOf(ref), tex);
   })();
 }
 
@@ -34,21 +54,22 @@ function loadAndCache(ref: BakedTextureRef): Promise<void> {
  * OPFS-read+decode promise so the surrounding <Suspense> boundary catches it.
  */
 export function resolveBakedTexture(ref: BakedTextureRef): Texture {
-  const hit = textureCache.get(ref.hash);
+  const key = cacheKeyOf(ref);
+  const hit = textureCache.get(key);
   if (hit) return hit;
 
-  const failed = errorCache.get(ref.hash);
+  const failed = errorCache.get(key);
   if (failed) throw failed;
 
-  let p = promiseCache.get(ref.hash);
+  let p = promiseCache.get(key);
   if (!p) {
     p = loadAndCache(ref).then(
       () => undefined,
       (err: unknown) => {
-        errorCache.set(ref.hash, err instanceof Error ? err : new Error(String(err)));
+        errorCache.set(key, err instanceof Error ? err : new Error(String(err)));
       },
     );
-    promiseCache.set(ref.hash, p);
+    promiseCache.set(key, p);
   }
   throw p;
 }
@@ -61,17 +82,18 @@ export function resolveBakedTexture(ref: BakedTextureRef): Texture {
  * shows no backdrop rather than crashing (resilience by construction).
  */
 export function peekBakedTexture(ref: BakedTextureRef): Texture | null {
-  const hit = textureCache.get(ref.hash);
+  const key = cacheKeyOf(ref);
+  const hit = textureCache.get(key);
   if (hit) return hit;
-  if (errorCache.has(ref.hash)) return null;
-  if (!promiseCache.has(ref.hash)) {
+  if (errorCache.has(key)) return null;
+  if (!promiseCache.has(key)) {
     const p = loadAndCache(ref).then(
       () => undefined,
       (err: unknown) => {
-        errorCache.set(ref.hash, err instanceof Error ? err : new Error(String(err)));
+        errorCache.set(key, err instanceof Error ? err : new Error(String(err)));
       },
     );
-    promiseCache.set(ref.hash, p);
+    promiseCache.set(key, p);
   }
   return null;
 }

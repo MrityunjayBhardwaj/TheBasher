@@ -12,6 +12,7 @@ import { renderNodeCatalog } from '../nodeCatalog';
 import { idRefsByRole } from '../../core/dag/idRefSweep';
 import { readBaseParam } from '../../app/readBaseParam';
 import type { DagState } from '../../core/dag/state';
+import { paramsForAgent } from '../paramsForAgent';
 
 export const dagInspectSchema = z.object({
   scope: z
@@ -48,7 +49,8 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           return {
             id,
             type: n.type,
-            params: n.params,
+            // #1049 — a stored mesh is shown as its counts, never as its packed bytes.
+            params: paramsForAgent(n.params),
             inputs: inputs.length > 0 ? inputs : undefined,
             outputs: def ? Object.keys(def.outputs) : undefined,
           };
@@ -80,7 +82,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           {
             id: node.id,
             type: node.type,
-            params: node.params,
+            params: paramsForAgent(node.params),
             inputs: listInputs(node.inputs),
             outputs: def ? Object.keys(def.outputs) : [],
             referencedBy: referencedBy.length > 0 ? referencedBy : undefined,

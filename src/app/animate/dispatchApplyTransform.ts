@@ -1,11 +1,14 @@
-// dispatchApplyTransform — Apply-Transform for primitives (Phase 151 Wave 2 t5,
-// issue #151). The Box/Sphere path: compose the (masked) resolved TRS into a 4×4
-// matrix, bake it into a CLONE of the registry geometry, persist the baked bytes
-// to OPFS, and swap the original mesh node for a new BakedMesh in ONE atomic Op
-// composite (one dispatchAtomic = one Cmd+Z).
+// dispatchApplyTransform — Apply-Transform (Phase 151 Wave 2 t5, issue #151). Three roads:
 //
-// THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1) for
-// primitives. The glTF-child path lands in Wave 4.
+//   - STORED MESH DATA (#1077, `applyIntoStoredMesh`): the pose is written into the mesh data at
+//     the base of the Object's data lane, and the Object keeps posing it. No bake, no OPFS write,
+//     the material is never read. Every native import takes this road.
+//   - BOX / SPHERE (below): compose the (masked) resolved TRS into a 4×4 matrix, bake it into a
+//     CLONE of the registry geometry, persist the baked bytes to OPFS, and swap the original mesh
+//     node for a baked pair in ONE atomic Op composite (one dispatchAtomic = one Cmd+Z).
+//   - glTF CHILD on the clone road (`dispatchApplyGltfChild`).
+//
+// THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
 // Lifecycle (K15 extension, ORDERED):
 //   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
@@ -37,14 +40,27 @@ import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
-import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/types';
+import type {
+  BakedMaterialSpec,
+  InlineMaterialSpec,
+  MeshGeometryData,
+  MeshTransform,
+  Vec3,
+} from '../../nodes/types';
+import {
+  isPackedMeshData,
+  packMeshData,
+  unpackMeshData,
+  type PackedMeshData,
+} from '../meshGeometryData';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
-import { assignedMaterials, primaryMaterial } from '../materialAssignment';
+import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
 import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
+import { resolveDataLaneBase } from '../operatorChain';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
@@ -220,6 +236,53 @@ export function multiMaterialBakeRefusal(
 }
 
 /**
+ * Why this Apply must be refused when the material that would be baked is one we never
+ * captured, or `null` when there is nothing uncaptured to lose (#605 item 2).
+ *
+ * ── THE SIBLING REFUSAL, AND WHY IT IS A SECOND ONE RATHER THAN A WIDER FIRST ────────────
+ *
+ * {@link multiMaterialBakeRefusal} stops a bake from flattening TWO materials into one. This
+ * stops it from flattening ONE material into NONE, and the two are different failures with the
+ * same manners: nothing errors, the object keeps rendering, and a material is simply gone from
+ * a file the director now believes is saved. Kept separate because the messages must be —
+ * "reduce it to a single material" is useless advice for a mesh whose one material is fine and
+ * merely unreadable from here.
+ *
+ * ── WHAT WAS MEASURED ────────────────────────────────────────────────────────────────────
+ *
+ * `primaryMaterial` answers `null` for BOTH a genuinely materialless mesh and a clone-drawn one,
+ * because its return type has no room for the difference — the collapse `absentSlot` exists to
+ * end, still standing at the one consumer where it costs something. Observed on two assignments
+ * differing ONLY in where their buffers live:
+ *
+ *     absentSlot           none -> "none"        elsewhere -> "elsewhere"    told apart
+ *     slotMaterialAt(0)    none -> none          elsewhere -> elsewhere      told apart
+ *     primaryMaterial      none -> null          elsewhere -> null           INDISTINGUISHABLE
+ *     the bake at :412     null                  null                        INDISTINGUISHABLE
+ *
+ * So an Apply over an imported mesh wrote a baked spec with no material where the asset clone
+ * has one on screen. The refusal is keyed through {@link slotMaterialAt}, not off
+ * `absentSlot` directly: `absentSlot` says what an absence WOULD mean, and a clone-backed mesh
+ * whose material we DID capture must still bake fine.
+ *
+ * 🔑 THIS REFUSAL IS DISTANCE FROM THE GOAL, AND IT SHOULD ONE DAY BE UNREACHABLE. `elsewhere`
+ * exists only because an imported mesh's material lives in an asset clone instead of on the
+ * mesh. In both reference systems the importer reads the material and puts it ON the geometry,
+ * so the question never arises — a format fills the model and stops existing. When that holds
+ * here, nothing can construct an `elsewhere` assignment and this function returns `null` for
+ * every input. Refusing honestly is the interim; it is not the destination.
+ */
+export function uncapturedMaterialBakeRefusal(
+  selectedId: string,
+  materials: EvaluatedMesh['materials'],
+): string | null {
+  // Slot 0 is the one the bake carries — `primaryMaterial` narrows to it, and the
+  // multi-material refusal above has already stopped anything with more than one assigned.
+  if (slotMaterialAt(materials, 0).status !== 'elsewhere') return null;
+  return `Apply: "${selectedId}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
+}
+
+/**
  * The data node this Object poses, when retiring the Object should retire it too (#376).
  *
  * Returns null when there is no linked data node, or when the data node is SHARED — a
@@ -382,6 +445,23 @@ export async function dispatchApplyTransform(
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
   if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
+
+  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the base of the
+  // data lane holds (a packed mesh), not by its type name, for the reason `isPackedMeshData`
+  // gives. The BASE, not the `data` hop: a modifier or material operator on the stack sits
+  // between the Object and its mesh, and one hop would land on it and send the Apply to the bake.
+  const baseId = resolveDataLaneBase(state, selectedId);
+  const dataId = baseId !== selectedId ? baseId : null;
+  const storedMesh = dataId ? (state.nodes[dataId]?.params as { mesh?: unknown }).mesh : undefined;
+  if (dataId && isPackedMeshData(storedMesh)) {
+    return applyIntoStoredMesh(selectedId, dataId, storedMesh, mesh.transform, mask, state, {
+      dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
+      clearTransients:
+        deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
+      setSelection: deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id)),
+    });
+  }
+
   const matrix = composeMaskedMatrix(mesh.transform, mask);
 
   // 2 — clone the SHARED registry geometry before baking (H45).
@@ -409,6 +489,11 @@ export async function dispatchApplyTransform(
   const bakedId = selectedId;
   const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
   if (refusal) return { ok: false, reason: refusal };
+  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
+  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
+  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
+  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
+  if (uncaptured) return { ok: false, reason: uncaptured };
   const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
@@ -526,6 +611,180 @@ export async function dispatchApplyTransform(
   setSelection(bakedId);
 
   return { ok: true, bakedId };
+}
+
+/** The Object params each Apply mask resets, and the identity each one resets to. */
+const APPLIED_BANDS: Readonly<Record<ApplyMask, ReadonlyArray<'position' | 'rotation' | 'scale'>>> =
+  {
+    all: ['position', 'rotation', 'scale'],
+    location: ['position'],
+    rotation: ['rotation'],
+    scale: ['scale'],
+  };
+const IDENTITY_BAND = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } as const;
+
+/** T·R·S from a resolved transform (degrees, Euler XYZ), the order the renderer draws with. */
+function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Matrix4 {
+  const D2R = Math.PI / 180;
+  const [rx, ry, rz] = t.rotation;
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3(...t.position),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx * D2R, ry * D2R, rz * D2R, 'XYZ')),
+    new THREE.Vector3(...t.scale),
+  );
+}
+
+/**
+ * A stored mesh with `matrix` applied to its points and corner normals. Every array is a COPY: the
+ * decoded arrays are cached on the packed object (`unpackMeshData`), and undo puts that same object
+ * back, so arrays written in place would draw the posed mesh under unposed strings after Cmd+Z.
+ *
+ * A matrix with a negative determinant mirrors the mesh, which turns every face inside out. Each
+ * face's corners are reversed with its FIRST corner kept, as Blender does on Apply (measured on
+ * 5.1.1: loop `[0,1,3,2]` → `[0,2,3,1]`, normals still outward). Keeping the first corner keeps the
+ * fan triangulation's diagonal where it was.
+ */
+function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshGeometryData {
+  const v = new THREE.Vector3();
+  const points = new Float32Array(data.points.length);
+  for (let i = 0; i < points.length; i += 3) {
+    v.fromArray(data.points, i).applyMatrix4(matrix).toArray(points, i);
+  }
+  let cornerNormals: Float32Array | null = null;
+  if (data.cornerNormals !== null) {
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+    cornerNormals = new Float32Array(data.cornerNormals.length);
+    for (let i = 0; i < cornerNormals.length; i += 3) {
+      v.fromArray(data.cornerNormals, i)
+        .applyMatrix3(normalMatrix)
+        .normalize()
+        .toArray(cornerNormals, i);
+    }
+  }
+  const cornerPoints = new Uint32Array(data.cornerPoints);
+  const cornerUVs = data.cornerUVs === null ? null : new Float32Array(data.cornerUVs);
+  if (matrix.determinant() < 0) {
+    const reversed = { points: new Uint32Array(cornerPoints), uvs: cornerUVs?.slice() ?? null };
+    const normals = cornerNormals?.slice() ?? null;
+    let start = 0;
+    for (const size of data.faceSizes) {
+      for (let k = 1; k < size; k++) {
+        const from = start + size - k; // corner k of the reversed run reads corner size-k
+        const to = start + k;
+        cornerPoints[to] = reversed.points[from];
+        if (cornerUVs !== null && reversed.uvs !== null) {
+          cornerUVs.set(reversed.uvs.subarray(from * 2, from * 2 + 2), to * 2);
+        }
+        if (cornerNormals !== null && normals !== null) {
+          cornerNormals.set(normals.subarray(from * 3, from * 3 + 3), to * 3);
+        }
+      }
+      start += size;
+    }
+  }
+  return {
+    points,
+    faceSizes: new Uint32Array(data.faceSizes),
+    cornerPoints,
+    cornerUVs,
+    cornerNormals,
+  };
+}
+
+/**
+ * Apply over an Object whose data is a stored mesh (#1077): the pose goes INTO that mesh data, and
+ * the Object keeps posing it. Nothing is baked and nothing is converted.
+ *
+ * ── WHY NOT THE BAKE ROAD ─────────────────────────────────────────────────────────────────
+ *
+ * The bake re-expresses the material as a `BakedMaterialSpec`, which has no field for an alpha
+ * cutoff, double-siding, vertex colours, per-map UV placement or UV sets, all of which an import
+ * writes. It kept only the base colour and lost the rest with nothing saying so. And a baked mesh
+ * answers none of the questions a stored mesh answers (`importedMeshParity.gate.test.ts`: 6 of 6
+ * against 0 of 6), so baking an import would turn it back into the thing the import stopped being.
+ * Blender does neither: after Apply the object points at the SAME Mesh datablock with the SAME
+ * material, verts moved (measured on 4.5.9 and 5.1.1). This function never reads the material,
+ * which is the whole of how it cannot lose one.
+ *
+ * ── WHAT IS WRITTEN INTO THE VERTS ─────────────────────────────────────────────────────────
+ *
+ * `kept⁻¹ · full`, where `full` is the resolved pose and `kept` is that pose with the applied bands
+ * set to identity. The drawn world shape is therefore unchanged for every mask, including a rotation
+ * applied under a non-uniform scale that stays on the Object, where the rotation alone would shear
+ * the result. Blender keeps the world shape exactly in that case (measured: max vertex deviation 0).
+ *
+ * ── WITH OPERATORS ON THE STACK ───────────────────────────────────────────────────────────
+ *
+ * `dataId` is the BASE of the data lane, so modifiers and material operators stacked between it and
+ * the Object stay exactly where they are and now read the applied mesh. The world shape above is
+ * then a promise about the mesh, not about every modifier's result: an operator with an offset in
+ * object units reads that offset against the new verts. Blender behaves the same (measured on
+ * 5.1.1: Apply Scale under an Array modifier succeeds and keeps it; a constant offset changes the
+ * drawn width 5.0 → 3.5, a relative offset keeps 4.0).
+ *
+ * Refused when anything along the lane feeds a second consumer (Blender: "Cannot apply to a multi
+ * user"), because that consumer would change too, and when a kept scale is zero, because `kept`
+ * has no inverse.
+ */
+function applyIntoStoredMesh(
+  selectedId: string,
+  dataId: string,
+  packed: PackedMeshData,
+  transform: MeshTransform,
+  mask: ApplyMask,
+  state: DagState,
+  io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
+): DispatchResult {
+  // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
+  // consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
+  // shared operator's result. Either way it would change with this Apply.
+  const seen = new Set<string>();
+  for (let cur = dataId; cur !== selectedId; ) {
+    const edges = consumerEdgesOf(state, cur);
+    if (edges.length !== 1 || seen.has(cur)) {
+      const others = Math.max(edges.length - 1, 0);
+      return {
+        ok: false,
+        reason: `Apply: "${selectedId}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${cur}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
+      };
+    }
+    seen.add(cur);
+    cur = edges[0].consumer;
+  }
+  const applied = APPLIED_BANDS[mask];
+  const kept = { ...transform };
+  for (const band of applied) kept[band] = [...IDENTITY_BAND[band]];
+  const keptMatrix = trsMatrix(kept);
+  if (keptMatrix.determinant() === 0) {
+    return {
+      ok: false,
+      reason: `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`,
+    };
+  }
+  const matrix = keptMatrix.invert().multiply(trsMatrix(transform));
+  const next = transformMeshData(unpackMeshData(packed), matrix);
+
+  const ops: Op[] = [
+    { type: 'setParam', nodeId: dataId, paramPath: 'mesh', value: packMeshData(next) },
+    ...applied.map(
+      (band): Op => ({
+        type: 'setParam',
+        nodeId: selectedId,
+        paramPath: band,
+        value: [...IDENTITY_BAND[band]],
+      }),
+    ),
+  ];
+  try {
+    io.dispatchAtomic(ops, 'user', `Apply ${mask} → mesh data`);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  // A held edit would otherwise outrank the identity just written — see step 5 of the bake road.
+  io.clearTransients(selectedId);
+  io.clearTransients(dataId);
+  io.setSelection(selectedId);
+  return { ok: true, bakedId: selectedId };
 }
 
 /**

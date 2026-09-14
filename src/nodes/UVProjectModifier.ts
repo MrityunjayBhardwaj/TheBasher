@@ -17,26 +17,36 @@
 // carrying differing projected values**, against 0 for the lift and 0 for the same code with
 // the per-face choice removed, over the identical 45.
 //
-// ── 🔴 WHAT A DIRECTOR SEES TODAY: NOTHING. READ THIS BEFORE ASSUMING IT IS BROKEN ────
+// ── 🔴 WHAT A DIRECTOR SEES TODAY: THE PROJECTION. THIS BLOCK USED TO SAY THE OPPOSITE (#1038) ──
 //
-// Adding this modifier changes no pixel. The layer it authors has no reader in production —
-// censused, and the only readers are its own gate and the producer census — so the mesh draws
-// exactly as it did before. Materialising the layer to the render buffer is #786, and it is a
-// tessellation change rather than an omission here: wherever two corners at one render vertex
-// disagree, the buffer has to SPLIT that vertex, and that is a different operator's work.
+// What stood here read *"Adding this modifier changes no pixel … the layer it authors has no
+// reader in production"*, and told the reader in the imperative not to trust their own eyes. It
+// was true when written and #786 made it false: `buildUVProject` is wired into the registry's
+// build dispatch (`geometryRegistry.ts`, whose own line says *"The delegation is gone; a
+// projection builds"*), so the layer reaches the render buffer.
 //
-// ⚠️ AND THAT MAKES THIS AN ADVERTISED ACTION THAT SILENTLY DOES NOTHING, which is the exact
-// shape `ModifierStackControls` refuses elsewhere: *"an add that `buildAddModifierOps` would
-// refuse is not shown at all, so the panel cannot advertise an action that silently does
-// nothing."* The two honest options were to ship it offered and say so, or to withhold the
-// `section` declaration — and the second is unavailable without also withholding the operator,
-// because in this substrate the section IS the membership ("a member joins a stack by declaring
-// the section, never by having the right sockets"). So it ships offered, the cost is written
-// down here rather than discovered, and the gap is FILED rather than left in a comment.
+// MEASURED on a unit box, the drawn `uv` buffer with the modifier against without it:
+//
+//     box  uv (48 slots) : [0, 1, 1, 1, 0, 0, 1, 0, ...]
+//     proj uv (48 slots) : [0.25, 0.75, 0.75, 0.75, 0.25, 0.25, 0.75, 0.25, ...]
+//     slots DIFFERING    : 48 of 48
+//
+// Every slot changes. The old block is recorded rather than deleted because it is the reason a
+// later session argued this operator could not be verified at all — a stale premise that keeps
+// producing plausible conclusions does not correct itself, and the correction is the useful part.
+//
+// ⚠️ WHAT REMAINS TRUE FROM IT, AND IT IS THE INTERESTING HALF. Materialising a corner layer IS a
+// tessellation change: wherever two corners at one render vertex carry different values, one slot
+// cannot hold both and the vertex has to SPLIT. That is why this operator is worth having — a
+// cube projection chooses its side per FACE, so the disagreement is the product, not an edge case
+// — and the split is `cornerMaterialisation.ts`, reached through the build arm rather than
+// deferred out of this file. So this is no longer an advertised action that does nothing; the
+// paragraph that weighed shipping it offered against withholding the `section` declaration is
+// spent, and is gone with the condition that made it a question.
 //
 // ── WHAT THIS NODE DOES NOT DO, DELIBERATELY ──────────────────────────────────────────
 //
-// It does not put the layer on the render buffer (#786 — see above), it does not carry the
+// It does not carry the
 // layer through a minting kind (#881 — measured: a downstream modifier gathers its source's
 // attribute KEY, and this layer cannot be in one, because a key is content-derived while the
 // values need built positions), and there is no seam marking or unwrapping here. A projection
@@ -47,7 +57,8 @@
 // The generators carry one because a scoped generator is meaningful — it generates from the
 // subset and preserves the whole input. The reference's UV Project modifier has no selection
 // either: it projects the mesh. A scoped projection would have to say what the UNPROJECTED
-// faces carry at a domain whose materialisation is #786's open question, so it is left out by
+// faces carry — a question the materialisation does not answer, since it says how a corner value
+// reaches the buffer and not what an UNPROJECTED corner's value is — so it is left out by
 // decision rather than by oversight — and being left out, it cannot be answered wrongly.
 //
 // REF: src/app/uvProjection.ts (`projectMeshUVs` — the projection, and why it is on the read

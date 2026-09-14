@@ -11,9 +11,10 @@ import {
 // happy-dom has no real image decoder + no OffscreenCanvas PNG encoder, so these
 // tests drive the deterministic, decode-free paths: path (1) (original-bytes
 // copy) and an INJECTED encoder/decoder for path (2). The real canvas readback +
-// TextureLoader decode are exercised by the e2e (p151-texture-readback-probe +
-// the Wave 4 glTF render), where a real browser is present (Lokayata: the unit
-// proves the IO round-trip + colorspace contract; the e2e proves the decode).
+// TextureLoader decode were exercised in a real browser by the p151 e2e, which baked
+// a glTF child off the clone. ⚠️ Since #1073 that fixture imports as native geometry,
+// so no e2e reaches the clone-road bake any more: the decode half is currently
+// unobserved (the unit still proves the IO round-trip + colorspace contract).
 
 /** A texture that reports captured-state fields but carries no decodable image. */
 function makeTexture(opts?: {

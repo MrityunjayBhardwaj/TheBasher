@@ -542,6 +542,12 @@ describe('ns-2 step 9b — nothing fabricates a selection (pre-mortem #1)', () =
       'src/app/faceCount.ts', // the scoped count
       'src/app/geometryRegistry.ts', // the scoped build
       'src/app/bevelLayout.ts', // #827 — the scoped LAYOUT, which is a topology and not a count
+      // #712 — the scoped POINT SET. Same category as the three above it: a descriptor-road
+      // consumer that has to know WHICH faces a scope names before it can say anything about
+      // them. `keptSourcePoints` unions the kept faces' rims, and it reads the mask through
+      // the one door rather than re-deriving a second one — which is the whole rule this
+      // census holds. Still no `src/nodes/` module interprets a query, which is the claim.
+      'src/app/pointIdentity.ts',
     ];
     const probe = /\bscopeSelection\b|\bscopeSelectedCount\b/;
     const files = sourceFiles();

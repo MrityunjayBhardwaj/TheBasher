@@ -48,6 +48,7 @@ import type { ComfyUICapability } from '../core/comfy';
 import type { MotionGenerationCapability } from '../core/motiongen';
 import type { ModelGenerationCapability } from '../core/modelgen';
 import type { StorageCapability } from '../core/storage';
+import { paramsForAgent } from './paramsForAgent';
 
 // Bumped 4 → 8 (2026-05-08, post-PR-#9 live smoke). Single user intents
 // often legitimately require 2 identifies + listMutators + proposePlan +
@@ -993,7 +994,11 @@ function buildContextBlock(
   for (const id of selectedNodeIds) {
     const n = dagState.nodes[id];
     if (n) {
-      const paramsStr = truncate(JSON.stringify(n.params ?? {}), PARAMS_PREVIEW_LIMIT);
+      // #1049 — a stored mesh previews as its counts, not as the first bytes of its packing.
+      const paramsStr = truncate(
+        JSON.stringify(paramsForAgent(n.params ?? {})),
+        PARAMS_PREVIEW_LIMIT,
+      );
       selectionDetails.push(`  - ${id} (${n.type}): ${paramsStr}`);
     }
   }

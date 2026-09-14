@@ -87,10 +87,12 @@ describe('a director generating a mesh gets an ordinary imported asset', () => {
       ...new Set(Object.values(useDagStore.getState().state.nodes).map((n) => n.type)),
     ].sort();
     // Scene + TimeSource are the seed; the rest is what the import road produced.
-    // #389 — `Object` + `GltfData` where `GltfChild` was: an imported child is a split pair
-    // now, and this row is the one that proves the generation road took the SAME producer
-    // the file-drop road takes rather than a parallel one that kept minting the fused kind.
-    expect(types).toEqual(['GltfAsset', 'GltfData', 'Group', 'Object', 'Scene', 'TimeSource']);
+    // #1049 — the stub's mesh (one node, one untextured primitive) is one the native model holds,
+    // so it arrives as native geometry: a Group over `Object` + `PolyMeshData`, and nothing that
+    // reads the file. This row still proves the generation road took the SAME producer the
+    // file-drop road takes rather than a parallel one (it named `GltfAsset` + `GltfData` while the
+    // clone road was the only one).
+    expect(types).toEqual(['Group', 'Object', 'PolyMeshData', 'Scene', 'TimeSource']);
   });
 });
 
@@ -146,9 +148,10 @@ describe("the identical road — the phase's discriminating observation", () => 
       .filter((n) => !before.has(n.id))
       .map((n) => `addNode:${n.type}`)
       // The import's connects, which the node table cannot report (a connect leaves no
-      // node behind). THREE since #389, not two: `gltf → group.children`,
-      // `group → scene.children`, and the split pair's own `data → object.data`. The
-      // count is `2 + one per imported child`, and this fixture's GLB has exactly one.
+      // node behind). THREE for a native import (#1049): `data → object.data`,
+      // `object → group.children`, `group → scene.children`. The count is `1 + two per
+      // imported object`, and this fixture's GLB has exactly one. (The clone road also
+      // made three here, by a different sum: `2 + one per imported child`.)
       .concat(['connect', 'connect', 'connect'])
       .sort();
 
