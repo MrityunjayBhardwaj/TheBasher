@@ -778,9 +778,22 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
     };
   })();
 
-  function build(pose: Pose, opts: { shared?: boolean; turnZDegrees?: number } = {}): DagState {
+  /** The id of the `i`th operator `build` splices between the mesh data and the Object. */
+  const opId = (i: number) => `n_stored_op${i}`;
+
+  function build(
+    pose: Pose,
+    opts: {
+      /** A second Object wearing the mesh data (`base`) or the top of the stack (`top`). */
+      sharedAt?: 'base' | 'top';
+      turnZDegrees?: number;
+      /** Operator node types spliced, bottom first, between the mesh data and the Object. */
+      between?: readonly string[];
+    } = {},
+  ): DagState {
     const s = buildSceneScaffold();
     const scene = s.outputs.scene!.node;
+    const between = opts.between ?? [];
     const ops: Op[] = [
       {
         type: 'addNode',
@@ -789,19 +802,33 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
         params: { mesh: packMeshData(cubeData(opts.turnZDegrees)), material: MATERIAL },
       },
       { type: 'addNode', nodeId: OBJ, nodeType: 'Object', params: { ...pose } },
-      { type: 'connect', from: { node: DATA, socket: 'out' }, to: { node: OBJ, socket: 'data' } },
+    ];
+    let below = DATA;
+    between.forEach((type, i) => {
+      ops.push(
+        { type: 'addNode', nodeId: opId(i), nodeType: type, params: {} },
+        {
+          type: 'connect',
+          from: { node: below, socket: 'out' },
+          to: { node: opId(i), socket: 'target' },
+        },
+      );
+      below = opId(i);
+    });
+    ops.push(
+      { type: 'connect', from: { node: below, socket: 'out' }, to: { node: OBJ, socket: 'data' } },
       {
         type: 'connect',
         from: { node: OBJ, socket: 'out' },
         to: { node: scene, socket: 'children' },
       },
-    ];
-    if (opts.shared) {
+    );
+    if (opts.sharedAt) {
       ops.push(
         { type: 'addNode', nodeId: 'n_stored_b', nodeType: 'Object', params: {} },
         {
           type: 'connect',
-          from: { node: DATA, socket: 'out' },
+          from: { node: opts.sharedAt === 'base' ? DATA : below, socket: 'out' },
           to: { node: 'n_stored_b', socket: 'data' },
         },
         {
@@ -985,14 +1012,68 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   });
 
   it('refuses by name when the mesh data is shared, and changes nothing', async () => {
-    const state = build(POSE, { shared: true });
+    const state = build(POSE, { sharedAt: 'base' });
     const { result, next, calls } = await apply(state, 'all');
     expect(result.ok).toBe(false);
     expect((result as { reason: string }).reason).toMatch(
-      /shares its mesh data with 1 other object\b/,
+      /shares its mesh data with 1 other consumer \(at "n_stored_data"\)/,
     );
     expect(calls).toHaveLength(0);
     expect(next).toBe(state);
+  });
+
+  // ── Operators on the stack: the Apply reaches the mesh data under them and leaves them alone ──
+
+  it.each([
+    [['ArrayModifier']],
+    [['MaterialOverrideOp']],
+    [['ArrayModifier', 'MaterialOverrideOp']],
+  ])(
+    'applies into the mesh data under %j: the operators stay wired, the material is untouched, nothing bakes',
+    async (between) => {
+      const state = build(POSE, { between });
+      const opsBefore = between.map((_, i) => state.nodes[opId(i)]);
+      const { result, next, cleared } = await apply(state, 'all');
+
+      expect(result.ok).toBe(true);
+      expect(Object.values(next.nodes).some((n) => n.type === 'BakedData')).toBe(false);
+      // The stack is exactly as it was: same nodes, same params, same wiring, Object on top.
+      between.forEach((_, i) => expect(next.nodes[opId(i)]).toEqual(opsBefore[i]));
+      expect(next.nodes[OBJ].inputs.data).toEqual({
+        node: opId(between.length - 1),
+        socket: 'out',
+      });
+      expect(next.nodes[DATA].params.material).toEqual(MATERIAL);
+      expect(next.nodes[OBJ].params).toMatchObject({
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      });
+      // The pose reached the mesh data under the stack.
+      const posedPoints = worldPoints(state);
+      expectSameWorld(worldPoints(next), posedPoints);
+      // The held edits dropped are the Object's and the MESH DATA's, not an operator's.
+      expect(cleared.sort()).toEqual([DATA, OBJ].sort());
+    },
+  );
+
+  it('refuses by name when a second Object wears a shared operator on the stack', async () => {
+    const state = build(POSE, { between: ['ArrayModifier'], sharedAt: 'top' });
+    const { result, next, calls } = await apply(state, 'all');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(
+      /shares its mesh data with 1 other consumer \(at "n_stored_op0"\)/,
+    );
+    expect(calls).toHaveLength(0);
+    expect(next).toBe(state);
+  });
+
+  it('refuses by name when a second Object poses the mesh data under the stack', async () => {
+    const state = build(POSE, { between: ['ArrayModifier'], sharedAt: 'base' });
+    const { result, calls } = await apply(state, 'all');
+    expect(result.ok).toBe(false);
+    expect((result as { reason: string }).reason).toMatch(/\(at "n_stored_data"\)/);
+    expect(calls).toHaveLength(0);
   });
 
   it('refuses by name when a scale that stays on the Object is zero', async () => {

@@ -57,6 +57,7 @@ import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialA
 import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
+import { resolveDataLaneBase } from '../operatorChain';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
@@ -442,9 +443,12 @@ export async function dispatchApplyTransform(
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
   if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
 
-  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the data node
-  // holds (a packed mesh), not by its type name, for the reason `isPackedMeshData` gives.
-  const dataId = linkedDataNodeId(state, selectedId);
+  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the base of the
+  // data lane holds (a packed mesh), not by its type name, for the reason `isPackedMeshData`
+  // gives. The BASE, not the `data` hop: a modifier or material operator on the stack sits
+  // between the Object and its mesh, and one hop would land on it and send the Apply to the bake.
+  const baseId = resolveDataLaneBase(state, selectedId);
+  const dataId = baseId !== selectedId ? baseId : null;
   const storedMesh = dataId ? (state.nodes[dataId]?.params as { mesh?: unknown }).mesh : undefined;
   if (dataId && isPackedMeshData(storedMesh)) {
     return applyIntoStoredMesh(selectedId, dataId, storedMesh, mesh.transform, mask, state, {
@@ -706,8 +710,18 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
  * applied under a non-uniform scale that stays on the Object, where the rotation alone would shear
  * the result. Blender keeps the world shape exactly in that case (measured: max vertex deviation 0).
  *
- * Refused when the mesh data is shared (Blender: "Cannot apply to a multi user"), because the other
- * Objects would move with it, and when a kept scale is zero, because `kept` has no inverse.
+ * ── WITH OPERATORS ON THE STACK ───────────────────────────────────────────────────────────
+ *
+ * `dataId` is the BASE of the data lane, so modifiers and material operators stacked between it and
+ * the Object stay exactly where they are and now read the applied mesh. The world shape above is
+ * then a promise about the mesh, not about every modifier's result: an operator with an offset in
+ * object units reads that offset against the new verts. Blender behaves the same (measured on
+ * 5.1.1: Apply Scale under an Array modifier succeeds and keeps it; a constant offset changes the
+ * drawn width 5.0 → 3.5, a relative offset keeps 4.0).
+ *
+ * Refused when anything along the lane feeds a second consumer (Blender: "Cannot apply to a multi
+ * user"), because that consumer would change too, and when a kept scale is zero, because `kept`
+ * has no inverse.
  */
 function applyIntoStoredMesh(
   selectedId: string,
@@ -718,12 +732,21 @@ function applyIntoStoredMesh(
   state: DagState,
   io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
 ): DispatchResult {
-  const users = consumerEdgesOf(state, dataId).length;
-  if (users > 1) {
-    return {
-      ok: false,
-      reason: `Apply: "${selectedId}" shares its mesh data with ${users - 1} other object${users === 2 ? '' : 's'}, and applying would move them too. Give it its own copy of the mesh first.`,
-    };
+  // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
+  // consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
+  // shared operator's result. Either way it would change with this Apply.
+  const seen = new Set<string>();
+  for (let cur = dataId; cur !== selectedId; ) {
+    const edges = consumerEdgesOf(state, cur);
+    if (edges.length !== 1 || seen.has(cur)) {
+      const others = Math.max(edges.length - 1, 0);
+      return {
+        ok: false,
+        reason: `Apply: "${selectedId}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${cur}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
+      };
+    }
+    seen.add(cur);
+    cur = edges[0].consumer;
   }
   const applied = APPLIED_BANDS[mask];
   const kept = { ...transform };
