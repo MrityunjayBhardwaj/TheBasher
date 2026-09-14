@@ -37,7 +37,19 @@ import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
-import type { BakedMaterialSpec, InlineMaterialSpec, Vec3 } from '../../nodes/types';
+import type {
+  BakedMaterialSpec,
+  InlineMaterialSpec,
+  MeshGeometryData,
+  MeshTransform,
+  Vec3,
+} from '../../nodes/types';
+import {
+  isPackedMeshData,
+  packMeshData,
+  unpackMeshData,
+  type PackedMeshData,
+} from '../meshGeometryData';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { writeBakedGeometry } from '../asset/bakedGeometryStore';
@@ -429,6 +441,20 @@ export async function dispatchApplyTransform(
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
   if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
+
+  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the data node
+  // holds (a packed mesh), not by its type name, for the reason `isPackedMeshData` gives.
+  const dataId = linkedDataNodeId(state, selectedId);
+  const storedMesh = dataId ? (state.nodes[dataId]?.params as { mesh?: unknown }).mesh : undefined;
+  if (dataId && isPackedMeshData(storedMesh)) {
+    return applyIntoStoredMesh(selectedId, dataId, storedMesh, mesh.transform, mask, state, {
+      dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
+      clearTransients:
+        deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
+      setSelection: deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id)),
+    });
+  }
+
   const matrix = composeMaskedMatrix(mesh.transform, mask);
 
   // 2 — clone the SHARED registry geometry before baking (H45).
@@ -578,6 +604,161 @@ export async function dispatchApplyTransform(
   setSelection(bakedId);
 
   return { ok: true, bakedId };
+}
+
+/** The Object params each Apply mask resets, and the identity each one resets to. */
+const APPLIED_BANDS: Readonly<Record<ApplyMask, ReadonlyArray<'position' | 'rotation' | 'scale'>>> =
+  {
+    all: ['position', 'rotation', 'scale'],
+    location: ['position'],
+    rotation: ['rotation'],
+    scale: ['scale'],
+  };
+const IDENTITY_BAND = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } as const;
+
+/** T·R·S from a resolved transform (degrees, Euler XYZ), the order the renderer draws with. */
+function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Matrix4 {
+  const D2R = Math.PI / 180;
+  const [rx, ry, rz] = t.rotation;
+  return new THREE.Matrix4().compose(
+    new THREE.Vector3(...t.position),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(rx * D2R, ry * D2R, rz * D2R, 'XYZ')),
+    new THREE.Vector3(...t.scale),
+  );
+}
+
+/**
+ * A stored mesh with `matrix` applied to its points and corner normals. Every array is a COPY: the
+ * decoded arrays are cached on the packed object (`unpackMeshData`), and undo puts that same object
+ * back, so arrays written in place would draw the posed mesh under unposed strings after Cmd+Z.
+ *
+ * A matrix with a negative determinant mirrors the mesh, which turns every face inside out. Each
+ * face's corners are reversed with its FIRST corner kept, as Blender does on Apply (measured on
+ * 5.1.1: loop `[0,1,3,2]` → `[0,2,3,1]`, normals still outward). Keeping the first corner keeps the
+ * fan triangulation's diagonal where it was.
+ */
+function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshGeometryData {
+  const v = new THREE.Vector3();
+  const points = new Float32Array(data.points.length);
+  for (let i = 0; i < points.length; i += 3) {
+    v.fromArray(data.points, i).applyMatrix4(matrix).toArray(points, i);
+  }
+  let cornerNormals: Float32Array | null = null;
+  if (data.cornerNormals !== null) {
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix);
+    cornerNormals = new Float32Array(data.cornerNormals.length);
+    for (let i = 0; i < cornerNormals.length; i += 3) {
+      v.fromArray(data.cornerNormals, i)
+        .applyMatrix3(normalMatrix)
+        .normalize()
+        .toArray(cornerNormals, i);
+    }
+  }
+  const cornerPoints = new Uint32Array(data.cornerPoints);
+  const cornerUVs = data.cornerUVs === null ? null : new Float32Array(data.cornerUVs);
+  if (matrix.determinant() < 0) {
+    const reversed = { points: new Uint32Array(cornerPoints), uvs: cornerUVs?.slice() ?? null };
+    const normals = cornerNormals?.slice() ?? null;
+    let start = 0;
+    for (const size of data.faceSizes) {
+      for (let k = 1; k < size; k++) {
+        const from = start + size - k; // corner k of the reversed run reads corner size-k
+        const to = start + k;
+        cornerPoints[to] = reversed.points[from];
+        if (cornerUVs !== null && reversed.uvs !== null) {
+          cornerUVs.set(reversed.uvs.subarray(from * 2, from * 2 + 2), to * 2);
+        }
+        if (cornerNormals !== null && normals !== null) {
+          cornerNormals.set(normals.subarray(from * 3, from * 3 + 3), to * 3);
+        }
+      }
+      start += size;
+    }
+  }
+  return {
+    points,
+    faceSizes: new Uint32Array(data.faceSizes),
+    cornerPoints,
+    cornerUVs,
+    cornerNormals,
+  };
+}
+
+/**
+ * Apply over an Object whose data is a stored mesh (#1077): the pose goes INTO that mesh data, and
+ * the Object keeps posing it. Nothing is baked and nothing is converted.
+ *
+ * ── WHY NOT THE BAKE ROAD ─────────────────────────────────────────────────────────────────
+ *
+ * The bake re-expresses the material as a `BakedMaterialSpec`, which has no field for an alpha
+ * cutoff, double-siding, vertex colours, per-map UV placement or UV sets, all of which an import
+ * writes. It kept only the base colour and lost the rest with nothing saying so. And a baked mesh
+ * answers none of the questions a stored mesh answers (`importedMeshParity.gate.test.ts`: 6 of 6
+ * against 0 of 6), so baking an import would turn it back into the thing the import stopped being.
+ * Blender does neither: after Apply the object points at the SAME Mesh datablock with the SAME
+ * material, verts moved (measured on 4.5.9 and 5.1.1). This function never reads the material,
+ * which is the whole of how it cannot lose one.
+ *
+ * ── WHAT IS WRITTEN INTO THE VERTS ─────────────────────────────────────────────────────────
+ *
+ * `kept⁻¹ · full`, where `full` is the resolved pose and `kept` is that pose with the applied bands
+ * set to identity. The drawn world shape is therefore unchanged for every mask, including a rotation
+ * applied under a non-uniform scale that stays on the Object, where the rotation alone would shear
+ * the result. Blender keeps the world shape exactly in that case (measured: max vertex deviation 0).
+ *
+ * Refused when the mesh data is shared (Blender: "Cannot apply to a multi user"), because the other
+ * Objects would move with it, and when a kept scale is zero, because `kept` has no inverse.
+ */
+function applyIntoStoredMesh(
+  selectedId: string,
+  dataId: string,
+  packed: PackedMeshData,
+  transform: MeshTransform,
+  mask: ApplyMask,
+  state: DagState,
+  io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
+): DispatchResult {
+  const users = consumerEdgesOf(state, dataId).length;
+  if (users > 1) {
+    return {
+      ok: false,
+      reason: `Apply: "${selectedId}" shares its mesh data with ${users - 1} other object${users === 2 ? '' : 's'}, and applying would move them too. Give it its own copy of the mesh first.`,
+    };
+  }
+  const applied = APPLIED_BANDS[mask];
+  const kept = { ...transform };
+  for (const band of applied) kept[band] = [...IDENTITY_BAND[band]];
+  const keptMatrix = trsMatrix(kept);
+  if (keptMatrix.determinant() === 0) {
+    return {
+      ok: false,
+      reason: `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`,
+    };
+  }
+  const matrix = keptMatrix.invert().multiply(trsMatrix(transform));
+  const next = transformMeshData(unpackMeshData(packed), matrix);
+
+  const ops: Op[] = [
+    { type: 'setParam', nodeId: dataId, paramPath: 'mesh', value: packMeshData(next) },
+    ...applied.map(
+      (band): Op => ({
+        type: 'setParam',
+        nodeId: selectedId,
+        paramPath: band,
+        value: [...IDENTITY_BAND[band]],
+      }),
+    ),
+  ];
+  try {
+    io.dispatchAtomic(ops, 'user', `Apply ${mask} → mesh data`);
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  // A held edit would otherwise outrank the identity just written — see step 5 of the bake road.
+  io.clearTransients(selectedId);
+  io.clearTransients(dataId);
+  io.setSelection(selectedId);
+  return { ok: true, bakedId: selectedId };
 }
 
 /**
