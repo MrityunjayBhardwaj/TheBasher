@@ -10,6 +10,7 @@
 // SC-7  H45 isolation: applying on one import leaves a second import of the SAME file unchanged.
 // SC-5  undo: Apply → undo → the original mesh data and pose restored, still textured.
 // M8    self-contained: Apply → delete the imported folder → reload → still drawn textured.
+// stacked  Apply under an Array modifier reaches the mesh data, keeps the modifier and the material.
 //
 // ── #1073 / #1077: THE IMPORT IS NATIVE GEOMETRY, AND APPLY KEEPS IT THAT WAY ───────────────
 //
@@ -26,6 +27,7 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { drawnImportMeshes, importRoots, importedMeshes } from './_importedMesh';
+import { modifierChainOps } from './_modifierStack';
 
 interface IngestFileShape {
   relativePath: string;
@@ -349,4 +351,78 @@ test('M8 self-contained: Apply → delete the imported folder → reload → sti
   await expect
     .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0])
     .toBeCloseTo(2, 3);
+});
+
+/**
+ * The mesh data at the BASE of an Object's data lane, found by the product's own walk — under a
+ * modifier the Object's `data` edge names the modifier, not the mesh.
+ */
+function laneBaseOf(page: Page, objectId: string) {
+  return page.evaluate(async (id) => {
+    const { resolveDataLaneBase } = await import('/src/app/operatorChain.ts');
+    const state = (window as unknown as BasherWindow).__basher_dag!.getState().state;
+    const baseId = resolveDataLaneBase(state as never, id);
+    const base = state.nodes[baseId];
+    return {
+      id: baseId,
+      type: base?.type ?? null,
+      mesh: (base?.params.mesh ?? null) as unknown,
+      material: (base?.params.material ?? null) as unknown,
+    };
+  }, objectId);
+}
+
+test('stacked (#1077): Apply under an Array modifier reaches the mesh data, keeps the modifier and the material', async ({
+  page,
+}) => {
+  await ingest(page, 'p151-stacked');
+  await expect.poll(async () => (await importRoots(page)).length).toBe(1);
+  const imp = await importNamed(page, 0);
+  expect(imp.road).toBe('native');
+  const plain = await waitTextured(page, imp.rootId);
+
+  // Splice an Array modifier between the mesh data and its Object — the shape "+ Add Modifier"
+  // builds. Positive control: the drawn mesh grows, so the stack is live before Apply runs.
+  const MOD = 'p151_stacked_array';
+  await page.evaluate(
+    (ops) =>
+      (window as unknown as BasherWindow)
+        .__basher_dag!.getState()
+        .dispatchAtomic(ops, 'user', 'p151 add array'),
+    modifierChainOps({
+      objectId: imp.objectId,
+      dataId: imp.dataId,
+      modifiers: [{ id: MOD, nodeType: 'ArrayModifier', params: { count: 2, offset: [2, 0, 0] } }],
+    }),
+  );
+  await expect
+    .poll(async () => (await drawnImportMeshes(page, imp.rootId))[0]?.worldBounds[0] ?? 0)
+    .toBeGreaterThan(plain.worldBounds[0] + 0.5);
+  await setScale(page, imp.objectId, [2, 1, 1]);
+  const baseBefore = await laneBaseOf(page, imp.objectId);
+  expect(baseBefore.id).toBe(imp.dataId);
+  const drawnBefore = await waitTextured(page, imp.rootId);
+
+  const result = await applyTransform(page, imp.objectId);
+  expect(result.ok).toBe(true);
+  await expect
+    .poll(async () => (await posedDataOf(page, imp.objectId)).pose.scale)
+    .toEqual([1, 1, 1]);
+
+  // The Object still wears the modifier, and the modifier still sits on the same mesh data, which
+  // now carries the pose and exactly the material it had.
+  expect((await posedDataOf(page, imp.objectId)).dataId).toBe(MOD);
+  const baseAfter = await laneBaseOf(page, imp.objectId);
+  expect(baseAfter.id).toBe(imp.dataId);
+  expect(baseAfter.type).toBe('PolyMeshData');
+  expect(baseAfter.mesh).not.toEqual(baseBefore.mesh);
+  expect(baseAfter.material).toEqual(baseBefore.material);
+  expect(await nodeTypes(page)).not.toContain('BakedData');
+
+  // …and it still draws the same textured material.
+  const drawnAfter = await waitTextured(page, imp.rootId);
+  console.log('P151 STACKED drawn =', JSON.stringify({ drawnBefore, drawnAfter }));
+  expect(drawnAfter.color).toBe(drawnBefore.color);
+  expect(drawnAfter.roughness).toBe(drawnBefore.roughness);
+  expect(drawnAfter.mapWidth).toBe(drawnBefore.mapWidth);
 });

@@ -3069,9 +3069,10 @@ function ParamRow({
 
 /**
  * Phase 151 — the transform-card Apply control (issue #151). Lives in the
- * transform section body for a selected primitive (BoxMesh/SphereMesh). Bakes
- * the TRS into geometry → a BakedMesh (one undo) via the SAME dispatch helper the
- * Object ▸ Apply menu uses. When the transform is animated it renders DISABLED
+ * transform section body for a selected mesh Object. Moves the TRS into the
+ * geometry (one undo) via the SAME dispatch helper the Object ▸ Apply menu uses:
+ * stored mesh data takes it in place (#1077), a box or sphere is baked. When the
+ * transform is animated it renders DISABLED
  * with the D-04 message (the dispatch-side guard is the belt; this is the chrome).
  */
 function ApplyTransformControl({ nodeId }: { nodeId: string }) {

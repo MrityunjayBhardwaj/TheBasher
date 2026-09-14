@@ -1,11 +1,14 @@
-// dispatchApplyTransform — Apply-Transform for primitives (Phase 151 Wave 2 t5,
-// issue #151). The Box/Sphere path: compose the (masked) resolved TRS into a 4×4
-// matrix, bake it into a CLONE of the registry geometry, persist the baked bytes
-// to OPFS, and swap the original mesh node for a new BakedMesh in ONE atomic Op
-// composite (one dispatchAtomic = one Cmd+Z).
+// dispatchApplyTransform — Apply-Transform (Phase 151 Wave 2 t5, issue #151). Three roads:
 //
-// THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1) for
-// primitives. The glTF-child path lands in Wave 4.
+//   - STORED MESH DATA (#1077, `applyIntoStoredMesh`): the pose is written into the mesh data at
+//     the base of the Object's data lane, and the Object keeps posing it. No bake, no OPFS write,
+//     the material is never read. Every native import takes this road.
+//   - BOX / SPHERE (below): compose the (masked) resolved TRS into a 4×4 matrix, bake it into a
+//     CLONE of the registry geometry, persist the baked bytes to OPFS, and swap the original mesh
+//     node for a baked pair in ONE atomic Op composite (one dispatchAtomic = one Cmd+Z).
+//   - glTF CHILD on the clone road (`dispatchApplyGltfChild`).
+//
+// THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
 // Lifecycle (K15 extension, ORDERED):
 //   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
