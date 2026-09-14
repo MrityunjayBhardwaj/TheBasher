@@ -12,9 +12,8 @@
 //
 // #1072 — the fixture now arrives as native geometry (#1050); the override wraps an
 // ordinary Object (`_importOverride.ts`) and the drawn material is read by
-// `_importedMesh.ts`. The checkbox half holds on that road. ⚠️ RED AT STEP (1) UNTIL
-// #1076: the native draw ignores `ignoreSourceMaterial`, so checking the box dispatches
-// and changes nothing on screen. The spec asserts the promise, not today's behaviour.
+// `_importedMesh.ts`. #1076 — the native draw honours flatten, so checking the box drops
+// the maps on screen and unchecking restores them, on that road too.
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
