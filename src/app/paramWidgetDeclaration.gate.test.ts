@@ -40,7 +40,7 @@ import { profileOptions } from '../nodes/LightProfileSelect';
 import { overrideDescriptor } from './overrideDescriptor';
 import { resolveActiveRigNode } from './resolveRigLightSources';
 import { nodeDisplayName } from './sceneTreeWalk';
-import { activeProfileSelect, buildAddProfileOps, enumerateProfiles } from './studioProfiles';
+import { activeProfileSelect, buildAddProfileOps } from './studioProfiles';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -597,14 +597,20 @@ describe('a param declares its control on its schema (#872)', () => {
       ],
     });
 
-    // Positive control: the same property over Light Studio's list (#1110) does catch a name
-    // that resolves to nothing, so the row above can fail.
-    const studio = enumerateProfiles(s).map((p) => ({ value: p.name, label: p.name }));
+    // Positive control: the same property over a provider with the WRONG domain — every rig in
+    // the graph, the shape Light Studio's switcher has today (#1110) — catches the unwired rig,
+    // so the row above can fail. Spelled here rather than borrowed from that switcher, so fixing
+    // #1110 cannot quietly turn this control into a row that asserts nothing.
+    const everyRig = Object.values(s.nodes)
+      .filter((n) => n.type === 'LightRig')
+      .map((n) => (n.params as { name: string }).name)
+      .filter((name) => name !== '')
+      .map((name) => ({ value: name, label: name }));
     expect(
-      resolves(s, studio)
+      resolves(s, everyRig)
         .filter((r) => !r.evaluate || !r.render)
         .map((r) => r.option),
-    ).toContain('Loose');
+    ).toEqual(['Loose']);
   });
 
   it('row 7 — every colour param declares the colour control, and none is left read-only', () => {

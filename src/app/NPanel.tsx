@@ -744,15 +744,11 @@ function declaredPlaceholder(nodeId: string, paramPath: string): string | null {
   return field ? (placeholderOf(field) ?? null) : null;
 }
 
-/** The options provider a param's schema declares, or null (#1064). Same identity lookup as
- *  {@link declaredWidget}. */
+/** The options provider a param's schema declares, or null (#1064). The identity lookup of
+ *  {@link declaredWidget}, through {@link fieldSchemaOf}. */
 function declaredOptions(nodeId: string, paramPath: string): OptionsProvider | null {
   if (paramPath.includes('.')) return null;
-  const type = useDagStore.getState().state.nodes[nodeId]?.type;
-  if (!type) return null;
-  const schema = getNodeType(type)?.paramSchema;
-  if (!(schema instanceof z.ZodObject)) return null;
-  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  const field = fieldSchemaOf(nodeId, paramPath);
   return field ? (optionsOf(field) ?? null) : null;
 }
 
