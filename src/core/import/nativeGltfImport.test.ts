@@ -148,7 +148,14 @@ describe('buildNativeGltfImportOps', () => {
   });
 
   const refusals: ReadonlyArray<readonly [string, () => ArrayBuffer, string]> = [
-    ['a mesh with two primitives', () => fixture('public/assets/two-material-quad.gltf'), '#1052'],
+    // Lifting this refusal gives a native Object one slot per primitive, and that is the day a
+    // MaterialOverride's `slotIndex` needs a native meaning: today only the clone road reads it
+    // (#1090). The row's name carries the issue so the red that retires it says what else is owed.
+    [
+      'a mesh with two primitives (lifting it makes #1090 reachable)',
+      () => fixture('public/assets/two-material-quad.gltf'),
+      '#1052',
+    ],
     // #1050 — a texture comes across only as the native material holds it; each guard gets a case
     // only it can refuse.
     [
