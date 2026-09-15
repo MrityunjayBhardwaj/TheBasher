@@ -43,6 +43,30 @@ export type PolygonRim = readonly number[];
 // reach leaves. Homing it beside the buffer build instead put `three` and the hasher under the
 // count and opened a ring back into this file — both measured red by the standing gates.
 
+/**
+ * #1117 — how many numbers each corner of a layer holds. A `Record` over the closed layer type, so
+ * a new member cannot compile without a width here. Spelled through `MeshGeometryData` rather than
+ * by importing the type's own name, because this module's one import is pinned.
+ */
+const CORNER_LAYER_WIDTH: Readonly<
+  Record<MeshGeometryData['cornerLayers'][number]['type'], number>
+> = { float2: 2, float4: 4 };
+
+/** A corner layer type's width, or `null` for a type a stored mesh does not hold. */
+export function cornerLayerWidth(type: string): number | null {
+  return Object.prototype.hasOwnProperty.call(CORNER_LAYER_WIDTH, type)
+    ? CORNER_LAYER_WIDTH[type as keyof typeof CORNER_LAYER_WIDTH]
+    : null;
+}
+
+/**
+ * The layers a render buffer has slots for: three draws UV layers as `uv` … `uv3` and one colour
+ * as `color`. A mesh needing more is refused at the door rather than holding a layer that would
+ * silently never draw.
+ */
+export const MAX_UV_LAYERS = 4;
+export const MAX_COLOUR_LAYERS = 1;
+
 /** Why this data is not a mesh, or `null` when it is. Checked before anything is derived from it. */
 export function meshDataProblem(data: MeshGeometryData): string | null {
   if (data.points.length % 3 !== 0)
@@ -59,8 +83,27 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
     if (data.cornerPoints[c] >= pointCount)
       return `corner ${c} cites point ${data.cornerPoints[c]} of ${pointCount}`;
   }
-  if (data.cornerUVs !== null && data.cornerUVs.length !== corners * 2)
-    return `cornerUVs holds ${data.cornerUVs.length} numbers for ${corners} corners`;
+  const names = new Set<string>();
+  let uvLayers = 0;
+  let colourLayers = 0;
+  for (const layer of data.cornerLayers) {
+    if (layer.name === '') return 'a corner layer has no name';
+    if (names.has(layer.name)) return `two corner layers are both named '${layer.name}'`;
+    names.add(layer.name);
+    const width = cornerLayerWidth(layer.type);
+    if (width === null) {
+      return `corner layer '${layer.name}' is '${String(layer.type)}', which a stored mesh does not hold`;
+    }
+    if (layer.data.length !== corners * width) {
+      return `corner layer '${layer.name}' holds ${layer.data.length} numbers for ${corners} corners of '${layer.type}'`;
+    }
+    if (layer.type === 'float2') uvLayers++;
+    else colourLayers++;
+  }
+  if (uvLayers > MAX_UV_LAYERS)
+    return `${uvLayers} UV layers, but the render buffer draws at most ${MAX_UV_LAYERS}`;
+  if (colourLayers > MAX_COLOUR_LAYERS)
+    return `${colourLayers} colour layers, but the render buffer draws at most ${MAX_COLOUR_LAYERS}`;
   if (data.cornerNormals !== null && data.cornerNormals.length !== corners * 3)
     return `cornerNormals holds ${data.cornerNormals.length} numbers for ${corners} corners`;
   return null;
@@ -69,11 +112,11 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
 /**
  * Which render vertex every corner of a stored mesh lands on, without allocating a buffer.
  *
- * A render vertex carries one uv and one normal, so two corners on one point share a vertex
- * exactly when both of those agree. The split key is the point plus the corner's own attribute
- * VALUES: a stored mesh keeps values per corner, so equality of values is the only identity there
- * is. `vertexCorner[v]` is the first corner that minted vertex `v`; the build reads every
- * attribute of `v` from that corner, so these rims and the drawn buffer cannot disagree.
+ * A render vertex carries one value per corner layer and one normal, so two corners on one point
+ * share a vertex exactly when all of those agree. The split key is the point plus the corner's own
+ * attribute VALUES: a stored mesh keeps values per corner, so equality of values is the only
+ * identity there is. `vertexCorner[v]` is the first corner that minted vertex `v`; the build reads
+ * every attribute of `v` from that corner, so these rims and the drawn buffer cannot disagree.
  */
 export interface MeshSplitLayout {
   readonly splitRims: readonly PolygonRim[];
@@ -88,7 +131,11 @@ export function meshSplitLayout(data: MeshGeometryData): MeshSplitLayout {
   const problem = meshDataProblem(data);
   if (problem !== null) throw new Error(`meshSplitLayout: ${problem}`);
 
-  const { faceSizes, cornerPoints, cornerUVs, cornerNormals } = data;
+  const { faceSizes, cornerPoints, cornerLayers, cornerNormals } = data;
+  const layers = cornerLayers.map((layer) => ({
+    values: layer.data,
+    width: CORNER_LAYER_WIDTH[layer.type],
+  }));
   const vertexOf = new Map<string, number>();
   const vertexCorner: number[] = [];
   const splitRims: PolygonRim[] = [];
@@ -97,7 +144,10 @@ export function meshSplitLayout(data: MeshGeometryData): MeshSplitLayout {
     const rim: number[] = [];
     for (let k = 0; k < faceSizes[f]; k++, corner++) {
       let key = String(cornerPoints[corner]);
-      if (cornerUVs !== null) key += `/${cornerUVs[corner * 2]},${cornerUVs[corner * 2 + 1]}`;
+      for (const { values, width } of layers) {
+        key += '/';
+        for (let i = 0; i < width; i++) key += `${i === 0 ? '' : ','}${values[corner * width + i]}`;
+      }
       if (cornerNormals !== null) {
         key += `/${cornerNormals[corner * 3]},${cornerNormals[corner * 3 + 1]},${cornerNormals[corner * 3 + 2]}`;
       }

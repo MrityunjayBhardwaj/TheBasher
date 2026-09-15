@@ -734,6 +734,9 @@ function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Ma
  * decoded arrays are cached on the packed object (`unpackMeshData`), and undo puts that same object
  * back, so arrays written in place would draw the posed mesh under unposed strings after Cmd+Z.
  *
+ * Corner layers (#1117) — UV sets and colours — are not spatial quantities, so the matrix does not
+ * touch their values. Every layer is copied, and it moves with its corner when the corners reorder.
+ *
  * A matrix with a negative determinant mirrors the mesh, which turns every face inside out. Each
  * face's corners are reversed with its FIRST corner kept, as Blender does on Apply (measured on
  * 5.1.1: loop `[0,1,3,2]` → `[0,2,3,1]`, normals still outward). Keeping the first corner keeps the
@@ -756,20 +759,30 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
         .toArray(cornerNormals, i);
     }
   }
+  const corners = data.cornerPoints.length;
   const cornerPoints = new Uint32Array(data.cornerPoints);
-  const cornerUVs = data.cornerUVs === null ? null : new Float32Array(data.cornerUVs);
+  const cornerLayers = data.cornerLayers.map((layer) => ({
+    ...layer,
+    data: new Float32Array(layer.data),
+  }));
   if (matrix.determinant() < 0) {
-    const reversed = { points: new Uint32Array(cornerPoints), uvs: cornerUVs?.slice() ?? null };
+    const reversedPoints = new Uint32Array(cornerPoints);
+    // A layer's width is its length per corner: the data check has already tied the two together.
+    const reversedLayers = cornerLayers.map((layer) => ({
+      values: layer.data.slice(),
+      width: corners === 0 ? 0 : layer.data.length / corners,
+    }));
     const normals = cornerNormals?.slice() ?? null;
     let start = 0;
     for (const size of data.faceSizes) {
       for (let k = 1; k < size; k++) {
         const from = start + size - k; // corner k of the reversed run reads corner size-k
         const to = start + k;
-        cornerPoints[to] = reversed.points[from];
-        if (cornerUVs !== null && reversed.uvs !== null) {
-          cornerUVs.set(reversed.uvs.subarray(from * 2, from * 2 + 2), to * 2);
-        }
+        cornerPoints[to] = reversedPoints[from];
+        cornerLayers.forEach((layer, i) => {
+          const { values, width } = reversedLayers[i];
+          layer.data.set(values.subarray(from * width, from * width + width), to * width);
+        });
         if (cornerNormals !== null && normals !== null) {
           cornerNormals.set(normals.subarray(from * 3, from * 3 + 3), to * 3);
         }
@@ -781,7 +794,7 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
     points,
     faceSizes: new Uint32Array(data.faceSizes),
     cornerPoints,
-    cornerUVs,
+    cornerLayers,
     cornerNormals,
   };
 }
