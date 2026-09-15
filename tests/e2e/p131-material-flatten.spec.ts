@@ -12,22 +12,21 @@
 //   (0) Import a TEXTURED METAL glTF (baseColorTexture → .map;
 //       metallicRoughnessTexture → .metalnessMap + .roughnessMap).
 //   (1) Baseline: the rendered mesh reports hasMap + hasMetalnessMap.
-//   (2) Override WITHOUT flatten (#99 + #124 clone path) → every map survives
-//       (the clone preserves them). Falsification anchor for step 3.
+//   (2) Override WITHOUT flatten (#99 + #124 composition) → every map survives
+//       (composition keeps the source). Falsification anchor for step 3.
 //   (3) Flatten on (ignoreSourceMaterial:true) → the source maps are GONE by
 //       intent (hasMap===false, hasMetalnessMap===false), the scalars land
 //       (metalness reads the override's value), the material renders as clay.
-//   (4) Flatten off → the clone path restores every map (the toggle is the
+//   (4) Flatten off → composition restores every map (the toggle is the
 //       only lever; nothing in #99/#124 is undone).
 //
 // Observation: the drawn three.js material, read on either road by `_importedMesh.ts`;
 // the override is wired by `_importOverride.ts`.
 //
 // #1072 — the fixture now arrives as native geometry (#1050), so the override wraps an
-// ordinary Object. Steps (0), (2) and (4) hold on that road. ⚠️ RED AT STEP (3) UNTIL
-// #1076: flatten was only ever built inside the glTF clone renderer, and the native draw
-// ignores `ignoreSourceMaterial` (measured: maps and scalars unchanged with it on). The
-// spec asserts the promise, not today's behaviour.
+// ordinary Object. #1076 — the native draw honours flatten: `compilePrimitiveMaterial`
+// compiles a new material from the override alone (`src/app/material/flattenMaterial.ts`),
+// so all four steps hold on that road.
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots, type DrawnImportMesh } from './_importedMesh';
@@ -193,13 +192,13 @@ test('#131 (D-05) — ignoreSourceMaterial drops source maps by intent; off rest
   expect(flattened.metalness, 'the clay material reports the override metalness').toBe(0.1);
   expect(flattened.roughness, 'the clay material reports the override roughness').toBe(0.2);
 
-  // (4) Flatten off → the clone path restores every map (the toggle is the only
+  // (4) Flatten off → composition restores every map (the toggle is the only
   //     lever; #99/#124 behaviour is untouched).
   await setFlatten(page, false);
   const restored = await pollForMesh(page, (m) => m.hasMap, 'restored');
   expect(
     restored.hasMap && restored.hasMetalnessMap && restored.hasRoughnessMap,
-    `turning flatten off must restore the clone path's maps; ${JSON.stringify(restored)}`,
+    `turning flatten off must restore the source's maps; ${JSON.stringify(restored)}`,
   ).toBe(true);
 
   expect(loaderErrors, `unexpected loader console errors: ${loaderErrors.join('\n')}`).toEqual([]);

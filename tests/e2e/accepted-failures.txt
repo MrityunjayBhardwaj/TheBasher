@@ -49,13 +49,3 @@ p233-leaf-pick-select.spec.ts › #233 single click selects the GltfChild leaf; 
 p6-w10-ui-review.spec.ts › c-1: zoom readout reflects a camera-zoom change (observed, not inferred)
 p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
 spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
-
-# ── Accepted product gap: flatten on a native import (2) — #1076 ───────────────
-# These specs now observe a MaterialOverride over a NATIVE import (textured files
-# arrive as native geometry since #1050). Tint, force, decorator and channel
-# composition all hold there; `ignoreSourceMaterial` does not, because the native
-# road never honoured it (src/app/material/composeMaterial.ts). Both fail at the
-# flatten step on every platform, not flakily. #1076 builds flatten on the native
-# road and removes these two lines.
-p131-material-flatten.spec.ts › #131 (D-05) — ignoreSourceMaterial drops source maps by intent; off restores them
-p136-npanel-boolean-toggle.spec.ts › #136 — boolean param is UI-editable: ignoreSourceMaterial checkbox flattens/restores, observed live
