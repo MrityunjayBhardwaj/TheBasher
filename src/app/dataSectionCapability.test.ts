@@ -117,6 +117,14 @@ const FIXTURES: Record<ObjectDataKind, ObjectData> = {
     lookAt: [0, 0, 0],
     roll: 0,
   },
+  // #1056 — a skeleton Object's data: bones, and nothing a modifier or a material acts on.
+  Skeleton: {
+    kind: 'Skeleton',
+    bones: [
+      { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'spine', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    ],
+  },
 };
 
 describe('#498 dataSectionCapability', () => {
@@ -184,7 +192,9 @@ describe('#498 dataSectionCapability', () => {
     // modifier: curve 'not-yet' (#349) + light/camera 'never'.
     // material: curve 'not-yet' (#528) + light/camera 'never'.
     // slots (#645): curve 'not-yet' (#528, the same blocker — see below) + light/camera 'never'.
-    expect({ notYet, never }).toEqual({ notYet: 3, never: 6 });
+    // #1056: skeleton 'never' in all three — measured on Blender 5.1.1 (0 of 83 modifier types
+    // on an armature; bpy.types.Armature declares no `materials`).
+    expect({ notYet, never }).toEqual({ notYet: 3, never: 9 });
   });
 
   it('pins the measured Blender answer per kind', () => {
@@ -196,6 +206,8 @@ describe('#498 dataSectionCapability', () => {
     expect(dataSectionCapability('CurveData', 'modifier').state).toBe('not-yet');
     expect(dataSectionCapability('LightData', 'modifier').state).toBe('never');
     expect(dataSectionCapability('CameraData', 'modifier').state).toBe('never');
+    // #1056 — measured the same way: 0 of 83 modifier types return a modifier on an armature.
+    expect(dataSectionCapability('Skeleton', 'modifier').state).toBe('never');
   });
 
   it('pins the measured Blender answer per kind for the material section', () => {
@@ -210,6 +222,8 @@ describe('#498 dataSectionCapability', () => {
     expect(dataSectionCapability('CurveData', 'material').state).toBe('not-yet');
     expect(dataSectionCapability('LightData', 'material').state).toBe('never');
     expect(dataSectionCapability('CameraData', 'material').state).toBe('never');
+    // #1056 — bpy.types.Armature declares no `materials` property (Blender 5.1.1, measured).
+    expect(dataSectionCapability('Skeleton', 'material').state).toBe('never');
   });
 
   it('keeps the two sections from collapsing into one answer', () => {
@@ -278,8 +292,9 @@ describe('#498 dataSectionCapability', () => {
       }
     }
     // Guard the guard, and pin the split so a column emptying cannot pass vacuously:
-    // 18 cells = 3 sections × 6 kinds; 6 are 'never' (light + camera, all three sections).
-    expect({ offered, withheld }).toEqual({ offered: 12, withheld: 6 });
+    // 21 cells = 3 sections × 7 kinds; 9 are 'never' (light + camera + skeleton, all three
+    // sections).
+    expect({ offered, withheld }).toEqual({ offered: 12, withheld: 9 });
   });
 
   it('MATERIAL: "supported" means the VALUE carries a material field, both directions', () => {
@@ -309,10 +324,11 @@ describe('#498 dataSectionCapability', () => {
       ).toBe(state === 'supported');
       if (hasMaterialField) withField++;
     }
-    // Non-vacuous in BOTH directions — 3 kinds carry the field, 3 do not. A sweep that
-    // landed all on one side would satisfy the equivalence and prove only one arm of it.
+    // Non-vacuous in BOTH directions — 3 kinds carry the field, 4 do not (#1056 added the
+    // skeleton to the second side). A sweep that landed all on one side would satisfy the
+    // equivalence and prove only one arm of it.
     expect(withField).toBe(3);
-    expect(OBJECT_DATA_KINDS.length - withField).toBe(3);
+    expect(OBJECT_DATA_KINDS.length - withField).toBe(4);
   });
 
   it('returns a stable reference so callers can memoize on it', () => {

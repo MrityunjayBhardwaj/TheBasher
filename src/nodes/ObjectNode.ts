@@ -77,7 +77,9 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: ObjectParams,
-  inputs: { data: { type: 'ObjectData', cardinality: 'single' } },
+  // #1056 — a `Skeleton` is accepted as data directly: an armature is its own Object, pointing
+  // at the skeleton, rather than the skeleton being re-wrapped to speak 'ObjectData'.
+  inputs: { data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The posable node — 'transform' implies 'constraint' (a pose can be
   // constrained) implies 'driver'. The data socket carries no pose, so those

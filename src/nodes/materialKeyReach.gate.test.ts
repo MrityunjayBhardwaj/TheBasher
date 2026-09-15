@@ -221,7 +221,7 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     expect(writers).toEqual(Object.keys(MATERIAL_KEY_WRITERS).sort());
   });
 
-  it('carries that key on 1 of the 6 ObjectData kinds, and a material on 3', () => {
+  it('carries that key on 1 of the 7 ObjectData kinds, and a material on 3', () => {
     // DERIVED from the union rather than restated: "1 of 6" is a claim about the type, so
     // read the type. A seventh kind joining the union changes the denominator here without
     // anyone remembering that a paragraph in the design doc counts it.
@@ -235,6 +235,9 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
       'CameraDataValue',
       'BakedDataValue',
       'ModifiedDataValue',
+      // #1056 — the seventh kind, exactly as the comment above anticipated: a skeleton Object's
+      // data. It carries neither a material nor a key, so the reach below does not move.
+      'SkeletonValue',
     ]);
 
     const bodies = members.map((name) => [name, interfaceBody(types, name)] as const);
