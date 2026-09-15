@@ -23,11 +23,15 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { StubMotionGenerationCapability, DEFAULT_MOTIONGEN_MODEL } from '../../core/motiongen';
 import { __resetBvhImportCounterForTests } from '../../core/import/bvhImportChain';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
+import { HttpMotionGenerationCapability } from '../../core/motiongen/HttpMotionGenerationCapability';
+import {
+  STUB_UNIT_SCALE,
+  synthesiseBvh,
+} from '../../core/motiongen/StubMotionGenerationCapability';
 import { motionGenerateTool } from './motionGenerate';
 import { registerAllTools, listTools, __resetToolRegistryForTests } from './index';
 import type { ToolContext } from './types';
 import type { DagState } from '../../core/dag/state';
-import { applyOp } from '../../core/dag/ops';
 import { bakeGeneratedClipOps } from '../../app/asset/bakeGeneratedClip';
 import { mintMotionGenerateOps } from '../../app/asset/mintMotionGenerate';
 import { resolvePendingMotionGenerations } from '../../app/asset/resolveMotionGenerate';
@@ -163,7 +167,7 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     // same fact as a clip existing in an evaluated graph.
     let state = stateWithTime();
     const result = await motionGenerateTool.handler(
-      { prompt: 'a figure waves', seconds: 1, fps: 24 },
+      { prompt: 'a figure waves', seconds: 1 },
       ctx({ dagState: state }),
     );
     for (const op of result.ops) state = applyOp(state, op).next;
@@ -262,15 +266,56 @@ describe('a missing piece of context fails legibly, and names the right setting'
     );
   });
 
-  it('refuses a degenerate request through the same path', async () => {
-    const result = await motionGenerateTool.handler(
-      // fps is schema-bounded at the tool boundary too, so go through the
-      // capability's own validation with a value the tool schema permits.
-      { prompt: 'walk', fps: 0.5, seconds: 0.5 },
-      ctx(),
+  it("returns the generator's refusal of a clip's frame rate as readable text, and KEEPS the generator", async () => {
+    // The tool offers no `fps`: the rate is the generator's, and the clip states it
+    // in its own `Frame Time` header. So the one rate check left is the generator's,
+    // on what comes BACK (`assertValidMotionResult`). This row used to pass an `fps`
+    // the tool's schema strips before anything reads it, and so exercised nothing
+    // (#1107). It now reaches that check through the real HTTP implementation,
+    // replaying a service whose clip is otherwise sound.
+    const service = (frameTime: string) =>
+      new HttpMotionGenerationCapability({
+        serverUrl: 'http://127.0.0.1:8600',
+        fetchImpl: (async () =>
+          new Response(
+            JSON.stringify({
+              jobId: 'replay-1',
+              bvh: synthesiseBvh({ prompt: 'walk', model: DEFAULT_MOTIONGEN_MODEL }).replace(
+                /Frame Time: .*/,
+                `Frame Time: ${frameTime}`,
+              ),
+              model: DEFAULT_MOTIONGEN_MODEL,
+              unitScale: STUB_UNIT_SCALE,
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          )) as typeof fetch,
+      });
+
+    // The control: the same replay at 30fps cooks, so the refusal below is the
+    // rate's and not a replay the transport could never have accepted.
+    const cooked = await motionGenerateTool.handler(
+      { prompt: 'walk' },
+      ctx({ motionCapability: service('0.0333333') }),
     );
-    // 0.5fps over 0.5s is legal — two frames minimum. The clip still lands.
-    expect(result.ops.length).toBeGreaterThan(0);
+    expect(cooked.ops.some((o) => o.type === 'setParam' && o.paramPath === 'sourceHash')).toBe(
+      true,
+    );
+
+    // 1000fps, past the bound.
+    const result = await motionGenerateTool.handler(
+      { prompt: 'walk' },
+      ctx({ motionCapability: service('0.001') }),
+    );
+    expect(result.text).toMatch(/declares 1000 fps/);
+    expect(
+      result.ops
+        .filter((o) => o.type === 'addNode')
+        .map((o) => o.nodeType)
+        .sort(),
+    ).toEqual(['AnimationClip', 'MotionGenerate', 'Skeleton']);
+    expect(result.ops.some((o) => o.type === 'setParam' && o.paramPath === 'sourceHash')).toBe(
+      false,
+    );
   });
 });
 
