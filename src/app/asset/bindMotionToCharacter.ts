@@ -55,11 +55,11 @@
 import { useDagStore } from '../../core/dag/store';
 import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
+import { standingObjectsOf } from '../../core/import/skeletonObject';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 // #1001 — the two-hop rig→asset read moved to the module that owns the graph
 // walks, where `placeGeneratedMotion`'s id-returning half already points.
 import { assetRefOfSkeleton } from '../animate/boundClipsForAsset';
-import { edgeTarget } from '../animate/graphNodes';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNotificationStore, type ToastSeverity } from '../stores/notificationStore';
@@ -192,11 +192,8 @@ export function selectedAssetRefs(state: DagState, selectedNodeId: string | null
  * two Objects show is named the same way every time.
  */
 export function standingObjectOf(state: DagState, skeletonId: string): string | null {
-  const ids = Object.values(state.nodes)
-    .filter((n) => n.type === 'Object' && edgeTarget(n, 'data') === skeletonId)
-    .map((n) => n.id)
-    .sort();
-  return ids[0] ?? null;
+  // The shared lookup, so the Object named here is one path placement moves (#1100).
+  return standingObjectsOf(state, skeletonId)[0] ?? null;
 }
 
 /**

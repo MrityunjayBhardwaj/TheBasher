@@ -21,6 +21,7 @@
 // REF: src/viewport/referenceRig.ts (armatureBounds); src/nodes/ObjectNode.ts (the data
 //      socket); src/app/asset/importBvhFbx.ts (the caller); issue #1056.
 
+import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
@@ -62,6 +63,30 @@ export function normalisedRigScale(
 /** The Object's id, derived from the skeleton's — one skeleton, one Object, reproducibly. */
 export function skeletonObjectId(skeletonId: string): string {
   return `${skeletonId}_object`;
+}
+
+/**
+ * Every Object standing this skeleton in the scene, id-sorted (V22).
+ *
+ * Found by the `data` edge rather than by {@link skeletonObjectId}, so an Object pointed at the
+ * skeleton by hand counts as much as the one an import made.
+ *
+ * ONE lookup for every question that asks it: which Object a notice names
+ * (`bindMotionToCharacter.ts`) and which Objects a path placement moves
+ * (`placeGeneratedMotion.ts`, #1100). Two spellings could disagree about which Object stands a
+ * motion, and a notice would then name one that placement leaves at the origin.
+ */
+export function standingObjectsOf(state: DagState, skeletonId: string): string[] {
+  return Object.values(state.nodes)
+    .filter((n) => n.type === 'Object' && dataSourceOf(n.inputs?.data) === skeletonId)
+    .map((n) => n.id)
+    .sort();
+}
+
+/** The node an input socket reads from, or null — one binding or the first of a list. */
+function dataSourceOf(binding: unknown): string | null {
+  const one = (Array.isArray(binding) ? binding[0] : binding) as { node?: unknown } | undefined;
+  return typeof one?.node === 'string' ? one.node : null;
 }
 
 export interface SkeletonObjectArgs {

@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
 import type { DagState } from '../dag/state';
+import type { Op } from '../dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
@@ -16,6 +17,7 @@ import {
   buildSkeletonObjectOps,
   normalisedRigScale,
   skeletonObjectId,
+  standingObjectsOf,
 } from './skeletonObject';
 
 const BVH = `HIERARCHY
@@ -240,5 +242,34 @@ describe('#1101 — the Object carries its motion name', () => {
       name: '   ',
     });
     expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
+  });
+});
+
+describe('standingObjectsOf (#1100)', () => {
+  it('finds every Object whose data is the skeleton, id-sorted, and no other Object', () => {
+    let state = sceneState();
+    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of imported.ops) state = applyOp(state, op).next;
+    const ops: Op[] = [
+      // Pointed at the skeleton by hand — found by its edge, not by the importer's id.
+      { type: 'addNode', nodeId: 'z_by_hand', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'sk', socket: 'out' },
+        to: { node: 'z_by_hand', socket: 'data' },
+      },
+      // An Empty that sorts FIRST, so a lookup that forgot the edge check would return it.
+      { type: 'addNode', nodeId: 'a_empty', nodeType: 'Object', params: {} },
+      ...buildSkeletonObjectOps({
+        skeletonId: 'sk',
+        bones: [],
+        sceneNodeId: 'scene',
+        normalise: false,
+        name: 'sk',
+      }).ops,
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    expect(standingObjectsOf(state, 'sk')).toEqual([skeletonObjectId('sk'), 'z_by_hand']);
+    expect(standingObjectsOf(state, 'clip')).toEqual([]);
   });
 });
