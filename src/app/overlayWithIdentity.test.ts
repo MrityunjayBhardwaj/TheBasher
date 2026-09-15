@@ -22,6 +22,8 @@ import {
   sphereGeometryRef,
 } from './modifierGeometry';
 import { faceCountOf } from './faceCount';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
+import type { GeometryRef } from '../nodes/types';
 import { mintMeshAttributes, rebuiltMeshAttributes } from '../nodes/meshAttributes';
 import { mintAttributes } from '../nodes/attributeKey';
 import { MATERIAL_INDEX } from '../nodes/attributes';
@@ -652,5 +654,67 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
     const dropped = rebuiltMeshAttributes(nonUniform.key, sphereDescriptor(1, 16, 4));
     expect(dropped.key).toBeNull();
     expect(dropped.reason).toMatch(/32 faces cannot follow 'sphere' to 64 faces/);
+  });
+});
+
+// #1099 — both overlay primitives clone through JSON, and a stored mesh travels inside its handle
+// as typed arrays that JSON turns into plain objects with no `length`. Rebuilding an Array over
+// that source threw (`meshSplitLayout: points holds undefined numbers`) and unmounted the editor.
+// The handle is read from the un-overlaid value; the written params still come from the clone.
+describe('#1099 — a handle over stored mesh data is taken from the un-overlaid value', () => {
+  const storedMesh = () =>
+    meshGeometryRef(
+      packMeshData({
+        points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        faceSizes: Uint32Array.from([3]),
+        cornerPoints: Uint32Array.from([0, 1, 2]),
+        cornerUVs: null,
+        cornerNormals: null,
+      }),
+    );
+  const valueOver = (geometry: GeometryRef) => ({
+    kind: 'SceneChild' as const,
+    position: [0, 0, 0],
+    data: { kind: 'ModifiedData', geometry, material: null },
+  });
+  /** The stored points under a handle, through a modifier's `source` when there is one. */
+  const pointsUnder = (ref: GeometryRef): unknown => {
+    const d = ref.descriptor as { source?: GeometryRef; data?: { points: unknown } };
+    return d.source ? pointsUnder(d.source) : d.data?.points;
+  };
+
+  it('a keyframed Array count rebuilds over the intact stored mesh', () => {
+    const source = storedMesh();
+    const base = valueOver(arrayGeometryRef(source, 2, [2, 0, 0]));
+    const out = overlayWithIdentity('children', base, NODE, [channel(COUNT, 5)], NO_TRANSIENTS, 0);
+    expect(out.data.geometry).toEqual(arrayGeometryRef(source, 5, [2, 0, 0]));
+    expect(pointsUnder(out.data.geometry)).toBeInstanceOf(Float32Array);
+  });
+
+  it('a held Array count edit does the same (the transient primitive clones through JSON too)', () => {
+    const source = storedMesh();
+    const base = valueOver(arrayGeometryRef(source, 2, [2, 0, 0]));
+    const out = overlayWithIdentity('children', base, NODE, NO_CHANNELS, transient(COUNT, 4), 0);
+    expect(out.data.geometry).toEqual(arrayGeometryRef(source, 4, [2, 0, 0]));
+    expect(pointsUnder(out.data.geometry)).toBeInstanceOf(Float32Array);
+  });
+
+  it('a write that feeds no handle leaves the stored mesh intact on the patched value', () => {
+    // Nothing is rebuilt here, so the handle keeps its key either way; what changed is that the
+    // clone no longer carries a damaged copy for a registry miss to build from.
+    for (const geometry of [storedMesh(), arrayGeometryRef(storedMesh(), 2, [2, 0, 0])]) {
+      const base = valueOver(geometry);
+      const out = overlayWithIdentity(
+        'children',
+        base,
+        NODE,
+        [channel(POSITION, [5, 0, 0])],
+        NO_TRANSIENTS,
+        0,
+      );
+      expect(out.position).toEqual([5, 0, 0]);
+      expect(out.data.geometry.key).toBe(geometry.key);
+      expect(pointsUnder(out.data.geometry)).toBeInstanceOf(Float32Array);
+    }
   });
 });

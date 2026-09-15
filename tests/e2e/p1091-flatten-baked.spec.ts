@@ -61,7 +61,12 @@ interface BasherWindow {
   __basher_gltf_meshes?: () => { hasMap: boolean }[];
 }
 
-/** The material drawn under the top-level scene child named `name` (the pick wrapper's id). */
+/**
+ * The material of every VISIBLE mesh drawn under the top-level scene child named `name` (the pick
+ * wrapper's id). #1108 — the bake now stays under the import's Group, and a nested object carries
+ * no name (#501), so the spec reads under that Group; the clone it holds keeps the applied child
+ * suppressed, which the visibility walk leaves out.
+ */
 async function drawn(page: Page, name: string): Promise<DrawnMaterial[] | null> {
   return page.evaluate((n) => {
     const scene = (window as unknown as BasherWindow).__basher_three.getState().scene as {
@@ -73,9 +78,15 @@ async function drawn(page: Page, name: string): Promise<DrawnMaterial[] | null> 
     root.traverse((o) => {
       const m = o as {
         isMesh?: boolean;
+        visible: boolean;
+        parent: { visible: boolean; parent: unknown } | null;
         material?: { type: string; map?: unknown; color?: { getHexString(): string } };
       };
       if (!m.isMesh || !m.material) return;
+      for (let p = m as { visible: boolean; parent: unknown } | null; p; ) {
+        if (!p.visible) return;
+        p = p.parent as { visible: boolean; parent: unknown } | null;
+      }
       out.push({
         type: m.material.type,
         hasMap: Boolean(m.material.map),
@@ -84,6 +95,47 @@ async function drawn(page: Page, name: string): Promise<DrawnMaterial[] | null> 
     });
     return out;
   }, name);
+}
+
+/** The world-space scale each mesh under `name` is drawn at (the length of each matrix axis). */
+async function drawnScale(page: Page, name: string): Promise<number[][] | null> {
+  return page.evaluate((n) => {
+    const scene = (window as unknown as BasherWindow).__basher_three.getState().scene as {
+      getObjectByName: (n: string) => { traverse: (f: (o: unknown) => void) => void } | undefined;
+    } | null;
+    const root = scene?.getObjectByName(n);
+    if (!root) return null;
+    const out: number[][] = [];
+    root.traverse((o) => {
+      const m = o as {
+        isMesh?: boolean;
+        visible: boolean;
+        parent: unknown;
+        updateWorldMatrix: (p: boolean, c: boolean) => void;
+        matrixWorld: { elements: number[] };
+      };
+      if (!m.isMesh) return;
+      for (let p = m as { visible: boolean; parent: unknown } | null; p; ) {
+        if (!p.visible) return;
+        p = p.parent as { visible: boolean; parent: unknown } | null;
+      }
+      m.updateWorldMatrix(true, false);
+      const e = m.matrixWorld.elements;
+      out.push([0, 4, 8].map((i) => Math.hypot(e[i], e[i + 1], e[i + 2])));
+    });
+    return out;
+  }, name);
+}
+
+async function setBakedScale(page: Page, id: string, scale: [number, number, number]) {
+  await page.evaluate(
+    ({ nodeId, v }) => {
+      (window as unknown as BasherWindow).__basher_dag
+        .getState()
+        .dispatch({ type: 'setParam', nodeId, paramPath: 'scale', value: v });
+    },
+    { nodeId: id, v: scale },
+  );
 }
 
 async function setFlatten(page: Page, value: boolean) {
@@ -144,22 +196,43 @@ test('#1091: flatten on an override over a baked mesh draws the override alone, 
   }, bakedId);
   expect(dataType, 'the Apply baked (the subject is the baked road)').toBe('BakedData');
 
+  // #1108 — the bake is held by the import's Group, the top-level node the spec reads under.
+  const holder = await page.evaluate((id) => {
+    const dag = (window as unknown as BasherWindow).__basher_dag.getState().state;
+    const holders = Object.entries(dag.nodes).filter(([, n]) =>
+      Object.values(n.inputs ?? {})
+        .flat()
+        .some((e) => (e as { node?: string } | undefined)?.node === id),
+    );
+    const sceneKids = (dag.nodes[dag.outputs.scene!.node].inputs?.children ?? []) as {
+      node: string;
+    }[];
+    return holders.map(([key, n]) => ({
+      id: key,
+      type: n.type,
+      topLevel: sceneKids.some((e) => e.node === key),
+    }));
+  }, bakedId);
+  expect(holder, 'one top-level Group holds the bake').toEqual([
+    expect.objectContaining({ type: 'Group', topLevel: true }),
+  ]);
+  const holderId = holder[0].id;
+
   // Baseline: the bake captured the map.
   await expect
-    .poll(() => drawn(page, bakedId))
+    .poll(() => drawn(page, holderId))
     .toEqual([expect.objectContaining({ hasMap: true })]);
 
   // Wrap the baked object in an override that does not name the flag (the schema writes false).
   await page.evaluate(
-    ({ id, ovr, color }) => {
+    ({ id, ovr, color, parentId }) => {
       const dag = (window as unknown as BasherWindow).__basher_dag.getState();
-      const sceneId = dag.state.outputs.scene!.node;
       dag.dispatchAtomic(
         [
           {
             type: 'disconnect',
             from: { node: id, socket: 'out' },
-            to: { node: sceneId, socket: 'children' },
+            to: { node: parentId, socket: 'children' },
           },
           {
             type: 'addNode',
@@ -175,30 +248,42 @@ test('#1091: flatten on an override over a baked mesh draws the override alone, 
           {
             type: 'connect',
             from: { node: ovr, socket: 'out' },
-            to: { node: sceneId, socket: 'children' },
+            to: { node: parentId, socket: 'children' },
           },
         ],
         'user',
         'e2e wrap baked mesh in override',
       );
     },
-    { id: bakedId, ovr: OVR, color: OVR_COLOR },
+    { id: bakedId, ovr: OVR, color: OVR_COLOR, parentId: holderId },
   );
 
   // UNNAMED (false by default) → composition: the override tints, the captured map survives.
   await expect
-    .poll(() => drawn(page, OVR))
+    .poll(() => drawn(page, holderId))
     .toEqual([{ type: 'MeshStandardMaterial', hasMap: true, color: OVR_COLOR }]);
 
   // TRUE → flatten: a new material from the override alone; the captured map is gone.
   await setFlatten(page, true);
   await expect
-    .poll(() => drawn(page, OVR))
+    .poll(() => drawn(page, holderId))
     .toEqual([{ type: 'MeshPhysicalMaterial', hasMap: false, color: OVR_COLOR }]);
+
+  // #489 — the flattened arm draws the baked Object's scale too, as the captured arm does. It used
+  // to keep its own identity-scale copy, so scaling a flattened baked mesh changed nothing on screen.
+  const [unscaled] = (await drawnScale(page, holderId)) ?? [];
+  expect(unscaled, 'the flattened baked mesh is drawn').toBeTruthy();
+  await setBakedScale(page, bakedId, [2, 2, 2]);
+  const doubled = unscaled.map((s) => s * 2);
+  const near = (got: number[][] | null) =>
+    got?.length === 1 && got[0].every((s, i) => Math.abs(s - doubled[i]) < 1e-6);
+  await expect.poll(async () => near(await drawnScale(page, holderId))).toBe(true);
 
   // FALSE → composition again, map restored: the flag is the only lever.
   await setFlatten(page, false);
   await expect
-    .poll(() => drawn(page, OVR))
+    .poll(() => drawn(page, holderId))
     .toEqual([{ type: 'MeshStandardMaterial', hasMap: true, color: OVR_COLOR }]);
+  // …and the captured arm keeps drawing the same scale.
+  await expect.poll(async () => near(await drawnScale(page, holderId))).toBe(true);
 });
