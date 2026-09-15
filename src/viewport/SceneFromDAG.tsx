@@ -119,6 +119,7 @@ import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
+import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
 import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
@@ -148,6 +149,7 @@ import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
 import { composeBakedMaterial } from '../app/material/composeMaterial';
+import { flattenedMaterial, flattens } from '../app/material/flattenMaterial';
 // #536 S3 — the ATTACH door on `materialRegistry`, extracted into its own module so the
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
@@ -335,6 +337,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     }
     return out;
   }, [state, cache, sourceRigVisible]);
+  // #1056 — skeleton Objects: an Object whose data is a Skeleton draws nothing in its scene
+  // slot (ObjectR's arm), because its body is its bones. Collected here, the one read path,
+  // and handed to the armature band beside the source rigs; the band samples each clip at the
+  // playhead per frame. Always on, unlike the source rig — this is scene content, not a
+  // diagnostic.
+  const skeletonObjects = useMemo<SkeletonObject[]>(
+    () => collectSkeletonObjects(state, cache),
+    [state, cache],
+  );
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -617,7 +628,11 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           the playhead; orients each bone by its own basis, so ROLL is visible
           (#854/#960). Hidden in `rendered` mode like every other helper. */}
       {showLightHelpers ? (
-        <ArmatureHelper sourceRigs={sourceRigs} showSourceRigs={sourceRigVisible} />
+        <ArmatureHelper
+          sourceRigs={sourceRigs}
+          showSourceRigs={sourceRigVisible}
+          skeletonObjects={skeletonObjects}
+        />
       ) : null}
       {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
@@ -2461,6 +2476,14 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // cast that silently darkened every grouped light. Return null; never cast.
     return null;
   }
+  if (data?.kind === 'Skeleton') {
+    // #1056 — a skeleton Object draws NO scene geometry, for the camera arm's reason: its
+    // visible body is its bones, which are editor chrome from the armature band
+    // (`collectSkeletonObjects` → `ArmatureHelper`), posed at the playhead there. Null here is
+    // the answer, not a stub — and never a fall-through to the mesh road, which would go
+    // looking for a geometry a skeleton does not have.
+    return null;
+  }
   if (data?.kind === 'BakedData') {
     // #388 — a baked mesh IS render geometry and MUST draw, unlike the three arms
     // above (a curve draws its own chrome, a light recomposes, a camera correctly
@@ -2817,7 +2840,52 @@ function needsMaterialSlots(slots: readonly unknown[]): boolean {
 // without sRGB washes out). A declarative element cannot select its own ctor or
 // hold the async-loaded textures cleanly. The material is built fresh per node
 // (single writer V20, same as Box's own material).
+//
+// #1091 — a FLATTEN override is the one case this build does not serve. Flatten means
+// "ignore what this was made of", and the captured spec IS what it was made of: its maps,
+// its material class and its lobes would all survive a compose. So a flattened baked mesh
+// draws the override alone through the native material road (`flattenedMaterial`, #1076),
+// and the imperative build below is left to the case it exists for. The branch is a
+// component split rather than an early return, because the two arms call different hooks
+// and a component-type change is a remount, never a hook-order change.
 function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: MaterialValue }) {
+  if (flattens(override)) return <FlattenedBakedMeshR value={value} override={override} />;
+  return <CapturedBakedMeshR value={value} override={override} />;
+}
+
+function FlattenedBakedMeshR({
+  value,
+  override,
+}: {
+  value: BakedMeshValue;
+  override: MaterialValue;
+}) {
+  const geom = useBakedGeometry(value.geometry);
+  const shading = useViewportStore((s) => s.shading);
+  // `null`, stated: a flattened material is built from the override alone, and nothing the
+  // evaluator minted describes it — the captured spec is exactly what flatten discards. The
+  // seam's fallback keys the flattened IR with the evaluator's own function
+  // (`materialKeyReach.gate.test.ts` case D counts this call).
+  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // IDENTITY scale — the transform is baked into the geometry verts (H40), as below.
+      scale={[1, 1, 1]}
+      geometry={geom}
+      material={material}
+    />
+  );
+}
+
+function CapturedBakedMeshR({
+  value,
+  override,
+}: {
+  value: BakedMeshValue;
+  override?: MaterialValue;
+}) {
   const geom = useBakedGeometry(value.geometry);
   const shading = useViewportStore((s) => s.shading);
   const spec = value.material;

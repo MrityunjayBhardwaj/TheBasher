@@ -167,6 +167,12 @@ const CONSUMERS: Record<string, Decision> = {
   // the start of its path is a property of the generation, not of the playhead.
   // A time-varying read here would move the character as the scrubber moved.
   'src/app/asset/placeGeneratedMotion.ts': authored('fixed-ctx-by-design'),
+  // #1056 — the skeleton Objects the armature band draws. It evaluates a skeleton's rest
+  // bones, the clip wired to it and the Object's world transform at frame 0, DELIBERATELY:
+  // the pose at the playhead is sampled later, per frame, by the helper from the clip value
+  // this hands over, so evaluating at t here would sample the motion twice. It is handed the
+  // authored state SceneFromDAG holds, like the source-rig read beside it.
+  'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -233,7 +239,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // retargeted clip at build time; it now emits a `RetargetClip` node that NAMES
     // the rig with an edge and lets the reader project it. The road collapsed rather
     // than moved — the evaluate went away with the bake, and the row went with it.
-    expect(evaluatorConsumers()).toHaveLength(40); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 40 → 41 at #1056: the skeleton-Object collector, a NEW road (skeletons had no scene
+    // presence to evaluate for until then), declared above as fixed-ctx.
+    expect(evaluatorConsumers()).toHaveLength(41); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

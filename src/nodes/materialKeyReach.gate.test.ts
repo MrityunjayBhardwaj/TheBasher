@@ -221,7 +221,7 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     expect(writers).toEqual(Object.keys(MATERIAL_KEY_WRITERS).sort());
   });
 
-  it('carries that key on 1 of the 6 ObjectData kinds, and a material on 3', () => {
+  it('carries that key on 1 of the 7 ObjectData kinds, and a material on 3', () => {
     // DERIVED from the union rather than restated: "1 of 6" is a claim about the type, so
     // read the type. A seventh kind joining the union changes the denominator here without
     // anyone remembering that a paragraph in the design doc counts it.
@@ -235,6 +235,9 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
       'CameraDataValue',
       'BakedDataValue',
       'ModifiedDataValue',
+      // #1056 — the seventh kind, exactly as the comment above anticipated: a skeleton Object's
+      // data. It carries neither a material nor a key, so the reach below does not move.
+      'SkeletonValue',
     ]);
 
     const bodies = members.map((name) => [name, interfaceBody(types, name)] as const);
@@ -355,9 +358,16 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
   // against the set emptying, and the failure here is the set GROWING one quiet caller at a
   // time until "the unkeyed road" is most of them.
   const UNKEYED_ATTACH_CALLERS: Record<string, string> = {
+    // #1091 — TWO roads in this module now, counted separately in the numbers below. The
+    // second is `FlattenedBakedMeshR`: a flatten override over a baked mesh draws a material
+    // built from the override alone, and no minted key describes it, because the evaluated
+    // material (the captured spec) is exactly what flatten discards. The fallback keys the
+    // flattened IR with `materialKeyOf`, the evaluator's own function — #545's argument.
     'src/viewport/SceneFromDAG.tsx':
       'ModifiedMeshR — ModifiedDataValue mints no materialKey, and #545 measured the ' +
-      'downstream fallback as the right permanent answer for it rather than as a gap',
+      'downstream fallback as the right permanent answer for it rather than as a gap; and ' +
+      'FlattenedBakedMeshR (#1091) — a flattened material is the override alone, which ' +
+      'nothing mints',
     // ⚠️ #638 (ns-1b step 5) — RESTATED, NOT FLOORED. This is one ROAD that costs EIGHT
     // call sites, and the two numbers below say so separately for that reason.
     //
@@ -392,14 +402,15 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // Anti-vacuity, and it is not theoretical: a parser that found nothing would make every
     // assertion below green while counting an empty set.
     //
-    // TEN: the two single-material components, plus the slot table's eight fixed calls
-    // (#638). The number is restated rather than relaxed — a floor would let the set grow
-    // one quiet caller at a time, which is the failure this whole case exists to stop.
+    // ELEVEN: the two single-material components, the flattened baked mesh (#1091), plus the
+    // slot table's eight fixed calls (#638). The number is restated rather than relaxed — a
+    // floor would let the set grow one quiet caller at a time, which is the failure this whole
+    // case exists to stop.
     expect(
       calls.length,
-      'the call-site parse does not read the ten known calls — under-reading makes every ' +
+      'the call-site parse does not read the eleven known calls — under-reading makes every ' +
         'assertion below vacuous, and over-reading means a further road now attaches here',
-    ).toBe(10);
+    ).toBe(11);
 
     // The type system already refuses an omitted argument. This re-checks it structurally,
     // because the way this gate dies is someone widening the parameter back to optional to
@@ -411,16 +422,17 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     ).toEqual([]);
 
     const unkeyed = calls.filter((c) => c.args[3] === 'null');
-    // NINE calls, TWO roads — and both numbers are asserted because they answer different
-    // questions. The call count catches a ninth site appearing inside an existing road (a
-    // wider cap, a copied line); the module set below catches a THIRD road joining, which
-    // is #545's actual reopen condition. Collapsing them to one number would hide whichever
-    // was not chosen.
+    // TEN calls, THREE roads in TWO modules — and both numbers are asserted because they
+    // answer different questions. The call count catches another site appearing inside an
+    // existing road (a wider cap, a copied line); the module set below catches a road joining
+    // from a new module, which is #545's actual reopen condition. #1091's flattened baked mesh
+    // joined inside `SceneFromDAG.tsx`, so it moved the count and not the set — which is why
+    // its entry above names it. Collapsing the two numbers would hide whichever was not chosen.
     expect(
       unkeyed.length,
       'a further call now attaches with no minted key — #545 reopen condition 3. The ' +
-        'fallback is only safe while this set is the two decided roads; decide, do not drift',
-    ).toBe(9);
+        'fallback is only safe while this set is the decided roads; decide, do not drift',
+    ).toBe(10);
     expect([...new Set(unkeyed.map((c) => c.path))].sort()).toEqual(
       Object.keys(UNKEYED_ATTACH_CALLERS).sort(),
     );
