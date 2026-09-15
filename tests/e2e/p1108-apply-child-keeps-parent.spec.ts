@@ -252,3 +252,101 @@ for (const mask of ['all', 'location'] as const) {
     expect(distance).toBeLessThan(1e-3);
   });
 }
+
+// The bake reads the parent node's pose at one frame and no longer draws under it, so a parent that
+// animates would stop there. Apply refuses instead. The parent is animated the way an edited
+// imported clip is (a baked channel naming it), and the spec first proves on screen that the child
+// really moves with it, so the refusal is not read off a parent that never moved.
+test('#1108 — Apply on a child whose imported parent node animates is refused, and nothing changes', async ({
+  page,
+}) => {
+  test.slow();
+  await openFresh(page);
+  await ingestHierarchy(page, 'p1108-animated-parent');
+  await expect.poll(async () => (await importRoots(page)).length, { timeout: 20_000 }).toBe(1);
+  const [root] = await importRoots(page);
+  expect(root.road).toBe('clone');
+  const child = (await importedMeshes(page)).find((m) => m.rootId === root.rootId);
+  expect(child, 'the import holds a mesh child').toBeTruthy();
+
+  const minted = await page.evaluate((rootId) => {
+    const dag = (window as unknown as BasherWindow).__basher_dag!.getState();
+    const nodes = dag.state.nodes;
+    const stack = [rootId];
+    let assetMap: Record<string, string> | null = null;
+    while (stack.length && !assetMap) {
+      const n = nodes[stack.pop()!];
+      if (!n) continue;
+      if (n.type === 'GltfAsset') assetMap = n.params.nodeNameMap as Record<string, string>;
+      for (const e of Object.values(n.inputs ?? {}).flat())
+        stack.push((e as { node: string }).node);
+    }
+    const target = assetMap?.p1108_parent;
+    if (!target) return null;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'p1108_parent_moving',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'p1108 parent moving',
+            target,
+            childName: 'p1108_parent',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 2, 0], easing: 'linear' },
+              { time: 2, value: [4, 2, 0], easing: 'linear' },
+            ],
+          },
+        },
+      ],
+      'e2e',
+      'p1108 animate the parent node',
+    );
+    return target;
+  }, root.rootId);
+  expect(minted, 'the import names the parent node').toBeTruthy();
+
+  const setTime = (seconds: number) =>
+    page.evaluate((s) => {
+      const time = (
+        window as unknown as {
+          __basher_time: { getState: () => { pause: () => void; setTime: (t: number) => void } };
+        }
+      ).__basher_time.getState();
+      time.pause();
+      time.setTime(s);
+    }, seconds);
+
+  // Positive control: the child drawn at 0 s and at 1 s is not in the same place.
+  await setTime(0);
+  await expect
+    .poll(async () => (await drawnUnder(page, root.rootId)).length, { timeout: 20_000 })
+    .toBe(1);
+  const [atZero] = await drawnUnder(page, root.rootId);
+  await setTime(1);
+  await expect
+    .poll(async () => setDistance(atZero, (await drawnUnder(page, root.rootId))[0] ?? atZero), {
+      timeout: 20_000,
+    })
+    .toBeGreaterThan(1);
+
+  const nodeCount = () =>
+    page.evaluate(
+      () =>
+        Object.keys((window as unknown as BasherWindow).__basher_dag!.getState().state.nodes)
+          .length,
+    );
+  const countBefore = await nodeCount();
+  const result = await page.evaluate(async (id) => {
+    const mod = await import('/src/app/animate/dispatchApplyTransform.ts');
+    return (await mod.dispatchApplyTransform(id, 'all')) as { ok: boolean; reason?: string };
+  }, child!.objectId);
+  console.log(`P1108 animated parent → ${JSON.stringify(result)}`);
+  expect(result.ok).toBe(false);
+  expect(result.reason).toContain('"p1108_parent"');
+  expect(await nodeCount()).toBe(countBefore);
+  // The child still draws under the import, from the clone.
+  expect((await drawnUnder(page, root.rootId)).length).toBe(1);
+});

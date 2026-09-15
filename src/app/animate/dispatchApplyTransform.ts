@@ -920,6 +920,10 @@ function isGltfChildClipDriven(
  *
  * When nothing sits between the holder and the child, that is the child's resolved pose itself,
  * with no decomposition, so an import with a flat hierarchy bakes exactly as it did.
+ *
+ * It also names what it read above the child (`wrapperIds`, `cloneAncestorNames`): everything
+ * there is read at the current frame and then gone from the child's chain, so the animated guard
+ * asks exactly these, the same way #1081 made the guard ask what the road consumes.
  */
 function importedChildPlacement(
   state: DagState,
@@ -932,12 +936,16 @@ function importedChildPlacement(
   readonly holderId: string;
   readonly transform: MeshTransform;
   readonly full?: THREE.Matrix4;
+  readonly wrapperIds: readonly string[];
+  readonly cloneAncestorNames: readonly string[];
 } | null {
   const nodes = Object.values(state.nodes);
   const parentOf = (id: string) => nodes.find((n) => hierarchyChildIds(n).includes(id));
   const assetParent = parentOf(assetId);
+  const wrapperIds: string[] = [];
   let holder = assetParent;
   while (holder && hierarchySocketForKind(holder.type, holder) !== 'children') {
+    wrapperIds.push(holder.id);
     holder = parentOf(holder.id);
   }
   const sceneId = state.outputs.scene?.node;
@@ -959,13 +967,17 @@ function importedChildPlacement(
 
   // The clone's own chain above the child, up to and including the clone root, as drawn.
   const parents = new THREE.Matrix4();
+  const cloneAncestorNames: string[] = [];
   for (let o = child.parent; o; o = o.parent) {
     parents.premultiply(new THREE.Matrix4().compose(o.position, o.quaternion, o.scale));
+    if (o.name) cloneAncestorNames.push(o.name);
     if (o === clone) break;
   }
 
   const above = between.multiply(parents);
-  if (above.equals(new THREE.Matrix4())) return { holderId, transform: local };
+  if (above.equals(new THREE.Matrix4())) {
+    return { holderId, transform: local, wrapperIds, cloneAncestorNames };
+  }
   const full = above.multiply(trsMatrix(local));
   const p = new THREE.Vector3();
   const q = new THREE.Quaternion();
@@ -984,7 +996,45 @@ function importedChildPlacement(
       scale: [s.x, s.y, s.z],
     },
     full,
+    wrapperIds,
+    cloneAncestorNames,
   };
+}
+
+/**
+ * #1108 follow-up — the first thing above an imported child whose animation the bake would freeze,
+ * or `null` when nothing above it animates.
+ *
+ * {@link importedChildPlacement} reads the wrappers and the clone's parent nodes at the current
+ * frame, and the baked Object no longer draws under either, so any motion there would stop at that
+ * frame (measured: a clip track or a baked channel on the glTF parent left the bake 4 units off
+ * the drawn mesh one second later). The holder is not asked: the bake is wired under it and keeps
+ * following it. Each ancestor is asked the questions the child is asked for itself: a keyframe
+ * channel on its node (a baked channel targets the same node), and a clip track for its name.
+ */
+function animatedAncestorOfImportedChild(
+  state: DagState,
+  asset: { readonly params?: unknown },
+  placement: {
+    readonly wrapperIds: readonly string[];
+    readonly cloneAncestorNames: readonly string[];
+  },
+  assetRef: string,
+  currentFrame: number,
+): string | null {
+  const seconds = currentFrame / 60;
+  for (const id of placement.wrapperIds) {
+    if (isApplySourceAnimated(state, id, currentFrame)) return id;
+  }
+  const nameMap = (asset.params as { nodeNameMap?: Record<string, string> }).nodeNameMap ?? {};
+  for (const name of placement.cloneAncestorNames) {
+    // By the mapped id alone: a baked channel is drawn by `nodeNameMap` membership, whether or not
+    // the node it names has a satellite in the graph.
+    const nodeId = nameMap[name];
+    if (nodeId && isApplySourceAnimated(state, nodeId, currentFrame)) return name;
+    if (isGltfChildClipDriven(state, assetRef, name, seconds)) return name;
+  }
+  return null;
 }
 
 /**
@@ -1059,6 +1109,19 @@ async function dispatchApplyGltfChild(
   // #1108 — the pose relative to the Group the child drew under, and that Group as the new parent.
   const placement = importedChildPlacement(state, asset.id, clone, child, mesh.transform, ctx);
   if (!placement) return { ok: false, reason: 'Apply: project has no `scene` output.' };
+  const animatedAncestor = animatedAncestorOfImportedChild(
+    state,
+    asset,
+    placement,
+    assetRef,
+    currentFrame,
+  );
+  if (animatedAncestor) {
+    return {
+      ok: false,
+      reason: `Apply unavailable — "${animatedAncestor}", which "${childName}" draws under, is animated, and the bake would freeze it.`,
+    };
+  }
   // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
   const split = splitAppliedPose(placement.transform, mask, placement.full);
   if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
