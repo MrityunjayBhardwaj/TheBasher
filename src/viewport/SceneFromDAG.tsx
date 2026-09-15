@@ -2853,6 +2853,24 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
   return <CapturedBakedMeshR value={value} override={override} />;
 }
 
+/**
+ * #489 — the pose a baked mesh draws at: the Object's OWN position, rotation AND scale. What an
+ * Apply baked is already in the verts and the Object reads identity for it, so this never
+ * double-transforms; a band the Apply kept (#1080) or a later edit is drawn instead of silently
+ * ignored. `resolveWorldTransform`'s `localMatrix` reads the same scale.
+ *
+ * ONE spelling for both arms of {@link BakedMeshR}. The flatten arm (#1091) was written with its own
+ * copy while #489 changed the other, and kept the old identity scale: a flattened baked mesh drew
+ * none of its scale while the inspector and the world resolver said it did.
+ */
+function bakedMeshPose(value: BakedMeshValue) {
+  return {
+    position: value.position as [number, number, number],
+    rotation: degVec3ToRad(value.rotation as [number, number, number]),
+    scale: (value.scale ?? [1, 1, 1]) as [number, number, number],
+  };
+}
+
 function FlattenedBakedMeshR({
   value,
   override,
@@ -2868,14 +2886,7 @@ function FlattenedBakedMeshR({
   // (`materialKeyReach.gate.test.ts` case D counts this call).
   const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
   return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // IDENTITY scale — the transform is baked into the geometry verts (H40), as below.
-      scale={[1, 1, 1]}
-      geometry={geom}
-      material={material}
-    />
+    <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />
   );
 }
 
@@ -3005,16 +3016,7 @@ function CapturedBakedMeshR({
   useEffect(() => () => material.dispose(), [material]);
 
   return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // #489 — the Object's OWN scale, like its position and rotation. What an Apply baked is
-      // already in the verts and the Object reads identity for it, so this never
-      // double-transforms; a band the Apply kept (#1080) or a later edit is drawn instead of
-      // silently ignored. `resolveWorldTransform`'s `localMatrix` reads the same scale.
-      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
-      geometry={geom}
-    >
+    <mesh {...bakedMeshPose(value)} geometry={geom}>
       <primitive object={material} attach="material" />
     </mesh>
   );

@@ -86,6 +86,41 @@ async function drawn(page: Page, name: string): Promise<DrawnMaterial[] | null> 
   }, name);
 }
 
+/** The world-space scale each mesh under `name` is drawn at (the length of each matrix axis). */
+async function drawnScale(page: Page, name: string): Promise<number[][] | null> {
+  return page.evaluate((n) => {
+    const scene = (window as unknown as BasherWindow).__basher_three.getState().scene as {
+      getObjectByName: (n: string) => { traverse: (f: (o: unknown) => void) => void } | undefined;
+    } | null;
+    const root = scene?.getObjectByName(n);
+    if (!root) return null;
+    const out: number[][] = [];
+    root.traverse((o) => {
+      const m = o as {
+        isMesh?: boolean;
+        updateWorldMatrix: (p: boolean, c: boolean) => void;
+        matrixWorld: { elements: number[] };
+      };
+      if (!m.isMesh) return;
+      m.updateWorldMatrix(true, false);
+      const e = m.matrixWorld.elements;
+      out.push([0, 4, 8].map((i) => Math.hypot(e[i], e[i + 1], e[i + 2])));
+    });
+    return out;
+  }, name);
+}
+
+async function setBakedScale(page: Page, id: string, scale: [number, number, number]) {
+  await page.evaluate(
+    ({ nodeId, v }) => {
+      (window as unknown as BasherWindow).__basher_dag
+        .getState()
+        .dispatch({ type: 'setParam', nodeId, paramPath: 'scale', value: v });
+    },
+    { nodeId: id, v: scale },
+  );
+}
+
 async function setFlatten(page: Page, value: boolean) {
   await page.evaluate(
     ({ ovr, v }) => {
@@ -196,9 +231,21 @@ test('#1091: flatten on an override over a baked mesh draws the override alone, 
     .poll(() => drawn(page, OVR))
     .toEqual([{ type: 'MeshPhysicalMaterial', hasMap: false, color: OVR_COLOR }]);
 
+  // #489 — the flattened arm draws the baked Object's scale too, as the captured arm does. It used
+  // to keep its own identity-scale copy, so scaling a flattened baked mesh changed nothing on screen.
+  const [unscaled] = (await drawnScale(page, OVR)) ?? [];
+  expect(unscaled, 'the flattened baked mesh is drawn').toBeTruthy();
+  await setBakedScale(page, bakedId, [2, 2, 2]);
+  const doubled = unscaled.map((s) => s * 2);
+  const near = (got: number[][] | null) =>
+    got?.length === 1 && got[0].every((s, i) => Math.abs(s - doubled[i]) < 1e-6);
+  await expect.poll(async () => near(await drawnScale(page, OVR))).toBe(true);
+
   // FALSE → composition again, map restored: the flag is the only lever.
   await setFlatten(page, false);
   await expect
     .poll(() => drawn(page, OVR))
     .toEqual([{ type: 'MeshStandardMaterial', hasMap: true, color: OVR_COLOR }]);
+  // …and the captured arm keeps drawing the same scale.
+  await expect.poll(async () => near(await drawnScale(page, OVR))).toBe(true);
 });
