@@ -61,6 +61,7 @@ import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { resolveDataLaneBase } from '../operatorChain';
+import { dataLaneNodeIds } from '../dataLaneOverlay';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
@@ -112,9 +113,19 @@ const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animat
  *
  * IT REACHES THROUGH THE SPLIT. Geometry and material live on the DATA node, so a
  * `size` channel targets the BoxData, not the Object the user selected. Without
- * the `linkedDataNodeId` reach the guard would ask the wrong node and get the
- * honest answer "nothing animated here" — the exact shape of the reach bugs the
- * split has produced repeatedly.
+ * the reach the guard would ask the wrong node and get the honest answer "nothing
+ * animated here" — the exact shape of the reach bugs the split has produced repeatedly.
+ *
+ * #1081 / #1098 — AND IT ASKS WHAT THE ROAD CONSUMES, not a fixed pair of nodes. It used
+ * to ask the Object and its first `data` hop for every Apply. A stack puts operators into
+ * that edge, so on the bake road the hop landed on the TOP operator and everything below
+ * it — the data's `size`, a lower modifier's `count` — baked away unrefused (measured: 8
+ * of 24 cases). The bake removes the whole lane, so it asks the whole lane. Stored mesh
+ * data is applied INTO instead (#1077), writing only the base's `mesh` and the Object's
+ * pose and leaving every operator and channel live, so there the Object alone is asked;
+ * the old pair refused over a material or top operator that road never reads. The road is
+ * decided by {@link applyRoadOf}, the same function dispatch branches on, so the offer
+ * (menu, N panel) and the dispatch cannot disagree about which question applies.
  *
  * This ALSO closes the orphaned-channel half of #411: the bake removes the data
  * node, which would leave a `size`/`material` channel targeting a dead id. Since
@@ -134,12 +145,13 @@ export function isApplySourceAnimated(
   nodeId: string,
   currentFrame: number,
 ): boolean {
-  // The Object owns the pose; the data node it points at owns geometry+material.
-  // Both are consumed by the bake, so both are asked. A fused node has no `data`
-  // edge and answers for itself alone.
-  const subjects = [nodeId, linkedDataNodeId(state, nodeId)].filter(
-    (id): id is string => id !== null,
-  );
+  // The Object owns the pose, which both roads write. The bake also consumes every node on
+  // the data lane (base first, then each operator); applying into stored mesh data consumes
+  // none of them. A fused node has no lane and answers for itself alone.
+  const subjects =
+    applyRoadOf(state, nodeId).kind === 'into-stored-mesh'
+      ? [nodeId]
+      : [nodeId, ...dataLaneNodeIds(state, nodeId)];
   return Object.values(state.nodes).some((node) => {
     if (!isKeyframeChannelNode(node)) return false;
     const p = (node.params ?? {}) as { target?: unknown; paramPath?: unknown };
@@ -151,6 +163,30 @@ export function isApplySourceAnimated(
       paramAnimationState(state, p.target, p.paramPath, currentFrame) !== 'none'
     );
   });
+}
+
+/** Which of Apply's two roads a node takes, and for stored mesh data, what it applies into. */
+export type ApplyRoad =
+  | { readonly kind: 'into-stored-mesh'; readonly dataId: string; readonly mesh: PackedMeshData }
+  | { readonly kind: 'bake' };
+
+/**
+ * #1081 / #1098 — the ONE decision between applying into stored mesh data (#1077) and baking,
+ * read by the dispatch that branches on it and by the animated guard that must ask what that
+ * branch consumes. Two spellings of this test would let the guard answer for one road while
+ * dispatch took the other.
+ *
+ * Recognised by what the BASE of the data lane holds (a packed mesh), not by its type name, for
+ * the reason `isPackedMeshData` gives — and the base, not the `data` hop, because a modifier or
+ * material operator on the stack sits between the Object and its mesh.
+ */
+export function applyRoadOf(state: DagState, nodeId: string): ApplyRoad {
+  const baseId = resolveDataLaneBase(state, nodeId);
+  if (baseId === nodeId) return { kind: 'bake' };
+  const mesh = (state.nodes[baseId]?.params as { mesh?: unknown } | undefined)?.mesh;
+  return isPackedMeshData(mesh)
+    ? { kind: 'into-stored-mesh', dataId: baseId, mesh }
+    : { kind: 'bake' };
 }
 
 /** Compose a 4×4 from the resolved TRS, including ONLY the masked band(s). */
@@ -446,15 +482,11 @@ export async function dispatchApplyTransform(
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
   if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
 
-  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the base of the
-  // data lane holds (a packed mesh), not by its type name, for the reason `isPackedMeshData`
-  // gives. The BASE, not the `data` hop: a modifier or material operator on the stack sits
-  // between the Object and its mesh, and one hop would land on it and send the Apply to the bake.
-  const baseId = resolveDataLaneBase(state, selectedId);
-  const dataId = baseId !== selectedId ? baseId : null;
-  const storedMesh = dataId ? (state.nodes[dataId]?.params as { mesh?: unknown }).mesh : undefined;
-  if (dataId && isPackedMeshData(storedMesh)) {
-    return applyIntoStoredMesh(selectedId, dataId, storedMesh, mesh.transform, mask, state, {
+  // #1077 — stored mesh data is applied INTO, never baked. `applyRoadOf` makes that call, and the
+  // animated guard above read the same call to decide what to ask (#1081 / #1098).
+  const road = applyRoadOf(state, selectedId);
+  if (road.kind === 'into-stored-mesh') {
+    return applyIntoStoredMesh(selectedId, road.dataId, road.mesh, mesh.transform, mask, state, {
       dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
       clearTransients:
         deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),

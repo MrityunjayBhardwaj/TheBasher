@@ -1128,6 +1128,237 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   });
 });
 
+describe('#1081 / #1098 — the animated guard asks what the Apply road it takes consumes', () => {
+  // Two roads consume different things. The BAKE (a box or sphere) removes the whole data lane
+  // and captures geometry and material from it, so a keyframe on ANY node of the lane is frozen.
+  // Stored mesh data is applied INTO (#1077): only `mesh` on the base and the Object's pose are
+  // written, and every operator, material and channel stays live. The guard used to ask the
+  // Object and its first `data` hop for both — blind below the top of a stack on the bake road,
+  // and refusing on the stored-mesh road over things it never reads. Measured over this whole
+  // table before the fix: 8 of 24 bake cases baked silently, 4 stored-mesh cases refused.
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    geometryRegistry.clear();
+  });
+
+  type Base = 'cube' | 'sphere' | 'stored';
+  type Holder = 'object' | 'base' | 'op0' | 'op1';
+  const STACKS: readonly (readonly string[])[] = [
+    [],
+    ['ArrayModifier'],
+    ['MaterialOverrideOp'],
+    ['ArrayModifier', 'MaterialOverrideOp'],
+  ];
+
+  function storedCube(): MeshGeometryData {
+    const corners = [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+    ];
+    const faces = [
+      [0, 3, 2, 1],
+      [4, 5, 6, 7],
+      [0, 1, 5, 4],
+      [2, 3, 7, 6],
+      [1, 2, 6, 5],
+      [3, 0, 4, 7],
+    ];
+    return {
+      points: Float32Array.from(corners.flat().map((v) => v * 0.5)),
+      faceSizes: Uint32Array.from(faces.map((f) => f.length)),
+      cornerPoints: Uint32Array.from(faces.flat()),
+      cornerUVs: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+      cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
+    };
+  }
+
+  /** An Object `o` over `base`, with `stack` spliced bottom-first as `op0`, `op1`. */
+  function build(base: Base, stack: readonly string[]): { state: DagState; dataId: string } {
+    let state: DagState;
+    let dataId: string;
+    if (base === 'cube') {
+      const c = makeSplitCube(emptyDagState(), { objectId: 'o', size: [1, 1, 1] });
+      state = c.state;
+      dataId = c.dataId;
+    } else if (base === 'sphere') {
+      const c = makeSplitSphere(emptyDagState(), { objectId: 'o', radius: 1 });
+      state = c.state;
+      dataId = c.dataId;
+    } else {
+      dataId = 'o_data';
+      state = applyAll(emptyDagState(), [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'PolyMeshData',
+          params: { mesh: packMeshData(storedCube()), material: gltfJsonMaterialToOpenpbr({}) },
+        },
+        { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: 'o', socket: 'data' },
+        },
+      ]);
+    }
+    if (stack.length === 0) return { state, dataId };
+    const ops: Op[] = [
+      {
+        type: 'disconnect',
+        from: { node: dataId, socket: 'out' },
+        to: { node: 'o', socket: 'data' },
+      },
+    ];
+    let below = dataId;
+    stack.forEach((type, i) => {
+      ops.push(
+        { type: 'addNode', nodeId: `op${i}`, nodeType: type, params: {} },
+        {
+          type: 'connect',
+          from: { node: below, socket: 'out' },
+          to: { node: `op${i}`, socket: 'target' },
+        },
+      );
+      below = `op${i}`;
+    });
+    ops.push({
+      type: 'connect',
+      from: { node: below, socket: 'out' },
+      to: { node: 'o', socket: 'data' },
+    });
+    return { state: applyAll(state, ops), dataId };
+  }
+
+  /** A two-key channel on a param `holderId` really owns, typed for that param. */
+  function keyframe(state: DagState, holderId: string, base: Base): DagState {
+    const type = state.nodes[holderId].type;
+    const [channel, paramPath, a, b]: [string, string, unknown, unknown] =
+      type === 'Object'
+        ? ['KeyframeChannelVec3', 'position', [0, 0, 0], [3, 0, 0]]
+        : type === 'ArrayModifier'
+          ? ['KeyframeChannelNumber', 'count', 2, 5]
+          : type === 'MaterialOverrideOp'
+            ? ['KeyframeChannelColor', 'color', '#ff0000', '#00ff00']
+            : base === 'cube'
+              ? ['KeyframeChannelVec3', 'size', [1, 1, 1], [3, 1, 1]]
+              : base === 'sphere'
+                ? ['KeyframeChannelNumber', 'radius', 0.5, 2]
+                : ['KeyframeChannelColor', 'material.base.color', '#ff0000', '#00ff00'];
+    return applyOp(state, {
+      type: 'addNode',
+      nodeId: 'kf',
+      nodeType: channel,
+      params: {
+        name: paramPath,
+        target: holderId,
+        paramPath,
+        keyframes: [
+          { time: 0, value: a, easing: 'linear' },
+          { time: 1, value: b, easing: 'linear' },
+        ],
+      },
+    }).next;
+  }
+
+  /** The guard's answer, and what Apply then actually did — asked of the same state. */
+  async function measure(base: Base, stack: readonly string[], holder: Holder | null) {
+    const built = build(base, stack);
+    const holderId = holder === 'object' ? 'o' : holder === 'base' ? built.dataId : holder;
+    const state = holderId ? keyframe(built.state, holderId, base) : built.state;
+    const guard = isApplySourceAnimated(state, 'o', 30);
+    const dispatched: Op[] = [];
+    const result = await dispatchApplyTransform('o', 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 30,
+      dispatchAtomic: (ops) => {
+        dispatched.push(...ops);
+        return [];
+      },
+      setSelection: () => {},
+      clearTransients: () => {},
+    });
+    const refusedAsAnimated = !result.ok && result.reason.includes('animated');
+    return { guard, result, refusedAsAnimated, dispatched };
+  }
+
+  /** Every node that can hold a keyframe under `stack`: the Object, the base, each operator. */
+  const holdersOf = (stack: readonly string[]): Holder[] => [
+    'object',
+    'base',
+    ...stack.map((_, i) => `op${i}` as Holder),
+  ];
+
+  const bakeCells = (['cube', 'sphere'] as const).flatMap((base) =>
+    STACKS.flatMap((stack) => holdersOf(stack).map((holder) => ({ base, stack, holder }))),
+  );
+
+  it('the table is the population it claims: 24 animated bake cells', () => {
+    // 2 shapes × (Object + base on an empty stack, + one per operator on each of the others).
+    expect(bakeCells).toHaveLength(24);
+  });
+
+  it.each(bakeCells)(
+    'bake road — $base [$stack] keyframe on $holder: refused, nothing dispatched',
+    async ({ base, stack, holder }) => {
+      const m = await measure(base, stack, holder);
+      expect(m.guard).toBe(true);
+      expect(m.refusedAsAnimated).toBe(true);
+      expect(m.dispatched).toEqual([]);
+    },
+  );
+
+  it.each(
+    (['cube', 'sphere'] as const).flatMap((base) => STACKS.map((stack) => ({ base, stack }))),
+  )(
+    'bake road — $base [$stack] with nothing animated still bakes (the widened guard is not blanket-true)',
+    async ({ base, stack }) => {
+      const m = await measure(base, stack, null);
+      expect(m.guard).toBe(false);
+      expect(m.result.ok).toBe(true);
+    },
+  );
+
+  it.each(STACKS.map((stack) => ({ stack })))(
+    'stored-mesh road — [$stack] keyframe on the Object pose: refused, because the pose is written',
+    async ({ stack }) => {
+      const m = await measure('stored', stack, 'object');
+      expect(m.guard).toBe(true);
+      expect(m.refusedAsAnimated).toBe(true);
+      expect(m.dispatched).toEqual([]);
+    },
+  );
+
+  const storedLiveCells = STACKS.flatMap((stack) =>
+    holdersOf(stack)
+      .filter((h) => h !== 'object')
+      .map((holder) => ({ stack, holder })),
+  );
+
+  it.each(storedLiveCells)(
+    'stored-mesh road — [$stack] keyframe on $holder: applied into the mesh, the channel left live',
+    async ({ stack, holder }) => {
+      const m = await measure('stored', stack, holder);
+      expect(m.guard).toBe(false);
+      expect(m.result.ok).toBe(true);
+      // What this road consumes, exactly: the base's mesh and the Object's pose. The keyframed
+      // node is none of them, which is why refusing on it froze nothing and only blocked Apply.
+      expect(
+        m.dispatched.map((op) =>
+          op.type === 'setParam' ? `${op.nodeId}.${op.paramPath}` : op.type,
+        ),
+      ).toEqual(['o_data.mesh', 'o.position', 'o.rotation', 'o.scale']);
+    },
+  );
+});
+
 describe('#411 — the animated guard covers every param the bake consumes', () => {
   beforeEach(() => {
     __resetRegistryForTests();
