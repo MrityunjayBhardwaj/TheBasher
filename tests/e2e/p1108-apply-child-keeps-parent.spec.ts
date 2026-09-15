@@ -83,9 +83,13 @@ async function openFresh(page: Page): Promise<void> {
   });
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
+  // The scene too, not only the store: under load the store exists before the canvas mounts, and a
+  // read in that window found no scene at all.
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_ingestGltfFolder && w.__basher_three);
+    return Boolean(
+      w.__basher_dag && w.__basher_ingestGltfFolder && w.__basher_three?.getState().scene,
+    );
   });
 }
 
@@ -119,11 +123,12 @@ async function ingestHierarchy(page: Page, folderName: string): Promise<void> {
   }, folderName);
 }
 
-/** Every visible mesh drawn under `rootId`, as world-space vertex lists. */
+/** Every visible mesh drawn under `rootId`, as world-space vertex lists. Empty while no scene is
+ *  mounted, so a poll waits for one instead of aborting on the read. */
 async function drawnUnder(page: Page, rootId: string): Promise<Tuple3[][]> {
   return page.evaluate((id) => {
     const scene = (window as unknown as BasherWindow).__basher_three!.getState().scene;
-    const root = scene.getObjectByName(id);
+    const root = scene?.getObjectByName(id);
     const out: [number, number, number][][] = [];
     if (!root) return out;
     root.traverse((o) => {
