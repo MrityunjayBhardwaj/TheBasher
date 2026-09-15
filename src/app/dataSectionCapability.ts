@@ -147,6 +147,14 @@ const MODIFIER_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
       'Same as a light — nothing to reshape. Measured: Blender 5.1.1 accepts 0 modifier ' +
       'types on a camera, and obj.modifiers.new() returns None there.',
   },
+  // #1056 — a skeleton Object (an armature, in the reference).
+  Skeleton: {
+    state: 'never',
+    reason:
+      'A skeleton is bones, not a surface, so there is nothing for a modifier to reshape. ' +
+      'Measured: Blender 5.1.1 accepts 0 of its 83 modifier types on an armature object — ' +
+      'obj.modifiers.new() returns None for every one (a camera, as control, also 0).',
+  },
 };
 
 /**
@@ -199,6 +207,12 @@ const MATERIAL_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
       'Same as a light — nothing to shade. Measured: bpy.types.Camera declares no ' +
       '`materials` property at all.',
   },
+  Skeleton: {
+    state: 'never',
+    reason:
+      'Bones are not a surface, so there is nothing to shade. Measured: bpy.types.Armature ' +
+      'declares no `materials` property in Blender 5.1.1 (bpy.types.Mesh, as control, does).',
+  },
 };
 
 /**
@@ -247,6 +261,12 @@ const SLOTS_CAPABILITY: Record<ObjectDataKind, SectionCapability> = {
     reason:
       'Same as a light — nothing to shade, so nothing to slot. Measured: bpy.types.Camera ' +
       'declares no `materials` property at all.',
+  },
+  Skeleton: {
+    state: 'never',
+    reason:
+      'No material table, so no slot for an Object to re-point. Measured: bpy.types.Armature ' +
+      'declares no `materials` property in Blender 5.1.1.',
   },
 };
 

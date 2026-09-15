@@ -89,7 +89,8 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     ') or customMap for arbitrary rigs. ' +
     'Emits a RetargetClip node wired to the source clip, the map and the ' +
     'target rig, so editing either operand re-poses the target with no ' +
-    're-run; the source clip is left untouched.',
+    're-run; the source clip is left untouched. An Object showing the source ' +
+    'skeleton is hidden in the same step.',
   spec: RetargetSpec,
   specExample: {
     sourceClipId: 'mixamo_clip',
@@ -199,8 +200,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     }
     return { ok: true };
   },
-  // No `state`: the build reads nothing off the graph any more. Every operand it
-  // used to sample is now named by an edge instead, which is the whole change.
+  // The build samples no operand off the graph: every one is named by an edge instead
+  // (#901). It reads `state` only to find what the bind must stand down within its
+  // closure — the rig's previous active clip (#907) and the source rig's Object (#1056).
   build(spec, _closure: ClosureSet, _state: DagState): Op[] {
     const nameMap =
       spec.customMap ??
@@ -277,6 +279,21 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       // undo entries and dirty params on nodes nothing asked about.
       if ((node.params as { active?: unknown }).active !== true) continue;
       ops.push({ type: 'setParam', nodeId: id, paramPath: 'active', value: false });
+    }
+
+    // #1056 — THE SOURCE RIG STEPS ASIDE. Every imported motion stands in the scene as an
+    // Object pointed at its skeleton, so it can be looked at before anything plays it. Once a
+    // character does, that Object is a second rig standing beside the character, so the bind
+    // hides it — in this same batch, so undoing the bind brings the rig back and a refused
+    // bind leaves it visible. Hidden, never removed: it stays in the outliner to unhide, and
+    // outlives the character. Found by its `data` edge rather than by the id the importer
+    // gives it, so a rewired Object is still the one showing this skeleton; the closure's one
+    // `parent` hop from `sourceSkeletonId` is what reaches it.
+    for (const id of _closure.nodes) {
+      const node = _state.nodes[id];
+      if (!node || node.type !== 'Object') continue;
+      if (edgeSource(node, 'data') !== spec.sourceSkeletonId) continue;
+      ops.push({ type: 'setHidden', nodeId: id, hidden: true });
     }
 
     return ops;

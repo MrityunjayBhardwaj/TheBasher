@@ -268,7 +268,13 @@ export function resolveEvaluatedMesh(
     // widening `ObjectData` could never redden it and `BakedData` was absorbed here in
     // silence — with the wrong answer, since a baked mesh IS a mesh face. Spelled as an
     // exhaustive switch, the next data kind (glTF, #389) is a compile error instead.
-    if (data.kind === 'CurveData' || data.kind === 'LightData' || data.kind === 'CameraData') {
+    // #1056 — a `Skeleton` is bones, not a surface: no mesh face to read, like a camera.
+    if (
+      data.kind === 'CurveData' ||
+      data.kind === 'LightData' ||
+      data.kind === 'CameraData' ||
+      data.kind === 'Skeleton'
+    ) {
       return null; // not a mesh face
     }
     // The pose is the Object's own band (the same evaluated walk the primitives

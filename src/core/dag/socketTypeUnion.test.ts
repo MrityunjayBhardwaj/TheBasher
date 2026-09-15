@@ -186,7 +186,7 @@ describe('#609 — an input socket accepts a SET of types', () => {
     expect(() => register('TmpScalarOk', 'Number')).not.toThrow();
   });
 
-  it('the set of PRODUCTION input sockets declaring a union is EXACTLY ParamDriver.in', () => {
+  it('the set of PRODUCTION input sockets declaring a union is EXACTLY Object.data and ParamDriver.in', () => {
     // An EXACT census, not a floor, because the population grows: a new set-valued
     // socket has to come here and say so, where the author is present, rather than being
     // added by someone who has not read why acceptance is not coercion.
@@ -207,6 +207,10 @@ describe('#609 — an input socket accepts a SET of types', () => {
         if (Array.isArray(desc.type)) unions.push(`${type}.${socket}`);
       }
     }
-    expect(unions.sort()).toEqual(['ParamDriver.in']);
+    // #1056 — the second member, and it came here to say so: `Object.data` accepts
+    // `ObjectData | Skeleton`, because an armature is its own Object pointing at the skeleton
+    // itself. Acceptance, not coercion — the Object carries the skeleton value unchanged, and
+    // every reader discriminates on `value.kind` (the compiler forced four of them).
+    expect(unions.sort()).toEqual(['Object.data', 'ParamDriver.in']);
   });
 });

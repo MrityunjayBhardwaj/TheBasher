@@ -294,4 +294,78 @@ describe('binding a motion to a character', () => {
     // The first bind is active again, so the rig is driving exactly one clip.
     expect((nodes['n_out_a'].params as { active?: boolean }).active).toBe(true);
   });
+
+  // ── #1056 — the motion's own rig steps aside when a character plays it ───
+  /** An Object showing a skeleton, as every motion import now adds one. */
+  const withSkeletonObject = (s: DagState, objectId: string, skeletonId: string): DagState => {
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: objectId,
+      nodeType: 'Object',
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: skeletonId, socket: 'out' },
+      to: { node: objectId, socket: 'data' },
+    }).next;
+  };
+  const isHidden = (id: string) => useDagStore.getState().state.nodes[id]?.meta?.hidden === true;
+
+  it('hides the Object showing the source skeleton, in the SAME undo entry as the bind', () => {
+    useDagStore
+      .getState()
+      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+    expect(isHidden('n_src_skel_object')).toBe(false);
+
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    expect(isHidden('n_src_skel_object')).toBe(true);
+    expect(useDagStore.getState().undoStack).toHaveLength(1);
+
+    // One undo takes the bind AND the hide: the rig is back, and it is not left hidden with
+    // nothing playing its motion.
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes['n_out_a']).toBeUndefined();
+    expect(isHidden('n_src_skel_object')).toBe(false);
+  });
+
+  it('finds that Object by its data edge, not by the id the importer gives it', () => {
+    useDagStore
+      .getState()
+      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_renamed_rig', 'n_src_skel'));
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    expect(isHidden('n_renamed_rig')).toBe(true);
+  });
+
+  it('leaves an Object showing the TARGET skeleton visible, though the bind reaches it', () => {
+    // The target rig is a closure root too, so an Object on it IS in the set the loop walks;
+    // only the `data` edge tells the two apart.
+    let s = buildScene('n_clip_a', 60);
+    s = withSkeletonObject(s, 'n_src_skel_object', 'n_src_skel');
+    s = withSkeletonObject(s, 'n_target_object', SKEL);
+    useDagStore.getState().hydrate(s);
+    expect(edgeOf('n_target_object', 'data')).toBe(SKEL);
+
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    expect(isHidden('n_src_skel_object')).toBe(true);
+    expect(isHidden('n_target_object')).toBe(false);
+  });
+
+  it('a refused bind hides nothing — the motion stays visible', () => {
+    useDagStore
+      .getState()
+      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+    const refused = dispatchMutatorFromUI(
+      'mutator.animation.retarget',
+      {
+        sourceClipId: 'n_missing_clip',
+        sourceSkeletonId: 'n_src_skel',
+        targetSkeletonId: SKEL,
+        customMap: Object.fromEntries(BONES.map((b) => [b, b])),
+      },
+      'Bind motion to rig',
+    );
+    expect(refused.ok).toBe(false);
+    expect(isHidden('n_src_skel_object')).toBe(false);
+  });
 });

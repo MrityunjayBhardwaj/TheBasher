@@ -178,9 +178,12 @@ export function modifierDataSource(data: ObjectData): ModifierDataSource | null 
     case 'CurveData':
     case 'LightData':
     case 'CameraData':
+    case 'Skeleton':
       // Not a mesh face — nothing for a geometry modifier to reshape. Measured, not
       // assumed: Blender 5.1.1 accepts 55 modifier types on a mesh and ZERO on a
       // camera or a light (`ref/GROUND_TRUTH_BLENDER_MODIFIER_DATA.md` §9).
+      // #1056 — a skeleton is bones, not a surface, and takes the same answer: Blender 5.1.1
+      // accepts 0 of its 83 modifier types on an armature object (measured).
       return null;
     default: {
       const exhaustiveData: never = data;

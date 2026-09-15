@@ -78,7 +78,11 @@ describe('node schema payload (#1007)', () => {
     // The measured failure: 18 invented socket names across four models, on a node
     // that declares exactly one input.
     const obj = nodeSchemaOf('Object')!;
-    expect(obj.inputs).toEqual([{ socket: 'data', type: 'ObjectData', cardinality: 'single' }]);
+    // #1056 — still exactly one input; it now accepts a Skeleton as well, and the catalogue
+    // names both types so a model is told the skeleton is a legal thing to wire there.
+    expect(obj.inputs).toEqual([
+      { socket: 'data', type: 'ObjectData|Skeleton', cardinality: 'single' },
+    ]);
     expect(obj.outputs).toEqual([{ socket: 'out', type: 'SceneObject', cardinality: 'single' }]);
     // and `position` IS real — as a PARAM, which is the distinction nobody was given
     expect(obj.params.find((f) => f.path === 'position')).toEqual({
