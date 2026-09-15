@@ -532,7 +532,7 @@ describe('resolveWorldTransform — a baked PAIR reads its scale like an ordinar
     registerAllNodes();
   });
 
-  it('baked pair → world scale [1,1,1]; a plain cube Object at the same scale → [3,3,3]', () => {
+  it('baked pair and a plain cube Object at the same scale both read world scale [3,3,3]', () => {
     const geometry = {
       key: 'baked|ws-8',
       kind: 'baked' as const,
