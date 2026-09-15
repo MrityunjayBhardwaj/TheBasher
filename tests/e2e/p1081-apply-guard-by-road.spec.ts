@@ -218,7 +218,7 @@ test('#1081 / #1098 — Apply is offered and accepted by what its road consumes'
   //
   // The subject is a keyframed override colour, not an Array `count`: an animated count over
   // stored mesh data currently takes the editor down on its own, before Apply is ever asked
-  // (filed separately), and a crash would pass or fail this file for a reason unrelated to it.
+  // (#1099), and a crash would pass or fail this file for a reason unrelated to it.
   // The override is the same #1098 cell — the top operator is keyframed and this road never
   // reads it.
   await page.evaluate(async () => {
