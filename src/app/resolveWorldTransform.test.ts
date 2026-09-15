@@ -522,9 +522,11 @@ describe('resolveWorldTransform — #231 Inc 2a grouped light', () => {
 // the old test said — it pins the rule as baked-SPECIFIC rather than as "Objects ignore
 // scale", which a lone [1,1,1] assertion would have been satisfied by.
 //
-// Whether a baked mesh should honour its scale at all is #489; if that lands, this pin and
-// `BakedMeshR`'s `scale={[1,1,1]}` move together.
-describe('resolveWorldTransform — a baked PAIR ignores its scale, an ordinary Object does not (#388)', () => {
+// #489 — THAT HAS LANDED, and this pin moved with `BakedMeshR`'s: a baked mesh honours its
+// scale on both roads now. The contrast control becomes an equality control, which is the
+// stronger form of the same question — a baked pair and an ordinary Object at the same scale
+// must read the SAME world scale, so neither road can quietly re-acquire a baked exemption.
+describe('resolveWorldTransform — a baked PAIR reads its scale like an ordinary Object (#388, #489)', () => {
   beforeEach(() => {
     __resetRegistryForTests();
     registerAllNodes();
@@ -563,8 +565,8 @@ describe('resolveWorldTransform — a baked PAIR ignores its scale, an ordinary 
     const plain = resolveWorldTransform(state, 'n_wscube', ctxAt(0));
     expect(pair).not.toBeNull();
     expect(plain).not.toBeNull();
-    // The rule is BAKED-specific: same param, opposite answers.
-    expect(pair!.scale).toEqual([1, 1, 1]);
+    // No baked exemption: same param, same answer.
     expect(plain!.scale).toEqual([3, 3, 3]);
+    expect(pair!.scale).toEqual([3, 3, 3]);
   });
 });

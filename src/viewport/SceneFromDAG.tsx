@@ -784,9 +784,9 @@ function MeshScaleProbe() {
       return out;
     };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
-    // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
-    // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
-    // lives in the geometry bounds. This seam reports the REAL rendered object's
+    // A fresh Apply All leaves a baked mesh at identity scale (the transform is in the
+    // verts), so `__basher_mesh_world_scale` reports [1,1,1] for it and the size lives in
+    // the geometry bounds. This seam reports the REAL rendered object's
     // WORLD-space axis-aligned bounding-box DIMENSIONS by node id, so the
     // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
     // (side A == side B) instead of inferring from params. Read-only (V8 clean).
@@ -2822,10 +2822,10 @@ function needsMaterialSlots(slots: readonly unknown[]): boolean {
 //   - `useBakedGeometry(value.geometry)` suspends on the first render (the OPFS
 //     read), primes geometryRegistry, then returns the cached BufferGeometry.
 //     The viewport already wraps the scene in <Suspense> (glTF uses it).
-//   - The mesh renders at IDENTITY scale [1,1,1] — the TRS is baked INTO the
-//     verts, so applying value.scale would double-transform (H40 band drift).
-//     position/rotation are kept for re-transform-after-Apply (a baked mesh is
-//     first-class), but a fresh Apply produces identity TRS.
+//   - The mesh renders at the Object's full TRS. What an Apply baked is in the verts
+//     and reads identity on the Object, so nothing is applied twice; every band the
+//     Apply kept (#1080), and any later edit, draws like any other mesh's (#489 — scale
+//     used to be pinned to [1,1,1] here while the inspector row edited it to no effect).
 //   - It feeds the SAME wireframe + MaterialOverride path a Box gets (first-class
 //     scene mesh, V20). Wave 2 built the SCALAR material; Wave 3 (t8) brings the
 //     6 texture-map slots online — built imperatively per `materialClass` so a
@@ -2962,8 +2962,11 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
     <mesh
       position={value.position as [number, number, number]}
       rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // IDENTITY scale — the transform is baked into the geometry verts (H40).
-      scale={[1, 1, 1]}
+      // #489 — the Object's OWN scale, like its position and rotation. What an Apply baked is
+      // already in the verts and the Object reads identity for it, so this never
+      // double-transforms; a band the Apply kept (#1080) or a later edit is drawn instead of
+      // silently ignored. `resolveWorldTransform`'s `localMatrix` reads the same scale.
+      scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
       geometry={geom}
     >
       <primitive object={material} attach="material" />
