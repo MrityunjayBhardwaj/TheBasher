@@ -266,6 +266,38 @@ describe('a missing piece of context fails legibly, and names the right setting'
     );
   });
 
+  it('#1104 — a refusal names the Object the mint stood in the scene, as success does', async () => {
+    // The mint ships on a refusal, and in a project with a scene that includes an
+    // Object. A model planning its next step from this text has to be told it exists.
+    let state = stateWithTime();
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'scene',
+      nodeType: 'Scene',
+      params: {},
+    }).next;
+    state = { ...state, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const result = await motionGenerateTool.handler(
+      { prompt: 'walk' },
+      ctx({ dagState: state, motionModel: BLOCKED }),
+    );
+    const [objectId] = result.ops.flatMap((o) =>
+      o.type === 'addNode' && o.nodeType === 'Object' ? [o.nodeId] : [],
+    );
+    expect(objectId, 'the mint stood no Object — the text check would be vacuous').toBeDefined();
+    expect(result.text).toMatch(/BLOCKED/);
+    expect(result.text).toContain(`Object ${objectId}`);
+    expect(result.text).toMatch(/draws nothing until the generator is re-cooked/);
+
+    // With no scene there is no Object, and the text must not name one.
+    const bare = await motionGenerateTool.handler(
+      { prompt: 'walk' },
+      ctx({ motionModel: BLOCKED }),
+    );
+    expect(bare.ops.some((o) => o.type === 'addNode' && o.nodeType === 'Object')).toBe(false);
+    expect(bare.text).not.toMatch(/\bObject\b/);
+  });
+
   it("returns the generator's refusal of a clip's frame rate as readable text, and KEEPS the generator", async () => {
     // The tool offers no `fps`: the rate is the generator's, and the clip states it
     // in its own `Frame Time` header. So the one rate check left is the generator's,

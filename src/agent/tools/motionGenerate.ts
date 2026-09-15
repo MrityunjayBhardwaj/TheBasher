@@ -199,12 +199,22 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       // on a server hiccup takes the prompt and the seed with it, and re-cooking a
       // node that is already there beats retyping a sentence. The text says the
       // clip is empty so the model does not report success.
+      //
+      // #1104 — the mint includes the Object standing the skeleton in the scene, so
+      // the text names it here too, as the success text does. A model planning its
+      // next step from this text (tidying up, or describing the scene) would
+      // otherwise not know it had added one.
       return {
         ops: mint.ops,
         text:
           `Added a motion generator for "${subject}" (${ctx.motionModel}), but it ` +
           `produced no clip — AnimationClip ${mint.clipId} is still empty` +
           (refusal !== undefined ? `: ${refusal}` : '.') +
+          (mint.objectId !== undefined
+            ? ` Object ${mint.objectId} was added to stand the skeleton in the scene; it ` +
+              `draws nothing until the generator is re-cooked, because the skeleton has ` +
+              `no bones yet.`
+            : '') +
           ` The generator keeps the prompt and seed, so once the cause is fixed it ` +
           `can be re-cooked from its inspector card rather than asked for again.` +
           owed,
