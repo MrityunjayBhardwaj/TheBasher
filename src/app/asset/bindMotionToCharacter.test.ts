@@ -84,6 +84,9 @@ function stateOf(...nodes: Node[]): DagState {
 
 const MIXAMO = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
 
+/** A source skeleton no node in these graphs answers to — rows about something else. */
+const NO_MOTION = 'skel_not_in_graph';
+
 describe('motionTargetCandidates', () => {
   it('finds a character by its rig node and reads the bones off the projection', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
@@ -115,7 +118,7 @@ describe('motionTargetCandidates', () => {
 
 describe('chooseMotionTarget', () => {
   it('refuses with the "no character" reason when the scene has no rig', () => {
-    const result = chooseMotionTarget(stateOf(), null, 'imported', null);
+    const result = chooseMotionTarget(stateOf(), null, 'imported', NO_MOTION);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal).toBe('no-character');
@@ -205,7 +208,7 @@ describe('chooseMotionTarget', () => {
 
   it('takes the only character without needing a selection', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
-    const result = chooseMotionTarget(state, null, 'imported', null);
+    const result = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.label).toBe('dwarf');
@@ -216,7 +219,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const result = chooseMotionTarget(state, null, 'imported', null);
+    const result = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal).toBe('ambiguous');
@@ -233,7 +236,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const result = chooseMotionTarget(state, 'grp_user-imports/elf/elf.glb', 'imported', null);
+    const result = chooseMotionTarget(state, 'grp_user-imports/elf/elf.glb', 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.label).toBe('elf');
@@ -248,7 +251,7 @@ describe('chooseMotionTarget', () => {
   // instruction with no gesture behind it.
 
   it('#823 — a generated clip is not described as Imported, on every refusal', () => {
-    const none = chooseMotionTarget(stateOf(), null, 'generated', null);
+    const none = chooseMotionTarget(stateOf(), null, 'generated', NO_MOTION);
     expect(none.ok).toBe(false);
     if (none.ok) return;
     expect(none.reason).toContain('Generated the motion');
@@ -261,7 +264,7 @@ describe('chooseMotionTarget', () => {
       ),
       null,
       'generated',
-      null,
+      NO_MOTION,
     );
     expect(two.ok).toBe(false);
     if (two.ok) return;
@@ -277,7 +280,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const generated = chooseMotionTarget(state, null, 'generated', null);
+    const generated = chooseMotionTarget(state, null, 'generated', NO_MOTION);
     expect(generated.ok).toBe(false);
     if (generated.ok) return;
     expect(generated.reason, 'there is no file to drop on the generation road').not.toContain(
@@ -287,7 +290,7 @@ describe('chooseMotionTarget', () => {
 
     // ...and the drop road is unchanged, which is the other half of "one voice":
     // this fix must not have quietly reworded the road that was already right.
-    const imported = chooseMotionTarget(state, null, 'imported', null);
+    const imported = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(imported.ok).toBe(false);
     if (imported.ok) return;
     expect(imported.reason).toContain('Imported the motion');
@@ -337,7 +340,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
     const elfSkel = gltfSkeletonDagId('user-imports/elf/elf.glb', 0);
-    const result = chooseMotionTarget(state, elfSkel, 'imported', null);
+    const result = chooseMotionTarget(state, elfSkel, 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.skeletonId).toBe(elfSkel);

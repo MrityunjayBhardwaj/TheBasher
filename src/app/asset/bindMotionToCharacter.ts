@@ -210,14 +210,14 @@ export function standingObjectOf(state: DagState, skeletonId: string): string | 
  *
  * `sourceSkeletonId` is REQUIRED for the same reason `arrival` is (#1103): whether
  * "no character" is news or a problem depends on whether the motion already
- * stands in the scene, and a caller that could leave it out would silently get
- * the warning back.
+ * stands in the scene, and a caller that could leave it out, or pass nothing,
+ * would silently get the warning back.
  */
 export function chooseMotionTarget(
   state: DagState,
   selectedNodeId: string | null,
   arrival: MotionArrival,
-  sourceSkeletonId: string | null,
+  sourceSkeletonId: string,
 ):
   | { ok: true; target: Candidate }
   | { ok: false; refusal: BindMotionRefusal; reason: string; severity: ToastSeverity } {
@@ -229,7 +229,7 @@ export function chooseMotionTarget(
     // when that Object is there, the message says where the motion is, and it is a
     // notice, because nothing went wrong. When it is not, nothing visible happened
     // and the warning stays.
-    const standing = sourceSkeletonId !== null ? standingObjectOf(state, sourceSkeletonId) : null;
+    const standing = standingObjectOf(state, sourceSkeletonId);
     if (standing !== null) {
       return {
         ok: false,

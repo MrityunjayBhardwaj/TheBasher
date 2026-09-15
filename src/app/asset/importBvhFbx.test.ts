@@ -232,7 +232,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       to: { node: 'n_char_skel', socket: 'asset' },
     }).next;
     useDagStore.getState().hydrate(s);
-    expect(chooseMotionTarget(useDagStore.getState().state, null, 'imported', null).ok).toBe(true);
+    expect(
+      chooseMotionTarget(useDagStore.getState().state, null, 'imported', 'skel_not_in_graph').ok,
+    ).toBe(true);
 
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
