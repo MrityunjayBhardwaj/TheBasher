@@ -37,6 +37,12 @@ interface DagWindow {
   };
 }
 
+interface ArmatureWindow {
+  __basher_armature?: {
+    skeletonObjects: { id: string; bones: number; clipCount: number; posed: boolean }[];
+  };
+}
+
 const nodeTypes = () =>
   Object.values((window as unknown as DagWindow).__basher_dag?.getState().state.nodes ?? {}).map(
     (n) => n.type,
@@ -83,10 +89,11 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
   const after = await page.evaluate(nodeTypes);
   const added = [...after];
   for (const t of before) added.splice(added.indexOf(t), 1);
-  // The import road's pair, plus the producer that can re-cook it — and nothing
+  // The import road's pair and the Object standing its skeleton in the scene
+  // (#1056, #1078), plus the producer that can re-cook it — and nothing
   // else. The producer is the whole point of the node road; a press that landed
   // only the pair would have thrown the director's request away.
-  expect(added.sort()).toEqual(['AnimationClip', 'MotionGenerate', 'Skeleton']);
+  expect(added.sort()).toEqual(['AnimationClip', 'MotionGenerate', 'Object', 'Skeleton']);
 
   // The clip is wired to the skeleton — the connect the import chain makes, not
   // a pair of orphans — AND its `source` resolves to the minted producer BY ID,
@@ -125,6 +132,36 @@ test('a director types a prompt and gets a re-cookable generator feeding an impo
     clipSourceIsTheProducer: true,
     skeletons: 1,
   });
+
+  // #1078 — nothing to bind to in the default project, so the director SEES the
+  // motion: the armature band draws the Object, posed, at the scale the generator
+  // declared. -1 when the seam was never written, so a missing band cannot read
+  // as "nothing drawn".
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as ArmatureWindow).__basher_armature?.skeletonObjects?.length ?? -1,
+      ),
+    )
+    .toBe(1);
+  const stood = await page.evaluate(() => {
+    const w = window as unknown as ArmatureWindow & DagWindow;
+    const [rig] = w.__basher_armature!.skeletonObjects;
+    const nodes = w.__basher_dag!.getState().state.nodes as unknown as Record<
+      string,
+      { type: string; params?: { scale?: number[] }; inputs: Record<string, unknown> }
+    >;
+    const object = nodes[rig.id];
+    const data = (object?.inputs.data as { node?: string } | undefined)?.node;
+    return {
+      dataType: data ? nodes[data]?.type : undefined,
+      scale: object?.params?.scale,
+      posed: rig.posed,
+      hasBones: rig.bones > 0,
+    };
+  });
+  expect(stood).toEqual({ dataType: 'Skeleton', scale: [1, 1, 1], posed: true, hasBones: true });
 
   // Back to idle, prompt consumed, and the failure surface stayed quiet.
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');
