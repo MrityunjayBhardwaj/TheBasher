@@ -44,6 +44,8 @@ import { hashString } from '../core/dag/hash';
 import {
   cornerLayerWidth,
   fanToTriangles,
+  MAX_COLOUR_LAYERS,
+  MAX_UV_LAYERS,
   meshSplitLayout,
   type PolygonRim,
 } from './polygonLayout';
@@ -218,6 +220,19 @@ export function cornerLayerBufferNames(
     }
   });
 }
+
+/**
+ * Every buffer slot a stored mesh's corner layers can be drawn to: the names
+ * {@link cornerLayerBufferNames} gives the largest mesh the data check admits.
+ *
+ * For a reader that has to know which buffer attributes ARE corner layers without a mesh in hand —
+ * a builder deciding what it cannot carry, above all. Derived rather than spelled, so it cannot
+ * name a slot the build never writes, or miss one it does.
+ */
+export const CORNER_LAYER_SLOTS: readonly string[] = cornerLayerBufferNames([
+  ...Array.from({ length: MAX_UV_LAYERS }, () => ({ type: 'float2' as const })),
+  ...Array.from({ length: MAX_COLOUR_LAYERS }, () => ({ type: 'float4' as const })),
+]);
 
 export interface MeshGeometryBuild {
   readonly geometry: BufferGeometry;
