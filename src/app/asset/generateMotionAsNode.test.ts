@@ -41,6 +41,11 @@ import { makeSplitCurve } from '../../test-utils/splitCurve';
 import { useSelectionStore } from '../stores/selectionStore';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 import { assertValidMotionRequest } from '../../core/motiongen/MotionGenerationCapability';
+import { skeletonObjectId } from '../../core/import/skeletonObject';
+import { buildDefaultDagState } from '../../core/project/default';
+import { collectSkeletonObjects } from '../skeletonObjects';
+import { boneTransforms } from '../../viewport/boneShape';
+import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 
 const stub = new StubMotionGenerationCapability();
 // Mutable so one case can hand back a SOMA clip instead — the stub's three-joint
@@ -113,10 +118,11 @@ describe('a director generating motion gets an ordinary clip in the scene', () =
     }
   });
 
-  it('adds the import pair PLUS the producer, and nothing else', async () => {
+  it('adds what an import adds PLUS the producer, and nothing else', async () => {
     await generateMotionAsNode('a figure walks');
     const types = new Set(Object.values(useDagStore.getState().state.nodes).map((n) => n.type));
-    // Seeded, plus exactly what a .bvh import produces, plus the generator that
+    // Seeded, plus exactly what a .bvh import produces — the pair and, since #1056/#1078, the
+    // Object standing its skeleton in the scene — plus the generator that
     // can re-cook it. `MotionGenerate` is the ONE addition, and it is the point:
     // it holds the prompt, the seed and the path so the request survives the
     // clip. The clip itself is still an ordinary `AnimationClip` carrying no
@@ -124,6 +130,7 @@ describe('a director generating motion gets an ordinary clip in the scene', () =
     expect([...types].sort()).toEqual([
       'AnimationClip',
       'MotionGenerate',
+      'Object',
       'Scene',
       'Skeleton',
       'TimeSource',
@@ -143,12 +150,12 @@ describe('a failure surfaces in the banner, never only in the console', () => {
     expect(Object.keys(errors)).toHaveLength(1);
     expect(Object.values(errors)[0]!).toMatch(/BLOCKED/);
 
-    // The generator, its skeleton and its empty clip DID land, and that is
+    // The generator, its skeleton, its empty clip and the skeleton's Object DID land, and that is
     // deliberate: this road mints before it cooks, so a blocked checkpoint
     // leaves a director a node carrying the prompt and the seed, re-cookable the
     // moment Settings changes. Rolling it back would make a refusal cost them
     // the request — which is what the one-shot road did, having nothing to keep.
-    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before + 3);
+    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before + 4);
     // The refresh signal did NOT move: a bump on failure would re-enumerate the
     // list for work that never happened.
     expect(useImportRefreshStore.getState().tick).toBe(0);
@@ -324,6 +331,96 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
     expect(types).toContain('AnimationClip');
     expect(types).not.toContain('KeyframeChannelVec3');
     expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
+  });
+});
+
+// #1078 — a generated motion stands in the scene the way a dropped one does (#1056).
+//
+// The size row is ABSOLUTE and on a REAL Kimodo file: frame 0 of the bytes Kimodo's server
+// sends, parsed with the unit it declares. A size read off the rest pose, or a row that only
+// asserts "scale is 1", stayed green on the file road while the rig drew 27× too big.
+const KIMODO_F0 = (): string =>
+  readFileSync(resolve(process.cwd(), 'public/fixtures/anim/kimodo-served-f0.bvh'), 'utf8');
+
+function kimodoCapability(): MotionGenerationCapability {
+  return {
+    id: 'kimodo-fixture',
+    kind: 'stub',
+    isAvailable: async () => true,
+    generate: async () => ({
+      jobId: 'j_kimodo',
+      bvh: KIMODO_F0(),
+      model: DEFAULT_MOTIONGEN_MODEL,
+      // What Kimodo's server reports: `units: "cm"`.
+      unitScale: 0.01,
+      worldOffsetXZ: null,
+      worldRotationRadians: null,
+    }),
+    cancel: async () => {},
+  };
+}
+
+/** The Object standing a generated clip's skeleton, found through the clip's own edge. */
+function objectForClip(clipId: string): string {
+  const { nodes } = useDagStore.getState().state;
+  const skeleton = (nodes[clipId].inputs.skeleton as { node: string } | undefined)?.node;
+  if (!skeleton) throw new Error(`clip ${clipId} has no skeleton edge`);
+  return skeletonObjectId(skeleton);
+}
+
+describe('a generated motion stands its skeleton in the scene (#1078)', () => {
+  it('with no character, the Object is drawn, posed, and a person tall at the unit the generator declared', async () => {
+    // The DEFAULT project, not `seedTime`'s: the band places an Object through the render
+    // output (`resolveWorldTransform` reads `outputs.render`), which that seed does not carry,
+    // so on it every skeleton Object resolves no world and draws nothing — measured.
+    useDagStore.getState().hydrate(buildDefaultDagState());
+    capability = kimodoCapability();
+    const result = await generateMotionAsNode('a figure walks forward');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const { state } = useDagStore.getState();
+    const objectId = objectForClip(result.clipId);
+    const object = state.nodes[objectId];
+    expect(object?.type).toBe('Object');
+    expect(object.meta?.hidden).not.toBe(true);
+    // Declared unit, so no normalising: the file road's rule does not apply here.
+    expect((object.params as { scale: number[] }).scale).toEqual([1, 1, 1]);
+
+    // What the armature band draws, read through the band's own collector.
+    const drawn = collectSkeletonObjects(state).find((o) => o.id === objectId);
+    expect(drawn, 'the armature band does not draw the generated Object').toBeDefined();
+    expect(drawn!.bones).toHaveLength(78);
+    expect(drawn!.clipCount).toBe(1);
+    expect(drawn!.clip).not.toBeNull();
+    const worldScale = Math.hypot(drawn!.world[0], drawn!.world[1], drawn!.world[2]);
+    expect(worldScale).toBeCloseTo(1, 6);
+
+    // Frame 0, the pose first drawn. Measured 1.68 m on this file.
+    const posed = armatureBounds(boneTransforms(posedSourceBones(drawn!.clip!, 0)));
+    expect(posed.size.y * worldScale).toBeGreaterThan(1.5);
+    expect(posed.size.y * worldScale).toBeLessThan(2.1);
+  });
+
+  it('with a character, the bind hides the Object in its own undo entry', async () => {
+    capability = somaCapability();
+    seedCharacter();
+    const result = await generateMotionAsNode('a figure walks forward');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const objectId = objectForClip(result.clipId);
+    const after = useDagStore.getState().state;
+    // The bind happened — otherwise "hidden" says nothing about binding.
+    expect(after.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeDefined();
+    expect(after.nodes[objectId]?.meta?.hidden).toBe(true);
+    expect(collectSkeletonObjects(after).some((o) => o.id === objectId)).toBe(false);
+
+    // Nothing to place (no path), so the last entry is the bind.
+    useDagStore.getState().undo();
+    const undone = useDagStore.getState().state;
+    expect(undone.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeUndefined();
+    expect(undone.nodes[objectId]?.meta?.hidden === true).toBe(false);
   });
 });
 

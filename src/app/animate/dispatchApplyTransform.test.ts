@@ -24,6 +24,8 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
+import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
+import { resolveWorldTransform } from '../resolveWorldTransform';
 import {
   dispatchApplyTransform,
   canApplyTransform,
@@ -1128,6 +1130,237 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   });
 });
 
+describe('#1081 / #1098 — the animated guard asks what the Apply road it takes consumes', () => {
+  // Two roads consume different things. The BAKE (a box or sphere) removes the whole data lane
+  // and captures geometry and material from it, so a keyframe on ANY node of the lane is frozen.
+  // Stored mesh data is applied INTO (#1077): only `mesh` on the base and the Object's pose are
+  // written, and every operator, material and channel stays live. The guard used to ask the
+  // Object and its first `data` hop for both — blind below the top of a stack on the bake road,
+  // and refusing on the stored-mesh road over things it never reads. Measured over this whole
+  // table before the fix: 8 of 24 bake cases baked silently, 4 stored-mesh cases refused.
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    geometryRegistry.clear();
+  });
+
+  type Base = 'cube' | 'sphere' | 'stored';
+  type Holder = 'object' | 'base' | 'op0' | 'op1';
+  const STACKS: readonly (readonly string[])[] = [
+    [],
+    ['ArrayModifier'],
+    ['MaterialOverrideOp'],
+    ['ArrayModifier', 'MaterialOverrideOp'],
+  ];
+
+  function storedCube(): MeshGeometryData {
+    const corners = [
+      [-1, -1, -1],
+      [1, -1, -1],
+      [1, 1, -1],
+      [-1, 1, -1],
+      [-1, -1, 1],
+      [1, -1, 1],
+      [1, 1, 1],
+      [-1, 1, 1],
+    ];
+    const faces = [
+      [0, 3, 2, 1],
+      [4, 5, 6, 7],
+      [0, 1, 5, 4],
+      [2, 3, 7, 6],
+      [1, 2, 6, 5],
+      [3, 0, 4, 7],
+    ];
+    return {
+      points: Float32Array.from(corners.flat().map((v) => v * 0.5)),
+      faceSizes: Uint32Array.from(faces.map((f) => f.length)),
+      cornerPoints: Uint32Array.from(faces.flat()),
+      cornerUVs: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+      cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
+    };
+  }
+
+  /** An Object `o` over `base`, with `stack` spliced bottom-first as `op0`, `op1`. */
+  function build(base: Base, stack: readonly string[]): { state: DagState; dataId: string } {
+    let state: DagState;
+    let dataId: string;
+    if (base === 'cube') {
+      const c = makeSplitCube(emptyDagState(), { objectId: 'o', size: [1, 1, 1] });
+      state = c.state;
+      dataId = c.dataId;
+    } else if (base === 'sphere') {
+      const c = makeSplitSphere(emptyDagState(), { objectId: 'o', radius: 1 });
+      state = c.state;
+      dataId = c.dataId;
+    } else {
+      dataId = 'o_data';
+      state = applyAll(emptyDagState(), [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'PolyMeshData',
+          params: { mesh: packMeshData(storedCube()), material: gltfJsonMaterialToOpenpbr({}) },
+        },
+        { type: 'addNode', nodeId: 'o', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: 'o', socket: 'data' },
+        },
+      ]);
+    }
+    if (stack.length === 0) return { state, dataId };
+    const ops: Op[] = [
+      {
+        type: 'disconnect',
+        from: { node: dataId, socket: 'out' },
+        to: { node: 'o', socket: 'data' },
+      },
+    ];
+    let below = dataId;
+    stack.forEach((type, i) => {
+      ops.push(
+        { type: 'addNode', nodeId: `op${i}`, nodeType: type, params: {} },
+        {
+          type: 'connect',
+          from: { node: below, socket: 'out' },
+          to: { node: `op${i}`, socket: 'target' },
+        },
+      );
+      below = `op${i}`;
+    });
+    ops.push({
+      type: 'connect',
+      from: { node: below, socket: 'out' },
+      to: { node: 'o', socket: 'data' },
+    });
+    return { state: applyAll(state, ops), dataId };
+  }
+
+  /** A two-key channel on a param `holderId` really owns, typed for that param. */
+  function keyframe(state: DagState, holderId: string, base: Base): DagState {
+    const type = state.nodes[holderId].type;
+    const [channel, paramPath, a, b]: [string, string, unknown, unknown] =
+      type === 'Object'
+        ? ['KeyframeChannelVec3', 'position', [0, 0, 0], [3, 0, 0]]
+        : type === 'ArrayModifier'
+          ? ['KeyframeChannelNumber', 'count', 2, 5]
+          : type === 'MaterialOverrideOp'
+            ? ['KeyframeChannelColor', 'color', '#ff0000', '#00ff00']
+            : base === 'cube'
+              ? ['KeyframeChannelVec3', 'size', [1, 1, 1], [3, 1, 1]]
+              : base === 'sphere'
+                ? ['KeyframeChannelNumber', 'radius', 0.5, 2]
+                : ['KeyframeChannelColor', 'material.base.color', '#ff0000', '#00ff00'];
+    return applyOp(state, {
+      type: 'addNode',
+      nodeId: 'kf',
+      nodeType: channel,
+      params: {
+        name: paramPath,
+        target: holderId,
+        paramPath,
+        keyframes: [
+          { time: 0, value: a, easing: 'linear' },
+          { time: 1, value: b, easing: 'linear' },
+        ],
+      },
+    }).next;
+  }
+
+  /** The guard's answer, and what Apply then actually did — asked of the same state. */
+  async function measure(base: Base, stack: readonly string[], holder: Holder | null) {
+    const built = build(base, stack);
+    const holderId = holder === 'object' ? 'o' : holder === 'base' ? built.dataId : holder;
+    const state = holderId ? keyframe(built.state, holderId, base) : built.state;
+    const guard = isApplySourceAnimated(state, 'o', 30);
+    const dispatched: Op[] = [];
+    const result = await dispatchApplyTransform('o', 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 30,
+      dispatchAtomic: (ops) => {
+        dispatched.push(...ops);
+        return [];
+      },
+      setSelection: () => {},
+      clearTransients: () => {},
+    });
+    const refusedAsAnimated = !result.ok && result.reason.includes('animated');
+    return { guard, result, refusedAsAnimated, dispatched };
+  }
+
+  /** Every node that can hold a keyframe under `stack`: the Object, the base, each operator. */
+  const holdersOf = (stack: readonly string[]): Holder[] => [
+    'object',
+    'base',
+    ...stack.map((_, i) => `op${i}` as Holder),
+  ];
+
+  const bakeCells = (['cube', 'sphere'] as const).flatMap((base) =>
+    STACKS.flatMap((stack) => holdersOf(stack).map((holder) => ({ base, stack, holder }))),
+  );
+
+  it('the table is the population it claims: 24 animated bake cells', () => {
+    // 2 shapes × (Object + base on an empty stack, + one per operator on each of the others).
+    expect(bakeCells).toHaveLength(24);
+  });
+
+  it.each(bakeCells)(
+    'bake road — $base [$stack] keyframe on $holder: refused, nothing dispatched',
+    async ({ base, stack, holder }) => {
+      const m = await measure(base, stack, holder);
+      expect(m.guard).toBe(true);
+      expect(m.refusedAsAnimated).toBe(true);
+      expect(m.dispatched).toEqual([]);
+    },
+  );
+
+  it.each(
+    (['cube', 'sphere'] as const).flatMap((base) => STACKS.map((stack) => ({ base, stack }))),
+  )(
+    'bake road — $base [$stack] with nothing animated still bakes (the widened guard is not blanket-true)',
+    async ({ base, stack }) => {
+      const m = await measure(base, stack, null);
+      expect(m.guard).toBe(false);
+      expect(m.result.ok).toBe(true);
+    },
+  );
+
+  it.each(STACKS.map((stack) => ({ stack })))(
+    'stored-mesh road — [$stack] keyframe on the Object pose: refused, because the pose is written',
+    async ({ stack }) => {
+      const m = await measure('stored', stack, 'object');
+      expect(m.guard).toBe(true);
+      expect(m.refusedAsAnimated).toBe(true);
+      expect(m.dispatched).toEqual([]);
+    },
+  );
+
+  const storedLiveCells = STACKS.flatMap((stack) =>
+    holdersOf(stack)
+      .filter((h) => h !== 'object')
+      .map((holder) => ({ stack, holder })),
+  );
+
+  it.each(storedLiveCells)(
+    'stored-mesh road — [$stack] keyframe on $holder: applied into the mesh, the channel left live',
+    async ({ stack, holder }) => {
+      const m = await measure('stored', stack, holder);
+      expect(m.guard).toBe(false);
+      expect(m.result.ok).toBe(true);
+      // What this road consumes, exactly: the base's mesh and the Object's pose. The keyframed
+      // node is none of them, which is why refusing on it froze nothing and only blocked Apply.
+      expect(
+        m.dispatched.map((op) =>
+          op.type === 'setParam' ? `${op.nodeId}.${op.paramPath}` : op.type,
+        ),
+      ).toEqual(['o_data.mesh', 'o.position', 'o.rotation', 'o.scale']);
+    },
+  );
+});
+
 describe('#411 — the animated guard covers every param the bake consumes', () => {
   beforeEach(() => {
     __resetRegistryForTests();
@@ -1314,6 +1547,235 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
 // decoder) — the textured capture is the e2e's job.
 //
 // REF: PLAN.md Wave 4 Task 10; RESEARCH §Q1/§Q4/§M2/§M7; hetvabhasa H45/H58/H59.
+
+describe('#1080 — a single-band Apply on the bake road keeps the world shape and the other bands', () => {
+  // The bake baked only the applied band into the verts and then reset ALL THREE bands on the
+  // Object, so Location, Rotation or Scale alone moved and reshaped the object (measured on every
+  // partial mask over boxes and spheres: 18 of 18 cells off by 0.65 to 4.1 units). And a mirrored
+  // pose baked in under an identity Object kept its mirrored winding, so every face drew
+  // inside-out. The rule is the stored-mesh road's (#1077), with Blender as the reference: bake
+  // `kept⁻¹ · full`, reset only the applied bands, and reverse winding when that matrix mirrors.
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    geometryRegistry.clear();
+  });
+
+  // Mutable tuples, the shape the split-fixture options take.
+  type Tuple3 = [number, number, number];
+  type Pose = { position: Tuple3; rotation: Tuple3; scale: Tuple3 };
+  const POSES: Record<string, Pose> = {
+    // The issue's own pose.
+    turned: { position: [1, 2, 3], rotation: [0, 0, 30], scale: [2, 1, 1] },
+    // A rotation under a non-uniform scale that stays on the Object: baking the rotation alone
+    // cannot keep this shape, only `kept⁻¹ · full` can.
+    sheared: { position: [1, 2, 3], rotation: [10, 20, 30], scale: [2, 1, 0.5] },
+    // A mirror: the winding has to follow the determinant of what is baked.
+    mirrored: { position: [1, 0, 0], rotation: [0, 0, 30], scale: [-1, 1, 1] },
+  };
+  const MASKS = ['all', 'location', 'rotation', 'scale'] as const;
+  const APPLIED: Record<(typeof MASKS)[number], readonly (keyof Pose)[]> = {
+    all: ['position', 'rotation', 'scale'],
+    location: ['position'],
+    rotation: ['rotation'],
+    scale: ['scale'],
+  };
+  const IDENTITY: Pose = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+
+  function poseMatrix(p: Pose): THREE.Matrix4 {
+    const d = Math.PI / 180;
+    return new THREE.Matrix4().compose(
+      new Vector3(...p.position),
+      new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(p.rotation[0] * d, p.rotation[1] * d, p.rotation[2] * d, 'XYZ'),
+      ),
+      new Vector3(...p.scale),
+    );
+  }
+
+  /** Each vertex as it is drawn: the geometry under the Object's pose. */
+  function drawnPoints(geom: THREE.BufferGeometry, pose: Pose): Vector3[] {
+    const m = poseMatrix(pose);
+    const a = geom.getAttribute('position');
+    return Array.from({ length: a.count }, (_, i) =>
+      new Vector3().fromBufferAttribute(a, i).applyMatrix4(m),
+    );
+  }
+
+  /**
+   * Triangles that DRAW facing inward. three flips its front face while the Object's matrix
+   * mirrors, so a triangle faces inward on screen when its winding in world space points inward
+   * XOR the pose mirrors.
+   */
+  function drawnInward(geom: THREE.BufferGeometry, pose: Pose): number {
+    const pts = drawnPoints(geom, pose);
+    const centre = pts.reduce((s, p) => s.add(p), new Vector3()).divideScalar(pts.length);
+    const mirrors = poseMatrix(pose).determinant() < 0;
+    const index = geom.getIndex();
+    const corners = index ? index.count : pts.length;
+    let inward = 0;
+    for (let i = 0; i + 2 < corners; i += 3) {
+      const [a, b, c] = [0, 1, 2].map((k) => pts[index ? index.getX(i + k) : i + k]);
+      const normal = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+      if (normal.lengthSq() < 1e-12) continue;
+      const out = new Vector3().add(a).add(b).add(c).divideScalar(3).sub(centre);
+      if (normal.dot(out) < 0 !== mirrors) inward++;
+    }
+    return inward;
+  }
+
+  async function bake(shape: 'cube' | 'sphere', pose: Pose, mask: (typeof MASKS)[number]) {
+    const built =
+      shape === 'cube'
+        ? makeSplitCube(emptyDagState(), { objectId: 'o', size: [1, 1, 1], ...pose })
+        : makeSplitSphere(emptyDagState(), {
+            objectId: 'o',
+            radius: 0.5,
+            widthSegments: 12,
+            heightSegments: 8,
+            ...pose,
+          });
+    const source = resolveEvaluatedMesh(built.state, 'o', {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    })!;
+    const sourceGeom = geometryRegistry.getForRead(source.geometry)!;
+    const storage = new MemoryStorage();
+    const stateRef = { current: built.state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('o', mask, {
+      state: built.state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      clearTransients: () => {},
+    });
+    const next = stateRef.current;
+    const bakedData = result.ok ? dataHalfOf(next, 'o') : null;
+    const ref = (
+      bakedData?.params as
+        | { geometry?: { descriptor: { hash: string; vertexCount: number } } }
+        | undefined
+    )?.geometry;
+    const bakedGeom = ref
+      ? await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount)
+      : null;
+    return { result, sourceGeom, bakedGeom, poseAfter: next.nodes.o?.params as Pose, next };
+  }
+
+  const cells = (['cube', 'sphere'] as const).flatMap((shape) =>
+    Object.keys(POSES).flatMap((pose) => MASKS.map((mask) => ({ shape, pose, mask }))),
+  );
+
+  it.each(cells)(
+    '$shape $pose Apply $mask: drawn verts unchanged, only the applied bands reset, no face inside-out',
+    async ({ shape, pose, mask }) => {
+      const before = POSES[pose];
+      const m = await bake(shape, before, mask);
+      expect(m.result.ok).toBe(true);
+      expect(m.bakedGeom).not.toBeNull();
+
+      // The pose: the applied bands are identity, every other band is exactly what it was.
+      for (const band of ['position', 'rotation', 'scale'] as const) {
+        const want = APPLIED[mask].includes(band) ? IDENTITY[band] : before[band];
+        expect(m.poseAfter[band], band).toEqual(want);
+      }
+
+      // The shape: every vertex draws where it drew before (the bake is clone + matrix, so the
+      // vertex order is the source's).
+      const was = drawnPoints(m.sourceGeom, before);
+      const is = drawnPoints(m.bakedGeom!, m.poseAfter);
+      expect(is).toHaveLength(was.length);
+      const worst = Math.max(...was.map((p, i) => p.distanceTo(is[i])));
+      expect(worst).toBeLessThan(1e-4);
+
+      // The faces: none draws inside-out, before or after.
+      expect(drawnInward(m.sourceGeom, before)).toBe(0);
+      expect(drawnInward(m.bakedGeom!, m.poseAfter)).toBe(0);
+    },
+  );
+
+  /** The same Apply over an imported child, which bakes off the live clone — the second bake site. */
+  async function bakeChild(pose: Pose, mask: (typeof MASKS)[number]) {
+    let state = buildSceneScaffold();
+    const sceneId = state.outputs.scene!.node;
+    state = applyAll(state, [
+      {
+        type: 'addNode',
+        nodeId: 'n_gltf',
+        nodeType: 'GltfAsset',
+        params: { assetRef: 'assets/textured.glb', nodeNameMap: { Cube: 'n_child' } },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_gltf', socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      },
+      ...(importedChildOps('n_child', {
+        assetRef: 'assets/textured.glb',
+        childName: 'Cube',
+        ...pose,
+        overridden: { position: true, rotation: true, scale: true },
+      }) as Op[]),
+    ]);
+    const clone = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+    mesh.name = 'Cube';
+    clone.add(mesh);
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_child', mask, {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      clearTransients: () => {},
+      gltfClone: clone,
+    });
+    if (!result.ok) return { result, sourceGeom: mesh.geometry, bakedGeom: null, poseAfter: null };
+    const bakedData = dataHalfOf(stateRef.current, result.bakedId);
+    const ref = (
+      bakedData!.params as { geometry: { descriptor: { hash: string; vertexCount: number } } }
+    ).geometry;
+    return {
+      result,
+      sourceGeom: mesh.geometry,
+      bakedGeom: await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount),
+      poseAfter: stateRef.current.nodes[result.bakedId].params as Pose,
+    };
+  }
+
+  it.each(Object.keys(POSES).flatMap((pose) => MASKS.map((mask) => ({ pose, mask }))))(
+    'imported child $pose Apply $mask: drawn verts unchanged, only the applied bands reset, no face inside-out',
+    async ({ pose, mask }) => {
+      const before = POSES[pose];
+      const m = await bakeChild(before, mask);
+      expect(m.result.ok).toBe(true);
+      for (const band of ['position', 'rotation', 'scale'] as const) {
+        const want = APPLIED[mask].includes(band) ? IDENTITY[band] : before[band];
+        expect(m.poseAfter![band], band).toEqual(want);
+      }
+      const was = drawnPoints(m.sourceGeom, before);
+      const is = drawnPoints(m.bakedGeom!, m.poseAfter!);
+      const worst = Math.max(...was.map((p, i) => p.distanceTo(is[i])));
+      expect(worst).toBeLessThan(1e-4);
+      expect(drawnInward(m.bakedGeom!, m.poseAfter!)).toBe(0);
+    },
+  );
+
+  it('refuses when a kept scale is zero — the rest of the pose cannot be taken back out', async () => {
+    const m = await bake(
+      'cube',
+      { position: [1, 0, 0], rotation: [0, 0, 0], scale: [0, 1, 1] },
+      'location',
+    );
+    expect(m.result.ok).toBe(false);
+    if (m.result.ok) return;
+    expect(m.result.reason).toContain('zero scale');
+  });
+});
 
 const ASSET_REF = 'assets/textured.glb';
 const CHILD_NAME = 'Cube';
@@ -1544,5 +2006,363 @@ describe('dispatchApplyTransform (glTF child)', () => {
     expect(result.reason).toContain('animated');
     expect(dispatched).toBe(0);
     expect(writeSpy).not.toHaveBeenCalled();
+  });
+});
+
+// #1108 — the baked Object used to land at the scene root carrying only the child's own pose, so
+// everything the child drew under (the import Group, a wrapper, the glTF parent nodes inside the
+// clone) was dropped and the mesh jumped by that whole chain. Blender keeps an applied child under
+// its parent with the world shape unchanged, and so must this.
+//
+// BEFORE is the chain the renderer draws, composed by hand from `GroupR` (Translate(position)·R·S·
+// Translate(-pivot)) · the wrapper · the clone's parent node · the child. AFTER is the production
+// world resolver's matrix for the baked Object, times the baked vertices — so the two sides of the
+// comparison are computed by different instruments.
+describe('#1108 — an imported child baked by Apply stays under what it drew under', () => {
+  type Pose = { position: Vec3; rotation: Vec3; scale: Vec3 };
+  const CHILD_POSE: Pose = { position: [1, 0.5, 0], rotation: [0, 0, 30], scale: [2, 1, 1] };
+  const IDENTITY_POSE: Pose = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+  const trs = (p: Pose) =>
+    new THREE.Matrix4().compose(
+      new THREE.Vector3(...p.position),
+      new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(
+          THREE.MathUtils.degToRad(p.rotation[0]),
+          THREE.MathUtils.degToRad(p.rotation[1]),
+          THREE.MathUtils.degToRad(p.rotation[2]),
+          'XYZ',
+        ),
+      ),
+      new THREE.Vector3(...p.scale),
+    );
+
+  interface Chain {
+    group: Pose & { pivot: Vec3 };
+    wrapper?: Pose;
+    gltfParent: Pose;
+  }
+  const PARENT_NAME = 'Parent';
+  const PARENT_ID = 'n_parent';
+
+  const CHAINS: Record<string, Chain> = {
+    'the import Group moved, turned and scaled about its pivot': {
+      group: { position: [5, 1, 0], rotation: [0, 0, 45], scale: [2, 2, 2], pivot: [1, 0, 0] },
+      gltfParent: IDENTITY_POSE,
+    },
+    'a glTF parent node inside the clone': {
+      group: { ...IDENTITY_POSE, pivot: [0, 0, 0] },
+      gltfParent: { position: [0, 3, 0], rotation: [-90, 0, 0], scale: [1, 1, 1] },
+    },
+    'a wrapper under a moved Group, over a non-uniformly scaled glTF parent (shear)': {
+      group: { position: [2, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+      wrapper: { position: [0, 0, 2], rotation: [0, 30, 0], scale: [1, 1, 1] },
+      gltfParent: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 3, 1] },
+    },
+    'a mirroring glTF parent': {
+      group: { position: [0, 0, 3], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+      gltfParent: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [-1, 1, 1] },
+    },
+  };
+
+  function chainState(c: Chain): DagState {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'n_import', nodeType: 'Group', params: c.group },
+      {
+        type: 'connect',
+        from: { node: 'n_import', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'n_gltf',
+        nodeType: 'GltfAsset',
+        params: {
+          assetRef: ASSET_REF,
+          nodeNameMap: { [CHILD_NAME]: 'n_child', [PARENT_NAME]: PARENT_ID },
+        },
+      },
+    ];
+    if (c.wrapper) {
+      ops.push(
+        { type: 'addNode', nodeId: 'n_wrap', nodeType: 'Transform', params: c.wrapper },
+        {
+          type: 'connect',
+          from: { node: 'n_gltf', socket: 'out' },
+          to: { node: 'n_wrap', socket: 'target' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_wrap', socket: 'out' },
+          to: { node: 'n_import', socket: 'children' },
+        },
+      );
+    } else {
+      ops.push({
+        type: 'connect',
+        from: { node: 'n_gltf', socket: 'out' },
+        to: { node: 'n_import', socket: 'children' },
+      });
+    }
+    ops.push(
+      ...(importedChildOps('n_child', {
+        assetRef: ASSET_REF,
+        childName: CHILD_NAME,
+        ...CHILD_POSE,
+        overridden: { position: true, rotation: true, scale: true },
+      }) as Op[]),
+    );
+    return applyAll(buildSceneScaffold(), ops);
+  }
+
+  /** The live clone as the renderer holds it: clone root → glTF parent node → the posed child. */
+  function chainClone(c: Chain): THREE.Group {
+    const root = new THREE.Group();
+    const parent = new THREE.Object3D();
+    parent.name = PARENT_NAME;
+    parent.applyMatrix4(trs(c.gltfParent));
+    const child = fakeClone().getObjectByName(CHILD_NAME)!;
+    child.applyMatrix4(trs(CHILD_POSE));
+    root.add(parent);
+    parent.add(child);
+    return root;
+  }
+
+  function drawnChain(c: Chain): THREE.Matrix4 {
+    const g = c.group;
+    return trs(g)
+      .multiply(new THREE.Matrix4().makeTranslation(-g.pivot[0], -g.pivot[1], -g.pivot[2]))
+      .multiply(c.wrapper ? trs(c.wrapper) : new THREE.Matrix4())
+      .multiply(trs(c.gltfParent))
+      .multiply(trs(CHILD_POSE));
+  }
+
+  const worldPoints = (geom: THREE.BufferGeometry, m: THREE.Matrix4) => {
+    const a = geom.getAttribute('position');
+    return Array.from({ length: a.count }, (_, i) =>
+      new THREE.Vector3().fromBufferAttribute(a, i).applyMatrix4(m),
+    );
+  };
+
+  /** Triangles that face inward as drawn: world winding, flipped when the world matrix mirrors. */
+  const inwardFaces = (geom: THREE.BufferGeometry, m: THREE.Matrix4) => {
+    const p = worldPoints(geom, m);
+    const centre = p.reduce((s, v) => s.add(v), new THREE.Vector3()).divideScalar(p.length);
+    const index = geom.getIndex();
+    const corners = index ? index.count : p.length;
+    let inward = 0;
+    for (let i = 0; i + 2 < corners; i += 3) {
+      const [a, b, c] = [0, 1, 2].map((k) => p[index ? index.getX(i + k) : i + k]);
+      const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
+      const out = a.clone().add(b).add(c).divideScalar(3).sub(centre);
+      if (n.dot(out) < 0 !== m.determinant() < 0) inward++;
+    }
+    return inward;
+  };
+
+  async function applyOnChain(c: Chain, mask: 'all' | 'location' | 'rotation' | 'scale') {
+    const state = chainState(c);
+    const clone = chainClone(c);
+    const source = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
+    const before = worldPoints(source, drawnChain(c));
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_child', mask, {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      gltfClone: clone,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.reason);
+    const next = stateRef.current;
+    const { geometry: ref } = dataHalfOf(next, result.bakedId)!.params as {
+      geometry: { descriptor: { hash: string; vertexCount: number } };
+    };
+    const baked = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
+    const world = resolveWorldTransform(next, result.bakedId, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    });
+    expect(world).not.toBeNull();
+    const after = new THREE.Matrix4().fromArray(world!.matrix);
+    return { next, bakedId: result.bakedId, before, baked, after };
+  }
+
+  const holdersOf = (state: DagState, id: string) =>
+    Object.values(state.nodes)
+      .filter((n) =>
+        Object.values(n.inputs ?? {})
+          .flat()
+          .some((e) => (e as { node?: string } | undefined)?.node === id),
+      )
+      .map((n) => n.id);
+
+  for (const [name, chain] of Object.entries(CHAINS)) {
+    for (const mask of ['all', 'location', 'rotation', 'scale'] as const) {
+      it(`${name} — Apply ${mask} keeps every drawn vertex where it was, under the import Group`, async () => {
+        const { next, bakedId, before, baked, after } = await applyOnChain(chain, mask);
+        expect(holdersOf(next, bakedId)).toEqual(['n_import']);
+        const drawnAfter = worldPoints(baked, after);
+        expect(drawnAfter).toHaveLength(before.length);
+        const worst = Math.max(...before.map((v, i) => v.distanceTo(drawnAfter[i])));
+        expect(worst).toBeLessThan(1e-6);
+        expect(inwardFaces(baked, after)).toBe(0);
+        if (mask === 'all') {
+          expect(next.nodes[bakedId].params).toMatchObject({
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          });
+        }
+      });
+    }
+  }
+
+  // What sits above the child is read at the current frame and is no longer above the bake, so an
+  // animation there would stop at that frame (measured before the refusal: a clip track or a baked
+  // channel on the glTF parent left the bake 4 units off the drawn mesh one second later). Each
+  // ancestor is asked what the child is asked for itself. The holder is not: the bake stays under it.
+  const MOVING_CHAIN =
+    CHAINS['a wrapper under a moved Group, over a non-uniformly scaled glTF parent (shear)'];
+  const vec3Channel = (
+    target: string,
+    paramPath: string,
+    from: Vec3,
+    to: Vec3,
+    extra = {},
+  ): Op => ({
+    type: 'addNode',
+    nodeId: 'n_moving',
+    nodeType: 'KeyframeChannelVec3',
+    params: {
+      name: 'moving',
+      target,
+      paramPath,
+      ...extra,
+      keyframes: [
+        { time: 0, value: from, easing: 'linear' },
+        { time: 2, value: to, easing: 'linear' },
+      ],
+    },
+  });
+  const ANIMATED_ANCESTORS: Record<string, { ops: Op[]; names: string }> = {
+    'a clip track on the glTF parent node': {
+      names: PARENT_NAME,
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: 'n_clip',
+          nodeType: 'TransformClip',
+          params: {
+            name: 'walk',
+            duration: 2,
+            loop: 'hold',
+            keyframes: [
+              { targetNodeId: PARENT_NAME, time: 0, position: [0, 1, 0] },
+              { targetNodeId: PARENT_NAME, time: 2, position: [4, 1, 0] },
+            ],
+          },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_clip', socket: 'out' },
+          to: { node: 'n_gltf', socket: 'transformClip' },
+        },
+      ],
+    },
+    'a baked channel on the glTF parent node, which has no node of its own in the graph': {
+      names: PARENT_NAME,
+      ops: [vec3Channel(PARENT_ID, 'position', [0, 1, 0], [4, 1, 0], { childName: PARENT_NAME })],
+    },
+    'a keyframed wrapper between the import Group and the asset': {
+      names: 'n_wrap',
+      ops: [vec3Channel('n_wrap', 'position', [0, 0, 2], [4, 0, 2])],
+    },
+  };
+
+  for (const [name, { ops, names }] of Object.entries(ANIMATED_ANCESTORS)) {
+    it(`refuses, before writing anything, when ${name} animates`, async () => {
+      const state = applyAll(chainState(MOVING_CHAIN), ops);
+      const storage = new MemoryStorage();
+      const writeSpy = vi.spyOn(storage, 'write');
+      let dispatched = 0;
+      const result = await dispatchApplyTransform('n_child', 'all', {
+        state,
+        storage,
+        currentFrame: 30,
+        dispatchAtomic: () => {
+          dispatched++;
+          return [];
+        },
+        setSelection: () => {},
+        gltfClone: chainClone(MOVING_CHAIN),
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.reason).toContain(`"${names}"`);
+      expect(result.reason).toContain('animated');
+      expect(dispatched).toBe(0);
+      expect(writeSpy).not.toHaveBeenCalled();
+    });
+  }
+
+  it('an animated import Group is not refused, and the bake keeps following it', async () => {
+    const chain = MOVING_CHAIN;
+    const state = applyAll(chainState(chain), [
+      vec3Channel('n_import', 'position', chain.group.position, [6, 0, 0]),
+    ]);
+    const clone = chainClone(chain);
+    const source = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      gltfClone: clone,
+    });
+    expect(result.ok, result.ok ? '' : result.reason).toBe(true);
+    if (!result.ok) return;
+    const next = stateRef.current;
+    expect(holdersOf(next, result.bakedId)).toEqual(['n_import']);
+    const { geometry: ref } = dataHalfOf(next, result.bakedId)!.params as {
+      geometry: { descriptor: { hash: string; vertexCount: number } };
+    };
+    const baked = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
+    // One second in, the Group is halfway along its keys; the chain draws under it there.
+    const moved = { ...chain, group: { ...chain.group, position: [4, 0, 0] as Vec3 } };
+    const before = worldPoints(source, drawnChain(moved));
+    const world = resolveWorldTransform(next, result.bakedId, {
+      time: { frame: 60, seconds: 1, normalized: 0 },
+    });
+    const drawnAfter = worldPoints(baked, new THREE.Matrix4().fromArray(world!.matrix));
+    expect(Math.max(...before.map((v, i) => v.distanceTo(drawnAfter[i])))).toBeLessThan(1e-6);
+  });
+
+  it('a flat import bakes exactly as before: the child pose is kept verbatim, under the scene', async () => {
+    const state = gltfChildState();
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_child', 'location', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      gltfClone: fakeClone(),
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(holdersOf(stateRef.current, result.bakedId)).toEqual(['n_scene']);
+    expect(stateRef.current.nodes[result.bakedId].params).toMatchObject({
+      rotation: [0, 0, 0],
+      scale: [2, 2, 2],
+    });
   });
 });
