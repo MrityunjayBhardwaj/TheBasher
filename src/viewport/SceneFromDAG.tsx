@@ -2885,9 +2885,7 @@ function FlattenedBakedMeshR({
   // seam's fallback keys the flattened IR with the evaluator's own function
   // (`materialKeyReach.gate.test.ts` case D counts this call).
   const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
-  return (
-    <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />
-  );
+  return <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />;
 }
 
 function CapturedBakedMeshR({
