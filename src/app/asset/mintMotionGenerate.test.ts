@@ -43,6 +43,7 @@ function capability() {
         model: request.model,
         unitScale: STUB_UNIT_SCALE,
         worldOffsetXZ: request.constraints?.waypoints ? [3, -1] : null,
+        worldRotationRadians: null,
       };
     },
     cancel: async () => {},

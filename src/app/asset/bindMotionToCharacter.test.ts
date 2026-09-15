@@ -84,6 +84,9 @@ function stateOf(...nodes: Node[]): DagState {
 
 const MIXAMO = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
 
+/** A source skeleton no node in these graphs answers to — rows about something else. */
+const NO_MOTION = 'skel_not_in_graph';
+
 describe('motionTargetCandidates', () => {
   it('finds a character by its rig node and reads the bones off the projection', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
@@ -115,15 +118,97 @@ describe('motionTargetCandidates', () => {
 
 describe('chooseMotionTarget', () => {
   it('refuses with the "no character" reason when the scene has no rig', () => {
-    const result = chooseMotionTarget(stateOf(), null, 'imported');
+    const result = chooseMotionTarget(stateOf(), null, 'imported', NO_MOTION);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal).toBe('no-character');
   });
 
+  // ── #1103 — "no character" is news, not a problem, once the motion stands ────
+  //
+  // Since #1056 (files) and #1078 (generation) a motion with no character stands
+  // in the scene as an Object pointed at its skeleton. The refusal used to warn
+  // that nothing happened while that rig stood right there.
+
+  /** A motion's skeleton, and — when `standing` — the Object that shows it. */
+  function motion(skeletonId: string, standing: boolean): Node[] {
+    const skeleton: Node = {
+      id: skeletonId,
+      type: 'Skeleton',
+      version: 1,
+      params: { bones: [] },
+      inputs: {},
+    };
+    if (!standing) return [skeleton];
+    return [
+      skeleton,
+      {
+        id: `${skeletonId}_object`,
+        type: 'Object',
+        version: 1,
+        params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        inputs: { data: { node: skeletonId, socket: 'out' } },
+      },
+    ];
+  }
+
+  it('#1103 — names the Object the motion stands as, on both roads, as a notice', () => {
+    const state = stateOf(...motion('skel_walk', true));
+    for (const [arrival, verb] of [
+      ['imported', 'Imported'],
+      ['generated', 'Generated'],
+    ] as const) {
+      const result = chooseMotionTarget(state, null, arrival, 'skel_walk');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.refusal).toBe('no-character');
+      expect(result.severity).toBe('info');
+      expect(result.reason).toContain(`${verb} the motion`);
+      // Named the way the outliner names it — this Object carries no name, so its id.
+      expect(result.reason).toContain('stands in the scene as skel_walk_object');
+      expect(result.reason).not.toContain('no character in the scene');
+    }
+  });
+
+  it('#1103 — with no Object standing, the warning and its wording stay', () => {
+    for (const state of [stateOf(...motion('skel_walk', false)), stateOf()]) {
+      const result = chooseMotionTarget(state, null, 'imported', 'skel_walk');
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.severity).toBe('warn');
+      expect(result.reason).toBe(
+        'Imported the motion — there is no character in the scene for it to drive yet.',
+      );
+    }
+  });
+
+  it("#1103 — another motion's Object is not this one's", () => {
+    // The control on the lookup: an Object in the scene is not enough, it has to be
+    // the one showing THIS skeleton, or the notice would name somebody else's rig.
+    const state = stateOf(...motion('skel_other', true), ...motion('skel_walk', false));
+    const result = chooseMotionTarget(state, null, 'generated', 'skel_walk');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.severity).toBe('warn');
+    expect(result.reason).not.toContain('skel_other');
+  });
+
+  it('#1103 — the refusals that are problems keep their warning', () => {
+    const state = stateOf(
+      ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
+      ...character('user-imports/elf/elf.glb', MIXAMO),
+      ...motion('skel_walk', true),
+    );
+    const result = chooseMotionTarget(state, null, 'imported', 'skel_walk');
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.refusal).toBe('ambiguous');
+    expect(result.severity).toBe('warn');
+  });
+
   it('takes the only character without needing a selection', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
-    const result = chooseMotionTarget(state, null, 'imported');
+    const result = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.label).toBe('dwarf');
@@ -134,7 +219,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const result = chooseMotionTarget(state, null, 'imported');
+    const result = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.refusal).toBe('ambiguous');
@@ -151,7 +236,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const result = chooseMotionTarget(state, 'grp_user-imports/elf/elf.glb', 'imported');
+    const result = chooseMotionTarget(state, 'grp_user-imports/elf/elf.glb', 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.label).toBe('elf');
@@ -166,7 +251,7 @@ describe('chooseMotionTarget', () => {
   // instruction with no gesture behind it.
 
   it('#823 — a generated clip is not described as Imported, on every refusal', () => {
-    const none = chooseMotionTarget(stateOf(), null, 'generated');
+    const none = chooseMotionTarget(stateOf(), null, 'generated', NO_MOTION);
     expect(none.ok).toBe(false);
     if (none.ok) return;
     expect(none.reason).toContain('Generated the motion');
@@ -179,6 +264,7 @@ describe('chooseMotionTarget', () => {
       ),
       null,
       'generated',
+      NO_MOTION,
     );
     expect(two.ok).toBe(false);
     if (two.ok) return;
@@ -194,7 +280,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const generated = chooseMotionTarget(state, null, 'generated');
+    const generated = chooseMotionTarget(state, null, 'generated', NO_MOTION);
     expect(generated.ok).toBe(false);
     if (generated.ok) return;
     expect(generated.reason, 'there is no file to drop on the generation road').not.toContain(
@@ -204,7 +290,7 @@ describe('chooseMotionTarget', () => {
 
     // ...and the drop road is unchanged, which is the other half of "one voice":
     // this fix must not have quietly reworded the road that was already right.
-    const imported = chooseMotionTarget(state, null, 'imported');
+    const imported = chooseMotionTarget(state, null, 'imported', NO_MOTION);
     expect(imported.ok).toBe(false);
     if (imported.ok) return;
     expect(imported.reason).toContain('Imported the motion');
@@ -254,7 +340,7 @@ describe('chooseMotionTarget', () => {
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
     const elfSkel = gltfSkeletonDagId('user-imports/elf/elf.glb', 0);
-    const result = chooseMotionTarget(state, elfSkel, 'imported');
+    const result = chooseMotionTarget(state, elfSkel, 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.target.skeletonId).toBe(elfSkel);

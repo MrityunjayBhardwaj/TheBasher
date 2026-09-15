@@ -18,6 +18,7 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useNotificationStore } from '../stores/notificationStore';
 
 let currentStorage: MemoryStorage = new MemoryStorage();
 vi.mock('../boot', () => ({
@@ -161,6 +162,36 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     expect(state.nodes.n_scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
   });
 
+  // #1103 — the toast a director reads, through the road a drop, the picker and the
+  // Library all take. The chooser's rows pin the wording; these pin that the bind
+  // actually shows it at the level the chooser picked.
+  it('#1103 — with no character, the toast names that Object, as a notice', async () => {
+    useNotificationStore.setState({ toasts: [] });
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    await routeImportByExtension(path);
+
+    const objectId = Object.values(useDagStore.getState().state.nodes).find(
+      (n) => n.type === 'Object',
+    )?.id;
+    expect(objectId, 'the import stood no Object — the toast check would be vacuous').toBeDefined();
+    const toasts = useNotificationStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].severity).toBe('info');
+    expect(toasts[0].message).toContain(`stands in the scene as ${objectId}`);
+  });
+
+  it('#1103 — with no scene to stand it in, the warning stays', async () => {
+    useDagStore.getState().hydrate({ nodes: {}, outputs: {} });
+    useNotificationStore.setState({ toasts: [] });
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    await routeImportByExtension(path);
+
+    const toasts = useNotificationStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].severity).toBe('warn');
+    expect(toasts[0].message).toContain('no character in the scene');
+  });
+
   it('a project with a character to bind to gets the Object too — the import does not read the scene', async () => {
     // The row the old "only when nothing binds" rule fails. A character is seeded and the
     // bind's own choice is asserted to pick it FIRST, so this is not an Object added to a
@@ -201,7 +232,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       to: { node: 'n_char_skel', socket: 'asset' },
     }).next;
     useDagStore.getState().hydrate(s);
-    expect(chooseMotionTarget(useDagStore.getState().state, null, 'imported').ok).toBe(true);
+    expect(
+      chooseMotionTarget(useDagStore.getState().state, null, 'imported', 'skel_not_in_graph').ok,
+    ).toBe(true);
 
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
