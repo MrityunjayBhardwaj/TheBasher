@@ -1142,8 +1142,8 @@ export interface EvaluatedMesh {
  * A standalone scene mesh whose TRS has been composed into its geometry: the
  * `geometry` is a `GeometryRef{kind:'baked'}` handle into OPFS-persisted bytes
  * (authoritative, NOT rebuildable from params — bakedGeometryStore.ts), the
- * transform is IDENTITY (the TRS is baked INTO the verts, so the renderer must
- * render at identity scale — H40 band-drift guard), and `material` is the ONE
+ * transform is the Object's (identity for every band an Apply baked into the verts,
+ * drawn as-is for any band it kept — #1080, #489), and `material` is the ONE
  * rich {@link BakedMaterialSpec} (scalars + nullable maps).
  *
  * The 4th `EvaluatedMesh` producer (V29): no consumer branches on this kind;

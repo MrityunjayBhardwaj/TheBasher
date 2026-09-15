@@ -24,6 +24,7 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
+import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import {
   dispatchApplyTransform,
   canApplyTransform,
@@ -1545,6 +1546,235 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
 // decoder) — the textured capture is the e2e's job.
 //
 // REF: PLAN.md Wave 4 Task 10; RESEARCH §Q1/§Q4/§M2/§M7; hetvabhasa H45/H58/H59.
+
+describe('#1080 — a single-band Apply on the bake road keeps the world shape and the other bands', () => {
+  // The bake baked only the applied band into the verts and then reset ALL THREE bands on the
+  // Object, so Location, Rotation or Scale alone moved and reshaped the object (measured on every
+  // partial mask over boxes and spheres: 18 of 18 cells off by 0.65 to 4.1 units). And a mirrored
+  // pose baked in under an identity Object kept its mirrored winding, so every face drew
+  // inside-out. The rule is the stored-mesh road's (#1077), with Blender as the reference: bake
+  // `kept⁻¹ · full`, reset only the applied bands, and reverse winding when that matrix mirrors.
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    geometryRegistry.clear();
+  });
+
+  // Mutable tuples, the shape the split-fixture options take.
+  type Tuple3 = [number, number, number];
+  type Pose = { position: Tuple3; rotation: Tuple3; scale: Tuple3 };
+  const POSES: Record<string, Pose> = {
+    // The issue's own pose.
+    turned: { position: [1, 2, 3], rotation: [0, 0, 30], scale: [2, 1, 1] },
+    // A rotation under a non-uniform scale that stays on the Object: baking the rotation alone
+    // cannot keep this shape, only `kept⁻¹ · full` can.
+    sheared: { position: [1, 2, 3], rotation: [10, 20, 30], scale: [2, 1, 0.5] },
+    // A mirror: the winding has to follow the determinant of what is baked.
+    mirrored: { position: [1, 0, 0], rotation: [0, 0, 30], scale: [-1, 1, 1] },
+  };
+  const MASKS = ['all', 'location', 'rotation', 'scale'] as const;
+  const APPLIED: Record<(typeof MASKS)[number], readonly (keyof Pose)[]> = {
+    all: ['position', 'rotation', 'scale'],
+    location: ['position'],
+    rotation: ['rotation'],
+    scale: ['scale'],
+  };
+  const IDENTITY: Pose = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+
+  function poseMatrix(p: Pose): THREE.Matrix4 {
+    const d = Math.PI / 180;
+    return new THREE.Matrix4().compose(
+      new Vector3(...p.position),
+      new THREE.Quaternion().setFromEuler(
+        new THREE.Euler(p.rotation[0] * d, p.rotation[1] * d, p.rotation[2] * d, 'XYZ'),
+      ),
+      new Vector3(...p.scale),
+    );
+  }
+
+  /** Each vertex as it is drawn: the geometry under the Object's pose. */
+  function drawnPoints(geom: THREE.BufferGeometry, pose: Pose): Vector3[] {
+    const m = poseMatrix(pose);
+    const a = geom.getAttribute('position');
+    return Array.from({ length: a.count }, (_, i) =>
+      new Vector3().fromBufferAttribute(a, i).applyMatrix4(m),
+    );
+  }
+
+  /**
+   * Triangles that DRAW facing inward. three flips its front face while the Object's matrix
+   * mirrors, so a triangle faces inward on screen when its winding in world space points inward
+   * XOR the pose mirrors.
+   */
+  function drawnInward(geom: THREE.BufferGeometry, pose: Pose): number {
+    const pts = drawnPoints(geom, pose);
+    const centre = pts.reduce((s, p) => s.add(p), new Vector3()).divideScalar(pts.length);
+    const mirrors = poseMatrix(pose).determinant() < 0;
+    const index = geom.getIndex();
+    const corners = index ? index.count : pts.length;
+    let inward = 0;
+    for (let i = 0; i + 2 < corners; i += 3) {
+      const [a, b, c] = [0, 1, 2].map((k) => pts[index ? index.getX(i + k) : i + k]);
+      const normal = new Vector3().subVectors(b, a).cross(new Vector3().subVectors(c, a));
+      if (normal.lengthSq() < 1e-12) continue;
+      const out = new Vector3().add(a).add(b).add(c).divideScalar(3).sub(centre);
+      if (normal.dot(out) < 0 !== mirrors) inward++;
+    }
+    return inward;
+  }
+
+  async function bake(shape: 'cube' | 'sphere', pose: Pose, mask: (typeof MASKS)[number]) {
+    const built =
+      shape === 'cube'
+        ? makeSplitCube(emptyDagState(), { objectId: 'o', size: [1, 1, 1], ...pose })
+        : makeSplitSphere(emptyDagState(), {
+            objectId: 'o',
+            radius: 0.5,
+            widthSegments: 12,
+            heightSegments: 8,
+            ...pose,
+          });
+    const source = resolveEvaluatedMesh(built.state, 'o', {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    })!;
+    const sourceGeom = geometryRegistry.getForRead(source.geometry)!;
+    const storage = new MemoryStorage();
+    const stateRef = { current: built.state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('o', mask, {
+      state: built.state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      clearTransients: () => {},
+    });
+    const next = stateRef.current;
+    const bakedData = result.ok ? dataHalfOf(next, 'o') : null;
+    const ref = (
+      bakedData?.params as
+        | { geometry?: { descriptor: { hash: string; vertexCount: number } } }
+        | undefined
+    )?.geometry;
+    const bakedGeom = ref
+      ? await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount)
+      : null;
+    return { result, sourceGeom, bakedGeom, poseAfter: next.nodes.o?.params as Pose, next };
+  }
+
+  const cells = (['cube', 'sphere'] as const).flatMap((shape) =>
+    Object.keys(POSES).flatMap((pose) => MASKS.map((mask) => ({ shape, pose, mask }))),
+  );
+
+  it.each(cells)(
+    '$shape $pose Apply $mask: drawn verts unchanged, only the applied bands reset, no face inside-out',
+    async ({ shape, pose, mask }) => {
+      const before = POSES[pose];
+      const m = await bake(shape, before, mask);
+      expect(m.result.ok).toBe(true);
+      expect(m.bakedGeom).not.toBeNull();
+
+      // The pose: the applied bands are identity, every other band is exactly what it was.
+      for (const band of ['position', 'rotation', 'scale'] as const) {
+        const want = APPLIED[mask].includes(band) ? IDENTITY[band] : before[band];
+        expect(m.poseAfter[band], band).toEqual(want);
+      }
+
+      // The shape: every vertex draws where it drew before (the bake is clone + matrix, so the
+      // vertex order is the source's).
+      const was = drawnPoints(m.sourceGeom, before);
+      const is = drawnPoints(m.bakedGeom!, m.poseAfter);
+      expect(is).toHaveLength(was.length);
+      const worst = Math.max(...was.map((p, i) => p.distanceTo(is[i])));
+      expect(worst).toBeLessThan(1e-4);
+
+      // The faces: none draws inside-out, before or after.
+      expect(drawnInward(m.sourceGeom, before)).toBe(0);
+      expect(drawnInward(m.bakedGeom!, m.poseAfter)).toBe(0);
+    },
+  );
+
+  /** The same Apply over an imported child, which bakes off the live clone — the second bake site. */
+  async function bakeChild(pose: Pose, mask: (typeof MASKS)[number]) {
+    let state = buildSceneScaffold();
+    const sceneId = state.outputs.scene!.node;
+    state = applyAll(state, [
+      {
+        type: 'addNode',
+        nodeId: 'n_gltf',
+        nodeType: 'GltfAsset',
+        params: { assetRef: 'assets/textured.glb', nodeNameMap: { Cube: 'n_child' } },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_gltf', socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      },
+      ...(importedChildOps('n_child', {
+        assetRef: 'assets/textured.glb',
+        childName: 'Cube',
+        ...pose,
+        overridden: { position: true, rotation: true, scale: true },
+      }) as Op[]),
+    ]);
+    const clone = new THREE.Group();
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
+    mesh.name = 'Cube';
+    clone.add(mesh);
+    const storage = new MemoryStorage();
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform('n_child', mask, {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      clearTransients: () => {},
+      gltfClone: clone,
+    });
+    if (!result.ok) return { result, sourceGeom: mesh.geometry, bakedGeom: null, poseAfter: null };
+    const bakedData = dataHalfOf(stateRef.current, result.bakedId);
+    const ref = (
+      bakedData!.params as { geometry: { descriptor: { hash: string; vertexCount: number } } }
+    ).geometry;
+    return {
+      result,
+      sourceGeom: mesh.geometry,
+      bakedGeom: await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount),
+      poseAfter: stateRef.current.nodes[result.bakedId].params as Pose,
+    };
+  }
+
+  it.each(Object.keys(POSES).flatMap((pose) => MASKS.map((mask) => ({ pose, mask }))))(
+    'imported child $pose Apply $mask: drawn verts unchanged, only the applied bands reset, no face inside-out',
+    async ({ pose, mask }) => {
+      const before = POSES[pose];
+      const m = await bakeChild(before, mask);
+      expect(m.result.ok).toBe(true);
+      for (const band of ['position', 'rotation', 'scale'] as const) {
+        const want = APPLIED[mask].includes(band) ? IDENTITY[band] : before[band];
+        expect(m.poseAfter![band], band).toEqual(want);
+      }
+      const was = drawnPoints(m.sourceGeom, before);
+      const is = drawnPoints(m.bakedGeom!, m.poseAfter!);
+      const worst = Math.max(...was.map((p, i) => p.distanceTo(is[i])));
+      expect(worst).toBeLessThan(1e-4);
+      expect(drawnInward(m.bakedGeom!, m.poseAfter!)).toBe(0);
+    },
+  );
+
+  it('refuses when a kept scale is zero — the rest of the pose cannot be taken back out', async () => {
+    const m = await bake(
+      'cube',
+      { position: [1, 0, 0], rotation: [0, 0, 0], scale: [0, 1, 1] },
+      'location',
+    );
+    expect(m.result.ok).toBe(false);
+    if (m.result.ok) return;
+    expect(m.result.reason).toContain('zero scale');
+  });
+});
 
 const ASSET_REF = 'assets/textured.glb';
 const CHILD_NAME = 'Cube';

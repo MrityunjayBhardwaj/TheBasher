@@ -189,24 +189,70 @@ export function applyRoadOf(state: DagState, nodeId: string): ApplyRoad {
     : { kind: 'bake' };
 }
 
-/** Compose a 4×4 from the resolved TRS, including ONLY the masked band(s). */
-function composeMaskedMatrix(
-  transform: { position: Vec3; rotation: Vec3; scale: Vec3 },
+/**
+ * #1080 — what an Apply of `mask` puts into the geometry, and what it leaves on the Object. ONE
+ * answer for every road that moves a pose into geometry: both bakes and the stored-mesh road (#1077).
+ *
+ * `kept` is the resolved pose with the applied bands set to identity, and the geometry takes
+ * `kept⁻¹ · full`, so the Object drawing it under `kept` draws exactly what it drew before, for every
+ * mask. The bake used to put only the applied band into the verts and then reset all three bands,
+ * which moved and reshaped the object on Location, Rotation or Scale alone (measured: every partial
+ * mask, off by up to 4 units) — and a rotation applied under a non-uniform scale that stays on the
+ * Object cannot be kept by baking the band alone at all. Blender keeps the world shape exactly in
+ * both cases (measured on 5.1.1).
+ *
+ * `null` when a kept scale is zero: `kept` has no inverse, so the rest of the pose cannot be taken
+ * back out of the geometry.
+ */
+function splitAppliedPose(
+  transform: MeshTransform,
   mask: ApplyMask,
-): THREE.Matrix4 {
-  const includeLoc = mask === 'all' || mask === 'location';
-  const includeRot = mask === 'all' || mask === 'rotation';
-  const includeScale = mask === 'all' || mask === 'scale';
+): { readonly matrix: THREE.Matrix4; readonly kept: MeshTransform } | null {
+  const kept = { ...transform };
+  for (const band of APPLIED_BANDS[mask]) kept[band] = [...IDENTITY_BAND[band]];
+  const keptMatrix = trsMatrix(kept);
+  if (keptMatrix.determinant() === 0) return null;
+  return { matrix: keptMatrix.invert().multiply(trsMatrix(transform)), kept };
+}
 
-  const pos = includeLoc ? new THREE.Vector3(...transform.position) : new THREE.Vector3(0, 0, 0);
-  const quat = new THREE.Quaternion();
-  if (includeRot) {
-    const [rx, ry, rz] = transform.rotation;
-    const D2R = Math.PI / 180; // rotation is degrees Euler XYZ (codebase convention)
-    quat.setFromEuler(new THREE.Euler(rx * D2R, ry * D2R, rz * D2R, 'XYZ'));
+/** The refusal every road gives when {@link splitAppliedPose} has no inverse to take. */
+function zeroKeptScaleReason(selectedId: string): string {
+  return `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`;
+}
+
+/**
+ * #1080 — reverse every triangle's winding in place, for a baked matrix that mirrors. three flips
+ * its front face only while an Object's OWN matrix mirrors; once the mirror is in the verts and the
+ * Object no longer carries it, the unchanged winding draws every face inside-out (measured: all 12
+ * of a box's triangles). The first corner stays where it was, as Blender keeps it and as the
+ * stored-mesh road does.
+ *
+ * Through the component accessors rather than `.array`, so an interleaved attribute off a glTF
+ * clone reverses the same way a plain one does.
+ */
+function reverseTriangleWinding(geometry: THREE.BufferGeometry): void {
+  const index = geometry.getIndex();
+  if (index) {
+    for (let i = 0; i + 2 < index.count; i += 3) {
+      const second = index.getX(i + 1);
+      index.setX(i + 1, index.getX(i + 2));
+      index.setX(i + 2, second);
+    }
+    index.needsUpdate = true;
+    return;
   }
-  const scl = includeScale ? new THREE.Vector3(...transform.scale) : new THREE.Vector3(1, 1, 1);
-  return new THREE.Matrix4().compose(pos, quat, scl);
+  const get = ['getX', 'getY', 'getZ', 'getW'] as const;
+  const set = ['setX', 'setY', 'setZ', 'setW'] as const;
+  for (const attribute of Object.values(geometry.attributes)) {
+    for (let i = 0; i + 2 < attribute.count; i += 3) {
+      for (let k = 0; k < attribute.itemSize; k++) {
+        const second = attribute[get[k]](i + 1);
+        attribute[set[k]](i + 1, attribute[get[k]](i + 2));
+        attribute[set[k]](i + 2, second);
+      }
+    }
+    if ('needsUpdate' in attribute) attribute.needsUpdate = true;
+  }
 }
 
 /** Build a BakedMaterialSpec from a primitive's inline material (M6 — null maps). */
@@ -494,15 +540,19 @@ export async function dispatchApplyTransform(
     });
   }
 
-  const matrix = composeMaskedMatrix(mesh.transform, mask);
+  // #1080 — the geometry takes `kept⁻¹ · full`, and the Object keeps every band not applied.
+  const split = splitAppliedPose(mesh.transform, mask);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
 
   // 2 — clone the SHARED registry geometry before baking (H45).
   const src = getForRead(mesh.geometry);
   if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
   const baked = src.clone();
-  baked.applyMatrix4(matrix);
+  baked.applyMatrix4(split.matrix);
+  if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
   // Rotation/scale change the surface orientation — recompute vertex normals so
-  // lighting stays correct (translation-only bakes leave normals untouched).
+  // lighting stays correct. A location-only Apply bakes a pure translation (`kept⁻¹ · full`
+  // conjugates the translation by the kept bands), which leaves normals untouched.
   if (mask !== 'location') baked.computeVertexNormals();
 
   // 3 — persist the baked bytes to OPFS (async, AWAITED before the Op composite).
@@ -582,9 +632,13 @@ export async function dispatchApplyTransform(
     type: 'addNode',
     nodeId: bakedId,
     nodeType: 'Object',
-    // IDENTITY pose — the TRS is baked into the verts. This is the one place the value
-    // is genuinely identity rather than defaulted, so it is written explicitly.
-    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // #1080 — the KEPT pose: the applied bands are in the verts and read identity here, and
+    // every band not applied stays exactly as it was. Written explicitly, never defaulted.
+    params: {
+      position: split.kept.position,
+      rotation: split.kept.rotation,
+      scale: split.kept.scale,
+    },
   });
   ops.push({
     type: 'connect',
@@ -784,17 +838,9 @@ function applyIntoStoredMesh(
     cur = edges[0].consumer;
   }
   const applied = APPLIED_BANDS[mask];
-  const kept = { ...transform };
-  for (const band of applied) kept[band] = [...IDENTITY_BAND[band]];
-  const keptMatrix = trsMatrix(kept);
-  if (keptMatrix.determinant() === 0) {
-    return {
-      ok: false,
-      reason: `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`,
-    };
-  }
-  const matrix = keptMatrix.invert().multiply(trsMatrix(transform));
-  const next = transformMeshData(unpackMeshData(packed), matrix);
+  const split = splitAppliedPose(transform, mask);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
+  const next = transformMeshData(unpackMeshData(packed), split.matrix);
 
   const ops: Op[] = [
     { type: 'setParam', nodeId: dataId, paramPath: 'mesh', value: packMeshData(next) },
@@ -898,7 +944,9 @@ async function dispatchApplyGltfChild(
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
   if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${selectedId}".` };
-  const matrix = composeMaskedMatrix(mesh.transform, mask);
+  // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
+  const split = splitAppliedPose(mesh.transform, mask);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
 
   // 2 — read source geometry + RESOLVED material off the LIVE render clone (Q4 —
   // registry.get returns null for gltf). The clone is the post-override render
@@ -918,7 +966,8 @@ async function dispatchApplyGltfChild(
   // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
   // every other instance/child sharing the buffer.
   const baked = child.geometry.clone();
-  baked.applyMatrix4(matrix);
+  baked.applyMatrix4(split.matrix);
+  if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
   if (mask !== 'location') baked.computeVertexNormals();
 
   // 3 — persist baked geometry + every texture map to OPFS (async, ALL AWAITED
@@ -968,8 +1017,12 @@ async function dispatchApplyGltfChild(
       type: 'addNode',
       nodeId: bakedId,
       nodeType: 'Object',
-      // IDENTITY pose — the child's world matrix is baked into the verts.
-      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1080 — the KEPT pose, as on the primitive bake: applied bands identity, the rest unchanged.
+      params: {
+        position: split.kept.position,
+        rotation: split.kept.rotation,
+        scale: split.kept.scale,
+      },
     },
     {
       type: 'connect',
