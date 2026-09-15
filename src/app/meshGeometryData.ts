@@ -22,21 +22,54 @@
 // Byte order is the platform's. Every engine this app runs in is little-endian, and a big-endian
 // reader would need a swap here and nowhere else.
 //
-// REF: src/nodes/types.ts (`MeshGeometryData`), src/app/polygonLayout.ts (the check, the split
-//      layout and `fanToTriangles`); issues #1049, #1054, #628.
+// ── #1117 — CORNER LAYERS ARE A NAMED LIST, AND THE BUILD DRAWS THEM BY ORDER ─────────────────
+//
+// A stored mesh keeps its UV sets and colours as named, typed corner layers (`MeshCornerLayer`),
+// saved one base64 string per layer, exactly as the fixed fields they replace were. The build
+// writes each layer to the buffer slot three reads: the `float2` layers to `uv`, `uv1`, `uv2`,
+// `uv3` in list order, and the one `float4` layer to `color`. `meshDataProblem` refuses a mesh that
+// would need a slot three does not have, so nothing is held that would silently never draw.
+//
+// REF: src/nodes/types.ts (`MeshGeometryData`, `MeshCornerLayer`), src/app/polygonLayout.ts (the
+//      check, the split layout and `fanToTriangles`); issues #1049, #1054, #1117, #628.
 
 import { BufferGeometry, Float32BufferAttribute } from 'three';
-import type { GeometryRef, MeshGeometryData } from '../nodes/types';
+import type {
+  GeometryRef,
+  MeshCornerLayer,
+  MeshCornerLayerType,
+  MeshGeometryData,
+} from '../nodes/types';
 import { hashString } from '../core/dag/hash';
-import { fanToTriangles, meshSplitLayout, type PolygonRim } from './polygonLayout';
+import {
+  cornerLayerWidth,
+  fanToTriangles,
+  MAX_COLOUR_LAYERS,
+  MAX_UV_LAYERS,
+  meshSplitLayout,
+  type PolygonRim,
+} from './polygonLayout';
 
-/** The persisted form: one base64 string per array, `null` for an absent corner attribute. */
+/** One corner layer as saved: its name, its type, and its values as one base64 string. */
+export interface PackedCornerLayer {
+  readonly name: string;
+  readonly type: MeshCornerLayerType;
+  readonly data: string;
+}
+
+/** The persisted form: one base64 string per array and per layer, `null` for absent normals. */
 export interface PackedMeshData {
   readonly points: string;
   readonly faceSizes: string;
   readonly cornerPoints: string;
-  readonly cornerUVs: string | null;
+  readonly cornerLayers: readonly PackedCornerLayer[];
   readonly cornerNormals: string | null;
+}
+
+function isPackedCornerLayer(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return typeof v.name === 'string' && typeof v.type === 'string' && typeof v.data === 'string';
 }
 
 /** Is this value a packed mesh? Recognised by SHAPE, so nothing that reads it asks who holds it. */
@@ -47,7 +80,8 @@ export function isPackedMeshData(value: unknown): value is PackedMeshData {
     typeof v.points === 'string' &&
     typeof v.faceSizes === 'string' &&
     typeof v.cornerPoints === 'string' &&
-    (v.cornerUVs === null || typeof v.cornerUVs === 'string') &&
+    Array.isArray(v.cornerLayers) &&
+    v.cornerLayers.every(isPackedCornerLayer) &&
     (v.cornerNormals === null || typeof v.cornerNormals === 'string')
   );
 }
@@ -59,7 +93,7 @@ function decodedBytes(text: string): number {
 }
 
 /**
- * A packed mesh's element counts, read off the string lengths alone.
+ * A packed mesh's element counts and layer names, read off the string lengths alone.
  *
  * For surfaces that describe a mesh to a reader who cannot use its bytes — an agent above all,
  * where megabytes of base64 would cost the context window and say nothing.
@@ -68,14 +102,14 @@ export function packedMeshSummary(packed: PackedMeshData): {
   readonly points: number;
   readonly faces: number;
   readonly corners: number;
-  readonly uvs: boolean;
+  readonly layers: readonly { readonly name: string; readonly type: MeshCornerLayerType }[];
   readonly normals: boolean;
 } {
   return {
     points: decodedBytes(packed.points) / 12,
     faces: decodedBytes(packed.faceSizes) / 4,
     corners: decodedBytes(packed.cornerPoints) / 4,
-    uvs: packed.cornerUVs !== null,
+    layers: packed.cornerLayers.map(({ name, type }) => ({ name, type })),
     normals: packed.cornerNormals !== null,
   };
 }
@@ -102,7 +136,11 @@ export function packMeshData(data: MeshGeometryData): PackedMeshData {
     points: toBase64(data.points),
     faceSizes: toBase64(data.faceSizes),
     cornerPoints: toBase64(data.cornerPoints),
-    cornerUVs: data.cornerUVs === null ? null : toBase64(data.cornerUVs),
+    cornerLayers: data.cornerLayers.map((layer) => ({
+      name: layer.name,
+      type: layer.type,
+      data: toBase64(layer.data),
+    })),
     cornerNormals: data.cornerNormals === null ? null : toBase64(data.cornerNormals),
   };
 }
@@ -121,7 +159,11 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
     points: new Float32Array(fromBase64(packed.points)),
     faceSizes: new Uint32Array(fromBase64(packed.faceSizes)),
     cornerPoints: new Uint32Array(fromBase64(packed.cornerPoints)),
-    cornerUVs: packed.cornerUVs === null ? null : new Float32Array(fromBase64(packed.cornerUVs)),
+    cornerLayers: packed.cornerLayers.map((layer) => ({
+      name: layer.name,
+      type: layer.type,
+      data: new Float32Array(fromBase64(layer.data)),
+    })),
     cornerNormals:
       packed.cornerNormals === null ? null : new Float32Array(fromBase64(packed.cornerNormals)),
   };
@@ -134,14 +176,18 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
  *
  * Two nodes holding identical meshes share one built geometry, and any change to any array is a
  * different key. The key is taken over the packed strings, which are a lossless spelling of the
- * arrays, so it never disagrees with what the project saves.
+ * arrays, so it never disagrees with what the project saves. Each layer contributes its name and
+ * type as well as its values: a renamed or retyped layer draws to a different slot, so it must not
+ * share a built geometry with the old one.
  */
 export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
   const content = [
     packed.points,
     packed.faceSizes,
     packed.cornerPoints,
-    packed.cornerUVs ?? '-',
+    packed.cornerLayers.length === 0
+      ? '-'
+      : packed.cornerLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
     packed.cornerNormals ?? '-',
   ].join('|');
   return {
@@ -150,6 +196,44 @@ export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
   };
 }
 
+/**
+ * The three.js buffer attribute each corner layer is drawn to, in list order (#1117): the `float2`
+ * layers count up `uv`, `uv1`, `uv2`, `uv3`, and the `float4` layer is `color`.
+ */
+export function cornerLayerBufferNames(
+  layers: readonly Pick<MeshCornerLayer, 'type'>[],
+): readonly string[] {
+  let uvs = 0;
+  return layers.map((layer) => {
+    switch (layer.type) {
+      case 'float4':
+        return 'color';
+      case 'float2': {
+        const name = uvs === 0 ? 'uv' : `uv${uvs}`;
+        uvs++;
+        return name;
+      }
+      default: {
+        const unreachable: never = layer.type;
+        throw new Error(`cornerLayerBufferNames: undeclared layer type ${String(unreachable)}`);
+      }
+    }
+  });
+}
+
+/**
+ * Every buffer slot a stored mesh's corner layers can be drawn to: the names
+ * {@link cornerLayerBufferNames} gives the largest mesh the data check admits.
+ *
+ * For a reader that has to know which buffer attributes ARE corner layers without a mesh in hand —
+ * a builder deciding what it cannot carry, above all. Derived rather than spelled, so it cannot
+ * name a slot the build never writes, or miss one it does.
+ */
+export const CORNER_LAYER_SLOTS: readonly string[] = cornerLayerBufferNames([
+  ...Array.from({ length: MAX_UV_LAYERS }, () => ({ type: 'float2' as const })),
+  ...Array.from({ length: MAX_COLOUR_LAYERS }, () => ({ type: 'float4' as const })),
+]);
+
 export interface MeshGeometryBuild {
   readonly geometry: BufferGeometry;
   /** Each face's rim in the BUILT buffer's split numbering — `polygonLayoutOf`'s rims. */
@@ -157,7 +241,7 @@ export interface MeshGeometryBuild {
 }
 
 /**
- * Build the render buffer from the split layout: one vertex per distinct (point, uv, normal).
+ * Build the render buffer from the split layout: one vertex per distinct (point, layers, normal).
  *
  * Every attribute of a vertex is read from the corner that minted it, and a duplicate is written
  * at the position of the point it copies, so welding the built buffer by position returns the
@@ -169,17 +253,21 @@ export interface MeshGeometryBuild {
  */
 export function buildMeshGeometry(data: MeshGeometryData): MeshGeometryBuild {
   const layout = meshSplitLayout(data);
-  const { points, cornerPoints, cornerUVs, cornerNormals } = data;
+  const { points, cornerPoints, cornerLayers, cornerNormals } = data;
   const vertices = layout.vertexCorner.length;
   const positions = new Float32Array(vertices * 3);
-  const uvs = cornerUVs === null ? null : new Float32Array(vertices * 2);
+  const layers = cornerLayers.map((layer) => {
+    // `meshSplitLayout` has already refused a type with no width, so this is never null here.
+    const width = cornerLayerWidth(layer.type)!;
+    return { source: layer.data, width, out: new Float32Array(vertices * width) };
+  });
   const normals = cornerNormals === null ? null : new Float32Array(vertices * 3);
   for (let v = 0; v < vertices; v++) {
     const corner = layout.vertexCorner[v];
     const point = cornerPoints[corner];
     positions.set(points.subarray(point * 3, point * 3 + 3), v * 3);
-    if (uvs !== null && cornerUVs !== null) {
-      uvs.set(cornerUVs.subarray(corner * 2, corner * 2 + 2), v * 2);
+    for (const { source, width, out } of layers) {
+      out.set(source.subarray(corner * width, corner * width + width), v * width);
     }
     if (normals !== null && cornerNormals !== null) {
       normals.set(cornerNormals.subarray(corner * 3, corner * 3 + 3), v * 3);
@@ -188,7 +276,10 @@ export function buildMeshGeometry(data: MeshGeometryData): MeshGeometryBuild {
 
   const geometry = new BufferGeometry();
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3));
-  if (uvs !== null) geometry.setAttribute('uv', new Float32BufferAttribute(uvs, 2));
+  const names = cornerLayerBufferNames(cornerLayers);
+  layers.forEach(({ width, out }, i) => {
+    geometry.setAttribute(names[i], new Float32BufferAttribute(out, width));
+  });
   geometry.setIndex(fanToTriangles(layout.splitRims));
   if (normals !== null) geometry.setAttribute('normal', new Float32BufferAttribute(normals, 3));
   else geometry.computeVertexNormals();

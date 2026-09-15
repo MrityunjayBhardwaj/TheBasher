@@ -118,7 +118,7 @@ const SUBJECTS: ReadonlyArray<readonly [string, GeometryDescriptor]> = [
         points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
         faceSizes: Uint32Array.from([3, 3, 3, 3]),
         cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
-        cornerUVs: null,
+        cornerLayers: [],
         cornerNormals: null,
       }),
     ).descriptor,
