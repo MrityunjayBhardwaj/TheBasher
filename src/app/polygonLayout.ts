@@ -97,8 +97,19 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
     if (layer.data.length !== corners * width) {
       return `corner layer '${layer.name}' holds ${layer.data.length} numbers for ${corners} corners of '${layer.type}'`;
     }
-    if (layer.type === 'float2') uvLayers++;
-    else colourLayers++;
+    // Exhaustive rather than an `else`, so a third layer type cannot be counted as a colour.
+    switch (layer.type) {
+      case 'float2':
+        uvLayers++;
+        break;
+      case 'float4':
+        colourLayers++;
+        break;
+      default: {
+        const unreachable: never = layer.type;
+        return `corner layer '${layer.name}' is '${String(unreachable)}', which a stored mesh does not hold`;
+      }
+    }
   }
   if (uvLayers > MAX_UV_LAYERS)
     return `${uvLayers} UV layers, but the render buffer draws at most ${MAX_UV_LAYERS}`;
