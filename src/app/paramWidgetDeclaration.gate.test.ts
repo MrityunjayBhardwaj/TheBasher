@@ -25,13 +25,22 @@ import { SCOPE_PARAM, scopeParam } from '../nodes/componentSelection';
 import {
   colorParam,
   nameParam,
+  optionsOf,
   placeholderOf,
   widget,
   widgetOf,
+  type ParamOption,
   type ParamWidget,
 } from '../nodes/paramWidget';
+import { applyOp, evaluate } from '../core/dag';
+import type { DagState } from '../core/dag/state';
+import type { Op } from '../core/dag/types';
+import { buildDefaultDagState } from '../core/project/default';
+import { profileOptions } from '../nodes/LightProfileSelect';
 import { overrideDescriptor } from './overrideDescriptor';
+import { resolveActiveRigNode } from './resolveRigLightSources';
 import { nodeDisplayName } from './sceneTreeWalk';
+import { activeProfileSelect, buildAddProfileOps, enumerateProfiles } from './studioProfiles';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -343,7 +352,8 @@ describe('a param declares its control on its schema (#872)', () => {
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
-      'LightProfileSelect.selectedProfile': CHOICE,
+      // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
+      // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
       'PoseOverride.bone': CHOICE,
     };
@@ -386,7 +396,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(34);
+    expect(readOnly.length).toBe(33);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -433,7 +443,8 @@ describe('a param declares its control on its schema (#872)', () => {
 
     // The census, so this cannot drift into "every text param declares a word" (which would
     // make the fallback dead) or "none does" (which is the bug it replaces). Every `name`
-    // carries one because they all come through the one helper; nothing else does yet.
+    // carries one because they all come through the one helper. The one other word is a
+    // picker's name for its empty value (#1064): a blank profile is "no profile".
     const declaredWord: string[] = [];
     let examined = 0;
     for (const type of listNodeTypes()) {
@@ -446,9 +457,11 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
-      count: 26,
+      count: 27,
     });
-    expect(declaredWord.every((k) => k.endsWith('.name'))).toBe(true);
+    expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
+      'LightProfileSelect.selectedProfile',
+    ]);
   });
 
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {
@@ -472,14 +485,126 @@ describe('a param declares its control on its schema (#872)', () => {
     // this Record errored only under a config that includes tests (the changed-file sweep).
     // So the production `never` is the guard, and this row is the readable census beside it.
     // Said plainly because the row it replaces claimed an enforcement it did not have.
+    //
+    // ⚠️ AND IT HAD DRIFTED AGAIN (measured #1064): `text` joined the union in #1027 with no line
+    // here, and this Record stopped compiling — `Property 'text' is missing` — which no gate
+    // saw, for exactly the reason above. Repaired with all four members.
     const DRAWN_BY: Record<ParamWidget, string> = {
       query: 'QueryField — free text over the component-selection language',
       color: 'ColorParamField -> MaterialColorRow — swatch + hex (#521)',
+      text: 'QueryField with testidKind "text" — plain authored string, the param’s own placeholder (#1027)',
+      options:
+        'OptionsParamField -> OptionsSelect — picker over the provider’s live options (#1064)',
     };
-    expect(Object.keys(DRAWN_BY).sort()).toEqual(['color', 'query']);
+    expect(Object.keys(DRAWN_BY).sort()).toEqual(['color', 'options', 'query', 'text']);
     // When this list grows: add the arm to `ParamRow`'s switch in `src/app/NPanel.tsx`,
     // and give the new control its own e2e row the way `scope` has one — an authorable
     // control that can refuse owes a visible refusal and an observed recovery.
+  });
+
+  it('row 16 — declaring the profile picker does not change what `selectedProfile` accepts (#1064)', () => {
+    // The pairing row: the schema BEFORE the declaration, rebuilt independently, against the
+    // instance the node stores now. A stored name no rig carries must still validate — the
+    // picker shows it as not found; refusing it would stop a saved project from loading.
+    const before = z.string().default('');
+    const field = fieldOf('LightProfileSelect', 'selectedProfile')!;
+    const cases: unknown[] = [undefined, '', 'Key', 'a profile that is gone', 42, null, {}];
+    const verdict = (s: z.ZodTypeAny, v: unknown) => {
+      const r = s.safeParse(v);
+      return r.success ? { ok: true, value: r.data } : { ok: false };
+    };
+    expect({ examined: cases.length, now: cases.map((v) => verdict(field, v)) }).toEqual({
+      examined: 7,
+      now: cases.map((v) => verdict(before, v)),
+    });
+    expect(widgetOf(field)).toBe('options');
+  });
+
+  it('row 17 — every options param has a provider, and every provider sits on an options param (#1064)', () => {
+    // Both directions: an `options` control with no provider draws an empty list, and a
+    // provider on a param drawn some other way is a picker nobody sees.
+    let examined = 0;
+    const optionsWidget: string[] = [];
+    const withProvider: string[] = [];
+    for (const type of listNodeTypes()) {
+      const schema = getNodeType(type)?.paramSchema;
+      if (!(schema instanceof z.ZodObject)) continue;
+      for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
+        examined++;
+        if (widgetOf(field) === 'options') optionsWidget.push(`${type}.${key}`);
+        if (optionsOf(field) !== undefined) withProvider.push(`${type}.${key}`);
+      }
+    }
+    expect({ examined: examined > 0, optionsWidget, withProvider }).toEqual({
+      examined: true,
+      optionsWidget: ['LightProfileSelect.selectedProfile'],
+      withProvider: ['LightProfileSelect.selectedProfile'],
+    });
+  });
+
+  it('row 18 — every enabled profile option, once chosen, resolves to that rig on both roads (#1064)', () => {
+    // The property the provider owes. Built with the product's own "+ Profile" builder, then
+    // pushed into the shapes that break a name lookup: a blank name, a duplicate name, and a
+    // rig in the graph that is not wired into the select.
+    const FRAME = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
+    const apply = (s: DagState, ops: readonly Op[]) => {
+      let n = s;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const name of ['Key', 'Rim', 'Fill', 'Dup'])
+      s = apply(s, buildAddProfileOps(s, name, [0, 0, 0])!.ops);
+    const rigId = (name: string) =>
+      Object.values(s.nodes).find(
+        (n) => n.type === 'LightRig' && (n.params as { name: string }).name === name,
+      )!.id;
+    s = apply(s, [
+      { type: 'setParam', nodeId: rigId('Fill'), paramPath: 'name', value: '' },
+      { type: 'setParam', nodeId: rigId('Dup'), paramPath: 'name', value: 'Key' },
+      { type: 'addNode', nodeId: 'rig_loose', nodeType: 'LightRig', params: { name: 'Loose' } },
+    ]);
+    const selId = activeProfileSelect(s)!;
+
+    const resolves = (st: DagState, list: readonly ParamOption[]) =>
+      list
+        .filter((o) => o.disabledReason === undefined)
+        .map((o) => {
+          const after = apply(st, [
+            { type: 'setParam', nodeId: selId, paramPath: 'selectedProfile', value: o.value },
+          ]);
+          const value = evaluate(after, selId, FRAME).value as { name?: string } | null;
+          const rendered = resolveActiveRigNode(after);
+          return {
+            option: o.value,
+            evaluate: value?.name === o.value,
+            render:
+              rendered !== null &&
+              (after.nodes[rendered].params as { name: string }).name === o.value,
+          };
+        });
+
+    const offered = optionsOf(fieldOf('LightProfileSelect', 'selectedProfile'))!(s, selId);
+    expect(offered).toEqual(profileOptions(s, selId));
+    expect({
+      offered: offered.map((o) => `${o.value}${o.disabledReason ? ' (disabled)' : ''}`),
+      resolved: resolves(s, offered),
+    }).toEqual({
+      offered: ['Key', 'Rim', ' (disabled)', 'Key (disabled)'],
+      resolved: [
+        { option: 'Key', evaluate: true, render: true },
+        { option: 'Rim', evaluate: true, render: true },
+      ],
+    });
+
+    // Positive control: the same property over Light Studio's list (#1110) does catch a name
+    // that resolves to nothing, so the row above can fail.
+    const studio = enumerateProfiles(s).map((p) => ({ value: p.name, label: p.name }));
+    expect(
+      resolves(s, studio)
+        .filter((r) => !r.evaluate || !r.render)
+        .map((r) => r.option),
+    ).toContain('Loose');
   });
 
   it('row 7 — every colour param declares the colour control, and none is left read-only', () => {

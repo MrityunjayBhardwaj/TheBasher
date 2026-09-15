@@ -69,7 +69,15 @@ import {
 } from './exposeParams';
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
-import { placeholderOf, type ParamWidget, widgetOf } from '../nodes/paramWidget';
+import {
+  optionsOf,
+  placeholderOf,
+  type OptionsProvider,
+  type ParamOption,
+  type ParamWidget,
+  widgetOf,
+} from '../nodes/paramWidget';
+import { OptionsSelect } from './OptionsSelect';
 import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
@@ -736,6 +744,18 @@ function declaredPlaceholder(nodeId: string, paramPath: string): string | null {
   return field ? (placeholderOf(field) ?? null) : null;
 }
 
+/** The options provider a param's schema declares, or null (#1064). Same identity lookup as
+ *  {@link declaredWidget}. */
+function declaredOptions(nodeId: string, paramPath: string): OptionsProvider | null {
+  if (paramPath.includes('.')) return null;
+  const type = useDagStore.getState().state.nodes[nodeId]?.type;
+  if (!type) return null;
+  const schema = getNodeType(type)?.paramSchema;
+  if (!(schema instanceof z.ZodObject)) return null;
+  const field = (schema.shape as Record<string, z.ZodTypeAny>)[paramPath];
+  return field ? (optionsOf(field) ?? null) : null;
+}
+
 /** The declared schema for a top-level param, so a control can check a value BEFORE
  *  dispatching it. Same lookup as {@link declaredWidget}, minus the widget read. */
 function fieldSchemaOf(nodeId: string, paramPath: string): z.ZodTypeAny | null {
@@ -988,15 +1008,25 @@ function NodeRefField({
         ? value
         : ''
       : ((value as { node?: string } | undefined)?.node ?? '');
+  const options = useMemo<ParamOption[]>(
+    () => candidates.map((c) => ({ value: c.id, label: `${c.label} (${c.type})` })),
+    [candidates],
+  );
   return (
     <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{label}</span>
-      <select
+      <OptionsSelect
+        testid={`inspector-noderef-${nodeId}-${paramPath}`}
         value={current}
-        data-testid={`inspector-noderef-${nodeId}-${paramPath}`}
-        className="max-w-[60%] rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-        onChange={(e) => {
-          const id = e.target.value;
+        options={options}
+        noneLabel="— none —"
+        // #1064 — a ref to a node that still exists but is not a candidate (the wrong kind, or
+        // this node itself) is not "not found", and saying so would send the director looking
+        // for a node that is right there.
+        staleLabel={(id) =>
+          nodes[id] ? `${nodeDisplayName(nodes, id)} — not a valid target` : `${id} — not found`
+        }
+        onCommit={(id) => {
           // 'id' writes the raw string (and '' for none — the param's own empty default,
           // which the enumeration reads as inert); 'ref' wraps it (or clears to undefined).
           const next = shape === 'id' ? id : id ? { node: id } : undefined;
@@ -1006,14 +1036,47 @@ function NodeRefField({
             `set ${paramPath}`,
           );
         }}
-      >
-        <option value="">— none —</option>
-        {candidates.map((c) => (
-          <option key={c.id} value={c.id}>
-            {c.label} ({c.type})
-          </option>
-        ))}
-      </select>
+      />
+    </label>
+  );
+}
+
+/** #1064 — the `options` control: a picker over what the param's provider says exists now.
+ *  The provider is read per render off the live graph, so a renamed or unwired target leaves
+ *  the list at once and the stored value shows as not found. */
+function OptionsParamField({
+  nodeId,
+  paramPath,
+  value,
+}: {
+  nodeId: string;
+  paramPath: string;
+  value: string;
+}) {
+  const dispatch = useDagStore((s) => s.dispatch);
+  // Subscribe to the node map so a rename or a rewire refreshes the list (NodeRefField's reason).
+  const nodes = useDagStore((s) => s.state.nodes);
+  const state = useDagStore((s) => s.state);
+  const provider = declaredOptions(nodeId, paramPath);
+  const options = useMemo(
+    () => (provider ? provider(state, nodeId) : []),
+    // `state` identity changes on every dispatch; `nodes` is the meaningful dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, provider, nodeId],
+  );
+  const none = declaredPlaceholder(nodeId, paramPath) ?? 'none';
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="font-mono text-fg/60">{paramPath}</span>
+      <OptionsSelect
+        testid={`inspector-options-${nodeId}-${paramPath}`}
+        value={value}
+        options={options}
+        noneLabel={`— ${none} —`}
+        onCommit={(next) =>
+          dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`)
+        }
+      />
     </label>
   );
 }
@@ -3033,6 +3096,12 @@ function ParamRow({
               testidKind="text"
             />
           );
+        // #1064 — a value that names something live (a profile, a clip). Free text here would
+        // accept a name that silently selects nothing, so the control offers only what the
+        // param's provider says resolves, and shows a stored value that no longer does as
+        // not found.
+        case 'options':
+          return <OptionsParamField nodeId={nodeId} paramPath={paramPath} value={value} />;
         case 'color':
           return (
             <ColorParamField
