@@ -149,6 +149,7 @@ import { DiffOverlay } from './DiffOverlay';
 import { AssetErrorBoundary } from './AssetErrorBoundary';
 import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
 import { composeBakedMaterial } from '../app/material/composeMaterial';
+import { flattenedMaterial, flattens } from '../app/material/flattenMaterial';
 // #536 S3 — the ATTACH door on `materialRegistry`, extracted into its own module so the
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
@@ -2839,7 +2840,52 @@ function needsMaterialSlots(slots: readonly unknown[]): boolean {
 // without sRGB washes out). A declarative element cannot select its own ctor or
 // hold the async-loaded textures cleanly. The material is built fresh per node
 // (single writer V20, same as Box's own material).
+//
+// #1091 — a FLATTEN override is the one case this build does not serve. Flatten means
+// "ignore what this was made of", and the captured spec IS what it was made of: its maps,
+// its material class and its lobes would all survive a compose. So a flattened baked mesh
+// draws the override alone through the native material road (`flattenedMaterial`, #1076),
+// and the imperative build below is left to the case it exists for. The branch is a
+// component split rather than an early return, because the two arms call different hooks
+// and a component-type change is a remount, never a hook-order change.
 function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: MaterialValue }) {
+  if (flattens(override)) return <FlattenedBakedMeshR value={value} override={override} />;
+  return <CapturedBakedMeshR value={value} override={override} />;
+}
+
+function FlattenedBakedMeshR({
+  value,
+  override,
+}: {
+  value: BakedMeshValue;
+  override: MaterialValue;
+}) {
+  const geom = useBakedGeometry(value.geometry);
+  const shading = useViewportStore((s) => s.shading);
+  // `null`, stated: a flattened material is built from the override alone, and nothing the
+  // evaluator minted describes it — the captured spec is exactly what flatten discards. The
+  // seam's fallback keys the flattened IR with the evaluator's own function
+  // (`materialKeyReach.gate.test.ts` case D counts this call).
+  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
+  return (
+    <mesh
+      position={value.position as [number, number, number]}
+      rotation={degVec3ToRad(value.rotation as [number, number, number])}
+      // IDENTITY scale — the transform is baked into the geometry verts (H40), as below.
+      scale={[1, 1, 1]}
+      geometry={geom}
+      material={material}
+    />
+  );
+}
+
+function CapturedBakedMeshR({
+  value,
+  override,
+}: {
+  value: BakedMeshValue;
+  override?: MaterialValue;
+}) {
   const geom = useBakedGeometry(value.geometry);
   const shading = useViewportStore((s) => s.shading);
   const spec = value.material;
