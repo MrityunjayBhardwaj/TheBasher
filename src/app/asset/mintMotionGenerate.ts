@@ -28,6 +28,29 @@
 // bone indices something plausible to address that is not what they mean.
 //
 // ─────────────────────────────────────────────────────────────────────────────
+// AND AN OBJECT FOR THE SKELETON, WHATEVER ELSE IS IN THE SCENE (#1078)
+// ─────────────────────────────────────────────────────────────────────────────
+// A dropped `.bvh` stands its skeleton in the scene as an Object of its own
+// (#1056), so a motion can be looked at before anything plays it. A generated
+// motion is the same motion reached by a prompt, so it gets the same Object —
+// here, in the mint's own batch, because the mint is what both the director's
+// road and the agent's `motion.generate` call. The bind that follows hides it
+// (`mutator.animation.retarget`), exactly as it hides a dropped file's.
+//
+// It is added BEFORE the skeleton has bones, and that is safe: the armature band
+// skips a skeleton with none (`collectSkeletonObjects`), so nothing draws until
+// the cook fills them in.
+//
+// Scale stays [1, 1, 1], and nothing re-sizes it when the cook lands. Unlike a
+// file, a generator DECLARES its unit — every result carries `unitScale` and the
+// rig is parsed with it — so the rig is already the size it says it is, and
+// normalising would override what it told us. `normalise: false` states that
+// intent; it does not enforce it, because at mint time there are no bones to
+// measure and a normalised scale would be 1 as well (measured). What pins the
+// size is the absolute frame-0 row on a real Kimodo file in
+// `generateMotionAsNode.test.ts`, which reds at 168 m under a wrong unit.
+//
+// ─────────────────────────────────────────────────────────────────────────────
 // WHY THE CURVE IS OPTIONAL AND ITS ABSENCE IS NOT A FAILURE
 // ─────────────────────────────────────────────────────────────────────────────
 // "Generate a walk" is a complete request. "Generate a walk along this path" is
@@ -41,6 +64,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
+import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 
 export interface MintMotionGenerateArgs {
   readonly prompt: string;
@@ -65,6 +89,8 @@ export interface MintMotionGenerateResult {
   readonly producerId: string;
   readonly clipId: string;
   readonly skeletonId: string;
+  /** The Object standing the skeleton in the scene; absent when the project has no scene. */
+  readonly objectId?: string;
 }
 
 /**
@@ -98,11 +124,10 @@ function mintId(prefix: string): string {
  * the same reason.
  */
 export function mintMotionGenerateOps(
-  // Unread since the clock lookup went (#920), and KEPT: every op-builder on
-  // this road takes the state it builds against, and a mint that needs to
-  // consult the graph again — to reuse an existing skeleton, say — should not
-  // have to change its signature at every call site to do it.
-  _state: DagState,
+  // Read for the scene the skeleton's Object joins (#1078). Unread between the
+  // clock lookup going (#920) and that, and kept for exactly this: every
+  // op-builder on this road takes the state it builds against.
+  state: DagState,
   args: MintMotionGenerateArgs,
 ): MintMotionGenerateResult {
   const ids = args.ids ?? {
@@ -162,5 +187,23 @@ export function mintMotionGenerateOps(
     });
   }
 
-  return { ops, producerId: ids.producer, clipId: ids.clip, skeletonId: ids.skeleton };
+  // A project with no scene aggregator has nowhere to stand one — the import road's rule.
+  const sceneNodeId = state.outputs.scene?.node;
+  const standIn = sceneNodeId
+    ? buildSkeletonObjectOps({
+        skeletonId: ids.skeleton,
+        bones: [],
+        sceneNodeId,
+        normalise: false,
+      })
+    : undefined;
+  if (standIn) ops.push(...standIn.ops);
+
+  return {
+    ops,
+    producerId: ids.producer,
+    clipId: ids.clip,
+    skeletonId: ids.skeleton,
+    ...(standIn ? { objectId: standIn.objectId } : {}),
+  };
 }

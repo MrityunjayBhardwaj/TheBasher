@@ -199,6 +199,31 @@ describe('mintMotionGenerateOps (#935)', () => {
     expect(edgeTarget(next.nodes[clipId], 'time')).toBeNull();
   });
 
+  // #1078 — the skeleton gets the Object a dropped .bvh's skeleton gets (#1056), in this batch.
+  it('in a project with a scene, stands the skeleton in it as an Object at scale 1', () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, skeletonId, objectId } = mintMotionGenerateOps(s, ARGS);
+    expect(objectId).toBeDefined();
+    const next = apply(s, ops);
+    const object = next.nodes[objectId!];
+    expect(object.type).toBe('Object');
+    expect(edgeTarget(object, 'data')).toBe(skeletonId);
+    expect(next.nodes.scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
+    // The generator declares its unit, so the rig is not normalised.
+    expect((object.params as { scale: number[] }).scale).toEqual([1, 1, 1]);
+  });
+
+  it('in a project with no scene, adds no Object — there is nowhere to stand one', () => {
+    const s = project();
+    expect(s.outputs.scene).toBeUndefined();
+    const { ops, objectId } = mintMotionGenerateOps(s, ARGS);
+    expect(objectId).toBeUndefined();
+    expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'Object')).toBe(false);
+  });
+
   it('two mints in one project do not collide', () => {
     let s = project();
     const a = mintMotionGenerateOps(s, ARGS);
