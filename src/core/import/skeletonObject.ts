@@ -74,9 +74,25 @@ export interface SkeletonObjectArgs {
   readonly sceneNodeId: string;
   /** True when the caller does not know the unit and the rig should stand at human height. */
   readonly normalise: boolean;
+  /**
+   * #1101 — the name the Object shows: its clip's, which is the file's base name on the import
+   * road and the prompt on the generation road. Blender's BVH importer does the same, naming
+   * the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
+   *
+   * Required, so a new caller cannot stand an Object the outliner lists by its id. A blank name
+   * adds no op: blank is the unnamed state `nodeDisplayName` falls back from.
+   */
+  readonly name: string;
 }
 
-/** The Object, its `data` edge from the skeleton, and its place among the scene's children. */
+/**
+ * The Object, its name, its `data` edge from the skeleton, and its place among the scene's
+ * children.
+ *
+ * The name goes on `meta.name` through a `setMeta` op, because that is the field the outliner's
+ * rename writes and `nodeDisplayName` reads first, and `addNode` carries no meta. It lands in the
+ * same op list, so the one undo that removes the Object removes its name with it.
+ */
 export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly ops: Op[];
   readonly objectId: string;
@@ -92,6 +108,9 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
       },
+      ...(args.name.trim()
+        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name }]
+        : []),
       {
         type: 'connect',
         from: { node: args.skeletonId, socket: 'out' },

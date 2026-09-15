@@ -72,6 +72,7 @@ describe('buildSkeletonObjectOps', () => {
       bones: RIG,
       sceneNodeId: 'scene',
       normalise: false,
+      name: 'soma-walk',
     });
     expect(objectId).toBe(skeletonObjectId('sk'));
     expect(ops).toEqual([
@@ -81,6 +82,7 @@ describe('buildSkeletonObjectOps', () => {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
+      { type: 'setMeta', nodeId: objectId, name: 'soma-walk' },
       {
         type: 'connect',
         from: { node: 'sk', socket: 'out' },
@@ -104,6 +106,7 @@ describe('buildSkeletonObjectOps', () => {
       bones,
       sceneNodeId: 'scene',
       normalise: true,
+      name: 'sk',
     });
     for (const op of ops) state = applyOp(state, op).next;
 
@@ -208,7 +211,34 @@ describe('normalisedRigScale', () => {
       bones: scaled(RIG, 100),
       sceneNodeId: 'scene',
       normalise: false,
+      name: 'sk',
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
+  });
+});
+
+describe('#1101 — the Object carries its motion name', () => {
+  it('applied, the name is the one the outliner reads; a blank name adds no op', () => {
+    let state = sceneState();
+    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of imported.ops) state = applyOp(state, op).next;
+    const named = buildSkeletonObjectOps({
+      skeletonId: 'sk',
+      bones: [],
+      sceneNodeId: 'scene',
+      normalise: false,
+      name: 'soma-walk',
+    });
+    for (const op of named.ops) state = applyOp(state, op).next;
+    expect(state.nodes[named.objectId].meta?.name).toBe('soma-walk');
+
+    const blank = buildSkeletonObjectOps({
+      skeletonId: 'sk2',
+      bones: [],
+      sceneNodeId: 'scene',
+      normalise: false,
+      name: '   ',
+    });
+    expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
   });
 });
