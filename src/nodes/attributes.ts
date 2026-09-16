@@ -441,11 +441,13 @@ export function uvLayerIndex(name: string): number | null {
  * disagree — and it is the substrate's first producer of a corner value that is not a lift.
  *
  * 🔴 IF THE TWO SHARED A NAME THE LIFT WOULD OVERWRITE THE AUTHORED LAYER AND NOTHING WOULD
- * SAY SO. Both mint into the same store; the buffer under a projected handle still carries the
- * SOURCE's unprojected `uv` (the projection writes no buffer — that is #786), so a `UVMap` read
- * of a projected mesh would answer with the values the projection exists to replace. Under one
- * name that is a silent wrong answer; under two it is two questions with two answers, and the
- * question of which one a material samples is #881's, asked out loud.
+ * SAY SO. Both mint into the same store, and they are different values: the projection is
+ * materialised into the built `uv` buffer (`cornerMaterialisation.ts`, #786), replacing the
+ * source's set there, while `UVMap` names the source's own. Measured on a unit box at size 3,
+ * all 24 vertices' `uv` differ from the source's (U in [0.33, 0.67]); at size 1 none do, because
+ * a size-1 cube projection over a unit box reproduces its UVs exactly — a fixed point, not a
+ * no-op. Under one name that is a silent wrong answer; under two it is two questions with two
+ * answers, and the question of which one a material samples is #881's, asked out loud.
  *
  * Not Blender's spelling, because Blender has no equivalent: there, UV Project writes INTO a
  * chosen UV map because a mesh owns named UV layers the modifier can target. This substrate has
