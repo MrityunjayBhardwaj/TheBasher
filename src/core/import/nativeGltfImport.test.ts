@@ -95,6 +95,195 @@ describe('readGltfMesh — the cube', () => {
   });
 });
 
+/**
+ * A one-primitive glTF built in memory, so an attribute shape no fixture holds can still be read.
+ * Every accessor is FLOAT and tightly packed, which is what the fixtures are too.
+ */
+function handBuilt(
+  attributes: Record<string, { readonly type: string; readonly values: number[] }>,
+) {
+  const accessors: unknown[] = [];
+  const bufferViews: unknown[] = [];
+  const floats: number[] = [];
+  const names: Record<string, number> = {};
+  for (const [name, { type, values }] of Object.entries(attributes)) {
+    const components = ({ VEC2: 2, VEC3: 3, VEC4: 4 } as Record<string, number>)[type];
+    bufferViews.push({ buffer: 0, byteOffset: floats.length * 4, byteLength: values.length * 4 });
+    accessors.push({
+      bufferView: bufferViews.length - 1,
+      componentType: 5126,
+      count: values.length / components,
+      type,
+    });
+    names[name] = accessors.length - 1;
+    floats.push(...values);
+  }
+  const packed = new Float32Array(floats);
+  return {
+    json: {
+      accessors,
+      bufferViews,
+      meshes: [{ primitives: [{ attributes: names }] }],
+    } as unknown as Parameters<typeof readGltfMesh>[0],
+    buffers: [new Uint8Array(packed.buffer)],
+  };
+}
+
+/**
+ * A triangle whose COLOR_0 is a normalised UNSIGNED_BYTE VEC4 — glTF's other legal spelling for a
+ * colour, and the one whose tightly packed stride (4 bytes) is nothing like a float VEC4's (16).
+ * Positions stay float, in their own view, as a real file's would be.
+ */
+function byteColourTriangle(byteStride: number) {
+  const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  const colours = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 128]);
+  const bytes = new Uint8Array(positions.byteLength + colours.byteLength);
+  bytes.set(new Uint8Array(positions.buffer), 0);
+  bytes.set(colours, positions.byteLength);
+  const json = {
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+      { bufferView: 1, componentType: 5121, count: 3, type: 'VEC4', normalized: true },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positions.byteLength },
+      { buffer: 0, byteOffset: positions.byteLength, byteLength: colours.byteLength, byteStride },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, COLOR_0: 1 } }] }],
+  };
+  return {
+    json: json as unknown as Parameters<typeof readGltfMesh>[0],
+    buffers: [bytes],
+  };
+}
+
+/** The value drawn at each built vertex, keyed by that vertex's position — the file's own frame. */
+function drawnByPosition(geometry: THREE.BufferGeometry, name: string, width: number) {
+  const position = geometry.getAttribute('position');
+  const attribute = geometry.getAttribute(name);
+  const out = new Map<string, number[]>();
+  for (let v = 0; v < position.count; v++) {
+    const key = [position.getX(v), position.getY(v), position.getZ(v)]
+      .map((x) => x.toFixed(4))
+      .join(',');
+    out.set(
+      key,
+      Array.from({ length: width }, (_, j) => attribute.getComponent(v, j)),
+    );
+  }
+  return out;
+}
+
+describe('#1062 — readGltfMesh carries every UV set and the colour as named layers', () => {
+  it('a second UV set arrives as UVMap.001, and draws to uv1 with the file’s own values', async () => {
+    const { json, bin } = parseGltfContainer(fixture('public/assets/two-uv-quad.gltf'));
+    const buffers = await resolveBuffers(json, bin);
+    const data = readGltfMesh(json, buffers, 0);
+    if ('refused' in data) throw new Error(data.refused);
+
+    // Two quads' worth of corners: 2 triangles × 3.
+    expect(data.cornerLayers.map((l) => [l.name, l.type, l.data.length])).toEqual([
+      ['UVMap', 'float2', 12],
+      ['UVMap.001', 'float2', 12],
+    ]);
+
+    // The values are the FILE's, read through the same accessors by a second path.
+    const { readAccessor } = await import('./glb');
+    const positions = readAccessor(
+      json,
+      buffers,
+      json.meshes![0].primitives![0].attributes!.POSITION,
+    );
+    const uv1 = readAccessor(json, buffers, json.meshes![0].primitives![0].attributes!.TEXCOORD_1);
+    const drawn = drawnByPosition(buildMeshGeometry(data).geometry, 'uv1', 2);
+    expect(drawn.size).toBe(4);
+    for (let v = 0; v < 4; v++) {
+      const key = [positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]]
+        .map((x) => x.toFixed(4))
+        .join(',');
+      expect(drawn.get(key), `uv1 at vertex ${v}`).toEqual([uv1[v * 2], uv1[v * 2 + 1]]);
+    }
+  });
+
+  it('COLOR_0 arrives as a float4 Color layer, and draws to color with the file’s own values', async () => {
+    const { json, bin } = parseGltfContainer(fixture('public/assets/vertex-color-quad.gltf'));
+    const buffers = await resolveBuffers(json, bin);
+    const data = readGltfMesh(json, buffers, 0);
+    if ('refused' in data) throw new Error(data.refused);
+
+    expect(data.cornerLayers.map((l) => [l.name, l.type, l.data.length])).toEqual([
+      ['Color', 'float4', 24],
+    ]);
+
+    const { readAccessor } = await import('./glb');
+    const positions = readAccessor(
+      json,
+      buffers,
+      json.meshes![0].primitives![0].attributes!.POSITION,
+    );
+    const colours = readAccessor(json, buffers, json.meshes![0].primitives![0].attributes!.COLOR_0);
+    const drawn = drawnByPosition(buildMeshGeometry(data).geometry, 'color', 4);
+    expect(drawn.size).toBe(4);
+    for (let v = 0; v < 4; v++) {
+      const key = [positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]]
+        .map((x) => x.toFixed(4))
+        .join(',');
+      expect(drawn.get(key), `colour at vertex ${v}`).toEqual([
+        colours[v * 4],
+        colours[v * 4 + 1],
+        colours[v * 4 + 2],
+        colours[v * 4 + 3],
+      ]);
+    }
+  });
+
+  it('a VEC3 colour arrives opaque rather than a component short', () => {
+    const { json, buffers } = handBuilt({
+      POSITION: { type: 'VEC3', values: [0, 0, 0, 1, 0, 0, 0, 1, 0] },
+      COLOR_0: { type: 'VEC3', values: [1, 0, 0, 0, 1, 0, 0, 0, 1] },
+    });
+    const data = readGltfMesh(json, buffers, 0);
+    if ('refused' in data) throw new Error(data.refused);
+    const colour = data.cornerLayers.find((l) => l.name === 'Color');
+    expect(colour?.type).toBe('float4');
+    expect(Array.from(colour!.data)).toEqual([1, 0, 0, 1, 0, 1, 0, 1, 0, 0, 1, 1]);
+  });
+
+  it('a tightly packed byte colour is read, not mistaken for interleaved data', () => {
+    // Its stride is 4, which is what a VEC4 of bytes tightly packed IS. Sized from the accessor
+    // rather than from a per-attribute literal, which could only describe a float colour.
+    const { json, buffers } = byteColourTriangle(4);
+    const data = readGltfMesh(json, buffers, 0);
+    if ('refused' in data) throw new Error(data.refused);
+    const colour = data.cornerLayers.find((l) => l.name === 'Color');
+    expect(colour?.type).toBe('float4');
+    // Dequantised per the spec: 255 → 1, 128 → 128/255.
+    expect(Array.from(colour!.data.slice(0, 4))).toEqual([1, 0, 0, 1]);
+    expect(colour!.data[11]).toBeCloseTo(128 / 255, 5);
+  });
+
+  it('a genuinely interleaved colour is still refused', () => {
+    // Same colour, a stride that is not its element size: `readAccessor` reads contiguously and
+    // would misread it, so the file must be refused rather than drawn wrong.
+    const { json, buffers } = byteColourTriangle(16);
+    const data = readGltfMesh(json, buffers, 0);
+    expect('refused' in data && data.refused).toContain('interleaved');
+  });
+
+  it('stops at the first TEXCOORD number the file does not have', () => {
+    // TEXCOORD_2 with no TEXCOORD_1: the numbers run from 0 without gaps, so reading past the gap
+    // would put set 2's values in set 1's slot and draw the wrong map.
+    const { json, buffers } = handBuilt({
+      POSITION: { type: 'VEC3', values: [0, 0, 0, 1, 0, 0, 0, 1, 0] },
+      TEXCOORD_0: { type: 'VEC2', values: [0, 0, 1, 0, 0, 1] },
+      TEXCOORD_2: { type: 'VEC2', values: [0.5, 0.5, 0.5, 0.5, 0.5, 0.5] },
+    });
+    const data = readGltfMesh(json, buffers, 0);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.cornerLayers.map((l) => l.name)).toEqual(['UVMap']);
+  });
+});
+
 describe('buildNativeGltfImportOps', () => {
   beforeEach(() => {
     __resetRegistryForTests();

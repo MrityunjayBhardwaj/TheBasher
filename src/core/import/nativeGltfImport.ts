@@ -56,6 +56,7 @@ import {
 import type {
   BakedTextureRef,
   InlineMaterialSpec,
+  MeshCornerLayer,
   MeshGeometryData,
   Vec3,
 } from '../../nodes/types';
@@ -114,9 +115,56 @@ const TRIANGLES = 4;
 const TRIANGLE_STRIP = 5;
 const TRIANGLE_FAN = 6;
 
-// What a stored mesh holds per vertex (#1062). Anything else in a primitive (vertex colours, a
-// second UV set, skin weights) would be read past and left behind, so its file is refused instead.
+// What a native import can DRAW per vertex (#1062). The reader below now carries every UV set and
+// the colour into named corner layers — that half is done — but a material still cannot name the
+// layer it samples, so a mesh drawn with those layers would lose them silently on screen. Until it
+// can, the file is refused. The list is what the whole road honours, not what the reader can read.
 const HELD_ATTRIBUTES = new Set(['POSITION', 'NORMAL', 'TEXCOORD_0']);
+
+// #1062 — WHAT BLENDER CALLS THESE, because a stored mesh keeps its corner data by NAME and the
+// names should be the ones a user already reads in the reference. Measured by importing this
+// repo's own fixtures into Blender 5.1.1: `TEXCOORD_0` → `UVMap`, `TEXCOORD_1` → `UVMap.001`,
+// `COLOR_0` → `Color`. Inventing a second vocabulary here would mean the same file describes its
+// mesh differently depending on which program opened it.
+function uvLayerName(n: number): string {
+  return n === 0 ? UV_MAP : `${UV_MAP}.${String(n).padStart(3, '0')}`;
+}
+const COLOUR_LAYER_NAME = 'Color';
+
+const COMPONENT_BYTES: Record<number, number> = {
+  5120: 1,
+  5121: 1,
+  5122: 2,
+  5123: 2,
+  5125: 4,
+  5126: 4,
+};
+const TYPE_COMPONENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
+
+/**
+ * The stride a TIGHTLY PACKED view of this accessor would have, or `undefined` when the accessor
+ * declares a type or component this reader has no size for.
+ *
+ * Read off the accessor rather than spelled per attribute: a colour is VEC3 or VEC4 and may be a
+ * normalised byte or short, so no single literal describes it.
+ */
+function elementBytesOf(json: NativeGltfJson, accessorIndex: number): number | undefined {
+  const accessor = json.accessors?.[accessorIndex];
+  if (!accessor) return undefined;
+  const components = TYPE_COMPONENTS[accessor.type];
+  const bytes = COMPONENT_BYTES[accessor.componentType];
+  return components === undefined || bytes === undefined ? undefined : components * bytes;
+}
+
+/** A VEC3 colour as RGBA: glTF says a colour carrying no alpha is opaque (2.0 §3.7.2.1). */
+function widenToRgba(rgb: Float32Array): Float32Array {
+  const out = new Float32Array((rgb.length / 3) * 4);
+  for (let i = 0; i * 3 < rgb.length; i++) {
+    out.set(rgb.subarray(i * 3, i * 3 + 3), i * 4);
+    out[i * 4 + 3] = 1;
+  }
+  return out;
+}
 
 // The extensions a native import carries all the way to the screen: the material lobes the
 // converter captures into the IR and `openpbrToThree` draws. The clone road's supported list is
@@ -157,6 +205,30 @@ const THREE_WRAP_OF: Readonly<Record<number, number>> = {
   33648: MirroredRepeatWrapping,
   10497: RepeatWrapping,
 };
+
+/**
+ * #1062 — the attributes this road can READ but cannot yet DRAW, or `null` when a mesh is clear.
+ *
+ * Kept with the import's other policy refusals rather than inside the reader: `readGltfMesh` carries
+ * every UV set and the colour into named corner layers, so the bytes stopped being the problem. What
+ * cannot honour them yet is the draw, where a material has no way to name the layer it samples — and
+ * a mesh drawn without its second UV set or its colour would lose them with nothing said.
+ *
+ * A mesh that is not one primitive is left alone here, so `readGltfMesh` still gives that its own
+ * refusal (#1052) rather than this one answering first about a primitive it arbitrarily picked.
+ */
+function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
+  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
+  if (primitives.length !== 1) return null;
+  const undrawable = Object.keys(primitives[0].attributes ?? {}).filter(
+    (name) => !HELD_ATTRIBUTES.has(name),
+  );
+  if (undrawable.length === 0) return null;
+  return {
+    refused: `mesh ${meshIndex} carries ${undrawable.join(', ')}, which a native import cannot draw yet`,
+    issue: '#1062',
+  };
+}
 
 /** The file-level reasons an import cannot be native yet, checked before any bytes are read. */
 function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
@@ -314,27 +386,27 @@ export function readGltfMesh(
       issue: '#1060',
     };
   }
-  const unheldAttributes = Object.keys(prim.attributes ?? {}).filter(
-    (name) => !HELD_ATTRIBUTES.has(name),
-  );
-  if (unheldAttributes.length > 0) {
-    return {
-      refused: `mesh ${meshIndex} carries ${unheldAttributes.join(', ')}, which the stored mesh does not hold yet`,
-      issue: '#1062',
-    };
-  }
   const positionAccessor = prim.attributes?.POSITION;
   if (typeof positionAccessor !== 'number' || json.accessors?.[positionAccessor]?.type !== 'VEC3') {
     return { refused: `mesh ${meshIndex} has no VEC3 POSITION`, issue: '#1063' };
   }
-  const uvAccessor = prim.attributes?.TEXCOORD_0;
-  const normalAccessor = prim.attributes?.NORMAL;
-  for (const [accessorIndex, elementBytes] of [
-    [positionAccessor, 12],
-    [uvAccessor, 8],
-    [normalAccessor, 12],
-  ] as const) {
-    if (typeof accessorIndex === 'number' && interleaved(json, accessorIndex, elementBytes)) {
+  // #1062 — EVERY UV set the primitive carries, in `TEXCOORD_n` order, and its colour. The numbers
+  // run from 0 without gaps, so the walk stops at the first one the file does not have rather than
+  // guessing past it.
+  const attributes = prim.attributes ?? {};
+  const uvAccessors: number[] = [];
+  for (let n = 0; typeof attributes[`TEXCOORD_${n}`] === 'number'; n++) {
+    uvAccessors.push(attributes[`TEXCOORD_${n}`]);
+  }
+  const colourAccessor = attributes.COLOR_0;
+  const normalAccessor = attributes.NORMAL;
+  // Each accessor's own element size, not a literal per attribute. For POSITION, NORMAL and the UV
+  // sets this is the same number the literals used to spell, because a non-float one of those needs
+  // `KHR_mesh_quantization`, which `fileRefusal` has already turned away.
+  for (const accessorIndex of [positionAccessor, normalAccessor, ...uvAccessors, colourAccessor]) {
+    if (typeof accessorIndex !== 'number') continue;
+    const elementBytes = elementBytesOf(json, accessorIndex);
+    if (elementBytes !== undefined && interleaved(json, accessorIndex, elementBytes)) {
       return {
         refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
         issue: '#1063',
@@ -384,14 +456,30 @@ export function readGltfMesh(
     return out;
   };
 
-  const uvs = gather(uvAccessor, 2);
+  // #1062 — every UV set becomes a `float2` layer and the colour a `float4` one, in the order the
+  // build draws them (`uv`, `uv1`, … then `color`). #1117 gave the stored mesh this shape; this is
+  // the reader filling it instead of refusing the file.
+  const cornerLayers: MeshCornerLayer[] = [];
+  uvAccessors.forEach((accessorIndex, n) => {
+    const data = gather(accessorIndex, 2);
+    if (data !== null) cornerLayers.push({ name: uvLayerName(n), type: 'float2', data });
+  });
+  if (typeof colourAccessor === 'number') {
+    const components = json.accessors?.[colourAccessor]?.type === 'VEC3' ? 3 : 4;
+    const read = gather(colourAccessor, components);
+    if (read !== null) {
+      cornerLayers.push({
+        name: COLOUR_LAYER_NAME,
+        type: 'float4',
+        data: components === 4 ? read : widenToRgba(read),
+      });
+    }
+  }
   return {
     points,
     faceSizes: new Uint32Array(corners.length / 3).fill(3),
     cornerPoints: Uint32Array.from(corners, (v) => weld.map[v]),
-    // #1117 — TEXCOORD_0 is the first UV layer, under Blender's name for it (measured: Blender
-    // 5.1.1 imports it as `UVMap`).
-    cornerLayers: uvs === null ? [] : [{ name: UV_MAP, type: 'float2', data: uvs }],
+    cornerLayers,
     cornerNormals: gather(normalAccessor, 3),
   };
 }
@@ -605,6 +693,12 @@ export async function buildNativeGltfImportOps(
   const textures = new Set<number>();
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
+    // #1062 — ASKED HERE AND NOT IN THE READER, because it is no longer a question about reading.
+    // `readGltfMesh` carries a second UV set and a colour into named layers; what cannot honour
+    // them yet is the DRAW, where a material has no way to name the layer it samples. Refusing in
+    // the reader would say the bytes are unreadable, which stopped being true.
+    const undrawable = undrawableAttributes(json, node.mesh as number);
+    if (undrawable !== null) return undrawable;
     const data = readGltfMesh(json, buffers, node.mesh as number);
     if ('refused' in data) return data;
     meshes.push(data);
