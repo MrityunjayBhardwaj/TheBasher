@@ -212,9 +212,10 @@ const THREE_WRAP_OF: Readonly<Record<number, number>> = {
  * whatever it is given, and the question here is not whether the bytes are readable but whether
  * the stored mesh would draw them. A mesh stored without them would lose them with nothing said.
  *
- * A UV set numbered past a gap is refused too, as a malformed file: glTF numbers `TEXCOORD_n` from 0
- * without gaps (2.0 §3.7.2.1), and the reader stops at the first missing number, so a set past the
- * gap would be dropped rather than drawn.
+ * A UV set numbered past a gap is refused too, as a malformed file: "All indices for indexed
+ * attribute semantics MUST start with 0 and be consecutive positive integers" (glTF 2.0 §3.7.2.1,
+ * Meshes › Overview), and the reader stops at the first missing number, so a set past the gap would
+ * be dropped rather than drawn.
  *
  * A mesh that is not one primitive is left alone here, so `readGltfMesh` still gives that its own
  * refusal (#1052) rather than this one answering first about a primitive it arbitrarily picked.
@@ -247,9 +248,11 @@ function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeIm
 /**
  * A map sampling a UV set its mesh does not carry, or `null`.
  *
- * glTF requires `texCoord` to name a `TEXCOORD_n` the primitive has. A file that breaks that would
- * import with a map whose named layer resolves to nothing, and the draw declines such a map rather
- * than sample a different set — so the texture would silently not show. Refused instead, by name.
+ * glTF requires `texCoord` to name a `TEXCOORD_n` the primitive has: "A mesh primitive MUST have
+ * the corresponding texture coordinate attributes for the material to be applicable to it"
+ * (`textureInfo.schema.json`, `texCoord`). A file that breaks that would import with a map whose
+ * named layer resolves to nothing, and the draw declines such a map rather than sample a different
+ * set — so the texture would silently not show. Refused instead, by name.
  */
 function unsampledUvSet(
   json: NativeGltfJson,
