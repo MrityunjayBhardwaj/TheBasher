@@ -48,6 +48,28 @@ interface CanonicalAttributes {
   readonly index: Uint32Array | null;
 }
 
+/** The vertex attributes a baked geometry keeps, by three's name. The index is kept beside them. */
+export const BAKED_ATTRIBUTES: readonly string[] = ['position', 'normal', 'uv'];
+
+/**
+ * #1119 — every attribute `geom` carries that a bake would drop, by name, sorted; empty when the
+ * store holds all of it. Morph targets are named `morph:<attribute>`.
+ *
+ * The format above has a slot for three attributes and nothing else, so anything more — a colour
+ * layer, a second UV set, skin weights — used to vanish on the way in with nothing said (measured:
+ * `color, normal, position, uv, uv1` in, `normal, position, uv` out). Answered here, beside the
+ * layout, so the list cannot drift from what the store actually writes.
+ */
+export function unheldBakeAttributes(geom: BufferGeometry): readonly string[] {
+  const attributes = Object.keys(geom.attributes).filter(
+    (name) => !BAKED_ATTRIBUTES.includes(name),
+  );
+  const morphs = Object.entries(geom.morphAttributes)
+    .filter(([, targets]) => targets.length > 0)
+    .map(([name]) => `morph:${name}`);
+  return [...attributes, ...morphs].sort();
+}
+
 function toFloat32(attr: BufferAttribute | undefined): Float32Array | null {
   if (!attr) return null;
   // BufferAttribute.array is a typed array; normalise to a fresh Float32Array so
@@ -104,8 +126,16 @@ const HEADER_BYTES = HEADER_U32_COUNT * 4;
 
 /**
  * Serialize a BufferGeometry to a content-hashed binary blob. Pure (no I/O).
+ *
+ * Throws on a geometry carrying anything {@link unheldBakeAttributes} names. A caller that can
+ * reach one refuses by name before it gets here (Apply does); this is what stops a caller that
+ * didn't ask from dropping the data quietly.
  */
 export function serializeGeometry(geom: BufferGeometry): SerializedGeometry {
+  const unheld = unheldBakeAttributes(geom);
+  if (unheld.length > 0) {
+    throw new Error(`bakedGeometryStore: cannot hold ${unheld.join(', ')}`);
+  }
   const c = extractCanonical(geom);
   const hash = hashCanonical(c);
   const vertexCount = vertexCountOf(c.position);
