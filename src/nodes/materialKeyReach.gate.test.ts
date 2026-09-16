@@ -415,10 +415,16 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // The type system already refuses an omitted argument. This re-checks it structurally,
     // because the way this gate dies is someone widening the parameter back to optional to
     // silence a red — at which point typecheck goes quiet and only this case still speaks.
+    //
+    // #1062 added a FIFTH argument — the drawn mesh's corner layers — and it is required for
+    // the identical reason the fourth is: omitting it and passing `[]` are byte-identical
+    // downstream, so an omitting caller equals a correct caller over geometry with no layer
+    // list and no tier below the signature can tell them apart.
     expect(
-      calls.filter((c) => c.args.length !== 4).map((c) => c.path),
-      'a caller does not pass exactly four arguments — an omitted minted key is exactly ' +
-        'what #545 closed, and a fifth argument means the parser mis-split this call',
+      calls.filter((c) => c.args.length !== 5).map((c) => c.path),
+      'a caller does not pass exactly five arguments — an omitted minted key is exactly ' +
+        'what #545 closed, an omitted layer list is what #1062 closed on the same argument, ' +
+        'and a sixth argument means the parser mis-split this call',
     ).toEqual([]);
 
     const unkeyed = calls.filter((c) => c.args[3] === 'null');

@@ -78,21 +78,36 @@
 // "every scalar lands under the same name" gate exact rather than exempted, and the
 // gate is the reason a field cannot be specced and keyed but silently unapplied.
 //
-// 🔴 `vertexColors` is the third compiled flag and it stays OFF this spec, which is a
-// measurement rather than an oversight. It is not a property of the material; it is a
-// REQUEST FOR GEOMETRY the material does not own — three's shader reads a `COLOR_0`
-// attribute, and the only producer of the flag in the whole codebase is the glTF import
-// chain, which sets it precisely when the imported primitive HAS that attribute and
-// applies it on the imported material, not through this registry. No native geometry
-// producer creates a colour attribute at all. Applying it here was tried and OBSERVED:
-// the box renders pure black, because the shader multiplies by an attribute that is not
-// there. A shared material also cannot answer this question honestly — two meshes may
-// share one material and differ in whether they carry the attribute, so conditioning
-// the build on a consumer's geometry is the coupling this whole epic exists to remove.
+// 🔴 `vertexColors` IS ON THIS SPEC NOW, AND WHAT CHANGED IS THE QUESTION, NOT THE ANSWER
+// (#1062). It stayed off for as long as it was unanswerable here, and that was a
+// measurement rather than an oversight: three's shader reads a colour attribute, no native
+// geometry producer created one, and applying the flag was tried and OBSERVED — the box
+// rendered pure black, because the shader multiplies by an attribute that is not there.
+// The deeper objection was the one about sharing: two meshes may share one material and
+// differ in whether they carry the attribute, so a shared material could not answer
+// honestly, and conditioning the build on a consumer's geometry is the coupling this whole
+// epic exists to remove.
+//
+// A material that NAMES its layer dissolves that. The name is a property of the material —
+// it is authored, saved and animated like any other field — and the pairing with geometry
+// happens once, at the spec assembly, where the drawn mesh's own ordered layer list is in
+// hand (`cornerLayerNames.ts`). The flag reaching this build is therefore already the
+// resolved answer for THIS mesh, and the layer signature that produced it is part of the
+// identity key, so two meshes that differ in whether they carry the layer now key
+// differently and correctly get two instances. The coupling is not reintroduced: the build
+// still reads nothing but its spec.
+//
+// And the black box is refused by construction rather than avoided. A material naming a
+// layer the mesh does not carry resolves to `false`/channel 0 — it draws its base colour.
+// Blender draws that case BLACK; we diverge on purpose, because there is no active-layer
+// notion here to fall back to and a silently black mesh is the failure this work set out to
+// remove. Pinned by `cornerLayerDivergence.gate.test.ts`.
 //
 // REF: docs/PERFORMANCE.md Lever 5; src/app/geometryRegistry.ts (the mirrored
 //      pattern); src/app/material/primitiveMaterialInputs.ts (`primitiveMaterialSpec`,
-//      where `doubleSided` becomes `side`); issues #530, #532.
+//      where `doubleSided` becomes `side` and the layer names are resolved);
+//      src/app/cornerLayerNames.ts; ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md;
+//      issues #530, #532, #1062.
 
 import * as THREE from 'three';
 import { CENTRE_PIVOT, placeTexture, resolveSlotPlacement } from './material/uvPlacement';
@@ -146,6 +161,23 @@ export interface PrimitiveMaterialSpec {
    * absent one and would re-mint every cached material on first load.
    */
   readonly mapUvTransforms?: SlotPlacements<keyof PrimitiveMaterialSpec['textures']>;
+  /**
+   * #1062 — draw the mesh's colour layer. THE RESOLVED ANSWER, not the material's request:
+   * true exactly when the material names a colour layer AND the drawn geometry carries one
+   * by that name. See the header for why a name makes this answerable at all.
+   */
+  readonly vertexColors: boolean;
+  /**
+   * #1062 — the UV buffer each map slot samples (three's `texture.channel`), for the slots
+   * whose named layer RESOLVED against the drawn geometry. Also the resolved answer: a slot
+   * naming a layer the mesh lacks is absent here and samples channel 0, never black.
+   *
+   * 🔴 ABSENT, not `undefined`, when no slot resolved to a non-zero channel — the same
+   * generic-walk trap {@link mapUvTransforms} carries, and the same answer. Channel 0 is
+   * three's default, so a slot resolving to it is left out rather than written: the bag
+   * stays empty for every material in the app that names nothing.
+   */
+  readonly mapUvChannels?: { readonly [K in keyof PrimitiveMaterialSpec['textures']]?: number };
   /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
@@ -322,8 +354,20 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0
   m.side = spec.side;
+  // #1062 — explicit, and already resolved against the drawn geometry by the spec assembly.
+  // This material is only ever handed to a mesh whose layers produced this spec, so the flag
+  // and the attribute cannot disagree — which is the whole reason it can live here now.
+  m.vertexColors = spec.vertexColors;
   for (const slot of Object.keys(MAP_COLOR_SPACE) as (keyof typeof MAP_COLOR_SPACE)[]) {
     m[slot] = prep(spec.textures[slot], slot, MAP_COLOR_SPACE[slot]);
+    // #1062 — the UV buffer this slot samples. Written on the CLONE `prep` just made (never
+    // the shared instance), and only for a slot that resolved: three's default is 0, so an
+    // absent entry is already the right answer and writing it would say nothing.
+    const channel = spec.mapUvChannels?.[slot];
+    if (channel !== undefined) {
+      const texture = m[slot];
+      if (texture) texture.channel = channel;
+    }
   }
   m.userData.__uvClones = clones;
   return m;

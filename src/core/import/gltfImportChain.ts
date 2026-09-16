@@ -129,7 +129,7 @@ export function detectUnsupportedGltfFeatures(json: {
   // Secondary UV sets. The clause that stood here read *"the texCoord index is captured
   // on the map descriptor, but a DAG-replaced map currently binds UV0 only"*, and the
   // second half of that is no longer true (#997): the set is captured per slot onto the
-  // material (`InlineMaterialSpec.mapUvSets`, which survives replacement where the map
+  // material (`InlineMaterialSpec.mapUvLayers`, which survives replacement where the map
   // descriptor did not) and a replaced map now samples it. The inherited road never had
   // the problem — three's own loader binds a captured texture to its set
   // (`GLTFLoader.js:3354-3357`).
@@ -150,7 +150,9 @@ export function detectUnsupportedGltfFeatures(json: {
   // either half of the wiring is deleted. What that discharged is the reason this entry
   // USED to give. The three above are untouched by it and were each re-measured when the
   // observation landed, so the notice keeps firing and its words stay true: the feature
-  // renders, and it is not editable.
+  // renders, and it is not editable. (Since #1062 that spec's subject imports native, so it now
+  // observes the native road; this notice fires only on the file's-copy road, for files refused
+  // for something else — `sheen-quad.gltf` is one.)
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),

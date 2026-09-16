@@ -26,11 +26,15 @@
 //   3. the RESOLVED textures — the IR carries map refs; the suspense hooks turn them into
 //      instances, and keying on the instance is deliberate so that a slot still loading
 //      and a slot loaded are distinct materials rather than one material at two moments.
+//   4. the DRAWN MESH'S LAYER LIST (#1062) — a material names the UV and colour layers it
+//      reads, and whether a name resolves is a fact about the mesh, not the material. Two
+//      objects sharing one material over meshes with different layers must not share an
+//      instance. It is the RESOLVED answer that is keyed, not the list — see the key itself.
 //
-// So the key is `materialKey ⊕ override ⊕ shading ⊕ resolved textures`. The win is not
-// deleting the downstream hash — it is that the EVALUATED half stops being re-derived by
-// the renderer (the invariant's first clause), and the three render-time contributions
-// become named inputs instead of leaves buried in a generic walk.
+// So the key is `materialKey ⊕ override ⊕ shading ⊕ resolved textures ⊕ resolved layers`.
+// The win is not deleting the downstream hash — it is that the EVALUATED half stops being
+// re-derived by the renderer (the invariant's first clause), and the render-time
+// contributions become named inputs instead of leaves buried in a generic walk.
 //
 // ── THE INVARIANT THIS MODULE OWES, AND WHO CHECKS IT ───────────────────────────────
 //
@@ -66,9 +70,14 @@
 // `doubleSided` were compiled, keyed and then ignored by the build — measured in a
 // browser, toggling them minted a fresh material instance that drew the same picture.
 // They are now on the spec and applied, so that split is justified rather than wasted.
-// `vertexColors` stays in the lost-dedup category ON PURPOSE: it asks for a geometry
-// attribute a shared material cannot promise, and the reason is written where the spec
-// is (`materialRegistry.ts`). So this direction is one case shorter, not empty.
+// `vertexColors` WAS the remaining case and is no longer one (#1062): it used to ask for a
+// geometry attribute a shared material could not promise, and a material that NAMES its
+// layer can be resolved against the mesh it will draw on before the spec is assembled. It is
+// specced, keyed and applied now, so that split is justified like the other two. The reason
+// the old refusal was right, and what exactly changed, is written where the spec is
+// (`materialRegistry.ts`). This direction is therefore empty of KNOWN cases — which is a
+// statement about today's compile, not a property, and the next field dropped by
+// `openpbrToThree` will re-open it.
 //
 // REF: src/nodes/materialKey.ts (the evaluator's half); src/app/materialRegistry.ts
 //      (`keyOf`, now the gate's oracle); src/viewport/SceneFromDAG.tsx
@@ -79,6 +88,12 @@ import { materialKeyOf } from '../../nodes/materialKey';
 import { threeSideFor } from './threeSide';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { MAP_SLOTS, type PrimitiveMaterialSpec } from '../materialRegistry';
+import {
+  COLOUR_BUFFER,
+  cornerLayerBufferOf,
+  uvChannelOf,
+  type NamedCornerLayer,
+} from '../cornerLayerNames';
 import { composeMaterial } from './composeMaterial';
 import { flattenedMaterial, flattens } from './flattenMaterial';
 import { openpbrToThree, type ThreeMaterialParams } from './openpbrToThree';
@@ -139,9 +154,27 @@ export function primitiveMaterialKey(parts: {
   readonly override: MaterialValue | undefined;
   readonly shading: string;
   readonly textures: ResolvedMaps;
+  /** The compiled params — the source of the layer NAMES this key resolves. */
+  readonly compiled: ThreeMaterialParams;
+  /** The ordered layer list of the mesh this material will draw on. */
+  readonly layers: readonly NamedCornerLayer[];
 }): string {
   const maps = MAP_SLOTS.map((slot) => parts.textures[slot]?.uuid ?? 'n').join(',');
-  return `${parts.irKey}|${materialKeyOf(parts.override)}|${parts.shading}|${maps}`;
+  // #1062 — THE FIFTH THING THE EVALUATOR CANNOT SEE: which layers the mesh this material
+  // will draw on actually carries. Two objects with one material over meshes with different
+  // layer lists compile the same IR and must NOT share an instance, because the resolution
+  // differs — one draws its colour layer and the other cannot.
+  //
+  // 🔴 KEYED ON THE RESOLVED ANSWER, NOT ON THE LAYER LIST. The list is an input to the
+  // resolution, not a property of the material: two meshes carrying wildly different layers
+  // that resolve a material's names identically DO draw the same material and should share
+  // one. Keying the raw list would split them for nothing — and, worse, would re-key every
+  // material in the app the moment any mesh gained a layer its materials never named. This
+  // way a material naming nothing contributes a constant, which is what keeps the existing
+  // population's keys unchanged.
+  const resolved = resolveNamedLayers(parts.compiled, parts.layers);
+  const channels = MAP_SLOTS.map((slot) => resolved.mapUvChannels?.[slot] ?? 0).join(',');
+  return `${parts.irKey}|${materialKeyOf(parts.override)}|${parts.shading}|${maps}|${resolved.vertexColors ? 'c' : 'n'}:${channels}`;
 }
 
 /**
@@ -153,7 +186,9 @@ export function primitiveMaterialSpec(
   compiled: ThreeMaterialParams,
   shading: string,
   textures: ResolvedMaps,
+  layers: readonly NamedCornerLayer[],
 ): PrimitiveMaterialSpec {
+  const resolved = resolveNamedLayers(compiled, layers);
   return {
     color: compiled.color,
     roughness: compiled.roughness,
@@ -180,7 +215,52 @@ export function primitiveMaterialSpec(
     // compile produced none: the spec's content key is a generic walk over own
     // enumerable keys, so a materialised empty bag would re-key every material.
     ...(compiled.mapUvTransforms ? { mapUvTransforms: compiled.mapUvTransforms } : {}),
+    // #1062 — the layer names, RESOLVED against the mesh this material will draw on. Spread
+    // from one object so the spec and the key below cannot state the resolution differently.
+    ...resolved,
     textures,
+  };
+}
+
+/**
+ * Turn the material's LAYER NAMES into what three can act on, against the ordered layer list
+ * of the mesh this material is being built for (#1062).
+ *
+ * 🔴 THE NAME IS LOOKED UP, NEVER PARSED — `cornerLayerNames.ts` carries the argument, and
+ * `uvLayerIndex`'s doc carries the counter-example (`UVProject` is a real layer name with
+ * no number in it). A name that does not resolve is DROPPED, not guessed at: the material
+ * then draws its base colour through channel 0 rather than the black Blender would give.
+ *
+ * Both halves come back ABSENT when they are the default, because `PrimitiveMaterialSpec` is
+ * walked generically for identity and a materialised empty bag re-keys every cached material
+ * — except `vertexColors`, which is a plain boolean the build always assigns and so is always
+ * present.
+ */
+function resolveNamedLayers(
+  compiled: ThreeMaterialParams,
+  layers: readonly NamedCornerLayer[],
+): Pick<PrimitiveMaterialSpec, 'vertexColors'> &
+  Partial<Pick<PrimitiveMaterialSpec, 'mapUvChannels'>> {
+  const colour = compiled.colorLayer;
+  // Resolved through the BUFFER rather than by asking whether the name is in the list, so a
+  // `float2` layer that happens to share a colour layer's name cannot switch colours on.
+  const vertexColors =
+    colour !== undefined && cornerLayerBufferOf(layers, colour) === COLOUR_BUFFER;
+
+  const channels: { -readonly [K in keyof ResolvedMaps]?: number } = {};
+  for (const slot of MAP_SLOTS) {
+    const name = compiled.mapUvLayers?.[slot];
+    if (name === undefined) continue;
+    const channel = uvChannelOf(layers, name);
+    // Channel 0 is three's default and the build leaves an absent slot alone, so recording a
+    // resolved 0 would be a no-op that changes the key. Absent covers both "named nothing"
+    // and "named the first layer", which draw identically.
+    if (channel !== null && channel !== 0) channels[slot] = channel;
+  }
+
+  return {
+    vertexColors,
+    ...(Object.keys(channels).length > 0 ? { mapUvChannels: channels } : {}),
   };
 }
 
@@ -192,14 +272,22 @@ export function primitiveMaterialInputs(args: {
   readonly shading: string;
   readonly compiled: ThreeMaterialParams;
   readonly textures: ResolvedMaps;
+  /**
+   * #1062 — the ordered corner layers of the mesh this material will draw on
+   * (`cornerLayerNamesOf`). Empty for geometry that carries no layer list, which is the
+   * answer that makes every named layer decline to resolve.
+   */
+  readonly layers: readonly NamedCornerLayer[];
 }): { readonly spec: PrimitiveMaterialSpec; readonly key: string } {
   return {
-    spec: primitiveMaterialSpec(args.compiled, args.shading, args.textures),
+    spec: primitiveMaterialSpec(args.compiled, args.shading, args.textures, args.layers),
     key: primitiveMaterialKey({
       irKey: irKeyFor(args.ir, args.mintedKey),
       override: args.override,
       shading: args.shading,
       textures: args.textures,
+      compiled: args.compiled,
+      layers: args.layers,
     }),
   };
 }

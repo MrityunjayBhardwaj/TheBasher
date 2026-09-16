@@ -35,6 +35,7 @@ import type {
   UvPlacement,
 } from '../../nodes/types';
 import { NULL_MAPS, IDENTITY_UV_TRANSFORM, MAP_UV_SLOTS } from '../../nodes/materialSchema';
+import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 
 /** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
 const GLTF_WRAP_REPEAT = 10497;
@@ -192,13 +193,15 @@ function captureUvTransform(mat: GltfJsonMaterial): InlineMaterialSpec['uvTransf
  * ordinary single-UV material keys exactly as it did (`materialKeyOf` walks own
  * enumerable keys; a materialised empty bag would re-mint every imported material).
  */
-function capturePerMapUvSets(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvSets'] {
-  const out: { -readonly [K in keyof InlineMaterialMaps]?: number } = {};
+function capturePerMapUvLayers(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvLayers'] {
+  const out: { -readonly [K in keyof InlineMaterialMaps]?: string } = {};
   for (const slot of MAP_UV_SLOTS) {
     const texCoord = IR_SLOT_SOURCES[slot].info(mat)?.texCoord;
     // `> 0` rather than `!== undefined`: set 0 IS the default, and writing it out
     // would materialise the bag for materials that name nothing.
-    if (typeof texCoord === 'number' && texCoord > 0) out[slot] = texCoord;
+    // #1062 — the file says `TEXCOORD_n`; the material stores the NAME that set arrives under,
+    // which is the same name the reader writes onto the mesh's layer list.
+    if (typeof texCoord === 'number' && texCoord > 0) out[slot] = uvLayerName(texCoord);
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }
@@ -340,7 +343,7 @@ export function gltfJsonMaterialToOpenpbr(
   // gain the key at all: `materialKeyOf` walks own enumerable keys, so spreading
   // `undefined` in unconditionally would re-key every material (H265).
   const perMap = capturePerMapUvTransforms(mat);
-  const perUvSets = capturePerMapUvSets(mat);
+  const perUvSets = capturePerMapUvLayers(mat);
   return {
     name: mat.name || 'default',
     base: {
@@ -362,8 +365,11 @@ export function gltfJsonMaterialToOpenpbr(
       // alphaMode:'MASK' → the alphaTest cutoff (glTF default 0.5). The clone
       // already renders cutout; capturing makes it DAG-addressable + editable.
       ...(mat.alphaMode === 'MASK' ? { alphaCutoff: num(mat.alphaCutoff, 0.5) } : {}),
-      // COLOR_0 → vertex colours captured for representation (clone renders it).
-      ...(prim?.vertexColors ? { vertexColors: true } : {}),
+      // COLOR_0 → the colour layer this material reads, by name (#1062). The caller still reports
+      // a boolean, because at that boundary the question really is "does this primitive carry a
+      // colour at all" — glTF gives it no name. The name it arrives under is the reader's, so both
+      // roads say the same word for the same data.
+      ...(prim?.vertexColors ? { colorLayer: COLOR_LAYER } : {}),
       // doubleSided → render both faces; captured so the DAG can override `side`.
       ...(mat.doubleSided ? { doubleSided: true } : {}),
     },
@@ -375,6 +381,6 @@ export function gltfJsonMaterialToOpenpbr(
     // individually below, since one shared placement cannot express them.
     uvTransform: captureUvTransform(mat),
     ...(perMap ? { mapUvTransforms: perMap } : {}),
-    ...(perUvSets ? { mapUvSets: perUvSets } : {}),
+    ...(perUvSets ? { mapUvLayers: perUvSets } : {}),
   };
 }

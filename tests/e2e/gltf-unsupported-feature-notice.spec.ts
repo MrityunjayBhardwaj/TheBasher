@@ -46,7 +46,9 @@ test('an import with not-yet-editable features warns to the console, not the err
     'secondary UV set',
   );
   // …and the road notice says why it is not native, naming the issue that brings it across.
-  expect(warnings.find((t) => t.includes('not as native geometry'))).toContain('#1062');
+  // Sheen is a material lobe the native material does not hold (#1123); the second UV set is no
+  // longer a reason, since the native road carries it (#1062).
+  expect(warnings.find((t) => t.includes('not as native geometry'))).toContain('#1123');
   // …and the import is NOT presented as a failure (no red error banner).
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });
