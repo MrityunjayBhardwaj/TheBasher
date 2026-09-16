@@ -79,7 +79,7 @@ import { getGltfClone } from './asset/gltfCloneRegistry';
 // UV editor cannot disagree about which mesh a glTF child is. See that module's header.
 import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
-import { buildMeshGeometry } from './meshGeometryData';
+import { buildMeshGeometry, CORNER_LAYER_SLOTS } from './meshGeometryData';
 
 const cache = new Map<string, BufferGeometry>();
 
@@ -1380,6 +1380,20 @@ function buildBevel(d: Extract<GeometryDescriptor, { kind: 'bevel' }>): BufferGe
 
   const source = get(d.source, 'internal');
   if (source === null) return null;
+  // #1117 — A CORNER LAYER THIS BUILDER DOES NOT WRITE IS REFUSED BY NAME, NOT DROPPED. It writes
+  // `position` and the interpolated `uv` below and computes normals; a second UV set or a colour
+  // on the source would reach the output as nothing at all, and the mesh would draw as if it never
+  // had one. Interpolating those onto the corners a bevel mints is the same question `uv` answers
+  // below, asked for every layer, and it is #881's to answer rather than this refusal's to guess.
+  const uncarried = CORNER_LAYER_SLOTS.filter(
+    (slot) => slot !== 'uv' && source.getAttribute(slot) !== undefined,
+  );
+  if (uncarried.length > 0) {
+    console.error(
+      `geometryRegistry: cannot build a 'bevel' — its source carries ${uncarried.join(', ')}, which a bevel does not carry onto the corners it creates yet (#881)`,
+    );
+    return null;
+  }
   const splitRims = alignedSplitRims(d.source, source);
   const position = source.getAttribute('position');
   if (splitRims === null || position === undefined) return null;

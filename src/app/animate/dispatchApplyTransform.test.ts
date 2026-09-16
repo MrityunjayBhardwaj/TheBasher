@@ -748,7 +748,13 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
       ),
       faceSizes: Uint32Array.from(faces.map((f) => f.length)),
       cornerPoints: Uint32Array.from(faces.flat()),
-      cornerUVs: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+      cornerLayers: [
+        {
+          name: 'UVMap',
+          type: 'float2' as const,
+          data: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+        },
+      ],
       cornerNormals: Float32Array.from(axes.flatMap((a) => Array(4).fill(turned(a, 0)).flat())),
     };
   }
@@ -988,6 +994,63 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
     expect(firstCorners(storedOf(next))).toEqual(firstBefore);
   });
 
+  it('corner layers (a second UV set, a colour) keep their values and move with their corners, under a plain and a mirroring Apply', async () => {
+    const mirroring: Pose = { position: [0, 0, 0], rotation: [0, 15, 0], scale: [-1, 1, 1] };
+    for (const pose of [POSE, mirroring]) {
+      const base = build(pose);
+      const cube = storedOf(base);
+      const corners = cube.cornerPoints.length;
+      // A distinct value at every corner, so a layer left behind when corners reorder cannot pass.
+      const layered: MeshGeometryData = {
+        ...cube,
+        cornerLayers: [
+          ...cube.cornerLayers,
+          {
+            name: 'UVMap.001',
+            type: 'float2',
+            data: Float32Array.from({ length: corners * 2 }, (_, i) => i / 2),
+          },
+          {
+            name: 'Color',
+            type: 'float4',
+            data: Float32Array.from({ length: corners * 4 }, (_, i) => i / (corners * 4)),
+          },
+        ],
+      };
+      const state = applyAll(base, [
+        { type: 'setParam', nodeId: DATA, paramPath: 'mesh', value: packMeshData(layered) },
+      ]);
+      /** Per (face, point): every layer's values at the corner of that face sitting on that point. */
+      const byFacePoint = (d: MeshGeometryData) => {
+        const out = new Map<string, number[][]>();
+        let c = 0;
+        d.faceSizes.forEach((size, f) => {
+          for (let k = 0; k < size; k++, c++) {
+            out.set(
+              `${f}:${d.cornerPoints[c]}`,
+              d.cornerLayers.map((l) => {
+                const w = l.data.length / d.cornerPoints.length;
+                return Array.from(l.data.subarray(c * w, c * w + w));
+              }),
+            );
+          }
+        });
+        return out;
+      };
+      const before = byFacePoint(storedOf(state));
+
+      const { result, next } = await apply(state, 'all');
+      expect(result.ok, `Apply under ${JSON.stringify(pose.scale)}`).toBe(true);
+      const after = storedOf(next);
+      expect(after.cornerLayers.map((l) => [l.name, l.type])).toEqual([
+        ['UVMap', 'float2'],
+        ['UVMap.001', 'float2'],
+        ['Color', 'float4'],
+      ]);
+      expect(byFacePoint(after), `layers under ${JSON.stringify(pose.scale)}`).toEqual(before);
+    }
+  });
+
   it('corner normals follow their faces under a rotation and a non-uniform scale', async () => {
     const { result, next } = await apply(
       build({ position: [0, 0, 0], rotation: [0, 0, 30], scale: [3, 1, 1] }, { turnZDegrees: 40 }),
@@ -1176,7 +1239,13 @@ describe('#1081 / #1098 — the animated guard asks what the Apply road it takes
       points: Float32Array.from(corners.flat().map((v) => v * 0.5)),
       faceSizes: Uint32Array.from(faces.map((f) => f.length)),
       cornerPoints: Uint32Array.from(faces.flat()),
-      cornerUVs: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+      cornerLayers: [
+        {
+          name: 'UVMap',
+          type: 'float2' as const,
+          data: Float32Array.from(faces.flatMap(() => [0, 0, 1, 0, 1, 1, 0, 1])),
+        },
+      ],
       cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
     };
   }

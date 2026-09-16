@@ -238,11 +238,12 @@ export function isKnownDomain(domain: DomainId): domain is KnownDomain {
 /**
  * The value types an attribute may carry.
  *
- * Minimal on purpose: `int` covers `material_index`, `float2` covers UVs, and the two
- * remaining members are the ones a polygonal model cannot express itself without. A type
+ * Minimal on purpose: `int` covers `material_index`, `float2` covers UVs, `float4` covers an
+ * RGBA colour (#1117 — first held by a stored mesh's colour layer, where glTF's `COLOR_0` lands),
+ * and `float` and `float3` are the ones a polygonal model cannot express itself without. A type
  * that has no producer is a type whose storage rules nothing has ever exercised.
  */
-export const ATTRIBUTE_TYPES = ['int', 'float', 'float2', 'float3'] as const;
+export const ATTRIBUTE_TYPES = ['int', 'float', 'float2', 'float3', 'float4'] as const;
 
 export type AttributeType = (typeof ATTRIBUTE_TYPES)[number];
 
@@ -299,6 +300,8 @@ export function componentsOf(type: AttributeType): number {
       return 2;
     case 'float3':
       return 3;
+    case 'float4':
+      return 4;
     default: {
       const unreachable: never = type;
       throw new Error(`componentsOf: undeclared attribute type ${String(unreachable)}`);

@@ -62,7 +62,9 @@ describe('readGltfMesh — the cube', () => {
     expect(data.points.length / 3).toBe(8);
     expect(data.faceSizes.length).toBe(12);
     expect(data.cornerPoints.length).toBe(36);
-    expect(data.cornerUVs?.length).toBe(72);
+    expect(data.cornerLayers.map((l) => [l.name, l.type, l.data.length])).toEqual([
+      ['UVMap', 'float2', 72],
+    ]);
     expect(data.cornerNormals?.length).toBe(108);
   });
 

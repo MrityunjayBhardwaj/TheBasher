@@ -27,12 +27,21 @@
 // declared `mesh` section would be a titled, permanently empty card — the reason `GltfData` and
 // `BakedData` declare `material` alone.
 //
+// ── #1117 — VERSION 2: CORNER DATA IS A NAMED LIST ───────────────────────────────────────────
+//
+// Version 1 kept UVs in a fixed `cornerUVs` field, so a mesh could hold one UV set and nothing
+// else. Version 2 keeps every UV set and colour in `cornerLayers`. The migration moves a version-1
+// `cornerUVs` string into that list as `UVMap`, byte for byte, so an old save draws exactly what it
+// drew: `src/core/project/polyMeshV1Fixture.test.ts` holds a real version-1 save captured before
+// this change and checks every drawn corner.
+//
 // REF: src/app/meshGeometryData.ts (packing, key, build), src/app/polygonLayout.ts (the data
-//      check), src/nodes/BoxData.ts (the producer template); issues #1049, #1054, #628.
+//      check), src/nodes/BoxData.ts (the producer template); issues #1049, #1054, #1117, #628.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { MeshDataValue } from './types';
+import type { MeshCornerLayerType, MeshDataValue } from './types';
+import { UV_MAP } from './attributes';
 import { openpbrMaterialSchema } from './materialSchema';
 import { materialKeyOf } from './materialKey';
 import { mintMeshAttributes } from './meshAttributes';
@@ -40,13 +49,18 @@ import { meshGeometryRef, unpackMeshData } from '../app/meshGeometryData';
 import { meshDataProblem } from '../app/polygonLayout';
 import { refWithAttributeKey } from '../app/modifierGeometry';
 
+/** The corner layer types a stored mesh holds, spelled once for the schema. */
+const CORNER_LAYER_TYPES = ['float2', 'float4'] as const satisfies readonly MeshCornerLayerType[];
+
 /** The packed mesh, refused at parse time unless it decodes to a well-formed mesh. */
 export const PackedMeshSchema = z
   .object({
     points: z.string(),
     faceSizes: z.string(),
     cornerPoints: z.string(),
-    cornerUVs: z.string().nullable(),
+    cornerLayers: z.array(
+      z.object({ name: z.string(), type: z.enum(CORNER_LAYER_TYPES), data: z.string() }),
+    ),
     cornerNormals: z.string().nullable(),
   })
   .superRefine((packed, ctx) => {
@@ -70,9 +84,32 @@ export const PolyMeshDataParams = z.object({
 });
 export type PolyMeshDataParams = z.infer<typeof PolyMeshDataParams>;
 
+/**
+ * Version 1 → 2 (#1117): a fixed `cornerUVs` string becomes the `UVMap` entry of `cornerLayers`,
+ * byte for byte, and `null` becomes no layer. Every other param rides through untouched, and the
+ * retired key is dropped by name rather than by a spread that happens to omit it. A mesh already in
+ * the version-2 shape, or params with no mesh at all, are returned as they are.
+ */
+export function migrateCornerUVsToLayers(params: unknown): unknown {
+  const p = (params ?? {}) as Record<string, unknown>;
+  const mesh = p.mesh;
+  if (mesh === null || typeof mesh !== 'object' || Array.isArray(mesh) || !('cornerUVs' in mesh)) {
+    return p;
+  }
+  const { cornerUVs, ...rest } = mesh as Record<string, unknown>;
+  const cornerLayers =
+    typeof cornerUVs === 'string' ? [{ name: UV_MAP, type: 'float2', data: cornerUVs }] : [];
+  return { ...p, mesh: { ...rest, cornerLayers } };
+}
+
 export const PolyMeshDataNode: NodeDefinition<PolyMeshDataParams, MeshDataValue> = {
   type: 'PolyMeshData',
-  version: 1,
+  // #1117 — BUMPED 1 → 2 by `cornerUVs` moving into `cornerLayers`. Without the bump the schema
+  // would refuse an old save's mesh on the way in, and the migration below would never run.
+  version: 2,
+  migrations: {
+    1: migrateCornerUVsToLayers,
+  },
   pure: true,
   cost: 'cheap',
   paramSchema: PolyMeshDataParams,

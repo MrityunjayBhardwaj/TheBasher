@@ -77,6 +77,7 @@ import {
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
+import { UV_MAP } from '../../nodes/attributes';
 
 /** Why a file cannot be imported natively yet, and the issue that changes that. */
 export interface NativeImportRefusal {
@@ -383,11 +384,14 @@ export function readGltfMesh(
     return out;
   };
 
+  const uvs = gather(uvAccessor, 2);
   return {
     points,
     faceSizes: new Uint32Array(corners.length / 3).fill(3),
     cornerPoints: Uint32Array.from(corners, (v) => weld.map[v]),
-    cornerUVs: gather(uvAccessor, 2),
+    // #1117 — TEXCOORD_0 is the first UV layer, under Blender's name for it (measured: Blender
+    // 5.1.1 imports it as `UVMap`).
+    cornerLayers: uvs === null ? [] : [{ name: UV_MAP, type: 'float2', data: uvs }],
     cornerNormals: gather(normalAccessor, 3),
   };
 }

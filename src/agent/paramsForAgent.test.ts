@@ -24,17 +24,25 @@ const grid = (n: number) => {
     points: Float32Array.from(points),
     faceSizes: Uint32Array.from(faceSizes),
     cornerPoints: Uint32Array.from(cornerPoints),
-    cornerUVs: new Float32Array(cornerPoints.length * 2),
+    cornerLayers: [
+      { name: 'UVMap', type: 'float2', data: new Float32Array(cornerPoints.length * 2) },
+    ],
     cornerNormals: null,
   });
 };
 
 describe('paramsForAgent', () => {
-  it('replaces a packed mesh with its element counts, wherever it sits', () => {
+  it('replaces a packed mesh with its element counts and layer names, wherever it sits', () => {
     const mesh = grid(10);
     const shown = paramsForAgent({ mesh, material: { base: { color: '#ff0000' } }, list: [mesh] });
     const counts = {
-      storedMesh: { points: 121, faces: 100, corners: 400, uvs: true, normals: false },
+      storedMesh: {
+        points: 121,
+        faces: 100,
+        corners: 400,
+        layers: [{ name: 'UVMap', type: 'float2' }],
+        normals: false,
+      },
     };
     expect(shown).toEqual({
       mesh: counts,
