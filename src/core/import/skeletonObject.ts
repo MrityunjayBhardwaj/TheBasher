@@ -108,6 +108,15 @@ export interface SkeletonObjectArgs {
    * adds no op: blank is the unnamed state `nodeDisplayName` falls back from.
    */
   readonly name: string;
+  /**
+   * #1122 — the clip this Object's name follows. The Object is named after its clip and keeps
+   * reading as the same motion when the clip is renamed or re-cooked, until a director renames
+   * the Object itself (the link is `meta.nameFrom`; the reducer copies, a rename cuts it).
+   *
+   * Required for the reason `name` is: a road that could leave it out would stand an Object
+   * whose name silently stops following, and both roads would look the same until a rename.
+   */
+  readonly clipId: string;
 }
 
 /**
@@ -134,7 +143,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
       },
       ...(args.name.trim()
-        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name }]
+        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name, nameFrom: args.clipId }]
         : []),
       {
         type: 'connect',

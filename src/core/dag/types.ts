@@ -716,6 +716,13 @@ export const NodeSchema = z.object({
       // the render (the renderer skips it). Lives on meta, not a per-type param,
       // because every node kind can be hidden uniformly (like meta.name).
       hidden: z.boolean().optional(),
+      // #1122 — "this node's name is that node's name". While set, a change to the named
+      // node's own name is copied onto `name` in the same state change (`applyOp`), so every
+      // reader of `meta.name` stays true without learning about links. A director's rename
+      // clears it. Absent (every node before #1122, and every node nobody linked) means the
+      // name is fixed, which is what it always meant — so no project needs migrating. It
+      // must be DECLARED here: an undeclared key is stripped by the save's own parse.
+      nameFrom: NodeIdSchema.optional(),
     })
     .optional(),
 });
@@ -780,10 +787,14 @@ export const OpSetParamSchema = z.object({
 // meta.name ?? id). It is NOT a param (it lives on `node.meta`, outside the
 // per-type paramSchema), so renaming needs its own op rather than setParam.
 // `name: undefined` CLEARS the override → the label falls back to the node id.
+// #1122 — `nameFrom` links the name to another node's (see `NodeSchema.meta.nameFrom`). A
+// setMeta WITHOUT it clears the link, because a name written without one is a name someone
+// chose; the inverse carries the prior link back, so undoing a rename resumes following.
 export const OpSetMetaSchema = z.object({
   type: z.literal('setMeta'),
   nodeId: NodeIdSchema,
   name: z.string().optional(),
+  nameFrom: NodeIdSchema.optional(),
 });
 
 // #227 S4 — visibility toggle. A dedicated op (not an `OpSetMeta` field) because

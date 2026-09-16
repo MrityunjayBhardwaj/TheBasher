@@ -230,6 +230,30 @@ describe('mintMotionGenerateOps (#935)', () => {
     expect(next.nodes[objectId!].meta?.name).toBe('hero walk');
   });
 
+  // #1122 — through a REAL cook, the road that renames a generated clip: a new request lands a
+  // new name on the clip (`bakeGeneratedClip.ts`), and the Object standing it follows.
+  it('#1122 — a re-cook that renames the clip renames the Object standing it', async () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, producerId, clipId, objectId } = mintMotionGenerateOps(s, ARGS);
+    s = apply(s, ops);
+    expect(s.nodes[objectId!].meta).toEqual({ name: 'a slow walk', nameFrom: clipId });
+
+    const { cap } = capability();
+    s = apply(s, [
+      { type: 'setParam', nodeId: producerId, paramPath: 'name', value: 'hero walk' },
+      { type: 'setParam', nodeId: producerId, paramPath: 'prompt', value: 'a fast run' },
+    ] as Op[]);
+    await resolvePendingMotionGenerations(s, cap);
+    const bake = bakeGeneratedClipOps(s);
+    expect(bake.length, 'nothing re-cooked — the follow below would be vacuous').toBeGreaterThan(0);
+    s = apply(s, bake);
+    expect((s.nodes[clipId].params as { name: string }).name).toBe('hero walk');
+    expect(s.nodes[objectId!].meta).toEqual({ name: 'hero walk', nameFrom: clipId });
+  });
+
   it('in a project with no scene, adds no Object — there is nowhere to stand one', () => {
     const s = project();
     expect(s.outputs.scene).toBeUndefined();

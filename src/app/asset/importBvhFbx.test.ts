@@ -31,6 +31,7 @@ import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
+import { composeProject, loadProject, saveProject } from '../../core/project/io';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -220,6 +221,74 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const state = useDagStore.getState().state;
     expect(state.nodes[objectId]).toBeUndefined();
     expect(state.nodes[result!.skeletonId]).toBeUndefined();
+  });
+
+  // #1122 — the Object reads as its motion until a director names it otherwise. Through the
+  // real store, so the undo is the one Cmd+Z runs, and through the ops the two gestures send:
+  // the inspector's name field is a `setParam` on the clip, the outliner's rename a `setMeta`.
+  it('#1122 — renaming the clip renames the Object that stands it', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    const store = useDagStore.getState();
+    store.dispatch(
+      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+      'user',
+      'set name',
+    );
+    const state = useDagStore.getState().state;
+    expect(nodeDisplayName(state.nodes, result!.clipId)).toBe('hero walk');
+    expect(nodeDisplayName(state.nodes, objectId)).toBe('hero walk');
+    // The field every direct reader uses, not only the resolver.
+    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.clipId });
+  });
+
+  it('#1122 — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    const store = useDagStore.getState();
+    store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
+    store.dispatch(
+      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+      'user',
+      'set name',
+    );
+    expect(nodeDisplayName(useDagStore.getState().state.nodes, objectId)).toBe('my rig');
+
+    store.undo(); // the clip's rename
+    store.undo(); // the Object's rename — following resumes
+    let nodes = useDagStore.getState().state.nodes;
+    expect(nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
+    store.dispatch(
+      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'jog' },
+      'user',
+      'set name',
+    );
+    nodes = useDagStore.getState().state.nodes;
+    expect(nodeDisplayName(nodes, objectId)).toBe('jog');
+  });
+
+  it('#1122 — the link survives a save and a load, and still follows afterwards', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    const storage = new MemoryStorage();
+    await saveProject(
+      storage,
+      composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
+    );
+    const loaded = await loadProject(storage, 'p1122');
+    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
+    useDagStore.getState().hydrate(loaded.state);
+    useDagStore
+      .getState()
+      .dispatch(
+        { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+        'user',
+        'set name',
+      );
+    expect(useDagStore.getState().state.nodes[objectId].meta?.name).toBe('hero walk');
   });
 
   it('#1103 — with no scene to stand it in, the warning stays', async () => {

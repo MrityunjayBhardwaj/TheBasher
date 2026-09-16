@@ -197,6 +197,8 @@ export function mintMotionGenerateOps(
         normalise: false,
         // #1101 — the clip's name, so the outliner lists the rig as the motion it is.
         name,
+        // #1122 — and it keeps following that clip's name until the Object is renamed.
+        clipId: ids.clip,
       })
     : undefined;
   if (standIn) ops.push(...standIn.ops);
