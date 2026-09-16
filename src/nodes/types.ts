@@ -289,7 +289,13 @@ export interface InlineMaterialSpec {
   readonly geometry: {
     readonly opacity: number;
     readonly alphaCutoff?: number;
-    readonly vertexColors?: boolean;
+    /**
+     * #1062 — the NAME of the colour layer this material reads, or absent for a material that
+     * asks for none. It replaces a `vertexColors: true` boolean, which could only mean "whatever
+     * colour the geometry happens to carry" — true for exactly as long as a mesh could carry only
+     * one. An old `true` migrates to {@link COLOR_LAYER}, the name an import writes.
+     */
+    readonly colorLayer?: string;
     /** glTF direct-import — render both faces (three `side=DoubleSide`), captured
      *  from a material's `doubleSided:true`. Absent = front-only (the default). */
     readonly doubleSided?: boolean;
@@ -349,8 +355,21 @@ export interface InlineMaterialSpec {
    * The INHERITED road needs nothing from this — three's own loader already binds a
    * captured texture to its set (`GLTFLoader.js:3354-3357`). This is only ever consulted
    * for a slot the director has replaced.
+   *
+   * 🔑 A LAYER NAME, NOT AN INDEX (#1062). It used to be the number glTF writes in `texCoord`,
+   * which only ever meant "whatever the drawn geometry's nth UV buffer happens to be". A stored
+   * mesh now carries NAMED UV layers, and its layers are not always the import's own — a
+   * projection authors one under its own name ({@link PROJECTED_UV}) — so an index cannot say
+   * which of them a slot samples. The reference addresses them by name for the same reason: a UV
+   * Map node names the layer it reads (measured, and grounded in
+   * `ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md`).
+   *
+   * 🔴 UNLIKE BLENDER, A NAME THAT THE DRAWN MESH DOES NOT HAVE IS NOT HONOURED, rather than
+   * drawn as zeros. Blender renders such a material BLACK (measured: both a UV Map and a Color
+   * Attribute node naming a missing layer emit `0,0,0`). There is no active-layer notion here to
+   * fall back to, and a silently black mesh is the failure #1062 set out to remove.
    */
-  readonly mapUvSets?: { readonly [K in keyof InlineMaterialMaps]?: number };
+  readonly mapUvLayers?: { readonly [K in keyof InlineMaterialMaps]?: string };
   /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,

@@ -16,7 +16,7 @@
 //
 // REF: src/app/material/gltfMapOverlay.ts (`applyEditedMaps` — the subject);
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts (`capturePerMapUvSets`);
-//      src/nodes/types.ts (`InlineMaterialSpec.mapUvSets`); issue #997.
+//      src/nodes/types.ts (`InlineMaterialSpec.mapUvLayers`); issue #997.
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
@@ -54,7 +54,7 @@ describe('#997 — a replaced map samples the UV set the material names', () => 
     await applyEditedMaps(
       mat,
       maps({ albedo: ref }),
-      { shared: IDENTITY, uvSets: { albedo: 1 } },
+      { shared: IDENTITY, uvLayers: { albedo: 'UVMap.001' } },
       storage,
       () => false,
       { decode: async () => loaded },
@@ -76,7 +76,7 @@ describe('#997 — a replaced map samples the UV set the material names', () => 
     await applyEditedMaps(
       mat,
       maps({ albedo, normal }),
-      { shared: IDENTITY, uvSets: { albedo: 2, normal: 1 } },
+      { shared: IDENTITY, uvLayers: { albedo: 'UVMap.002', normal: 'UVMap.001' } },
       storage,
       () => false,
       { decode: async () => decoded.shift()! },
@@ -96,7 +96,7 @@ describe('#997 — a replaced map samples the UV set the material names', () => 
     await applyEditedMaps(
       mat,
       maps({ albedo, normal }),
-      { shared: IDENTITY, uvSets: { albedo: 1 } },
+      { shared: IDENTITY, uvLayers: { albedo: 'UVMap.001' } },
       storage,
       () => false,
       { decode: async () => decoded.shift()! },
@@ -122,13 +122,13 @@ describe('#997 — the importer captures the set off a real asset', () => {
 
   it('two-uv-quad names its base-colour slot set 1; the control names nothing', () => {
     const subj = gltfJsonMaterialToOpenpbr(asset('two-uv-quad.gltf').materials[0]);
-    expect(subj.mapUvSets).toEqual({ albedo: 1 });
+    expect(subj.mapUvLayers).toEqual({ albedo: 'UVMap.001' });
 
     const ctrl = gltfJsonMaterialToOpenpbr(asset('one-uv-quad.gltf').materials[0]);
     // ABSENT, not an empty object — a materialised bag keys differently from an absent
     // one and would re-mint every already-imported material's identity.
-    expect(ctrl.mapUvSets).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(ctrl, 'mapUvSets')).toBe(false);
+    expect(ctrl.mapUvLayers).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(ctrl, 'mapUvLayers')).toBe(false);
   });
 
   it('an EXPLICIT texCoord 0 captures nothing — the bag must not materialise', () => {
@@ -142,8 +142,8 @@ describe('#997 — the importer captures the set off a real asset', () => {
     });
     // Absent, not `{ albedo: 0 }`: `materialKeyOf` walks own enumerable keys, so a
     // materialised bag re-mints every existing material's identity on first load.
-    expect(spec.mapUvSets).toBeUndefined();
-    expect(Object.prototype.hasOwnProperty.call(spec, 'mapUvSets')).toBe(false);
+    expect(spec.mapUvLayers).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(spec, 'mapUvLayers')).toBe(false);
   });
 
   it('what the importer captures is what the overlay consumes — one road, end to end', async () => {
@@ -156,7 +156,7 @@ describe('#997 — the importer captures the set off a real asset', () => {
     await applyEditedMaps(
       mat,
       maps({ albedo: ref }),
-      { shared: IDENTITY, uvSets: spec.mapUvSets },
+      { shared: IDENTITY, uvLayers: spec.mapUvLayers },
       storage,
       () => false,
       { decode: async () => loaded },
@@ -173,11 +173,13 @@ describe('#997 — the set participates in material identity', () => {
     // materials that differ only here would share one cached material and one of them
     // would silently draw the other's UV set.
     const base = { color: '#fff', maps: {} };
-    expect(materialKeyOf({ ...base, mapUvSets: { albedo: 1 } })).not.toBe(
-      materialKeyOf({ ...base, mapUvSets: { albedo: 2 } }),
+    expect(materialKeyOf({ ...base, mapUvLayers: { albedo: 'UVMap.001' } })).not.toBe(
+      materialKeyOf({ ...base, mapUvLayers: { albedo: 'UVMap.002' } }),
     );
     // …and an ABSENT bag keys as the pre-#997 material did, which is what keeps every
     // already-imported material's identity stable.
-    expect(materialKeyOf(base)).not.toBe(materialKeyOf({ ...base, mapUvSets: { albedo: 1 } }));
+    expect(materialKeyOf(base)).not.toBe(
+      materialKeyOf({ ...base, mapUvLayers: { albedo: 'UVMap.001' } }),
+    );
   });
 });

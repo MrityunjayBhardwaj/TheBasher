@@ -3190,7 +3190,11 @@ describe('object↔data split v12 → v13: fused GltfChild → Object + GltfData
     // Without this the rows below could all pass against a fixture that was already split,
     // or against one the ladder never touched because its version was wrong.
     const { json, childId } = buildFusedGltfChildJson();
-    expect(json.formatVersion).toBe(PROJECT_FORMAT_VERSION - 1);
+    // The literal 12 rather than `PROJECT_FORMAT_VERSION - 1`: this fixture is about the 12 → 13
+    // step, so its version is a property of THAT step, not a distance from whatever the current
+    // version happens to be. Measured relative, it silently stopped describing this fixture the
+    // moment the next bump landed (#1062).
+    expect(json.formatVersion).toBe(12);
     expect(json.state.nodes[childId].type).toBe('GltfChild');
     expect((json.state.nodes[childId].params as { materials: unknown[] }).materials).toHaveLength(
       2,
@@ -3442,5 +3446,99 @@ describe('AnimationClip v10 → v11: the dead `time` binding is dropped (#920)',
 
     const migrated = loadFromBytes(buildV10ClipJson(true));
     expect(newCacheEntriesOver10Frames(migrated)).toBe(1);
+  });
+});
+
+describe('v13 → v14: a material names the layers it reads (#1062)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  /** A v13 project whose materials sit at three different depths, on purpose. */
+  const v13 = () => ({
+    formatVersion: 13,
+    state: {
+      nodes: {
+        plain: {
+          id: 'plain',
+          type: 'GltfData',
+          version: 1,
+          params: {
+            material: { name: 'A', mapUvSets: { albedo: 1, normal: 2 }, geometry: { opacity: 1 } },
+          },
+        },
+        // NESTED — the walk must find this one too, and no node type needs to be listed for it.
+        nested: {
+          id: 'nested',
+          type: 'MaterialOverride',
+          version: 1,
+          params: {
+            override: {
+              material: { name: 'B', geometry: { opacity: 1, vertexColors: true } },
+            },
+          },
+        },
+        // A material that asked for NO colours, and a set that was never a legible index.
+        quiet: {
+          id: 'quiet',
+          type: 'BoxData',
+          version: 1,
+          params: {
+            material: {
+              name: 'C',
+              mapUvSets: { albedo: 1.5 },
+              geometry: { opacity: 1, vertexColors: false },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  const migrated = () =>
+    migrateProjectFormat(JSON.parse(JSON.stringify(v13()))) as {
+      formatVersion: number;
+      state: { nodes: Record<string, { params: Record<string, never> }> };
+    };
+
+  const materialAt = (path: 'plain' | 'nested' | 'quiet') => {
+    const params = migrated().state.nodes[path].params as Record<string, unknown>;
+    const holder = path === 'nested' ? (params.override as Record<string, unknown>) : params;
+    return holder.material as {
+      mapUvSets?: unknown;
+      mapUvLayers?: Record<string, string>;
+      geometry?: { vertexColors?: unknown; colorLayer?: unknown };
+    };
+  };
+
+  it('stamps the new version', () => {
+    expect(migrated().formatVersion).toBe(14);
+  });
+
+  it('names each numbered UV set, and retires the numeric key', () => {
+    const material = materialAt('plain');
+    expect(material.mapUvLayers).toEqual({ albedo: 'UVMap.001', normal: 'UVMap.002' });
+    expect(material.mapUvSets).toBeUndefined();
+  });
+
+  it('finds a material nested deeper than `params.material`', () => {
+    // The pass recognises a material by SHAPE. Sixteen node types declare one and an override
+    // carries a partial — a walk that enumerated types would skip whichever it had not heard of,
+    // and a skipped material is the silent wrong picture this change exists to remove.
+    const material = materialAt('nested');
+    expect(material.geometry?.colorLayer).toBe('Color');
+    expect(material.geometry?.vertexColors).toBeUndefined();
+  });
+
+  it('a material that asked for no colours names none, and an illegible set names nothing', () => {
+    const material = materialAt('quiet');
+    // `false` meant "no colour", which is what ABSENT means now — naming one would invent a
+    // request the save never made.
+    expect(material.geometry?.colorLayer).toBeUndefined();
+    expect(material.geometry?.vertexColors).toBeUndefined();
+    // 1.5 was never an index the parse would have honoured, so it names no layer either.
+    expect(material.mapUvLayers).toBeUndefined();
+    expect(material.mapUvSets).toBeUndefined();
   });
 });
