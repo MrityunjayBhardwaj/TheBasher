@@ -83,7 +83,13 @@ function nameFromPath(path: string): string {
  * the clip's frame 0 — the pose the director first sees — not on the file's rest pose, which
  * need not stand up (`normalisedRigScale`).
  */
-function skeletonObjectOps(ops: readonly Op[], skeletonId: string, clipId: string): Op[] {
+function skeletonObjectOps(
+  ops: readonly Op[],
+  skeletonId: string,
+  clipId: string,
+  // #1101 — the name the import gave the clip, so the Object and its motion read the same.
+  name: string,
+): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
   const bones = (params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
@@ -92,7 +98,8 @@ function skeletonObjectOps(ops: readonly Op[], skeletonId: string, clipId: strin
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
   const clip = importedClip(state, ops, clipId);
-  return buildSkeletonObjectOps({ skeletonId, bones, clip, sceneNodeId, normalise: true }).ops;
+  return buildSkeletonObjectOps({ skeletonId, bones, clip, sceneNodeId, normalise: true, name })
+    .ops;
 }
 
 /**
@@ -131,8 +138,9 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const bytes = await storage.read(path);
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
-    const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name: nameFromPath(path) });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId);
+    const name = nameFromPath(path);
+    const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name });
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
@@ -161,11 +169,9 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const copy = new Uint8Array(bytes.byteLength);
     copy.set(bytes);
     const dag = useDagStore.getState();
-    const { ops, skeletonId, clipId } = buildFbxImportOps({
-      data: copy.buffer,
-      name: nameFromPath(path),
-    });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId);
+    const name = nameFromPath(path);
+    const { ops, skeletonId, clipId } = buildFbxImportOps({ data: copy.buffer, name });
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, clipId };
