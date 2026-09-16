@@ -80,7 +80,10 @@ function kindForNodeType(nodeType: string): IconKind {
   if (nodeType === 'MaterialOverride') return 'material';
   if (nodeType === 'Curve') return 'curve';
   if (nodeType === 'Scatter') return 'scatter';
-  if (nodeType === 'GltfSkeleton') return 'skeleton';
+  // #1120 — both rigs. An `Object` has accepted a `Skeleton` as its data since #1056, so an
+  // imported or generated motion's Object resolves here through its `data` edge; without
+  // this arm it drew the unknown dot beside a perfectly known rig.
+  if (nodeType === 'GltfSkeleton' || nodeType === 'Skeleton') return 'skeleton';
 
   // A data node is iconed by ITS STEM, not by the fact that it is data. A blanket
   // `endsWith('Data') → mesh` was the first shape of this fix and it was wrong in
@@ -130,7 +133,8 @@ function kindForNodeType(nodeType: string): IconKind {
  * cannot force a new data kind to be answered here the way an exhaustive switch
  * would. `SceneTreeIcon.test.ts` substitutes for that by walking the REGISTRY:
  * every registered node type that can sit on an Object's `data` socket must
- * resolve to a non-'dot' icon. Stage C's SphereData / CurveData / LightData /
+ * resolve to a non-'dot' icon. The set is read from the socket's own declaration (#1120),
+ * so a type the socket starts accepting joins the sweep without anyone listing it. Stage C's SphereData / CurveData / LightData /
  * CameraData will redden that test the moment they register without an arm.
  */
 export function iconKindForNode(state: DagState, nodeId: string, nodeType: string): IconKind {
