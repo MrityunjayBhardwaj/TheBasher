@@ -9,8 +9,8 @@
 // REF: THESIS.md §11, §53, krama K1 step 6.
 
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
-import { Canvas } from '@react-three/fiber';
-import { Suspense, useCallback } from 'react';
+import { Canvas, useThree } from '@react-three/fiber';
+import { Suspense, useCallback, useEffect, useRef } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
@@ -38,6 +38,7 @@ import { useBoxSelectStore } from '../app/stores/boxSelectStore';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
+import { attachWheelZoom } from './wheelZoom';
 
 function EditorOrbit() {
   // Disable orbit while a TransformControls handle is being dragged
@@ -87,15 +88,34 @@ function EditorOrbit() {
     });
   }, []);
 
+  // #1128 — wheel and trackpad zoom sized by how far the wheel moved (see `wheelZoom.ts`). The
+  // controls' own wheel zoom is off (`enableZoom={false}`), which also turns off their touch-screen
+  // pinch; a trackpad pinch arrives as a wheel event and is handled here. Attached to the element
+  // the controls connect to, resolved the way drei resolves it.
+  const controlsRef = useRef<OrbitControlsImpl>(null);
+  const connected = useThree((s) => s.events.connected as HTMLElement | undefined);
+  const canvas = useThree((s) => s.gl.domElement);
+  const wheelTarget = connected ?? canvas;
+  // drei builds a NEW controls instance when the default camera changes (its `useMemo` keys on the
+  // camera), so the camera is a dependency: without it the listener would dolly a disposed one.
+  const camera = useThree((s) => s.camera);
+  useEffect(() => {
+    const controls = controlsRef.current;
+    if (!controls) return;
+    return attachWheelZoom(wheelTarget, controls);
+  }, [wheelTarget, camera]);
+
   return (
     <OrbitControls
+      ref={controlsRef}
       makeDefault
       enabled={!dragging && !lookThrough}
       enableDamping
       dampingFactor={0.08}
+      enableZoom={false}
       onChange={handleChange}
       onEnd={handleEnd}
-      // Default mouse map: rotate (LMB), zoom (wheel), pan (RMB / two-finger).
+      // Default mouse map: rotate (LMB), zoom (wheel — `wheelZoom.ts`), pan (RMB / two-finger).
     />
   );
 }

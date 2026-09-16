@@ -90,7 +90,7 @@ import { hashValue } from '../core/dag/hash';
 import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/generatedClipCache';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
-import { nameParam, widget } from './paramWidget';
+import { widget } from './paramWidget';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -113,14 +113,11 @@ export const MotionGenerateParams = z.object({
   model: z.string().trim().min(1, 'must not be empty'),
   /** Requested length. Optional: the generator has its own default. */
   seconds: z.number().positive().finite().max(MAX_MOTION_SECONDS).optional(),
-  /**
-   * Clip name. Defaults to empty and resolves to the prompt at evaluate, the way
-   * an imported clip defaults to its filename.
-   *
-   * NOT part of the request hash: renaming a clip must not re-run a paid
-   * generation, and two clips differing only in name are the same motion.
-   */
-  name: nameParam(''),
+  // #1124 — NO `name`. It lived here until the generator and its clip both wrote one name and
+  // the cook let the generator win: a clip a director had renamed went back to the generator's
+  // name on the next re-cook, measured in the running app. The clip owns the name now; the mint
+  // seeds it there. The rule this param carried — a rename must never re-run a paid generation
+  // — still holds, because renaming a clip never touches this node's request.
 });
 export type MotionGenerateParams = z.infer<typeof MotionGenerateParams>;
 
@@ -173,7 +170,8 @@ export function motionRequestHash(
 
 export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationClipValue> = {
   type: 'MotionGenerate',
-  version: 1,
+  // v2 (#1124): `name` retired; the clip owns a generated motion's name.
+  version: 2,
   pure: true,
   cost: 'medium',
   paramSchema: MotionGenerateParams,
@@ -191,10 +189,22 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
   inputs: { path: { type: 'SceneObject', cardinality: 'single' } },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
   inspectorSections: ['animate'],
+  migrations: {
+    // v1 → v2 (#1124): `name` leaves by name. Nothing is lost: the name it seeded is on the
+    // clip, written there at mint and again by every cook before this change.
+    1: (params) => {
+      const rest = { ...((params ?? {}) as Record<string, unknown>) };
+      delete rest.name;
+      return rest;
+    },
+  },
   evaluate(params, inputs: ResolvedInputs): AnimationClipValue {
     const path = inputs.path as ObjectValue | undefined;
     const requestHash = motionRequestHash(params, path);
-    const name = params.name.trim() || params.prompt;
+    // The value still carries a name, because an `AnimationClipValue` does. Nothing lands it —
+    // the bake writes motion, not names (#1124) — so it is the prompt, the name a clip minted
+    // from this request would have started with.
+    const name = params.prompt;
 
     const clip = lookupGeneratedClip(requestHash);
     if (clip) {

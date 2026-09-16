@@ -174,11 +174,9 @@ export async function resolvePendingMotionGenerations(
         ...(params.seconds !== undefined ? { seconds: params.seconds } : {}),
         ...(waypoints ? { constraints: { waypoints } } : {}),
       });
-      const parsed = parseBvh(
-        generated.bvh,
-        params.name.trim() || params.prompt,
-        generated.unitScale,
-      );
+      // The parser wants a name for the clip params it builds; none of them is recorded below —
+      // only the motion is — so the prompt serves, as it does in `evaluate` (#1124).
+      const parsed = parseBvh(generated.bvh, params.prompt, generated.unitScale);
       recordGeneratedClip(requestHash, {
         duration: parsed.clipParams.duration,
         keyframes: parsed.clipParams.keyframes,

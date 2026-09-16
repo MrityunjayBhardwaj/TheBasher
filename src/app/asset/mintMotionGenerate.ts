@@ -148,7 +148,7 @@ export function mintMotionGenerateOps(
         seed: args.seed,
         model: args.model,
         ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
-        name,
+        // No `name` (#1124): the clip below owns it.
       },
     },
     // Empty until the generator says what rig it produced.
@@ -197,6 +197,8 @@ export function mintMotionGenerateOps(
         normalise: false,
         // #1101 — the clip's name, so the outliner lists the rig as the motion it is.
         name,
+        // #1122 — and it keeps following that clip's name until the Object is renamed.
+        clipId: ids.clip,
       })
     : undefined;
   if (standIn) ops.push(...standIn.ops);

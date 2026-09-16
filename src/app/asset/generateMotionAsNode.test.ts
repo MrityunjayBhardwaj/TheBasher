@@ -488,7 +488,11 @@ describe('UI == agent — the two routes land the same clip', () => {
         return Object.fromEntries(
           Object.entries(v as Record<string, unknown>).map(([k, val]) => [
             k,
-            k === 'nodeId' || k === 'node' || k === 'id' ? rename(String(val)) : walk(val),
+            // `nameFrom` (#1122) is an id reference too: the Object must follow ITS OWN clip on
+            // both roads, which only holds if the link is renamed with the ids it points at.
+            k === 'nodeId' || k === 'node' || k === 'id' || k === 'nameFrom'
+              ? rename(String(val))
+              : walk(val),
           ]),
         );
       }

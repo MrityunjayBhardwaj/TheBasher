@@ -98,8 +98,15 @@ function skeletonObjectOps(
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
   const clip = importedClip(state, ops, clipId);
-  return buildSkeletonObjectOps({ skeletonId, bones, clip, sceneNodeId, normalise: true, name })
-    .ops;
+  return buildSkeletonObjectOps({
+    skeletonId,
+    bones,
+    clip,
+    sceneNodeId,
+    normalise: true,
+    name,
+    clipId,
+  }).ops;
 }
 
 /**
