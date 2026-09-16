@@ -229,8 +229,8 @@ export async function storeImageInOpenProject(bytes: Uint8Array, mime: string): 
  * `model.generate`, AI generation) comes through `buildGltfImportOpsFromOpfs`, so the road is
  * chosen once, here: the native road first, and when it refuses, the WHOLE import takes the clone
  * road instead, carrying the refusal so the caller can say why. One import is never split between
- * the two. As later steps delete their refusals (#1050, #1051, #393, #1052, #1060, #1061, #1062),
- * more files arrive native with no change here; #1053 removes the clone arm.
+ * the two. As later steps delete their refusals (#1050, #1051, #393, #1052, #1060, #1061, #1123,
+ * #1125), more files arrive native with no change here; #1053 removes the clone arm.
  */
 export type GltfImportRoadResult =
   | ({ readonly road: 'native' } & NativeImportResult)
@@ -264,7 +264,7 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
     //      never strips them); they're just not yet captured into the editable
     //      IR. A console notice, NOT the red `asset failed:` banner.
     // A native import has nothing to report: the native road refuses a file rather than drop what
-    // it carries (#1062), so everything below is about the clone road's copy of the file.
+    // it carries (#1123, #1125), so everything below is about the clone road's copy of the file.
     if (result.road === 'native') {
       useImportRefreshStore.getState().bump();
       return;

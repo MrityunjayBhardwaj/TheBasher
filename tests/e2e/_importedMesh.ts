@@ -85,6 +85,14 @@ export interface DrawnImportMesh {
   readonly transparent: boolean;
   readonly vertexColors: boolean;
   readonly side: number | null;
+  /**
+   * The drawn geometry's buffer attribute names (`position`, `uv`, `uv1`, `color`, …), sorted. A
+   * material reading vertex colours over a geometry with no `color` buffer draws BLACK, so the
+   * flag alone cannot say the colours are on screen.
+   */
+  readonly buffers: readonly string[];
+  /** The base-colour texture's `channel` — which `uv` buffer it samples — or null with no map. */
+  readonly mapChannel: number | null;
 }
 
 /** Every import root in the scene, in the scene's child order. */
@@ -244,7 +252,10 @@ export async function firstMaterialMesh(page: Page): Promise<ImportedMeshRow | n
 export async function drawnImportMeshes(page: Page, rootId?: string): Promise<DrawnImportMesh[]> {
   const roots = rootId ? [rootId] : (await importRoots(page)).map((r) => r.rootId);
   return page.evaluate((rootIds: string[]) => {
-    type Tex = { image?: { width?: number } | null; colorSpace?: string } | null | undefined;
+    type Tex =
+      | { image?: { width?: number } | null; colorSpace?: string; channel?: number }
+      | null
+      | undefined;
     type V3 = { x: number; y: number; z: number };
     type Box = {
       min: V3;
@@ -272,7 +283,11 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
       material?: Mat | Mat[];
       matrixWorld: unknown;
       updateWorldMatrix: (parents: boolean, children: boolean) => void;
-      geometry?: { boundingBox: Box | null; computeBoundingBox: () => void };
+      geometry?: {
+        boundingBox: Box | null;
+        computeBoundingBox: () => void;
+        attributes?: Record<string, unknown>;
+      };
       getObjectByName: (n: string) => O3 | undefined;
       traverse: (f: (o: O3) => void) => void;
     };
@@ -315,6 +330,8 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             transparent: mat?.transparent === true,
             vertexColors: mat?.vertexColors === true,
             side: typeof mat?.side === 'number' ? mat.side : null,
+            buffers: Object.keys(o.geometry?.attributes ?? {}).sort(),
+            mapChannel: typeof mat?.map?.channel === 'number' ? mat.map.channel : null,
           });
         }
       });

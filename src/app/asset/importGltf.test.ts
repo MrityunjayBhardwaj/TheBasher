@@ -156,19 +156,31 @@ describe('importGltfFromOpfs — the road an import takes (#1049)', () => {
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
   });
 
-  it('sends a file the native model cannot hold down the clone road whole, and says why', async () => {
+  it('#1062 — a file carrying vertex colours now imports as native geometry', async () => {
     const path = 'user-imports/vcolor/vertex-color-quad.gltf';
     await currentStorage.write(
       path,
       new Uint8Array(readFileSync('public/assets/vertex-color-quad.gltf')),
     );
+    await importGltfFromOpfs(path);
+    const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
+    expect(types).toContain('PolyMeshData');
+    expect(types).not.toContain('GltfAsset');
+  });
+
+  it('sends a file the native model cannot hold down the clone road whole, and says why', async () => {
+    // Sheen is a material lobe the native material does not hold (#1123).
+    const path = 'user-imports/sheen/sheen-quad.gltf';
+    await currentStorage.write(path, new Uint8Array(readFileSync('public/assets/sheen-quad.gltf')));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
       await importGltfFromOpfs(path);
       const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
       expect(types).toContain('GltfAsset');
       expect(types).not.toContain('PolyMeshData');
-      expect(warn.mock.calls.flat().join('\n')).toMatch(/not as native geometry.*COLOR_0.*#1062/);
+      expect(warn.mock.calls.flat().join('\n')).toMatch(
+        /not as native geometry.*KHR_materials_sheen.*#1123/,
+      );
     } finally {
       warn.mockRestore();
     }

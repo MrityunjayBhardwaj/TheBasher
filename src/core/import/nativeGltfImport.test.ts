@@ -9,6 +9,7 @@ import { cornerCountOf, faceCountOf } from '../../app/faceCount';
 import { pointCountOf } from '../../app/pointIdentity';
 import { edgeCountOf } from '../../app/edgeIdentity';
 import { polygonLayoutOf } from '../../app/polygonLayout';
+import { cornerLayerBufferOf, cornerLayerNamesOf, uvChannelOf } from '../../app/cornerLayerNames';
 import { __resetRegistryForTests } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { applyOp } from '../dag/ops';
@@ -49,6 +50,11 @@ function texturedFixture(mutate: (json: Record<string, unknown>) => void): Array
   mutate(json);
   return new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer;
 }
+
+/** The cube's one primitive's attribute table, to add attributes to by accessor index. */
+const cubeAttributes = (json: Record<string, unknown>) =>
+  (json.meshes as { primitives: { attributes: Record<string, number> }[] }[])[0].primitives[0]
+    .attributes;
 
 type MaterialJson = Record<string, unknown> & { pbrMetallicRoughness: Record<string, unknown> };
 const materialOf = (json: Record<string, unknown>) => (json.materials as MaterialJson[])[0];
@@ -284,6 +290,15 @@ describe('#1062 — readGltfMesh carries every UV set and the colour as named la
   });
 });
 
+/** The params of the one PolyMeshData an import writes. */
+function polyMeshParamsOf(ops: readonly Op[]) {
+  const data = ops.find(
+    (op): op is Extract<Op, { type: 'addNode' }> =>
+      op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+  )!;
+  return PolyMeshDataParams.parse(data.params);
+}
+
 describe('buildNativeGltfImportOps', () => {
   beforeEach(() => {
     __resetRegistryForTests();
@@ -338,7 +353,11 @@ describe('buildNativeGltfImportOps', () => {
     );
   });
 
-  const refusals: ReadonlyArray<readonly [string, () => ArrayBuffer, string]> = [
+  /** `[what, file, issue, and — where the issue alone cannot tell guards apart — words only that guard says]` */
+  const refusals: ReadonlyArray<
+    | readonly [string, () => ArrayBuffer, string]
+    | readonly [string, () => ArrayBuffer, string, string]
+  > = [
     // Lifting this refusal gives a native Object one slot per primitive, and that is the day a
     // MaterialOverride's `slotIndex` needs a native meaning: today only the clone road reads it
     // (#1090). The row's name carries the issue so the red that retires it says what else is owed.
@@ -358,17 +377,20 @@ describe('buildNativeGltfImportOps', () => {
             KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatTexture: { index: 0 } },
           };
         }),
-      '#1062',
+      '#1123',
     ],
+    // A map may sample any UV set its mesh carries (two-uv-quad below); one the mesh does not
+    // carry is a malformed file, and the draw would decline the map with nothing said.
     [
-      'a texture on a second UV set',
+      'a texture on a UV set its mesh does not carry',
       () =>
         texturedFixture((json) => {
           (
             materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
           ).texCoord = 1;
         }),
-      '#1062',
+      '#1063',
+      'samples UV set 1, which mesh 0 does not carry',
     ],
     [
       'a texture reference carrying an extension',
@@ -378,7 +400,7 @@ describe('buildNativeGltfImportOps', () => {
             materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
           ).extensions = { KHR_texture_transform: { offset: [0.5, 0] } };
         }),
-      '#1062',
+      '#1123',
     ],
     [
       'a normal map with a scale',
@@ -386,7 +408,7 @@ describe('buildNativeGltfImportOps', () => {
         texturedFixture((json) => {
           materialOf(json).normalTexture = { index: 0, scale: 2 };
         }),
-      '#1062',
+      '#1123',
     ],
     [
       'an occlusion map with a strength',
@@ -394,9 +416,9 @@ describe('buildNativeGltfImportOps', () => {
         texturedFixture((json) => {
           materialOf(json).occlusionTexture = { index: 0, strength: 0.5 };
         }),
-      '#1062',
+      '#1123',
     ],
-    ['the UV-transform quad', () => fixture('public/assets/uv-transform-quad.gltf'), '#1062'],
+    ['the UV-transform quad', () => fixture('public/assets/uv-transform-quad.gltf'), '#1123'],
     [
       'an image that is neither PNG nor JPEG',
       () =>
@@ -441,25 +463,61 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1063',
     ],
-    // #1062 — each guard gets a case only it can refuse, then the real files that tripped it.
+    // #1125 — an attribute no render buffer slot draws. Each guard gets a case only it can refuse:
+    // the counts come from the slot limits, so a fifth UV set and a second colour are the first
+    // numbers past them.
     [
-      'a mesh with vertex colours',
+      'a fifth UV set',
       () =>
         jsonFixture((json) => {
-          const meshes = json.meshes as { primitives: { attributes: Record<string, number> }[] }[];
-          meshes[0].primitives[0].attributes.COLOR_0 = meshes[0].primitives[0].attributes.NORMAL;
+          const attributes = cubeAttributes(json);
+          for (let n = 1; n <= 4; n++) attributes[`TEXCOORD_${n}`] = attributes.TEXCOORD_0;
         }),
-      '#1062',
+      '#1125',
+      'carries TEXCOORD_4,',
     ],
     [
-      'a mesh with a second UV set',
+      'a second colour',
       () =>
         jsonFixture((json) => {
-          const meshes = json.meshes as { primitives: { attributes: Record<string, number> }[] }[];
-          const attributes = meshes[0].primitives[0].attributes;
-          attributes.TEXCOORD_1 = attributes.TEXCOORD_0;
+          const attributes = cubeAttributes(json);
+          attributes.COLOR_0 = attributes.NORMAL;
+          attributes.COLOR_1 = attributes.NORMAL;
         }),
-      '#1062',
+      '#1125',
+      'carries COLOR_1,',
+    ],
+    [
+      'tangents',
+      () =>
+        jsonFixture((json) => {
+          const attributes = cubeAttributes(json);
+          attributes.TANGENT = attributes.NORMAL;
+        }),
+      '#1125',
+      'carries TANGENT,',
+    ],
+    [
+      'a UV set numbered past a gap',
+      () =>
+        jsonFixture((json) => {
+          const attributes = cubeAttributes(json);
+          attributes.TEXCOORD_2 = attributes.TEXCOORD_0;
+        }),
+      '#1063',
+      'TEXCOORD_2 without TEXCOORD_1',
+    ],
+    [
+      'a colour that does not hold one value per vertex',
+      () =>
+        jsonFixture((json) => {
+          const accessors = json.accessors as Record<string, unknown>[];
+          const attributes = cubeAttributes(json);
+          accessors.push({ ...accessors[attributes.NORMAL], count: 12 });
+          attributes.COLOR_0 = accessors.length - 1;
+        }),
+      '#1063',
+      'a COLOR_0 that does not hold one value per vertex',
     ],
     [
       'a material extension the native material does not draw',
@@ -467,10 +525,15 @@ describe('buildNativeGltfImportOps', () => {
         jsonFixture((json) => {
           json.extensionsUsed = ['KHR_materials_sheen'];
         }),
-      '#1062',
+      '#1123',
     ],
-    ['the vertex-colour quad', () => fixture('public/assets/vertex-color-quad.gltf'), '#1062'],
-    ['the sheen quad', () => fixture('public/assets/sheen-quad.gltf'), '#1062'],
+    // Sheen AND a second UV set: still refused, and now for the sheen alone.
+    [
+      'the sheen quad',
+      () => fixture('public/assets/sheen-quad.gltf'),
+      '#1123',
+      'KHR_materials_sheen',
+    ],
     [
       'two nodes sharing one mesh',
       () =>
@@ -591,9 +654,42 @@ describe('buildNativeGltfImportOps', () => {
     },
   );
 
+  it('#1062 — the vertex-colour quad arrives native: its colour a layer the material names', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/vertex-color-quad.gltf'),
+      assetRef: 'user-imports/native/vertex-color-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const params = polyMeshParamsOf(result.ops);
+    const layers = cornerLayerNamesOf(meshGeometryRef(params.mesh).descriptor);
+    expect(layers).toEqual([{ name: 'Color', type: 'float4' }]);
+    // The material names the layer, and that name resolves on THIS mesh to the colour buffer.
+    expect(params.material?.geometry.colorLayer).toBe('Color');
+    expect(cornerLayerBufferOf(layers, params.material!.geometry.colorLayer!)).toBe('color');
+  });
+
+  it('#1062 — the two-UV quad arrives native: its map names the second UV set, which resolves to uv1', async () => {
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/two-uv-quad.gltf'),
+      assetRef: 'user-imports/native/two-uv-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: (bytes, mime) => writeProjectImage(storage, 'p', bytes, mime),
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const params = polyMeshParamsOf(result.ops);
+    const layers = cornerLayerNamesOf(meshGeometryRef(params.mesh).descriptor);
+    expect(layers.map((l) => l.name)).toEqual(['UVMap', 'UVMap.001']);
+    expect(params.material?.mapUvLayers?.albedo).toBe('UVMap.001');
+    expect(uvChannelOf(layers, params.material!.mapUvLayers!.albedo!)).toBe(1);
+    expect(params.material?.maps.albedo?.store).toBe('project');
+  });
+
   it.each(refusals)(
     'refuses %s whole, naming the issue that brings it across',
-    async (_, buffer, issue) => {
+    async (_, buffer, issue, says?: string) => {
       const result = await buildNativeGltfImportOps({
         buffer: buffer(),
         assetRef: 'user-imports/native/x.gltf',
@@ -605,6 +701,7 @@ describe('buildNativeGltfImportOps', () => {
       if (!('refused' in result)) return;
       expect(result.issue).toBe(issue);
       expect(result.refused.length).toBeGreaterThan(10);
+      if (says !== undefined) expect(result.refused).toContain(says);
     },
   );
 });
