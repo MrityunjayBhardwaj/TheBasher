@@ -115,9 +115,9 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
   await expect(row).toHaveText('my rig');
 
   // 4. Undo back past the Object's rename → it reads as the clip again, and follows again.
-  //    Counted by STATE, not by presses: the inspector's name field commits on Enter AND again
-  //    when it loses focus, each an undo entry of its own, so a fixed number of presses would
-  //    measure that field rather than this behaviour.
+  //    Counted by STATE, not by presses: how many entries a gesture writes belongs to the field
+  //    that took it (it once wrote two for Enter then blur, #1127), so a fixed number of presses
+  //    would measure that field rather than this behaviour.
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   for (let i = 0; i < 4 && (await row.innerText()) === 'my rig'; i++) {
     await page.keyboard.press('ControlOrMeta+z');

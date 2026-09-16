@@ -866,6 +866,10 @@ function QueryField({
       return; // the draft stays, so the typo is correctable
     }
     setRefusal(null);
+    // #1127 — Enter commits and the blur that follows commits again, and a click in and out
+    // commits with nothing typed. Only a value that moved is an edit; the rest would each be
+    // an undo entry that changes nothing (the guard `RenameInput` and `MaterialNameRow` carry).
+    if (next === value) return;
     dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`);
   };
 
@@ -2585,7 +2589,9 @@ function MaterialColorRow({
   // scrub, animation, agent edit) — the input is otherwise locally edited.
   useEffect(() => setDraft(effective), [effective]);
   const commit = (next: string) => {
-    if (!isHex6(next)) return;
+    // #1127 — the same value is not an edit (Enter then blur, or a click in and out), compared
+    // against what the field shows, so a scrubbed or animated colour is judged as seen.
+    if (!isHex6(next) || next === effective) return;
     onEdit(next);
   };
   const swatch = isHex6(draft) ? draft : '#000000';
