@@ -21,6 +21,7 @@
 // REF: src/viewport/referenceRig.ts (armatureBounds); src/nodes/ObjectNode.ts (the data
 //      socket); src/app/asset/importBvhFbx.ts (the caller); issue #1056.
 
+import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
@@ -64,6 +65,30 @@ export function skeletonObjectId(skeletonId: string): string {
   return `${skeletonId}_object`;
 }
 
+/**
+ * Every Object standing this skeleton in the scene, id-sorted (V22).
+ *
+ * Found by the `data` edge rather than by {@link skeletonObjectId}, so an Object pointed at the
+ * skeleton by hand counts as much as the one an import made.
+ *
+ * ONE lookup for every question that asks it: which Object a notice names
+ * (`bindMotionToCharacter.ts`) and which Objects a path placement moves
+ * (`placeGeneratedMotion.ts`, #1100). Two spellings could disagree about which Object stands a
+ * motion, and a notice would then name one that placement leaves at the origin.
+ */
+export function standingObjectsOf(state: DagState, skeletonId: string): string[] {
+  return Object.values(state.nodes)
+    .filter((n) => n.type === 'Object' && dataSourceOf(n.inputs?.data) === skeletonId)
+    .map((n) => n.id)
+    .sort();
+}
+
+/** The node an input socket reads from, or null — one binding or the first of a list. */
+function dataSourceOf(binding: unknown): string | null {
+  const one = (Array.isArray(binding) ? binding[0] : binding) as { node?: unknown } | undefined;
+  return typeof one?.node === 'string' ? one.node : null;
+}
+
 export interface SkeletonObjectArgs {
   readonly skeletonId: string;
   /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
@@ -74,9 +99,25 @@ export interface SkeletonObjectArgs {
   readonly sceneNodeId: string;
   /** True when the caller does not know the unit and the rig should stand at human height. */
   readonly normalise: boolean;
+  /**
+   * #1101 — the name the Object shows: its clip's, which is the file's base name on the import
+   * road and the prompt on the generation road. Blender's BVH importer does the same, naming
+   * the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
+   *
+   * Required, so a new caller cannot stand an Object the outliner lists by its id. A blank name
+   * adds no op: blank is the unnamed state `nodeDisplayName` falls back from.
+   */
+  readonly name: string;
 }
 
-/** The Object, its `data` edge from the skeleton, and its place among the scene's children. */
+/**
+ * The Object, its name, its `data` edge from the skeleton, and its place among the scene's
+ * children.
+ *
+ * The name goes on `meta.name` through a `setMeta` op, because that is the field the outliner's
+ * rename writes and `nodeDisplayName` reads first, and `addNode` carries no meta. It lands in the
+ * same op list, so the one undo that removes the Object removes its name with it.
+ */
 export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly ops: Op[];
   readonly objectId: string;
@@ -92,6 +133,9 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
       },
+      ...(args.name.trim()
+        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name }]
+        : []),
       {
         type: 'connect',
         from: { node: args.skeletonId, socket: 'out' },

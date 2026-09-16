@@ -29,6 +29,7 @@ vi.mock('../boot', () => ({
 import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './importBvhFbx';
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
+import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
@@ -177,7 +178,48 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const toasts = useNotificationStore.getState().toasts;
     expect(toasts).toHaveLength(1);
     expect(toasts[0].severity).toBe('info');
-    expect(toasts[0].message).toContain(`stands in the scene as ${objectId}`);
+    // #1101 — by the name of the file the director dropped, never by the internal id.
+    expect(toasts[0].message).toContain('stands in the scene as wave until');
+    expect(toasts[0].message).not.toContain(objectId!);
+  });
+
+  it('#1101 — the Object is named after the file, the same name its clip carries', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const state = useDagStore.getState().state;
+    const objectId = `${result!.skeletonId}_object`;
+    expect(state.nodes[objectId]?.meta?.name).toBe('wave');
+    expect((state.nodes[result!.clipId].params as { name?: string }).name).toBe('wave');
+    expect(nodeDisplayName(state.nodes, objectId)).toBe('wave');
+  });
+
+  it('#1101 — renaming the Object in the outliner is the name the next notice uses', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    // The outliner's rename is this op (`RenameInput.tsx`).
+    useDagStore
+      .getState()
+      .dispatch({ type: 'setMeta', nodeId: objectId, name: 'hero walk' }, 'user', 'rename');
+    const choice = chooseMotionTarget(
+      useDagStore.getState().state,
+      null,
+      'imported',
+      result!.skeletonId,
+    );
+    expect(choice.ok).toBe(false);
+    expect(choice.ok ? '' : choice.reason).toContain('stands in the scene as hero walk until');
+  });
+
+  it('#1101 — one undo takes the Object and its name away with the rest of the import', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    expect(useDagStore.getState().state.nodes[objectId]?.meta?.name).toBe('wave');
+    useDagStore.getState().undo();
+    const state = useDagStore.getState().state;
+    expect(state.nodes[objectId]).toBeUndefined();
+    expect(state.nodes[result!.skeletonId]).toBeUndefined();
   });
 
   it('#1103 — with no scene to stand it in, the warning stays', async () => {
@@ -263,6 +305,10 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const ops = dispatchSpy.mock.calls[0][0];
     expect(ops).toContainEqual(
       expect.objectContaining({ nodeId: `${result!.skeletonId}_object`, nodeType: 'Object' }),
+    );
+    // #1101 — named after the file, as the BVH road's is.
+    expect(useDagStore.getState().state.nodes[`${result!.skeletonId}_object`]?.meta?.name).toBe(
+      'rig',
     );
   });
 });

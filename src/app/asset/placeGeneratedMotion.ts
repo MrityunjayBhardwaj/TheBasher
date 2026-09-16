@@ -62,7 +62,9 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
+import { standingObjectsOf } from '../../core/import/skeletonObject';
 import { riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
+import { edgeTarget } from '../animate/graphNodes';
 import { clipBakeStates } from './bakeGeneratedClip';
 import { evaluate } from '../../core/dag/evaluator';
 import type { AnimationClipValue } from '../../nodes/types';
@@ -132,6 +134,28 @@ export function placementGroupFor(state: DagState, skeletonId: string): string |
   return null;
 }
 
+/** Why a placement's inputs cannot be applied, or null when they can. Shared by the character
+ *  and the stand-in so the two never accept different offsets. */
+function invalidPlacementInput(
+  offsetXZ: readonly [number, number],
+  rotationRadians: number | null,
+): string | null {
+  const [x, z] = offsetXZ;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) {
+    return `world offset is not a finite [x, z] pair — got [${x}, ${z}].`;
+  }
+  if (rotationRadians !== null && !Number.isFinite(rotationRadians)) {
+    return `world rotation is not a finite angle in radians — got ${rotationRadians}.`;
+  }
+  return null;
+}
+
+/** A waypoint-frame angle as the Y degrees a node's `rotation` takes. The sign is measured —
+ *  see the note in {@link placeCharacterAtPathStart}. */
+function threeYawDegrees(rotationRadians: number): number {
+  return -rotationRadians * (180 / Math.PI);
+}
+
 /**
  * Move a character so its motion starts where the path was drawn.
  *
@@ -149,15 +173,8 @@ export function placeCharacterAtPathStart(
   rotationRadians: number | null,
 ): PlacementOutcome {
   const [x, z] = offsetXZ;
-  if (!Number.isFinite(x) || !Number.isFinite(z)) {
-    return { ok: false, reason: `world offset is not a finite [x, z] pair — got [${x}, ${z}].` };
-  }
-  if (rotationRadians !== null && !Number.isFinite(rotationRadians)) {
-    return {
-      ok: false,
-      reason: `world rotation is not a finite angle in radians — got ${rotationRadians}.`,
-    };
-  }
+  const invalid = invalidPlacementInput(offsetXZ, rotationRadians);
+  if (invalid) return { ok: false, reason: invalid };
 
   const groupId = placementGroupFor(state, skeletonId);
   if (!groupId) {
@@ -186,7 +203,7 @@ export function placeCharacterAtPathStart(
   // so a character asked to set off toward +Z (angle +pi/2) needs euler.y =
   // -90 deg. Guessing this is a coin flip whose wrong face is a character walking
   // backwards down a correct path — plausible enough to be blamed on the model.
-  const yawDeg = rotationRadians === null ? rotation[1] : -rotationRadians * (180 / Math.PI);
+  const yawDeg = rotationRadians === null ? rotation[1] : threeYawDegrees(rotationRadians);
 
   // Effective translation is `position - pivot` (see the header) only while the
   // rotation is identity. In general the content's world start is
@@ -238,6 +255,58 @@ export function placeCharacterAtPathStart(
 // in the same place twice; a delta would walk it down the path one offset per
 // cook, which is the shape of bug that looks like drift and reads like physics.
 
+/**
+ * #1100 — stand a motion's own rig where its path starts.
+ *
+ * A motion's skeleton stands in the scene as an Object of its own (#1056, #1078), and that
+ * Object is what draws it: the armature band composes the bones over the Object's world
+ * transform (`collectSkeletonObjects`). So a motion generated along a path has something to
+ * place even with no character to play it. It used to be left at the origin and reported as
+ * "nothing to place".
+ *
+ * The same offset and facing a character's root Group gets, with less arithmetic. An Object has
+ * no pivot, so its position IS the offset. Its rotation is degrees into the same XYZ Euler a
+ * Group's is (`resolveWorldTransform.ts`, `localMatrix`), so the sign measured for the Group
+ * holds. Y and the X/Z rotation are left alone, as they are for a character, and the target is
+ * absolute, so a second cook writes the same pose.
+ */
+export function placeStandInAtPathStart(
+  state: DagState,
+  objectId: string,
+  offsetXZ: readonly [number, number],
+  rotationRadians: number | null,
+):
+  | { readonly ok: true; readonly ops: readonly Op[] }
+  | { readonly ok: false; readonly reason: string } {
+  const invalid = invalidPlacementInput(offsetXZ, rotationRadians);
+  if (invalid) return { ok: false, reason: invalid };
+
+  const params = state.nodes[objectId]?.params;
+  const position = vec3Param(params, 'position');
+  const rotation = vec3Param(params, 'rotation');
+  const ops: Op[] = [
+    {
+      type: 'setParam',
+      nodeId: objectId,
+      paramPath: 'position',
+      value: [offsetXZ[0], position[1], offsetXZ[1]] as [number, number, number],
+    },
+  ];
+  if (rotationRadians !== null) {
+    ops.push({
+      type: 'setParam',
+      nodeId: objectId,
+      paramPath: 'rotation',
+      value: [rotation[0], threeYawDegrees(rotationRadians), rotation[2]] as [
+        number,
+        number,
+        number,
+      ],
+    });
+  }
+  return { ok: true, ops };
+}
+
 export interface CookedPlacement {
   readonly ops: Op[];
   /** One per clip that asked to be placed and could not. Never swallowed: the
@@ -247,7 +316,8 @@ export interface CookedPlacement {
 }
 
 /**
- * Place every character whose generated clip came back with a world offset.
+ * Place every character whose generated clip came back with a world offset, and every Object
+ * standing that motion's own rig (#1100).
  *
  * A `worldOffsetXZ` of `null` means no world path was requested, and those clips
  * are skipped rather than placed at the origin — the distinction the generator
@@ -280,14 +350,30 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     // with the read band; the read band matches the RETARGETED clip and
     // deliberately excludes the source. Same socket name, different node.
     const skeletonIds = riggedSkeletonsForClip(state.nodes, clipId);
-    if (skeletonIds.length === 0) {
+
+    // #1100 — AND THE MOTION'S OWN RIG. Here the clip's `skeleton` edge IS the right read, for
+    // the reason the note above says it is the wrong one for a character: it reaches the SOURCE
+    // `Skeleton`, and the Objects standing that skeleton are this motion's rig in the scene.
+    // Placed whether or not a character plays the clip: while one does, the bind hides the rig,
+    // and undoing the bind should show it where the path starts rather than at the origin.
+    const sourceSkeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
+    const standing = sourceSkeletonId ? standingObjectsOf(state, sourceSkeletonId) : [];
+
+    if (skeletonIds.length === 0 && standing.length === 0) {
       refusals.push({
         clipId,
         reason:
           'the motion was generated along a world path, but the clip is not bound to a ' +
-          'character rig, so there is nothing to place — it will play at the origin.',
+          'character rig and its own rig does not stand in the scene, so there is nothing ' +
+          'to place — it will play at the origin.',
       });
       continue;
+    }
+
+    for (const objectId of standing) {
+      const placed = placeStandInAtPathStart(state, objectId, offset, rotation);
+      if (placed.ok) ops.push(...(placed.ops as Op[]));
+      else refusals.push({ clipId, reason: placed.reason });
     }
 
     // Every character the clip drives, not the first: one generated walk bound to
