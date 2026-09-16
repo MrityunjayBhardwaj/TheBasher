@@ -30,6 +30,7 @@ import {
   dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
+  unheldAttributesBakeRefusal,
 } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
@@ -2433,5 +2434,77 @@ describe('#1108 — an imported child baked by Apply stays under what it drew un
       rotation: [0, 0, 0],
       scale: [2, 2, 2],
     });
+  });
+});
+
+// #1119 — the baked store keeps position, normal, uv and index. A bake over anything more used to
+// drop it with nothing said; both bake roads now refuse by name before they clone or write.
+describe('#1119 — a bake refuses attributes the baked store cannot hold', () => {
+  function withCornerLayers(geometry: THREE.BufferGeometry): void {
+    const count = geometry.getAttribute('position').count;
+    geometry.setAttribute(
+      'color',
+      new THREE.Float32BufferAttribute(new Float32Array(count * 3), 3),
+    );
+    geometry.setAttribute('uv1', new THREE.Float32BufferAttribute(new Float32Array(count * 2), 2));
+  }
+
+  it('names every attribute it would drop, and nothing for a geometry it holds', () => {
+    const plain = new THREE.BoxGeometry(1, 1, 1);
+    expect(unheldAttributesBakeRefusal('box', plain)).toBeNull();
+    const layered = new THREE.BoxGeometry(1, 1, 1);
+    withCornerLayers(layered);
+    expect(unheldAttributesBakeRefusal('box', layered)).toContain('"box" carries color, uv1,');
+    expect(unheldAttributesBakeRefusal('box', layered)).toContain('would drop them.');
+    const one = new THREE.BoxGeometry(1, 1, 1);
+    one.setAttribute('uv1', one.getAttribute('uv').clone());
+    expect(unheldAttributesBakeRefusal('box', one)).toContain('carries uv1, which');
+    expect(unheldAttributesBakeRefusal('box', one)).toContain('would drop it.');
+  });
+
+  it('an imported child drawn from the file refuses, writes nothing and dispatches nothing', async () => {
+    const state = gltfChildState();
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    const clone = fakeClone();
+    withCornerLayers((clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry);
+    let dispatched = 0;
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+      gltfClone: clone,
+    });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
+    expect(dispatched).toBe(0);
+    expect(writeSpy).not.toHaveBeenCalled();
+  });
+
+  it('a mesh baked from the geometry registry refuses the same way', async () => {
+    const state = buildSplitSphereState();
+    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    });
+    // The registry hands every reader the SAME instance, so the bake reads the layers set here.
+    withCornerLayers(geometryRegistry.getForRead(mesh!.geometry)!);
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    const stateRef = { current: state };
+    const { fn, calls } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
+    expect(calls).toHaveLength(0);
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 });

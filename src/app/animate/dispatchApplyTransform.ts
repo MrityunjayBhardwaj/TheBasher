@@ -55,7 +55,7 @@ import {
 } from '../meshGeometryData';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
-import { writeBakedGeometry } from '../asset/bakedGeometryStore';
+import { unheldBakeAttributes, writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
 import type { EvaluatedMesh } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
@@ -327,6 +327,29 @@ export function multiMaterialBakeRefusal(
 }
 
 /**
+ * Why this Apply must be refused when the geometry it would bake carries attributes the baked
+ * store cannot hold, or `null` when it holds all of them (#1119).
+ *
+ * A third refusal of the same family as {@link multiMaterialBakeRefusal}: the bake would drop a
+ * colour layer, a second UV set or skin weights with nothing said, and the object would keep
+ * rendering from a file the director believes is saved. It names the attributes so the message
+ * says what would be lost. Asked of the SOURCE geometry, before it is cloned or written.
+ *
+ * Stored mesh data never reaches this: it is applied into, which keeps every corner layer. What
+ * reaches it is an import still drawn from the file's own copy, and it becomes unreachable when
+ * those import natively.
+ */
+export function unheldAttributesBakeRefusal(
+  selectedId: string,
+  geometry: THREE.BufferGeometry,
+): string | null {
+  const unheld = unheldBakeAttributes(geometry);
+  if (unheld.length === 0) return null;
+  const pronoun = unheld.length === 1 ? 'it' : 'them';
+  return `Apply: "${selectedId}" carries ${unheld.join(', ')}, which a baked mesh has no place to keep, so Apply would drop ${pronoun}. Apply stays unavailable on it until the import comes across as native mesh data.`;
+}
+
+/**
  * Why this Apply must be refused when the material that would be baked is one we never
  * captured, or `null` when there is nothing uncaptured to lose (#605 item 2).
  *
@@ -556,6 +579,8 @@ export async function dispatchApplyTransform(
   // 2 — clone the SHARED registry geometry before baking (H45).
   const src = getForRead(mesh.geometry);
   if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
+  const unheld = unheldAttributesBakeRefusal(selectedId, src);
+  if (unheld) return { ok: false, reason: unheld };
   const baked = src.clone();
   baked.applyMatrix4(split.matrix);
   if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
@@ -1138,6 +1163,9 @@ async function dispatchApplyGltfChild(
   // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
   const split = splitAppliedPose(placement.transform, mask, placement.full);
   if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
+
+  const unheld = unheldAttributesBakeRefusal(selectedId, child.geometry);
+  if (unheld) return { ok: false, reason: unheld };
 
   // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
   // every other instance/child sharing the buffer.
