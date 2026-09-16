@@ -195,6 +195,8 @@ export function mintMotionGenerateOps(
         bones: [],
         sceneNodeId,
         normalise: false,
+        // #1101 — the clip's name, so the outliner lists the rig as the motion it is.
+        name,
       })
     : undefined;
   if (standIn) ops.push(...standIn.ops);

@@ -215,6 +215,19 @@ describe('mintMotionGenerateOps (#935)', () => {
     expect(next.nodes.scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
     // The generator declares its unit, so the rig is not normalised.
     expect((object.params as { scale: number[] }).scale).toEqual([1, 1, 1]);
+    // #1101 — named after its clip, which defaults to the prompt.
+    expect(object.meta?.name).toBe('a slow walk');
+  });
+
+  it('#1101 — a named request names the Object with the clip’s name, not the prompt', () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, clipId, objectId } = mintMotionGenerateOps(s, { ...ARGS, name: 'hero walk' });
+    const next = apply(s, ops);
+    expect((next.nodes[clipId].params as { name: string }).name).toBe('hero walk');
+    expect(next.nodes[objectId!].meta?.name).toBe('hero walk');
   });
 
   it('in a project with no scene, adds no Object — there is nowhere to stand one', () => {
