@@ -243,3 +243,114 @@ test('#1062 — a second UV set and a colour survive Apply, save and reload, on 
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+// ── A MODIFIER OVER THE IMPORT ────────────────────────────────────────────────────────
+//
+// A native import can now sit under a modifier, and that draws through a different road
+// (`ModifiedMeshR`), which resolves layer names from the MODIFIER's descriptor. Unit-typed and
+// arity-gated, never drawn until this: an Array over each subject must still draw its colour and
+// its second UV set, with the vertex count doubled so the modifier is known to have run.
+test('#1062 — an Array modifier over the import still draws the colour and the second UV set', async ({
+  page,
+}) => {
+  test.slow();
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await openFresh(page);
+  await ingest(page, 'vertex-color-quad.gltf', 'p1062m-colour');
+  await ingest(page, 'two-uv-quad.gltf', 'p1062m-two-uv');
+  await expectBothDrawn(page, 'after import');
+
+  const { colour, twoUv } = await pair(page);
+  const vertexCount = (rootId: string) =>
+    page.evaluate((id) => {
+      type O3 = {
+        isMesh?: boolean;
+        geometry?: { getAttribute: (n: string) => { count: number } | undefined };
+        traverse: (f: (o: O3) => void) => void;
+      };
+      const w = window as unknown as {
+        __basher_three: { getState: () => { scene: { getObjectByName: (n: string) => O3 } } };
+      };
+      let n = 0;
+      w.__basher_three
+        .getState()
+        .scene.getObjectByName(id)
+        ?.traverse((o) => {
+          if (o.isMesh) n += o.geometry?.getAttribute('position')?.count ?? 0;
+        });
+      return n;
+    }, rootId);
+  const before = {
+    colour: await vertexCount(colour!.rootId),
+    twoUv: await vertexCount(twoUv!.rootId),
+  };
+  expect(before.colour).toBeGreaterThan(0);
+  expect(before.twoUv).toBeGreaterThan(0);
+
+  for (const [i, objectId] of [colour!.objectId, twoUv!.objectId].entries()) {
+    await page.evaluate(
+      ({ objectId, arr }) => {
+        type Dag = {
+          getState: () => {
+            state: { nodes: Record<string, { inputs: Record<string, unknown> }> };
+            dispatchAtomic: (ops: unknown[], s: string, l: string) => void;
+          };
+        };
+        const dag = (window as unknown as { __basher_dag: Dag }).__basher_dag.getState();
+        const mesh = (dag.state.nodes[objectId].inputs.data as { node: string }).node;
+        dag.dispatchAtomic(
+          [
+            {
+              type: 'disconnect',
+              from: { node: mesh, socket: 'out' },
+              to: { node: objectId, socket: 'data' },
+            },
+            { type: 'addNode', nodeId: arr, nodeType: 'ArrayModifier', params: { count: 2 } },
+            {
+              type: 'connect',
+              from: { node: mesh, socket: 'out' },
+              to: { node: arr, socket: 'target' },
+            },
+            {
+              type: 'connect',
+              from: { node: arr, socket: 'out' },
+              to: { node: objectId, socket: 'data' },
+            },
+          ],
+          'e2e',
+          '#1062 splice Array',
+        );
+      },
+      { objectId, arr: `p1062_arr_${i}` },
+    );
+  }
+
+  await expect
+    .poll(async () => ({
+      colour: await vertexCount(colour!.rootId),
+      twoUv: await vertexCount(twoUv!.rootId),
+    }))
+    .toEqual({ colour: before.colour * 2, twoUv: before.twoUv * 2 });
+  await expect
+    .poll(async () => {
+      // By root id: with a modifier between the Object and its mesh, the structural root scan no
+      // longer recognises the group as an import, so the roots this file already holds are named.
+      const [c] = await drawnImportMeshes(page, colour!.rootId);
+      const [t] = await drawnImportMeshes(page, twoUv!.rootId);
+      return {
+        colour: c && { vertexColors: c.vertexColors, hasColourBuffer: c.buffers.includes('color') },
+        twoUv: t && {
+          mapChannel: t.mapChannel,
+          hasUv1Buffer: t.buffers.includes('uv1'),
+          mapImageOk: t.mapImageOk,
+        },
+      };
+    }, 'under the Array modifier')
+    .toEqual({
+      colour: { vertexColors: true, hasColourBuffer: true },
+      twoUv: { mapChannel: 1, hasUv1Buffer: true, mapImageOk: true },
+    });
+  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
