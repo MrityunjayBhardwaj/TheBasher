@@ -154,7 +154,7 @@ const HANDLE_KINDS: Record<
         points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]),
         faceSizes: Uint32Array.from([3]),
         cornerPoints: Uint32Array.from([0, 1, 2]),
-        cornerUVs: null,
+        cornerLayers: [],
         cornerNormals: null,
       }),
     ),

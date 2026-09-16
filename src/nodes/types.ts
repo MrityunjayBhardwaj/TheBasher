@@ -522,12 +522,37 @@ export interface MeshTransform {
 }
 
 /**
+ * #1117 — the corner layer types a stored mesh holds: `float2` for a UV set, `float4` for an RGBA
+ * colour. Drawn from `AttributeType`, so a layer can never carry a width the attribute model does
+ * not declare.
+ */
+export type MeshCornerLayerType = Extract<
+  import('./attributes').AttributeType,
+  'float2' | 'float4'
+>;
+
+/**
+ * #1117 — one named, typed corner layer of a stored mesh: a UV set or a colour.
+ *
+ * Named and listed rather than a field each, for the reason `AttributeSet` gives: a closed struct
+ * cannot hold the next layer. ORDER IS MEANINGFUL: the build draws the `float2` layers to three's
+ * `uv`, `uv1`, `uv2`, `uv3` in the order they appear, which is the order glTF numbers `TEXCOORD_n`.
+ */
+export interface MeshCornerLayer {
+  /** Unique within the mesh (`UVMap`, `UVMap.001`, `Color`: Blender's names on import). */
+  readonly name: string;
+  readonly type: MeshCornerLayerType;
+  /** The type's width per corner, corner-major. */
+  readonly data: Float32Array;
+}
+
+/**
  * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
  *
  * Points are TOPOLOGICAL (a cube has 8), matching what `pointCountOf` means for a box. What makes
- * a render vertex split — a UV seam, a hard normal — lives on the CORNER, which is where Blender
- * keeps it too (`UVMap` is a corner attribute). Faces are listed in order; face `f` owns the next
- * `faceSizes[f]` entries of every corner array.
+ * a render vertex split — a UV seam, a colour edge, a hard normal — lives on the CORNER, which is
+ * where Blender keeps it too (`UVMap` and `Color` are corner attributes). Faces are listed in order;
+ * face `f` owns the next `faceSizes[f]` entries of every corner array.
  *
  * Immutable by contract: instances are shared by every descriptor minted from one params object.
  */
@@ -538,8 +563,8 @@ export interface MeshGeometryData {
   readonly faceSizes: Uint32Array;
   /** The point each corner sits on. Length = the sum of `faceSizes`. */
   readonly cornerPoints: Uint32Array;
-  /** uv per corner, or `null` when the mesh has no UV map. */
-  readonly cornerUVs: Float32Array | null;
+  /** Every UV set and colour, in order; empty when the mesh has none (#1117). */
+  readonly cornerLayers: readonly MeshCornerLayer[];
   /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
   readonly cornerNormals: Float32Array | null;
 }

@@ -666,7 +666,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
         points: 'AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/',
         faceSizes: 'AwAAAAMAAAADAAAAAwAAAA==',
         cornerPoints: 'AAAAAAIAAAABAAAAAAAAAAEAAAADAAAAAAAAAAMAAAACAAAAAQAAAAIAAAADAAAA',
-        cornerUVs: null,
+        cornerLayers: [],
         cornerNormals: null,
       },
       material: null,
