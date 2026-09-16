@@ -520,6 +520,18 @@ describe('buildNativeGltfImportOps', () => {
       'a COLOR_0 that does not hold one value per vertex',
     ],
     [
+      'a UV set that does not hold one value per vertex',
+      () =>
+        jsonFixture((json) => {
+          const accessors = json.accessors as Record<string, unknown>[];
+          const attributes = cubeAttributes(json);
+          accessors.push({ ...accessors[attributes.TEXCOORD_0], count: 12 });
+          attributes.TEXCOORD_0 = accessors.length - 1;
+        }),
+      '#1063',
+      'a TEXCOORD_0 that does not hold one value per vertex',
+    ],
+    [
       'a material extension the native material does not draw',
       () =>
         jsonFixture((json) => {
