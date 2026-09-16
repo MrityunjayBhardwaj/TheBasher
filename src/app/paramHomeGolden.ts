@@ -187,7 +187,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
   MotionGenerate:
-    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) name=(unrouted)',
+    // #1124 — `name` retired: the clip owns a generated motion's name.
+    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
@@ -341,4 +342,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1049 adds `PolyMeshData` as a wholly new node type: +1 type, +1 routed (`material`), +1
 // unrouted (`mesh`, see its row). Nothing existing moved:
 //   types 87 + 1 = 88 · routed 138 + 1 = 139 · unrouted 235 + 1 = 236
-export const GOLDEN_TOTALS = { types: 88, routed: 139, unrouted: 236 } as const;
+export const GOLDEN_TOTALS = { types: 88, routed: 139, unrouted: 235 } as const;

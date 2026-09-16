@@ -190,7 +190,7 @@ describe('a param declares its control on its schema (#872)', () => {
   });
 
   it('row 11 — no top-level `name` param is left read-only, stated as an absence (#1031)', () => {
-    // THE DURABLE FORM, and it is deliberately NOT a fixed list of the twenty-six. A node
+    // THE DURABLE FORM, and it is deliberately NOT a fixed list of the twenty-five. A node
     // type added tomorrow with a `name: z.string()` that forgets `nameParam()` reds HERE
     // rather than shipping a field its director cannot type — which is the whole failure
     // this row descends from (#1027, found in self-review at the twenty-seventh site).
@@ -222,14 +222,15 @@ describe('a param declares its control on its schema (#872)', () => {
     // `undeclared` can never be read as a pass from a loop that never ran.
     expect({ examined: examined > 0, nameCount: names.length, undeclared }).toEqual({
       examined: true,
-      nameCount: 26,
+      // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
+      nameCount: 25,
       undeclared: [],
     });
   });
 
   it('row 12 — `nameParam` declares the control and does NOT narrow what the schema accepts', () => {
     // Same pairing as row 8, and for the same reason: the widget is presentation, so a
-    // declared name must validate EXACTLY as the bare string it replaced. Twenty-six node
+    // declared name must validate EXACTLY as the bare string it replaced. Twenty-five node
     // types' saved projects parse through these fields, so a refinement added here would
     // be a migration, not a decoration.
     const declared = nameParam('Shot');
@@ -446,7 +447,8 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
-      count: 26,
+      // 25 since #1124 retired `MotionGenerate.name`.
+      count: 25,
     });
     expect(declaredWord.every((k) => k.endsWith('.name'))).toBe(true);
   });

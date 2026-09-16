@@ -148,7 +148,7 @@ export function mintMotionGenerateOps(
         seed: args.seed,
         model: args.model,
         ...(args.seconds !== undefined ? { seconds: args.seconds } : {}),
-        name,
+        // No `name` (#1124): the clip below owns it.
       },
     },
     // Empty until the generator says what rig it produced.

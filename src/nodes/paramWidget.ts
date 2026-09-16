@@ -164,13 +164,13 @@ export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
 /**
  * A node's SEMANTIC name, declared with the text control it is authored by (#1031).
  *
- * ── WHY A HELPER RATHER THAN `widget('text', …)` AT TWENTY-SIX SITES ──────────────────
+ * ── WHY A HELPER RATHER THAN `widget('text', …)` AT TWENTY-FIVE SITES ─────────────────
  *
  * This is the reasoning this module's header already states, applied to the param it is
  * most true of. A widget is a property of the PARAM TYPE, and `name` is the same field
- * wherever it appears: twenty-six node types carry a top-level `name: z.string()` whose
+ * wherever it appears: twenty-five node types carry a top-level `name: z.string()` whose
  * default is a domain label (`'Shot'`, `'clip'`, `'channel'`, `'track-to'`). Declaring the
- * control per node would spell one fact twenty-six times — the failure the spine comment
+ * control per node would spell one fact twenty-five times — the failure the spine comment
  * names — and a twenty-seventh node would have to remember. Calling this instead gets the
  * control for free and cannot forget to ask.
  *

@@ -10,7 +10,10 @@ import { applyOp } from '../core/dag/ops';
 import { emptyDagState } from '../core/dag/state';
 import type { EvalCtx, Op } from '../core/dag/types';
 import type { DagState } from '../core/dag/state';
+import { getNodeType } from '../core/dag/registry';
 import { registerAllNodes } from './registerAll';
+import { composeProject, loadProject, saveProject } from '../core/project/io';
+import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { MotionGenerateParams } from './MotionGenerate';
 import {
   __resetGeneratedClipsForTests,
@@ -101,16 +104,62 @@ describe('MotionGenerate (#902)', () => {
     expect(clipOf(at0).generation?.requestHash).not.toBe(clipOf(moved).generation?.requestHash);
   });
 
+  // #1124 — the rule this row has always pinned, "a rename must not re-run a paid call", now
+  // has its subject on the CLIP, which owns a generated motion's name. The generator has no name
+  // to rename: a write to one is refused as a stripped write rather than silently kept, and
+  // renaming the clip leaves this node's request exactly where it was.
   it('renaming does NOT change the request — a rename must not re-run a paid call', () => {
-    const s = buildGraph();
-    const renamed = applyOp(s, {
+    const s = applyOp(buildGraph(), {
+      type: 'addNode',
+      nodeId: 'clip',
+      nodeType: 'AnimationClip',
+      params: { name: 'a slow walk' },
+    }).next;
+    const renamedClip = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'clip',
+      paramPath: 'name',
+      value: 'stroll',
+    }).next;
+    expect(clipOf(renamedClip).generation?.requestHash).toBe(clipOf(s).generation?.requestHash);
+
+    const onGenerator = applyOp(s, {
       type: 'setParam',
       nodeId: 'gen',
       paramPath: 'name',
       value: 'stroll',
-    }).next;
-    expect(clipOf(renamed).generation?.requestHash).toBe(clipOf(s).generation?.requestHash);
-    expect(clipOf(renamed).name).toBe('stroll');
+    });
+    expect(onGenerator.reportable?.badge).toBe('stripped-write');
+    expect(onGenerator.next.nodes.gen.params).not.toHaveProperty('name');
+  });
+
+  it('a project saved with a v1 generator opens as v2, without the name (#1124)', async () => {
+    const storage = new MemoryStorage();
+    const saved = composeProject({ id: 'p1124', name: 'p1124', state: buildGraph() });
+    // Written as a pre-#1124 save would be: version 1, the name still in the params.
+    const gen = saved.state.nodes.gen;
+    saved.state.nodes.gen = {
+      ...gen,
+      version: 1,
+      params: { ...(gen.params as object), name: 'hero' },
+    };
+    await saveProject(storage, saved);
+    const loaded = await loadProject(storage, 'p1124');
+    expect(loaded.state.nodes.gen.version).toBe(2);
+    expect(loaded.state.nodes.gen.params).toEqual({
+      prompt: 'a slow walk',
+      seed: 7,
+      model: 'kimodo-base',
+    });
+  });
+
+  it('v1 → v2 drops the retired `name` and keeps the request byte-identical (#1124)', () => {
+    const v1 = { prompt: 'a slow walk', seed: 7, model: 'kimodo-base', seconds: 4, name: 'hero' };
+    const migrate = getNodeType('MotionGenerate')!.migrations![1];
+    const v2 = migrate(v1);
+    expect(v2).toEqual({ prompt: 'a slow walk', seed: 7, model: 'kimodo-base', seconds: 4 });
+    expect(MotionGenerateParams.safeParse(v2).success).toBe(true);
+    expect(v1).toHaveProperty('name'); // the step copies; it does not mutate what it was handed
   });
 
   it('the seed and the prompt DO change the request', () => {

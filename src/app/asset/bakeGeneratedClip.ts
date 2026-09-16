@@ -168,7 +168,8 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
     }
 
     ops.push(
-      { type: 'setParam', nodeId: clipId, paramPath: 'name', value: value.name },
+      // NOT the name (#1124). The clip owns it: a cook lands motion, and writing the name here is
+      // what put a director's rename back to the generator's on every re-cook.
       { type: 'setParam', nodeId: clipId, paramPath: 'duration', value: value.duration },
       { type: 'setParam', nodeId: clipId, paramPath: 'loop', value: value.loop },
       { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: value.keyframes },
