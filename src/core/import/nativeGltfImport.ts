@@ -78,7 +78,7 @@ import {
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
-import { UV_MAP } from '../../nodes/attributes';
+import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 
 /** Why a file cannot be imported natively yet, and the issue that changes that. */
 export interface NativeImportRefusal {
@@ -120,16 +120,6 @@ const TRIANGLE_FAN = 6;
 // layer it samples, so a mesh drawn with those layers would lose them silently on screen. Until it
 // can, the file is refused. The list is what the whole road honours, not what the reader can read.
 const HELD_ATTRIBUTES = new Set(['POSITION', 'NORMAL', 'TEXCOORD_0']);
-
-// #1062 — WHAT BLENDER CALLS THESE, because a stored mesh keeps its corner data by NAME and the
-// names should be the ones a user already reads in the reference. Measured by importing this
-// repo's own fixtures into Blender 5.1.1: `TEXCOORD_0` → `UVMap`, `TEXCOORD_1` → `UVMap.001`,
-// `COLOR_0` → `Color`. Inventing a second vocabulary here would mean the same file describes its
-// mesh differently depending on which program opened it.
-function uvLayerName(n: number): string {
-  return n === 0 ? UV_MAP : `${UV_MAP}.${String(n).padStart(3, '0')}`;
-}
-const COLOUR_LAYER_NAME = 'Color';
 
 const COMPONENT_BYTES: Record<number, number> = {
   5120: 1,
@@ -469,7 +459,7 @@ export function readGltfMesh(
     const read = gather(colourAccessor, components);
     if (read !== null) {
       cornerLayers.push({
-        name: COLOUR_LAYER_NAME,
+        name: COLOR_LAYER,
         type: 'float4',
         data: components === 4 ? read : widenToRgba(read),
       });

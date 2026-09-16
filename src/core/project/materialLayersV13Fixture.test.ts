@@ -122,15 +122,23 @@ describe('#1062 format-13 material fixture', () => {
   it('loads through the real loadProject seam, still sampling the second UV set', async () => {
     const project = await loaded();
     expect(project.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    const materials = materialsByName(project);
-    expect(materials.has('TwoUvQuadMat'), 'the material survives the load').toBe(true);
-    expect(albedoUvSet(materials.get('TwoUvQuadMat'))).toBe('second');
+    const material = materialsByName(project).get('TwoUvQuadMat');
+    expect(material, 'the material survives the load').toBeDefined();
+    expect(albedoUvSet(material)).toBe('second');
+    // 🔴 AND IN THE CURRENT SPELLING. Node params are NOT re-parsed through their schemas on load,
+    // so the old key would otherwise survive untouched and the reader above would answer from it —
+    // green while every replaced map silently sampled set 0. Naming the new spelling here is what
+    // makes this row mean "the ladder ran".
+    expect(material?.mapUvLayers?.albedo).toBe(SECOND_UV_LAYER);
+    expect(material?.mapUvSets, 'the retired numeric key is gone').toBeUndefined();
   });
 
   it('loads with the vertex-coloured material still asking for the mesh’s colours', async () => {
-    const materials = materialsByName(await loaded());
-    expect(materials.has('VColorMat'), 'the material survives the load').toBe(true);
-    expect(asksForColours(materials.get('VColorMat'))).toBe(true);
+    const material = materialsByName(await loaded()).get('VColorMat');
+    expect(material, 'the material survives the load').toBeDefined();
+    expect(asksForColours(material)).toBe(true);
+    expect(material?.geometry?.colorLayer).toBe('Color');
+    expect(material?.geometry?.vertexColors, 'the retired boolean is gone').toBeUndefined();
   });
 
   it('leaves the native material asking for neither — it never had either', async () => {

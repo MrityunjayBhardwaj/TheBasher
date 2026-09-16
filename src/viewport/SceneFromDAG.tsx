@@ -3527,7 +3527,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
               perMap: ir.mapUvTransforms,
               // #997 — the UV set a REPLACED slot samples. The inherited road needs
               // nothing: three's loader already bound the clone's texture to its set.
-              uvSets: ir.mapUvSets,
+              uvLayers: ir.mapUvLayers,
             },
           });
         }

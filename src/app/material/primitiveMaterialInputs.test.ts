@@ -196,7 +196,7 @@ describe('#532 — `vertexColors` is deliberately NOT a native spec field', () =
   //
   // So this is a REACH stated with a gate, not a silent omission — and the pair below
   // is what makes it a statement rather than a wish.
-  const flagged = irWith({ geometry: { opacity: 1, vertexColors: true } });
+  const flagged = irWith({ geometry: { opacity: 1, colorLayer: 'Color' } });
   const cutout = irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } });
 
   it('the native spec is INSENSITIVE to it', () => {

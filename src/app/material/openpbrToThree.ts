@@ -153,7 +153,11 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     opacity,
     transparent,
     alphaTest: ir.geometry.alphaCutoff ?? 0,
-    vertexColors: ir.geometry.vertexColors ?? false,
+    // #1062 — WHETHER a colour is asked for. WHICH layer is asked for does not reach three's
+    // material at all: the draw resolves the name against the geometry in hand, because only there
+    // is it known whether that layer exists. Until that lands (the next change on #1062) this
+    // stays exactly as true as the boolean it replaces.
+    vertexColors: ir.geometry.colorLayer !== undefined,
     doubleSided: ir.geometry.doubleSided ?? false,
     maps: threeMaps(ir.maps),
     uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it

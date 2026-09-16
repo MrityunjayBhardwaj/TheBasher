@@ -380,6 +380,57 @@ export const MATERIAL_INDEX = 'material_index';
 export const UV_MAP = 'UVMap';
 
 /**
+ * Blender's name for the nth UV layer a file carries (#1062): `UVMap`, then `UVMap.001`, …
+ *
+ * 🔑 THE SUFFIX IS A DE-DUPLICATION ARTEFACT, NOT A CONVENTION. `CustomData_set_layer_unique_name`
+ * runs `BLI_uniquename_cb` with `'.'` as its separator, so a second layer asking for `UVMap` gets
+ * `UVMap.001` (`customdata.cc:4083-4109`). Spelled the same way here so one file read by either
+ * program describes its mesh with the same words — and measured on the reference rather than
+ * assumed: importing this repo's `two-uv-quad.gltf` yields exactly `UVMap` and `UVMap.001`.
+ *
+ * NOT every corner UV layer is named this way — {@link PROJECTED_UV} is not — so a consumer asking
+ * "which buffer does this layer draw to" must read the mesh's OWN layer list rather than parse a
+ * name. This function names what an IMPORT writes; it does not define the vocabulary.
+ *
+ * REF: ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md (stages 1 and 2).
+ */
+export function uvLayerName(n: number): string {
+  return n === 0 ? UV_MAP : `${UV_MAP}.${String(n).padStart(3, '0')}`;
+}
+
+/**
+ * The corner-domain colour layer, under Blender's default name for a colour attribute
+ * (`customdata.cc:1891`, `CD_PROP_COLOR`). glTF's `COLOR_0` lands here.
+ *
+ * Blender quantises an imported float colour to `BYTE_COLOR`; this project keeps `float4`, because
+ * quantising what the file actually holds is quiet loss. The NAME is shared, the storage is not.
+ *
+ * REF: ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md (stage 2).
+ */
+export const COLOR_LAYER = 'Color';
+
+/**
+ * The `n` of {@link uvLayerName}, or `null` for a name that is not one of those.
+ *
+ * 🔴 THIS IS THE ANSWER FOR GEOMETRY THAT CARRIES NO LAYER LIST — the copy of a glTF the
+ * file's-copy road draws, where three named the buffers `uv`, `uv1`, … in the file's own
+ * `TEXCOORD` order, so the name's number IS the buffer. A mesh that carries its own ordered layer
+ * list answers the same question from THAT list instead, and must: its layers need not be an
+ * import's ({@link PROJECTED_UV} is not), so parsing their names would answer confidently about a
+ * layer the mesh never had.
+ *
+ * `null` means "not one of these names", never `0` — the caller decides what to do with an
+ * unresolvable name, and every caller here declines to honour it rather than guessing the first.
+ */
+export function uvLayerIndex(name: string): number | null {
+  if (name === UV_MAP) return 0;
+  const match = new RegExp(`^${UV_MAP}\\.(\\d{3})$`).exec(name);
+  if (match === null) return null;
+  const n = Number(match[1]);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+/**
  * The corner-domain UV layer a cube projection AUTHORS (#994) — distinct from {@link UV_MAP},
  * and the distinction is load-bearing rather than a naming preference.
  *
