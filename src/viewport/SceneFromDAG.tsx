@@ -154,6 +154,7 @@ import { flattenedMaterial, flattens } from '../app/material/flattenMaterial';
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
 import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
+import { cornerLayerNamesOf } from '../app/cornerLayerNames';
 // #638 (ns-1b step 5) — the ONE function that decides array-or-single, and the fixed-count
 // hydration a multi-slot mesh needs. No renderer decides for itself: each one supplies the
 // geometry, the assignment and the hydrated table, and draws whatever comes back.
@@ -2352,7 +2353,15 @@ function ModifiedMeshR({
   // spelling of identity to drift from. What it must NOT be is an omission, because an
   // omission computes the identical key and no tier below the signature can tell the two
   // apart.
-  const material = usePrimitiveMaterial(inlineMat, override, shading, null);
+  const material = usePrimitiveMaterial(
+    inlineMat,
+    override,
+    shading,
+    null,
+    // #1062 — a modifier's output carries its source's layers (the derived builders merge
+    // attributes by name), so the descriptor walk answers for the whole chain from here.
+    cornerLayerNamesOf(value.geometry.descriptor),
+  );
   const geom = getForAttach(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
@@ -2640,6 +2649,10 @@ function ObjectMeshR({
     // third: an absent key and a road that has none are different claims, and only the
     // caller knows which one it is making.
     mat && mat === data?.material ? (data?.materialKey ?? null) : null,
+    // #1062 — the layers of the mesh THIS object draws, so the material's named UV and
+    // colour layers resolve against the geometry actually in hand. `[]` for an Empty: no
+    // data, no mesh, nothing for a name to resolve against.
+    data ? cornerLayerNamesOf(data.geometry.descriptor) : [],
   );
   // #389 — an Object does not draw what the asset clone is already drawing: without that
   // rule the pair draws a second mesh from one geometry, and on a skinned child the second
@@ -2748,6 +2761,8 @@ function MultiMaterialMeshR({
     MODIFIED_FALLBACK_MATERIAL,
     override,
     shading,
+    // #1062 — one list for all eight slots: they are eight materials on THIS mesh.
+    cornerLayerNamesOf(geometry.descriptor),
   );
   const geom = getForAttach(geometry);
   const assignment = materialAssignmentOf(attributeKey, slots, geometry);
@@ -2884,7 +2899,10 @@ function FlattenedBakedMeshR({
   // evaluator minted describes it — the captured spec is exactly what flatten discards. The
   // seam's fallback keys the flattened IR with the evaluator's own function
   // (`materialKeyReach.gate.test.ts` case D counts this call).
-  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
+  // `[]` stated, not omitted: a bake keeps position/normal/uv/index only, and a FLATTENED
+  // material is built from the override alone — which carries no layer names to resolve
+  // anyway. Nothing here can name a layer, so nothing resolves, which is the answer.
+  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null, []);
   return <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />;
 }
 
@@ -3096,7 +3114,14 @@ function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void
   // the cutout render respond. vertexColors only ever set to its captured value
   // (the clone's shader is already compiled for it → no needsUpdate churn).
   if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
-  if ('vertexColors' in next) next.vertexColors = tp.vertexColors;
+  // #1062 — the compile carries the colour layer's NAME now, and the reduction to three's
+  // flag happens HERE, at this road's own boundary, because the answer is road-specific.
+  // This road draws three's copy of the file, which carries no layer list to resolve a name
+  // against — so the only question it can answer is whether a colour was asked for at all,
+  // which is exactly what the boolean meant before names existed. The native road resolves
+  // the name properly against the drawn mesh's layers (`cornerLayerNames.ts`). Same split as
+  // `uvLayerIndex` vs that module, for the same reason.
+  if ('vertexColors' in next) next.vertexColors = tp.colorLayer !== undefined;
   // doubleSided → three `side`. Identity for an unedited import (matches the
   // clone); editing re-clones first, so the new `side` compiles correctly. The
   // mapping is shared with the native road's spec assembly (#532) rather than

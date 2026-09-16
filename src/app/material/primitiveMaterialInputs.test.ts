@@ -33,8 +33,9 @@ import type * as THREE from 'three';
 import { stripComments } from '../../test-utils/sourceScan';
 import { BoxDataNode, BoxDataParams } from '../../nodes/BoxData';
 import { hydrateInlineMaterial } from '../../nodes/materialSchema';
-import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
+import type { InlineMaterialSpec, MaterialValue, MeshDataValue } from '../../nodes/types';
 import { keyOf } from '../materialRegistry';
+import type { NamedCornerLayer } from '../cornerLayerNames';
 import {
   compilePrimitiveMaterial,
   irKeyFor,
@@ -91,6 +92,12 @@ interface World {
   readonly override?: MaterialValue;
   readonly shading: string;
   readonly textures: ResolvedMaps;
+  /**
+   * #1062 — the drawn mesh's ordered corner layers: the fourth render-time contribution the
+   * evaluator cannot see. Defaults to `[]` (no layer list), which is what every world that
+   * does not name a layer would resolve to anyway.
+   */
+  readonly layers: readonly NamedCornerLayer[];
 }
 
 const world = (name: string, patch: Partial<Omit<World, 'name'>> = {}): World => ({
@@ -99,18 +106,21 @@ const world = (name: string, patch: Partial<Omit<World, 'name'>> = {}): World =>
   override: undefined,
   shading: 'material',
   textures: NO_MAPS,
+  layers: [],
   ...patch,
 });
 
 function derive(w: World) {
   const compiled = compilePrimitiveMaterial(w.ir, w.override);
   return {
-    spec: primitiveMaterialSpec(compiled, w.shading, w.textures),
+    spec: primitiveMaterialSpec(compiled, w.shading, w.textures, w.layers),
     key: primitiveMaterialKey({
       irKey: irKeyFor(w.ir, null),
       override: w.override,
       shading: w.shading,
       textures: w.textures,
+      compiled,
+      layers: w.layers,
     }),
   };
 }
@@ -150,6 +160,22 @@ const CORPUS: readonly World[] = [
   world('one map resolved', { textures: { ...NO_MAPS, map: tex('t1') } }),
   world('a different texture instance', { textures: { ...NO_MAPS, map: tex('t2') } }),
   world('a different slot', { textures: { ...NO_MAPS, normalMap: tex('t1') } }),
+  // #1062 — the fourth render-time contribution. BOTH halves of the pair name a layer, and
+  // the two worlds differ ONLY in whether the mesh carries it: that is the exact pair the
+  // old design could not separate, and the pair whose collision drew one mesh's answer on
+  // the other. A world naming nothing would perturb neither the spec nor the key and would
+  // sit in the corpus proving nothing.
+  world('names a colour layer, mesh has it', {
+    ir: irWith({ geometry: { opacity: 1, colorLayer: 'Color' } }),
+    layers: [{ name: 'Color', type: 'float4' }],
+  }),
+  world('names a UV layer, mesh has it at 1', {
+    ir: irWith({ mapUvLayers: { albedo: 'UVMap.001' } }),
+    layers: [
+      { name: 'UVMap', type: 'float2' },
+      { name: 'UVMap.001', type: 'float2' },
+    ],
+  }),
 ];
 
 describe('#536 S2 — the composed key is at least as discriminating as the spec walk', () => {
@@ -186,56 +212,58 @@ describe('#536 S2 — the composed key is at least as discriminating as the spec
   });
 });
 
-describe('#532 — `vertexColors` is deliberately NOT a native spec field', () => {
-  // It is not a property of the material; it is a request for a geometry attribute the
-  // material does not own and a SHARED material cannot promise — two meshes may share
-  // one material and differ in whether they carry `COLOR_0`. The only producer of the
-  // flag is the glTF import chain, which sets it exactly when the imported primitive
-  // has the attribute and applies it on the imported material, never through this
-  // registry. Applying it here was tried and observed: a native box renders pure black.
+describe('#532 / #1062 — `vertexColors` is a native spec field, resolved against the mesh', () => {
+  // ── WHAT THIS BLOCK USED TO SAY, AND WHY IT CHANGED ──────────────────────────────────
   //
-  // So this is a REACH stated with a gate, not a silent omission — and the pair below
-  // is what makes it a statement rather than a wish.
+  // It used to assert the exact opposite: that the native spec was INSENSITIVE to the
+  // colour flag. That was right for as long as the flag was unanswerable here — it is not a
+  // property of the material but a request for a geometry attribute, and a SHARED material
+  // cannot promise one, because two meshes may share a material and differ in whether they
+  // carry the layer. Applying it anyway was tried and observed: a native box rendered pure
+  // black.
+  //
+  // #1062 changes the question rather than the answer. The material now NAMES the layer it
+  // reads, and the name is resolved against the drawn mesh's own ordered layer list BEFORE
+  // the spec is assembled — so what reaches the spec is not a request, it is the answer for
+  // THIS mesh. The sharing objection is met by the key, which carries the resolved answer.
+  //
+  // 🔴 THE OLD BLOCK'S REAL CONCERN SURVIVES AS THE SECOND ROW, and it is the one that
+  // protects the whole existing population: a material naming a colour over a mesh that does
+  // not carry it must key EXACTLY as it did before. Otherwise every such material splits and
+  // the GPU cache re-mints for a layer nobody can draw.
   const flagged = irWith({ geometry: { opacity: 1, colorLayer: 'Color' } });
   const cutout = irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } });
+  /** A mesh that carries the layer `flagged` names. */
+  const WITH_COLOUR: readonly NamedCornerLayer[] = [{ name: 'Color', type: 'float4' }];
 
-  it('the native spec is INSENSITIVE to it', () => {
-    const plain = primitiveMaterialSpec(
-      compilePrimitiveMaterial(BASE_IR, undefined),
-      'material',
-      NO_MAPS,
-    );
-    const withFlag = primitiveMaterialSpec(
-      compilePrimitiveMaterial(flagged, undefined),
-      'material',
-      NO_MAPS,
-    );
-    expect(keyOf(withFlag)).toBe(keyOf(plain));
-    expect(Object.keys(withFlag)).not.toContain('vertexColors');
+  const specFor = (ir: InlineMaterialSpec, layers: readonly NamedCornerLayer[]) =>
+    primitiveMaterialSpec(compilePrimitiveMaterial(ir, undefined), 'material', NO_MAPS, layers);
+
+  it('draws the colour when the mesh named carries it', () => {
+    const spec = specFor(flagged, WITH_COLOUR);
+    expect(spec.vertexColors).toBe(true);
+    expect(keyOf(spec)).not.toBe(keyOf(specFor(BASE_IR, WITH_COLOUR)));
+  });
+
+  it('is INSENSITIVE to a colour the drawn mesh does not carry — the population is not re-keyed', () => {
+    // `[]` is what every geometry without a layer list answers, which today is most of them.
+    expect(keyOf(specFor(flagged, []))).toBe(keyOf(specFor(BASE_IR, [])));
+    expect(specFor(flagged, []).vertexColors).toBe(false);
   });
 
   it('…and the PRESENCE CONTROL: the same shape of edit on a sibling flag DOES reach it', () => {
     // Without this, "insensitive" is indistinguishable from a compile that dropped the
     // whole geometry lobe, or from a spec builder that ignores its input.
-    const plain = primitiveMaterialSpec(
-      compilePrimitiveMaterial(BASE_IR, undefined),
-      'material',
-      NO_MAPS,
-    );
-    const withCutout = primitiveMaterialSpec(
-      compilePrimitiveMaterial(cutout, undefined),
-      'material',
-      NO_MAPS,
-    );
-    expect(keyOf(withCutout)).not.toBe(keyOf(plain));
+    const withCutout = specFor(cutout, []);
+    expect(keyOf(withCutout)).not.toBe(keyOf(specFor(BASE_IR, [])));
     expect(withCutout.alphaTest).toBe(0.5);
   });
 
-  it('the compile still carries it, so the glTF road is unaffected', () => {
-    // The exclusion is at the SPEC, not at the compiler — `applyOpenpbrScalars` reads
-    // the compiled value directly and must keep seeing it.
-    expect(compilePrimitiveMaterial(flagged, undefined).vertexColors).toBe(true);
-    expect(compilePrimitiveMaterial(BASE_IR, undefined).vertexColors).toBe(false);
+  it('the compile carries the NAME, not the flag, so each road reduces it itself', () => {
+    // The resolution is at the SPEC, not at the compiler. The glTF clone road reads the
+    // compiled value directly and reduces it against geometry that has no layer list.
+    expect(compilePrimitiveMaterial(flagged, undefined).colorLayer).toBe('Color');
+    expect('colorLayer' in compilePrimitiveMaterial(BASE_IR, undefined)).toBe(false);
   });
 });
 
@@ -347,6 +375,12 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     maps: 'textures',
     uvTransform: 'uvTransform',
     mapUvTransforms: 'mapUvTransforms',
+    // #1062 — both land under a different name for the same reason `doubleSided` does: the
+    // compile carries the LAYER NAME the material asks for, and the spec carries the RESOLVED
+    // answer in the build's vocabulary. The rename is the resolution step, which is exactly
+    // what makes a declared correspondence necessary here rather than name equality.
+    colorLayer: 'vertexColors',
+    mapUvLayers: 'mapUvChannels',
   };
 
   /**
@@ -357,10 +391,14 @@ describe('#566 — every field the compile produces is carried on the spec, or e
    * member today.
    */
   const EXCLUDED: Readonly<Record<string, string>> = {
-    vertexColors:
-      'asks the shader for a COLOR_0 attribute the GEOMETRY must supply, so a shared ' +
-      'material cannot answer it without knowing who is holding it (#532 — wiring it ' +
-      'through renders a native primitive pure black, observed in a browser)',
+    // EMPTY, and that is a result rather than an oversight (#1062). Its one member was
+    // `vertexColors`, excluded because it asked the shader for a geometry attribute a SHARED
+    // material could not promise — wiring it through rendered a native primitive pure black,
+    // observed in a browser. A material that NAMES its layer is resolved against the drawn
+    // mesh before the spec exists, so the compile no longer emits a request at all: it emits
+    // `colorLayer`, and the spec carries the answer. The set stays here, checked and empty,
+    // because the NEXT field the compile learns to produce must land in one of these two maps
+    // or be accused — which is this whole census's subject.
   };
 
   /**
@@ -376,8 +414,11 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     const worlds: InlineMaterialSpec[] = [
       BASE_IR,
       irWith({ emission: { color: '#ff8800', intensity: 2 } }),
-      irWith({ geometry: { doubleSided: true, alphaCutoff: 0.5, vertexColors: true } }),
+      irWith({ geometry: { doubleSided: true, alphaCutoff: 0.5, colorLayer: 'Color' } }),
       irWith({ mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0.1, 0], rotation: 0 } } }),
+      // #1062 — `mapUvLayers` is conditionally emitted too, so without a world naming a UV
+      // layer the union is blind to it and every case in this file would be blind with it.
+      irWith({ mapUvLayers: { albedo: 'UVMap.001' } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -402,21 +443,34 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(18);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(17);
-    expect(produced.filter((f) => f in EXCLUDED).length).toBe(1);
+    expect(produced.length).toBe(19);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(19);
+    expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
   it('every CARRIED target really is a key of the assembled spec', () => {
     // Guards the map itself. A stale entry — right-hand side renamed, or the field dropped
     // from the assembly — would otherwise let the first case pass while nothing arrives.
+    // #1062 — the IR must name BOTH layers and the layer list must RESOLVE them, or
+    // `vertexColors`/`mapUvChannels` are absent from the assembled spec and this case accuses
+    // two correct entries. The resolution is the point: an unresolved name is deliberately
+    // absent, so the world here has to be one where the mesh really carries what is named.
     const spec = primitiveMaterialSpec(
       compilePrimitiveMaterial(
-        irWith({ mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } } }),
+        irWith({
+          mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } },
+          mapUvLayers: { albedo: 'UVMap.001' },
+          geometry: { opacity: 1, colorLayer: 'Color' },
+        }),
         undefined,
       ),
       'flat',
       NO_MAPS,
+      [
+        { name: 'UVMap', type: 'float2' },
+        { name: 'UVMap.001', type: 'float2' },
+        { name: 'Color', type: 'float4' },
+      ],
     );
     const produced = producedFields();
     for (const [compiled, specField] of Object.entries(CARRIED)) {
@@ -510,9 +564,13 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // reason beside it has become false. So: an excluded field must genuinely be absent
     // from the spec, and must genuinely still be produced.
     const spec = primitiveMaterialSpec(
-      compilePrimitiveMaterial(irWith({ geometry: { vertexColors: true } }), undefined),
+      compilePrimitiveMaterial(
+        irWith({ geometry: { opacity: 1, colorLayer: 'Color' } }),
+        undefined,
+      ),
       'flat',
       NO_MAPS,
+      [],
     );
     const produced = producedFields();
     for (const field of Object.keys(EXCLUDED)) {
@@ -622,7 +680,10 @@ describe('#1076 — a flatten override draws the override alone on the native ro
       thickness: compiled.thickness,
       alphaTest: compiled.alphaTest,
       doubleSided: compiled.doubleSided,
-      vertexColors: compiled.vertexColors,
+      // #1062 — the compile carries the colour layer's NAME now; `vertexColors` is resolved
+      // later, against a mesh. Reading the removed field here compared `undefined` to
+      // `undefined` and passed whatever flatten did to the colour.
+      colorLayer: compiled.colorLayer,
       uvTransform: compiled.uvTransform,
     }).toEqual({
       ior: fresh.ior,
@@ -632,7 +693,7 @@ describe('#1076 — a flatten override draws the override alone on the native ro
       thickness: fresh.thickness,
       alphaTest: fresh.alphaTest,
       doubleSided: fresh.doubleSided,
-      vertexColors: fresh.vertexColors,
+      colorLayer: fresh.colorLayer,
       uvTransform: fresh.uvTransform,
     });
   });

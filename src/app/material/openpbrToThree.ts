@@ -85,9 +85,18 @@ export interface ThreeMaterialParams {
    *  (three's default). Captured from `geometry.alphaCutoff` so editing it
    *  changes the render; identity for an unedited import (matches the clone). */
   readonly alphaTest: number;
-  /** Render per-vertex COLOR_0 (glTF vertex colours). Captured from
-   *  `geometry.vertexColors`; false (default) for a native primitive. */
-  readonly vertexColors: boolean;
+  /**
+   * #1062 — the NAME of the colour layer this material reads, absent when it reads none.
+   *
+   * 🔴 A NAME AND NOT three's `vertexColors` BOOLEAN, although this is three's vocabulary
+   * everywhere else, because the boolean cannot be answered here. "Draw per-vertex colour"
+   * is only true of a material TOGETHER WITH a mesh that carries that layer, and this
+   * compile sees no mesh. Each road reduces the name to the flag at its own boundary, with
+   * the geometry in hand: the native road resolves it against the drawn mesh's ordered layer
+   * list (`cornerLayerNames.ts`), and the file's-copy road — whose geometry has no layer
+   * list — asks only whether a colour was requested at all.
+   */
+  readonly colorLayer?: string;
   /** Render both faces (glTF `doubleSided`). Captured from
    *  `geometry.doubleSided`; false (front-only) by default. The renderer maps
    *  this to three `side` (DoubleSide / FrontSide) — kept boolean here so this
@@ -126,7 +135,20 @@ export interface ThreeMaterialParams {
    * tier; same answer: absent means absent.
    */
   readonly mapUvTransforms?: ThreeMapUvTransforms;
+  /**
+   * #1062 — the UV LAYER each map samples, re-keyed into THREE's slot vocabulary so both
+   * apply roads read one spelling, exactly as {@link mapUvTransforms} is. A slot not listed
+   * names no layer, which means "sample the first UV buffer" — three's own default.
+   *
+   * Names, not channel numbers, and for the same reason {@link colorLayer} is a name: the
+   * channel is only knowable against the drawn mesh's layer list, which this compile has no
+   * access to. Absent rather than empty, same trap, same answer.
+   */
+  readonly mapUvLayers?: ThreeMapUvLayers;
 }
+
+/** The UV layer a map slot samples, in THREE's slot vocabulary. */
+export type ThreeMapUvLayers = { readonly [K in keyof ThreeMaterialMaps]?: string };
 
 /**
  * Compile the OpenPBR IR to three.js MeshPhysicalMaterial params. Pure / sync.
@@ -135,6 +157,7 @@ export interface ThreeMaterialParams {
  */
 export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
   const perMap = threeMapUvTransforms(ir.mapUvTransforms);
+  const perMapLayers = threeMapUvLayers(ir.mapUvLayers);
   const transmission = ir.transmission.weight;
   const opacity = ir.geometry.opacity;
   // three needs `transparent` for BOTH a transmissive lobe AND a <1 opacity.
@@ -153,11 +176,12 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     opacity,
     transparent,
     alphaTest: ir.geometry.alphaCutoff ?? 0,
-    // #1062 — WHETHER a colour is asked for. WHICH layer is asked for does not reach three's
-    // material at all: the draw resolves the name against the geometry in hand, because only there
-    // is it known whether that layer exists. Until that lands (the next change on #1062) this
-    // stays exactly as true as the boolean it replaces.
-    vertexColors: ir.geometry.colorLayer !== undefined,
+    // #1062 — WHICH layer is asked for, carried through rather than reduced to a flag here.
+    // OMITTED, never `undefined`, for the reason `mapUvTransforms` gives below: this object
+    // flows into a generic content walk, and a materialised absent key re-keys every material.
+    ...(ir.geometry.colorLayer !== undefined ? { colorLayer: ir.geometry.colorLayer } : {}),
+    // #1062 — and which UV layer each map samples. Same omission rule, same reason.
+    ...(perMapLayers ? { mapUvLayers: perMapLayers } : {}),
     doubleSided: ir.geometry.doubleSided ?? false,
     maps: threeMaps(ir.maps),
     uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it
@@ -191,6 +215,25 @@ export function threeMapUvTransforms(
   for (const slot of IR_MAP_SLOTS) {
     const placement = perMap[slot];
     if (placement) out[THREE_SLOT_OF[slot]] = placement;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * #1062 — the per-map UV LAYER NAMES, re-keyed the same way and absent on the same terms
+ * as {@link threeMapUvTransforms}. Split from that function rather than folded into it
+ * because the two bags are independent on the IR: a slot may name a layer and carry no
+ * placement, or the reverse, and merging them here would invent an entry for whichever
+ * half was missing.
+ */
+export function threeMapUvLayers(
+  perMap: InlineMaterialSpec['mapUvLayers'],
+): ThreeMapUvLayers | undefined {
+  if (!perMap) return undefined;
+  const out: { -readonly [K in keyof ThreeMaterialMaps]?: string } = {};
+  for (const slot of IR_MAP_SLOTS) {
+    const layer = perMap[slot];
+    if (layer) out[THREE_SLOT_OF[slot]] = layer;
   }
   return Object.keys(out).length > 0 ? out : undefined;
 }

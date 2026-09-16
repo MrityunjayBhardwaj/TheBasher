@@ -172,10 +172,15 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     // The NAME the colour arrives under — the same one the native reader writes onto the mesh's
     // layer list, so both roads say one word for one thing.
     expect(vc.geometry.colorLayer).toBe('Color');
-    expect(openpbrToThree(vc).vertexColors).toBe(true);
+    // The compile carries the NAME through rather than reducing it to three's boolean: whether
+    // a colour is DRAWN depends on the mesh, which the compile never sees, so each road reduces
+    // it at its own boundary (#1062).
+    expect(openpbrToThree(vc).colorLayer).toBe('Color');
     // absent COLOR_0 → no layer named (native primitives never set it).
     expect(gltfJsonMaterialToOpenpbr({}).geometry.colorLayer).toBeUndefined();
-    expect(openpbrToThree(gltfJsonMaterialToOpenpbr({})).vertexColors).toBe(false);
+    // ABSENT, not `undefined` — the compile's output is walked generically for identity, so a
+    // materialised absent key would re-key every material that never names a colour.
+    expect('colorLayer' in openpbrToThree(gltfJsonMaterialToOpenpbr({}))).toBe(false);
   });
 
   it('captures doubleSided → geometry.doubleSided (front-only by default)', () => {
