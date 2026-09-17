@@ -821,6 +821,9 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
     cornerPoints,
     cornerLayers,
     cornerNormals,
+    // A pose moves points and turns corners; it leaves faces where they are, in the same order,
+    // so every face layer (a material index above all) comes through as it was (#1052).
+    faceLayers: data.faceLayers.map((layer) => ({ ...layer, data: new Int32Array(layer.data) })),
   };
 }
 
