@@ -42,10 +42,12 @@ import type { DagState } from '../../core/dag/state';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
 import type {
+  BakedMapSlot,
   BakedMaterialSpec,
   InlineMaterialSpec,
   MeshGeometryData,
   MeshTransform,
+  UvPlacement,
   Vec3,
 } from '../../nodes/types';
 import {
@@ -75,6 +77,8 @@ import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
 import { resolveParentWorldMatrix, resolveWorldTransform } from '../resolveWorldTransform';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
 import { captureBakedMaterial } from './captureBakedMaterial';
+import { openpbrToThree } from '../material/openpbrToThree';
+import { isIdentityPlacement, resolveSlotPlacement } from '../material/uvPlacement';
 import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
 import type { GltfAssetValue } from '../../nodes/types';
 
@@ -266,29 +270,62 @@ function reverseTriangleWinding(geometry: THREE.BufferGeometry): void {
   }
 }
 
-/** Build a BakedMaterialSpec from a primitive's inline material (M6 — null maps). */
+/**
+ * Build a BakedMaterialSpec from a primitive's inline material: the material it DRAWS (#1139).
+ *
+ * Compiled through `openpbrToThree`, the same compile the primitive's own draw reads, so the bake
+ * keeps what was on screen: every map ref in three's slot names, the placement each mapped slot
+ * draws with, and the real scalars. This used to write six null maps and a frozen pre-#178 look
+ * (roughness 0.5, metalness 0), which dropped a textured primitive's maps and shifted a new box's
+ * roughness from its drawn 0.3 on every Apply. The inline road places about the centre, as
+ * `BakedMeshR` does, so a placement carries unchanged.
+ *
+ * `null` (a data node with no material) keeps the frozen default it always baked.
+ */
 function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterialSpec {
+  if (!material) {
+    return {
+      materialClass: 'standard',
+      color: '#ffffff',
+      roughness: 0.5,
+      metalness: 0,
+      opacity: 1,
+      transparent: false,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      map: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+    };
+  }
+  const drawn = openpbrToThree(material);
+  const placements: { [K in BakedMapSlot]?: UvPlacement } = {};
+  for (const slot of Object.keys(drawn.maps) as BakedMapSlot[]) {
+    if (drawn.maps[slot] === null) continue;
+    const placement = resolveSlotPlacement(drawn.uvTransform, drawn.mapUvTransforms, slot);
+    if (!isIdentityPlacement(placement)) placements[slot] = placement;
+  }
   return {
-    materialClass: 'standard',
-    // Primitives expose color only; the remaining scalars are FROZEN at the values
-    // the pre-#178 renderer used when no override was present. This used to cite
-    // `SceneFromDAG.applyOverride`'s no-override branch; #394 S3b deleted that
-    // branch as unreachable, so these are a bake-time snapshot of a historical
-    // look, not a mirror of anything live. Changing them re-bakes differently.
-    // v0.6 #2 (#178): the inline color now lives at base.color (OpenPBR IR).
-    color: material?.base.color ?? '#ffffff',
-    roughness: 0.5,
-    metalness: 0,
-    opacity: 1,
-    transparent: false,
-    emissive: '#000000',
-    emissiveIntensity: 0,
-    map: null,
-    normalMap: null,
-    roughnessMap: null,
-    metalnessMap: null,
-    aoMap: null,
-    emissiveMap: null,
+    // Physical, as the primitive draws (`materialRegistry` builds a MeshPhysicalMaterial).
+    materialClass: 'physical',
+    color: drawn.color,
+    roughness: drawn.roughness,
+    metalness: drawn.metalness,
+    opacity: drawn.opacity,
+    transparent: drawn.transparent,
+    emissive: drawn.emissive,
+    emissiveIntensity: drawn.emissiveIntensity,
+    ...drawn.maps,
+    ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
+    physical: {
+      clearcoat: drawn.clearcoat,
+      clearcoatRoughness: drawn.clearcoatRoughness,
+      transmission: drawn.transmission,
+      ior: drawn.ior,
+    },
   };
 }
 

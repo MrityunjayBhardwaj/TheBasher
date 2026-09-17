@@ -261,6 +261,10 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     'src/app/material/primitiveMaterialInputs.ts':
       'carries the translated bag onto the spec — AUTHORED road (centre pivot)',
     'src/app/materialRegistry.ts': 'AUTHORED road — resolves per slot, pivots about the centre',
+    // #1139 — the primitive bake keeps the placement each mapped slot draws with. It reads the
+    // AUTHORED road's compile, so the values are already centre-pivot and carry unchanged.
+    'src/app/animate/dispatchApplyTransform.ts':
+      'AUTHORED road — bakes each slot’s resolved placement, centre pivot, unconverted',
     'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
     // #550 inspector slice — the EDIT side. Owns the field's presence so the panel
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
