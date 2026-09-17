@@ -71,10 +71,10 @@ export function skeletonObjectId(skeletonId: string): string {
  * Found by the `data` edge rather than by {@link skeletonObjectId}, so an Object pointed at the
  * skeleton by hand counts as much as the one an import made.
  *
- * ONE lookup for every question that asks it: which Object a notice names
- * (`bindMotionToCharacter.ts`) and which Objects a path placement moves
- * (`placeGeneratedMotion.ts`, #1100). Two spellings could disagree about which Object stands a
- * motion, and a notice would then name one that placement leaves at the origin.
+ * ONE lookup for "where does this motion stand": the Object a notice falls back to naming
+ * (`bindMotionToCharacter.ts`) and whether a path placement's refusal can say an Object of the
+ * director's still shows it (`placeGeneratedMotion.ts`). What a bind hides and a placement moves
+ * is narrower — {@link standInObjectOf} (#1088, #1141).
  */
 export function standingObjectsOf(state: DagState, skeletonId: string): string[] {
   return Object.values(state.nodes)

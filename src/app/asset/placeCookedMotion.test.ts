@@ -457,6 +457,77 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
     expect(poseOf(twice, objectId).rotation).toEqual([0, 0, 0]);
   });
 
+  it('leaves an Object the director pointed at the motion’s skeleton where they put it', async () => {
+    // A second placement or a reference copy of the same motion. Placement runs after every
+    // re-cook, so moving it would snap the director's copy onto the generated rig each time.
+    const { state: cooked, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    const skeletonId = edgeTarget(cooked.nodes[objectId], 'data')!;
+    const state = apply(cooked, [
+      {
+        type: 'addNode',
+        nodeId: 'a_by_hand',
+        nodeType: 'Object',
+        params: { position: [9, 0, 9], rotation: [0, 45, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: 'a_by_hand', socket: 'data' },
+      },
+    ] as Op[]);
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    expect(poseOf(placed, objectId).position).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(poseOf(placed, 'a_by_hand')).toMatchObject({
+      position: [9, 0, 9],
+      rotation: [0, 45, 0],
+    });
+  });
+
+  it('with the generated rig deleted, refuses — and says the director’s Object stays put', async () => {
+    const { state: cooked, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    const skeletonId = edgeTarget(cooked.nodes[objectId], 'data')!;
+    const state = apply(cooked, [
+      {
+        type: 'disconnect',
+        from: { node: objectId, socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
+      {
+        type: 'disconnect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: objectId, socket: 'data' },
+      },
+      { type: 'removeNode', nodeId: objectId },
+      {
+        type: 'addNode',
+        nodeId: 'a_by_hand',
+        nodeType: 'Object',
+        params: { position: [9, 0, 9], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: 'a_by_hand', socket: 'data' },
+      },
+    ] as Op[]);
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(ops).toEqual([]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0].reason).toMatch(/no longer stands in the scene/);
+    expect(refusals[0].reason).toMatch(/stay where you put them/);
+    expect(refusals[0].reason).not.toMatch(/does not stand in the scene/);
+  });
+
   it('with a character bound, places the character AND the rig the bind hid', async () => {
     const { state } = await mintAndCookThroughRetarget(
       projectWithScene(),
