@@ -25,6 +25,7 @@ import { emptyDagState, type DagState } from '../dag/state';
 import { PolyMeshDataNode, PolyMeshDataParams } from '../../nodes/PolyMeshData';
 import type { Op } from '../dag/types';
 import type { MeshDataValue } from '../../nodes/types';
+import { nodeDisplayName } from '../../app/sceneTreeWalk';
 import { join } from 'node:path';
 import * as THREE from 'three';
 import { MemoryStorage } from '../storage';
@@ -462,6 +463,46 @@ describe('buildNativeGltfImportOps', () => {
     ) as MeshDataValue;
     expect(faceCountOf(value.geometry.descriptor)).toBe(12);
     expect(value.material?.base.color.toLowerCase()).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  /** The display name every surface shows for each Object an import writes, in file order. */
+  async function importedNames(buffer: ArrayBuffer): Promise<string[]> {
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/named.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state: DagState = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    return result.objectIds.map((id) => nodeDisplayName(state.nodes, id));
+  }
+
+  it('#1137 — an Object takes the file node’s name, as the outliner shows it', async () => {
+    expect(await importedNames(fixture(CUBE))).toEqual(['cube']);
+    // Written as the file spells it: the clone road's lookup key strips three's reserved
+    // characters, but a name nothing looks up by has no reason to.
+    expect(
+      await importedNames(
+        jsonFixture((json) => {
+          (json.nodes as Record<string, unknown>[])[0].name = 'Hero.Body/L';
+        }),
+      ),
+    ).toEqual(['Hero.Body/L']);
+  });
+
+  it('#1137 — an unnamed node falls back to its mesh’s name, then to Mesh_<index>, as Blender does', async () => {
+    const unnamedNode = (meshName?: string) =>
+      jsonFixture((json) => {
+        const node = (json.nodes as Record<string, unknown>[])[0];
+        node.name = '';
+        const mesh = (json.meshes as Record<string, unknown>[])[0];
+        if (meshName === undefined) delete mesh.name;
+        else mesh.name = meshName;
+      });
+    expect(await importedNames(unnamedNode('CubeMesh'))).toEqual(['CubeMesh']);
+    expect(await importedNames(unnamedNode())).toEqual(['Mesh_0']);
   });
 
   it('is deterministic: the same file imports to the same op stream', async () => {
