@@ -33,6 +33,7 @@ import {
   unheldAttributesBakeRefusal,
 } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { NULL_MAPS as NULL_IR_MAPS } from '../../nodes/materialSchema';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
@@ -49,7 +50,13 @@ vi.mock('../resolveEvaluatedMesh', async (importOriginal) => {
 });
 import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
-import type { EvaluatedMesh, InlineMaterialSpec, MeshGeometryData, Vec3 } from '../../nodes/types';
+import type {
+  BakedMaterialSpec,
+  EvaluatedMesh,
+  InlineMaterialSpec,
+  MeshGeometryData,
+  Vec3,
+} from '../../nodes/types';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -2685,5 +2692,100 @@ describe('#1134 — a refusal names the object the way the outliner does', () =>
       reason: expect.stringContaining(`"${CHILD_NAME}" carries uv1`),
     });
     expect(result.ok ? '' : result.reason).not.toContain('n_child');
+  });
+});
+
+describe('#1139 — a primitive bakes the material it draws, maps and placement included', () => {
+  const IMAGE = {
+    hash: 'abc.png',
+    store: 'project' as const,
+    colorSpace: 'srgb' as const,
+    flipY: false,
+    wrapS: 1000,
+    wrapT: 1000,
+  };
+
+  async function bakeBoxWith(material: Record<string, unknown>) {
+    let state = makeSplitCube(emptyDagState(), { objectId: 'n_box' }).state;
+    const dataId = (state.nodes['n_box'].inputs.data as { node: string }).node;
+    const current = state.nodes[dataId].params.material as Record<string, unknown>;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: dataId,
+      paramPath: 'material',
+      value: { ...current, ...material },
+    }).next;
+    const drawn = state.nodes[dataId].params.material as InlineMaterialSpec;
+    let ops: Op[] = [];
+    const result = await dispatchApplyTransform('n_box', 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: (o) => {
+        ops = o;
+        return [];
+      },
+      setSelection: () => {},
+    });
+    const baked = ops.find(
+      (o): o is Extract<Op, { type: 'addNode' }> =>
+        o.type === 'addNode' && o.nodeType === 'BakedData',
+    );
+    return { result, drawn, spec: (baked?.params as { material: BakedMaterialSpec }).material };
+  }
+
+  it('keeps every map it samples, in three’s slot names', async () => {
+    const normal = { ...IMAGE, hash: 'n.png', colorSpace: 'srgb-linear' as const };
+    const { result, spec } = await bakeBoxWith({
+      maps: { ...NULL_IR_MAPS, albedo: IMAGE, normal },
+    });
+    expect(result.ok).toBe(true);
+    expect(spec.map).toEqual(IMAGE);
+    expect(spec.normalMap).toEqual(normal);
+    expect(spec.roughnessMap).toBeNull();
+  });
+
+  it('keeps the placement each map draws with: the shared one, or the slot’s own', async () => {
+    const shared = {
+      tiling: [2, 2] as [number, number],
+      offset: [0.25, 0] as [number, number],
+      rotation: 0,
+    };
+    const own = {
+      tiling: [4, 1] as [number, number],
+      offset: [0, 0] as [number, number],
+      rotation: 0.5,
+    };
+    const { spec } = await bakeBoxWith({
+      maps: { ...NULL_IR_MAPS, albedo: IMAGE, emissive: { ...IMAGE, hash: 'e.png' } },
+      uvTransform: shared,
+      mapUvTransforms: { emissive: own },
+    });
+    // The inline road already places about the centre, as a baked mesh does: carried unchanged.
+    expect(spec.mapPlacements).toEqual({ map: shared, emissiveMap: own });
+  });
+
+  it('bakes the scalars it draws, not a frozen historical look', async () => {
+    const { drawn, spec } = await bakeBoxWith({
+      specular: { roughness: 0.15, ior: 1.7 },
+      base: { color: '#336699', metalness: 0.8 },
+      emission: { color: '#ff0000', luminance: 2 },
+      coat: { weight: 0.5, roughness: 0.25 },
+    });
+    expect(drawn.specular.roughness).toBe(0.15);
+    expect(spec).toMatchObject({
+      color: '#336699',
+      roughness: 0.15,
+      metalness: 0.8,
+      emissive: '#ff0000',
+      emissiveIntensity: 2,
+    });
+    expect(spec.physical).toMatchObject({ clearcoat: 0.5, clearcoatRoughness: 0.25, ior: 1.7 });
+  });
+
+  it('an untextured, unplaced box writes no placement field', async () => {
+    const { spec } = await bakeBoxWith({});
+    expect('mapPlacements' in spec).toBe(false);
+    expect(spec.map).toBeNull();
   });
 });
