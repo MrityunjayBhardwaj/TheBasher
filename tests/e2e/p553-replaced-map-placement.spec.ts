@@ -33,6 +33,10 @@
 //      src/app/material/replacedMapPlacement.gate.test.ts (the unit half);
 //      issues #553, #550, #178.
 
+// #1123 — a drop now brings this fixture across native, so it imports through `__basher_importGltf`,
+// the entry that never tries native. This spec's subject is the clone road's per-map placement,
+// which still serves every file the native road refuses.
+
 import { test, expect, type Page } from './_fixtures';
 import { firstMaterialChild } from './_importedChild';
 import { openInspectorSection } from './_inspectorSections';
@@ -56,10 +60,8 @@ interface BasherWindow {
     };
   };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
-  __basher_ingestGltfFolder: (
-    files: { relativePath: string; bytes: Uint8Array }[],
-    folderName: string,
-  ) => Promise<string>;
+  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
   __basher_gltf_meshes?: () => {
     slotPlacements: Record<string, SlotPlacement>;
     mapProbe?: { imageWidth?: number } | null;
@@ -106,7 +108,7 @@ async function materialChild(page: Page) {
 async function importAndSelect(page: Page, mutate: boolean, folder: string) {
   await page.goto('/');
   await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
+    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
   );
   await page.evaluate(
     async ({ mutate, folder }) => {
@@ -124,7 +126,9 @@ async function importAndSelect(page: Page, mutate: boolean, folder: string) {
         json.materials[0].emissiveFactor = [1, 1, 1];
       }
       const bytes = new TextEncoder().encode(JSON.stringify(json));
-      await w.__basher_ingestGltfFolder([{ relativePath: 'p553.gltf', bytes }], folder);
+      const ref = `assets/${folder}.gltf`;
+      await w.__basher_writeOpfsBytes(ref, bytes);
+      await w.__basher_importGltf(bytes.buffer as ArrayBuffer, ref);
     },
     { mutate, folder },
   );

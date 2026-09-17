@@ -29,13 +29,15 @@
 //
 // ── THE ROAD, stated because the value does not carry it ──────────────────────
 //
-// These rows belong to the glTF material editor, whose road applies placements about
-// the UV ORIGIN — the KHR_texture_transform convention the import captured. This
-// module is a PASS-THROUGH: it moves the road's own stored numbers in and out with no
-// pivot conversion. A conversion here would be a third spelling of a placement rule
+// These rows edit whatever material the inspector shows, and the road that DRAWS that
+// node supplies the pivot: the UV origin for a clone-road import (the
+// KHR_texture_transform convention it captured), the centre for native mesh data.
+// This module is a PASS-THROUGH: it moves the node's own stored numbers in and out with
+// no pivot conversion. A conversion here would be a third spelling of a placement rule
 // `uvPlacement.ts` already owns, and the pivot travels with the ROAD, not the value.
-// The authored editor (centre pivot) has no per-map rows in this slice, so no per-map
-// value is authored on one road and read by the other. → #551 for the divergence.
+// No per-map value is written on one road and read by another: the native importer
+// restates a file's placements about the centre once, at import (#1123, and
+// `rebasePlacementPivot`). → #551 for the divergence.
 //
 // REF: src/app/material/uvPlacement.ts (`resolveSlotPlacement` — the READ side of the
 //      same replacement rule; this is its WRITE side), src/nodes/materialSchema.ts

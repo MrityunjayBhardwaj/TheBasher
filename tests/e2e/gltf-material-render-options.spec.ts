@@ -36,6 +36,8 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
+  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
   __basher_gltf_meshes?: () => MeshSummary[];
 }
 
@@ -52,6 +54,24 @@ async function ingest(page: import('@playwright/test').Page, file: string, folde
     },
     [file, folder] as const,
   );
+}
+
+/**
+ * #1123 — import through `__basher_importGltf`, which never tries native, for a fixture a drop now
+ * brings across native. This spec's subject is the clone road's inspector overlay, which still
+ * serves every file the native road refuses.
+ */
+async function importOnCloneRoad(page: import('@playwright/test').Page, file: string) {
+  await page.goto('/');
+  await page.waitForFunction(
+    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
+  );
+  await page.evaluate(async (f) => {
+    const w = window as unknown as BasherWindow;
+    const buffer = await fetch(`/assets/${f}`).then((r) => r.arrayBuffer());
+    await w.__basher_writeOpfsBytes(`assets/${f}`, new Uint8Array(buffer));
+    await w.__basher_importGltf(buffer, `assets/${f}`);
+  }, file);
 }
 
 /** The first imported child that captured a material, + slot 0's geometry/uv/name.
@@ -142,7 +162,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
 
   test('editing UV tiling in the inspector re-tiles the rendered map', async ({ page }) => {
     // uv-transform-quad is textured (mapRepeat readable) and captures uvTransform.
-    await ingest(page, 'uv-transform-quad.gltf', 'ro-uv');
+    await importOnCloneRoad(page, 'uv-transform-quad.gltf');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
     await selectAndOpen(page, child!.id);
