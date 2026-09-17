@@ -96,6 +96,12 @@ export interface DrawnImportMesh {
   readonly buffers: readonly string[];
   /** The base-colour texture's `channel` — which `uv` buffer it samples — or null with no map. */
   readonly mapChannel: number | null;
+  /**
+   * #1123 — the base-colour texture's UV matrix as three builds it from offset, repeat, rotation
+   * AND centre, column-major, or null with no map. The one placement reading that means the same on
+   * both roads: they pivot differently, so their offsets differ for the same draw.
+   */
+  readonly mapUvMatrix: number[] | null;
 }
 
 /** Every import root in the scene, in the scene's child order. */
@@ -257,7 +263,13 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
   const roots = rootId ? [rootId] : (await importRoots(page)).map((r) => r.rootId);
   return page.evaluate((rootIds: string[]) => {
     type Tex =
-      | { image?: { width?: number } | null; colorSpace?: string; channel?: number }
+      | {
+          image?: { width?: number } | null;
+          colorSpace?: string;
+          channel?: number;
+          updateMatrix?: () => void;
+          matrix?: { toArray: () => number[] };
+        }
       | null
       | undefined;
     type V3 = { x: number; y: number; z: number };
@@ -336,6 +348,14 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             side: typeof mat?.side === 'number' ? mat.side : null,
             buffers: Object.keys(o.geometry?.attributes ?? {}).sort(),
             mapChannel: typeof mat?.map?.channel === 'number' ? mat.map.channel : null,
+            mapUvMatrix: (() => {
+              const map = mat?.map;
+              if (!map?.updateMatrix || !map.matrix) return null;
+              // three refreshes the matrix at draw only when `matrixAutoUpdate`; refresh it here so
+              // a read taken between an edit and the next frame is the edited placement.
+              map.updateMatrix();
+              return map.matrix.toArray();
+            })(),
           });
         }
       });

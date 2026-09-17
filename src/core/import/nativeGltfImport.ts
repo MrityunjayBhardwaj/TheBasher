@@ -59,6 +59,7 @@ import type {
   MeshCornerLayer,
   MeshFaceLayer,
   MeshGeometryData,
+  UvPlacement,
   Vec3,
 } from '../../nodes/types';
 import type { Op } from '../dag/types';
@@ -77,6 +78,7 @@ import {
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
@@ -171,6 +173,8 @@ function widenToRgba(rgb: Float32Array): Float32Array {
 // so those are refused here too. A missing entry refuses a file that could have come across, which
 // is the safe direction.
 const HELD_EXTENSIONS = new Set([
+  // #1123 — held per texture below, restated about the native material's pivot.
+  'KHR_texture_transform',
   'KHR_materials_ior',
   'KHR_materials_clearcoat',
   'KHR_materials_transmission',
@@ -297,9 +301,6 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1051',
     };
   }
-  // `KHR_texture_transform` is not held: the converter captures its placement, but the native material
-  // pivots a placement about the texture centre where glTF pivots about the UV origin
-  // (`materialRegistry.ts`, `build`), so a transformed texture would draw shifted.
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
   if (unheld.length > 0) {
     return {
@@ -737,7 +738,20 @@ function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImp
     if (!HELD_TEXTURE_SLOTS.has(path)) {
       return { refused: `${where} is a texture the native material does not hold`, issue: '#1123' };
     }
-    const extensions = Object.keys((info.extensions as object | undefined) ?? {});
+    const transform = (info.extensions as Record<string, unknown> | undefined)
+      ?.KHR_texture_transform as Record<string, unknown> | undefined;
+    // #1123 — a transform may also move its map onto another UV set. Blender honours that
+    // (`io_scene_gltf2/blender/imp/texture.py:185-189`); the converter names a slot's UV set from
+    // `texCoord` alone, so the map would draw from the wrong set.
+    if (transform?.texCoord !== undefined) {
+      return {
+        refused: `${where} has a KHR_texture_transform that names its own UV set, which the native material does not read`,
+        issue: '#1123',
+      };
+    }
+    const extensions = Object.keys((info.extensions as object | undefined) ?? {}).filter(
+      (ext) => ext !== 'KHR_texture_transform',
+    );
     if (extensions.length > 0) {
       return {
         refused: `${where} uses ${extensions.join(', ')}, which a native import would drop`,
@@ -824,6 +838,31 @@ async function readTextureImage(
  * refs say "inherit the clone's texture" and carry GL enums; a native material has no clone, so each
  * becomes a project ref sampled the way the file asks.
  */
+/**
+ * #1123 — the material's placements restated about the pivot the native material draws with.
+ *
+ * The converter captures `KHR_texture_transform` as the file wrote it, about the UV origin, which is
+ * right for the clone road (`applyGltfUvTransform` places with `ORIGIN_PIVOT`). A native material is
+ * drawn by `materialRegistry`'s `build`, which places about `CENTRE_PIVOT`, so each placement is
+ * restated once here and the file's convention stops existing. An identity placement comes back
+ * unchanged, so an untransformed material keys exactly as before.
+ */
+function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
+  const rebase = (p: UvPlacement) => rebasePlacementPivot(p, ORIGIN_PIVOT, CENTRE_PIVOT);
+  const perMap = material.mapUvTransforms;
+  return {
+    ...material,
+    uvTransform: rebase(material.uvTransform),
+    ...(perMap === undefined
+      ? {}
+      : {
+          mapUvTransforms: Object.fromEntries(
+            Object.entries(perMap).map(([slot, p]) => [slot, rebase(p as UvPlacement)]),
+          ) as InlineMaterialSpec['mapUvTransforms'],
+        }),
+  };
+}
+
 function withProjectImages(
   material: InlineMaterialSpec,
   json: NativeGltfJson,
@@ -940,10 +979,12 @@ export async function buildNativeGltfImportOps(
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
       withProjectImages(
-        gltfJsonMaterialToOpenpbr(
-          slot.material === undefined ? {} : (json.materials?.[slot.material] ?? {}),
-          materialTables,
-          { vertexColors: slot.vertexColors },
+        withCentrePivot(
+          gltfJsonMaterialToOpenpbr(
+            slot.material === undefined ? {} : (json.materials?.[slot.material] ?? {}),
+            materialTables,
+            { vertexColors: slot.vertexColors },
+          ),
         ),
         json,
         imageKeys,

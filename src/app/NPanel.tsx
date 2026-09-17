@@ -2882,8 +2882,9 @@ function MaterialEditor({
           entirely, so each row is an absolute placement. Rows come from the IR's closed
           slot table rather than the bag's own key order, and each keeps a reset back to
           shared so a captured placement can always be undone. Values pass through
-          unconverted — this editor places about the UV origin, the convention they were
-          captured in (#551). */}
+          unconverted: they are the node's own, and the road that draws the node supplies
+          the pivot — the UV origin for a clone-road import, the centre for native mesh
+          data, which the native importer restates at import (#1123, #551). */}
       {perMapRows.map(({ slot: mapSlot, placement }) => (
         <UvTransformSection
           key={mapSlot}

@@ -513,9 +513,24 @@ describe('buildNativeGltfImportOps', () => {
         texturedFixture((json) => {
           (
             materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
-          ).extensions = { KHR_texture_transform: { offset: [0.5, 0] } };
+          ).extensions = { EXT_texture_webp: { source: 0 } };
         }),
       '#1123',
+      'uses EXT_texture_webp',
+    ],
+    // #1123 — a transform is carried, but one that also moves the map onto another UV set is not:
+    // the material names its UV set from `texCoord` alone.
+    [
+      'a texture transform that names its own UV set',
+      () =>
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_texture_transform'];
+          (
+            materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
+          ).extensions = { KHR_texture_transform: { scale: [2, 2], texCoord: 1 } };
+        }),
+      '#1123',
+      'names its own UV set',
     ],
     [
       'a normal map with a scale',
@@ -533,7 +548,6 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1123',
     ],
-    ['the UV-transform quad', () => fixture('public/assets/uv-transform-quad.gltf'), '#1123'],
     [
       'an image that is neither PNG nor JPEG',
       () =>
@@ -723,6 +737,68 @@ describe('buildNativeGltfImportOps', () => {
     const ops = JSON.stringify(result.ops);
     expect(ops).not.toContain('gltfTexture');
     expect(ops).not.toContain('data:image');
+  });
+
+  it('#1123 — the UV-transform quad arrives native, its placement restated about the centre pivot', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/uv-transform-quad.gltf'),
+      assetRef: 'user-imports/native/uvt.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    // The file: scale [2,3], offset [0.1,0.2], rotation 0, about the UV origin. three's matrix puts
+    // `-s·pivot + pivot + offset` in the translation, so about the centre the same draw needs
+    // 0.1 + (2 - 1)·0.5 = 0.6 and 0.2 + (3 - 1)·0.5 = 1.2.
+    expect(material.uvTransform.tiling).toEqual([2, 3]);
+    expect(material.uvTransform.rotation).toBe(0);
+    expect(material.uvTransform.offset[0]).toBeCloseTo(0.6, 12);
+    expect(material.uvTransform.offset[1]).toBeCloseTo(1.2, 12);
+    expect(material.mapUvTransforms).toBeUndefined();
+  });
+
+  it('#1123 — a per-map transform is restated slot by slot, and an untransformed slot stays identity', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: texturedFixture((json) => {
+        json.extensionsUsed = ['KHR_texture_transform'];
+        const material = materialOf(json);
+        (material.pbrMetallicRoughness.baseColorTexture as Record<string, unknown>).extensions = {
+          KHR_texture_transform: { scale: [4, 4], rotation: Math.PI / 2 },
+        };
+        material.emissiveTexture = { index: 0 };
+        material.emissiveFactor = [1, 1, 1];
+      }),
+      assetRef: 'user-imports/native/permap.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    const albedo = material.mapUvTransforms!.albedo!;
+    const emission = material.mapUvTransforms!.emissive!;
+    const origin = new THREE.Matrix3().setUvTransform(0, 0, 4, 4, Math.PI / 2, 0, 0).toArray();
+    const drawn = new THREE.Matrix3()
+      .setUvTransform(
+        albedo.offset[0],
+        albedo.offset[1],
+        albedo.tiling[0],
+        albedo.tiling[1],
+        albedo.rotation,
+        0.5,
+        0.5,
+      )
+      .toArray();
+    for (let i = 0; i < 9; i++) expect(drawn[i]).toBeCloseTo(origin[i], 12);
+    expect(emission).toEqual({ tiling: [1, 1], offset: [0, 0], rotation: 0 });
   });
 
   it('#1050 — a multi-file glTF reads the image beside it', async () => {
