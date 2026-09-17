@@ -431,14 +431,6 @@ export interface BakedTextureRef {
   readonly minFilter?: number;
 }
 
-/**
- * The rich PBR material a BakedMesh carries — ONE shape for every source
- * (box, sphere, AND glTF). Scalar names mirror {@link MaterialValue} 1:1
- * (Chesterton — the renderer/override/inspector already speak those names).
- * A primitive bake populates the scalars and leaves all 6 map refs null (M6);
- * a glTF bake captures the resolved post-override material incl. textures
- * (Wave 3/4). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
- */
 /** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
 export type BakedMapSlot =
   | 'map'
@@ -448,6 +440,21 @@ export type BakedMapSlot =
   | 'aoMap'
   | 'emissiveMap';
 
+/**
+ * The rich PBR material a BakedMesh carries — ONE shape for every source
+ * (box, sphere, AND glTF). Scalar names mirror {@link MaterialValue} 1:1
+ * (Chesterton — the renderer/override/inspector already speak those names).
+ * Both roads capture what their source DRAWS: a glTF bake reads the resolved
+ * post-override material off the live clone (Wave 3/4), and a primitive bake
+ * compiles its inline material through the same `openpbrToThree` its own draw
+ * reads (#1139 — it used to leave all 6 map refs null, which dropped a textured
+ * primitive's maps). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
+ *
+ * Its field list is CLOSED, and that is this type's standing hazard: whatever a
+ * source draws with that has no field here is gone after Apply, and the Apply
+ * reports ok. #1119, #1136, #1139 and #1140 were each one such field. A new one
+ * belongs here AND in `BakedMaterialSpecSchema`, or the parse strips it on the way in.
+ */
 export interface BakedMaterialSpec {
   readonly materialClass: 'standard' | 'physical' | 'basic';
   readonly color: string;
