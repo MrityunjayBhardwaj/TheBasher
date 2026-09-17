@@ -167,10 +167,12 @@ import {
   type ObjectSlotSource,
 } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
+import { CENTRE_PIVOT, placeTexture } from '../app/material/uvPlacement';
 import type {
   AmbientLightValue,
   AreaLightValue,
   BakedMeshValue,
+  BakedMapSlot,
   BakedMaterialSpec,
   CharacterValue,
   DirectionalLightValue,
@@ -2958,6 +2960,18 @@ function CapturedBakedMeshR({
       if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
       return t;
     };
+    // #1136 — a slot baked with a placement draws a CLONE placed about the centre. The loaded
+    // texture is cached and shared by hash, so placing it in place would move every other baked
+    // mesh drawing the same image. The clones are this material's, disposed with it below.
+    const clones: THREE.Texture[] = [];
+    const placed = (t: THREE.Texture | null, slot: BakedMapSlot) => {
+      const placement = spec.mapPlacements?.[slot];
+      if (!t || !placement) return t;
+      const c = t.clone();
+      placeTexture(c, placement, CENTRE_PIVOT);
+      clones.push(c);
+      return c;
+    };
 
     if (spec.materialClass === 'basic') {
       // MeshBasicMaterial (KHR_materials_unlit) — NO roughness/metalness/emissive
@@ -2968,7 +2982,8 @@ function CapturedBakedMeshR({
         transparent: scalar.transparent,
         wireframe: shading === 'wireframe',
       });
-      m.map = sRGB(mapTex);
+      m.map = placed(sRGB(mapTex), 'map');
+      m.userData.__placedClones = clones;
       return m;
     }
 
@@ -2990,12 +3005,13 @@ function CapturedBakedMeshR({
     // and `:185`), so honouring a captured set here would point a sampler at an
     // attribute that does not exist. The discharge is upstream — carry the second set
     // through the bake first; only then does binding it here mean anything.
-    m.map = sRGB(mapTex);
-    m.normalMap = linear(normalTex);
-    m.roughnessMap = linear(roughnessTex);
-    m.metalnessMap = linear(metalnessTex);
-    m.aoMap = linear(aoTex);
-    m.emissiveMap = sRGB(emissiveTex);
+    m.map = placed(sRGB(mapTex), 'map');
+    m.normalMap = placed(linear(normalTex), 'normalMap');
+    m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
+    m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
+    m.aoMap = placed(linear(aoTex), 'aoMap');
+    m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
+    m.userData.__placedClones = clones;
 
     if (spec.materialClass === 'physical' && spec.physical) {
       const p = m as THREE.MeshPhysicalMaterial;
@@ -3025,11 +3041,21 @@ function CapturedBakedMeshR({
     metalnessTex,
     aoTex,
     emissiveTex,
+    spec.mapPlacements,
   ]);
 
   // Dispose the built material when it is replaced or the node unmounts — it is
-  // owned here (single writer V20), so this renderer owns its lifecycle.
-  useEffect(() => () => material.dispose(), [material]);
+  // owned here (single writer V20), so this renderer owns its lifecycle. Material.dispose does not
+  // free textures, so the placed clones (#1136) go explicitly; the shared loaded ones stay.
+  useEffect(
+    () => () => {
+      material.dispose();
+      (material.userData.__placedClones as THREE.Texture[] | undefined)?.forEach((t) =>
+        t.dispose(),
+      );
+    },
+    [material],
+  );
 
   return (
     <mesh {...bakedMeshPose(value)} geometry={geom}>

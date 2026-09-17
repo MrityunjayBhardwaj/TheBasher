@@ -439,6 +439,15 @@ export interface BakedTextureRef {
  * a glTF bake captures the resolved post-override material incl. textures
  * (Wave 3/4). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
  */
+/** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
+export type BakedMapSlot =
+  | 'map'
+  | 'normalMap'
+  | 'roughnessMap'
+  | 'metalnessMap'
+  | 'aoMap'
+  | 'emissiveMap';
+
 export interface BakedMaterialSpec {
   readonly materialClass: 'standard' | 'physical' | 'basic';
   readonly color: string;
@@ -455,6 +464,13 @@ export interface BakedMaterialSpec {
   readonly metalnessMap: BakedTextureRef | null;
   readonly aoMap: BakedTextureRef | null;
   readonly emissiveMap: BakedTextureRef | null;
+  /**
+   * #1136 — each map's UV placement as it drew at bake time, restated about the CENTRE pivot
+   * `BakedMeshR` places with. Only slots whose placement is not identity are listed, and the field
+   * is absent when none is, so a bake of an untransformed material, and every save before this
+   * field, reads exactly as it did.
+   */
+  readonly mapPlacements?: { readonly [K in BakedMapSlot]?: UvPlacement };
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;
