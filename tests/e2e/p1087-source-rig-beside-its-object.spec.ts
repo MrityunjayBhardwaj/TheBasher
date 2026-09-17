@@ -16,6 +16,12 @@
 // What makes two draws acceptable is that they can be told apart and neither follows the other.
 // This row pins exactly that: both draw, in different colours, and moving the Object moves its
 // bones and not the overlay.
+//
+// #1148 is pinned here too, and belongs here: this is the state that produces it. The Object's
+// bones join the band AFTER the first frame, and until #1148 they kept the white the instance
+// colour buffer is allocated with — so the band told the two draws apart with a colour that was
+// not the bone colour either. Telling them apart is only worth something if each is the colour
+// it claims to be.
 
 import { test, expect } from './_fixtures';
 
@@ -164,6 +170,17 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   expect(before.sourceColor).not.toBeNull();
   expect(before.boneColors.length).toBeGreaterThan(0);
   expect(before.boneColors).not.toContain(before.sourceColor);
+
+  // #1148 — and the armatures draw in the BONE colour, all of them. The rig Object's bones
+  // were appended after the first frame, and the repaint used to run only when the highlight
+  // changed, so they stayed at three's `.fill(1)` white and drew brighter than the character
+  // beside them. Nothing is selected in this row, so the bone colour is the ONLY colour the
+  // band may draw; an unhighlighted band showing two colours is showing one it never chose.
+  expect(
+    before.boneColors,
+    'a rig that joined the band after the first frame was left at the white the instance ' +
+      'colour buffer is allocated with, instead of the bone colour',
+  ).toEqual(['#c8d4e4']);
 
   // NEITHER FOLLOWS THE OTHER: move the Object, and only its bones move.
   await page.evaluate(

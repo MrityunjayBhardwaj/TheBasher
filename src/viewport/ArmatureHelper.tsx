@@ -233,6 +233,10 @@ export function ArmatureHelper({
   // rewritten when it CHANGES rather than on every frame of a 4096-instance
   // mesh.
   const lastHighlight = useRef(-2);
+  /** How many instances the last repaint actually reached. The highlight alone does not
+   *  say it: the drawn count grows on events that never touch it, and every instance past
+   *  this number is still at three's white default (#1148). */
+  const lastPaintedCount = useRef(0);
   const lineRef = useRef<THREE.LineSegments>(null);
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
@@ -558,8 +562,20 @@ export function ArmatureHelper({
         }
       }
     }
-    if (highlighted !== lastHighlight.current || mesh.instanceColor === null) {
+    // 🔴 The drawn COUNT is part of this condition, not the highlight alone (#1148).
+    // `setColorAt` allocates the buffer as `new Float32Array(...).fill(1)` — WHITE — and
+    // the material is white too, so any instance the last repaint did not reach draws
+    // #ffffff rather than the bone colour. The count grows on events that leave the
+    // highlight exactly where it was: a motion's rig Object unhidden in the outliner, a
+    // second character imported. Those bones then drew brighter than the character beside
+    // them, for no reason a director could see.
+    if (
+      highlighted !== lastHighlight.current ||
+      count !== lastPaintedCount.current ||
+      mesh.instanceColor === null
+    ) {
       lastHighlight.current = highlighted;
+      lastPaintedCount.current = count;
       for (let i = 0; i < count; i++) {
         mesh.setColorAt(i, i === highlighted ? SELECTED_COLOR : BASE_COLOR);
       }
