@@ -471,9 +471,29 @@ export interface BakedMaterialSpec {
    * field, reads exactly as it did.
    */
   readonly mapPlacements?: { readonly [K in BakedMapSlot]?: UvPlacement };
+  /**
+   * #1140 — the cutout threshold the source drew with (three's `alphaTest`, from the IR's
+   * `geometry.alphaCutoff`). Absent when it draws no cutout, which is three's own default of 0, so
+   * an ordinary bake and every save before this field read exactly as they did.
+   */
+  readonly alphaTest?: number;
+  /**
+   * #1140 — the source drew both faces. Absent when it drew front faces only.
+   *
+   * The IR's boolean, not three's `side` enum, for the reason `threeSide.ts` gives: the enum is
+   * spelled in exactly one place, and a snapshot that spelled it a second time could only ever
+   * diverge by inverting. `BakedMeshR` passes this through `threeSideFor` like every other road.
+   */
+  readonly doubleSided?: boolean;
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;
+    /**
+     * #1140 — how deep the refraction is (three's `thickness`). Transmission only refracts through
+     * a material with thickness, so a captured `transmission` without this drew clear glass as a
+     * flat surface.
+     */
+    readonly thickness?: number;
     readonly clearcoatRoughness?: number;
     readonly transmission?: number;
     readonly ior?: number;

@@ -72,6 +72,23 @@ export function bakedMapPlacements(
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * #1140 — how the live material treats its surface: the cutout it draws with and whether it draws
+ * both faces. Each is absent at three's own default, so an ordinary bake writes neither field.
+ *
+ * Read off the live material like the placements above, because both roads set them from the IR
+ * and the capture's job is to keep what was drawn, not to re-derive it.
+ */
+function bakedSurface(material: THREE.Material): {
+  readonly alphaTest?: number;
+  readonly doubleSided?: boolean;
+} {
+  return {
+    ...(material.alphaTest !== 0 ? { alphaTest: material.alphaTest } : {}),
+    ...(material.side === THREE.DoubleSide ? { doubleSided: true } : {}),
+  };
+}
+
 /** Which three ctor BakedMeshR must rebuild (M1). */
 function materialClassOf(mat: THREE.Material): BakedMaterialSpec['materialClass'] {
   if ((mat as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) return 'physical';
@@ -130,6 +147,7 @@ export async function captureBakedMaterial(
       aoMap: null,
       emissiveMap: null,
       ...(mapPlacements ? { mapPlacements } : {}),
+      ...bakedSurface(basic),
     };
   }
 
@@ -159,6 +177,7 @@ export async function captureBakedMaterial(
     metalnessMap,
     aoMap,
     emissiveMap,
+    ...bakedSurface(std),
   };
   // #1136 — absent, not empty, when nothing is transformed, so an ordinary bake writes no field.
   const mapPlacements = bakedMapPlacements(material);
@@ -174,6 +193,8 @@ export async function captureBakedMaterial(
         clearcoat: p.clearcoat,
         clearcoatRoughness: p.clearcoatRoughness,
         transmission: p.transmission,
+        // #1140 — transmission refracts only through thickness, so the two travel together.
+        thickness: p.thickness,
         ior: p.ior,
         sheen: p.sheen,
         specularIntensity: p.specularIntensity,

@@ -2908,6 +2908,18 @@ function FlattenedBakedMeshR({
   return <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />;
 }
 
+/**
+ * #1140 — draw the surface the bake captured: its cutout threshold and which faces it drew.
+ *
+ * Both are absent from an ordinary spec, and three's own constructor defaults (alphaTest 0,
+ * FrontSide) are exactly what absence means, so this writes nothing for a material that had
+ * neither. `threeSideFor` stays the one place the boolean becomes the enum.
+ */
+function bakedSurface(m: THREE.Material, spec: BakedMaterialSpec): void {
+  if (spec.alphaTest !== undefined) m.alphaTest = spec.alphaTest;
+  if (spec.doubleSided !== undefined) m.side = threeSideFor(spec.doubleSided);
+}
+
 function CapturedBakedMeshR({
   value,
   override,
@@ -2983,6 +2995,7 @@ function CapturedBakedMeshR({
         wireframe: shading === 'wireframe',
       });
       m.map = placed(sRGB(mapTex), 'map');
+      bakedSurface(m, spec);
       m.userData.__placedClones = clones;
       return m;
     }
@@ -3011,6 +3024,7 @@ function CapturedBakedMeshR({
     m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
     m.aoMap = placed(linear(aoTex), 'aoMap');
     m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
+    bakedSurface(m, spec);
     m.userData.__placedClones = clones;
 
     if (spec.materialClass === 'physical' && spec.physical) {
@@ -3019,6 +3033,9 @@ function CapturedBakedMeshR({
       if (ph.clearcoat !== undefined) p.clearcoat = ph.clearcoat;
       if (ph.clearcoatRoughness !== undefined) p.clearcoatRoughness = ph.clearcoatRoughness;
       if (ph.transmission !== undefined) p.transmission = ph.transmission;
+      // #1140 — without this a captured transmission drew at three's thickness 0, which refracts
+      // nothing: the glass baked flat.
+      if (ph.thickness !== undefined) p.thickness = ph.thickness;
       if (ph.ior !== undefined) p.ior = ph.ior;
       if (ph.sheen !== undefined) p.sheen = ph.sheen;
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
@@ -3042,6 +3059,8 @@ function CapturedBakedMeshR({
     aoTex,
     emissiveTex,
     spec.mapPlacements,
+    spec.alphaTest,
+    spec.doubleSided,
   ]);
 
   // Dispose the built material when it is replaced or the node unmounts — it is
