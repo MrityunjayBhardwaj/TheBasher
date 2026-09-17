@@ -191,7 +191,14 @@ describe('node schema payload (#1007)', () => {
     expect(text).toContain('Object | in: data:ObjectData');
     expect(text).toContain('Param paths are exactly the paths setParam takes');
     // The whole reason this file exists: dag.inspect's JSON is 120,813 B.
-    expect(text.length).toBeLessThan(40_000);
+    //
+    // 41,000 and not 40,000 since #1140, and the raise is the symptom, not the fix: six node
+    // types print the whole material tree in full, so about 26,500 B of this payload is one
+    // schema repeated, and every material field costs ~90 B across six lines at once. That left
+    // 31 B of slack, which the three fields of #1140 spent. Printing the tree once (#1149) takes
+    // ~18,000 B out and gives the budget real room; until then this number moves when a material
+    // grows, which is exactly the thing worth fixing.
+    expect(text.length).toBeLessThan(41_000);
     console.log(`[#1007] renderNodeCatalog = ${text.length} B over ${schemas.length} types`);
   });
 });

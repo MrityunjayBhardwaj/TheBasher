@@ -320,10 +320,16 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     emissiveIntensity: drawn.emissiveIntensity,
     ...drawn.maps,
     ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
+    // #1140 — the cutout and the side, absent at three's defaults, as on the clone road.
+    ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
+    ...(drawn.doubleSided ? { doubleSided: true } : {}),
     physical: {
       clearcoat: drawn.clearcoat,
       clearcoatRoughness: drawn.clearcoatRoughness,
       transmission: drawn.transmission,
+      // #1140 — `openpbrToThree` seeds this whenever transmission is on; without it the baked
+      // mesh drew a transmissive material with three's thickness 0, which does not refract.
+      thickness: drawn.thickness,
       ior: drawn.ior,
     },
   };

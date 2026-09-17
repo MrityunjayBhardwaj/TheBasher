@@ -50,6 +50,7 @@ vi.mock('../resolveEvaluatedMesh', async (importOriginal) => {
 });
 import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
+import { DEFAULT_TRANSMISSION_THICKNESS } from '../material/openpbrToThree';
 import type {
   BakedMaterialSpec,
   EvaluatedMesh,
@@ -2787,5 +2788,69 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     const { spec } = await bakeBoxWith({});
     expect('mapPlacements' in spec).toBe(false);
     expect(spec.map).toBeNull();
+  });
+
+  describe('#1140 — the cutout, the side and the thickness come across too', () => {
+    it('bakes the cutout and the side the box draws with', async () => {
+      const { result, spec } = await bakeBoxWith({
+        geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.alphaTest).toBe(0.4);
+      expect(spec.doubleSided).toBe(true);
+    });
+
+    it('bakes the thickness a transmissive material refracts through', async () => {
+      const { drawn, spec } = await bakeBoxWith({ transmission: { weight: 0.5 } });
+      expect(drawn.transmission.weight).toBe(0.5);
+      // The draw seeds a thickness whenever transmission is on; a transmission captured without
+      // one refracts through nothing, which is glass baked flat.
+      expect(spec.physical).toMatchObject({
+        transmission: 0.5,
+        thickness: DEFAULT_TRANSMISSION_THICKNESS,
+      });
+    });
+
+    it('a box drawing neither writes neither field, so earlier saves read as they did', async () => {
+      const { spec } = await bakeBoxWith({});
+      expect('alphaTest' in spec).toBe(false);
+      expect('doubleSided' in spec).toBe(false);
+    });
+
+    it('both fields survive the schema, which is where a field the spec never declared dies', async () => {
+      let state = makeSplitCube(emptyDagState(), { objectId: 'n_box' }).state;
+      const dataId = (state.nodes['n_box'].inputs.data as { node: string }).node;
+      const current = state.nodes[dataId].params.material as Record<string, unknown>;
+      state = applyOp(state, {
+        type: 'setParam',
+        nodeId: dataId,
+        paramPath: 'material',
+        value: {
+          ...current,
+          geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true },
+          transmission: { weight: 0.5 },
+        },
+      }).next;
+      let ops: Op[] = [];
+      await dispatchApplyTransform('n_box', 'all', {
+        state,
+        storage: new MemoryStorage(),
+        currentFrame: 0,
+        dispatchAtomic: (o) => {
+          ops = o;
+          return [];
+        },
+        setSelection: () => {},
+      });
+      // Through `applyOp`, which is where `addNode` parses: an undeclared field is stripped here
+      // and the bake reports ok anyway (#1136's own red before its schema line landed).
+      let after = state;
+      for (const op of ops) after = applyOp(after, op).next;
+      const baked = Object.values(after.nodes).find((n) => n.type === 'BakedData');
+      const spec = (baked?.params as { material: BakedMaterialSpec }).material;
+      expect(spec.alphaTest).toBe(0.4);
+      expect(spec.doubleSided).toBe(true);
+      expect(spec.physical?.thickness).toBe(DEFAULT_TRANSMISSION_THICKNESS);
+    });
   });
 });

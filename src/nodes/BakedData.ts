@@ -95,9 +95,13 @@ export const BakedMaterialSpecSchema = z.object({
       ),
     )
     .optional(),
+  // #1140 — declared, or zod strips them on every parse and the cutout and the side are lost.
+  alphaTest: z.number().optional(),
+  doubleSided: z.boolean().optional(),
   physical: z
     .object({
       clearcoat: z.number().optional(),
+      thickness: z.number().optional(),
       clearcoatRoughness: z.number().optional(),
       transmission: z.number().optional(),
       ior: z.number().optional(),
