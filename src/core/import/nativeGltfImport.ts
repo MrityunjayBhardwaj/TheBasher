@@ -104,6 +104,7 @@ type NativeGltfJson = GltfJson & {
   images?: { uri?: string; bufferView?: number; mimeType?: string }[];
   samplers?: { wrapS?: number; wrapT?: number; magFilter?: number; minFilter?: number }[];
   meshes?: {
+    name?: string;
     primitives?: {
       material?: number;
       mode?: number;
@@ -839,6 +840,20 @@ async function readTextureImage(
  * becomes a project ref sampled the way the file asks.
  */
 /**
+ * #1137 — what a mesh node's Object is called: the node's own name, else its mesh's, else
+ * `Mesh_<mesh index>`. Blender 4.5.9's order exactly (`io_scene_gltf2/blender/imp/node.py:308-309`,
+ * `imp/mesh.py:39`), including treating a blank name as absent.
+ *
+ * Kept as the file spells it. The clone road's `childName` strips three's reserved characters
+ * because it looks a child up by that name in the clone; nothing looks a native Object up by name.
+ */
+function objectNameOf(json: NativeGltfJson, nodeIndex: number): string {
+  const node = json.nodes[nodeIndex];
+  const meshIndex = node.mesh as number;
+  return node.name || json.meshes?.[meshIndex]?.name || `Mesh_${meshIndex}`;
+}
+
+/**
  * #1123 — the material's placements restated about the pivot the native material draws with.
  *
  * The converter captures `KHR_texture_transform` as the file wrote it, about the UV origin, which is
@@ -1010,6 +1025,8 @@ export async function buildNativeGltfImportOps(
         nodeType: 'Object',
         params: { position: trs.position, rotation: trs.rotation, scale: trs.scale },
       },
+      // #1137 — the name every surface shows, so the outliner lists the file's own node.
+      { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
       {
         type: 'connect',
         from: { node: dataId, socket: 'out' },
