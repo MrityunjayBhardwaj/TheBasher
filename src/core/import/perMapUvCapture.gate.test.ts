@@ -297,6 +297,9 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // REPLACES, which arrive later from OPFS on a deferred pass. Same road, so the same
     // pivot — it was the missing caller here that let a replaced map draw unplaced.
     'src/app/material/gltfMapOverlay.ts': 'ORIGIN_PIVOT',
+    // #1136 — `BakedMeshR` places the per-map placement a bake captured. The capture restates
+    // whatever pivot the source drew with about the centre, so this road is the authored one's.
+    'src/viewport/SceneFromDAG.tsx': 'CENTRE_PIVOT',
   };
 
   it('is named by exactly the declared modules', () => {
