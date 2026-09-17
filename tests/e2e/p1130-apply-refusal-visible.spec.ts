@@ -74,7 +74,9 @@ test.describe('#1130 — a refused Apply is shown, not dropped', () => {
 
     const warning = page.getByTestId('toast-warn');
     await expect(warning).toBeVisible();
-    await expect(warning).toContainText('uv1');
+    // #1134 — the object as the outliner names it, never its node id.
+    await expect(warning).toContainText('"SheenQuad" carries uv1');
+    await expect(warning).not.toContainText('n_gltfChild');
     await expect(warning).toContainText('a baked mesh has no place to keep');
     expect(await nodeTypes(page)).toEqual(before);
   });

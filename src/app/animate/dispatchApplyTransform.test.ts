@@ -2646,3 +2646,44 @@ describe('#1132 — a refused Apply writes nothing to storage', () => {
     expect(writeSpy).toHaveBeenCalled();
   });
 });
+
+describe('#1134 — a refusal names the object the way the outliner does', () => {
+  it('quotes a renamed registry object by its name, not its id', async () => {
+    let state = buildSplitSphereState();
+    state = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
+    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    });
+    geometryRegistry
+      .getForRead(mesh!.geometry)!
+      .setAttribute('uv1', geometryRegistry.getForRead(mesh!.geometry)!.getAttribute('uv').clone());
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: () => [],
+      setSelection: () => {},
+    });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('"Hero" carries uv1') });
+    expect(result.ok ? '' : result.reason).not.toContain(PRIM_ID);
+  });
+
+  it('quotes an imported child by the name it was imported with', async () => {
+    const clone = fakeClone();
+    const geometry = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
+    geometry.setAttribute('uv1', geometry.getAttribute('uv').clone());
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state: gltfChildState(),
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: () => [],
+      setSelection: () => {},
+      gltfClone: clone,
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining(`"${CHILD_NAME}" carries uv1`),
+    });
+    expect(result.ok ? '' : result.reason).not.toContain('n_child');
+  });
+});
