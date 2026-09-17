@@ -676,6 +676,11 @@ export function ArmatureHelper({
           // not posed: without `clipCount`, a rig resting because two clips are wired reads
           // the same as a rig whose clip failed to sample.
           skeletonObjects: { id: string; bones: number; clipCount: number; posed: boolean }[];
+          // #1087 — the colours actually drawn, read off the two meshes: every distinct colour
+          // among the drawn bones, and the source rig's. The source rig and a rig Object can
+          // both show one motion, and the colour is what tells them apart on screen.
+          boneColors: string[];
+          sourceColor: string | null;
         };
       };
       w.__basher_armature = {
@@ -689,6 +694,19 @@ export function ArmatureHelper({
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),
         matrices: frames.slice(0, count).map((f) => [...f.matrix.elements]),
+        boneColors: (() => {
+          const seen = new Set<string>();
+          const c = new THREE.Color();
+          for (let i = 0; i < count; i++) {
+            mesh.getColorAt(i, c);
+            seen.add(`#${c.getHexString()}`);
+          }
+          return [...seen].sort();
+        })(),
+        sourceColor:
+          refMesh && refMesh.count > 0
+            ? `#${(refMesh.material as THREE.MeshBasicMaterial).color.getHexString()}`
+            : null,
         sourceRigsOffered: showSourceRigs ? (sourceRigs?.length ?? 0) : 0,
         sourceBones: refMeshRef.current?.count ?? 0,
         sourceNames: refNames,
