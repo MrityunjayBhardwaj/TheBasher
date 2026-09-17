@@ -83,6 +83,22 @@ export function standingObjectsOf(state: DagState, skeletonId: string): string[]
     .sort();
 }
 
+/**
+ * The Object the import stood this skeleton up with, while it still shows the skeleton — or null.
+ *
+ * #1088 — the one Object a bind hides. {@link standingObjectsOf} answers "where does this motion
+ * stand", and an Object the director pointed at the skeleton is a right answer to that; it is not
+ * one a bind may hide unasked. The import's own Object is told apart by the id the import derives
+ * ({@link skeletonObjectId}): a rename writes `meta.name` and never the id, while a duplicate gets
+ * an id of its own. The `data` edge is checked too, because once that Object is pointed at
+ * something else it no longer shows this motion.
+ */
+export function standInObjectOf(state: DagState, skeletonId: string): string | null {
+  const id = skeletonObjectId(skeletonId);
+  const node = state.nodes[id];
+  return node?.type === 'Object' && dataSourceOf(node.inputs?.data) === skeletonId ? id : null;
+}
+
 /** The node an input socket reads from, or null — one binding or the first of a list. */
 function dataSourceOf(binding: unknown): string | null {
   const one = (Array.isArray(binding) ? binding[0] : binding) as { node?: unknown } | undefined;
