@@ -11,7 +11,8 @@
 // THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
 // Lifecycle (K15 extension, ORDERED):
-//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
+//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh, and ask EVERY
+//      refusal here (#1132): a refusal asked after step 3 leaves an orphan file in storage.
 //   2. clone+matrix(sync) — getForRead(ref) returns a SHARED instance;
 //      `.clone()` BEFORE applyMatrix4 (H45 — mutating the cache corrupts every
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
@@ -66,6 +67,7 @@ import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationStat
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { importedChildDataId, importedChildOf, isImportedChild } from '../importedChild';
+import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import { getGltfClone } from '../asset/gltfCloneRegistry';
@@ -225,8 +227,8 @@ function splitAppliedPose(
 }
 
 /** The refusal every road gives when {@link splitAppliedPose} has no inverse to take. */
-function zeroKeptScaleReason(selectedId: string): string {
-  return `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`;
+function zeroKeptScaleReason(name: string): string {
+  return `Apply: "${name}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`;
 }
 
 /**
@@ -318,12 +320,12 @@ function bakedSpecFromMeshMaterial(
  * produce a multi-material mesh, so this is the only seam a test can hand one to.
  */
 export function multiMaterialBakeRefusal(
-  selectedId: string,
+  name: string,
   materials: EvaluatedMesh['materials'],
 ): string | null {
   const assigned = assignedMaterials(materials);
   if (assigned.length <= 1) return null;
-  return `Apply: "${selectedId}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
+  return `Apply: "${name}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
 }
 
 /**
@@ -340,13 +342,13 @@ export function multiMaterialBakeRefusal(
  * those import natively.
  */
 export function unheldAttributesBakeRefusal(
-  selectedId: string,
+  name: string,
   geometry: THREE.BufferGeometry,
 ): string | null {
   const unheld = unheldBakeAttributes(geometry);
   if (unheld.length === 0) return null;
   const pronoun = unheld.length === 1 ? 'it' : 'them';
-  return `Apply: "${selectedId}" carries ${unheld.join(', ')}, which a baked mesh has no place to keep, so Apply would drop ${pronoun}. Apply stays unavailable on it until the import comes across as native mesh data.`;
+  return `Apply: "${name}" carries ${unheld.join(', ')}, which a baked mesh has no place to keep, so Apply would drop ${pronoun}. Apply stays unavailable on it until the import comes across as native mesh data.`;
 }
 
 /**
@@ -387,13 +389,13 @@ export function unheldAttributesBakeRefusal(
  * every input. Refusing honestly is the interim; it is not the destination.
  */
 export function uncapturedMaterialBakeRefusal(
-  selectedId: string,
+  name: string,
   materials: EvaluatedMesh['materials'],
 ): string | null {
   // Slot 0 is the one the bake carries — `primaryMaterial` narrows to it, and the
   // multi-material refusal above has already stopped anything with more than one assigned.
   if (slotMaterialAt(materials, 0).status !== 'elsewhere') return null;
-  return `Apply: "${selectedId}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
+  return `Apply: "${name}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
 }
 
 /**
@@ -521,6 +523,9 @@ export async function dispatchApplyTransform(
 
   const node = state.nodes[selectedId];
   if (!node) return { ok: false, reason: `Apply: node "${selectedId}" not found.` };
+  // #1134 — every sentence a person reads names the object the way the outliner and the inspector
+  // header do. A caller that passed the id still knows it; a director has never seen it.
+  const name = nodeDisplayName(state.nodes, selectedId);
 
   // The glTF-child path (the R-1 edge-less satellite) is materially different —
   // source geometry/material live inside the live render clone, and the asset
@@ -558,7 +563,7 @@ export async function dispatchApplyTransform(
     time: { frame: currentFrame, seconds: currentFrame / 60, normalized: 0 },
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
-  if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
+  if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${name}".` };
 
   // #1077 — stored mesh data is applied INTO, never baked. `applyRoadOf` makes that call, and the
   // animated guard above read the same call to decide what to ask (#1081 / #1098).
@@ -574,13 +579,22 @@ export async function dispatchApplyTransform(
 
   // #1080 — the geometry takes `kept⁻¹ · full`, and the Object keeps every band not applied.
   const split = splitAppliedPose(mesh.transform, mask);
-  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
 
   // 2 — clone the SHARED registry geometry before baking (H45).
   const src = getForRead(mesh.geometry);
-  if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
-  const unheld = unheldAttributesBakeRefusal(selectedId, src);
+  if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${name}".` };
+  const unheld = unheldAttributesBakeRefusal(name, src);
   if (unheld) return { ok: false, reason: unheld };
+  // #1132 — every refusal is asked BEFORE the write below. A refusal asked after it is still
+  // honest about the graph, but it leaves the baked file in storage with nothing pointing at it.
+  const refusal = multiMaterialBakeRefusal(name, mesh.materials);
+  if (refusal) return { ok: false, reason: refusal };
+  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
+  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
+  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
+  const uncaptured = uncapturedMaterialBakeRefusal(name, mesh.materials);
+  if (uncaptured) return { ok: false, reason: uncaptured };
   const baked = src.clone();
   baked.applyMatrix4(split.matrix);
   if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
@@ -603,13 +617,6 @@ export async function dispatchApplyTransform(
   // This is also the rule the object↔data split already chose — the load migration has the
   // Object inherit the fused node's id for exactly this reason (§5 id-stability).
   const bakedId = selectedId;
-  const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
-  if (refusal) return { ok: false, reason: refusal };
-  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
-  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
-  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
-  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
-  if (uncaptured) return { ok: false, reason: uncaptured };
   const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
@@ -874,6 +881,7 @@ function applyIntoStoredMesh(
   // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
   // consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
   // shared operator's result. Either way it would change with this Apply.
+  const name = nodeDisplayName(state.nodes, selectedId);
   const seen = new Set<string>();
   for (let cur = dataId; cur !== selectedId; ) {
     const edges = consumerEdgesOf(state, cur);
@@ -881,7 +889,7 @@ function applyIntoStoredMesh(
       const others = Math.max(edges.length - 1, 0);
       return {
         ok: false,
-        reason: `Apply: "${selectedId}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${cur}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
+        reason: `Apply: "${name}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${nodeDisplayName(state.nodes, cur)}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
       };
     }
     seen.add(cur);
@@ -889,7 +897,7 @@ function applyIntoStoredMesh(
   }
   const applied = APPLIED_BANDS[mask];
   const split = splitAppliedPose(transform, mask);
-  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
   const next = transformMeshData(unpackMeshData(packed), split.matrix);
 
   const ops: Op[] = [
@@ -1065,7 +1073,7 @@ function animatedAncestorOfImportedChild(
 ): string | null {
   const seconds = currentFrame / 60;
   for (const id of placement.wrapperIds) {
-    if (isApplySourceAnimated(state, id, currentFrame)) return id;
+    if (isApplySourceAnimated(state, id, currentFrame)) return nodeDisplayName(state.nodes, id);
   }
   const nameMap = (asset.params as { nodeNameMap?: Record<string, string> }).nodeNameMap ?? {};
   for (const name of placement.cloneAncestorNames) {
@@ -1105,6 +1113,9 @@ async function dispatchApplyGltfChild(
     };
   }
   const { assetRef, childName } = imported;
+  // #1134 — `childName` finds the mesh in the clone; `name` is what a message calls it, and differs
+  // once the director renames the object.
+  const name = nodeDisplayName(state.nodes, selectedId);
   const seconds = currentFrame / 60;
 
   // Animated guard (D-04) — keyframe channels on the child node OR a clip track
@@ -1124,7 +1135,7 @@ async function dispatchApplyGltfChild(
     time: { frame: currentFrame, seconds, normalized: 0 },
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
-  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${selectedId}".` };
+  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${name}".` };
 
   // 2 — read source geometry + RESOLVED material off the LIVE render clone (Q4 —
   // registry.get returns null for gltf). The clone is the post-override render
@@ -1138,7 +1149,7 @@ async function dispatchApplyGltfChild(
   }
   const child = clone.getObjectByName(childName) as THREE.Mesh | undefined;
   if (!child || !(child as THREE.Mesh).isMesh || !child.geometry) {
-    return { ok: false, reason: `Apply: child "${childName}" is not a renderable mesh.` };
+    return { ok: false, reason: `Apply: child "${name}" is not a renderable mesh.` };
   }
 
   // The owning GltfAsset node (to append the suppression key on it, and to find what holds it).
@@ -1160,15 +1171,22 @@ async function dispatchApplyGltfChild(
   if (animatedAncestor) {
     return {
       ok: false,
-      reason: `Apply unavailable — "${animatedAncestor}", which "${childName}" draws under, is animated, and the bake would freeze it.`,
+      reason: `Apply unavailable — "${animatedAncestor}", which "${name}" draws under, is animated, and the bake would freeze it.`,
     };
   }
   // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
   const split = splitAppliedPose(placement.transform, mask, placement.full);
-  if (!split) return { ok: false, reason: zeroKeptScaleReason(selectedId) };
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
 
-  const unheld = unheldAttributesBakeRefusal(selectedId, child.geometry);
+  const unheld = unheldAttributesBakeRefusal(name, child.geometry);
   if (unheld) return { ok: false, reason: unheld };
+
+  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
+  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
+  // for #151; multi-material merge is a later concern). Textures persist inside.
+  // #1132 — read and refused here, before the geometry write, so a refusal leaves no file behind.
+  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
+  if (!liveMat) return { ok: false, reason: `Apply: child "${name}" has no material.` };
 
   // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
   // every other instance/child sharing the buffer.
@@ -1182,12 +1200,6 @@ async function dispatchApplyGltfChild(
   const storage = deps?.storage ?? (await getStorage());
   const bakedRef = await writeBakedGeometry(storage, baked);
   baked.dispose();
-
-  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
-  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
-  // for #151; multi-material merge is a later concern). Textures persist inside.
-  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
-  if (!liveMat) return { ok: false, reason: `Apply: child "${childName}" has no material.` };
   const spec = await captureBakedMaterial(storage, liveMat);
 
   // 4 — atomic Op composite (Q1, the R-1 edge-less satellite collapses to):

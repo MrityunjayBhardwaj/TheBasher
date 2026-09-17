@@ -81,11 +81,11 @@ import {
   slotAbsenceOf,
 } from './objectSlotAuthoring';
 import {
-  dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
+import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
@@ -3086,7 +3086,8 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   const currentFrame = useTimeStore((s) => s.frame);
   const animated = isApplySourceAnimated(state, nodeId, currentFrame);
   const onApply = (mask: ApplyMask) => {
-    void dispatchApplyTransform(nodeId, mask);
+    // #1130 — a refusal is shown, never dropped.
+    void applyTransformFromUi(nodeId, mask);
   };
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5" data-testid="npanel-apply-transform">
