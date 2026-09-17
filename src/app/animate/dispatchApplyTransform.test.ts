@@ -24,7 +24,7 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
-import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
+import { evaluatedMeshFromMeshData, resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { resolveWorldTransform } from '../resolveWorldTransform';
 import {
   dispatchApplyTransform,
@@ -37,9 +37,19 @@ import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
+import { twoMaterialMeshData } from '../../test-utils/twoMaterialMesh';
+import { materialAssignmentOf } from '../materialAssignment';
+
+// #1132 — the registry road's material refusals read `mesh.materials`, and no real node yet
+// resolves to a two-material or clone-owned assignment on that road. The mock passes straight
+// through to the real resolver unless a test swaps one answer for a mesh with those materials.
+vi.mock('../resolveEvaluatedMesh', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../resolveEvaluatedMesh')>();
+  return { ...real, resolveEvaluatedMesh: vi.fn(real.resolveEvaluatedMesh) };
+});
 import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
-import type { InlineMaterialSpec, MeshGeometryData, Vec3 } from '../../nodes/types';
+import type { EvaluatedMesh, InlineMaterialSpec, MeshGeometryData, Vec3 } from '../../nodes/types';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -2536,5 +2546,103 @@ describe('#1119 — a bake refuses attributes the baked store cannot hold', () =
     expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
     expect(calls).toHaveLength(0);
     expect(writeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('#1132 — a refused Apply writes nothing to storage', () => {
+  async function applyRefused(
+    selectedId: string,
+    state: DagState,
+    gltfClone?: THREE.Group,
+  ): Promise<{
+    result: Awaited<ReturnType<typeof dispatchApplyTransform>>;
+    writes: number;
+    dispatched: number;
+  }> {
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    let dispatched = 0;
+    const result = await dispatchApplyTransform(selectedId, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+      ...(gltfClone ? { gltfClone } : {}),
+    });
+    return { result, writes: writeSpy.mock.calls.length, dispatched };
+  }
+
+  /** The next resolve of the registry-road sphere answers with `materials` in place of its own. */
+  function resolveWithMaterials(materials: EvaluatedMesh['materials']): void {
+    const real = vi.mocked(resolveEvaluatedMesh).getMockImplementation()!;
+    vi.mocked(resolveEvaluatedMesh).mockImplementationOnce((state, id, ctx) => {
+      const mesh = real(state, id, ctx);
+      return mesh ? { ...mesh, materials } : mesh;
+    });
+  }
+
+  it('the registry bake refuses two materials before it writes', async () => {
+    const state = buildSplitSphereState();
+    const two = evaluatedMeshFromMeshData(null, twoMaterialMeshData(), {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    }).materials;
+    resolveWithMaterials(two);
+    const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('assigns 2 materials') });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the registry bake refuses a material owned by an imported asset before it writes', async () => {
+    const state = buildSplitSphereState();
+    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    })!;
+    const cloneOwned = materialAssignmentOf(null, [null], {
+      key: 'gltf|asset-a|Cube',
+      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+    });
+    expect(mesh.geometry.descriptor.kind).not.toBe('gltf');
+    resolveWithMaterials(cloneOwned);
+    const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('owned by its imported asset'),
+    });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the imported-child bake refuses a child with no material before it writes', async () => {
+    const clone = fakeClone();
+    (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).material = [];
+    const { result, writes, dispatched } = await applyRefused('n_child', gltfChildState(), clone);
+    expect(result).toEqual({ ok: false, reason: `Apply: child "${CHILD_NAME}" has no material.` });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the positive control: the same child with its material writes and dispatches', async () => {
+    const stateRef = { current: gltfChildState() };
+    const { fn, calls } = makeDispatch(stateRef);
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state: stateRef.current,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      gltfClone: fakeClone(),
+    });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(writeSpy).toHaveBeenCalled();
   });
 });

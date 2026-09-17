@@ -11,7 +11,8 @@
 // THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
 // Lifecycle (K15 extension, ORDERED):
-//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
+//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh, and ask EVERY
+//      refusal here (#1132): a refusal asked after step 3 leaves an orphan file in storage.
 //   2. clone+matrix(sync) — getForRead(ref) returns a SHARED instance;
 //      `.clone()` BEFORE applyMatrix4 (H45 — mutating the cache corrupts every
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
@@ -581,6 +582,15 @@ export async function dispatchApplyTransform(
   if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
   const unheld = unheldAttributesBakeRefusal(selectedId, src);
   if (unheld) return { ok: false, reason: unheld };
+  // #1132 — every refusal is asked BEFORE the write below. A refusal asked after it is still
+  // honest about the graph, but it leaves the baked file in storage with nothing pointing at it.
+  const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
+  if (refusal) return { ok: false, reason: refusal };
+  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
+  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
+  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
+  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
+  if (uncaptured) return { ok: false, reason: uncaptured };
   const baked = src.clone();
   baked.applyMatrix4(split.matrix);
   if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
@@ -603,13 +613,6 @@ export async function dispatchApplyTransform(
   // This is also the rule the object↔data split already chose — the load migration has the
   // Object inherit the fused node's id for exactly this reason (§5 id-stability).
   const bakedId = selectedId;
-  const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
-  if (refusal) return { ok: false, reason: refusal };
-  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
-  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
-  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
-  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
-  if (uncaptured) return { ok: false, reason: uncaptured };
   const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
@@ -1170,6 +1173,13 @@ async function dispatchApplyGltfChild(
   const unheld = unheldAttributesBakeRefusal(selectedId, child.geometry);
   if (unheld) return { ok: false, reason: unheld };
 
+  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
+  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
+  // for #151; multi-material merge is a later concern). Textures persist inside.
+  // #1132 — read and refused here, before the geometry write, so a refusal leaves no file behind.
+  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
+  if (!liveMat) return { ok: false, reason: `Apply: child "${childName}" has no material.` };
+
   // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
   // every other instance/child sharing the buffer.
   const baked = child.geometry.clone();
@@ -1182,12 +1192,6 @@ async function dispatchApplyGltfChild(
   const storage = deps?.storage ?? (await getStorage());
   const bakedRef = await writeBakedGeometry(storage, baked);
   baked.dispose();
-
-  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
-  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
-  // for #151; multi-material merge is a later concern). Textures persist inside.
-  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
-  if (!liveMat) return { ok: false, reason: `Apply: child "${childName}" has no material.` };
   const spec = await captureBakedMaterial(storage, liveMat);
 
   // 4 — atomic Op composite (Q1, the R-1 edge-less satellite collapses to):
