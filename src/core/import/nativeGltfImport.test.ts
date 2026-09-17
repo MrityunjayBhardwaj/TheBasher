@@ -2,7 +2,15 @@
 // the whole import is refused by name.
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildNativeGltfImportOps, readGltfMesh, triangulate } from './nativeGltfImport';
+import {
+  buildNativeGltfImportOps,
+  primitiveSlots,
+  readGltfMesh,
+  triangulate,
+} from './nativeGltfImport';
+import { attributeAt, MATERIAL_INDEX } from '../../nodes/attributes';
+import { read as readAttributes } from '../../app/attributeStore';
+import { readGeometry } from '../../app/geometryRegistry';
 import { parseGltfContainer, resolveBuffers } from './glb';
 import { meshGeometryRef, packMeshData, buildMeshGeometry } from '../../app/meshGeometryData';
 import { cornerCountOf, faceCountOf } from '../../app/faceCount';
@@ -299,6 +307,121 @@ function polyMeshParamsOf(ops: readonly Op[]) {
   return PolyMeshDataParams.parse(data.params);
 }
 
+// #1052 — the two-material quads: one glTF node, two primitives sharing one POSITION accessor, a red
+// and a blue material. Blender's importer makes ONE mesh of them with 2 material slots and
+// `material_index` [0, 1] (measured on #1052), and so must this.
+const TWO_MATERIAL = 'public/assets/two-material-quad.gltf';
+const TWO_MATERIAL_TEXTURED = 'public/assets/two-material-textured-quad.gltf';
+
+type PrimitiveJson = { attributes: Record<string, number>; material?: number; indices: number };
+/** The textured two-material quad, edited: its accessors are 0 POSITION, 1 and 2 the two index lists, 3 UV. */
+function twoPrimitiveFixture(mutate: (primitives: PrimitiveJson[]) => void) {
+  const json = JSON.parse(readFileSync(TWO_MATERIAL_TEXTURED, 'utf8')) as Record<string, unknown>;
+  mutate((json.meshes as { primitives: PrimitiveJson[] }[])[0].primitives);
+  return json;
+}
+async function readFirstMesh(json: Record<string, unknown>) {
+  const parsed = json as never as Parameters<typeof readGltfMesh>[0];
+  // The fixture's one buffer is a data URI, so there is no embedded binary chunk to hand over.
+  return readGltfMesh(parsed, await resolveBuffers(parsed, new Uint8Array(0)), 0);
+}
+
+describe('#1052 — readGltfMesh reads every primitive into one mesh', () => {
+  it('two primitives over one POSITION: 4 welded points, 2 faces, and a material_index of [0, 1]', async () => {
+    const data = await readFirstMesh(JSON.parse(readFileSync(TWO_MATERIAL, 'utf8')));
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.points.length / 3).toBe(4);
+    expect(Array.from(data.faceSizes)).toEqual([3, 3]);
+    expect(data.faceLayers.map((l) => [l.name, l.type, Array.from(l.data)])).toEqual([
+      ['material_index', 'int', [0, 1]],
+    ]);
+  });
+
+  it('primitives sharing a material share a slot, and a one-slot mesh writes no face layer', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[1].material = 0;
+    });
+    expect(primitiveSlots(json as never, 0).slotOfPrimitive).toEqual([0, 0]);
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.faceLayers).toEqual([]);
+  });
+
+  it('primitives with no material share one slot; vertex colours on one of them make it a slot of its own', () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[0].material;
+      delete prims[1].material;
+    });
+    expect(primitiveSlots(json as never, 0).slotOfPrimitive).toEqual([0, 0]);
+    const coloured = twoPrimitiveFixture((prims) => {
+      delete prims[0].material;
+      delete prims[1].material;
+      prims[1].attributes.COLOR_0 = 0;
+    });
+    const slots = primitiveSlots(coloured as never, 0);
+    expect(slots.slotOfPrimitive).toEqual([0, 1]);
+    expect(slots.slots.map((s) => s.vertexColors)).toEqual([false, true]);
+  });
+
+  it('a UV set one primitive lacks is zeros on its corners; a colour it lacks is white', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[1].attributes.TEXCOORD_0;
+      delete prims[1].material; // its material samples UV set 0, which it would no longer carry
+      prims[0].attributes.COLOR_0 = 0;
+    });
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    const uv = data.cornerLayers.find((l) => l.name === 'UVMap')!;
+    const colour = data.cornerLayers.find((l) => l.name === 'Color')!;
+    // Corners 0-2 are the first primitive's, 3-5 the second's.
+    expect(Array.from(uv.data.subarray(0, 6)).some((v) => v !== 0)).toBe(true);
+    expect(Array.from(uv.data.subarray(6))).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(Array.from(colour.data.subarray(12))).toEqual(Array(12).fill(1));
+    expect(Array.from(colour.data.subarray(0, 12))).not.toEqual(Array(12).fill(1));
+  });
+
+  it('when only one primitive has normals, the other takes its faces’ own normals and draws flat', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[0].attributes.NORMAL = 0;
+    });
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    const second = Array.from(data.cornerNormals!.subarray(9));
+    // The quad lies in z = 0, so a face normal is (0, 0, ±1) at every corner.
+    for (let c = 0; c < 3; c++) {
+      expect(second.slice(c * 3, c * 3 + 3).map(Math.abs)).toEqual([0, 0, 1]);
+    }
+  });
+
+  it('a map sampling a UV set is asked of the primitive that uses the material, not of the mesh', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[1].attributes.TEXCOORD_0; // the blue material samples UV set 0; its sibling still has one
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.refused).toContain(
+      'material 1 pbrMetallicRoughness.metallicRoughnessTexture samples UV set 0, which mesh 0 does not carry',
+    );
+  });
+
+  it('an attribute no buffer draws is refused on any primitive, not only the first', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[1].attributes.TANGENT = 0;
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.issue).toBe('#1125');
+  });
+});
+
 describe('buildNativeGltfImportOps', () => {
   beforeEach(() => {
     __resetRegistryForTests();
@@ -358,14 +481,6 @@ describe('buildNativeGltfImportOps', () => {
     | readonly [string, () => ArrayBuffer, string]
     | readonly [string, () => ArrayBuffer, string, string]
   > = [
-    // Lifting this refusal gives a native Object one slot per primitive, and that is the day a
-    // MaterialOverride's `slotIndex` needs a native meaning: today only the clone road reads it
-    // (#1090). The row's name carries the issue so the red that retires it says what else is owed.
-    [
-      'a mesh with two primitives (lifting it makes #1090 reachable)',
-      () => fixture('public/assets/two-material-quad.gltf'),
-      '#1052',
-    ],
     // #1050 — a texture comes across only as the native material holds it; each guard gets a case
     // only it can refuse.
     [
@@ -697,6 +812,52 @@ describe('buildNativeGltfImportOps', () => {
     expect(params.material?.mapUvLayers?.albedo).toBe('UVMap.001');
     expect(uvChannelOf(layers, params.material!.mapUvLayers!.albedo!)).toBe(1);
     expect(params.material?.maps.albedo?.store).toBe('project');
+  });
+
+  it('#1052 — the two-material quad arrives native: one mesh, a red and a blue slot, each face drawn by its own', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TWO_MATERIAL),
+      assetRef: 'user-imports/native/two-material-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
+    expect(types.sort()).toEqual(['Group', 'Object', 'PolyMeshData']);
+    const params = polyMeshParamsOf(result.ops);
+    expect(params.materialSlots?.map((m) => m?.base.color.toLowerCase())).toEqual([
+      '#ff0000',
+      '#0000ff',
+    ]);
+    expect(params.material).toEqual(params.materialSlots![0]);
+    const value = PolyMeshDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
+    const index = attributeAt(readAttributes(value.attributeKey!), MATERIAL_INDEX, 'face');
+    expect(Array.from(index!.data)).toEqual([0, 1]);
+    const read = readGeometry(value.geometry);
+    if (read.status !== 'ok') throw new Error(read.status);
+    expect(read.geometry.groups).toEqual([
+      { start: 0, count: 3, materialIndex: 0 },
+      { start: 3, count: 3, materialIndex: 1 },
+    ]);
+  });
+
+  it('#1052 — the textured two-material quad stores its image once, and only the blue slot samples it', async () => {
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TWO_MATERIAL_TEXTURED),
+      assetRef: 'user-imports/native/two-material-textured-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: (bytes, mime) => writeProjectImage(storage, 'p', bytes, mime),
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const slots = polyMeshParamsOf(result.ops).materialSlots!;
+    expect(slots).toHaveLength(2);
+    const held = (slot: (typeof slots)[number]) =>
+      Object.values(slot!.maps).filter((m) => m !== null && m !== undefined);
+    expect(held(slots[0])).toEqual([]);
+    expect(held(slots[1]).length).toBeGreaterThan(0);
+    expect(held(slots[1]).every((m) => m!.store === 'project')).toBe(true);
+    expect(await listProjectImages(storage, 'p')).toHaveLength(1);
   });
 
   it.each(refusals)(

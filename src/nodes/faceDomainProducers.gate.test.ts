@@ -79,6 +79,7 @@ import {
   targetedMaterialAttributes,
   uniformMaterialAttributes,
   mintGroupAttributes,
+  storedMeshAttributes,
 } from './meshAttributes';
 import { MATERIAL_INDEX, UV_MAP, UV_PROJECT, isKnownDomain, type AttributeSet } from './attributes';
 
@@ -136,6 +137,21 @@ const PRODUCERS: readonly Producer[] = [
     module: 'src/nodes/meshAttributes.ts',
     what: 'uniformMaterialAttributes',
     probe: () => uniformMaterialAttributes(boxDescriptor())!.set,
+  },
+  {
+    module: 'src/nodes/meshAttributes.ts',
+    what: 'storedMeshAttributes',
+    // #1052 — a stored mesh's own face layers. The probe's mesh holds `material_index` alone, the
+    // one face layer anything writes today.
+    probe: () =>
+      storedMeshAttributes({
+        points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+        faceSizes: Uint32Array.from([3]),
+        cornerPoints: Uint32Array.from([0, 1, 2]),
+        cornerLayers: [],
+        cornerNormals: null,
+        faceLayers: [{ name: MATERIAL_INDEX, type: 'int', data: Int32Array.from([0]) }],
+      })!.set,
   },
   {
     module: 'src/nodes/meshAttributes.ts',

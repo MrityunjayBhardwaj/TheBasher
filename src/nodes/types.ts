@@ -565,6 +565,23 @@ export interface MeshCornerLayer {
   readonly data: Float32Array;
 }
 
+/** #1052 — the face layer types a stored mesh holds. */
+export type MeshFaceLayerType = Extract<import('./attributes').AttributeType, 'int'>;
+
+/**
+ * #1052 — one named, typed face layer of a stored mesh, one value per face, in face order.
+ *
+ * Blender keeps `material_index` as an ordinary int attribute on the mesh's FACE domain, and so
+ * does this: the per-face slot index is the first face layer anything writes. Listed by name, like
+ * the corner layers, so the next face attribute needs no new field.
+ */
+export interface MeshFaceLayer {
+  /** Unique within the mesh (`material_index` is Blender's own name). */
+  readonly name: string;
+  readonly type: MeshFaceLayerType;
+  readonly data: Int32Array;
+}
+
 /**
  * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
  *
@@ -584,6 +601,8 @@ export interface MeshGeometryData {
   readonly cornerPoints: Uint32Array;
   /** Every UV set and colour, in order; empty when the mesh has none (#1117). */
   readonly cornerLayers: readonly MeshCornerLayer[];
+  /** Every face attribute, by name; empty when the mesh has none (#1052). */
+  readonly faceLayers: readonly MeshFaceLayer[];
   /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
   readonly cornerNormals: Float32Array | null;
 }

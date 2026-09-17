@@ -57,6 +57,7 @@ import type {
   BakedTextureRef,
   InlineMaterialSpec,
   MeshCornerLayer,
+  MeshFaceLayer,
   MeshGeometryData,
   Vec3,
 } from '../../nodes/types';
@@ -79,7 +80,7 @@ import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
-import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
+import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 
 /** Why a file cannot be imported natively yet, and the issue that changes that. */
 export interface NativeImportRefusal {
@@ -217,29 +218,28 @@ const THREE_WRAP_OF: Readonly<Record<number, number>> = {
  * Meshes › Overview), and the reader stops at the first missing number, so a set past the gap would
  * be dropped rather than drawn.
  *
- * A mesh that is not one primitive is left alone here, so `readGltfMesh` still gives that its own
- * refusal (#1052) rather than this one answering first about a primitive it arbitrarily picked.
+ * #1052 — asked of EVERY primitive: the mesh they become holds the union of what they carry.
  */
 function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
-  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
-  if (primitives.length !== 1) return null;
-  const attributes = primitives[0].attributes ?? {};
-  const undrawable = Object.keys(attributes).filter((name) => !HELD_ATTRIBUTES.has(name));
-  if (undrawable.length > 0) {
-    return {
-      refused: `mesh ${meshIndex} carries ${undrawable.join(', ')}, which a native mesh has no buffer slot to draw`,
-      issue: '#1125',
-    };
-  }
-  for (let n = 1; n < MAX_UV_LAYERS; n++) {
-    if (
-      attributes[`TEXCOORD_${n}`] !== undefined &&
-      attributes[`TEXCOORD_${n - 1}`] === undefined
-    ) {
+  for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
+    const attributes = prim.attributes ?? {};
+    const undrawable = Object.keys(attributes).filter((name) => !HELD_ATTRIBUTES.has(name));
+    if (undrawable.length > 0) {
       return {
-        refused: `mesh ${meshIndex} carries TEXCOORD_${n} without TEXCOORD_${n - 1}, and UV sets are numbered without gaps`,
-        issue: '#1063',
+        refused: `mesh ${meshIndex} carries ${undrawable.join(', ')}, which a native mesh has no buffer slot to draw`,
+        issue: '#1125',
       };
+    }
+    for (let n = 1; n < MAX_UV_LAYERS; n++) {
+      if (
+        attributes[`TEXCOORD_${n}`] !== undefined &&
+        attributes[`TEXCOORD_${n - 1}`] === undefined
+      ) {
+        return {
+          refused: `mesh ${meshIndex} carries TEXCOORD_${n} without TEXCOORD_${n - 1}, and UV sets are numbered without gaps`,
+          issue: '#1063',
+        };
+      }
     }
   }
   return null;
@@ -253,13 +253,18 @@ function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeIm
  * (`textureInfo.schema.json`, `texCoord`). A file that breaks that would import with a map whose
  * named layer resolves to nothing, and the draw declines such a map rather than sample a different
  * set — so the texture would silently not show. Refused instead, by name.
+ *
+ * #1052 — asked of the primitive that uses the material, never of its mesh as a whole: a sibling
+ * primitive's UV set is filled with zeros on the stored mesh, and a map sampling zeros is exactly
+ * the silent failure this refuses.
  */
 function unsampledUvSet(
   json: NativeGltfJson,
   meshIndex: number,
+  primitiveIndex: number,
   materialIndex: number,
 ): NativeImportRefusal | null {
-  const attributes = json.meshes?.[meshIndex]?.primitives?.[0]?.attributes ?? {};
+  const attributes = json.meshes?.[meshIndex]?.primitives?.[primitiveIndex]?.attributes ?? {};
   for (const { path, info } of textureSites(materialOf(json, materialIndex))) {
     const set = typeof info.texCoord === 'number' ? info.texCoord : 0;
     if (attributes[`TEXCOORD_${set}`] === undefined) {
@@ -402,20 +407,64 @@ function mismatched(meshIndex: number, attribute: string): NativeImportRefusal {
   };
 }
 
-/** Read one glTF mesh into a stored polygon mesh, or say why it cannot be. */
-export function readGltfMesh(
+/**
+ * #1052 — which material slot each primitive of a mesh draws with, and what each slot holds.
+ *
+ * Blender's importer, which this follows (`io_scene_gltf2/blender/imp/mesh.py`, 4.5.9): a mesh's
+ * primitives become ONE mesh, and a slot is added per distinct material the first time a primitive
+ * uses it, so two primitives sharing a material share a slot (`:420-428`, "Merge Material Slot when
+ * possible" defaults on, `__init__.py:1970-1973`). The material Blender makes depends on whether the
+ * primitive carries `COLOR_0` too (`:416-418`, and `:444-469` for a primitive with no material), so a
+ * slot is keyed on both. Primitives with no material share a slot, and draw with the default material
+ * a single primitive with no material has always drawn with here, where Blender leaves the slot
+ * empty (`:470-476`).
+ *
+ * Asked by the reader, which writes each face's slot, and by the op builder, which writes each slot's
+ * material, so the two cannot disagree about the numbering.
+ */
+export function primitiveSlots(
+  json: NativeGltfJson,
+  meshIndex: number,
+): {
+  readonly slotOfPrimitive: readonly number[];
+  readonly slots: readonly {
+    readonly material: number | undefined;
+    readonly vertexColors: boolean;
+  }[];
+} {
+  const slotOfPrimitive: number[] = [];
+  const slots: { material: number | undefined; vertexColors: boolean }[] = [];
+  const slotByKey = new Map<string, number>();
+  for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
+    const material = typeof prim.material === 'number' ? prim.material : undefined;
+    const vertexColors = prim.attributes?.COLOR_0 !== undefined;
+    const key = `${material ?? 'none'}|${vertexColors}`;
+    let slot = slotByKey.get(key);
+    if (slot === undefined) {
+      slot = slots.length;
+      slotByKey.set(key, slot);
+      slots.push({ material, vertexColors });
+    }
+    slotOfPrimitive.push(slot);
+  }
+  return { slotOfPrimitive, slots };
+}
+
+/** One primitive, read and checked: its positions, triangle corners, and the accessors it names. */
+interface ReadPrimitive {
+  readonly positions: Float32Array;
+  readonly corners: Uint32Array;
+  readonly uvAccessors: readonly number[];
+  readonly colourAccessor: number | undefined;
+  readonly normalAccessor: number | undefined;
+}
+
+function readPrimitive(
   json: NativeGltfJson,
   buffers: Uint8Array[],
   meshIndex: number,
-): MeshGeometryData | NativeImportRefusal {
-  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
-  if (primitives.length !== 1) {
-    return {
-      refused: `mesh ${meshIndex} has ${primitives.length} primitives, and one mesh with a slot per primitive is not written yet`,
-      issue: '#1052',
-    };
-  }
-  const prim = primitives[0];
+  prim: NonNullable<NonNullable<NativeGltfJson['meshes']>[number]['primitives']>[number],
+): ReadPrimitive | NativeImportRefusal {
   const mode = prim.mode ?? TRIANGLES;
   if (mode !== TRIANGLES && mode !== TRIANGLE_STRIP && mode !== TRIANGLE_FAN) {
     return {
@@ -478,6 +527,72 @@ export function readGltfMesh(
     if (v >= vertices)
       return { refused: `mesh ${meshIndex} indexes vertex ${v} of ${vertices}`, issue: '#1063' };
   }
+  return {
+    positions,
+    corners,
+    uvAccessors,
+    colourAccessor: typeof colourAccessor === 'number' ? colourAccessor : undefined,
+    normalAccessor: typeof normalAccessor === 'number' ? normalAccessor : undefined,
+  };
+}
+
+/** The unit normal of triangle `(a, b, c)`, read off `positions`, xyz per vertex. */
+function triangleNormal(positions: Float32Array, a: number, b: number, c: number): number[] {
+  const ux = positions[b * 3] - positions[a * 3];
+  const uy = positions[b * 3 + 1] - positions[a * 3 + 1];
+  const uz = positions[b * 3 + 2] - positions[a * 3 + 2];
+  const vx = positions[c * 3] - positions[a * 3];
+  const vy = positions[c * 3 + 1] - positions[a * 3 + 1];
+  const vz = positions[c * 3 + 2] - positions[a * 3 + 2];
+  const nx = uy * vz - uz * vy;
+  const ny = uz * vx - ux * vz;
+  const nz = ux * vy - uy * vx;
+  const length = Math.hypot(nx, ny, nz);
+  return length === 0 ? [0, 0, 0] : [nx / length, ny / length, nz / length];
+}
+
+/**
+ * Read one glTF mesh into a stored polygon mesh, or say why it cannot be.
+ *
+ * #1052 — EVERY primitive, as one mesh, the way Blender's importer does it (see
+ * {@link primitiveSlots}): faces in primitive order, points welded across the whole mesh, and a
+ * `material_index` face layer when the primitives use more than one slot. A primitive missing a UV
+ * set its siblings carry gets zeros there and a missing colour gets white, as in Blender
+ * (`mesh.py:245-251`, `:262-266`). When only some primitives carry normals, the rest get their
+ * faces' own normals, which draws them flat — Blender shades such a primitive flat (`:769-773`).
+ */
+export function readGltfMesh(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  meshIndex: number,
+): MeshGeometryData | NativeImportRefusal {
+  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
+  if (primitives.length === 0) {
+    return { refused: `mesh ${meshIndex} has no primitives`, issue: '#1063' };
+  }
+  const read: ReadPrimitive[] = [];
+  for (const prim of primitives) {
+    const one = readPrimitive(json, buffers, meshIndex, prim);
+    if ('refused' in one) return one;
+    read.push(one);
+  }
+
+  // Every primitive's vertices in one numbering, so the weld and the corners span the whole mesh.
+  const vertexBase: number[] = [];
+  let vertices = 0;
+  let cornerCount = 0;
+  for (const one of read) {
+    vertexBase.push(vertices);
+    vertices += one.positions.length / 3;
+    cornerCount += one.corners.length;
+  }
+  const positions = new Float32Array(vertices * 3);
+  const corners = new Uint32Array(cornerCount);
+  let cornerAt = 0;
+  read.forEach((one, i) => {
+    positions.set(one.positions, vertexBase[i] * 3);
+    for (const v of one.corners) corners[cornerAt++] = v + vertexBase[i];
+  });
 
   // The weld: split vertices at one position are one point. `map[v]` is vertex v's point.
   const scratch = new BufferGeometry();
@@ -494,13 +609,31 @@ export function readGltfMesh(
     }
   }
 
-  const gather = (accessorIndex: number | undefined, width: number): Float32Array | null => {
-    if (typeof accessorIndex !== 'number') return null;
-    const values = readAccessor(json, buffers, accessorIndex);
-    if (values.length !== vertices * width) return null;
-    const out = new Float32Array(corners.length * width);
-    for (let c = 0; c < corners.length; c++) {
-      out.set(values.subarray(corners[c] * width, corners[c] * width + width), c * width);
+  // One corner array, primitive by primitive: `own` reads a primitive's accessor per corner, and a
+  // primitive without it takes `fill`. `null` when no primitive has the layer at all.
+  const gathered = (
+    accessorOf: (one: ReadPrimitive) => number | undefined,
+    width: number,
+    fill: (one: ReadPrimitive, corner: number, out: Float32Array, at: number) => void,
+    widen?: (values: Float32Array, accessorIndex: number) => Float32Array,
+  ): Float32Array | 'mismatched' | null => {
+    if (read.every((one) => accessorOf(one) === undefined)) return null;
+    const out = new Float32Array(cornerCount * width);
+    let at = 0;
+    for (const one of read) {
+      const accessorIndex = accessorOf(one);
+      const vertexCount = one.positions.length / 3;
+      if (accessorIndex === undefined) {
+        for (let c = 0; c < one.corners.length; c++, at++) fill(one, c, out, at * width);
+        continue;
+      }
+      let values = readAccessor(json, buffers, accessorIndex);
+      if (widen !== undefined) values = widen(values, accessorIndex);
+      if (values.length !== vertexCount * width) return 'mismatched';
+      for (let c = 0; c < one.corners.length; c++, at++) {
+        const v = one.corners[c];
+        out.set(values.subarray(v * width, v * width + width), at * width);
+      }
     }
     return out;
   };
@@ -511,27 +644,57 @@ export function readGltfMesh(
   // A layer whose accessor does not hold one value per vertex is refused, not skipped: skipping
   // it would store the mesh without that layer and a material naming it would draw nothing.
   const cornerLayers: MeshCornerLayer[] = [];
-  for (let n = 0; n < uvAccessors.length; n++) {
-    const data = gather(uvAccessors[n], 2);
-    if (data === null) return mismatched(meshIndex, `TEXCOORD_${n}`);
-    cornerLayers.push({ name: uvLayerName(n), type: 'float2', data });
+  const uvSets = Math.max(...read.map((one) => one.uvAccessors.length));
+  for (let n = 0; n < uvSets; n++) {
+    const data = gathered(
+      (one) => one.uvAccessors[n],
+      2,
+      () => {},
+    );
+    if (data === 'mismatched') return mismatched(meshIndex, `TEXCOORD_${n}`);
+    if (data !== null) cornerLayers.push({ name: uvLayerName(n), type: 'float2', data });
   }
-  if (typeof colourAccessor === 'number') {
-    const components = json.accessors?.[colourAccessor]?.type === 'VEC3' ? 3 : 4;
-    const read = gather(colourAccessor, components);
-    if (read === null) return mismatched(meshIndex, 'COLOR_0');
-    cornerLayers.push({
-      name: COLOR_LAYER,
-      type: 'float4',
-      data: components === 4 ? read : widenToRgba(read),
+  const colour = gathered(
+    (one) => one.colourAccessor,
+    4,
+    (_one, _corner, out, at) => out.fill(1, at, at + 4),
+    (values, accessorIndex) =>
+      json.accessors?.[accessorIndex]?.type === 'VEC3' ? widenToRgba(values) : values,
+  );
+  if (colour === 'mismatched') return mismatched(meshIndex, 'COLOR_0');
+  if (colour !== null) cornerLayers.push({ name: COLOR_LAYER, type: 'float4', data: colour });
+
+  const normals = gathered(
+    (one) => one.normalAccessor,
+    3,
+    (one, corner, out, at) => {
+      const first = corner - (corner % 3);
+      const [a, b, c] = [one.corners[first], one.corners[first + 1], one.corners[first + 2]];
+      out.set(triangleNormal(one.positions, a, b, c), at);
+    },
+  );
+  const cornerNormals = normals === 'mismatched' ? null : normals;
+
+  const { slotOfPrimitive, slots } = primitiveSlots(json, meshIndex);
+  const faceCount = cornerCount / 3;
+  const faceLayers: MeshFaceLayer[] = [];
+  if (slots.length > 1) {
+    const index = new Int32Array(faceCount);
+    let face = 0;
+    read.forEach((one, i) => {
+      index.fill(slotOfPrimitive[i], face, face + one.corners.length / 3);
+      face += one.corners.length / 3;
     });
+    faceLayers.push({ name: MATERIAL_INDEX, type: 'int', data: index });
   }
+
   return {
     points,
-    faceSizes: new Uint32Array(corners.length / 3).fill(3),
+    faceSizes: new Uint32Array(faceCount).fill(3),
     cornerPoints: Uint32Array.from(corners, (v) => weld.map[v]),
     cornerLayers,
-    cornerNormals: gather(normalAccessor, 3),
+    cornerNormals,
+    faceLayers,
   };
 }
 
@@ -745,13 +908,17 @@ export async function buildNativeGltfImportOps(
     const data = readGltfMesh(json, buffers, node.mesh as number);
     if ('refused' in data) return data;
     meshes.push(data);
-    const materialIndex = json.meshes![node.mesh as number].primitives![0].material;
-    if (typeof materialIndex !== 'number') continue;
-    const unheld = materialRefusal(json, materialIndex);
-    if (unheld !== null) return unheld;
-    const unsampled = unsampledUvSet(json, node.mesh as number, materialIndex);
-    if (unsampled !== null) return unsampled;
-    for (const { info } of textureSites(materialOf(json, materialIndex))) textures.add(info.index);
+    const primitives = json.meshes![node.mesh as number].primitives!;
+    for (let p = 0; p < primitives.length; p++) {
+      const materialIndex = primitives[p].material;
+      if (typeof materialIndex !== 'number') continue;
+      const unheld = materialRefusal(json, materialIndex);
+      if (unheld !== null) return unheld;
+      const unsampled = unsampledUvSet(json, node.mesh as number, p, materialIndex);
+      if (unsampled !== null) return unsampled;
+      for (const { info } of textureSites(materialOf(json, materialIndex)))
+        textures.add(info.index);
+    }
   }
   const images = new Map<number, ReadImage>();
   for (const texture of [...textures].sort((a, b) => a - b)) {
@@ -767,18 +934,20 @@ export async function buildNativeGltfImportOps(
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const data = meshes[i];
-    const prim = json.meshes![node.mesh as number].primitives![0];
     const key = keyByGltfNodeIndex[i];
     const dataId = hashId('nativeMesh', args.assetRef, key);
     const objectId = hashId('nativeObject', args.assetRef, key);
-    const material = withProjectImages(
-      gltfJsonMaterialToOpenpbr(
-        typeof prim.material === 'number' ? (json.materials?.[prim.material] ?? {}) : {},
-        materialTables,
-        { vertexColors: prim.attributes?.COLOR_0 !== undefined },
+    // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
+    const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
+      withProjectImages(
+        gltfJsonMaterialToOpenpbr(
+          slot.material === undefined ? {} : (json.materials?.[slot.material] ?? {}),
+          materialTables,
+          { vertexColors: slot.vertexColors },
+        ),
+        json,
+        imageKeys,
       ),
-      json,
-      imageKeys,
     );
     const trs = defaultTRS(node);
     ops.push(
@@ -786,7 +955,13 @@ export async function buildNativeGltfImportOps(
         type: 'addNode',
         nodeId: dataId,
         nodeType: 'PolyMeshData',
-        params: { mesh: packMeshData(data), material },
+        params: {
+          mesh: packMeshData(data),
+          material: slotMaterials[0],
+          // Written only for a mesh with more than one slot: absent already means "one slot, and it
+          // is `material`", and writing a one-entry table would be the same answer spelled twice.
+          ...(slotMaterials.length > 1 ? { materialSlots: slotMaterials } : {}),
+        },
       },
       {
         type: 'addNode',

@@ -58,7 +58,10 @@ export interface ImportedMeshRow {
   readonly objectId: string;
   /** The data half: `PolyMeshData` (native) or `GltfData` (clone). The material lives here. */
   readonly dataId: string;
-  /** The captured material table, `[material]` on the native road (one material per mesh). */
+  /**
+   * The captured material table: on the native road the mesh's `materialSlots` when it has more than
+   * one slot (#1052), otherwise `[material]` — `dataSlotsOnly`'s own rule.
+   */
   readonly slots: readonly unknown[];
 }
 
@@ -182,8 +185,9 @@ export async function importedMeshes(page: Page): Promise<ImportedMeshRow[]> {
           if (n.type === 'Object') {
             const dataId = refs(n.inputs.data).find((d) => nodes[d]?.type === 'PolyMeshData');
             if (dataId) {
-              const material = nodes[dataId].params.material ?? null;
-              rows.push({ rootId, objectId: id, dataId, slots: [material] });
+              const { material, materialSlots } = nodes[dataId].params;
+              const slots = Array.isArray(materialSlots) ? materialSlots : [material ?? null];
+              rows.push({ rootId, objectId: id, dataId, slots });
             }
           }
           for (const v of Object.values(n.inputs)) stack.push(...refs(v));

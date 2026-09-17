@@ -7,6 +7,7 @@ import {
   cornerLayerBufferNames,
   isPackedMeshData,
   meshGeometryRef,
+  packedMeshSummary,
   packMeshData,
   unpackMeshData,
 } from './meshGeometryData';
@@ -72,6 +73,7 @@ function cube(withNormals = true): MeshGeometryData {
     cornerNormals: withNormals
       ? Float32Array.from(CUBE_FACES.flatMap(([, n]) => [...n, ...n, ...n, ...n]))
       : null,
+    faceLayers: [],
   };
 }
 
@@ -215,6 +217,26 @@ describe('the packed form', () => {
     expect(renamed.key).not.toBe(a.key);
     expect(added.key).not.toBe(a.key);
     expect(a.key.startsWith('mesh|')).toBe(true);
+  });
+
+  it('#1052 — face layers round-trip, and a mesh whose faces say something different keys apart', () => {
+    const slots = (index: number[]) => ({
+      ...cube(),
+      faceLayers: [{ name: 'material_index', type: 'int' as const, data: Int32Array.from(index) }],
+    });
+    const data = slots([0, 1, 0, 1, 0, 1]);
+    const back = unpackMeshData(packMeshData(data));
+    expect(back.faceLayers.map((l) => [l.name, l.type, Array.from(l.data)])).toEqual([
+      ['material_index', 'int', [0, 1, 0, 1, 0, 1]],
+    ]);
+    const plain = meshGeometryRef(packMeshData(cube()));
+    const a = meshGeometryRef(packMeshData(data));
+    const b = meshGeometryRef(packMeshData(slots([1, 1, 0, 1, 0, 1])));
+    expect(a.key).not.toBe(plain.key);
+    expect(b.key).not.toBe(a.key);
+    expect(packedMeshSummary(packMeshData(data)).faceLayers).toEqual([
+      { name: 'material_index', type: 'int' },
+    ]);
   });
 });
 

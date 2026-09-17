@@ -757,6 +757,7 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
         },
       ],
       cornerNormals: Float32Array.from(axes.flatMap((a) => Array(4).fill(turned(a, 0)).flat())),
+      faceLayers: [],
     };
   }
 
@@ -1192,6 +1193,34 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   it('is offered: canApplyTransform agrees with the dispatcher', () => {
     expect(canApplyTransform(build(POSE), OBJ)).toBe(true);
   });
+  it('#1052 — a mesh with two material slots keeps each face on its slot, and both slots, through a mirroring Apply', async () => {
+    const slotted = {
+      ...cubeData(),
+      faceLayers: [
+        { name: 'material_index', type: 'int' as const, data: Int32Array.from([0, 1, 0, 1, 1, 0]) },
+      ],
+    };
+    const red = { ...MATERIAL, base: { ...MATERIAL.base, color: '#ff0000' } };
+    const blue = { ...MATERIAL, base: { ...MATERIAL.base, color: '#0000ff' } };
+    const state = applyAll(build({ position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }), [
+      {
+        type: 'setParam',
+        nodeId: DATA,
+        paramPath: 'mesh',
+        value: packMeshData(slotted),
+      },
+      { type: 'setParam', nodeId: DATA, paramPath: 'materialSlots', value: [red, blue] },
+      { type: 'setParam', nodeId: OBJ, paramPath: 'scale', value: [-2, 1, 1] },
+    ]);
+    const { result, next } = await apply(state, 'all');
+    expect(result.ok).toBe(true);
+    const params = next.nodes[DATA].params as { mesh: PackedMeshData; materialSlots?: unknown[] };
+    const after = unpackMeshData(params.mesh);
+    expect(after.faceLayers.map((l) => [l.name, Array.from(l.data)])).toEqual([
+      ['material_index', [0, 1, 0, 1, 1, 0]],
+    ]);
+    expect(params.materialSlots).toEqual([red, blue]);
+  });
 });
 
 describe('#1081 / #1098 — the animated guard asks what the Apply road it takes consumes', () => {
@@ -1248,6 +1277,7 @@ describe('#1081 / #1098 — the animated guard asks what the Apply road it takes
         },
       ],
       cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
+      faceLayers: [],
     };
   }
 

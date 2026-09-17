@@ -2,7 +2,15 @@
 // same MeshData value a box does. #1117 — version 2 keeps corner data as a named list, and a
 // version-1 mesh migrates into it.
 import { beforeEach, describe, expect, it } from 'vitest';
-import { migrateCornerUVsToLayers, PolyMeshDataNode, PolyMeshDataParams } from './PolyMeshData';
+import {
+  migrateAddFaceLayers,
+  migrateCornerUVsToLayers,
+  PolyMeshDataNode,
+  PolyMeshDataParams,
+} from './PolyMeshData';
+import { read as readAttributes } from '../app/attributeStore';
+import { attributeAt, MATERIAL_INDEX } from './attributes';
+import { openpbrMaterialSchema } from './materialSchema';
 import { packMeshData } from '../app/meshGeometryData';
 import { faceCountOf } from '../app/faceCount';
 import { readGeometry } from '../app/geometryRegistry';
@@ -19,6 +27,7 @@ const tetra = () =>
     cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
     cornerLayers: [],
     cornerNormals: null,
+    faceLayers: [],
   });
 
 /** The tetrahedron with a UV per corner, so a migration has a real string to move. */
@@ -119,9 +128,10 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     };
   };
 
-  it('is at version 2, with a migration from version 1', () => {
-    expect(PolyMeshDataNode.version).toBe(2);
+  it('is at version 3, with a migration from each earlier version', () => {
+    expect(PolyMeshDataNode.version).toBe(3);
     expect(PolyMeshDataNode.migrations?.[1]).toBe(migrateCornerUVsToLayers);
+    expect(PolyMeshDataNode.migrations?.[2]).toBe(migrateAddFaceLayers);
   });
 
   it('moves a version-1 cornerUVs string into cornerLayers as UVMap, byte for byte', () => {
@@ -129,8 +139,8 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     const migrated = migrateCornerUVsToLayers(v1(uvs)) as { mesh: Record<string, unknown> };
     expect('cornerUVs' in migrated.mesh).toBe(false);
     expect(migrated.mesh.cornerLayers).toEqual([{ name: 'UVMap', type: 'float2', data: uvs }]);
-    // And the result is a valid version-2 mesh that draws a uv buffer.
-    const value = evaluate(migrated);
+    // And the result, carried on through the version-3 step the ladder runs next, draws a uv buffer.
+    const value = evaluate(migrateAddFaceLayers(migrated));
     const read = readGeometry(value.geometry);
     if (read.status !== 'ok') throw new Error(read.status);
     expect(read.geometry.getAttribute('uv')?.count).toBeGreaterThan(0);
@@ -148,12 +158,70 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     expect(migrated.mesh.cornerPoints).toBe(before.mesh.cornerPoints);
     expect(migrated.mesh.cornerNormals).toBe(before.mesh.cornerNormals);
     expect(migrated.material).toBeNull();
-    expect(PolyMeshDataParams.safeParse(migrated).success).toBe(true);
+    expect(PolyMeshDataParams.safeParse(migrateAddFaceLayers(migrated)).success).toBe(true);
   });
 
   it('returns a mesh already in the version-2 shape as it is', () => {
     const current = { mesh: tetraWithUVs(), material: null };
     expect(migrateCornerUVsToLayers(current)).toBe(current);
+  });
+});
+
+describe('PolyMeshData version 2 → 3 and material slots (#1052)', () => {
+  const material = (color: string) =>
+    openpbrMaterialSchema().parse({ name: color, base: { color } });
+  /** The tetra with its four faces on slots `index`. */
+  const slotted = (index: number[]) =>
+    packMeshData({
+      ...decodeTetra(),
+      faceLayers: [{ name: MATERIAL_INDEX, type: 'int', data: Int32Array.from(index) }],
+    });
+
+  it('gives a version-2 mesh an empty face layer list, and leaves everything else as it was', () => {
+    const v2mesh: Record<string, unknown> = { ...tetra() };
+    delete v2mesh.faceLayers;
+    const before = { mesh: v2mesh, material: null };
+    const migrated = migrateAddFaceLayers(before) as { mesh: Record<string, unknown> };
+    expect(migrated.mesh.faceLayers).toEqual([]);
+    expect(migrated.mesh.points).toBe(v2mesh.points);
+    expect(migrated.mesh.cornerLayers).toBe(v2mesh.cornerLayers);
+    expect(PolyMeshDataParams.safeParse(migrated).success).toBe(true);
+    const current = { mesh: tetra(), material: null };
+    expect(migrateAddFaceLayers(current)).toBe(current);
+  });
+
+  it('draws each face with the slot its material_index names', () => {
+    const slots = [material('#ff0000'), material('#0000ff')];
+    const value = evaluate({
+      mesh: slotted([0, 1, 1, 0]),
+      material: slots[0],
+      materialSlots: slots,
+    });
+    expect(value.materialSlots).toEqual(slots);
+    const index = attributeAt(readAttributes(value.attributeKey!), MATERIAL_INDEX, 'face');
+    expect(Array.from(index!.data)).toEqual([0, 1, 1, 0]);
+    // The groups the draw splits by come from that index, on the built instance.
+    const read = readGeometry(value.geometry);
+    if (read.status !== 'ok') throw new Error(read.status);
+    expect(read.geometry.groups.map((g) => g.materialIndex)).toEqual([0, 1, 0]);
+  });
+
+  it('with no face layers, every face is on slot 0, as before', () => {
+    const value = evaluate({ mesh: tetra(), material: null });
+    const index = attributeAt(readAttributes(value.attributeKey!), MATERIAL_INDEX, 'face');
+    expect(Array.from(index!.data)).toEqual([0, 0, 0, 0]);
+    expect(value.materialSlots).toBeUndefined();
+  });
+
+  it('refuses a face layer of the wrong length, at the door', () => {
+    const short = packMeshData({
+      ...decodeTetra(),
+      faceLayers: [{ name: MATERIAL_INDEX, type: 'int', data: Int32Array.from([0, 1]) }],
+    });
+    const parsed = PolyMeshDataParams.safeParse({ mesh: short, material: null });
+    expect(parsed.error?.issues[0].message).toContain(
+      "face layer 'material_index' holds 2 values for 4 faces",
+    );
   });
 });
 
@@ -164,5 +232,6 @@ function decodeTetra() {
     cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
     cornerLayers: [],
     cornerNormals: null,
+    faceLayers: [],
   };
 }
