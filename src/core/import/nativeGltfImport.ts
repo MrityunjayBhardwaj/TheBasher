@@ -43,6 +43,9 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  Matrix4,
+  Quaternion,
+  Vector3,
   ClampToEdgeWrapping,
   LinearFilter,
   LinearMipmapLinearFilter,
@@ -73,7 +76,6 @@ import {
 import {
   buildNodeNameMap,
   computeGltfBoundsCenter,
-  defaultTRS,
   hashId,
   type GltfImportChainArgs,
 } from './gltfImportChain';
@@ -861,6 +863,41 @@ function objectNameOf(json: NativeGltfJson, nodeIndex: number): string {
  * restated once here and the file's convention stops existing. An identity placement comes back
  * unchanged, so an untransformed material keys exactly as before.
  */
+/**
+ * A node's transform as Blender imports it: quaternion mode, holding the file's own quaternion
+ * (`io_scene_gltf2/blender/imp/node.py:113-116`, every object, animated or not — measured in 4.5.9
+ * and 5.1.1). The euler stays at zero, as Blender's does, because in quaternion mode nothing reads
+ * it. A `matrix` node holds what its matrix decomposes to (glTF forbids shear, so TRS is exact).
+ */
+function nodeTransformOf(node: NativeGltfJson['nodes'][number]): {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  rotationMode: 'quaternion';
+  quaternion: [number, number, number, number];
+} {
+  if (node.matrix) {
+    const position = new Vector3();
+    const quaternion = new Quaternion();
+    const scale = new Vector3();
+    new Matrix4().fromArray(node.matrix).decompose(position, quaternion, scale);
+    return {
+      position: position.toArray(),
+      rotation: [0, 0, 0],
+      scale: scale.toArray(),
+      rotationMode: 'quaternion',
+      quaternion: quaternion.toArray() as [number, number, number, number],
+    };
+  }
+  return {
+    position: (node.translation ?? [0, 0, 0]) as Vec3,
+    rotation: [0, 0, 0],
+    scale: (node.scale ?? [1, 1, 1]) as Vec3,
+    rotationMode: 'quaternion',
+    quaternion: (node.rotation ?? [0, 0, 0, 1]) as [number, number, number, number],
+  };
+}
+
 function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
   const rebase = (p: UvPlacement) => rebasePlacementPivot(p, ORIGIN_PIVOT, CENTRE_PIVOT);
   const perMap = material.mapUvTransforms;
@@ -1007,7 +1044,6 @@ export async function buildNativeGltfImportOps(
     const key = keyByGltfNodeIndex[i];
     const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
     if (typeof node.mesh !== 'number') {
-      const trs = defaultTRS(node);
       const emptyId = idOfNode(i);
       ops.push(
         {
@@ -1016,7 +1052,7 @@ export async function buildNativeGltfImportOps(
           nodeType: 'Group',
           // No pivot of its own: the file states an empty's transform about its own origin, and the
           // import Group's pivot already places the model as a whole.
-          params: { position: trs.position, rotation: trs.rotation, scale: trs.scale },
+          params: nodeTransformOf(node),
         },
         { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
       );
@@ -1044,7 +1080,6 @@ export async function buildNativeGltfImportOps(
         imageKeys,
       ),
     );
-    const trs = defaultTRS(node);
     ops.push(
       {
         type: 'addNode',
@@ -1062,7 +1097,7 @@ export async function buildNativeGltfImportOps(
         type: 'addNode',
         nodeId: objectId,
         nodeType: 'Object',
-        params: { position: trs.position, rotation: trs.rotation, scale: trs.scale },
+        params: nodeTransformOf(node),
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },

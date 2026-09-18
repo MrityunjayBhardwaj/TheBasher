@@ -1072,11 +1072,67 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
       position: [0, 3, 0],
       rotation: [0, 0, 0],
       scale: [1, 1, 1],
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
     });
     expect(
       ops.find((o) => o.type === 'setMeta' && o.nodeId === emptyId),
       'the outliner shows the file’s own name',
     ).toMatchObject({ name: 'Pivot' });
+  });
+
+  // Blender puts EVERY imported object in quaternion mode and writes the file's quaternion as it
+  // is (`imp/node.py:113-116`; measured in 4.5.9 and 5.1.1, animated or not). The euler stays at
+  // its zero default, as Blender's does, because in quaternion mode nothing reads it.
+  const ROT_CUBE = [0.1, 0.7, -0.3, 0.6403124237432849];
+  const ROT_PIVOT = [0, 0, 0.3826834323650898, 0.9238795325112867];
+  const paramsOf = (ops: readonly Op[], id: string) =>
+    ops.find((o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === id)!
+      .params as Record<string, unknown>;
+
+  it('every node holds the file’s own quaternion, in quaternion mode, as Blender imports it', async () => {
+    const { ops, groupId, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[0].rotation = ROT_CUBE;
+        nodes[1].rotation = ROT_PIVOT;
+      }),
+    );
+    const emptyId = parentOf(ops)[objectIds[0]];
+    for (const [id, q] of [
+      [objectIds[0], ROT_CUBE],
+      [emptyId, ROT_PIVOT],
+    ] as const) {
+      // EXACT — the file's own numbers, never a round trip through an euler.
+      expect(paramsOf(ops, id)).toMatchObject({
+        rotationMode: 'quaternion',
+        quaternion: q,
+        rotation: [0, 0, 0],
+      });
+    }
+    // The import Group is ours, not the file's: it keeps the euler mode every native node has.
+    expect(paramsOf(ops, groupId).rotationMode).toBeUndefined();
+  });
+
+  it('a matrix-form node holds the quaternion its matrix decomposes to', async () => {
+    const q = new THREE.Quaternion(...(ROT_PIVOT as [number, number, number, number]));
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 3, 0),
+      q,
+      new THREE.Vector3(2, 2, 2),
+    );
+    const { ops, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[1] = { name: 'Pivot', children: [0], matrix: m.toArray() };
+      }),
+    );
+    const p = paramsOf(ops, parentOf(ops)[objectIds[0]]);
+    expect(p.rotationMode).toBe('quaternion');
+    const got = new THREE.Quaternion(...(p.quaternion as [number, number, number, number]));
+    expect((2 * Math.acos(Math.min(1, Math.abs(got.dot(q)))) * 180) / Math.PI).toBeLessThan(1e-5);
+    (p.position as number[]).forEach((v, i) => expect(v).toBeCloseTo([0, 3, 0][i], 12));
+    (p.scale as number[]).forEach((v) => expect(v).toBeCloseTo(2, 12));
   });
 
   it('the mesh node hangs under the empty, and the empty under the import Group', async () => {
