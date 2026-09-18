@@ -39,6 +39,8 @@ import * as THREE from 'three';
 import { useDagStore } from '../../core/dag/store';
 import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
+import { IDENTITY_QUATERNION } from '../../nodes/rotationMode';
+import { rotationWriteOf } from '../resolvedRotation';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
 import type {
@@ -60,7 +62,7 @@ import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { unheldBakeAttributes, writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
-import type { EvaluatedMesh } from '../../nodes/types';
+import type { EvaluatedMesh, Quat, RotationModeFields } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { resolveDataLaneBase } from '../operatorChain';
@@ -720,7 +722,7 @@ export async function dispatchApplyTransform(
     // every band not applied stays exactly as it was. Written explicitly, never defaulted.
     params: {
       position: split.kept.position,
-      rotation: split.kept.rotation,
+      ...keptRotationParamsOf(node.params as RotationModeFields, split.kept.rotation),
       scale: split.kept.scale,
     },
   });
@@ -792,6 +794,39 @@ const APPLIED_BANDS: Readonly<Record<ApplyMask, ReadonlyArray<'position' | 'rota
     scale: ['scale'],
   };
 const IDENTITY_BAND = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } as const;
+
+/**
+ * #1153 — the rotation params of a node Apply re-mints from its KEPT pose. The mode survives the
+ * bake, as it does in Blender (Apply resets values, never `rotmode`): a quaternion-mode Object
+ * comes back in quaternion mode holding the kept orientation (identity when rotation was the
+ * band applied), written through the same path every writer takes.
+ */
+function keptRotationParamsOf(
+  params: RotationModeFields,
+  kept: Vec3,
+): { rotation: Vec3; rotationMode?: 'quaternion'; quaternion?: Quat } {
+  const write = rotationWriteOf(params, kept);
+  if (write.paramPath === 'rotation') return { rotation: kept };
+  return { rotation: kept, rotationMode: 'quaternion', quaternion: write.value };
+}
+
+/**
+ * #1153 — applying rotation resets the quaternion too. Blender clears the euler AND the
+ * quaternion when it applies rotation, whatever the mode (`object_transform.cc:1062-1066`), so
+ * a quaternion-mode Object comes out of Apply at identity rather than re-applying its old turn
+ * on top of the baked mesh. Written only when the node holds one: an absent quaternion is the
+ * identity already, and writing it would change an euler node's saved shape.
+ */
+function quaternionResetFor(
+  state: DagState,
+  nodeId: string,
+  applied: ReadonlyArray<'position' | 'rotation' | 'scale'>,
+): Op[] {
+  if (!applied.includes('rotation')) return [];
+  const params = (state.nodes[nodeId]?.params ?? {}) as { quaternion?: unknown };
+  if (params.quaternion === undefined) return [];
+  return [{ type: 'setParam', nodeId, paramPath: 'quaternion', value: [...IDENTITY_QUATERNION] }];
+}
 
 /** T·R·S from a resolved transform (degrees, Euler XYZ), the order the renderer draws with. */
 function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Matrix4 {
@@ -953,6 +988,7 @@ function applyIntoStoredMesh(
         value: [...IDENTITY_BAND[band]],
       }),
     ),
+    ...quaternionResetFor(state, selectedId, applied),
   ];
   try {
     io.dispatchAtomic(ops, 'user', `Apply ${mask} → mesh data`);

@@ -17,6 +17,7 @@ import {
   buildSkeletonObjectOps,
   normalisedRigScale,
   skeletonObjectId,
+  standInObjectOf,
   standingObjectsOf,
 } from './skeletonObject';
 
@@ -271,5 +272,40 @@ describe('standingObjectsOf (#1100)', () => {
     for (const op of ops) state = applyOp(state, op).next;
     expect(standingObjectsOf(state, 'sk')).toEqual([skeletonObjectId('sk'), 'z_by_hand']);
     expect(standingObjectsOf(state, 'clip')).toEqual([]);
+  });
+});
+
+describe('standInObjectOf (#1088)', () => {
+  /** A skeleton `sk`, a second skeleton `other`, and an Object with `objectId` on `dataFrom`. */
+  function withObject(objectId: string, dataFrom: string): DagState {
+    let state = sceneState();
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'sk', nodeType: 'Skeleton', params: { bones: [] } },
+      { type: 'addNode', nodeId: 'other', nodeType: 'Skeleton', params: { bones: [] } },
+      { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: dataFrom, socket: 'out' },
+        to: { node: objectId, socket: 'data' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  it("names the import's Object while it shows the skeleton", () => {
+    expect(standInObjectOf(withObject(skeletonObjectId('sk'), 'sk'), 'sk')).toBe('sk_object');
+  });
+
+  it('names no Object the director pointed at the skeleton', () => {
+    const state = withObject('a_by_hand', 'sk');
+    expect(standingObjectsOf(state, 'sk')).toEqual(['a_by_hand']);
+    expect(standInObjectOf(state, 'sk')).toBeNull();
+  });
+
+  it("names nothing once the import's Object is pointed at another skeleton", () => {
+    const state = withObject(skeletonObjectId('sk'), 'other');
+    expect(standInObjectOf(state, 'sk')).toBeNull();
+    expect(standInObjectOf(state, 'other')).toBeNull();
   });
 });

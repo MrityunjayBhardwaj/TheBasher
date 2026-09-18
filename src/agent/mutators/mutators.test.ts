@@ -841,21 +841,78 @@ describe('setKeyframeInterp mutator (per-keyframe interp/ease/handle — #281 / 
     expect(r.ok).toBe(false);
   });
 
-  it('rejects a channel type without the broadened interp vocab (Quat)', () => {
+  // A quaternion channel takes 'constant' (glTF STEP) alongside linear/cubic, and
+  // refuses — by name — the curves and handles that only shape a scalar value.
+  function quatScene(): DagState {
     let s = buildSceneWithTime();
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'qch',
       nodeType: 'KeyframeChannelQuat',
-      params: { name: 'rot', target: 'box', paramPath: 'quaternion' },
+      params: {
+        name: 'rot',
+        target: 'box',
+        paramPath: 'quaternion',
+        keyframes: [
+          { time: 0, value: [0, 0, 0, 1], easing: 'linear' },
+          { time: 1, value: [0, 0.7071, 0, 0.7071], easing: 'linear' },
+        ],
+      },
     }).next;
+    return s;
+  }
+
+  it("sets 'constant' on a Quat channel's keys", () => {
     const r = validatePlan(
       setKeyframeInterpMutator,
-      { channelId: 'qch', easing: 'back' },
-      s,
+      { channelId: 'qch', scope: 'all', easing: 'constant' },
+      quatScene(),
+      'step the rotation',
+    );
+    expect(r.ok).toBe(true);
+    if (!r.ok || r.ops[0].type !== 'setParam') return;
+    const next = r.ops[0].value as Array<{ easing: string }>;
+    expect(next.map((k) => k.easing)).toEqual(['constant', 'constant']);
+  });
+
+  it.each([
+    [{ easing: 'back' as const }, /easing` must be one of linear, cubic, constant/],
+    [{ easing: 'constant' as const, ease: 'out' as const }, /no `ease` or `handleType`/],
+    [{ handleType: 'auto' as const }, /no `ease` or `handleType`/],
+  ])('refuses %o on a Quat channel by name', (fields, reason) => {
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'qch', scope: 'all' as const, ...fields },
+      quatScene(),
       'quat interp',
     );
     expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(JSON.stringify(r)).toMatch(reason);
+  });
+
+  it('still refuses a Color channel', () => {
+    let s = buildSceneWithTime();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'cch',
+      nodeType: 'KeyframeChannelColor',
+      params: {
+        name: 'col',
+        target: 'box',
+        paramPath: 'color',
+        keyframes: [{ time: 0, value: '#ff0000', easing: 'linear' }],
+      },
+    }).next;
+    const r = validatePlan(
+      setKeyframeInterpMutator,
+      { channelId: 'cch', scope: 'all', easing: 'constant' },
+      s,
+      'color interp',
+    );
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(JSON.stringify(r)).toMatch(/apply only to KeyframeChannel/);
   });
 
   it('is deterministic (same spec → identical ops)', () => {
