@@ -46,7 +46,7 @@
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeRef } from '../core/dag/types';
-import type { GltfAssetValue, RenderOutputValue, SceneChild } from '../nodes/types';
+import type { GltfAssetValue, Quat, RenderOutputValue, SceneChild } from '../nodes/types';
 import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolveGltfChildTransform';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
 import { overlayTransients } from './overlayTransients';
@@ -56,7 +56,11 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { importedChildOf } from './importedChild';
-import { withResolvedRotation } from './resolvedRotation';
+import {
+  quaternionFromEulerDeg,
+  resolvedQuaternionOf,
+  withResolvedRotation,
+} from './resolvedRotation';
 
 type Vec3 = [number, number, number];
 
@@ -69,6 +73,10 @@ export interface EvaluatedTransform {
   /** Explicit `.scale` wins; `.size` is the BoxMesh-style fallback (mirrors
    *  getManipulable Gizmo.tsx:69-76). null when neither is present. */
   scale: Vec3 | null;
+  /** #1153 — present only in quaternion mode: the orientation `rotation` shows, as the unit
+   *  quaternion a key or a write in that mode records. Absent in euler mode, so every euler
+   *  read keeps exactly the shape it had. */
+  quaternion?: Quat;
 }
 
 function isVec3(v: unknown): v is Vec3 {
@@ -317,6 +325,11 @@ export function resolveEvaluatedTransform(
   // one band, two callers. Unconstrained nodes → null → rotation unchanged.
   const aim = resolveConstraintRotation(state, selectedId, ctx, cache);
   if (aim) rotation = aim;
+  // #1153 — in quaternion mode, the quaternion of what is SHOWN: the overlaid one, or the aim's
+  // when a Track-To replaced it, so a key taken here records the pose on screen, as the euler
+  // band's key always has.
+  const own = resolvedQuaternionOf(child as never);
+  const quaternion = own ? (aim ? quaternionFromEulerDeg(aim) : own) : null;
 
   // #339 — a Follow-Path constraint DERIVES this node's position from a curve, so it
   // OVERRIDES the authored/animated position exactly as the aim overrides rotation. The
@@ -325,5 +338,5 @@ export function resolveEvaluatedTransform(
   const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
   const position = followed ?? (c.position as Vec3);
 
-  return { position, rotation, scale };
+  return { position, rotation, scale, ...(quaternion ? { quaternion } : {}) };
 }

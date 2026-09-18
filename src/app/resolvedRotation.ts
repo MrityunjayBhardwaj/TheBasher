@@ -70,3 +70,38 @@ export function aimPatch(value: RotationModeFields, aim: Vec3): Record<string, u
     ? { rotation: aim, rotationMode: undefined }
     : { rotation: aim };
 }
+
+/** The unit quaternion of an XYZ euler in degrees, through three's own composition. */
+export function quaternionFromEulerDeg(e: Vec3): Quat {
+  const q = new Quaternion().setFromEuler(
+    new Euler(e[0] / RAD2DEG, e[1] / RAD2DEG, e[2] / RAD2DEG, 'XYZ'),
+  );
+  return [q.x, q.y, q.z, q.w];
+}
+
+/** `q` on the same side as `prev`: q and −q are one orientation, and Blender flips to keep the
+ *  one a write replaces (`object_transform.cc:236-240`), so W X Y Z do not jump sign between
+ *  edits of the same rotation. */
+function sameHemisphere(q: Quat, prev: Quat | undefined): Quat {
+  if (!prev) return q;
+  const d = q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3];
+  return d < 0 ? [-q[0], -q[1], -q[2], -q[3]] : q;
+}
+
+/**
+ * Where an orientation a writer computed (as XYZ euler degrees) lands on a node, and as what.
+ * Blender's write path (`object.cc:2826-2837`): through the node's mode. An euler node gets
+ * `rotation`, exactly as every writer wrote before; a quaternion node gets `quaternion`,
+ * sign-matched to the one it replaces. The euler a writer hands in is lossless for one
+ * orientation (3.4e-6° measured), so routing through it costs nothing.
+ */
+export function rotationWriteOf(
+  params: RotationModeFields,
+  eulerDeg: Vec3,
+): { paramPath: 'rotation'; value: Vec3 } | { paramPath: 'quaternion'; value: Quat } {
+  if (params.rotationMode !== 'quaternion') return { paramPath: 'rotation', value: eulerDeg };
+  return {
+    paramPath: 'quaternion',
+    value: sameHemisphere(quaternionFromEulerDeg(eulerDeg), params.quaternion),
+  };
+}

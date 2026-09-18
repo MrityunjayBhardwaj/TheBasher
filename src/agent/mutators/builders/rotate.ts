@@ -12,6 +12,8 @@ import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
+import { rotationWriteOf, withResolvedRotation } from '../../../app/resolvedRotation';
+import type { RotationModeFields } from '../../../nodes/types';
 import type { Op } from '../../../core/dag/types';
 
 const RotateSpec = z.object({
@@ -61,14 +63,18 @@ export const rotateMutator: MutatorDefinition<RotateSpec> = {
     const axisIdx = { x: 0, y: 1, z: 2 }[spec.axis];
     for (const id of spec.targetSelectors) {
       const node = state.nodes[id];
-      const params = node.params as { rotation: [number, number, number] };
-      const next: [number, number, number] = [...params.rotation];
+      // #1153 — the delta is added to the orientation the node SHOWS (a quaternion-mode node's
+      // resolved euler), and the result is written through its mode, so a quaternion node lands
+      // exactly where an euler node holding the same orientation would.
+      const params = node.params as RotationModeFields & { rotation: [number, number, number] };
+      const next: [number, number, number] = [...withResolvedRotation(params).rotation];
       next[axisIdx] += spec.deltaDeg;
+      const write = rotationWriteOf(params, next);
       ops.push({
         type: 'setParam',
         nodeId: id,
-        paramPath: 'rotation',
-        value: next,
+        paramPath: write.paramPath,
+        value: write.value,
       });
     }
     return ops;

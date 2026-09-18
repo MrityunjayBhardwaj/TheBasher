@@ -150,6 +150,7 @@ import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
+import { withResolvedRotation } from './resolvedRotation';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -3146,7 +3147,9 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
     const next = originToGeometry(
       {
         position: params.position,
-        rotation: params.rotation,
+        // #1153 — the orientation in the Group's own mode, not a quaternion-mode Group's stale
+        // euler, or the new pivot lands where the old euler would have put the geometry.
+        rotation: withResolvedRotation(params).rotation as [number, number, number],
         scale: params.scale,
         pivot: params.pivot,
       },

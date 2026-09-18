@@ -273,3 +273,112 @@ test('#1153 — the diff ghost of a quaternion-mode proposal draws the quaternio
   await expect.poll(async () => (await ghostQuats()).length).toBe(1);
   await expect.poll(async () => angleDeg((await ghostQuats())[0], Q170)).toBeLessThan(1e-3);
 });
+
+// ── #1153 — the WRITERS, through the real UI roads ─────────────────────────────────────────
+
+interface Sel {
+  __basher_selection?: { getState: () => { select: (id: string) => void } };
+  __basher_gizmo_grab?: (mode: 'translate' | 'rotate' | 'scale', target: V) => void;
+  __basher_dag?: {
+    getState: () => {
+      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+    };
+  };
+}
+async function selectBox(page: Page) {
+  await page.waitForFunction(() => Boolean((window as unknown as Sel).__basher_selection));
+  await page.evaluate(() =>
+    (window as unknown as Sel).__basher_selection!.getState().select('n_box'),
+  );
+  await page.waitForFunction(() => Boolean((window as unknown as Sel).__basher_gizmo_grab));
+}
+const boxParams = (page: Page) =>
+  page.evaluate(
+    () => (window as unknown as Sel).__basher_dag!.getState().state.nodes['n_box'].params,
+  );
+const quatChannels = (page: Page) =>
+  page.evaluate(() =>
+    Object.values((window as unknown as Sel).__basher_dag!.getState().state.nodes)
+      .filter((n) => n.type.startsWith('KeyframeChannel') && n.params.target === 'n_box')
+      .map((n) => ({
+        type: n.type,
+        paramPath: n.params.paramPath as string,
+        keyframes: n.params.keyframes as { time: number; value: number[] }[],
+      })),
+  );
+
+test('#1153 — a gizmo rotate on a quaternion node writes its quaternion and leaves the euler alone', async ({
+  page,
+}) => {
+  await ready(page);
+  await dispatch(
+    page,
+    setParams('n_box', { rotation: DECOY, rotationMode: 'quaternion', quaternion: Q170 }),
+  );
+  await selectBox(page);
+  const target: V = [0, 45, 20];
+  await page.evaluate((t) => (window as unknown as Sel).__basher_gizmo_grab!('rotate', t), target);
+  const want = fromEulerXYZ(target);
+  await expect
+    .poll(async () => angleDeg((await boxParams(page)).quaternion as Q, want))
+    .toBeLessThan(1e-3);
+  const p = await boxParams(page);
+  expect(p.rotationMode).toBe('quaternion');
+  expect(p.rotation).toEqual(DECOY); // untouched: the write went through the mode
+  await expect
+    .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, want))
+    .toBeLessThan(1e-3);
+});
+
+test('#1153 — Auto-Key records a gizmo rotate on a quaternion node into a QUATERNION channel', async ({
+  page,
+}) => {
+  await ready(page);
+  await dispatch(
+    page,
+    setParams('n_box', { rotation: DECOY, rotationMode: 'quaternion', quaternion: [0, 0, 0, 1] }),
+  );
+  await page.getByTestId('floating-toolbar-timeline').click();
+  await selectBox(page);
+  await page.getByTestId('autokey-toggle').click();
+  await expect(page.getByTestId('timebar')).toHaveAttribute('data-autokey', 'on');
+  const targets: V[] = [
+    [0, 40, 0],
+    [30, 0, 60],
+  ];
+  for (const [i, t] of targets.entries()) {
+    await page.evaluate((s) => (window as unknown as W).__basher_time!.getState().setTime(s), i);
+    await page.evaluate((t) => (window as unknown as Sel).__basher_gizmo_grab!('rotate', t), t);
+  }
+  await expect.poll(async () => (await quatChannels(page)).length).toBe(1);
+  const [ch] = await quatChannels(page);
+  expect(ch.type).toBe('KeyframeChannelQuat');
+  expect(ch.paramPath).toBe('quaternion');
+  const keys = [...ch.keyframes].sort((a, b) => a.time - b.time);
+  expect(keys).toHaveLength(2);
+  keys.forEach((k, i) => {
+    expect(k.time).toBeCloseTo(i, 5);
+    expect(angleDeg(k.value as Q, fromEulerXYZ(targets[i]))).toBeLessThan(1e-3);
+  });
+});
+
+test('#1153 — I keys a quaternion node on its quaternion channel, with the orientation shown', async ({
+  page,
+}) => {
+  await ready(page);
+  await dispatch(
+    page,
+    setParams('n_box', { rotation: DECOY, rotationMode: 'quaternion', quaternion: Q170 }),
+  );
+  await page.getByTestId('floating-toolbar-timeline').click();
+  await selectBox(page);
+  // As p149 does: blur whatever holds focus, or the key handler's typing guard swallows the press.
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press('i');
+  await expect
+    .poll(async () => (await quatChannels(page)).map((c) => c.paramPath).sort())
+    .toEqual(['position', 'quaternion', 'scale']);
+  const q = (await quatChannels(page)).find((c) => c.paramPath === 'quaternion')!;
+  expect(q.type).toBe('KeyframeChannelQuat');
+  expect(angleDeg(q.keyframes[0].value as Q, Q170)).toBeLessThan(1e-3);
+});

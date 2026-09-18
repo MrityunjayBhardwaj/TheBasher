@@ -19,7 +19,15 @@ import { registerAllNodes } from '../nodes/registerAll';
 import type { Quat, Vec3 } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { resolvedQuaternionOf, withResolvedRotation } from './resolvedRotation';
+import {
+  quaternionFromEulerDeg,
+  resolvedQuaternionOf,
+  rotationWriteOf,
+  withResolvedRotation,
+} from './resolvedRotation';
+import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
+import { rotateMutator } from '../agent/mutators/builders/rotate';
+import { randomizeMutator } from '../agent/mutators/builders/randomize';
 
 const D2R = Math.PI / 180;
 const DECOY: Vec3 = [10, 20, 30];
@@ -221,5 +229,120 @@ describe('#1153 — a Track-To aim wins in either mode (Blender evaluates constr
     // Positive control: the aim actually turned the euler box away from identity.
     expect(angleBetween(fromDeg(euler!.rotation!), new Quaternion())).toBeGreaterThan(1);
     expect(angleBetween(fromDeg(quat!.rotation!), fromDeg(euler!.rotation!))).toBeLessThan(1e-5);
+  });
+});
+
+describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', () => {
+  it('an euler node is written `rotation`, exactly the triple handed in', () => {
+    expect(rotationWriteOf({}, DECOY)).toEqual({ paramPath: 'rotation', value: DECOY });
+  });
+
+  it('a quaternion node is written `quaternion`, the same orientation, on the side it replaces', () => {
+    const e: Vec3 = [40, -70, 15];
+    const prev = quaternionFromEulerDeg(e).map((v) => -v) as unknown as Quat; // the far side
+    const w = rotationWriteOf({ rotationMode: 'quaternion', quaternion: prev }, e);
+    expect(w.paramPath).toBe('quaternion');
+    const q = w.value as Quat;
+    expect(angleBetween(tq(q), fromDeg(e))).toBeLessThan(1e-5);
+    // Blender's hemisphere match (object_transform.cc:236-240): no sign jump against `prev`.
+    expect(q[0] * prev[0] + q[1] * prev[1] + q[2] * prev[2] + q[3] * prev[3]).toBeGreaterThan(0);
+  });
+
+  it('the evaluated transform carries the quaternion only in quaternion mode', () => {
+    const quat = resolveEvaluatedTransform(quaternionMode('n_box', Q), 'n_box', at(0) as never);
+    // Component-wise: the evaluated quaternion IS the (already unit) quaternion authored.
+    quat!.quaternion!.forEach((v, i) => expect(v).toBeCloseTo(Q[i], 9));
+    const euler = resolveEvaluatedTransform(buildDefaultDagState(), 'n_box', at(0) as never);
+    expect(euler && 'quaternion' in euler).toBe(false);
+  });
+
+  it("under a Track-To the evaluated quaternion is the AIM's, so a key records what is shown", () => {
+    const state = run(quaternionMode('n_box', Q), [
+      {
+        type: 'addNode',
+        nodeId: 'n_aim',
+        nodeType: 'TrackTo',
+        params: { target: 'n_box', aimPoint: [3, -2, -5] },
+      },
+    ]);
+    const r = resolveEvaluatedTransform(state, 'n_box', at(0) as never);
+    expect(angleBetween(tq(r!.quaternion!), fromDeg(r!.rotation!))).toBeLessThan(1e-5);
+    expect(angleBetween(tq(r!.quaternion!), tq(Q))).toBeGreaterThan(1);
+  });
+
+  /** Apply `ops` and read the orientation the node shows. */
+  function shown(state: DagState, ops: Op[], id = 'n_box'): Quaternion {
+    const r = resolveEvaluatedTransform(run(state, ops), id, at(0) as never);
+    return fromDeg(r!.rotation!);
+  }
+  /** An euler node holding the SAME orientation as `Q`: the twin a quaternion node must match. */
+  const twin = () =>
+    run(
+      buildDefaultDagState(),
+      setParams('n_box', {
+        rotation: withResolvedRotation({
+          rotationMode: 'quaternion',
+          quaternion: Q,
+          rotation: DECOY,
+        }).rotation,
+      }),
+    );
+
+  it('the agent rotate lands a quaternion node exactly where its euler twin lands', () => {
+    const spec = { targetSelectors: ['n_box'], axis: 'y' as const, deltaDeg: 35 };
+    const qState = quaternionMode('n_box', Q);
+    const qOps = rotateMutator.build(spec, {} as never, qState);
+    expect(qOps.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual(['quaternion']);
+    const eState = twin();
+    const eOps = rotateMutator.build(spec, {} as never, eState);
+    expect(angleBetween(shown(qState, qOps), shown(eState, eOps))).toBeLessThan(1e-4);
+    // Positive control: the rotate moved it.
+    expect(angleBetween(shown(qState, qOps), tq(Q))).toBeGreaterThan(30);
+  });
+
+  it('the agent randomize (same seed) lands a quaternion node where its euler twin lands', () => {
+    const spec = {
+      targetSelectors: ['n_box'],
+      properties: ['rotation' as const],
+      ranges: { rotation: { axis: 'x' as const, degRange: [20, 60] as [number, number] } },
+      seed: 7,
+    };
+    const qState = quaternionMode('n_box', Q);
+    const qOps = randomizeMutator.build(spec as never, {} as never, qState);
+    expect(qOps.map((o) => (o.type === 'setParam' ? o.paramPath : o.type))).toEqual(['quaternion']);
+    const eState = twin();
+    const eOps = randomizeMutator.build(spec as never, {} as never, eState);
+    expect(angleBetween(shown(qState, qOps), shown(eState, eOps))).toBeLessThan(1e-4);
+    expect(angleBetween(shown(qState, qOps), tq(Q))).toBeGreaterThan(15);
+  });
+
+  it("Apply's fallback for an Object the scene walk misses (nested) reads the quaternion", () => {
+    let state = buildDefaultDagState();
+    state = run(state, [
+      { type: 'addNode', nodeId: 'g', nodeType: 'Group', params: {} },
+      { type: 'addNode', nodeId: 'kid', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'n_box_data', socket: 'out' },
+        to: { node: 'kid', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'kid', socket: 'out' },
+        to: { node: 'g', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'g', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]);
+    state = quaternionMode('kid', Q, state);
+    // The precondition that makes this the FALLBACK: the walk does not reach a nested Object.
+    expect(resolveEvaluatedTransform(state, 'kid', at(0) as never)).toBeNull();
+    const mesh = resolveEvaluatedMesh(state, 'kid', at(0) as never) as unknown as {
+      transform: { rotation: Vec3 };
+    } | null;
+    expect(angleBetween(fromDeg(mesh!.transform.rotation), tq(Q))).toBeLessThan(1e-5);
   });
 });
