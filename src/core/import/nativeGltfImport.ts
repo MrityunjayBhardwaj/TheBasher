@@ -12,8 +12,8 @@
 // ── A WHOLE IMPORT IS NATIVE OR IT IS REFUSED, NEVER SPLIT PER CHILD ────────────────────────────
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
-// is refused WHOLE, by name, with the issue that brings it across: skinning (#393), clips and
-// nesting (#1051), several primitives on one mesh (#1052), morph targets (#1060),
+// is refused WHOLE, by name, with the issue that brings it across: skinning (#393), a second clip
+// (#1154), several primitives on one mesh (#1052), morph targets (#1060),
 // a mesh shared by several nodes (#1061), vertex attributes a render buffer has no slot for
 // (#1125), and material features the native material cannot hold (#1123). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
@@ -80,11 +80,16 @@ import {
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
+
+/** The native parameter each animated glTF path drives. Rotation drives the quaternion, which is
+ *  why every imported node is in quaternion mode. */
+const CLIP_PARAM = { translation: 'position', rotation: 'quaternion', scale: 'scale' } as const;
 
 /** Why a file cannot be imported natively yet, and the issue that changes that. */
 export interface NativeImportRefusal {
@@ -296,12 +301,6 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
     return {
       refused: 'it is skinned, and skinning as a deform relation is not native yet',
       issue: '#393',
-    };
-  }
-  if ((json.animations?.length ?? 0) > 0) {
-    return {
-      refused: 'it carries animation clips, which become Object channels later',
-      issue: '#1051',
     };
   }
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
@@ -963,6 +962,9 @@ export async function buildNativeGltfImportOps(
   const refusal = fileRefusal(json);
   if (refusal !== null) return refusal;
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  // #1051 — the clip is read with everything else that can refuse, before anything is stored.
+  const clip = readNativeClip(json as ClipGltfJson, buffers);
+  if ('refused' in clip) return clip;
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
 
   const groupId = hashId('nativeGrp', args.assetRef);
@@ -1118,7 +1120,24 @@ export async function buildNativeGltfImportOps(
   // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
   // can be written before the parent it names, and a `connect` to a node that does not exist yet
   // throws. Within this list the order is the file's, which is what fixes each parent's child order.
-  ops.push(...parentEdges, {
+  ops.push(...parentEdges);
+
+  // #1051 — the clip as ordinary channels on the Objects and Groups it animates, written after
+  // every node so each names a target that exists. Each is what Auto-Key or I would have made for
+  // the same parameter: the same node type, the same `<target>_<param>_channel` id (these three
+  // param names are already id-safe), named by its param. Nothing refers back to the file.
+  for (const channel of clip.channels) {
+    const target = idOfNode(channel.node);
+    const paramPath = CLIP_PARAM[channel.path];
+    ops.push({
+      type: 'addNode',
+      nodeId: `${target}_${paramPath}_channel`,
+      nodeType: channel.path === 'rotation' ? 'KeyframeChannelQuat' : 'KeyframeChannelVec3',
+      params: { name: paramPath, target, paramPath, keyframes: channel.keyframes },
+    });
+  }
+
+  ops.push({
     type: 'connect',
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
