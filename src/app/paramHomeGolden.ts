@@ -22,6 +22,11 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1153): `Object` and `Group` each append `rotationMode=(unrouted)
+// quaternion=(unrouted)` — the rotation mode lands before the inspector draws it, so the
+// honest cell is `(unrouted)` (the #645 P6 precedent below). `unrouted` 235 → 239, `routed`
+// untouched; the inspector commit routes all four under the fourth arm.
+//
 // USED THREE TIMES (#607, ns-2 steps 12, 13a and 13b), and every use is recorded here
 // because an amendment nobody tracks is a rule that quietly became the norm.
 // `SetMaterialOp.scope`, `ArrayModifier.scope` and `MirrorModifier.scope` each appended ONE
@@ -142,7 +147,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
-    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
+    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=(unrouted) quaternion=(unrouted)',
   IDPass: '[render] width=(unrouted) height=(unrouted)',
   KeyframeChannelColor:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
@@ -195,7 +200,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted)',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=(unrouted) quaternion=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -342,4 +347,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1049 adds `PolyMeshData` as a wholly new node type: +1 type, +1 routed (`material`), +1
 // unrouted (`mesh`, see its row). Nothing existing moved:
 //   types 87 + 1 = 88 · routed 138 + 1 = 139 · unrouted 235 + 1 = 236
-export const GOLDEN_TOTALS = { types: 88, routed: 139, unrouted: 235 } as const;
+export const GOLDEN_TOTALS = { types: 88, routed: 139, unrouted: 239 } as const;

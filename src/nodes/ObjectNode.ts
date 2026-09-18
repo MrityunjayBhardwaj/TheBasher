@@ -17,6 +17,7 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
 import type { ObjectData, ObjectValue } from './types';
+import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
 
 export const ObjectParams = z.object({
   position: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
@@ -68,6 +69,11 @@ export const ObjectParams = z.object({
       scale: z.boolean().optional(),
     })
     .optional(),
+  /**
+   * #1153 — Blender's rotation mode: absent is XYZ euler, as every Object before it. Last in
+   * the schema so the frozen param-home row (paramHomeGolden.ts) is appended to, not reordered.
+   */
+  ...rotationModeParams,
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 
@@ -134,6 +140,8 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       scale: params.scale ?? [1, 1, 1],
       // `data` unset → an Empty (the Group/Null/Transform collapse is a later phase).
       data: (inputs.data as ObjectData | undefined) ?? null,
+      // #1153 — only in quaternion mode, so an euler Object keeps the shape it always had.
+      ...rotationModeFieldsOf(params),
       // #645 — carried onto the value ONLY when the author actually set one, so an Object
       // that overrides nothing evaluates to the same shape it did before the field
       // existed, and a reader downstream never has to branch on a field that is present

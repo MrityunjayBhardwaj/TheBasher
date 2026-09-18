@@ -56,6 +56,7 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { importedChildOf } from './importedChild';
+import { withResolvedRotation } from './resolvedRotation';
 
 type Vec3 = [number, number, number];
 
@@ -232,7 +233,8 @@ export function resolveEvaluatedTransform(
     if ((lightVal as { kind?: unknown } | null)?.kind === 'light') {
       const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
       if (followed) {
-        const lv = lightVal as { rotation?: unknown; scale?: unknown };
+        // #1153 — a light Object's mode rides onto the flat light (lightRecompose).
+        const lv = withResolvedRotation(lightVal) as { rotation?: unknown; scale?: unknown };
         return {
           position: followed,
           rotation: isVec3(lv.rotation) ? (lv.rotation as Vec3) : null,
@@ -292,6 +294,9 @@ export function resolveEvaluatedTransform(
   child = overlayTransients(child, selectedId, useTransientEditStore.getState().edits);
 
   if (!child) return null;
+  // #1153 — after both overlays, as the renderer's MeshChild does, and BEFORE the Track-To
+  // aim below, which replaces the orientation in either mode.
+  child = withResolvedRotation(child);
 
   // 6. Read the transform off the (possibly unwrapped) child value.
   const c = child as unknown as {
