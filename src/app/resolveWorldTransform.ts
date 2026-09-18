@@ -237,11 +237,15 @@ function walk(
   value: SceneChild,
   acc: THREE.Matrix4,
   targetId: string,
+  at: Overlay,
 ): THREE.Matrix4 | null {
   const world = acc.clone().multiply(localMatrix(value));
   if (nodeId === targetId) return world;
+  // `childEdges` reads the children off the RAW value, so each one is overlaid on the way down.
   for (const edge of childEdges(state, nodeId, value)) {
-    const found = walk(state, edge.id, edge.value, world, targetId);
+    const child = overlaidAt(state, edge.id, edge.value, at);
+    if (!child) continue;
+    const found = walk(state, edge.id, child, world, targetId, at);
     if (found) return found;
   }
   return null;
@@ -258,14 +262,41 @@ function walkParent(
   value: SceneChild,
   acc: THREE.Matrix4,
   targetId: string,
+  at: Overlay,
 ): THREE.Matrix4 | null {
   if (nodeId === targetId) return acc;
   const world = acc.clone().multiply(localMatrix(value));
   for (const edge of childEdges(state, nodeId, value)) {
-    const found = walkParent(state, edge.id, edge.value, world, targetId);
+    const child = overlaidAt(state, edge.id, edge.value, at);
+    if (!child) continue;
+    const found = walkParent(state, edge.id, child, world, targetId, at);
     if (found) return found;
   }
   return null;
+}
+
+/** The time and held edits a walk overlays each node with. */
+interface Overlay {
+  readonly seconds: number;
+  readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
+}
+
+/**
+ * One node's value as the renderer draws it: its free-floating channels at `seconds`, then its held
+ * transient — the band DirectChannelsR applies to a node at ANY depth (#266). #268 — this used to
+ * run for top-level scene children only, so a channel on a nested node, or on a nested ancestor,
+ * moved the drawn mesh and left this read on the static pose.
+ */
+function overlaidAt(
+  state: DagState,
+  nodeId: string,
+  value: SceneChild,
+  at: Overlay,
+): SceneChild | null {
+  let child: SceneChild | null = value;
+  const directChannels = directChannelValuesForTarget(state.nodes, nodeId);
+  if (directChannels.length > 0) child = overlayChannels(child, directChannels, 1, at.seconds);
+  return overlayTransients(child, nodeId, at.transients);
 }
 
 function isIdentityMatrix(m: THREE.Matrix4): boolean {
@@ -383,17 +414,13 @@ export function resolveWorldTransform(
   //    SAME way DirectChannelsR renders it (free-floating channels → held
   //    transient, at ctx.time.seconds) so an animated ancestor moves its
   //    descendants' world transform in lockstep with the render (H40, one band).
+  const at: Overlay = { seconds: ctx.time.seconds, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;
-    let child: SceneChild | null = value.scene.children[i];
-    const directChannels = directChannelValuesForTarget(state.nodes, topId);
-    if (child && directChannels.length > 0) {
-      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
-    }
-    child = overlayTransients(child, topId, transients);
+    const child = overlaidAt(state, topId, value.scene.children[i], at);
     if (!child) continue;
-    const world = walk(state, topId, child, identity, selectedId);
+    const world = walk(state, topId, child, identity, selectedId, at);
     if (world) return decompose(world);
   }
 
@@ -506,17 +533,13 @@ export function resolveParentWorldMatrix(
   const transients = useTransientEditStore.getState().edits;
   const identity = new THREE.Matrix4();
 
+  const at: Overlay = { seconds: ctx.time.seconds, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;
-    let child: SceneChild | null = value.scene.children[i];
-    const directChannels = directChannelValuesForTarget(state.nodes, topId);
-    if (child && directChannels.length > 0) {
-      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
-    }
-    child = overlayTransients(child, topId, transients);
+    const child = overlaidAt(state, topId, value.scene.children[i], at);
     if (!child) continue;
-    const parent = walkParent(state, topId, child, identity, selectedId);
+    const parent = walkParent(state, topId, child, identity, selectedId, at);
     if (parent) return isIdentityMatrix(parent) ? null : parent;
   }
 

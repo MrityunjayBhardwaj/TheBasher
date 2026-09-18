@@ -224,7 +224,9 @@ describe('#583 — the tier the render root may fold', () => {
     // EXACT, not a floor. A census whose subject can empty goes green by losing its
     // corpus — a renamed helper, a narrowed file list — and reports the strongest possible
     // result for having measured nothing at all.
-    expect(calls).toHaveLength(9);
+    // 9 → 8 (#268): the world read's two top-level sites became one helper that every depth of
+    // the walk calls, still at weight 1.
+    expect(calls).toHaveLength(8);
     expect(calls.filter((c) => !/,\s*1,\s*/.test(c))).toEqual([]);
   });
 });
