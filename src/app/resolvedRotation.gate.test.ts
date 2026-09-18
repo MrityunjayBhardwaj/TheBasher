@@ -205,6 +205,32 @@ describe('#1153 — a quaternion channel drives it, slerping', () => {
     const w = resolveWorldTransform(animated(), 'n_box', at(0.5) as never);
     expect(angleBetween(tq(w!.quaternion), truth(0.5))).toBeLessThan(1e-4);
   });
+
+  it("a 'constant' (glTF STEP) track holds each key until the next, then snaps", () => {
+    const state = run(animated(), [
+      {
+        type: 'setParam',
+        nodeId: 'n_box_quaternion_channel',
+        paramPath: 'keyframes',
+        value: KEYS.map((value, i) => ({ time: i, value, easing: 'constant' })),
+      },
+    ]);
+    let worst = 0;
+    let samples = 0;
+    for (let n = 0; n <= 48; n++) {
+      const t = n / 24;
+      const held = tq(KEYS[Math.min(Math.floor(t), 2)]);
+      const r = resolveEvaluatedTransform(state, 'n_box', at(t) as never);
+      worst = Math.max(worst, angleBetween(fromDeg(r!.rotation!), held));
+      samples++;
+    }
+    expect(samples).toBe(49);
+    expect(worst).toBeLessThan(1e-4);
+    // Positive control: half-way through the first segment the linear track has
+    // left the key by 85°, so a held pose is not what the linear road also gives.
+    const mid = resolveEvaluatedTransform(animated(), 'n_box', at(0.5) as never);
+    expect(angleBetween(fromDeg(mid!.rotation!), tq(KEYS[0]))).toBeGreaterThan(80);
+  });
 });
 
 describe('#1153 — a Track-To aim wins in either mode (Blender evaluates constraints after)', () => {

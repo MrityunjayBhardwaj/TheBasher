@@ -141,6 +141,49 @@ test('#1153 — a quaternion channel draws the slerp at every sampled time', asy
   expect(checked).toHaveLength(5);
 });
 
+test("#1153 — a 'constant' (glTF STEP) quaternion channel draws each key held until the next", async ({
+  page,
+}) => {
+  await ready(page);
+  const KEYS: Q[] = [[0, 0, 0, 1], Q170, axisAngle([0, 0, 1], 90)];
+  await dispatch(page, [
+    ...setParams('n_box', {
+      rotation: DECOY,
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
+    }),
+    {
+      type: 'addNode',
+      nodeId: 'n_box_quaternion_channel',
+      nodeType: 'KeyframeChannelQuat',
+      params: {
+        name: 'quaternion',
+        target: 'n_box',
+        paramPath: 'quaternion',
+        keyframes: KEYS.map((value, i) => ({ time: i, value, easing: 'constant' })),
+      },
+    },
+  ]);
+  // Ordered so every step's held key differs from the one before: a draw that
+  // stopped following time cannot pass a step by standing still.
+  const checked: number[] = [];
+  for (const [t, held] of [
+    [1.5, 1],
+    [0.5, 0],
+    [1.99, 1],
+    [2, 2],
+    [0.99, 0],
+    [1, 1],
+  ] as const) {
+    await page.evaluate((t) => (window as unknown as W).__basher_time!.getState().setTime(t), t);
+    await expect
+      .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, KEYS[held]))
+      .toBeLessThan(1e-3);
+    checked.push(t);
+  }
+  expect(checked).toHaveLength(6);
+});
+
 test('#1153 — a Track-To aim draws the same in quaternion mode as in euler', async ({ page }) => {
   await ready(page);
   await dispatch(page, [
