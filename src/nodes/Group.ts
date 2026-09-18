@@ -45,6 +45,9 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
     rotation: 'transform',
     scale: 'transform',
     pivot: 'transform',
+    // #1153 — drawn by the transform section's rotation-mode control.
+    rotationMode: 'transform',
+    quaternion: 'transform',
   },
   evaluate(params, inputs) {
     // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)

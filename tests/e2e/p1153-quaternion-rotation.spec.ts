@@ -58,9 +58,14 @@ function rotate(q: Q, v: V): V {
   const r = mul(mul(q, [v[0], v[1], v[2], 0]), [-q[0], -q[1], -q[2], q[3]]);
   return [r[0], r[1], r[2]];
 }
-const angleDeg = (a: Q, b: Q) =>
-  (2 * Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3])))) /
-  D2R;
+/** Angle between two orientations. Normalises both: a stored quaternion need not be unit
+ *  length (Blender normalises only where it composes), and comparing raw would misread it. */
+function angleDeg(a: Q, b: Q): number {
+  const la = Math.hypot(...a);
+  const lb = Math.hypot(...b);
+  const d = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]) / (la * lb);
+  return (2 * Math.acos(Math.min(1, d))) / D2R;
+}
 
 async function ready(page: Page) {
   await page.goto('/');
@@ -381,4 +386,73 @@ test('#1153 — I keys a quaternion node on its quaternion channel, with the ori
   const q = (await quatChannels(page)).find((c) => c.paramPath === 'quaternion')!;
   expect(q.type).toBe('KeyframeChannelQuat');
   expect(angleDeg(q.keyframes[0].value as Q, Q170)).toBeLessThan(1e-3);
+});
+
+// ── #1153 — the inspector: Blender's rotation-mode switch, and W X Y Z ────────────────────
+
+test('#1153 — the rotation-mode switch converts both ways without moving the object', async ({
+  page,
+}) => {
+  await ready(page);
+  await dispatch(page, setParams('n_box', { rotation: [25, -40, 70] }));
+  await selectBox(page);
+  const mode = page.getByTestId('inspector-rotation-mode-n_box');
+  await expect(mode).toHaveValue('euler');
+  // The euler row is the same row it always was, in the same place: position, rotation, scale.
+  await expect(page.getByTestId('inspector-vec-n_box-rotation-x')).toBeVisible();
+  const before = (await drawnQuat(page, 'n_box'))!;
+  expect(angleDeg(before, fromEulerXYZ([25, -40, 70]))).toBeLessThan(1e-3);
+
+  await mode.selectOption('quaternion');
+  await expect.poll(async () => (await boxParams(page)).rotationMode).toBe('quaternion');
+  // Blender converts the stored value: the quaternion IS the euler's orientation, so nothing moves.
+  expect(angleDeg((await boxParams(page)).quaternion as Q, before)).toBeLessThan(1e-3);
+  await expect
+    .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, before))
+    .toBeLessThan(1e-3);
+  await expect(page.getByTestId('inspector-quaternion-n_box')).toBeVisible();
+  await expect(page.getByTestId('inspector-vec-n_box-rotation-x')).toHaveCount(0);
+
+  await mode.selectOption('euler');
+  await expect.poll(async () => (await boxParams(page)).rotationMode ?? null).toBe(null);
+  const back = (await boxParams(page)).rotation as V;
+  expect(angleDeg(fromEulerXYZ(back), before)).toBeLessThan(1e-3);
+  await expect
+    .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, before))
+    .toBeLessThan(1e-3);
+});
+
+test('#1153 — W X Y Z edits the quaternion and the object follows; one Cmd+Z undoes a switch', async ({
+  page,
+}) => {
+  await ready(page);
+  await selectBox(page);
+  await page.getByTestId('inspector-rotation-mode-n_box').selectOption('quaternion');
+  await expect.poll(async () => (await boxParams(page)).rotationMode).toBe('quaternion');
+  // Identity → set W=0, Z=1: a half turn about Z. Component by component, as a user types.
+  const field = (axis: string) => page.getByTestId(`inspector-vec-n_box-quaternion-${axis}`);
+  await expect(field('w')).toHaveValue('1');
+  await field('z').fill('1');
+  await field('w').fill('0');
+  const halfZ: Q = [0, 0, 1, 0];
+  // EXACTLY what was typed: the fields edit the stored quaternion, so z stays 1 after w is set.
+  // (Showing the normalised value made this [0, 0, 0.707, 0] — w's edit rewrote z.)
+  await expect.poll(async () => (await boxParams(page)).quaternion).toEqual(halfZ);
+  await expect
+    .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, halfZ))
+    .toBeLessThan(1e-3);
+
+  // Back to euler is ONE step; undo it once and the node is in quaternion mode again, unmoved,
+  // AND the euler the switch wrote is rolled back with it — only an atomic step does both.
+  const eulerBefore = (await boxParams(page)).rotation;
+  await page.getByTestId('inspector-rotation-mode-n_box').selectOption('euler');
+  await expect.poll(async () => (await boxParams(page)).rotation).not.toEqual(eulerBefore);
+  await expect.poll(async () => (await boxParams(page)).rotationMode ?? null).toBe(null);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z');
+  await expect.poll(async () => (await boxParams(page)).rotationMode).toBe('quaternion');
+  expect((await boxParams(page)).rotation).toEqual(eulerBefore);
+  await expect
+    .poll(async () => angleDeg((await drawnQuat(page, 'n_box'))!, halfZ))
+    .toBeLessThan(1e-3);
 });

@@ -130,6 +130,9 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
     // and sat in the unrouted bucket, which was the honest state while nothing could author
     // one: a home names the section that RENDERS a param, and no section did.
     slotOverrides: 'slots',
+    // #1153 — drawn by the transform section's rotation-mode control.
+    rotationMode: 'transform',
+    quaternion: 'transform',
   },
   evaluate(params, inputs) {
     return {
