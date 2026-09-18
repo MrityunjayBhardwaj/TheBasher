@@ -311,23 +311,22 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
   }
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
-    if ((node.children?.length ?? 0) > 0) {
+    // #1051 — a hierarchy comes across now: an empty is a Group, a mesh node is an Object, and the
+    // parent is an edge. What still has no shape is a node that is BOTH — an Object cannot parent
+    // (`connect` refuses: "Object has no input socket 'children'"), where Blender makes one object
+    // per node and parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`).
+    if (typeof node.mesh === 'number' && (node.children?.length ?? 0) > 0) {
       return {
-        refused: `node ${i} has children, and a hierarchy is not written as parent edges yet`,
-        issue: '#1051',
-      };
-    }
-    if (typeof node.mesh !== 'number') {
-      return {
-        refused: `node ${i} has no mesh (an empty), and empties arrive with the hierarchy`,
-        issue: '#1051',
+        refused: `node ${i} carries a mesh and also has children, and an Object cannot parent`,
+        issue: '#1152',
       };
     }
   }
-  // After the hierarchy, so a nested file is refused for its nesting first. Every node has a mesh
-  // by here.
+  // After the hierarchy refusal, so a file is refused for its shape first. A node without a mesh is
+  // an empty and shares nothing.
   const nodeOfMesh = new Map<number, number>();
   for (let i = 0; i < json.nodes.length; i++) {
+    if (typeof json.nodes[i].mesh !== 'number') continue;
     const mesh = json.nodes[i].mesh as number;
     const first = nodeOfMesh.get(mesh);
     if (first !== undefined) {
@@ -947,21 +946,25 @@ export async function buildNativeGltfImportOps(
     },
   ];
   const objectIds: string[] = [];
+  const parentEdges: Op[] = [];
   const materialTables = { textures: json.textures as never, samplers: json.samplers };
 
   // #1050 — everything that can refuse is read before anything is stored: every mesh, every
   // material, every image. A refused import leaves no file behind in the project.
-  const meshes: MeshGeometryData[] = [];
+  // Keyed by node index, not pushed in order: a file with empties in it has nodes that read no
+  // mesh at all, and a list would slide every later node onto the wrong geometry (#1051).
+  const meshes = new Map<number, MeshGeometryData>();
   const textures = new Set<number>();
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
+    if (typeof node.mesh !== 'number') continue; // an empty: a transform and a parent, no geometry
     // ASKED HERE AND NOT IN THE READER, because it is not a question about reading: `readGltfMesh`
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
     const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
     const data = readGltfMesh(json, buffers, node.mesh as number);
     if ('refused' in data) return data;
-    meshes.push(data);
+    meshes.set(i, data);
     const primitives = json.meshes![node.mesh as number].primitives!;
     for (let p = 0; p < primitives.length; p++) {
       const materialIndex = primitives[p].material;
@@ -985,12 +988,48 @@ export async function buildNativeGltfImportOps(
     imageKeys.set(texture, await args.storeImage(image.bytes, image.mime));
   }
 
+  // #1051 — the node each node hangs under, and the id each one will be addressed by. An empty is
+  // a Group (Blender's Empty: `imp/node.py:84-88`), a mesh node is an Object, and a node nobody
+  // names as a child is a root, which hangs under the import Group as a flat file's nodes do.
+  const parentOfNode = new Map<number, number>();
+  for (let i = 0; i < json.nodes.length; i++) {
+    for (const child of json.nodes[i].children ?? []) parentOfNode.set(child, i);
+  }
+  const idOfNode = (i: number): string => {
+    const key = keyByGltfNodeIndex[i];
+    return typeof json.nodes[i].mesh === 'number'
+      ? hashId('nativeObject', args.assetRef, key)
+      : hashId('nativeEmpty', args.assetRef, key);
+  };
+
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
-    const data = meshes[i];
     const key = keyByGltfNodeIndex[i];
+    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    if (typeof node.mesh !== 'number') {
+      const trs = defaultTRS(node);
+      const emptyId = idOfNode(i);
+      ops.push(
+        {
+          type: 'addNode',
+          nodeId: emptyId,
+          nodeType: 'Group',
+          // No pivot of its own: the file states an empty's transform about its own origin, and the
+          // import Group's pivot already places the model as a whole.
+          params: { position: trs.position, rotation: trs.rotation, scale: trs.scale },
+        },
+        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
+      );
+      parentEdges.push({
+        type: 'connect',
+        from: { node: emptyId, socket: 'out' },
+        to: { node: parentId, socket: 'children' },
+      });
+      continue;
+    }
+    const data = meshes.get(i)!;
     const dataId = hashId('nativeMesh', args.assetRef, key);
-    const objectId = hashId('nativeObject', args.assetRef, key);
+    const objectId = idOfNode(i);
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
       withProjectImages(
@@ -1032,16 +1071,19 @@ export async function buildNativeGltfImportOps(
         from: { node: dataId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
       },
-      {
-        type: 'connect',
-        from: { node: objectId, socket: 'out' },
-        to: { node: groupId, socket: 'children' },
-      },
     );
+    parentEdges.push({
+      type: 'connect',
+      from: { node: objectId, socket: 'out' },
+      to: { node: parentId, socket: 'children' },
+    });
     objectIds.push(objectId);
   }
 
-  ops.push({
+  // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
+  // can be written before the parent it names, and a `connect` to a node that does not exist yet
+  // throws. Within this list the order is the file's, which is what fixes each parent's child order.
+  ops.push(...parentEdges, {
     type: 'connect',
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
