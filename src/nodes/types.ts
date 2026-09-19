@@ -22,6 +22,24 @@ export type Vec3 = readonly [number, number, number];
 /** Quaternion stored as xyzw (THREE convention). */
 export type Quat = readonly [number, number, number, number];
 
+/**
+ * #1153 — how a posable value holds its orientation, beside the euler `rotation` it always
+ * carries. Blender's shape: an Object keeps BOTH an euler and a quaternion and `rotmode` picks
+ * which one composes (`object.cc:2794-2815`). Absent `rotationMode` is today's XYZ euler, so
+ * every value that never opts in keeps exactly the shape it had.
+ *
+ * Present only in quaternion mode, and then both together — `rotationModeFieldsOf` is the one
+ * writer. What `rotation` reads in that mode is decided by `withResolvedRotation`
+ * (`src/app/resolvedRotation.ts`), which every reader goes through AFTER the channel overlay:
+ * a channel on `quaternion` patches this field, not `rotation`.
+ */
+export interface RotationModeFields {
+  readonly rotationMode?: 'quaternion';
+  /** [x, y, z, w], w LAST as everywhere in Basher (Blender stores wxyz). Not necessarily
+   *  unit length: it is normalised where it composes, as Blender does. */
+  readonly quaternion?: Quat;
+}
+
 // ---------------------------------------------------------------------------
 // Cameras (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
@@ -54,7 +72,7 @@ export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;
 // Lights (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
 
-export interface DirectionalLightValue {
+export interface DirectionalLightValue extends RotationModeFields {
   readonly kind: 'DirectionalLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -63,7 +81,7 @@ export interface DirectionalLightValue {
   readonly color: string;
 }
 
-export interface PointLightValue {
+export interface PointLightValue extends RotationModeFields {
   readonly kind: 'PointLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -74,7 +92,7 @@ export interface PointLightValue {
   readonly decay: number;
 }
 
-export interface SpotLightValue {
+export interface SpotLightValue extends RotationModeFields {
   readonly kind: 'SpotLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -88,7 +106,7 @@ export interface SpotLightValue {
   readonly decay: number;
 }
 
-export interface AreaLightValue {
+export interface AreaLightValue extends RotationModeFields {
   readonly kind: 'AreaLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -1367,7 +1385,7 @@ export interface NullValue {
 // arc-length seam (curveSampleSource.ts) still measures those LOCAL samples in world (#349
 // unchanged). Old saves split on load (migrateFusedCurveToSplit).
 
-export interface GroupValue {
+export interface GroupValue extends RotationModeFields {
   readonly kind: 'Group';
   // #222 — a Group is transformable as a unit (Blender's parent/Empty). `pivot`
   // is the local point rotation/scale happen around; the renderer applies
@@ -2034,7 +2052,7 @@ export type ObjectData =
  * `Object → MeshData` pair is byte-identical to the fused node beside it.
  * `data: null` is an Empty (the Group/Null/Transform collapse, a later phase).
  */
-export interface ObjectValue {
+export interface ObjectValue extends RotationModeFields {
   readonly kind: 'Object';
   readonly position: Vec3;
   readonly rotation: Vec3;

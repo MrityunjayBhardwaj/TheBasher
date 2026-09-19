@@ -3,7 +3,9 @@
 // Spherical interpolation (slerp) keeps the rotation arc on the unit sphere;
 // a naive component lerp would bow the magnitude away from 1 and produce a
 // non-rotation. Cubic easing applies smoothstep to the slerp parameter — same
-// shape as the other channels, no sudden velocity changes.
+// shape as the other channels, no sudden velocity changes. 'constant' holds the
+// previous key until the next and snaps (glTF STEP; Blender CONSTANT) — the one
+// scalar-channel interpolation that means the same thing on a rotation.
 //
 // V0.5 keeps quaternion handles deferred (no inHandle/outHandle in the
 // schema) — explicit quaternion bezier is rare in user-facing tools and
@@ -21,7 +23,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { Easing, KeyframeChannelQuatValue, Quat } from './types';
+import type { KeyframeChannelQuatValue, Quat } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
 // slerp lives in quatMath now — the ONE shared unit-quat slerp, also consumed by
 // the NLA layer-fold reducer (foldChannel.ts). No drift (H40).
@@ -29,6 +31,11 @@ import { slerp } from './quatMath';
 import { nameParam } from './paramWidget';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+/** The interpolations a quaternion key takes. The Penner curves and handles stay
+ *  on the scalar channels: they shape a value, and a slerp has no value axis. */
+export const QUAT_EASINGS = ['linear', 'cubic', 'constant'] as const;
+export type QuatEasing = (typeof QUAT_EASINGS)[number];
 
 export const KeyframeChannelQuatParams = z.object({
   name: nameParam('channel'),
@@ -50,7 +57,7 @@ export const KeyframeChannelQuatParams = z.object({
       z.object({
         time: z.number().nonnegative(),
         value: QuatSchema,
-        easing: z.enum(['linear', 'cubic']).default('cubic'),
+        easing: z.enum(QUAT_EASINGS).default('cubic'),
       }),
     )
     .default([]),
@@ -61,7 +68,9 @@ function smoothstep(u: number): number {
   return u * u * (3 - 2 * u);
 }
 
-function interp(a: Quat, b: Quat, u: number, easing: Easing): Quat {
+function interp(a: Quat, b: Quat, u: number, easing: QuatEasing): Quat {
+  // Same rule as the scalar channels' easeFraction (keyframeInterp.ts).
+  if (easing === 'constant') return u >= 1 ? b : a;
   const t = easing === 'cubic' ? smoothstep(u) : u;
   return slerp(a, b, t);
 }

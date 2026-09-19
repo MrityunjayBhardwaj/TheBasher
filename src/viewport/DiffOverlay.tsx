@@ -15,6 +15,7 @@ import { resolveConstraintPosition, resolveConstraintRotation } from '../app/nod
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { degVec3ToRad } from './rotation';
+import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type { RenderOutputValue, CameraValue, LightValue, SceneObject } from '../nodes/types';
 
 export function DiffOverlay() {
@@ -116,7 +117,8 @@ function applyGhostPoseBand(
   const aim = resolveConstraintRotation(state, nodeId, ctx, cache);
   const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
   const patch: Record<string, unknown> = {};
-  if (aim && 'rotation' in rec) patch.rotation = aim;
+  // #1153 — the aim replaces the orientation in either mode (see `aimPatch`).
+  if (aim && 'rotation' in rec) Object.assign(patch, aimPatch(rec, aim));
   if (followed && 'position' in rec) patch.position = followed;
   if (Object.keys(patch).length === 0) return value;
   return { ...rec, ...patch } as unknown as SceneObject;
@@ -173,7 +175,11 @@ const GHOSTLESS_KINDS = [
   'OrthographicCamera',
 ] as const satisfies readonly SceneObject['kind'][];
 
-function GhostChild({ value }: { value: SceneObject }) {
+function GhostChild({ value: raw }: { value: SceneObject }) {
+  // #1153 — the ghost draws its own tree and never passes through MeshChild, so it resolves the
+  // rotation mode itself, after the pose band (whose aim already drops the mode). Recursion into
+  // a Group's children comes back through here, so a nested quaternion-mode child resolves too.
+  const value = withResolvedRotation(raw);
   switch (value.kind) {
     case 'Transform':
       if (!value.child) return null;
