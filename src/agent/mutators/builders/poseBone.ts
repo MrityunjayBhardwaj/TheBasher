@@ -83,6 +83,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { edgeTarget, type GraphNodeLike } from '../../../app/animate/graphNodes';
+import { overrideChain } from '../../../app/animate/poseChain';
 import { bonesOfSkeletonNode } from '../../../app/animate/retargetFromNodes';
 import { resolveBoneNames } from '../../../core/import/retarget';
 
@@ -124,50 +125,6 @@ function safeName(name: string): string {
  */
 function overrideIdFor(spec: PoseBoneSpec): NodeId {
   return spec.overrideId ?? `${spec.retarget}_${safeName(spec.bone)}_pose`;
-}
-
-interface OverrideNode {
-  readonly id: string;
-  readonly bone: string;
-  readonly overridden: { position?: boolean; rotation?: boolean };
-}
-
-/**
- * The chain of `PoseOverride`s hanging off `retargetId`, nearest first.
- *
- * Walked consumer-side one hop at a time: at each step, the override whose `pose`
- * input names the current node. Bounded by the node count so a malformed graph
- * cannot spin, and by taking the FIRST match at each hop it reports a single
- * chain even if a previous road (or a hand-edited file) left a fork — `build`
- * appends to the tip of what it reports, which keeps a fork from widening.
- */
-function overrideChain(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  retargetId: string,
-): OverrideNode[] {
-  const ids = Object.keys(nodes).sort();
-  const out: OverrideNode[] = [];
-  let cur = retargetId;
-  const seen = new Set<string>([retargetId]);
-  for (let hops = 0; hops < ids.length; hops++) {
-    const nextId = ids.find(
-      (id) =>
-        nodes[id].type === 'PoseOverride' && edgeTarget(nodes[id], 'pose') === cur && !seen.has(id),
-    );
-    if (nextId === undefined) break;
-    const p = (nodes[nextId].params ?? {}) as {
-      bone?: unknown;
-      overridden?: { position?: boolean; rotation?: boolean };
-    };
-    out.push({
-      id: nextId,
-      bone: typeof p.bone === 'string' ? p.bone : '',
-      overridden: p.overridden ?? {},
-    });
-    seen.add(nextId);
-    cur = nextId;
-  }
-  return out;
 }
 
 /** The bones of the rig a `RetargetClip` drives, or null when it names none. */
