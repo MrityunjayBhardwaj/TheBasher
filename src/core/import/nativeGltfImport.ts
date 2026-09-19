@@ -12,8 +12,8 @@
 // ── A WHOLE IMPORT IS NATIVE OR IT IS REFUSED, NEVER SPLIT PER CHILD ────────────────────────────
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
-// is refused WHOLE, by name, with the issue that brings it across: skinning (#393), clips and
-// nesting (#1051), several primitives on one mesh (#1052), morph targets (#1060),
+// is refused WHOLE, by name, with the issue that brings it across: skinning (#393), a second clip
+// (#1154), several primitives on one mesh (#1052), morph targets (#1060),
 // a mesh shared by several nodes (#1061), vertex attributes a render buffer has no slot for
 // (#1125), and material features the native material cannot hold (#1123). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
@@ -43,6 +43,9 @@
 import {
   BufferAttribute,
   BufferGeometry,
+  Matrix4,
+  Quaternion,
+  Vector3,
   ClampToEdgeWrapping,
   LinearFilter,
   LinearMipmapLinearFilter,
@@ -73,16 +76,20 @@ import {
 import {
   buildNodeNameMap,
   computeGltfBoundsCenter,
-  defaultTRS,
   hashId,
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
+
+/** The native parameter each animated glTF path drives. Rotation drives the quaternion, which is
+ *  why every imported node is in quaternion mode. */
+const CLIP_PARAM = { translation: 'position', rotation: 'quaternion', scale: 'scale' } as const;
 
 /** Why a file cannot be imported natively yet, and the issue that changes that. */
 export interface NativeImportRefusal {
@@ -296,12 +303,6 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#393',
     };
   }
-  if ((json.animations?.length ?? 0) > 0) {
-    return {
-      refused: 'it carries animation clips, which become Object channels later',
-      issue: '#1051',
-    };
-  }
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
   if (unheld.length > 0) {
     return {
@@ -311,23 +312,22 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
   }
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
-    if ((node.children?.length ?? 0) > 0) {
+    // #1051 — a hierarchy comes across now: an empty is a Group, a mesh node is an Object, and the
+    // parent is an edge. What still has no shape is a node that is BOTH — an Object cannot parent
+    // (`connect` refuses: "Object has no input socket 'children'"), where Blender makes one object
+    // per node and parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`).
+    if (typeof node.mesh === 'number' && (node.children?.length ?? 0) > 0) {
       return {
-        refused: `node ${i} has children, and a hierarchy is not written as parent edges yet`,
-        issue: '#1051',
-      };
-    }
-    if (typeof node.mesh !== 'number') {
-      return {
-        refused: `node ${i} has no mesh (an empty), and empties arrive with the hierarchy`,
-        issue: '#1051',
+        refused: `node ${i} carries a mesh and also has children, and an Object cannot parent`,
+        issue: '#1152',
       };
     }
   }
-  // After the hierarchy, so a nested file is refused for its nesting first. Every node has a mesh
-  // by here.
+  // After the hierarchy refusal, so a file is refused for its shape first. A node without a mesh is
+  // an empty and shares nothing.
   const nodeOfMesh = new Map<number, number>();
   for (let i = 0; i < json.nodes.length; i++) {
+    if (typeof json.nodes[i].mesh !== 'number') continue;
     const mesh = json.nodes[i].mesh as number;
     const first = nodeOfMesh.get(mesh);
     if (first !== undefined) {
@@ -862,6 +862,41 @@ function objectNameOf(json: NativeGltfJson, nodeIndex: number): string {
  * restated once here and the file's convention stops existing. An identity placement comes back
  * unchanged, so an untransformed material keys exactly as before.
  */
+/**
+ * A node's transform as Blender imports it: quaternion mode, holding the file's own quaternion
+ * (`io_scene_gltf2/blender/imp/node.py:113-116`, every object, animated or not — measured in 4.5.9
+ * and 5.1.1). The euler stays at zero, as Blender's does, because in quaternion mode nothing reads
+ * it. A `matrix` node holds what its matrix decomposes to (glTF forbids shear, so TRS is exact).
+ */
+function nodeTransformOf(node: NativeGltfJson['nodes'][number]): {
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  rotationMode: 'quaternion';
+  quaternion: [number, number, number, number];
+} {
+  if (node.matrix) {
+    const position = new Vector3();
+    const quaternion = new Quaternion();
+    const scale = new Vector3();
+    new Matrix4().fromArray(node.matrix).decompose(position, quaternion, scale);
+    return {
+      position: position.toArray(),
+      rotation: [0, 0, 0],
+      scale: scale.toArray(),
+      rotationMode: 'quaternion',
+      quaternion: quaternion.toArray() as [number, number, number, number],
+    };
+  }
+  return {
+    position: (node.translation ?? [0, 0, 0]) as Vec3,
+    rotation: [0, 0, 0],
+    scale: (node.scale ?? [1, 1, 1]) as Vec3,
+    rotationMode: 'quaternion',
+    quaternion: (node.rotation ?? [0, 0, 0, 1]) as [number, number, number, number],
+  };
+}
+
 function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
   const rebase = (p: UvPlacement) => rebasePlacementPivot(p, ORIGIN_PIVOT, CENTRE_PIVOT);
   const perMap = material.mapUvTransforms;
@@ -927,6 +962,9 @@ export async function buildNativeGltfImportOps(
   const refusal = fileRefusal(json);
   if (refusal !== null) return refusal;
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  // #1051 — the clip is read with everything else that can refuse, before anything is stored.
+  const clip = readNativeClip(json as ClipGltfJson, buffers);
+  if ('refused' in clip) return clip;
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
 
   const groupId = hashId('nativeGrp', args.assetRef);
@@ -947,21 +985,25 @@ export async function buildNativeGltfImportOps(
     },
   ];
   const objectIds: string[] = [];
+  const parentEdges: Op[] = [];
   const materialTables = { textures: json.textures as never, samplers: json.samplers };
 
   // #1050 — everything that can refuse is read before anything is stored: every mesh, every
   // material, every image. A refused import leaves no file behind in the project.
-  const meshes: MeshGeometryData[] = [];
+  // Keyed by node index, not pushed in order: a file with empties in it has nodes that read no
+  // mesh at all, and a list would slide every later node onto the wrong geometry (#1051).
+  const meshes = new Map<number, MeshGeometryData>();
   const textures = new Set<number>();
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
+    if (typeof node.mesh !== 'number') continue; // an empty: a transform and a parent, no geometry
     // ASKED HERE AND NOT IN THE READER, because it is not a question about reading: `readGltfMesh`
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
     const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
     const data = readGltfMesh(json, buffers, node.mesh as number);
     if ('refused' in data) return data;
-    meshes.push(data);
+    meshes.set(i, data);
     const primitives = json.meshes![node.mesh as number].primitives!;
     for (let p = 0; p < primitives.length; p++) {
       const materialIndex = primitives[p].material;
@@ -985,12 +1027,47 @@ export async function buildNativeGltfImportOps(
     imageKeys.set(texture, await args.storeImage(image.bytes, image.mime));
   }
 
+  // #1051 — the node each node hangs under, and the id each one will be addressed by. An empty is
+  // a Group (Blender's Empty: `imp/node.py:84-88`), a mesh node is an Object, and a node nobody
+  // names as a child is a root, which hangs under the import Group as a flat file's nodes do.
+  const parentOfNode = new Map<number, number>();
+  for (let i = 0; i < json.nodes.length; i++) {
+    for (const child of json.nodes[i].children ?? []) parentOfNode.set(child, i);
+  }
+  const idOfNode = (i: number): string => {
+    const key = keyByGltfNodeIndex[i];
+    return typeof json.nodes[i].mesh === 'number'
+      ? hashId('nativeObject', args.assetRef, key)
+      : hashId('nativeEmpty', args.assetRef, key);
+  };
+
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
-    const data = meshes[i];
     const key = keyByGltfNodeIndex[i];
+    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    if (typeof node.mesh !== 'number') {
+      const emptyId = idOfNode(i);
+      ops.push(
+        {
+          type: 'addNode',
+          nodeId: emptyId,
+          nodeType: 'Group',
+          // No pivot of its own: the file states an empty's transform about its own origin, and the
+          // import Group's pivot already places the model as a whole.
+          params: nodeTransformOf(node),
+        },
+        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
+      );
+      parentEdges.push({
+        type: 'connect',
+        from: { node: emptyId, socket: 'out' },
+        to: { node: parentId, socket: 'children' },
+      });
+      continue;
+    }
+    const data = meshes.get(i)!;
     const dataId = hashId('nativeMesh', args.assetRef, key);
-    const objectId = hashId('nativeObject', args.assetRef, key);
+    const objectId = idOfNode(i);
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
       withProjectImages(
@@ -1005,7 +1082,6 @@ export async function buildNativeGltfImportOps(
         imageKeys,
       ),
     );
-    const trs = defaultTRS(node);
     ops.push(
       {
         type: 'addNode',
@@ -1023,7 +1099,7 @@ export async function buildNativeGltfImportOps(
         type: 'addNode',
         nodeId: objectId,
         nodeType: 'Object',
-        params: { position: trs.position, rotation: trs.rotation, scale: trs.scale },
+        params: nodeTransformOf(node),
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
@@ -1032,13 +1108,33 @@ export async function buildNativeGltfImportOps(
         from: { node: dataId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
       },
-      {
-        type: 'connect',
-        from: { node: objectId, socket: 'out' },
-        to: { node: groupId, socket: 'children' },
-      },
     );
+    parentEdges.push({
+      type: 'connect',
+      from: { node: objectId, socket: 'out' },
+      to: { node: parentId, socket: 'children' },
+    });
     objectIds.push(objectId);
+  }
+
+  // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
+  // can be written before the parent it names, and a `connect` to a node that does not exist yet
+  // throws. Within this list the order is the file's, which is what fixes each parent's child order.
+  ops.push(...parentEdges);
+
+  // #1051 — the clip as ordinary channels on the Objects and Groups it animates, written after
+  // every node so each names a target that exists. Each is what Auto-Key or I would have made for
+  // the same parameter: the same node type, the same `<target>_<param>_channel` id (these three
+  // param names are already id-safe), named by its param. Nothing refers back to the file.
+  for (const channel of clip.channels) {
+    const target = idOfNode(channel.node);
+    const paramPath = CLIP_PARAM[channel.path];
+    ops.push({
+      type: 'addNode',
+      nodeId: `${target}_${paramPath}_channel`,
+      nodeType: channel.path === 'rotation' ? 'KeyframeChannelQuat' : 'KeyframeChannelVec3',
+      params: { name: paramPath, target, paramPath, keyframes: channel.keyframes },
+    });
   }
 
   ops.push({

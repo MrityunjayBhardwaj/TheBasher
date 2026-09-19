@@ -76,6 +76,18 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
     position: pos,
     shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
   });
+  // #1089 — how many RectAreaLights the scene draws BEFORE this row adds one, so the wait
+  // below keys on OUR light arriving rather than on any light already standing there.
+  const rectLightsBefore = await page.evaluate(() => {
+    const three = (window as unknown as BasherWindow).__basher_three!.getState().scene;
+    if (!three) return 0;
+    let n = 0;
+    three.traverse((o) => {
+      if (o.type === 'RectAreaLight') n++;
+    });
+    return n;
+  });
+
   const lid = await page.evaluate((lightOps) => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
@@ -103,6 +115,28 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
   );
   expect(world, 'seam resolves a light world (no longer null)').not.toBeNull();
   for (let i = 0; i < 3; i++) expect(world!.position[i]).toBeCloseTo(pos[i], 4);
+
+  // #1089 — WAIT FOR THE RENDER BEFORE READING IT. The dispatch above writes the DAG; the
+  // RectAreaLight exists only once React has committed the new scene, which is a frame or
+  // more later (measured: never within the dispatch's own tick, first seen 43-72 ms after).
+  // Without this wait the row passed only while the round trip to the next `evaluate` happened
+  // to outrun the render — true locally and on a healthy shard, false on a slow one, where it
+  // failed as `a live RectAreaLight exists: Received null`. This is a test race, not product
+  // debt, so it gets a wait rather than a baseline entry. The boundary-pair comparison below
+  // is untouched; all this changes is that it reads a scene that has finished rendering.
+  await page.waitForFunction(
+    (before) => {
+      const three = (window as unknown as BasherWindow).__basher_three!.getState().scene;
+      if (!three) return false;
+      let n = 0;
+      three.traverse((o) => {
+        if (o.type === 'RectAreaLight') n++;
+      });
+      return n > before;
+    },
+    rectLightsBefore,
+    { timeout: 30_000 },
+  );
 
   // Side A (render) — the REAL rendered RectAreaLight nearest the expected spot.
   const live = await page.evaluate((p) => {

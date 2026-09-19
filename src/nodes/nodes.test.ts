@@ -1389,6 +1389,25 @@ describe('P3 — KeyframeChannelQuat (pure, time-aware)', () => {
   it('D-04: node declares NO inputs (function-of-time, V24/V3-amended)', () => {
     expect(KeyframeChannelQuatNode.inputs).toEqual({});
   });
+
+  // A glTF STEP rotation sampler (and Blender's CONSTANT) holds the previous key
+  // until the next one, then snaps. The ARRIVING key's easing governs the
+  // segment, as on the scalar channels.
+  it("'constant' holds the previous key until the next, then snaps", () => {
+    const stepped = {
+      ...params,
+      keyframes: [
+        { time: 0, value: q0, easing: 'constant' as const },
+        { time: 1, value: q1, easing: 'constant' as const },
+      ],
+    };
+    expect(KeyframeChannelQuatNode.paramSchema.safeParse(stepped).success).toBe(true);
+    const state = buildChannelState('KeyframeChannelQuat', stepped);
+    const v = evalAt<KeyframeChannelQuatValue>(state, 'ch', 0);
+    for (const t of [0, 0.001, 0.5, 0.999]) expect(v.sample(t)).toEqual(q0);
+    expect(v.sample(1)).toEqual(q1);
+    expect(v.sample(2)).toEqual(q1);
+  });
 });
 
 describe('P3 — KeyframeChannelColor (pure, time-aware)', () => {

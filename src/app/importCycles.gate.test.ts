@@ -307,8 +307,15 @@ describe('#814 the import cycles, enumerated and held', () => {
         'src/app/resolveMeshUVSpace.ts',
         'src/app/sceneBundle.ts',
       ],
+      // #1166 — `resolveWorldTransform` and `curveSampleSource` joined this one knowingly. The world
+      // read folds what the draw folds, drivers included, and a driver can read a transform
+      // (`paramDrivers` → … → `geometrySampleSource` → `resolveWorldTransform`): the same reason
+      // `resolveEvaluatedTransform` has always been here. Both new edges are call-time only —
+      // `driverChannelValuesForTarget` is called inside `drawnChannels`, `resolveWorldTransform`
+      // inside `curveSampleSource`'s sampler — so neither reads across at module load.
       [
         'src/app/activeCamera.ts',
+        'src/app/curveSampleSource.ts',
         'src/app/geometrySampleSource.ts',
         'src/app/nodeConstraints.ts',
         'src/app/operatorStack.ts',
@@ -316,6 +323,7 @@ describe('#814 the import cycles, enumerated and held', () => {
         'src/app/resolveEvaluatedMesh.ts',
         'src/app/resolveEvaluatedParam.ts',
         'src/app/resolveEvaluatedTransform.ts',
+        'src/app/resolveWorldTransform.ts',
         'src/app/sceneTreeWalk.ts',
         'src/app/statefulOps.ts',
         'src/app/transformChannelSource.ts',

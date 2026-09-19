@@ -615,14 +615,16 @@ describe('buildNativeGltfImportOps', () => {
     ],
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
     [
-      'a nested hierarchy',
+      // #1051 made a hierarchy native; what this fixture actually carries is the one shape still
+      // refused — the holder node has a mesh AND children, and an Object cannot parent (#1152).
+      'a node that is both a mesh and a parent',
       () =>
         jsonFixture((json) => {
           const nodes = json.nodes as Record<string, unknown>[];
           nodes.push({ name: 'holder', children: [0], mesh: 0 });
           json.scenes = [{ nodes: [1] }];
         }),
-      '#1051',
+      '#1152',
     ],
     [
       'a mesh drawn as lines',
@@ -1014,5 +1016,170 @@ describe('triangulate — three’s toTrianglesDrawMode rule', () => {
 
   it('refuses a mode that is not a triangle mode', () => {
     expect(triangulate(Uint32Array.from([0, 1]), 1)).toBeNull();
+  });
+});
+
+describe('#1051 — a hierarchy comes across as parent edges', () => {
+  /** The cube, hung under an empty parent node that carries its own transform. */
+  function nestedFixture(mutate: (json: Record<string, unknown>) => void = () => {}): ArrayBuffer {
+    return jsonFixture((json) => {
+      json.nodes = [
+        { name: 'cube', mesh: 0 },
+        { name: 'Pivot', children: [0], translation: [0, 3, 0] },
+      ];
+      json.scenes = [{ nodes: [1] }];
+      mutate(json);
+    });
+  }
+
+  async function importNested(buffer: ArrayBuffer) {
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/nested.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    return result;
+  }
+
+  /** Who each node is wired under, by node id → parent id, read off the emitted connects. */
+  function parentOf(ops: readonly Op[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const op of ops) {
+      if (op.type !== 'connect' || op.to.socket !== 'children') continue;
+      out[op.from.node] = op.to.node;
+    }
+    return out;
+  }
+
+  const typeOf = (ops: readonly Op[], id: string) =>
+    ops.find((o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === id)
+      ?.nodeType;
+
+  it('an empty becomes a Group carrying the file’s transform and name', async () => {
+    const { ops, groupId } = await importNested(nestedFixture());
+    const parents = parentOf(ops);
+    const emptyId = Object.keys(parents).find(
+      (id) => typeOf(ops, id) === 'Group' && id !== groupId,
+    );
+    expect(emptyId, 'the empty node is written as a Group').toBeDefined();
+    const added = ops.find(
+      (o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === emptyId,
+    )!;
+    // Blender writes an Empty for a node with no mesh (`imp/node.py:84-88`); a Group is ours.
+    expect(added.params).toMatchObject({
+      position: [0, 3, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
+    });
+    expect(
+      ops.find((o) => o.type === 'setMeta' && o.nodeId === emptyId),
+      'the outliner shows the file’s own name',
+    ).toMatchObject({ name: 'Pivot' });
+  });
+
+  // Blender puts EVERY imported object in quaternion mode and writes the file's quaternion as it
+  // is (`imp/node.py:113-116`; measured in 4.5.9 and 5.1.1, animated or not). The euler stays at
+  // its zero default, as Blender's does, because in quaternion mode nothing reads it.
+  const ROT_CUBE = [0.1, 0.7, -0.3, 0.6403124237432849];
+  const ROT_PIVOT = [0, 0, 0.3826834323650898, 0.9238795325112867];
+  const paramsOf = (ops: readonly Op[], id: string) =>
+    ops.find((o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === id)!
+      .params as Record<string, unknown>;
+
+  it('every node holds the file’s own quaternion, in quaternion mode, as Blender imports it', async () => {
+    const { ops, groupId, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[0].rotation = ROT_CUBE;
+        nodes[1].rotation = ROT_PIVOT;
+      }),
+    );
+    const emptyId = parentOf(ops)[objectIds[0]];
+    for (const [id, q] of [
+      [objectIds[0], ROT_CUBE],
+      [emptyId, ROT_PIVOT],
+    ] as const) {
+      // EXACT — the file's own numbers, never a round trip through an euler.
+      expect(paramsOf(ops, id)).toMatchObject({
+        rotationMode: 'quaternion',
+        quaternion: q,
+        rotation: [0, 0, 0],
+      });
+    }
+    // The import Group is ours, not the file's: it keeps the euler mode every native node has.
+    expect(paramsOf(ops, groupId).rotationMode).toBeUndefined();
+  });
+
+  it('a matrix-form node holds the quaternion its matrix decomposes to', async () => {
+    const q = new THREE.Quaternion(...(ROT_PIVOT as [number, number, number, number]));
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 3, 0),
+      q,
+      new THREE.Vector3(2, 2, 2),
+    );
+    const { ops, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[1] = { name: 'Pivot', children: [0], matrix: m.toArray() };
+      }),
+    );
+    const p = paramsOf(ops, parentOf(ops)[objectIds[0]]);
+    expect(p.rotationMode).toBe('quaternion');
+    const got = new THREE.Quaternion(...(p.quaternion as [number, number, number, number]));
+    expect((2 * Math.acos(Math.min(1, Math.abs(got.dot(q)))) * 180) / Math.PI).toBeLessThan(1e-5);
+    (p.position as number[]).forEach((v, i) => expect(v).toBeCloseTo([0, 3, 0][i], 12));
+    (p.scale as number[]).forEach((v) => expect(v).toBeCloseTo(2, 12));
+  });
+
+  it('the mesh node hangs under the empty, and the empty under the import Group', async () => {
+    const { ops, groupId, objectIds } = await importNested(nestedFixture());
+    const parents = parentOf(ops);
+    const emptyId = parents[objectIds[0]];
+    expect(emptyId, 'the cube’s parent is not the import Group any more').not.toBe(groupId);
+    expect(typeOf(ops, emptyId)).toBe('Group');
+    expect(parents[emptyId], 'and the empty hangs under the import Group').toBe(groupId);
+  });
+
+  it('a child written BEFORE its parent still connects — glTF fixes no node order', async () => {
+    // The cube is node 0 and its parent is node 1, so the parent edge names a node the op stream
+    // has not added yet unless every parent edge comes after every node. `applyOp` throws if not.
+    const { ops } = await importNested(nestedFixture());
+    const addedBy: string[] = [];
+    for (const op of ops) {
+      if (op.type === 'addNode') addedBy.push(op.nodeId);
+      if (op.type === 'connect' && op.to.socket === 'children' && op.to.node !== 'n_scene') {
+        expect(addedBy, `connect to ${op.to.node} before it exists`).toContain(op.to.node);
+        expect(addedBy, `connect from ${op.from.node} before it exists`).toContain(op.from.node);
+      }
+    }
+  });
+
+  it('a node that carries a mesh AND children is refused by name', async () => {
+    const buffer = jsonFixture((json) => {
+      json.nodes = [
+        { name: 'cube', mesh: 0 },
+        { name: 'holder', mesh: 0, children: [0] },
+      ];
+      json.scenes = [{ nodes: [1] }];
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.refused).toContain('carries a mesh and also has children');
+    expect('refused' in result && result.issue).toBe('#1152');
+  });
+
+  it('an empty is not mistaken for a second node sharing a mesh', async () => {
+    // The shared-mesh refusal (#1061) reads `node.mesh` for every node; an empty has none, and
+    // reading it as mesh 0 would refuse a file that is perfectly importable.
+    const { ops } = await importNested(nestedFixture());
+    expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'PolyMeshData')).toBe(true);
   });
 });

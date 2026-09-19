@@ -71,16 +71,32 @@ export function skeletonObjectId(skeletonId: string): string {
  * Found by the `data` edge rather than by {@link skeletonObjectId}, so an Object pointed at the
  * skeleton by hand counts as much as the one an import made.
  *
- * ONE lookup for every question that asks it: which Object a notice names
- * (`bindMotionToCharacter.ts`) and which Objects a path placement moves
- * (`placeGeneratedMotion.ts`, #1100). Two spellings could disagree about which Object stands a
- * motion, and a notice would then name one that placement leaves at the origin.
+ * ONE lookup for "where does this motion stand": the Object a notice falls back to naming
+ * (`bindMotionToCharacter.ts`) and whether a path placement's refusal can say an Object of the
+ * director's still shows it (`placeGeneratedMotion.ts`). What a bind hides and a placement moves
+ * is narrower — {@link standInObjectOf} (#1088, #1141).
  */
 export function standingObjectsOf(state: DagState, skeletonId: string): string[] {
   return Object.values(state.nodes)
     .filter((n) => n.type === 'Object' && dataSourceOf(n.inputs?.data) === skeletonId)
     .map((n) => n.id)
     .sort();
+}
+
+/**
+ * The Object the import stood this skeleton up with, while it still shows the skeleton — or null.
+ *
+ * #1088 — the one Object a bind hides. {@link standingObjectsOf} answers "where does this motion
+ * stand", and an Object the director pointed at the skeleton is a right answer to that; it is not
+ * one a bind may hide unasked. The import's own Object is told apart by the id the import derives
+ * ({@link skeletonObjectId}): a rename writes `meta.name` and never the id, while a duplicate gets
+ * an id of its own. The `data` edge is checked too, because once that Object is pointed at
+ * something else it no longer shows this motion.
+ */
+export function standInObjectOf(state: DagState, skeletonId: string): string | null {
+  const id = skeletonObjectId(skeletonId);
+  const node = state.nodes[id];
+  return node?.type === 'Object' && dataSourceOf(node.inputs?.data) === skeletonId ? id : null;
 }
 
 /** The node an input socket reads from, or null — one binding or the first of a list. */

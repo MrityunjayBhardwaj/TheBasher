@@ -55,7 +55,7 @@
 import { useDagStore } from '../../core/dag/store';
 import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
-import { standingObjectsOf } from '../../core/import/skeletonObject';
+import { standInObjectOf, standingObjectsOf } from '../../core/import/skeletonObject';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 // #1001 — the two-hop rig→asset read moved to the module that owns the graph
 // walks, where `placeGeneratedMotion`'s id-returning half already points.
@@ -185,15 +185,15 @@ export function selectedAssetRefs(state: DagState, selectedNodeId: string | null
 /**
  * The Object standing this skeleton in the scene, or null when none does.
  *
- * Found by its `data` edge rather than by the id the importer gives it — the same
- * lookup the retarget's hide makes (`retarget.ts`), so a message naming it names
- * the Object a bind would hide. Null when nothing stands: a project with no scene
- * aggregator, or a motion with no bones to draw. Id-sorted (V22), so a skeleton
- * two Objects show is named the same way every time.
+ * The import's own Object first — the one the retarget's hide names (`standInObjectOf`,
+ * #1088), so a message naming it names the Object a bind would hide. Without it, any
+ * Object whose `data` is the skeleton still says where the motion is, id-sorted (V22) so
+ * a skeleton two Objects show is named the same way every time. Null when nothing stands:
+ * a project with no scene aggregator, or a motion with no bones to draw.
  */
 export function standingObjectOf(state: DagState, skeletonId: string): string | null {
-  // The shared lookup, so the Object named here is one path placement moves (#1100).
-  return standingObjectsOf(state, skeletonId)[0] ?? null;
+  // The shared lookups, so the Object named here is one path placement moves (#1100).
+  return standInObjectOf(state, skeletonId) ?? standingObjectsOf(state, skeletonId)[0] ?? null;
 }
 
 /**

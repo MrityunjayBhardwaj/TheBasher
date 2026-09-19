@@ -62,7 +62,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
-import { standingObjectsOf } from '../../core/import/skeletonObject';
+import { standInObjectOf, standingObjectsOf } from '../../core/import/skeletonObject';
 import { riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
 import { edgeTarget } from '../animate/graphNodes';
 import { clipBakeStates } from './bakeGeneratedClip';
@@ -316,8 +316,8 @@ export interface CookedPlacement {
 }
 
 /**
- * Place every character whose generated clip came back with a world offset, and every Object
- * standing that motion's own rig (#1100).
+ * Place every character whose generated clip came back with a world offset, and the Object the
+ * generation stood that motion's own rig up with (#1100, #1141).
  *
  * A `worldOffsetXZ` of `null` means no world path was requested, and those clips
  * are skipped rather than placed at the origin — the distinction the generator
@@ -353,25 +353,36 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
 
     // #1100 — AND THE MOTION'S OWN RIG. Here the clip's `skeleton` edge IS the right read, for
     // the reason the note above says it is the wrong one for a character: it reaches the SOURCE
-    // `Skeleton`, and the Objects standing that skeleton are this motion's rig in the scene.
-    // Placed whether or not a character plays the clip: while one does, the bind hides the rig,
-    // and undoing the bind should show it where the path starts rather than at the origin.
+    // `Skeleton`, and the Object the generation stood that skeleton up with is this motion's rig
+    // in the scene. Placed whether or not a character plays the clip: while one does, the bind
+    // hides the rig, and undoing the bind should show it where the path starts rather than at the
+    // origin.
+    //
+    // #1141 — THAT OBJECT ONLY, the one the bind hides (`standInObjectOf`, #1088). An Object the
+    // director pointed at the skeleton is a copy they placed; this runs after every re-cook, so
+    // moving it would snap their copy onto the generated rig each time.
     const sourceSkeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
-    const standing = sourceSkeletonId ? standingObjectsOf(state, sourceSkeletonId) : [];
+    const standIn = sourceSkeletonId ? standInObjectOf(state, sourceSkeletonId) : null;
 
-    if (skeletonIds.length === 0 && standing.length === 0) {
+    if (skeletonIds.length === 0 && standIn === null) {
+      const theirs = sourceSkeletonId ? standingObjectsOf(state, sourceSkeletonId).length : 0;
       refusals.push({
         clipId,
         reason:
-          'the motion was generated along a world path, but the clip is not bound to a ' +
-          'character rig and its own rig does not stand in the scene, so there is nothing ' +
-          'to place — it will play at the origin.',
+          theirs > 0
+            ? 'the motion was generated along a world path, but the clip is not bound to a ' +
+              'character rig and the Object it was generated with no longer stands in the ' +
+              'scene, so there is nothing to place — Objects you pointed at its skeleton stay ' +
+              'where you put them.'
+            : 'the motion was generated along a world path, but the clip is not bound to a ' +
+              'character rig and its own rig does not stand in the scene, so there is nothing ' +
+              'to place — it will play at the origin.',
       });
       continue;
     }
 
-    for (const objectId of standing) {
-      const placed = placeStandInAtPathStart(state, objectId, offset, rotation);
+    if (standIn !== null) {
+      const placed = placeStandInAtPathStart(state, standIn, offset, rotation);
       if (placed.ok) ops.push(...(placed.ops as Op[]));
       else refusals.push({ clipId, reason: placed.reason });
     }

@@ -73,6 +73,135 @@ function canvasNonUniform(page: import('@playwright/test').Page) {
   });
 }
 
+/** How long a layer gets to paint. Deliberately shorter than the decoder's own 15 s
+ *  load + 15 s seek allowance (`VIDEO_OP_TIMEOUT_MS`): a slow decode should FAIL here
+ *  and say it was slow, not be absorbed (#1138). */
+const PAINT_BUDGET_MS = 8_000;
+
+interface CompositeWatch {
+  t0: number;
+  /** Every change of the canvas's (planned layer count, completed-draw nonce). */
+  samples: { t: number; draws: number; nonce: number }[];
+  toasts: { t: number; text: string }[];
+}
+
+/**
+ * Record what the composite does from now on, so a blank canvas can say why.
+ *
+ * `data-composite-draws` is the number of layers PLANNED — it reads 1 before any
+ * decode starts. `data-composite-nonce` is bumped only after a draw COMPLETES, and
+ * the render carrying that bump carries the draws count that draw used (a draw whose
+ * plan changed underneath it is cancelled and never bumps). The decode-failure road
+ * reports through `console.warn` + an error toast, which auto-dismisses, so both are
+ * captured as they happen.
+ */
+async function watchComposite(page: import('@playwright/test').Page) {
+  const warnings: { t: number; text: string }[] = [];
+  page.on('console', (msg) => {
+    if (msg.text().startsWith('composite: failed to decode'))
+      warnings.push({ t: Date.now(), text: msg.text() });
+  });
+  await page.evaluate(() => {
+    const watch = { t0: Date.now(), samples: [], toasts: [] } as unknown as CompositeWatch;
+    (window as unknown as { __compositeWatch: CompositeWatch }).__compositeWatch = watch;
+    const seenToasts = new Set<string>();
+    const record = () => {
+      const c = document.querySelector('[data-testid="composite-canvas"]');
+      if (c) {
+        const draws = Number(c.getAttribute('data-composite-draws'));
+        const nonce = Number(c.getAttribute('data-composite-nonce'));
+        const last = watch.samples[watch.samples.length - 1];
+        if (!last || last.draws !== draws || last.nonce !== nonce)
+          watch.samples.push({ t: Date.now(), draws, nonce });
+      }
+      for (const el of document.querySelectorAll('[data-testid="toast-error"] p')) {
+        const text = el.textContent ?? '';
+        if (!seenToasts.has(text)) {
+          seenToasts.add(text);
+          watch.toasts.push({ t: Date.now(), text });
+        }
+      }
+    };
+    record();
+    new MutationObserver(record).observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['data-composite-draws', 'data-composite-nonce'],
+    });
+  });
+  return { warnings };
+}
+
+/**
+ * Wait until a draw of `layers` planned layers has COMPLETED and left real pixels.
+ * On timeout, fail with what happened instead of "Timeout 8000ms exceeded":
+ * whether such a draw completed and when, and any decode warning / error toast.
+ */
+async function expectLayersPainted(
+  page: import('@playwright/test').Page,
+  watch: { warnings: { t: number; text: string }[] },
+  layers: number,
+) {
+  const started = Date.now();
+  try {
+    await page.waitForFunction(
+      (n) => {
+        const w = (window as unknown as { __compositeWatch: CompositeWatch }).__compositeWatch;
+        const planned = w.samples.findIndex((s) => s.draws === n);
+        if (planned < 0) return false;
+        const plannedNonce = w.samples[planned].nonce;
+        const completed = w.samples
+          .slice(planned + 1)
+          .some((s) => s.draws === n && s.nonce > plannedNonce);
+        if (!completed) return false;
+        const c = document.querySelector('[data-testid="composite-canvas"]') as HTMLCanvasElement;
+        const { data } = c.getContext('2d')!.getImageData(0, 0, c.width, c.height);
+        for (let i = 4; i < data.length; i += 4)
+          if (
+            data[i] !== data[0] ||
+            data[i + 1] !== data[1] ||
+            data[i + 2] !== data[2] ||
+            data[i + 3] !== data[3]
+          )
+            return true;
+        return false;
+      },
+      layers,
+      { timeout: PAINT_BUDGET_MS, polling: 100 },
+    );
+  } catch (err) {
+    if (!(err instanceof Error) || err.name !== 'TimeoutError') throw err;
+    const w = await page.evaluate(
+      () => (window as unknown as { __compositeWatch: CompositeWatch }).__compositeWatch,
+    );
+    const at = (t: number) => `+${t - w.t0} ms`;
+    const planned = w.samples.find((s) => s.draws === layers);
+    const completed = planned
+      ? w.samples.filter((s) => s.draws === layers && s.nonce > planned.nonce)
+      : [];
+    const failures = [...watch.warnings, ...w.toasts];
+    const cause = !planned
+      ? `NEVER PLANNED: the composite never planned ${layers} layer(s)`
+      : completed.length === 0
+        ? `SLOW: no draw of the ${layers}-layer composition completed within ${PAINT_BUDGET_MS} ms`
+        : failures.length > 0
+          ? `DECODE FAILED: ${completed.length} draw(s) completed but the canvas is uniform, and the decode reported an error`
+          : `DREW NOTHING: ${completed.length} draw(s) completed, the canvas is uniform, and no decode error was reported`;
+    throw new Error(
+      [
+        `composite did not paint ${layers} layer(s) — ${cause}`,
+        `waited ${Date.now() - started} ms (budget ${PAINT_BUDGET_MS} ms); watch started ${at(started)}`,
+        `planned ${layers} layer(s): ${planned ? at(planned.t) : 'never'}`,
+        `completed draws of that plan: ${completed.map((s) => `nonce ${s.nonce} @ ${at(s.t)}`).join(', ') || 'none'}`,
+        `canvas timeline (draws/nonce): ${w.samples.map((s) => `${s.draws}/${s.nonce}@${at(s.t)}`).join(' ')}`,
+        `decode warnings: ${watch.warnings.map((x) => `${at(x.t)} ${x.text}`).join(' | ') || 'none'}`,
+        `error toasts: ${w.toasts.map((x) => `${at(x.t)} ${x.text}`).join(' | ') || 'none'}`,
+      ].join('\n'),
+    );
+  }
+}
+
 async function addMedia(page: import('@playwright/test').Page, file: string, expectCount: number) {
   await page.getByTestId('video-mode-add-layer').click();
   const [chooser] = await Promise.all([
@@ -110,6 +239,7 @@ test('an image layer composites real pixels', async ({ page }) => {
 });
 
 test('an MP4 video ingests as a video MediaClip and composites real pixels', async ({ page }) => {
+  const watch = await watchComposite(page);
   await addMedia(page, VIDEO, 1);
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 
@@ -120,9 +250,10 @@ test('an MP4 video ingests as a video MediaClip and composites real pixels', asy
   expect(Number(clip.width)).toBeGreaterThan(0);
   expect(Number(clip.height)).toBeGreaterThan(0);
 
-  // The first frame actually decoded onto the composite.
+  // One layer is PLANNED (this attribute counts the plan, not a finished draw)…
   await expect(page.getByTestId('composite-canvas')).toHaveAttribute('data-composite-draws', '1');
-  await expect.poll(() => canvasNonUniform(page), { timeout: 8_000 }).toBe(true);
+  // …and a draw of that plan COMPLETED with the decoded first frame on the canvas.
+  await expectLayersPainted(page, watch, 1);
 });
 
 test('scrubbing a video layer changes the composited frame', async ({ page }) => {

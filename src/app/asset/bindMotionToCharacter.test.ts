@@ -170,6 +170,33 @@ describe('chooseMotionTarget', () => {
     }
   });
 
+  it('#1088 — names the import’s Object, not one the director pointed at the skeleton', () => {
+    // `a_by_hand` sorts first, so a lookup that took the first standing Object would name it.
+    // The notice names the Object a bind hides, and since #1088 that is only the import's.
+    const byHand: Node = {
+      id: 'a_by_hand',
+      type: 'Object',
+      version: 1,
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      inputs: { data: { node: 'skel_walk', socket: 'out' } },
+    };
+    const result = chooseMotionTarget(
+      stateOf(...motion('skel_walk', true), byHand),
+      null,
+      'imported',
+      'skel_walk',
+    );
+    expect(result.ok ? '' : result.reason).toContain('stands in the scene as skel_walk_object');
+    // Without the import's Object, a hand-made one still says where the motion is.
+    const alone = chooseMotionTarget(
+      stateOf(...motion('skel_walk', false), byHand),
+      null,
+      'imported',
+      'skel_walk',
+    );
+    expect(alone.ok ? '' : alone.reason).toContain('stands in the scene as a_by_hand');
+  });
+
   it('#1103 — with no Object standing, the warning and its wording stay', () => {
     for (const state of [stateOf(...motion('skel_walk', false)), stateOf()]) {
       const result = chooseMotionTarget(state, null, 'imported', 'skel_walk');
