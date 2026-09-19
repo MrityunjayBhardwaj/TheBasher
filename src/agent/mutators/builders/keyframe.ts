@@ -23,6 +23,8 @@ import {
   type Easing,
   type EaseDir,
   type HandleType,
+  type HandledKey,
+  splitSegmentForKey,
 } from '../../../nodes/keyframeInterp';
 import {
   CHANNEL_ADDRESS_DOC,
@@ -71,6 +73,13 @@ const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
   KeyframeChannelImage: (v) => typeof v === 'string',
 };
 
+/** The channels whose keys carry bézier handles — the ones an insert can split (#1165). */
+const HANDLED_CHANNEL_TYPES: ReadonlySet<string> = new Set([
+  'KeyframeChannelNumber',
+  'KeyframeChannelVec2',
+  'KeyframeChannelVec3',
+]);
+
 const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
   KeyframeChannelNumber: 'linear',
   KeyframeChannelVec2: 'cubic',
@@ -86,12 +95,13 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
   name: 'mutator.timeline.keyframe',
   description:
     'Append a keyframe { time, value } to an existing KeyframeChannel. ' +
-    'Re-keying the same time replaces the existing sample. `easing` is the ' +
+    'Re-keying the same time replaces its value and keeps its handles and interpolation; ' +
+    'a key between handled keys keeps the curve. `easing` is the ' +
     "per-key interpolation: 'linear','cubic','constant' (stepped), or a Penner " +
     "curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|'elastic' " +
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
-    'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing uses the ' +
-    "channel's default. Use mutator.timeline.addChannel to create a channel on an " +
+    'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing takes the ' +
+    'interpolation of the segment the key lands in (the channel default for a first or second key). Use mutator.timeline.addChannel to create a channel on an ' +
     'ordinary node. To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
     CHANNEL_ADDRESS_DOC,
@@ -156,9 +166,14 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     if (!resolved.ok) throw new Error(resolved.reason);
     const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
-    const params = view.params as {
-      keyframes?: Array<{ time: number; value: unknown; easing: Easing }>;
+    type Key = {
+      time: number;
+      value: unknown;
+      easing: Easing;
+      ease?: EaseDir;
+      handleType?: HandleType;
     };
+    const params = view.params as { keyframes?: Key[] };
     // The SEEDED keys when this mint just took them from the clip — reading
     // `state` here instead would author onto an empty channel and throw the
     // seed away, which is the difference between editing a motion and
@@ -166,23 +181,50 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     const existing = params.keyframes ?? [];
     const easing = spec.easing ?? DEFAULT_EASING_BY_TYPE[view.type] ?? 'linear';
 
-    // Build the new sample. `ease`/`handleType` are added ONLY when provided so a
-    // legacy call (linear/cubic, no ease/handle) stays byte-identical to pre-#281.
-    const key: {
-      time: number;
-      value: unknown;
-      easing: Easing;
-      ease?: EaseDir;
-      handleType?: HandleType;
-    } = { time: spec.time, value: spec.value, easing };
-    if (spec.ease !== undefined) key.ease = spec.ease;
-    if (spec.handleType !== undefined) key.handleType = spec.handleType;
-
-    // Replace any sample at the same time; otherwise append. Sort by time
-    // so the channel's evaluator can rely on monotonic input (and so the
-    // dopesheet renders rows left-to-right without re-sorting on render).
-    const filtered = existing.filter((k) => k.time !== spec.time);
-    const next = [...filtered, key].sort((a, b) => a.time - b.time);
+    // #1165 — keying a value the curve already has must not reshape it (Blender: animrig
+    // `fcurve.cc` `insert_bezt_fcurve`).
+    //
+    // Re-keying a time replaces its VALUE and keeps the rest of the key: its handles (stored as
+    // offsets, so they ride with the value exactly as `replace_bezt_keyframe_ypos` shifts them
+    // by dy), and its interpolation unless this call names one — Auto-Key names none, and
+    // resetting a linear key to the channel default reshaped both segments beside it.
+    const at = existing.findIndex((k) => k.time === spec.time);
+    let next: Key[];
+    if (at >= 0) {
+      const kept: Key = { ...existing[at], value: spec.value };
+      if (spec.easing !== undefined) kept.easing = spec.easing;
+      if (spec.ease !== undefined) kept.ease = spec.ease;
+      if (spec.handleType !== undefined) kept.handleType = spec.handleType;
+      next = existing.map((k, i) => (i === at ? kept : k));
+    } else {
+      // A new sample. `ease`/`handleType` are added ONLY when provided so a legacy call
+      // (linear/cubic, no ease/handle) stays byte-identical to pre-#281.
+      const key: Key = { time: spec.time, value: spec.value, easing };
+      if (spec.ease !== undefined) key.ease = spec.ease;
+      if (spec.handleType !== undefined) key.handleType = spec.handleType;
+      // Sorted by time so the channel's evaluator can rely on monotonic input (and so the
+      // dopesheet renders rows left-to-right without re-sorting on render).
+      next = [...existing, key].sort((a, b) => a.time - b.time);
+      const i = next.indexOf(key);
+      // #1170 — a new key on a curve that already has two keys takes the interpolation of the
+      // segment it lands in unless this call names one, as Blender's takes its neighbour's
+      // (animrig `fcurve.cc` `insert_vert_fcurve`: the key before, or after when it is first).
+      // A segment's interpolation here is its ARRIVING key's, so that is the key after; past the
+      // last key, the last. The channel default is for a curve with no shape to keep yet.
+      if (spec.easing === undefined && existing.length >= 2) {
+        const from = next[i + 1] ?? next[i - 1];
+        key.easing = from.easing;
+        if (spec.ease === undefined && from.ease !== undefined) key.ease = from.ease;
+      }
+      // Landing between two keys whose handles are stored, the segment is split so the curve
+      // keeps its shape (`subdivide_nonauto_handles`).
+      if (HANDLED_CHANNEL_TYPES.has(view.type) && i > 0 && i < next.length - 1) {
+        const prev = next[i - 1] as HandledKey;
+        const after = next[i + 1] as HandledKey;
+        const split = splitSegmentForKey(prev, after, key as HandledKey);
+        if (split) next.splice(i - 1, 3, split.a as Key, split.key as Key, split.b as Key);
+      }
+    }
 
     return [
       ...resolved.mintOps,
