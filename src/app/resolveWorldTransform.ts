@@ -69,7 +69,10 @@ import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { directChannelValuesForTarget, bareChannelValuesForSubject } from './nodeChannels';
+import { bareChannelValuesForSubject } from './nodeChannels';
+import { layeredChannelValues } from './layeredChannels';
+import { driverChannelValuesForTarget } from './paramDrivers';
+import type { KeyframeChannelValue } from '../nodes/types';
 import { cameraLensParams, isCameraNode } from './cameraNode';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
@@ -275,15 +278,28 @@ function walkParent(
   return null;
 }
 
-/** The time and held edits a walk overlays each node with. */
+/** The time, evaluation context and held edits a walk overlays each node with. */
 interface Overlay {
-  readonly seconds: number;
+  readonly ctx: EvalCtx;
+  readonly cache: EvaluatorCache | undefined;
   readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
 }
 
 /**
- * One node's value as the renderer draws it: its free-floating channels at `seconds`, then its held
- * transient — the band DirectChannelsR applies to a node at ANY depth (#266). #268 — this used to
+ * #1166 — the channels the renderer folds onto `nodeId`: its bare channels, the channels its
+ * placed Strips contribute, then its drivers — SceneFromDAG's `useLayeredChannels`, the set
+ * `resolveEvaluatedTransform` folds too. Reading only the bare channels left a node moved by a
+ * strip or a driver drawn in one place while this read sat on its static pose.
+ */
+function drawnChannels(state: DagState, nodeId: string, at: Overlay): KeyframeChannelValue[] {
+  const layered = layeredChannelValues(state.nodes, nodeId);
+  const drivers = driverChannelValuesForTarget(state, nodeId, at.ctx, at.cache);
+  return drivers.length === 0 ? layered : [...layered, ...drivers];
+}
+
+/**
+ * One node's value as the renderer draws it: the channels it folds ({@link drawnChannels}), then its
+ * held transient — the band DirectChannelsR applies to a node at ANY depth (#266). #268 — this used to
  * run for top-level scene children only, so a channel on a nested node, or on a nested ancestor,
  * moved the drawn mesh and left this read on the static pose.
  */
@@ -294,8 +310,8 @@ function overlaidAt(
   at: Overlay,
 ): SceneChild | null {
   let child: SceneChild | null = value;
-  const directChannels = directChannelValuesForTarget(state.nodes, nodeId);
-  if (directChannels.length > 0) child = overlayChannels(child, directChannels, 1, at.seconds);
+  const channels = drawnChannels(state, nodeId, at);
+  if (channels.length > 0) child = overlayChannels(child, channels, 1, at.ctx.time.seconds);
   return overlayTransients(child, nodeId, at.transients);
 }
 
@@ -414,7 +430,7 @@ export function resolveWorldTransform(
   //    SAME way DirectChannelsR renders it (free-floating channels → held
   //    transient, at ctx.time.seconds) so an animated ancestor moves its
   //    descendants' world transform in lockstep with the render (H40, one band).
-  const at: Overlay = { seconds: ctx.time.seconds, transients };
+  const at: Overlay = { ctx, cache, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;
@@ -448,12 +464,8 @@ export function resolveWorldTransform(
   }
   for (const edge of lightEdges) {
     if (edge.id !== selectedId) continue;
-    let lit: SceneChild | null = edge.value;
-    const directChannels = directChannelValuesForTarget(state.nodes, edge.id);
-    if (lit && directChannels.length > 0) {
-      lit = overlayChannels(lit, directChannels, 1, ctx.time.seconds);
-    }
-    lit = overlayTransients(lit, edge.id, transients);
+    // A light folds what DirectChannelsLightR draws it with, as every other node does.
+    const lit = overlaidAt(state, edge.id, edge.value, { ctx, cache, transients });
     if (!lit) continue;
     return decompose(identity.clone().multiply(localMatrix(lit)));
   }
@@ -533,7 +545,7 @@ export function resolveParentWorldMatrix(
   const transients = useTransientEditStore.getState().edits;
   const identity = new THREE.Matrix4();
 
-  const at: Overlay = { seconds: ctx.time.seconds, transients };
+  const at: Overlay = { ctx, cache, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;

@@ -226,7 +226,9 @@ describe('#583 — the tier the render root may fold', () => {
     // result for having measured nothing at all.
     // 9 → 8 (#268): the world read's two top-level sites became one helper that every depth of
     // the walk calls, still at weight 1.
-    expect(calls).toHaveLength(8);
+    // 8 → 7 (#1166): the world read's light branch overlays through that same helper now, so a
+    // light folds its strips and drivers as the draw does; still weight 1.
+    expect(calls).toHaveLength(7);
     expect(calls.filter((c) => !/,\s*1,\s*/.test(c))).toEqual([]);
   });
 });
