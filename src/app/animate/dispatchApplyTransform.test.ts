@@ -1192,6 +1192,91 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   it('is offered: canApplyTransform agrees with the dispatcher', () => {
     expect(canApplyTransform(build(POSE), OBJ)).toBe(true);
   });
+
+  // ── #1153 — Apply on a quaternion-mode Object ─────────────────────────────────────────
+  //
+  // Every pose below carries a DECOY euler `rotation`: if Apply read it instead of the
+  // quaternion, the world shape would move. The matrix here is composed from the quaternion
+  // param with three directly, never through the code under test.
+  const Q: [number, number, number, number] = (() => {
+    const h = (170 * Math.PI) / 360;
+    const s = Math.sin(h) / Math.SQRT2;
+    return [s, s, 0, Math.cos(h)];
+  })();
+  const QPOSE = {
+    position: [1, 2, 3] as Vec3,
+    rotation: [10, 20, 30] as Vec3,
+    scale: [2, 1, 0.5] as Vec3,
+    rotationMode: 'quaternion' as const,
+    quaternion: Q,
+  };
+  function modeMatrix(state: DagState): THREE.Matrix4 {
+    const p = state.nodes[OBJ].params as Pose & {
+      rotationMode?: string;
+      quaternion?: [number, number, number, number];
+    };
+    const q =
+      p.rotationMode === 'quaternion' && p.quaternion
+        ? new THREE.Quaternion(...p.quaternion).normalize()
+        : new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(
+              (p.rotation[0] * Math.PI) / 180,
+              (p.rotation[1] * Math.PI) / 180,
+              (p.rotation[2] * Math.PI) / 180,
+              'XYZ',
+            ),
+          );
+    return new THREE.Matrix4().compose(
+      new THREE.Vector3(...p.position),
+      q,
+      new THREE.Vector3(...p.scale),
+    );
+  }
+  function modeWorldPoints(state: DagState): number[][] {
+    const m = modeMatrix(state);
+    const { points } = storedOf(state);
+    const out: number[][] = [];
+    for (let i = 0; i < points.length; i += 3) {
+      out.push(new Vector3().fromArray(points, i).applyMatrix4(m).toArray());
+    }
+    return out;
+  }
+
+  it('#1153 — Apply all bakes the QUATERNION, not the euler, and resets it to identity in the same mode', async () => {
+    const state = build(QPOSE as unknown as Pose);
+    const before = modeWorldPoints(state);
+    // Positive control: the decoy euler is a genuinely different pose.
+    const decoy = worldPoints(state);
+    expect(
+      Math.max(...decoy.map((d, i) => Math.hypot(...d.map((v, k) => v - before[i][k])))),
+    ).toBeGreaterThan(0.5);
+
+    const { result, next } = await apply(state, 'all');
+    expect(result.ok).toBe(true);
+    expect(next.nodes[OBJ].params).toMatchObject({
+      rotation: [0, 0, 0],
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
+    });
+    expectSameWorld(modeWorldPoints(next), before);
+  });
+
+  it('#1153 — Apply location leaves the quaternion and its mode exactly as they were', async () => {
+    const state = build(QPOSE as unknown as Pose);
+    const before = modeWorldPoints(state);
+    const { result, next } = await apply(state, 'location');
+    expect(result.ok).toBe(true);
+    expect(next.nodes[OBJ].params).toMatchObject({ rotationMode: 'quaternion', quaternion: Q });
+    expectSameWorld(modeWorldPoints(next), before);
+  });
+
+  it('#1153 — Apply rotation on an EULER Object writes no quaternion at all', async () => {
+    const { result, calls } = await apply(build(POSE), 'rotation');
+    expect(result.ok).toBe(true);
+    const paths = calls.flat().flatMap((op) => (op.type === 'setParam' ? [op.paramPath] : []));
+    expect(paths).toContain('rotation');
+    expect(paths).not.toContain('quaternion');
+  });
 });
 
 describe('#1081 / #1098 — the animated guard asks what the Apply road it takes consumes', () => {
@@ -2506,5 +2591,52 @@ describe('#1119 — a bake refuses attributes the baked store cannot hold', () =
     expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
     expect(calls).toHaveLength(0);
     expect(writeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('#1153 — a primitive bake re-mints the Object and keeps its rotation mode', () => {
+  const h = (170 * Math.PI) / 360;
+  const s = Math.sin(h) / Math.SQRT2;
+  const Q: [number, number, number, number] = [s, s, 0, Math.cos(h)];
+
+  async function bake(mask: 'location' | 'rotation') {
+    let state = buildSplitSphereState();
+    for (const [paramPath, value] of [
+      ['rotation', [10, 20, 30]],
+      ['rotationMode', 'quaternion'],
+      ['quaternion', Q],
+    ] as const) {
+      state = applyOp(state, { type: 'setParam', nodeId: PRIM_ID, paramPath, value }).next;
+    }
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, mask, {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    return stateRef.current.nodes[PRIM_ID].params as {
+      rotationMode?: string;
+      quaternion?: [number, number, number, number];
+    };
+  }
+  const angle = (a: readonly number[], b: readonly number[]) =>
+    2 *
+    Math.acos(Math.min(1, Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]))) *
+    (180 / Math.PI);
+
+  it('Apply location: the new Object holds the same quaternion, in quaternion mode', async () => {
+    const p = await bake('location');
+    expect(p.rotationMode).toBe('quaternion');
+    expect(angle(p.quaternion!, Q)).toBeLessThan(1e-4);
+  });
+
+  it('Apply rotation: the new Object is at identity, still in quaternion mode', async () => {
+    const p = await bake('rotation');
+    expect(p.rotationMode).toBe('quaternion');
+    expect(angle(p.quaternion!, [0, 0, 0, 1])).toBeLessThan(1e-6);
   });
 });

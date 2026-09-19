@@ -76,6 +76,7 @@ import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
 import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { withResolvedRotation } from './resolvedRotation';
 
 type Vec3 = [number, number, number];
 
@@ -124,7 +125,9 @@ function refNode(binding: unknown): string | null {
  */
 function localMatrix(value: SceneChild): THREE.Matrix4 {
   const m = new THREE.Matrix4();
-  const v = value as unknown as {
+  // #1153 — the one composition point of this resolver, called on each value after its
+  // overlay: a quaternion-mode value's orientation is read into `rotation` here.
+  const v = withResolvedRotation(value) as unknown as {
     kind: string;
     position?: unknown;
     rotation?: unknown;

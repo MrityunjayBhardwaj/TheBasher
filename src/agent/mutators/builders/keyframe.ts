@@ -43,7 +43,8 @@ const KeyframeSpec = z
     // key at CREATION time (not just linear/cubic). Omitted → the channel's per-type
     // default (byte-identical to pre-#281). `ease`/`handleType` are meaningful only
     // for Number/Vec2/Vec3 channels; on a Quat/Color channel their paramSchema strips
-    // the extra fields and rejects a non-{linear,cubic} easing at gate 2.
+    // the extra fields and rejects an easing it does not take at gate 2 (Quat:
+    // linear/cubic/constant; Color: linear/cubic).
     easing: z.enum(KEYFRAME_INTERPS as unknown as [Easing, ...Easing[]]).optional(),
     ease: z.enum(EASE_DIRS as unknown as [EaseDir, ...EaseDir[]]).optional(),
     handleType: z
@@ -89,7 +90,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "per-key interpolation: 'linear','cubic','constant' (stepped), or a Penner " +
     "curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|'elastic' " +
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
-    'channels; Quat/Color take only linear|cubic). Omitting easing uses the ' +
+    'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing uses the ' +
     "channel's default. Use mutator.timeline.addChannel to create a channel on an " +
     'ordinary node. To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
