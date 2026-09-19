@@ -576,6 +576,112 @@ function correctBezpart(
   ];
 }
 
+/** A key with stored bézier handles: {@link ScalarKey}, {@link Vec2Key} or {@link Vec3Key}. */
+export type HandledKey = ScalarKey | Vec2Key | Vec3Key;
+
+const componentsOf = (v: number | readonly number[]): number[] =>
+  typeof v === 'number' ? [v] : [...v];
+const shapedLike = <V extends number | readonly number[]>(like: V, c: number[]): V =>
+  (typeof like === 'number' ? c[0] : c) as unknown as V;
+
+/**
+ * #1165 — split the segment a→b at `key.time` so that inserting `key` leaves the curve as it
+ * was, the way Blender's insert does between keys whose handles are not computed
+ * (animrig `fcurve.cc` `subdivide_nonauto_handles` → blenkernel `BKE_fcurve_bezt_subdivide_handles`:
+ * the effective control points, a De Casteljau split at the key's parameter, the new key's
+ * handles carried as offsets so a value off the curve keeps the split's shape about itself).
+ *
+ * The control points are the ones the sampler draws this segment with — a stored handle, or
+ * the easing's auto-fill where a side has none, and {@link correctBezpart} exactly when the
+ * sampler applies it (either end carries a handleType). The shrink depends on time alone, so
+ * every component shares one time handle and a vec key stays representable.
+ *
+ * Returns null, and the caller inserts plainly, when this segment has nothing to keep: an
+ * equation interpolation (it ignores handles), a computed handle on either end or asked for on
+ * the new key (Blender recomputes those), or no stored handle on either side (the legacy path).
+ */
+export function splitSegmentForKey<K extends HandledKey>(
+  a: K,
+  b: K,
+  key: K,
+): { a: K; key: K; b: K } | null {
+  if (!(a.time < key.time && key.time < b.time)) return null;
+  if (EQUATION_INTERPS.has(b.easing) || EQUATION_INTERPS.has(key.easing)) return null;
+  if (key.handleType !== undefined) return null;
+  if (a.handleType !== undefined && COMPUTED_HANDLE_TYPES.has(a.handleType)) return null;
+  if (b.handleType !== undefined && COMPUTED_HANDLE_TYPES.has(b.handleType)) return null;
+  if (!a.outHandle && !b.inHandle) return null;
+
+  const span = b.time - a.time;
+  const av = componentsOf(a.value);
+  const bv = componentsOf(b.value);
+  const oh = a.outHandle ? componentsOf(a.outHandle.value) : null;
+  const ih = b.inHandle ? componentsOf(b.inHandle.value) : null;
+  let h1x = a.time + (a.outHandle ? a.outHandle.time : span / 3);
+  let h2x = b.time + (b.inHandle ? b.inHandle.time : -span / 3);
+  let h1y = av.map((v, i) => v + (oh ? oh[i] : autoValueOffset(a.easing, bv[i] - v)));
+  let h2y = bv.map((v, i) => v + (ih ? ih[i] : autoValueOffset(b.easing, v - av[i])));
+  if (a.handleType !== undefined || b.handleType !== undefined) {
+    const corrected = av.map((_, i) =>
+      correctBezpart([h1x, h1y[i], h2x, h2y[i]], a.time, av[i], b.time, bv[i]),
+    );
+    h1x = corrected[0][0];
+    h2x = corrected[0][2];
+    h1y = corrected.map((c) => c[1]);
+    h2y = corrected.map((c) => c[3]);
+  }
+
+  const s = solveParamForX(a.time, h1x, h2x, b.time, key.time);
+  const lerp = (p: number, q: number) => p + (q - p) * s;
+  // De Casteljau, one level at a time: 3 → 2 → 1 points, in time and in every component.
+  const x1 = [lerp(a.time, h1x), lerp(h1x, h2x), lerp(h2x, b.time)];
+  const x2 = [lerp(x1[0], x1[1]), lerp(x1[1], x1[2])];
+  const x3 = lerp(x2[0], x2[1]);
+  const y1 = av.map((v, i) => [lerp(v, h1y[i]), lerp(h1y[i], h2y[i]), lerp(h2y[i], bv[i])]);
+  const y2 = y1.map((c) => [lerp(c[0], c[1]), lerp(c[1], c[2])]);
+  const y3 = y2.map((c) => lerp(c[0], c[1]));
+
+  return {
+    a: {
+      ...a,
+      outHandle: {
+        time: x1[0] - a.time,
+        value: shapedLike(
+          a.value,
+          y1.map((c, i) => c[0] - av[i]),
+        ),
+      },
+    },
+    key: {
+      ...key,
+      inHandle: {
+        time: x2[0] - x3,
+        value: shapedLike(
+          key.value,
+          y2.map((c, i) => c[0] - y3[i]),
+        ),
+      },
+      outHandle: {
+        time: x2[1] - x3,
+        value: shapedLike(
+          key.value,
+          y2.map((c, i) => c[1] - y3[i]),
+        ),
+      },
+    },
+    b: {
+      ...b,
+      inHandle: {
+        time: x1[2] - b.time,
+        value: shapedLike(
+          b.value,
+          y1.map((c, i) => c[2] - bv[i]),
+        ),
+      },
+    },
+  };
+}
+
 /** Interpolate ONE scalar segment a→b at absolute time t. */
 function segmentScalar(a: ScalarKey, b: ScalarKey, t: number): number {
   const span = b.time - a.time;
