@@ -49,6 +49,7 @@ import type {
 import { modifierDataSource } from './modifierDataSource';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { withResolvedRotation } from './resolvedRotation';
 import { materialAssignmentOf, objectSlotsOf } from './materialAssignment';
 import { readMeshUVs } from './uvAttributes';
 
@@ -282,7 +283,10 @@ export function resolveEvaluatedMesh(
     // value's static TRS when the Object isn't in the rendered scene to walk.
     const transform = resolvePrimitiveTransform(state, selectedId, ctx, cache, {
       position: value.position,
-      rotation: value.rotation,
+      // #1153 — the fallback (an Object the scene walk does not reach, e.g. a nested one) reads
+      // the orientation in the Object's own mode, or Apply would bake a quaternion node's stale
+      // euler into its mesh.
+      rotation: withResolvedRotation(value).rotation,
       scale: isVec3(value.scale) ? value.scale : IDENTITY_SCALE, // C-1 hydrate guard
     });
     if (data.kind === 'BakedData') {

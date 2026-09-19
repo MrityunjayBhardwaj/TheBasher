@@ -34,6 +34,7 @@ import {
   type EaseDir,
   type HandleType,
 } from '../../../nodes/keyframeInterp';
+import { QUAT_EASINGS } from '../../../nodes/KeyframeChannelQuat';
 import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
@@ -44,14 +45,27 @@ import {
 } from './channelAddress';
 
 /** The KeyframeChannel node types that carry the broadened per-keyframe interp /
- *  ease / handle vocabulary (Number/Vec2/Vec3, from #272/#273). Quat/Color keep the
+ *  ease / handle vocabulary (Number/Vec2/Vec3, from #272/#273). Color keeps the
  *  legacy linear|cubic easing and no handles → targeting one is a reject, not a
- *  gate-2 surprise (their paramSchema would refuse 'back'/'auto'). */
+ *  gate-2 surprise (its paramSchema would refuse 'back'/'auto'). */
 const INTERP_CHANNEL_TYPES = new Set([
   'KeyframeChannelNumber',
   'KeyframeChannelVec2',
   'KeyframeChannelVec3',
 ]);
+
+/** A quaternion channel takes an interpolation from its own short list and no
+ *  ease or handle (a slerp has no value axis to shape) — Blender's Set
+ *  Interpolation on a rotation, minus the curves that only mean something on one. */
+function quatRefusal(spec: SetKeyframeInterpSpec, channelId: string): string | null {
+  if (spec.ease !== undefined || spec.handleType !== undefined) {
+    return `channel "${channelId}" is KeyframeChannelQuat; it takes \`easing\` only — no \`ease\` or \`handleType\`.`;
+  }
+  if (spec.easing !== undefined && !(QUAT_EASINGS as readonly string[]).includes(spec.easing)) {
+    return `channel "${channelId}" is KeyframeChannelQuat; \`easing\` must be one of ${QUAT_EASINGS.join(', ')}.`;
+  }
+  return null;
+}
 
 const KeyframeScope = z.union([z.literal('all'), z.object({ time: z.number() })]);
 
@@ -107,7 +121,8 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
   name: 'mutator.timeline.setKeyframeInterp',
   description:
     'Set the INTERPOLATION of existing keyframes on a KeyframeChannel' +
-    "{Number,Vec2,Vec3} (Blender's Set Interpolation / Easing / Handle Type). " +
+    "{Number,Vec2,Vec3,Quat} (Blender's Set Interpolation / Easing / Handle Type; " +
+    "a Quat channel takes only `easing` 'linear'|'cubic'|'constant'). " +
     "`easing` = the interpolation mode ('linear','cubic','constant' (stepped), or " +
     "a Penner curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|" +
     "'elastic'); `ease` = the direction 'in'|'out'|'inout' for the Penner curves; " +
@@ -151,10 +166,13 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
-    if (!INTERP_CHANNEL_TYPES.has(view.type)) {
+    if (view.type === 'KeyframeChannelQuat') {
+      const refusal = quatRefusal(spec, resolved.channelId);
+      if (refusal) return { ok: false, reason: refusal };
+    } else if (!INTERP_CHANNEL_TYPES.has(view.type)) {
       return {
         ok: false,
-        reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3}.`,
+        reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3,Quat}.`,
       };
     }
     // Defense-in-depth vs the spec `.refine()` (only fires at safeParse): an

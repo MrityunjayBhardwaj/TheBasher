@@ -74,6 +74,16 @@ const DOORS: Record<string, Door> = {
     kind: 'POINT_IN_TIME',
     why: 'Constraint aim, parent-relative, resolved per frame. Not a stored sequence.',
   },
+  'src/app/resolvedRotation.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      "#1153 — a quaternion-mode value's orientation written into `rotation` for ONE frame, " +
+      "after the channel overlay, and read by that frame's draw or resolve. The keyed " +
+      'sequence is the quaternion channel itself, which slerps; nothing interpolates between ' +
+      'two of these triples. It stays point-in-time only while no writer keys this euler — ' +
+      'in quaternion mode the writers key `quaternion`.',
+  },
   'src/app/Gizmo.tsx': {
     count: 2,
     kind: 'POINT_IN_TIME',

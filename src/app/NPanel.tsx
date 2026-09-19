@@ -52,7 +52,7 @@ import {
 } from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import type { BakedTextureRef, UvPlacement } from '../nodes/types';
+import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { importedChildOf } from './importedChild';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
@@ -70,7 +70,7 @@ import {
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import { placeholderOf, type ParamWidget, widgetOf } from '../nodes/paramWidget';
-import type { NodeRef } from '../core/dag/types';
+import type { NodeRef, Op } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
@@ -144,6 +144,8 @@ import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam, TRANSFORM_PARAMS } from './resolveTransformParam';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { paramAnimationState } from './animate/paramAnimationState';
 import { driverNodesForTarget } from './paramDrivers';
 import { ParamDriverBind } from './ParamDriverBind';
 import { SpareParamControls } from './SpareParamControls';
@@ -152,6 +154,8 @@ import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
+import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
+import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -3148,7 +3152,9 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
     const next = originToGeometry(
       {
         position: params.position,
-        rotation: params.rotation,
+        // #1153 — the orientation in the Group's own mode, not a quaternion-mode Group's stale
+        // euler, or the new pivot lands where the old euler would have put the geometry.
+        rotation: withResolvedRotation(params).rotation as [number, number, number],
         scale: params.scale,
         pivot: params.pivot,
       },
@@ -3729,6 +3735,135 @@ function LinkedDataSections({
  * about, so offer and accept stay the same node. The lens control takes BOTH —
  * its lens params and its pose live on opposite halves of a split camera.
  */
+/**
+ * #1153 — the rotation row of an Object or a Group, in whichever mode it is held.
+ *
+ * Blender's panel: a mode switch, and the rotation shown in that mode — XYZ euler as the
+ * ordinary vector row (the SAME `VectorField` this row always was), or W X Y Z for a
+ * quaternion, W first as Blender shows it (stored [x, y, z, w]).
+ *
+ * Switching CONVERTS, as Blender's does (`armature.cc:2417-2443`): to quaternion writes the
+ * quaternion of the current euler; to euler writes the euler of the current quaternion and
+ * clears the mode, so an euler node goes back to exactly the shape it had. Both writes land in
+ * one atomic step — one Cmd+Z. Only the stored values convert; a channel keeps driving the
+ * param it names, which in the other mode composes nothing, as in Blender.
+ */
+function RotationModeControl({ nodeId }: { nodeId: string }) {
+  const node = useDagStore((s) => s.state.nodes[nodeId]);
+  const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
+  const params = (node?.params ?? {}) as RotationModeFields & { rotation?: unknown };
+  const quaternionMode = params.rotationMode === 'quaternion';
+  const onMode = (next: string) => {
+    if ((next === 'quaternion') === quaternionMode) return;
+    const euler = (isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3;
+    const ops: Op[] =
+      next === 'quaternion'
+        ? [
+            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: 'quaternion' },
+            {
+              type: 'setParam',
+              nodeId,
+              paramPath: 'quaternion',
+              value: rotationWriteOf({ ...params, rotationMode: 'quaternion' }, euler).value,
+            },
+          ]
+        : [
+            {
+              type: 'setParam',
+              nodeId,
+              paramPath: 'rotation',
+              value: withResolvedRotation(params).rotation,
+            },
+            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: undefined },
+          ];
+    dispatchAtomic(
+      ops,
+      'user',
+      `rotation mode → ${next === 'quaternion' ? 'Quaternion' : 'XYZ Euler'}`,
+    );
+  };
+  return (
+    <div className="flex flex-col">
+      <label className="flex items-center justify-between gap-2 px-3 pt-1.5 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">rotation mode</span>
+        <select
+          data-testid={`inspector-rotation-mode-${nodeId}`}
+          value={quaternionMode ? 'quaternion' : 'euler'}
+          onChange={(e) => onMode(e.target.value)}
+          className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <option value="euler">XYZ Euler</option>
+          <option value="quaternion">Quaternion (WXYZ)</option>
+        </select>
+      </label>
+      {quaternionMode ? (
+        <QuaternionField nodeId={nodeId} authored={params.quaternion ?? IDENTITY_QUATERNION} />
+      ) : (
+        <VectorField
+          nodeId={nodeId}
+          paramPath="rotation"
+          label="rotation"
+          value={(isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3}
+          overrideInfo={node ? overrideInfoFor(node, 'rotation') : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+/** W X Y Z → the stored index of each, since Basher stores [x, y, z, w]. */
+const QUATERNION_AXES = [
+  ['w', 3],
+  ['x', 0],
+  ['y', 1],
+  ['z', 2],
+] as const;
+
+/** #1153 — a quaternion's four components, as STORED. Blender shows and edits the stored
+ *  values and normalises only where it composes (`object.cc:2807`); showing the normalised one
+ *  here would make an edit to one component silently rewrite the other three. Only while a
+ *  channel actually animates the quaternion does the field show the evaluated sample (as the
+ *  euler row shows its evaluated triple), read-only while playing. Each component commits
+ *  through the same animated re-route and Auto-Key the vector rows use. */
+function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat }) {
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const evaluated = useMemo(
+    () =>
+      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } })
+        ?.quaternion ?? null,
+    [dagState, nodeId, frame, seconds, normalized],
+  );
+  const animated = paramAnimationState(dagState, nodeId, 'quaternion', frame) !== 'none';
+  const shown: Quat = animated && evaluated ? evaluated : authored;
+  const readOnly = playing && animated;
+  return (
+    <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath="quaternion" value={authored} />
+        <span className="font-mono text-fg/60">rotation</span>
+      </span>
+      <div className="flex gap-1" data-testid={`inspector-quaternion-${nodeId}`}>
+        {QUATERNION_AXES.map(([axis, index]) => (
+          <VectorComponent
+            key={axis}
+            nodeId={nodeId}
+            paramPath="quaternion"
+            axisLabel={axis}
+            axisIndex={index}
+            value={shown[index]}
+            vec={shown}
+            readOnly={readOnly}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
   gltfMaterialReadout: (ctx) => (
@@ -3757,6 +3892,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   channelModifiers: (ctx) => <ChannelModifierControls nodeId={ctx.paramsNodeId} />,
   boneMap: (ctx) => <BoneMapEditor nodeId={ctx.paramsNodeId} />,
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
+  rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block
