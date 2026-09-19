@@ -167,6 +167,7 @@ import {
   type ObjectSlotSource,
 } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
+import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -972,7 +973,7 @@ const LightNode = memo(function LightNode({
  *  and the animated path (DirectChannelsLightR) so the channel overlay reuses the
  *  SAME projection as a static light — render == resolver for free (H40). */
 function LightKindR({
-  value,
+  value: raw,
   nodeId,
   constrained,
 }: {
@@ -980,6 +981,10 @@ function LightKindR({
   nodeId: string | null;
   constrained: boolean;
 }) {
+  // #1153 — every light road ends here (static, channel-driven, nested, MeshChild's arm), so
+  // this is the light's counterpart of MeshChild: a quaternion-mode light's orientation
+  // becomes the `rotation` its kind reads. Memoised; an euler light comes back as itself.
+  const value = useMemo(() => withResolvedRotation(raw), [raw]);
   switch (value.kind) {
     case 'DirectionalLight':
       // #265 — a Track-To'd sun aims its `.target` at the resolved world point.
@@ -1367,12 +1372,14 @@ function LightHelperFollower({
   // is unchanged (the ConstrainedR / useAreaLightAim pattern).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const patched = usePlayheadFollow((seconds) => {
-    const base =
+    // #1153 — resolved after the overlay, as the light it follows is.
+    const base = withResolvedRotation(
       overlayTransients(
         overlayChannels(value, channels, 1, seconds) ?? value,
         nodeId,
         transients,
-      ) ?? value;
+      ) ?? value,
+    );
     // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
     // derives its aim from the Track-To target per frame; the wireframe helper
     // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
@@ -1804,7 +1811,12 @@ interface MeshChildProps {
   nodeId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: MeshChildProps) {
+  // #1153 — every scene child is drawn through here, downstream of every overlay road
+  // (DirectChannelsR, ConstrainedR, GroupR's children), so this is where a quaternion-mode
+  // value's orientation becomes the `rotation` every arm below already reads. Memoised on the
+  // value: an euler value comes back as itself, so nothing that never opts in re-renders.
+  const value = useMemo(() => withResolvedRotation(raw), [raw]);
   switch (value.kind) {
     // #388 S5 / #415 S5 — no DAG node evaluates to a `BakedMeshValue` or a
     // `ModifiedMeshValue` any more (the fused baked kind is retired; the modifiers emit
@@ -2254,7 +2266,8 @@ function ConstrainedR({
     const followed = resolveConstraintPosition(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
-    if (aim && 'rotation' in rec) patch.rotation = aim;
+    // #1153 — the aim replaces the orientation in either mode (see `aimPatch`).
+    if (aim && 'rotation' in rec) Object.assign(patch, aimPatch(rec, aim));
     if (followed && 'position' in rec) patch.position = followed;
     // #536 S3 — the spread builds a SECOND value after the seam already ran, so it owes the
     // same debt the overlay does: it must not hand on an identity its own writes made stale.
