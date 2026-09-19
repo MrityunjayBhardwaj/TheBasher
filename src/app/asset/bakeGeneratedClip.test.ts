@@ -153,6 +153,34 @@ describe('bakeGeneratedClipOps (#935)', () => {
     expect(after.keyframes).toBeGreaterThan(0);
   });
 
+  // #900 RUNG 4, SETTLED — THE PREMISE THE DECISION RESTS ON.
+  // Rung 4 asked what a saved project does about a generated clip, and the answer taken was
+  // "the bake stays for generated clips": THESIS §393's "procedural nodes are baked at export"
+  // arriving early, rather than a hole in the procedural ladder. That answer is only the right
+  // one while a READY clip value is still invisible to the params-side band — which is what
+  // makes this bake the persistence mechanism and not a redundant copy.
+  //
+  // The row above pins the COLD case, where nothing has been generated yet. This pins the WARM
+  // one: the cache holds a finished clip and the band STILL sees nothing. That is the case a
+  // reload produces, and the case option (2) on #900 — persist the generated-clip cache as
+  // project data — would deliberately change.
+  //
+  // 🔴 If this row ever reds, the premise has moved, not the test: a ready clip became readable
+  // without a bake, Rung 4 is takeable again, and #900 wants revisiting. Do not delete it to
+  // make a suite green.
+  it('RUNG 4 PREMISE: a READY generated clip is still invisible to the band until it is baked', async () => {
+    let s = graphBoundToRig();
+    await resolvePendingMotionGenerations(s, capability);
+
+    // The cache is WARM — the generation finished and its value is ready.
+    expect(bandSees(s)).toEqual({ clips: 0, keyframes: 0 });
+
+    // And the bake is the only thing that makes it visible. This half is the positive control:
+    // without it the assertion above could pass on a fixture that can never show a clip at all.
+    s = apply(s, bakeGeneratedClipOps(s));
+    expect(bandSees(s).clips).toBe(1);
+  });
+
   it('a pending producer writes NOTHING and leaves the last motion playing (lock/freeze)', () => {
     const s = graph();
     // Stale and NOT baked: the params are behind the request (nothing has been
