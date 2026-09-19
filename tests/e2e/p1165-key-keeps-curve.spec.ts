@@ -71,7 +71,7 @@ async function drawnAt(page: Page, t: number): Promise<V> {
       const p = await page.evaluate(() => {
         const o = (window as unknown as W)
           .__basher_three!.getState()
-          .scene.getObjectByName('n_box');
+          .scene?.getObjectByName('n_box');
         if (!o) return null;
         // The node's Group holds still; the mesh inside it carries the animated transform.
         o.updateMatrixWorld(true);
@@ -106,47 +106,72 @@ async function pressI(page: Page) {
   await page.keyboard.press('i');
 }
 
-test('#1165 — I on a handled curve, mid-segment and on a key, leaves the drawn motion unchanged', async ({
-  page,
-}) => {
-  test.slow(); // ten drawn reads, each waiting for its frame, around two key presses
-  await page.goto('/');
-  await page.waitForFunction(() => {
-    const w = window as unknown as W;
-    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_selection && w.__basher_three);
-  });
-  await page.evaluate(() => (window as unknown as W).__basher_time!.getState().pause());
-  await page.evaluate((keyframes) => {
-    (window as unknown as W).__basher_dag!.getState().dispatch({
-      type: 'addNode',
-      nodeId: 'n_box_position_channel',
-      nodeType: 'KeyframeChannelVec3',
-      params: { name: 'position', target: 'n_box', paramPath: 'position', keyframes },
-    });
-  }, KEYS);
-  await page.getByTestId('floating-toolbar-timeline').click();
+const LINEAR = [
+  { time: 0, value: [0, 0, 0], easing: 'linear' },
+  { time: 2, value: [0, 4, 0], easing: 'linear' },
+];
 
-  const before: V[] = [];
-  for (const t of PROBES) before.push(await drawnAt(page, t));
-  // Positive control: the curve moves the box, so an unchanged read is not a frozen scene.
-  expect(Math.abs(before[0][1] - before[2][1])).toBeGreaterThan(0.1);
+const CASES = [
+  {
+    // #1165 — keys with stored handles, as the import writes a CUBICSPLINE track.
+    name: 'I on a handled curve, mid-segment and on a key',
+    keys: KEYS,
+    presses: [
+      [0.25, 4], // between the keys at 0 and 0.5: a new key
+      [0.5, 4], // on the key at 0.5: a re-key
+    ],
+  },
+  {
+    // #1170 — a linear curve with no handles: the new key takes the segment's interpolation.
+    name: 'I on a linear curve, mid-segment',
+    keys: LINEAR,
+    presses: [[0.5, 3]],
+  },
+] as const;
 
-  for (const [at, count] of [
-    [0.25, 4], // between the keys at 0 and 0.5: a new key
-    [0.5, 4], // on the key at 0.5: a re-key
-  ] as const) {
-    await setTime(page, at);
-    await drawnAt(page, at);
-    await pressI(page);
-    await expect.poll(async () => (await positionKeys(page)).length).toBe(count);
-    for (const [i, t] of PROBES.entries()) {
-      const now = await drawnAt(page, t);
-      now.forEach((v, j) =>
-        expect(
-          Math.abs(v - before[i][j]),
-          `key at ${at}: drawn at t = ${t}, axis ${j}`,
-        ).toBeLessThan(1e-4),
+for (const c of CASES)
+  test(`#1165 — ${c.name}, leaves the drawn motion unchanged`, async ({ page }) => {
+    test.slow(); // ten drawn reads, each waiting for its frame, around two key presses
+    await page.goto('/');
+    await page.waitForFunction(() => {
+      const w = window as unknown as W;
+      // The scene too, not only the store: under load the store exists before the canvas mounts.
+      return Boolean(
+        w.__basher_dag &&
+        w.__basher_time &&
+        w.__basher_selection &&
+        w.__basher_three?.getState().scene,
       );
+    });
+    await page.evaluate(() => (window as unknown as W).__basher_time!.getState().pause());
+    await page.evaluate((keyframes) => {
+      (window as unknown as W).__basher_dag!.getState().dispatch({
+        type: 'addNode',
+        nodeId: 'n_box_position_channel',
+        nodeType: 'KeyframeChannelVec3',
+        params: { name: 'position', target: 'n_box', paramPath: 'position', keyframes },
+      });
+    }, c.keys);
+    await page.getByTestId('floating-toolbar-timeline').click();
+
+    const before: V[] = [];
+    for (const t of PROBES) before.push(await drawnAt(page, t));
+    // Positive control: the curve moves the box, so an unchanged read is not a frozen scene.
+    expect(Math.abs(before[0][1] - before[2][1])).toBeGreaterThan(0.1);
+
+    for (const [at, count] of c.presses) {
+      await setTime(page, at);
+      await drawnAt(page, at);
+      await pressI(page);
+      await expect.poll(async () => (await positionKeys(page)).length).toBe(count);
+      for (const [i, t] of PROBES.entries()) {
+        const now = await drawnAt(page, t);
+        now.forEach((v, j) =>
+          expect(
+            Math.abs(v - before[i][j]),
+            `key at ${at}: drawn at t = ${t}, axis ${j}`,
+          ).toBeLessThan(1e-4),
+        );
+      }
     }
-  }
-});
+  });

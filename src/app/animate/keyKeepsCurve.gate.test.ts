@@ -235,13 +235,13 @@ describe('#1165 — a key off the curve moves it only between its neighbours, an
 });
 
 describe('#1165 — what is not split', () => {
-  it('a segment with no stored handles inserts plainly, as before', () => {
+  it('a segment with no stored handles is not split: the new key carries no handles', () => {
     const keys: Vec3Key[] = [
       { time: 0, value: [0, 0, 0], easing: 'linear' },
       { time: 2, value: [0, 2, 0], easing: 'linear' },
     ];
     const { after } = keyAndMeasure('KeyframeChannelVec3', keys, 1);
-    expect(after[1]).toEqual({ time: 1, value: [0, 1, 0], easing: 'cubic' });
+    expect(after[1]).toEqual({ time: 1, value: [0, 1, 0], easing: 'linear' });
     expect(after[0]).toEqual(keys[0]);
   });
 
@@ -304,5 +304,99 @@ describe('#1165 — what is not split', () => {
     );
     expect(res).toEqual({ ok: true });
     expect((keysNow()[1] as { easing: string }).easing).toBe('linear');
+  });
+});
+
+// #1170 — a new key takes the interpolation of the segment it lands in (Blender: animrig
+// `fcurve.cc` `insert_vert_fcurve`, the neighbour's ipo once the curve holds more than two keys),
+// so keying a linear curve at its own value no longer bends it. The channel default still seeds a
+// curve too short to have a shape: its first and second key.
+describe('#1170 — a new key takes the interpolation of the segment it splits', () => {
+  it('a linear Vec3 curve keyed mid-segment stays linear and does not move', () => {
+    const keys: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [0, 4, 0], easing: 'linear' },
+    ];
+    const { worst, after } = keyAndMeasure('KeyframeChannelVec3', keys, 0.5);
+    expect(after[1].easing).toBe('linear');
+    expect(worst).toBeLessThan(1e-9);
+  });
+
+  it('a linear quaternion curve keyed mid-segment keeps its slerp', () => {
+    let s: DagState = emptyDagState();
+    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
+    const keys = [
+      { time: 0, value: [0, 0, 0, 1], easing: 'linear' },
+      { time: 2, value: [0, 0.7071068, 0, 0.7071068], easing: 'linear' },
+    ];
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelQuat',
+      params: { name: 'q', target: 'scene', paramPath: 'quaternion', keyframes: keys },
+    }).next;
+    useDagStore.getState().hydrate(s);
+    const res = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'ch', time: 0.5, value: [0, 0.1950903, 0, 0.9807853] },
+      'key',
+    );
+    expect(res).toEqual({ ok: true });
+    expect(keysNow().map((k) => (k as { easing: string }).easing)).toEqual([
+      'linear',
+      'linear',
+      'linear',
+    ]);
+  });
+
+  it("past the last key, the new key takes the last key's interpolation", () => {
+    const keys: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 1, value: [0, 1, 0], easing: 'linear' },
+    ];
+    const { after } = keyAndMeasure('KeyframeChannelVec3', keys, 1.5, [0, 3, 0]);
+    expect(after[2].easing).toBe('linear');
+  });
+
+  it('an explicit easing still wins', () => {
+    const keys: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [0, 4, 0], easing: 'linear' },
+    ];
+    hydrate('KeyframeChannelVec3', keys);
+    dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'ch', time: 1, value: [0, 2, 0], easing: 'cubic' },
+      'key',
+    );
+    expect(keysNow()[1].easing).toBe('cubic');
+  });
+
+  it('the ease direction comes with an inherited equation interpolation', () => {
+    const keys: Vec3Key[] = [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [0, 4, 0], easing: 'sine', ease: 'out' },
+    ];
+    const { after } = keyAndMeasure('KeyframeChannelVec3', keys, 1);
+    expect(after[1]).toMatchObject({ easing: 'sine', ease: 'out' });
+  });
+
+  it('a first and a second key still take the channel default', () => {
+    // The seed key is linear, so a second key that inherited would say so; Blender inherits only
+    // once the curve holds more than two keys after the insert.
+    hydrate('KeyframeChannelVec3', []);
+    dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'ch', time: 0, value: [0, 0, 0] },
+      'key',
+    );
+    expect(keysNow()[0].easing).toBe('cubic');
+    hydrate('KeyframeChannelVec3', [{ time: 0, value: [0, 0, 0], easing: 'linear' }]);
+    dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      { channelId: 'ch', time: 1, value: [0, 1, 0] },
+      'key',
+    );
+    expect(keysNow().map((k) => k.easing)).toEqual(['linear', 'cubic']);
   });
 });
