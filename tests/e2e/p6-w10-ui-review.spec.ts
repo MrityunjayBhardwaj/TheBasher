@@ -21,7 +21,7 @@
 // (file-rooted — the writer lives in Viewport.tsx, a UI-projection
 // store write, not a DAG dispatch).
 
-import { expect, test } from './_fixtures';
+import { expect, settleViewFit, test } from './_fixtures';
 
 interface BasherWindow {
   __basher_viewport?: {
@@ -52,6 +52,12 @@ test('c-1: zoom readout reflects a camera-zoom change (observed, not inferred)',
   page,
 }) => {
   const value = page.getByTestId('top-toolbar-zoom-value');
+  // The boot bounds-fit moves the camera until the scene holds still for 45 frames,
+  // and every move lands in `cameraZoom` through the same onChange this spec imitates.
+  // Driven before it settles, the readout has two writers: measured, the fit can land
+  // its 170% AFTER the spec's first write (#1171). Green runs hide that, because the
+  // window is narrow. Wait for the condition, never a duration.
+  await settleViewFit(page);
   // Establish a deterministic baseline — the load-time readout is the window-
   // dependent auto-fit % (#186), not 100. Drive it to 100 through the same seam
   // the OrbitControls onChange uses, so the change assertions below are stable.
