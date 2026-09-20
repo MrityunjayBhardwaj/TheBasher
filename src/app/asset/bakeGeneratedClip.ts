@@ -41,6 +41,46 @@
 // ever writes a `ready` result, so the last landed motion keeps playing and the
 // stale hash is what says it is out of date. The policy is the data model.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THIS BAKE STAYS — #900 RUNG 4, SETTLED IN WRITING
+// ─────────────────────────────────────────────────────────────────────────────
+// Epic #900 removes the materialisations between a curve and the screen, and on
+// the face of it this file is one of them. It is kept, deliberately, and the
+// reason is not that removing it was hard — it is that the bake is doing a
+// SECOND job the ladder never accounted for.
+//
+// Measured on #900, taking the bake away and reloading:
+//
+//   WITH the bake,    after reload:  band sees 1 clip / 120 keys  -> plays
+//   WITHOUT the bake, cache WARM:    band sees 0 clips            -> does not play
+//   WITHOUT the bake, cache COLD:    status=pending, 0 keys       -> does not play
+//
+// The generated clip lives in a module-level `Map` that no reload survives, and
+// every reader that drives pixels is params-side. So this bake is not only a
+// copy of the value — it is the PERSISTENCE MECHANISM for generated motion, and
+// the only reason a reopened project still animates. Removing it breaks playback
+// immediately, not merely on reload.
+//
+// So the answer taken is THESIS §393 — "procedural nodes are baked at export" —
+// arriving early for this one producer, rather than a gap in the ladder. A
+// generated clip is the one node whose content came from a network call, so it
+// is the one node that cannot be re-derived from params on load; every other
+// rung's output can (Rung 2's retarget resolves from params alone, which is why
+// IT did not need this).
+//
+// THE PRINCIPLED VERSION, IF THE CONSTRAINT MOVES: option (2) on #900 — persist
+// the generated-clip cache as project data, making the bake explicit as a cache
+// rather than implicit as a copy. It was not taken now because it opens where
+// that cache lives and how it is invalidated, and nothing today is blocked on
+// it. Option (1), a params-side resolver like Rung 2's, is blocked until then:
+// the resolver would need a cache that is cold on load.
+//
+// 🔴 THE PREMISE IS PINNED, NOT JUST WRITTEN DOWN. The whole argument rests on a
+// ready clip being invisible to the band until it is baked, and
+// `bakeGeneratedClip.test.ts` carries a row that says so ("RUNG 4 PREMISE"). If
+// that row ever reds, this decision is takeable again — reopen #900, do not
+// delete the row.
+//
 // REF: src/nodes/MotionGenerate.ts (the producer + `motionRequestHash`);
 //      src/nodes/AnimationClip.ts (the `source` socket + `sourceHash` param);
 //      src/app/asset/resolveMotionGenerate.ts (the pass that performs the call);
