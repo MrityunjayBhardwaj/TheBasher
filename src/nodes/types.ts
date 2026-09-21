@@ -2158,13 +2158,6 @@ export interface KeyframeVec3 {
   readonly outHandle?: BezierHandle<Vec3>;
 }
 
-export interface KeyframeQuat {
-  readonly time: number;
-  readonly value: Quat;
-  readonly easing: Easing;
-  // Quaternion handles are deferred — slerp interpolation only in v0.5.
-}
-
 export interface KeyframeColor {
   readonly time: number;
   /** Hex color string, e.g. '#ff8800'. HSL-lerp interpolation. */
