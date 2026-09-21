@@ -156,6 +156,7 @@ const HANDLE_KINDS: Record<
         cornerPoints: Uint32Array.from([0, 1, 2]),
         cornerLayers: [],
         cornerNormals: null,
+        faceLayers: [],
       }),
     ),
     probe: 'z',

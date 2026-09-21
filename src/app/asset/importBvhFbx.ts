@@ -31,11 +31,12 @@ import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
-import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
+import { buildSkeletonObjectOps, skeletonObjectId } from '../../core/import/skeletonObject';
 import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { useSelectionStore } from '../stores/selectionStore';
 import { importGltfFromOpfs } from './importGltf';
 import {
   bindMotionToCharacter,
@@ -78,10 +79,20 @@ function nameFromPath(path: string): string {
  * the bind brings it back. It lands in the import's single dispatch (K6). A project with no
  * scene aggregator has nowhere to stand one, and gets the import alone.
  *
- * `normalise` is true for both file formats: BVH declares no unit, and the FBX road does not
- * read one either, so neither knows how big the rig is meant to be. The size is measured on
- * the clip's frame 0 — the pose the director first sees — not on the file's rest pose, which
- * need not stand up (`normalisedRigScale`).
+ * #791 — `normalise` is FALSE for BVH and true for FBX, and the difference is the formats'.
+ * BVH declares no unit, so nothing in the file can say how big the rig is, and guessing from
+ * the content is the one answer the reference refuses: Blender's BVH importer offers a scale
+ * defaulted to 1.0 and has no detection code at all (`io_anim_bvh/__init__.py:60-66`). A BVH
+ * therefore stands at file scale, with the scale in `Object.scale` where the director can set
+ * it, and the import selects the Object so that field is in front of them
+ * (`selectLandedMotion`). A guess sized every rig to a person — right for a humanoid, silently
+ * wrong for anything else, with nothing on screen to say which case it took.
+ *
+ * FBX does declare a unit, which Blender honours (`apply_unit_scale`); this road does not read
+ * it yet, so until it does FBX keeps the frame-0 fit rather than landing a centimetre file at
+ * 100x with no field explaining why. The fit is measured on the clip's frame 0 — the pose the
+ * director first sees — not on the file's rest pose, which need not stand up
+ * (`normalisedRigScale`).
  */
 function skeletonObjectOps(
   ops: readonly Op[],
@@ -89,6 +100,7 @@ function skeletonObjectOps(
   clipId: string,
   // #1101 — the name the import gave the clip, so the Object and its motion read the same.
   name: string,
+  normalise: boolean,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
@@ -97,13 +109,14 @@ function skeletonObjectOps(
   const { state } = useDagStore.getState();
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
-  const clip = importedClip(state, ops, clipId);
+  // The clip is read only to measure the fit, so a road that does not fit does not evaluate it.
+  const clip = normalise ? importedClip(state, ops, clipId) : null;
   return buildSkeletonObjectOps({
     skeletonId,
     bones,
     clip,
     sceneNodeId,
-    normalise: true,
+    normalise,
     name,
     clipId,
   }).ops;
@@ -147,7 +160,7 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
     const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name, false);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
@@ -178,7 +191,7 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
     const { ops, skeletonId, clipId } = buildFbxImportOps({ data: copy.buffer, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
+    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name, true);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, clipId };
@@ -208,12 +221,34 @@ const IMPORT_BY_EXT: Readonly<Record<ImportExt, (entryPath: string) => Promise<v
     await importGltfFromOpfs(entryPath);
   },
   '.bvh': async (entryPath) => {
-    bindImportedMotion(await importBvhFromOpfs(entryPath), 'imported');
+    landImportedMotion(await importBvhFromOpfs(entryPath));
   },
   '.fbx': async (entryPath) => {
-    bindImportedMotion(await importFbxFromOpfs(entryPath), 'imported');
+    landImportedMotion(await importFbxFromOpfs(entryPath));
   },
 };
+
+/**
+ * #791 — bind a dropped motion, and when nothing takes it, select the Object that stands it.
+ *
+ * Blender's importers end by selecting what they made and making it active
+ * (`io_anim_bvh/import_bvh.py:425-426`; FBX `import_fbx.py:2908-2913`), which is how the
+ * import dialog's Scale reaches the director a second time: the result is in the properties
+ * panel the moment it lands. A drop has no dialog, so the selection is the whole of that road
+ * — a BVH lands at file scale, and its Object's Scale is the field that fixes it.
+ *
+ * The bind goes FIRST because it reads the selection to choose a character
+ * (`chooseMotionTarget`). Selecting beforehand would retarget the choice onto the motion's
+ * own rig. A bind that takes hides the Object, and a hidden Object is not what a director
+ * wants selected; the selection is then left where the bind found it.
+ */
+function landImportedMotion(imported: MotionImportResult | null): void {
+  const outcome = bindImportedMotion(imported, 'imported');
+  if (!imported || outcome?.ok) return;
+  const objectId = skeletonObjectId(imported.skeletonId);
+  if (!useDagStore.getState().state.nodes[objectId]) return;
+  useSelectionStore.getState().select(objectId);
+}
 
 /**
  * Route an already-ingested OPFS entry to the right per-format importer by its

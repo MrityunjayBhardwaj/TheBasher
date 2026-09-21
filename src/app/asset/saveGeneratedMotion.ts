@@ -19,9 +19,10 @@
 // (`bindMotionToCharacter.ts:69`). The claim was probably true once and dissolved
 // on purpose when #889 removed the eager bake; the sentence stayed, promising a
 // safety net a later change could lean on and get silence from. A second bind is
-// ACCEPTED, and the clip that ends up driving a bone is the id-sorted-FIRST one
-// (`boundClipsForAsset.ts:86`), not the one bound most recently — so a duplicate
-// import would not merely add a node, it could leave the wrong motion playing.
+// ACCEPTED, and since #907 the clip that drives a bone is the one bound LAST:
+// `boundClipsForAsset` ranks an active clip first and falls back to the id only
+// when nothing is active. So a duplicate import would not merely add a node — it
+// would stand the director's own clip down and play the copy.
 // Pinned by `src/app/animate/secondBind.test.ts` rather than re-described here.
 //
 // What lands is an ORDINARY `.bvh` under `user-imports/`, indistinguishable from

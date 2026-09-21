@@ -36,6 +36,7 @@ import {
   resetDegenerateBasisCount,
 } from './boneShape';
 import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
+import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useDagStore } from '../core/dag/store';
@@ -150,32 +151,6 @@ export function scanArmatures(scene: THREE.Object3D): ArmatureScan[] {
  *  a second character, a rig swap) but not when they merely move. */
 function scanSignature(scans: ArmatureScan[]): string {
   return scans.map((s) => `${s.root.uuid}:${s.bones.length}`).join('|');
-}
-
-const _world = new THREE.Matrix4();
-const _point = new THREE.Vector3();
-
-/**
- * #1056 — a skeleton Object's bones, carried from the rig's own space into the world by the
- * Object's matrix. Head, tail and instance matrix all move together, and the length scales
- * with the Object, so sticks, bounds and picking read the same bone the octahedron draws.
- */
-function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): BoneFrame[] {
-  _world.fromArray(world);
-  const scale = _world.getMaxScaleOnAxis();
-  return frames.map((f) => {
-    _point.set(f.head[0], f.head[1], f.head[2]).applyMatrix4(_world);
-    const head = [_point.x, _point.y, _point.z] as const;
-    _point.set(f.tail[0], f.tail[1], f.tail[2]).applyMatrix4(_world);
-    const tail = [_point.x, _point.y, _point.z] as const;
-    return {
-      ...f,
-      head,
-      tail,
-      length: f.length * scale,
-      matrix: new THREE.Matrix4().multiplyMatrices(_world, f.matrix),
-    };
-  });
 }
 
 /**
@@ -458,9 +433,9 @@ export function ArmatureHelper({
       standaloneSignature.current = standaloneSig;
     }
     const playhead = useTimeStore.getState().seconds;
-    const standalone = standaloneInputs.map((o) =>
-      placeInWorld(boneTransforms(o.clip ? posedSourceBones(o.clip, playhead) : o.bones), o.world),
-    );
+    // #1179 — posed and placed by the SAME function Frame Selected measures, so the camera
+    // fits exactly the bones drawn here.
+    const standalone = standaloneInputs.map((o) => skeletonObjectFrames(o, playhead));
     const armatures = [...perArmature, ...standalone];
     const frames = armatures.flat();
 

@@ -303,6 +303,77 @@ function renderSocket(s: SocketField): string {
 }
 
 /**
+ * Below this, a block costs a reader more in indirection than it returns in bytes (#1149).
+ * The OpenPBR material tree is 3.4 KB on five node types and saves ~13.6 KB; the next repeat
+ * down is 128 B on three, which is not worth a name.
+ */
+const MIN_BLOCK_SAVING = 400;
+
+/** One hoisted subtree: the text every sharer would otherwise print, and what it is called. */
+interface SharedSubtree {
+  readonly name: string;
+  readonly body: string;
+  /** `type|prefix` for each sharer — the lookup a line does while rendering. */
+  readonly sharers: readonly string[];
+}
+
+const at = (type: NodeTypeId, prefix: string) => `${type}|${prefix}`;
+
+/** A param's leading path segment, or null when it is a leaf at the top ( `size`, `seed` ). */
+function prefixOf(p: ParamField): string | null {
+  const i = p.path.indexOf('.');
+  return i < 0 ? null : p.path.slice(0, i);
+}
+
+/**
+ * The subtrees worth printing once (#1149).
+ *
+ * Five node types embed the SAME material schema, and the payload used to print its ~110 paths in
+ * full on each of them: about two thirds of the whole catalogue was one tree repeated, and every
+ * field added to a material cost its bytes five times over. A subtree qualifies when its rendered
+ * text is IDENTICAL across two or more types — identical text is the only evidence this file has
+ * that two trees are the same tree, and it is the right evidence, because the text is what a
+ * reader would have to compare.
+ *
+ * A name is the shared prefix (`material`), and stays unambiguous: a second, DIFFERENT tree under
+ * the same prefix — `BakedData.material` is the baked snapshot, not the IR — keeps printing in
+ * full rather than borrowing a name that would describe it wrongly.
+ */
+function sharedSubtrees(schemas: NodeSchema[]): SharedSubtree[] {
+  const bodies = new Map<string, { prefix: string; sharers: string[] }>();
+  for (const s of schemas) {
+    const byPrefix = new Map<string, ParamField[]>();
+    for (const p of s.params) {
+      const prefix = prefixOf(p);
+      if (prefix === null) continue;
+      byPrefix.set(prefix, [...(byPrefix.get(prefix) ?? []), p]);
+    }
+    for (const [prefix, fields] of byPrefix) {
+      const body = fields
+        .map((f) => renderParam({ ...f, path: f.path.slice(prefix.length + 1) }))
+        .join(' ');
+      const entry = bodies.get(body) ?? { prefix, sharers: [] };
+      entry.sharers.push(at(s.type, prefix));
+      bodies.set(body, entry);
+    }
+  }
+  const worth = [...bodies.entries()]
+    .filter(
+      ([body, e]) =>
+        e.sharers.length > 1 && body.length * (e.sharers.length - 1) >= MIN_BLOCK_SAVING,
+    )
+    .sort((a, b) => b[0].length - a[0].length);
+  const taken = new Set<string>();
+  return worth.flatMap(([body, e]) => {
+    // Largest first, so when two different trees share a prefix the bigger one takes the name and
+    // the other stays inline — a block that described the wrong tree would be worse than no block.
+    if (taken.has(e.prefix)) return [];
+    taken.add(e.prefix);
+    return [{ name: e.prefix, body, sharers: e.sharers }];
+  });
+}
+
+/**
  * The prompt form — one line per node type, and no JSON.
  *
  * JSON costs roughly five times the bytes to say the same thing here, and the
@@ -318,13 +389,30 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
     '#   (a|b|c) after a param   = the only legal values',
     '#   [3 number] after a tuple = fixed length and element kind',
     '#   ? after a param = may be null',
+    '#   x:<name> = the shared block named <name> below, each of its paths prefixed with "x."',
     '# Param paths are exactly the paths setParam takes. A path not listed here is not a param.',
   ].join('\n');
+  const shared = sharedSubtrees(schemas);
+  const blocks = shared.map((b) => `<${b.name}> = ${b.body}`);
+  const nameAt = new Map(shared.flatMap((b) => b.sharers.map((s) => [s, b.name] as const)));
   const lines = schemas.map((s) => {
     const ins = s.inputs.map(renderSocket).join(' ') || '-';
     const outs = s.outputs.map(renderSocket).join(' ') || '-';
-    const ps = s.params.map(renderParam).join(' ') || '-';
+    // A hoisted subtree prints its reference where its FIRST field stood, so the reading order of
+    // a line is the schema's own order, and the rest of its fields drop out.
+    const seen = new Set<string>();
+    const ps =
+      s.params
+        .flatMap((p) => {
+          const prefix = prefixOf(p);
+          const name = prefix === null ? undefined : nameAt.get(at(s.type, prefix));
+          if (name === undefined) return [renderParam(p)];
+          if (seen.has(name)) return [];
+          seen.add(name);
+          return [`${prefix}:<${name}>`];
+        })
+        .join(' ') || '-';
     return `${s.type} | in: ${ins} | out: ${outs} | params: ${ps}`;
   });
-  return `${legend}\n${lines.join('\n')}`;
+  return `${legend}\n${blocks.join('\n')}\n${lines.join('\n')}`;
 }

@@ -58,6 +58,7 @@ function quad(
       data: new Float32Array(corners * (type === 'float4' ? 4 : 2)).fill(fillFor(i)),
     })),
     cornerNormals: null,
+    faceLayers: [],
   };
 }
 

@@ -38,6 +38,7 @@ import type {
   GeometryRef,
   MeshCornerLayer,
   MeshCornerLayerType,
+  MeshFaceLayerType,
   MeshGeometryData,
 } from '../nodes/types';
 import { hashString } from '../core/dag/hash';
@@ -57,6 +58,13 @@ export interface PackedCornerLayer {
   readonly data: string;
 }
 
+/** One face layer as saved (#1052): its name, its type, and its values as one base64 string. */
+export interface PackedFaceLayer {
+  readonly name: string;
+  readonly type: MeshFaceLayerType;
+  readonly data: string;
+}
+
 /** The persisted form: one base64 string per array and per layer, `null` for absent normals. */
 export interface PackedMeshData {
   readonly points: string;
@@ -64,6 +72,7 @@ export interface PackedMeshData {
   readonly cornerPoints: string;
   readonly cornerLayers: readonly PackedCornerLayer[];
   readonly cornerNormals: string | null;
+  readonly faceLayers: readonly PackedFaceLayer[];
 }
 
 function isPackedCornerLayer(value: unknown): boolean {
@@ -82,7 +91,9 @@ export function isPackedMeshData(value: unknown): value is PackedMeshData {
     typeof v.cornerPoints === 'string' &&
     Array.isArray(v.cornerLayers) &&
     v.cornerLayers.every(isPackedCornerLayer) &&
-    (v.cornerNormals === null || typeof v.cornerNormals === 'string')
+    (v.cornerNormals === null || typeof v.cornerNormals === 'string') &&
+    Array.isArray(v.faceLayers) &&
+    v.faceLayers.every(isPackedCornerLayer)
   );
 }
 
@@ -104,6 +115,7 @@ export function packedMeshSummary(packed: PackedMeshData): {
   readonly corners: number;
   readonly layers: readonly { readonly name: string; readonly type: MeshCornerLayerType }[];
   readonly normals: boolean;
+  readonly faceLayers: readonly { readonly name: string; readonly type: MeshFaceLayerType }[];
 } {
   return {
     points: decodedBytes(packed.points) / 12,
@@ -111,6 +123,7 @@ export function packedMeshSummary(packed: PackedMeshData): {
     corners: decodedBytes(packed.cornerPoints) / 4,
     layers: packed.cornerLayers.map(({ name, type }) => ({ name, type })),
     normals: packed.cornerNormals !== null,
+    faceLayers: packed.faceLayers.map(({ name, type }) => ({ name, type })),
   };
 }
 
@@ -142,6 +155,11 @@ export function packMeshData(data: MeshGeometryData): PackedMeshData {
       data: toBase64(layer.data),
     })),
     cornerNormals: data.cornerNormals === null ? null : toBase64(data.cornerNormals),
+    faceLayers: data.faceLayers.map((layer) => ({
+      name: layer.name,
+      type: layer.type,
+      data: toBase64(layer.data),
+    })),
   };
 }
 
@@ -166,6 +184,11 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
     })),
     cornerNormals:
       packed.cornerNormals === null ? null : new Float32Array(fromBase64(packed.cornerNormals)),
+    faceLayers: packed.faceLayers.map((layer) => ({
+      name: layer.name,
+      type: layer.type,
+      data: new Int32Array(fromBase64(layer.data)),
+    })),
   };
   unpacked.set(packed, data);
   return data;
@@ -179,6 +202,10 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
  * arrays, so it never disagrees with what the project saves. Each layer contributes its name and
  * type as well as its values: a renamed or retyped layer draws to a different slot, so it must not
  * share a built geometry with the old one.
+ *
+ * #1052 — face layers are in the key too. The built buffer does not read them, but the handle's
+ * descriptor carries the decoded mesh, and a cached handle must never answer for a mesh whose faces
+ * say something different.
  */
 export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
   const content = [
@@ -189,6 +216,9 @@ export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
       ? '-'
       : packed.cornerLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
     packed.cornerNormals ?? '-',
+    packed.faceLayers.length === 0
+      ? '-'
+      : packed.faceLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
   ].join('|');
   return {
     key: `mesh|${hashString(content)}`,

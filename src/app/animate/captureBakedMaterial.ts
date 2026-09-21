@@ -26,8 +26,68 @@
 
 import * as THREE from 'three';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import type { BakedMaterialSpec, BakedTextureRef } from '../../nodes/types';
+import type {
+  BakedMapSlot,
+  BakedMaterialSpec,
+  BakedTextureRef,
+  UvPlacement,
+} from '../../nodes/types';
 import { persistTexture } from '../asset/bakedTextureStore';
+import { CENTRE_PIVOT, isIdentityPlacement, rebasePlacementPivot } from '../material/uvPlacement';
+
+const BAKED_MAP_SLOTS: readonly BakedMapSlot[] = [
+  'map',
+  'normalMap',
+  'roughnessMap',
+  'metalnessMap',
+  'aoMap',
+  'emissiveMap',
+];
+
+/**
+ * #1136 — each map's UV placement as it draws, restated about the centre pivot `BakedMeshR` places
+ * with, or `undefined` when every map draws untransformed.
+ *
+ * Read off the live texture, `center` included: the clone road places about the UV origin (the glTF
+ * convention it captured) and an authored material about the centre, and the bake has to keep what
+ * either one drew. `rebasePlacementPivot` is exact, so the baked mesh draws the same UV matrix.
+ * Exported because it is the decision; the rest of the capture is canvas readback.
+ */
+export function bakedMapPlacements(
+  material: THREE.Material,
+): BakedMaterialSpec['mapPlacements'] | undefined {
+  const slots = material as unknown as Partial<Record<BakedMapSlot, THREE.Texture | null>>;
+  const out: { [K in BakedMapSlot]?: UvPlacement } = {};
+  for (const slot of BAKED_MAP_SLOTS) {
+    const tex = slots[slot];
+    if (!tex) continue;
+    const drawn: UvPlacement = {
+      tiling: [tex.repeat.x, tex.repeat.y],
+      offset: [tex.offset.x, tex.offset.y],
+      rotation: tex.rotation,
+    };
+    const placement = rebasePlacementPivot(drawn, [tex.center.x, tex.center.y], CENTRE_PIVOT);
+    if (!isIdentityPlacement(placement)) out[slot] = placement;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/**
+ * #1140 — how the live material treats its surface: the cutout it draws with and whether it draws
+ * both faces. Each is absent at three's own default, so an ordinary bake writes neither field.
+ *
+ * Read off the live material like the placements above, because both roads set them from the IR
+ * and the capture's job is to keep what was drawn, not to re-derive it.
+ */
+function bakedSurface(material: THREE.Material): {
+  readonly alphaTest?: number;
+  readonly doubleSided?: boolean;
+} {
+  return {
+    ...(material.alphaTest !== 0 ? { alphaTest: material.alphaTest } : {}),
+    ...(material.side === THREE.DoubleSide ? { doubleSided: true } : {}),
+  };
+}
 
 /** Which three ctor BakedMeshR must rebuild (M1). */
 function materialClassOf(mat: THREE.Material): BakedMaterialSpec['materialClass'] {
@@ -70,6 +130,7 @@ export async function captureBakedMaterial(
   if (cls === 'basic') {
     const basic = material as THREE.MeshBasicMaterial;
     const map = await persistSlot(storage, basic.map);
+    const mapPlacements = bakedMapPlacements(basic);
     return {
       materialClass: 'basic',
       color: hexOf(basic.color, '#ffffff'),
@@ -85,6 +146,8 @@ export async function captureBakedMaterial(
       metalnessMap: null,
       aoMap: null,
       emissiveMap: null,
+      ...(mapPlacements ? { mapPlacements } : {}),
+      ...bakedSurface(basic),
     };
   }
 
@@ -99,7 +162,7 @@ export async function captureBakedMaterial(
     persistSlot(storage, std.emissiveMap),
   ]);
 
-  const spec: BakedMaterialSpec = {
+  let spec: BakedMaterialSpec = {
     materialClass: cls, // 'standard' | 'physical'
     color: hexOf(std.color, '#ffffff'),
     roughness: typeof std.roughness === 'number' ? std.roughness : 0.5,
@@ -114,7 +177,11 @@ export async function captureBakedMaterial(
     metalnessMap,
     aoMap,
     emissiveMap,
+    ...bakedSurface(std),
   };
+  // #1136 — absent, not empty, when nothing is transformed, so an ordinary bake writes no field.
+  const mapPlacements = bakedMapPlacements(material);
+  if (mapPlacements) spec = { ...spec, mapPlacements };
 
   // Physical-only scalars (M3) — captured only when the subclass is physical.
   // Map refs for these (clearcoatMap etc.) are a v0.6 #2 follow-up.
@@ -126,6 +193,8 @@ export async function captureBakedMaterial(
         clearcoat: p.clearcoat,
         clearcoatRoughness: p.clearcoatRoughness,
         transmission: p.transmission,
+        // #1140 — transmission refracts only through thickness, so the two travel together.
+        thickness: p.thickness,
         ior: p.ior,
         sheen: p.sheen,
         specularIntensity: p.specularIntensity,

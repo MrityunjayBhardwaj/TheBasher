@@ -40,6 +40,10 @@
 # This block used to say all nine pass on darwin and fail only on the CI runner.
 # Measured, that was true for four of them. The other five fail on darwin too, so
 # they sit under the reason that actually holds.
+#
+# Nine, not ten: the p6-w10 zoom readout row came out on 2026-09-18. It passed in
+# all seven CI runs of that day (six stacked PRs and one re-run), on top of the four
+# earlier passes that first raised the question, and the check itself asks for two.
 
 # Runner environment: pass on darwin, fail on the CI runner's software GL
 # (SwiftShader) and its slow OPFS.

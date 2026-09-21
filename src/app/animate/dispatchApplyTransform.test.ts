@@ -24,7 +24,7 @@ import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
-import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
+import { evaluatedMeshFromMeshData, resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { resolveWorldTransform } from '../resolveWorldTransform';
 import {
   dispatchApplyTransform,
@@ -33,13 +33,31 @@ import {
   unheldAttributesBakeRefusal,
 } from './dispatchApplyTransform';
 import { makeSplitCube } from '../../test-utils/splitCube';
+import { NULL_MAPS as NULL_IR_MAPS } from '../../nodes/materialSchema';
 import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
+import { twoMaterialMeshData } from '../../test-utils/twoMaterialMesh';
+import { materialAssignmentOf } from '../materialAssignment';
+
+// #1132 — the registry road's material refusals read `mesh.materials`, and no real node yet
+// resolves to a two-material or clone-owned assignment on that road. The mock passes straight
+// through to the real resolver unless a test swaps one answer for a mesh with those materials.
+vi.mock('../resolveEvaluatedMesh', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../resolveEvaluatedMesh')>();
+  return { ...real, resolveEvaluatedMesh: vi.fn(real.resolveEvaluatedMesh) };
+});
 import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
-import type { InlineMaterialSpec, MeshGeometryData, Vec3 } from '../../nodes/types';
+import { DEFAULT_TRANSMISSION_THICKNESS } from '../material/openpbrToThree';
+import type {
+  BakedMaterialSpec,
+  EvaluatedMesh,
+  InlineMaterialSpec,
+  MeshGeometryData,
+  Vec3,
+} from '../../nodes/types';
 
 /** The DATA half of a split pair — reached through the `data` edge, never by id spelling.
  *  #388 made this the load-bearing question in this file: an Apply now mints an
@@ -757,6 +775,7 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
         },
       ],
       cornerNormals: Float32Array.from(axes.flatMap((a) => Array(4).fill(turned(a, 0)).flat())),
+      faceLayers: [],
     };
   }
 
@@ -1192,6 +1211,34 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
   it('is offered: canApplyTransform agrees with the dispatcher', () => {
     expect(canApplyTransform(build(POSE), OBJ)).toBe(true);
   });
+  it('#1052 — a mesh with two material slots keeps each face on its slot, and both slots, through a mirroring Apply', async () => {
+    const slotted = {
+      ...cubeData(),
+      faceLayers: [
+        { name: 'material_index', type: 'int' as const, data: Int32Array.from([0, 1, 0, 1, 1, 0]) },
+      ],
+    };
+    const red = { ...MATERIAL, base: { ...MATERIAL.base, color: '#ff0000' } };
+    const blue = { ...MATERIAL, base: { ...MATERIAL.base, color: '#0000ff' } };
+    const state = applyAll(build({ position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }), [
+      {
+        type: 'setParam',
+        nodeId: DATA,
+        paramPath: 'mesh',
+        value: packMeshData(slotted),
+      },
+      { type: 'setParam', nodeId: DATA, paramPath: 'materialSlots', value: [red, blue] },
+      { type: 'setParam', nodeId: OBJ, paramPath: 'scale', value: [-2, 1, 1] },
+    ]);
+    const { result, next } = await apply(state, 'all');
+    expect(result.ok).toBe(true);
+    const params = next.nodes[DATA].params as { mesh: PackedMeshData; materialSlots?: unknown[] };
+    const after = unpackMeshData(params.mesh);
+    expect(after.faceLayers.map((l) => [l.name, Array.from(l.data)])).toEqual([
+      ['material_index', [0, 1, 0, 1, 1, 0]],
+    ]);
+    expect(params.materialSlots).toEqual([red, blue]);
+  });
 
   // ── #1153 — Apply on a quaternion-mode Object ─────────────────────────────────────────
   //
@@ -1333,6 +1380,7 @@ describe('#1081 / #1098 — the animated guard asks what the Apply road it takes
         },
       ],
       cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
+      faceLayers: [],
     };
   }
 
@@ -2591,6 +2639,304 @@ describe('#1119 — a bake refuses attributes the baked store cannot hold', () =
     expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
     expect(calls).toHaveLength(0);
     expect(writeSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('#1132 — a refused Apply writes nothing to storage', () => {
+  async function applyRefused(
+    selectedId: string,
+    state: DagState,
+    gltfClone?: THREE.Group,
+  ): Promise<{
+    result: Awaited<ReturnType<typeof dispatchApplyTransform>>;
+    writes: number;
+    dispatched: number;
+  }> {
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    let dispatched = 0;
+    const result = await dispatchApplyTransform(selectedId, 'all', {
+      state,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: () => {
+        dispatched++;
+        return [];
+      },
+      setSelection: () => {},
+      ...(gltfClone ? { gltfClone } : {}),
+    });
+    return { result, writes: writeSpy.mock.calls.length, dispatched };
+  }
+
+  /** The next resolve of the registry-road sphere answers with `materials` in place of its own. */
+  function resolveWithMaterials(materials: EvaluatedMesh['materials']): void {
+    const real = vi.mocked(resolveEvaluatedMesh).getMockImplementation()!;
+    vi.mocked(resolveEvaluatedMesh).mockImplementationOnce((state, id, ctx) => {
+      const mesh = real(state, id, ctx);
+      return mesh ? { ...mesh, materials } : mesh;
+    });
+  }
+
+  it('the registry bake refuses two materials before it writes', async () => {
+    const state = buildSplitSphereState();
+    const two = evaluatedMeshFromMeshData(null, twoMaterialMeshData(), {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    }).materials;
+    resolveWithMaterials(two);
+    const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('assigns 2 materials') });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the registry bake refuses a material owned by an imported asset before it writes', async () => {
+    const state = buildSplitSphereState();
+    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    })!;
+    const cloneOwned = materialAssignmentOf(null, [null], {
+      key: 'gltf|asset-a|Cube',
+      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+    });
+    expect(mesh.geometry.descriptor.kind).not.toBe('gltf');
+    resolveWithMaterials(cloneOwned);
+    const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining('owned by its imported asset'),
+    });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the imported-child bake refuses a child with no material before it writes', async () => {
+    const clone = fakeClone();
+    (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).material = [];
+    const { result, writes, dispatched } = await applyRefused('n_child', gltfChildState(), clone);
+    expect(result).toEqual({ ok: false, reason: `Apply: child "${CHILD_NAME}" has no material.` });
+    expect(dispatched).toBe(0);
+    expect(writes).toBe(0);
+  });
+
+  it('the positive control: the same child with its material writes and dispatches', async () => {
+    const stateRef = { current: gltfChildState() };
+    const { fn, calls } = makeDispatch(stateRef);
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state: stateRef.current,
+      storage,
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+      gltfClone: fakeClone(),
+    });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(writeSpy).toHaveBeenCalled();
+  });
+});
+
+describe('#1134 — a refusal names the object the way the outliner does', () => {
+  it('quotes a renamed registry object by its name, not its id', async () => {
+    let state = buildSplitSphereState();
+    state = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
+    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
+      time: { frame: 0, seconds: 0, normalized: 0 },
+    });
+    geometryRegistry
+      .getForRead(mesh!.geometry)!
+      .setAttribute('uv1', geometryRegistry.getForRead(mesh!.geometry)!.getAttribute('uv').clone());
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: () => [],
+      setSelection: () => {},
+    });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining('"Hero" carries uv1') });
+    expect(result.ok ? '' : result.reason).not.toContain(PRIM_ID);
+  });
+
+  it('quotes an imported child by the name it was imported with', async () => {
+    const clone = fakeClone();
+    const geometry = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
+    geometry.setAttribute('uv1', geometry.getAttribute('uv').clone());
+    const result = await dispatchApplyTransform('n_child', 'all', {
+      state: gltfChildState(),
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: () => [],
+      setSelection: () => {},
+      gltfClone: clone,
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining(`"${CHILD_NAME}" carries uv1`),
+    });
+    expect(result.ok ? '' : result.reason).not.toContain('n_child');
+  });
+});
+
+describe('#1139 — a primitive bakes the material it draws, maps and placement included', () => {
+  const IMAGE = {
+    hash: 'abc.png',
+    store: 'project' as const,
+    colorSpace: 'srgb' as const,
+    flipY: false,
+    wrapS: 1000,
+    wrapT: 1000,
+  };
+
+  async function bakeBoxWith(material: Record<string, unknown>) {
+    let state = makeSplitCube(emptyDagState(), { objectId: 'n_box' }).state;
+    const dataId = (state.nodes['n_box'].inputs.data as { node: string }).node;
+    const current = state.nodes[dataId].params.material as Record<string, unknown>;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: dataId,
+      paramPath: 'material',
+      value: { ...current, ...material },
+    }).next;
+    const drawn = state.nodes[dataId].params.material as InlineMaterialSpec;
+    let ops: Op[] = [];
+    const result = await dispatchApplyTransform('n_box', 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: (o) => {
+        ops = o;
+        return [];
+      },
+      setSelection: () => {},
+    });
+    const baked = ops.find(
+      (o): o is Extract<Op, { type: 'addNode' }> =>
+        o.type === 'addNode' && o.nodeType === 'BakedData',
+    );
+    return { result, drawn, spec: (baked?.params as { material: BakedMaterialSpec }).material };
+  }
+
+  it('keeps every map it samples, in three’s slot names', async () => {
+    const normal = { ...IMAGE, hash: 'n.png', colorSpace: 'srgb-linear' as const };
+    const { result, spec } = await bakeBoxWith({
+      maps: { ...NULL_IR_MAPS, albedo: IMAGE, normal },
+    });
+    expect(result.ok).toBe(true);
+    expect(spec.map).toEqual(IMAGE);
+    expect(spec.normalMap).toEqual(normal);
+    expect(spec.roughnessMap).toBeNull();
+  });
+
+  it('keeps the placement each map draws with: the shared one, or the slot’s own', async () => {
+    const shared = {
+      tiling: [2, 2] as [number, number],
+      offset: [0.25, 0] as [number, number],
+      rotation: 0,
+    };
+    const own = {
+      tiling: [4, 1] as [number, number],
+      offset: [0, 0] as [number, number],
+      rotation: 0.5,
+    };
+    const { spec } = await bakeBoxWith({
+      maps: { ...NULL_IR_MAPS, albedo: IMAGE, emissive: { ...IMAGE, hash: 'e.png' } },
+      uvTransform: shared,
+      mapUvTransforms: { emissive: own },
+    });
+    // The inline road already places about the centre, as a baked mesh does: carried unchanged.
+    expect(spec.mapPlacements).toEqual({ map: shared, emissiveMap: own });
+  });
+
+  it('bakes the scalars it draws, not a frozen historical look', async () => {
+    const { drawn, spec } = await bakeBoxWith({
+      specular: { roughness: 0.15, ior: 1.7 },
+      base: { color: '#336699', metalness: 0.8 },
+      emission: { color: '#ff0000', luminance: 2 },
+      coat: { weight: 0.5, roughness: 0.25 },
+    });
+    expect(drawn.specular.roughness).toBe(0.15);
+    expect(spec).toMatchObject({
+      color: '#336699',
+      roughness: 0.15,
+      metalness: 0.8,
+      emissive: '#ff0000',
+      emissiveIntensity: 2,
+    });
+    expect(spec.physical).toMatchObject({ clearcoat: 0.5, clearcoatRoughness: 0.25, ior: 1.7 });
+  });
+
+  it('an untextured, unplaced box writes no placement field', async () => {
+    const { spec } = await bakeBoxWith({});
+    expect('mapPlacements' in spec).toBe(false);
+    expect(spec.map).toBeNull();
+  });
+
+  describe('#1140 — the cutout, the side and the thickness come across too', () => {
+    it('bakes the cutout and the side the box draws with', async () => {
+      const { result, spec } = await bakeBoxWith({
+        geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.alphaTest).toBe(0.4);
+      expect(spec.doubleSided).toBe(true);
+    });
+
+    it('bakes the thickness a transmissive material refracts through', async () => {
+      const { drawn, spec } = await bakeBoxWith({ transmission: { weight: 0.5 } });
+      expect(drawn.transmission.weight).toBe(0.5);
+      // The draw seeds a thickness whenever transmission is on; a transmission captured without
+      // one refracts through nothing, which is glass baked flat.
+      expect(spec.physical).toMatchObject({
+        transmission: 0.5,
+        thickness: DEFAULT_TRANSMISSION_THICKNESS,
+      });
+    });
+
+    it('a box drawing neither writes neither field, so earlier saves read as they did', async () => {
+      const { spec } = await bakeBoxWith({});
+      expect('alphaTest' in spec).toBe(false);
+      expect('doubleSided' in spec).toBe(false);
+    });
+
+    it('both fields survive the schema, which is where a field the spec never declared dies', async () => {
+      let state = makeSplitCube(emptyDagState(), { objectId: 'n_box' }).state;
+      const dataId = (state.nodes['n_box'].inputs.data as { node: string }).node;
+      const current = state.nodes[dataId].params.material as Record<string, unknown>;
+      state = applyOp(state, {
+        type: 'setParam',
+        nodeId: dataId,
+        paramPath: 'material',
+        value: {
+          ...current,
+          geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true },
+          transmission: { weight: 0.5 },
+        },
+      }).next;
+      let ops: Op[] = [];
+      await dispatchApplyTransform('n_box', 'all', {
+        state,
+        storage: new MemoryStorage(),
+        currentFrame: 0,
+        dispatchAtomic: (o) => {
+          ops = o;
+          return [];
+        },
+        setSelection: () => {},
+      });
+      // Through `applyOp`, which is where `addNode` parses: an undeclared field is stripped here
+      // and the bake reports ok anyway (#1136's own red before its schema line landed).
+      let after = state;
+      for (const op of ops) after = applyOp(after, op).next;
+      const baked = Object.values(after.nodes).find((n) => n.type === 'BakedData');
+      const spec = (baked?.params as { material: BakedMaterialSpec }).material;
+      expect(spec.alphaTest).toBe(0.4);
+      expect(spec.doubleSided).toBe(true);
+      expect(spec.physical?.thickness).toBe(DEFAULT_TRANSMISSION_THICKNESS);
+    });
   });
 });
 

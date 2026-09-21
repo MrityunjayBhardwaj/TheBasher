@@ -28,6 +28,7 @@ const grid = (n: number) => {
       { name: 'UVMap', type: 'float2', data: new Float32Array(cornerPoints.length * 2) },
     ],
     cornerNormals: null,
+    faceLayers: [],
   });
 };
 
@@ -42,6 +43,7 @@ describe('paramsForAgent', () => {
         corners: 400,
         layers: [{ name: 'UVMap', type: 'float2' }],
         normals: false,
+        faceLayers: [],
       },
     };
     expect(shown).toEqual({
