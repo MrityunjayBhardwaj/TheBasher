@@ -12,6 +12,8 @@
 
 import * as THREE from 'three';
 import { evaluate } from '../../core/dag/evaluator';
+import { fitViewToSphere, orthoZoomForView } from '../../viewport/cameraFit';
+import { computeSceneBounds, type SceneBounds } from '../../viewport/sceneBounds';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
 import type { CharacterValue } from '../../nodes/types';
@@ -22,6 +24,11 @@ import { useThreeRef } from './threeRef';
 /** Default camera offset used when nothing is on screen yet. Matches the
  *  initial editor pose (THESIS.md §11). */
 const DEFAULT_OFFSET = new THREE.Vector3(3, 2, 3);
+
+/** Vertical FOV assumed when the editor camera cannot supply one (an ortho view,
+ *  which has no FOV of its own — the boot fit passes the seed camera's the same
+ *  way). Matches `DEFAULT_FOV` in the viewport's own fit. */
+const DEFAULT_FOV_DEG = 50;
 
 /** Read the world-space "anchor" position for a DAG node. Best-effort:
  *   - anything carrying `params.position` (Transform / Camera / Light / Group,
@@ -56,6 +63,85 @@ export function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
     }
   }
   return null;
+}
+
+/** World-space bounding sphere of what a node actually DRAWS, or null when it
+ *  draws nothing measurable (a light, a camera, an empty group, or a node whose
+ *  object has not mounted yet).
+ *
+ *  Read off the live scene by object name — `SceneFromDAG` names each object
+ *  for its node id, which is the same lookup `__basher_mesh_world_bounds` uses —
+ *  and measured with the SAME walk "frame all" uses at boot, so editor chrome is
+ *  pruned rather than framed (#546).
+ *
+ *  EXPORTED FOR TESTING, for the reason `anchorForNode` is: "Frame Selected did
+ *  not fit my character" is a claim about which nodes have measurable bounds,
+ *  and that has to be assertable without a camera. */
+export function boundsForNode(nodeId: NodeId): SceneBounds | null {
+  const scene = useThreeRef.getState().scene;
+  if (!scene) return null;
+  const object = scene.getObjectByName(nodeId);
+  if (!object) return null;
+  return computeSceneBounds(object);
+}
+
+/** Frame a bounding sphere: re-centre on it AND set the distance so it fills
+ *  the view, keeping the current viewing ANGLE.
+ *
+ *  🔑 WHY THIS IS SEPARATE FROM `applyTarget` (#969). `applyTarget` preserves
+ *  the camera's existing offset by design — it is the whole of the camera math
+ *  a FOLLOW needs, and a follow that re-derived its distance every frame would
+ *  dolly at the subject while it walked. So fitting is added BESIDE it rather
+ *  than inside it: framing is a gesture, following is a constraint, and only the
+ *  gesture is allowed to change how far away the camera is.
+ *
+ *  The angle is preserved because that is what the reference does. Measured in
+ *  Blender 4.5.9, parking the view at distance 50 and taking View Selected on
+ *  the default 2 m cube: `view_location` goes to (0,0,0) and `view_distance` to
+ *  3.279, with the view rotation untouched. A director's orbit is theirs; only
+ *  the pivot and the distance are the gesture's to set. */
+export function applyFit(bounds: SceneBounds): boolean {
+  const cam = useThreeRef.getState().camera;
+  const ctrlTarget = useThreeRef.getState().controlsTarget;
+  if (!cam) return false;
+
+  const center = new THREE.Vector3(bounds.center[0], bounds.center[1], bounds.center[2]);
+
+  // The direction the director is already looking from. A camera sitting ON its
+  // target has no direction to preserve, so fall back to the canonical angle
+  // rather than normalising a zero vector into NaN.
+  const offset = ctrlTarget
+    ? new THREE.Vector3().subVectors(cam.position, ctrlTarget)
+    : DEFAULT_OFFSET.clone();
+  const dir = offset.lengthSq() > 1e-12 ? offset.normalize() : DEFAULT_OFFSET.clone().normalize();
+
+  const persp = cam as THREE.PerspectiveCamera;
+  const isPersp = persp.isPerspectiveCamera === true;
+  const fovDeg = isPersp && persp.fov > 0 ? persp.fov : DEFAULT_FOV_DEG;
+  const aspect = isPersp && persp.aspect > 0 ? persp.aspect : 1;
+
+  const fit = fitViewToSphere(bounds.center, bounds.radius, fovDeg, aspect, {
+    dir: [dir.x, dir.y, dir.z],
+  });
+
+  cam.position.set(fit.position[0], fit.position[1], fit.position[2]);
+  if (ctrlTarget) ctrlTarget.copy(center);
+  cam.lookAt(center);
+
+  // An ORTHOGRAPHIC editor view is not framed by position at all — its frustum
+  // extent is `zoom` (`orthoZoomForView`, the same math the boot fit uses), so
+  // moving it alone would re-centre and leave the subject the same size.
+  const ortho = cam as THREE.OrthographicCamera;
+  if (ortho.isOrthographicCamera) {
+    const height = useThreeRef.getState().gl?.domElement.clientHeight ?? 0;
+    if (height > 0) {
+      ortho.zoom = orthoZoomForView(cam.position.distanceTo(center), fovDeg, height);
+      ortho.updateProjectionMatrix();
+    }
+  }
+
+  cam.updateMatrixWorld();
+  return true;
 }
 
 /** Apply a new target to OrbitControls + translate the camera so the
@@ -108,6 +194,14 @@ export function applyTarget(target: THREE.Vector3): boolean {
 export function frameSelected(): boolean {
   const primary = useSelectionStore.getState().primaryNodeId;
   if (!primary) return false;
+  // FIT first: what the node draws decides how far away to stand. An imported
+  // character is the case this exists for — its Group anchors at the model
+  // centre, which is where the camera is already pointing, so re-centring on it
+  // moved the camera a few centimetres and left the character inside the cube.
+  const bounds = boundsForNode(primary);
+  if (bounds) return applyFit(bounds);
+  // Nothing drawn (a light, a camera, a Character with no mounted object): the
+  // anchor road still re-centres, which is all there is to do without a size.
   const anchor = anchorForNode(primary);
   if (!anchor) return false;
   return applyTarget(anchor);
@@ -132,6 +226,13 @@ export function frameAll(): void {
       count++;
     }
   }
+  // Same gesture, whole scene: fit what the scene DRAWS, which is the bound the
+  // boot fit already frames against (#186). The anchor average below is the
+  // fallback for a scene that draws nothing measurable.
+  const scene = useThreeRef.getState().scene;
+  const bounds = scene ? computeSceneBounds(scene) : null;
+  if (bounds && applyFit(bounds)) return;
+
   const target = count > 0 ? sum.divideScalar(count) : new THREE.Vector3(0, 0, 0);
   applyTarget(target);
 }

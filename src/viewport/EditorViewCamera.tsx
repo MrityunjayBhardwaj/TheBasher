@@ -78,21 +78,12 @@ const MAX_FRAMES = 300;
  *  swapped can go unfollowed. */
 const LOCK_RESCAN_INTERVAL = 15;
 
-/** Orthographic zoom that makes the ortho framing match the perspective
- *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
- *  is preserved at the focal distance.
- *
- *  drei's OrthographicCamera sets its frustum in PIXELS (left=-w/2 … top=h/2),
- *  so the visible world-height at zoom z is `viewportHeight / z`. A perspective
- *  camera shows `2·d·tan(fov/2)` of world-height at distance d. Equate the two
- *  and solve for z. Pure + testable (no THREE, no DOM). */
-export function orthoZoomForView(distance: number, fovDeg: number, viewportHeight: number): number {
-  if (!Number.isFinite(distance) || distance <= 0) return 1;
-  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 1;
-  const worldHeight = 2 * distance * Math.tan((fovDeg * Math.PI) / 180 / 2);
-  if (worldHeight <= 0) return 1;
-  return viewportHeight / worldHeight;
-}
+// `orthoZoomForView` lives in `cameraFit.ts` beside the rest of the pure fit
+// math (#969 needed it from `src/app/character/framing.ts`, and importing this
+// module would have pulled R3F into a unit test). Re-exported here because this
+// is where it was, and both call sites below still read it as a local.
+export { orthoZoomForView } from './cameraFit';
+import { orthoZoomForView } from './cameraFit';
 
 /** Point a THREE camera from `position` toward `lookAt` + move the
  *  OrbitControls target to `lookAt` so orbiting pivots around the right point.
