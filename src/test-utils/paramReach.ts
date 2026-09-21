@@ -224,5 +224,8 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     mesh: { by: 'src/app/meshGeometryData.ts' },
     // The material, drawn by the same object road every MeshData producer's material takes.
     material: { by: SCENE },
+    // #1052 — the slot table, drawn slot by slot against the mesh's `material_index` groups by
+    // the same object road, through `objectSlotsOf`.
+    materialSlots: { by: SCENE },
   },
 };

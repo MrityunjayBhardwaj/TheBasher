@@ -10,8 +10,9 @@
 // ── THE SUBJECT ─────────────────────────────────────────────────────────────────────────
 //
 // The flat multi-file fixture, with its one mesh node wrapped in a turned and lifted parent node, so
-// the file has a hierarchy. A hierarchy is what the native reader refuses, so the import takes the
-// clone road — the road this defect lives on — and the spec asserts that it did. The import Group is
+// the file has a hierarchy. The file also names an extension no reader holds, which the native reader
+// refuses (a hierarchy alone no longer does, #1051), so the import takes the clone road — the road
+// this defect lives on — and the spec asserts that it did. The import Group is
 // then moved, turned and scaled, so both halves of the chain are non-identity when Apply runs.
 //
 // ── WHAT IS OBSERVED ────────────────────────────────────────────────────────────────────
@@ -101,7 +102,11 @@ async function ingestHierarchy(page: Page, folderName: string): Promise<void> {
     const gltf = (await fetch(`${base}scene.gltf`).then((r) => r.json())) as {
       nodes: Record<string, unknown>[];
       scenes: { nodes: number[] }[];
+      extensionsUsed?: string[];
     };
+    // Keeps the file on the clone road: the native reader refuses an extension it does not hold,
+    // and one that exists nowhere is never held. Not required, so GLTFLoader only warns.
+    gltf.extensionsUsed = [...(gltf.extensionsUsed ?? []), 'EXT_p1108_clone_road'];
     const meshNode = gltf.scenes[0].nodes[0];
     gltf.nodes.push({
       name: 'p1108_parent',

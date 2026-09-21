@@ -56,6 +56,7 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { importedChildOf } from './importedChild';
+import { childEdges } from './resolveWorldTransform';
 import {
   quaternionFromEulerDeg,
   resolvedQuaternionOf,
@@ -133,7 +134,18 @@ export function resolveEvaluatedTransform(
       break;
     }
   }
+  // #268 — a NESTED node (a Group's child, and every node of an import) is found by descending the
+  // same edges the renderer descends (`childEdges`, as GroupR does). Its RAW value is taken here,
+  // and the overlays below run on it exactly as for a top-level child. It used to return null, so
+  // the gizmo and inspector fell back to the authored params while the viewport drew the animation.
+  let nested: SceneChild | null = null;
   if (matchIdx === -1) {
+    for (let i = 0; i < value.scene.children.length && !nested; i++) {
+      const topId = childRefs[i]?.node;
+      if (topId) nested = findNested(state, topId, value.scene.children[i], selectedId);
+    }
+  }
+  if (matchIdx === -1 && !nested) {
     // 4b. TRAILING glTF-child branch (P7.7 / #91 — purely additive, H40).
     //   A GltfChild id is NEITHER a top-level scene-child ref NOR a single-hop
     //   AnimationLayer target — it lives BY NAME inside a GltfAssetValue, so the
@@ -256,7 +268,7 @@ export function resolveEvaluatedTransform(
   // 5. The matched scene child IS the producing node's evaluated value (v0.7
   //    #199 retired the AnimationLayer wrapper, so there is no patched clone to
   //    unwrap — the animation overlay below is the only "animated value" source).
-  let child: SceneChild | null = value.scene.children[matchIdx];
+  let child: SceneChild | null = nested ?? value.scene.children[matchIdx];
 
   // v0.7 unification (#197/#199) — overlay free-floating DIRECT channels the SAME
   // way the render side (DirectChannelsR, SceneFromDAG) does: the SAME
@@ -339,4 +351,19 @@ export function resolveEvaluatedTransform(
   const position = followed ?? (c.position as Vec3);
 
   return { position, rotation, scale, ...(quaternion ? { quaternion } : {}) };
+}
+
+/** The raw evaluated value of `targetId` under this subtree, or null when it is not in it. */
+function findNested(
+  state: DagState,
+  nodeId: string,
+  value: SceneChild,
+  targetId: string,
+): SceneChild | null {
+  for (const edge of childEdges(state, nodeId, value)) {
+    if (edge.id === targetId) return edge.value;
+    const found = findNested(state, edge.id, edge.value, targetId);
+    if (found) return found;
+  }
+  return null;
 }

@@ -15,7 +15,8 @@
 // scene bounds from the live THREE scene and applies the result.
 //
 // REF: issue #186; vyapti V8 (file-rooted, UI projection); sibling of
-// `orthoZoomForView` (EditorViewCamera.tsx).
+// `orthoZoomForView` (below — it moved here in #969, from EditorViewCamera.tsx,
+// so an app-layer caller can have the math without the component).
 
 /** The canonical 3/4 viewing direction — the seed camera's [3,2,3] offset,
  *  normalized. Framing along this keeps the familiar Basher boot angle while
@@ -151,4 +152,20 @@ export function fitViewToSphere(
     distance,
     ...planes,
   };
+}
+
+/** Orthographic zoom that makes the ortho framing match the perspective
+ *  framing at the orbit pivot — Blender's Numpad-5 behavior: apparent scale
+ *  is preserved at the focal distance.
+ *
+ *  drei's OrthographicCamera sets its frustum in PIXELS (left=-w/2 … top=h/2),
+ *  so the visible world-height at zoom z is `viewportHeight / z`. A perspective
+ *  camera shows `2·d·tan(fov/2)` of world-height at distance d. Equate the two
+ *  and solve for z. Pure + testable (no THREE, no DOM). */
+export function orthoZoomForView(distance: number, fovDeg: number, viewportHeight: number): number {
+  if (!Number.isFinite(distance) || distance <= 0) return 1;
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 1;
+  const worldHeight = 2 * distance * Math.tan((fovDeg * Math.PI) / 180 / 2);
+  if (worldHeight <= 0) return 1;
+  return viewportHeight / worldHeight;
 }

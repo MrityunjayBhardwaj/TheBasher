@@ -69,6 +69,7 @@ function storedCube(extra: readonly MeshCornerLayer[]): GeometryRef {
     cornerPoints: Uint32Array.from(FACES.flat()),
     cornerLayers: [uvMap(), ...extra],
     cornerNormals: null,
+    faceLayers: [],
   };
   return meshGeometryRef(packMeshData(data));
 }

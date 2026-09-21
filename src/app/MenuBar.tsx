@@ -26,11 +26,11 @@ import {
 } from './boot';
 import type { ProjectMetadata } from '../core/project/io';
 import {
-  dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
+import { applyTransformFromUi } from './animate/applyTransformAction';
 import { useTimeStore } from './stores/timeStore';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
@@ -635,7 +635,8 @@ export function MenuBar() {
               label={label}
               disabled={applyDisabled}
               onSelect={() => {
-                if (selectedId) void dispatchApplyTransform(selectedId, mask);
+                // #1130 — a refusal is shown, never dropped.
+                if (selectedId) void applyTransformFromUi(selectedId, mask);
               }}
               testId={`menu-object-apply-${mask}`}
             />

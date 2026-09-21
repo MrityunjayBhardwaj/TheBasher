@@ -117,6 +117,18 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
     return `${colourLayers} colour layers, but the render buffer draws at most ${MAX_COLOUR_LAYERS}`;
   if (data.cornerNormals !== null && data.cornerNormals.length !== corners * 3)
     return `cornerNormals holds ${data.cornerNormals.length} numbers for ${corners} corners`;
+  const faceNames = new Set<string>();
+  for (const layer of data.faceLayers) {
+    if (layer.name === '') return 'a face layer has no name';
+    if (faceNames.has(layer.name)) return `two face layers are both named '${layer.name}'`;
+    faceNames.add(layer.name);
+    if (layer.type !== 'int') {
+      return `face layer '${layer.name}' is '${String(layer.type)}', which a stored mesh does not hold`;
+    }
+    if (layer.data.length !== data.faceSizes.length) {
+      return `face layer '${layer.name}' holds ${layer.data.length} values for ${data.faceSizes.length} faces`;
+    }
+  }
   return null;
 }
 

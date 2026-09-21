@@ -59,7 +59,7 @@ import { groupAttributeName } from './componentGroups';
 import { Vector3 } from 'three';
 import { transformRuleFor } from '../app/attributeTransform';
 import { copyMatrixOf } from '../app/copyTransform';
-import type { GeometryDescriptor, GeometryRef } from './types';
+import type { GeometryDescriptor, GeometryRef, MeshGeometryData } from './types';
 // TYPE ONLY, and that is the whole relationship: this module reads a selection through its
 // accessor and can never construct one, so the memoized total stays un-forgeable here.
 import type { ComponentSelection } from './componentSelection';
@@ -112,6 +112,26 @@ export function uniformMaterialAttributes(descriptor: GeometryDescriptor): Minte
 }
 
 /**
+ * #1052 — the attribute set a STORED mesh carries: every face layer it holds, as a face-domain
+ * attribute of the same name, over a `material_index` of all zeros when it stores none.
+ *
+ * The other producers derive their set from params, because a box has nowhere to keep one. A
+ * stored mesh does: its face layers ARE authored data, written by whatever produced the mesh (an
+ * import writing one slot per primitive), so this reads them rather than re-deriving them. A stored
+ * mesh with no face layers gets exactly what {@link uniformMaterialAttributes} would give it.
+ */
+export function storedMeshAttributes(data: MeshGeometryData): MintedAttributes | null {
+  const faces = data.faceSizes.length;
+  const entries: Record<string, AttributeData> = {
+    [MATERIAL_INDEX]: { domain: 'face', type: 'int', count: faces, data: new Int32Array(faces) },
+  };
+  for (const layer of data.faceLayers) {
+    entries[layer.name] = { domain: 'face', type: layer.type, count: faces, data: layer.data };
+  }
+  return mintAttributes(entries);
+}
+
+/**
  * Derive the set, put it in the store, and hand back the key a data value carries.
  *
  * Called from `evaluate()` and, since #638, from the animation overlay's handle rebuild.
@@ -130,7 +150,10 @@ export function mintMeshAttributes(
   via: AttributeGrowthSource,
 ): string | null {
   refuseUnattributedGrowth(via);
-  const minted = uniformMaterialAttributes(descriptor);
+  const minted =
+    descriptor.kind === 'mesh'
+      ? storedMeshAttributes(descriptor.data)
+      : uniformMaterialAttributes(descriptor);
   if (minted === null) return null;
   insert(minted.key, minted.set, via);
   return minted.key;

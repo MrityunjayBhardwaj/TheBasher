@@ -120,7 +120,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // ADDED at #1049 — a stored polygon mesh. Placed beside its sibling data kind rather than in
   // strict order; the gate compares sorted keys. `mesh` is unrouted for the reason `GltfData`'s
   // address is: nothing edits a stored mesh's elements yet, so a home would be an empty card.
-  PolyMeshData: '[material] mesh=(unrouted) material=material',
+  // #1052 appends `materialSlots`, unrouted for the reason `GltfData`'s is: the material section
+  // edits it through the slot selector, which reads the param directly rather than by a home.
+  PolyMeshData: '[material] mesh=(unrouted) material=material materialSlots=(unrouted)',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
@@ -351,4 +353,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1049 adds `PolyMeshData` as a wholly new node type: +1 type, +1 routed (`material`), +1
 // unrouted (`mesh`, see its row). Nothing existing moved:
 //   types 87 + 1 = 88 · routed 138 + 1 = 139 · unrouted 235 + 1 = 236
-export const GOLDEN_TOTALS = { types: 88, routed: 143, unrouted: 235 } as const;
+//
+// #1052 appends `PolyMeshData.materialSlots`, unrouted (see its row): +1 unrouted.
+//   types 88 · routed 139 · unrouted 235 + 1 = 236
+//
+// #1153 routes four rows under the transform section's rotation arm (see their rows): +4 routed.
+//   types 88 · routed 139 + 4 = 143 · unrouted 236
+export const GOLDEN_TOTALS = { types: 88, routed: 143, unrouted: 236 } as const;

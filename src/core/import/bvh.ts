@@ -55,8 +55,9 @@ export const BVH_UNIT_SCALE_CENTIMETRES = 0.01;
  * the format simply has no field for it — so it cannot be derived from the text
  * and has to arrive from whoever knows what produced the clip. The generation
  * road gets it from the capability, which knows what it emitted (#790); the file
- * road has no such source and still defaults to 1, which is what this importer
- * has always assumed (#791 decides what it should do instead).
+ * road has no such source and passes 1 — the file's own size — and leaves the
+ * director to set the scale on the Object that stands the rig, as Blender's BVH
+ * importer does with its Scale field (#791).
  *
  * It scales LENGTHS only — bind offsets and keyed positions. Rotations are
  * angles and are unit-free, and bind scale is a ratio; multiplying either would
