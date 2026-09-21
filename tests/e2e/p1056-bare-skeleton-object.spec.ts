@@ -30,6 +30,7 @@ interface Win {
   __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
   __basher_gltf_skin?: () => unknown;
   __basher_time: { getState: () => { setTime: (seconds: number) => void } };
+  __basher_selection: { getState: () => { selectedNodeId: string | null } };
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_armature?: {
     armatures: number;
@@ -112,8 +113,9 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
   expect(graph.inScene).toBe(true);
   // Motion, not a model — the p7.14 rule still holds with an Object added.
   expect(graph.gltfAssets).toBe(0);
-  // The unit was unknown, so the rig was stood at human height rather than left at file scale.
-  expect(graph.scale?.[0]).not.toBe(1);
+  // #791 — BVH declares no unit, so the rig stands at the file's own size and nothing guesses
+  // one from the content (Blender's BVH importer: Scale defaults to 1.0, no detection).
+  expect(graph.scale).toEqual([1, 1, 1]);
 
   const [rig] = await page.evaluate(
     () => (window as unknown as Win).__basher_armature!.skeletonObjects,
@@ -122,14 +124,38 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
   expect(rig.clipCount).toBe(1);
   expect(rig.posed).toBe(true);
 
-  // …and at the size of a person in the world, read off the drawn bones rather than the scale
-  // param. Measured wrong twice while "scale is not 1" above stayed green: ~27× too big (the
-  // rest pose's Y extent — SOMA lies along +X) and 1.19 m (its longest extent — the arms are
-  // raised). Bone heads, so the top end site is not counted; a 1.8 m figure reads ~1.75.
-  const heads = (await boneMatrices(page)).map((m) => m[13]);
-  const drawnHeight = Math.max(...heads) - Math.min(...heads);
-  expect(drawnHeight).toBeGreaterThan(1.5);
-  expect(drawnHeight).toBeLessThan(2.1);
+  // …drawn at the file's size, read off the drawn bones rather than the scale param: SOMA is
+  // authored in centimetres and its walk's frame 0 stands ~161 units tall. Bone heads, so the
+  // top end site is not counted.
+  const drawnHeight = async (): Promise<number> => {
+    const heads = (await boneMatrices(page)).map((m) => m[13]);
+    return Math.max(...heads) - Math.min(...heads);
+  };
+  const atFileScale = await drawnHeight();
+  expect(atFileScale).toBeGreaterThan(100);
+  expect(atFileScale).toBeLessThan(250);
+
+  // #791 — the import selects the Object, so its Scale is in the inspector the moment it lands:
+  // the drop road's equivalent of the reference's import-dialog field.
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as Win).__basher_selection.getState().selectedNodeId),
+    )
+    .toBe(objectId);
+  const scaleX = page.getByTestId(`inspector-vec-${objectId}-scale-x`);
+  await expect(scaleX).toBeVisible();
+  await expect(scaleX).toHaveValue('1');
+
+  // …and that field is the fix: a centimetre file set to 0.01 stands at the size of a person.
+  // The uniform-scale write goes through the graph so all three axes move together.
+  await page.evaluate((id) => {
+    (window as unknown as Win).__basher_dag
+      .getState()
+      .dispatch({ type: 'setParam', nodeId: id, paramPath: 'scale', value: [0.01, 0.01, 0.01] });
+  }, objectId);
+  await expect(scaleX).toHaveValue('0.01');
+  await expect.poll(drawnHeight).toBeGreaterThan(1.4);
+  expect(await drawnHeight()).toBeLessThan(2.1);
 });
 
 test('#1056 — the skeleton Object is posed at the playhead', async ({ page }) => {
