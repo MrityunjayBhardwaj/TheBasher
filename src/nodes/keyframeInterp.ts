@@ -27,7 +27,10 @@
 // REF: UX-BACKLOG #11; KeyframeChannelNumber.ts / KeyframeChannelVec3.ts (the
 //      callers); vyapti V49.
 
-import type { Vec2, Vec3 } from './types';
+import type { Quat, Vec2, Vec3 } from './types';
+// The unit-quat slerp and normalize live in quatMath — the ONE copy, also the fold
+// layer's (foldChannel.ts). Read here, never re-derived (H40).
+import { normalize as normalizeQuat, slerp } from './quatMath';
 import {
   applyChannelModifiers,
   resolveSampleTime,
@@ -292,6 +295,25 @@ export interface Vec3Key {
   readonly handleType?: HandleType;
   readonly inHandle?: Vec3Handle;
   readonly outHandle?: Vec3Handle;
+}
+
+/** A quaternion handle: a (time, value) OFFSET from its key, the four components together. */
+export interface QuatHandle {
+  readonly time: number;
+  readonly value: Quat;
+}
+/**
+ * A quaternion keyframe. Unlike the scalar and vec keys, a quat key's easing is narrow
+ * ('linear' | 'cubic' | 'constant' — QUAT_EASINGS): the Penner curves shape a value along an
+ * axis, and a slerp has no value axis. Handles are the exception — a tangent is a component
+ * velocity, which a quaternion does have (#1157).
+ */
+export interface QuatKey {
+  readonly time: number;
+  readonly value: Quat;
+  readonly easing: Easing;
+  readonly inHandle?: QuatHandle;
+  readonly outHandle?: QuatHandle;
 }
 
 function smoothstep(u: number): number {
@@ -856,6 +878,64 @@ function segmentVec2(a: Vec2Key, b: Vec2Key, t: number): Vec2 {
     out[i] = bezierAt(a.value[i], a.value[i] + ohV, b.value[i] + ihV, b.value[i], s);
   }
   return out;
+}
+
+/**
+ * Interpolate ONE quaternion segment a→b at absolute time t.
+ *
+ * TWO REGIMES, as the glTF spec has them, chosen by whether the segment stores handles:
+ *
+ *  - no stored handle → slerp, exactly as before this existed. The arc on the unit sphere,
+ *    'cubic' easing shaping the slerp parameter, 'constant' holding. Byte-identical.
+ *  - a stored handle → the spec's CUBICSPLINE rotation: a cubic over each of the four
+ *    components, normalized afterwards (`Specification.adoc:3615-3638`, normalize at `:3628`).
+ *    A tangent is a component velocity and the arc cannot carry one, which is why the file's
+ *    curve needs this road. Note what is NOT done here: the short-arc flip (`dot < 0 → -b`)
+ *    belongs to slerp. The file's own key signs ARE the curve, so flipping one would bend it —
+ *    three.js reads it the same way (`GLTFCubicSplineInterpolant`, `GLTFLoader.js:2074`), and
+ *    Blender sidesteps the question by dropping the tangents altogether
+ *    (`animation_node.py:67-69`).
+ */
+function segmentQuat(a: QuatKey, b: QuatKey, t: number): Quat {
+  const span = b.time - a.time;
+  const u = span > 0 ? (t - a.time) / span : 0;
+  if (b.easing === 'constant') return u >= 1 ? b.value : a.value;
+  if (!a.outHandle && !b.inHandle) {
+    const f = b.easing === 'cubic' ? smoothstep(u) : u;
+    return slerp(a.value, b.value, f);
+  }
+  // One shared x→s solve, then the same cubic per component — the vec path's shape
+  // (`segmentVec2`), over four components instead of two.
+  const ohTime = a.outHandle ? a.outHandle.time : span / 3;
+  const ihTime = b.inHandle ? b.inHandle.time : -span / 3;
+  const s = solveParamForX(a.time, a.time + ohTime, b.time + ihTime, b.time, t);
+  const out: number[] = [0, 0, 0, 0];
+  for (let i = 0; i < 4; i++) {
+    const delta = b.value[i] - a.value[i];
+    // A side with no handle falls back to its easing's auto-tangent, as the vec path does.
+    // Reached only when exactly one side is edited; a glTF CUBICSPLINE track writes both,
+    // except at the ends the spec leaves unused (`:3638`).
+    const ohV = a.outHandle ? a.outHandle.value[i] : autoValueOffset(a.easing, delta);
+    const ihV = b.inHandle ? b.inHandle.value[i] : autoValueOffset(b.easing, delta);
+    out[i] = bezierAt(a.value[i], a.value[i] + ohV, b.value[i] + ihV, b.value[i], s);
+  }
+  return normalizeQuat(out as unknown as Quat);
+}
+
+/**
+ * Sample a quaternion channel's keys at `t`. The quat sibling of {@link sampleVec3Keyframes},
+ * and the ONE road a quaternion curve is read through — the channel's evaluate closes over it
+ * (#1157).
+ */
+export function sampleQuatKeyframes(keys: readonly QuatKey[], t: number): Quat {
+  if (keys.length === 0) return [0, 0, 0, 1];
+  if (t <= keys[0].time) return keys[0].value;
+  const last = keys[keys.length - 1];
+  if (t >= last.time) return last.value;
+  for (let i = 0; i < keys.length - 1; i++) {
+    if (t >= keys[i].time && t <= keys[i + 1].time) return segmentQuat(keys[i], keys[i + 1], t);
+  }
+  return last.value;
 }
 
 /** A discrete (step) keyframe — a value held from its time until the next key.

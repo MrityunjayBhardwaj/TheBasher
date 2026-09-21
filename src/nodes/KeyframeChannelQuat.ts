@@ -7,9 +7,13 @@
 // previous key until the next and snaps (glTF STEP; Blender CONSTANT) — the one
 // scalar-channel interpolation that means the same thing on a rotation.
 //
-// V0.5 keeps quaternion handles deferred (no inHandle/outHandle in the
-// schema) — explicit quaternion bezier is rare in user-facing tools and
-// adds substantial math; revisit when a real use case appears.
+// A key MAY carry bézier handles (#1157). A glTF rotation sampled CUBICSPLINE
+// is a cubic over the four components, normalized after (spec Appendix C.5), and
+// a slerp arc cannot hold that tangent — so a segment whose handles are stored is
+// read as the spec defines it, and one with none slerps exactly as it always did.
+// The handles are the key's, not the importer's: whoever writes the key can carry
+// them, and keying an existing key keeps them (#1165). What a director still cannot
+// do is SEE them — the curve editor has no quaternion projection yet (#1176).
 //
 // P7.12 D-04 — function-of-time value shape (V24/V3 amended): no `time` input
 // socket; evaluate is pure over (params) and returns a value carrying
@@ -25,12 +29,23 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelQuatValue, Quat } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
-// slerp lives in quatMath now — the ONE shared unit-quat slerp, also consumed by
-// the NLA layer-fold reducer (foldChannel.ts). No drift (H40).
-import { slerp } from './quatMath';
+// The sampling itself lives in keyframeInterp, beside the scalar and vec samplers —
+// the ONE road a keyframe curve is read through, slerp and bézier both. The slerp it
+// uses is quatMath's, the same one the NLA layer-fold reducer (foldChannel.ts) folds
+// with. No second copy of either.
+import { sampleQuatKeyframes, type QuatKey } from './keyframeInterp';
 import { nameParam } from './paramWidget';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
+
+/** A handle is a (time, value) OFFSET from its key — the four components together,
+ *  so the key stays one thing. Same shape as the vec channels' handles. */
+const QuatHandleSchema = z
+  .object({
+    time: z.number(),
+    value: QuatSchema,
+  })
+  .optional();
 
 /** The interpolations a quaternion key takes. The Penner curves and handles stay
  *  on the scalar channels: they shape a value, and a slerp has no value axis. */
@@ -58,38 +73,19 @@ export const KeyframeChannelQuatParams = z.object({
         time: z.number().nonnegative(),
         value: QuatSchema,
         easing: z.enum(QUAT_EASINGS).default('cubic'),
+        // #1157 — optional, and absent keeps the slerp road byte-identical. A glTF
+        // CUBICSPLINE rotation lands its per-second tangents here as ±Δt/3 offsets,
+        // the same shape the vec channels store.
+        inHandle: QuatHandleSchema,
+        outHandle: QuatHandleSchema,
       }),
     )
     .default([]),
 });
 export type KeyframeChannelQuatParams = z.infer<typeof KeyframeChannelQuatParams>;
 
-function smoothstep(u: number): number {
-  return u * u * (3 - 2 * u);
-}
-
-function interp(a: Quat, b: Quat, u: number, easing: QuatEasing): Quat {
-  // Same rule as the scalar channels' easeFraction (keyframeInterp.ts).
-  if (easing === 'constant') return u >= 1 ? b : a;
-  const t = easing === 'cubic' ? smoothstep(u) : u;
-  return slerp(a, b, t);
-}
-
 function sample(keyframes: KeyframeChannelQuatParams['keyframes'], t: number): Quat {
-  if (keyframes.length === 0) return [0, 0, 0, 1];
-  if (t <= keyframes[0].time) return keyframes[0].value;
-  const last = keyframes[keyframes.length - 1];
-  if (t >= last.time) return last.value;
-  for (let i = 0; i < keyframes.length - 1; i++) {
-    const a = keyframes[i];
-    const b = keyframes[i + 1];
-    if (t >= a.time && t <= b.time) {
-      const span = b.time - a.time;
-      const u = span > 0 ? (t - a.time) / span : 0;
-      return interp(a.value, b.value, u, b.easing);
-    }
-  }
-  return last.value;
+  return sampleQuatKeyframes(keyframes as readonly QuatKey[], t);
 }
 
 export const KeyframeChannelQuatNode: NodeDefinition<
@@ -115,7 +111,7 @@ export const KeyframeChannelQuatNode: NodeDefinition<
     keyframes: 'channel',
   },
   evaluate(params): KeyframeChannelQuatValue {
-    // Sort ONCE in the closure; sample() slerps per call (function of time, V24).
+    // Sort ONCE in the closure; sample() interpolates per call (function of time, V24).
     const sorted = [...params.keyframes].sort((a, b) => a.time - b.time);
     return {
       kind: 'KeyframeChannel',
