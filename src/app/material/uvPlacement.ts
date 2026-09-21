@@ -77,3 +77,36 @@ export function placeTexture(
   tex.rotation = placement.rotation;
   tex.needsUpdate = true;
 }
+
+/**
+ * The same placement stated about another pivot (#1123): the offset that makes `placement` about `to`
+ * draw exactly what it drew about `from`. Tiling and rotation are unchanged.
+ *
+ * `Matrix3.setUvTransform` puts the pivot only in the translation column, so this is exact rather
+ * than an approximation. For each axis the pivot contributes `−s·(R·pivot) + pivot`, and the new
+ * offset is the old one plus the `from` contribution minus the `to` one. For tiling [1,1] and
+ * rotation 0 both contributions are exactly zero, so an identity placement comes back unchanged.
+ *
+ * This is how a file's convention stops existing at import. Blender's importer does the same with
+ * `KHR_texture_transform`: it restates the transform in its own Mapping-node convention
+ * (`io_scene_gltf2/blender/com/conversion.py:55-70`) rather than carrying glTF's.
+ */
+export function rebasePlacementPivot(
+  placement: UvPlacement,
+  from: readonly [number, number],
+  to: readonly [number, number],
+): UvPlacement {
+  const c = Math.cos(placement.rotation);
+  const s = Math.sin(placement.rotation);
+  const [sx, sy] = placement.tiling;
+  const shiftX = (p: readonly [number, number]) => -sx * (c * p[0] + s * p[1]) + p[0];
+  const shiftY = (p: readonly [number, number]) => -sy * (-s * p[0] + c * p[1]) + p[1];
+  return {
+    tiling: [placement.tiling[0], placement.tiling[1]],
+    offset: [
+      placement.offset[0] + shiftX(from) - shiftX(to),
+      placement.offset[1] + shiftY(from) - shiftY(to),
+    ],
+    rotation: placement.rotation,
+  };
+}

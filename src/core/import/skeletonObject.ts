@@ -11,15 +11,15 @@
 // wrapper node is minted, because the skeleton is already the right noun
 // (docs/OBJECT-DATA-SPLIT-DESIGN.md §0, "skeleton-as-data").
 //
-// SCALE. BVH declares no unit, and our own files run from 0.1 to 100 units against a
-// metre-scale scene, so a caller that does not know the unit asks for `normalise` and the
-// Object's `scale` is set so the rest pose stands at a human height. The height is measured
-// the way the source-rig overlay measures one — `armatureBounds` over `boneTransforms`, a
-// rig's transport root excluded — and it lands in `scale`, where it is visible and editable,
-// rather than being baked into the bones.
+// SCALE. The Object's `scale` is where a rig's size is set, visible and editable rather than
+// baked into the bones. A BVH import leaves it at 1 — the format declares no unit, and the
+// reference never guesses one from the content (#791). A caller that asks for `normalise`
+// gets the rig stood at a human height instead; the FBX road does, until it reads the unit
+// its format declares. The height is measured the way the source-rig overlay measures one —
+// `armatureBounds` over `boneTransforms`, a rig's transport root excluded.
 //
 // REF: src/viewport/referenceRig.ts (armatureBounds); src/nodes/ObjectNode.ts (the data
-//      socket); src/app/asset/importBvhFbx.ts (the caller); issue #1056.
+//      socket); src/app/asset/importBvhFbx.ts (the caller); issues #1056, #791.
 
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
@@ -113,7 +113,9 @@ export interface SkeletonObjectArgs {
   readonly clip?: AnimationClipValue | null;
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
-  /** True when the caller does not know the unit and the rig should stand at human height. */
+  /** True to stand the rig at human height — a GUESS from the content, so only for a road
+   *  that cannot yet read a unit its format declares (FBX). A BVH declares none and passes
+   *  false: its size is the director's to set (#791). */
   readonly normalise: boolean;
   /**
    * #1101 — the name the Object shows: its clip's, which is the file's base name on the import

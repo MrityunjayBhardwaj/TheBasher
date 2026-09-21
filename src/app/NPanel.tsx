@@ -81,11 +81,11 @@ import {
   slotAbsenceOf,
 } from './objectSlotAuthoring';
 import {
-  dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
+import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
@@ -2888,8 +2888,9 @@ function MaterialEditor({
           entirely, so each row is an absolute placement. Rows come from the IR's closed
           slot table rather than the bag's own key order, and each keeps a reset back to
           shared so a captured placement can always be undone. Values pass through
-          unconverted — this editor places about the UV origin, the convention they were
-          captured in (#551). */}
+          unconverted: they are the node's own, and the road that draws the node supplies
+          the pivot — the UV origin for a clone-road import, the centre for native mesh
+          data, which the native importer restates at import (#1123, #551). */}
       {perMapRows.map(({ slot: mapSlot, placement }) => (
         <UvTransformSection
           key={mapSlot}
@@ -3092,7 +3093,8 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   const currentFrame = useTimeStore((s) => s.frame);
   const animated = isApplySourceAnimated(state, nodeId, currentFrame);
   const onApply = (mask: ApplyMask) => {
-    void dispatchApplyTransform(nodeId, mask);
+    // #1130 — a refusal is shown, never dropped.
+    void applyTransformFromUi(nodeId, mask);
   };
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5" data-testid="npanel-apply-transform">

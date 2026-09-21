@@ -107,7 +107,11 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('importGltfFromOpfs', () => {
-  it('dispatches a GltfAsset addNode and bumps the refresh signal once', async () => {
+  // #1051 — this used to read `GltfAsset`, because a file whose only node has no mesh was refused
+  // natively ("an empty") and fell to the clone road. An empty is a Group now, so the row asserts
+  // its actual subject: ONE dispatch, the refresh signal bumped once, and no error. The clone road
+  // keeps its own row below, over a file the native model still cannot hold.
+  it('dispatches the import once and bumps the refresh signal once', async () => {
     const path = 'user-imports/cube/cube.glb';
     await currentStorage.write(path, staticGlb());
 
@@ -118,8 +122,8 @@ describe('importGltfFromOpfs', () => {
 
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     const opsArg = dispatchSpy.mock.calls[0][0];
-    const gltfAssetAdd = opsArg.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset');
-    expect(gltfAssetAdd).toBeDefined();
+    const added = opsArg.filter((o) => o.type === 'addNode');
+    expect(added.length, 'the import wrote nodes').toBeGreaterThan(0);
     expect(useImportRefreshStore.getState().tick).toBe(1);
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
   });

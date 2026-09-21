@@ -62,6 +62,13 @@ const BakedTextureRefSchema = z.object({
   minFilter: z.number().optional(),
 });
 
+/** Zod for one baked map's UV placement (#1136), about the centre pivot. */
+const BakedPlacementSchema = z.object({
+  tiling: z.tuple([z.number(), z.number()]),
+  offset: z.tuple([z.number(), z.number()]),
+  rotation: z.number(),
+});
+
 /** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */
 export const BakedMaterialSpecSchema = z.object({
   materialClass: z.enum(['standard', 'physical', 'basic']),
@@ -78,9 +85,23 @@ export const BakedMaterialSpecSchema = z.object({
   metalnessMap: BakedTextureRefSchema.nullable(),
   aoMap: BakedTextureRefSchema.nullable(),
   emissiveMap: BakedTextureRefSchema.nullable(),
+  // #1136 — declared, or zod strips it on every parse and the placement is lost on load.
+  mapPlacements: z
+    .object(
+      Object.fromEntries(
+        (['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const).map(
+          (slot) => [slot, BakedPlacementSchema.optional()],
+        ),
+      ),
+    )
+    .optional(),
+  // #1140 — declared, or zod strips them on every parse and the cutout and the side are lost.
+  alphaTest: z.number().optional(),
+  doubleSided: z.boolean().optional(),
   physical: z
     .object({
       clearcoat: z.number().optional(),
+      thickness: z.number().optional(),
       clearcoatRoughness: z.number().optional(),
       transmission: z.number().optional(),
       ior: z.number().optional(),

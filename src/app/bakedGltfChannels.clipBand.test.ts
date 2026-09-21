@@ -203,9 +203,14 @@ describe('#888 — the band reaches the clip through the skeleton edge', () => {
     expect(b!.position!(4)[1]).toBeCloseTo(8, 6);
   });
 
-  it('is deterministic when two clips share a rig — first by sorted id wins', () => {
-    // A second bind is refused by name today, so this tie-break should not
-    // fire. "Should not fire" is not "cannot", and key order is not an ordering.
+  it('with NO active clip, two clips sharing a rig resolve by sorted id', () => {
+    // This fixture binds neither clip ACTIVE, which is the shape of every project
+    // saved before #907 — so the id is what decides, and key order is not an
+    // ordering. The active case is the other half and lives where the rule does:
+    // `secondBind.test.ts` › "#907 — the last bind wins, whatever the ids sort
+    // like". Nothing refuses a second bind (`bindMotionToCharacter.ts`'s
+    // `BindMotionRefusal` has no such member), so this row covers a state a
+    // director can actually reach.
     const b = band(buildScene({ secondClip: true }))[BONES[0]];
     expect(b!.position!(1)[1]).toBeCloseTo(2, 6); // a_clip, not a_clip_zzz
   });

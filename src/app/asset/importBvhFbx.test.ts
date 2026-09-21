@@ -19,6 +19,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { useNotificationStore } from '../stores/notificationStore';
+import { useSelectionStore } from '../stores/selectionStore';
 
 let currentStorage: MemoryStorage = new MemoryStorage();
 vi.mock('../boot', () => ({
@@ -32,6 +33,7 @@ import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
 import { composeProject, loadProject, saveProject } from '../../core/project/io';
+import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -71,6 +73,46 @@ function seedTime(): void {
     },
     outputs: { scene: { node: 'n_scene', socket: 'out' } },
   });
+}
+
+/** A glTF character with a two-bone rig the synthetic BVH's names match — something to bind to. */
+function seedCharacter(): void {
+  const names = ['Hips', 'Spine'];
+  let s = useDagStore.getState().state;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_char',
+    nodeType: 'GltfAsset',
+    params: {
+      assetRef: 'assets/char.glb',
+      nodeNameMap: {},
+      childHierarchy: {},
+      skins: [
+        {
+          jointKeys: names,
+          bindTRS: names.map(() => ({
+            position: [0, 0, 0] as [number, number, number],
+            rotation: [0, 0, 0] as [number, number, number],
+            scale: [1, 1, 1] as [number, number, number],
+          })),
+          parentJointIndex: [-1, 0],
+          inverseBindMatrices: [],
+        },
+      ],
+    },
+  }).next;
+  s = applyOp(s, {
+    type: 'addNode',
+    nodeId: 'n_char_skel',
+    nodeType: 'GltfSkeleton',
+    params: { skinIndex: 0 },
+  }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'n_char', socket: 'out' },
+    to: { node: 'n_char_skel', socket: 'asset' },
+  }).next;
+  useDagStore.getState().hydrate(s);
 }
 
 beforeEach(() => {
@@ -307,42 +349,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     // The row the old "only when nothing binds" rule fails. A character is seeded and the
     // bind's own choice is asserted to pick it FIRST, so this is not an Object added to a
     // scene that had nothing to bind to.
-    const names = ['Hips', 'Spine'];
-    let s = useDagStore.getState().state;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_char',
-      nodeType: 'GltfAsset',
-      params: {
-        assetRef: 'assets/char.glb',
-        nodeNameMap: {},
-        childHierarchy: {},
-        skins: [
-          {
-            jointKeys: names,
-            bindTRS: names.map(() => ({
-              position: [0, 0, 0] as [number, number, number],
-              rotation: [0, 0, 0] as [number, number, number],
-              scale: [1, 1, 1] as [number, number, number],
-            })),
-            parentJointIndex: [-1, 0],
-            inverseBindMatrices: [],
-          },
-        ],
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'n_char_skel',
-      nodeType: 'GltfSkeleton',
-      params: { skinIndex: 0 },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'n_char', socket: 'out' },
-      to: { node: 'n_char_skel', socket: 'asset' },
-    }).next;
-    useDagStore.getState().hydrate(s);
+    seedCharacter();
     expect(
       chooseMotionTarget(useDagStore.getState().state, null, 'imported', 'skel_not_in_graph').ok,
     ).toBe(true);
@@ -379,6 +386,67 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     expect(useDagStore.getState().state.nodes[`${result!.skeletonId}_object`]?.meta?.name).toBe(
       'rig',
     );
+  });
+});
+
+// #791 — BVH declares no unit, so the rig stands at file scale and the director sets it. The
+// reference offers a scale defaulted to 1.0 and never guesses (Blender's `io_anim_bvh`), then
+// selects what it imported. The synthetic clip stands ~1 unit tall, so the old fit would have
+// scaled it by ~1.8: a scale of exactly 1 separates "no guess" from "guessed".
+describe('#791 — a dropped BVH stands at file scale, and its Object is selected', () => {
+  const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
+  const objectScale = (skeletonId: string): number[] | undefined =>
+    (useDagStore.getState().state.nodes[`${skeletonId}_object`]?.params as { scale?: number[] })
+      ?.scale;
+
+  beforeEach(() => {
+    // The bind runs through `mutator.animation.retarget`; without the catalogue it is refused,
+    // and a refused bind is the no-character case — the row about a bind that TAKES would
+    // then pass or fail for the wrong reason.
+    __resetMutatorRegistryForTests();
+    registerAllMutators();
+    useSelectionStore.getState().select(null);
+  });
+
+  it("the Object that stands a BVH is at scale 1 — the file's own size", async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const result = await importBvhFromOpfs(path);
+    expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
+  });
+
+  it('an FBX still gets the fit — its declared unit is not read yet, so 1 would be a guess too', async () => {
+    const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+    await currentStorage.write(fbxPath, RIG_FBX_BYTES);
+    const result = await importFbxFromOpfs(fbxPath);
+    expect(objectScale(result!.skeletonId)?.[0]).not.toBe(1);
+  });
+
+  it('with nothing to bind to, the drop selects the Object, so its Scale is in the inspector', async () => {
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    await routeImportByExtension(path);
+    const objects = Object.values(useDagStore.getState().state.nodes).filter(
+      (n) => n.type === 'Object',
+    );
+    expect(objects).toHaveLength(1);
+    expect(useSelectionStore.getState().selectedNodeId).toBe(objects[0].id);
+  });
+
+  it('when a character takes the motion, the selection is left where the bind found it', async () => {
+    seedCharacter();
+    useSelectionStore.getState().select('n_char');
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    await routeImportByExtension(path);
+    // The bind took it — the character's clip exists — so the stand-in was hidden, not selected.
+    expect(
+      Object.values(useDagStore.getState().state.nodes).some((n) => n.type === 'RetargetClip'),
+    ).toBe(true);
+    expect(useSelectionStore.getState().selectedNodeId).toBe('n_char');
+  });
+
+  it('an import that fails selects nothing — there is no Object to show', async () => {
+    await currentStorage.write(path, new TextEncoder().encode('not a bvh'));
+    await routeImportByExtension(path);
+    expect(useSelectionStore.getState().selectedNodeId).toBeNull();
   });
 });
 

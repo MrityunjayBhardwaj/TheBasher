@@ -7,11 +7,13 @@
 import { useFrame, useThree } from '@react-three/fiber';
 import { useEffect } from 'react';
 import * as THREE from 'three';
-import { useThreeRef } from './threeRef';
+import { useThreeRef, type DollyLimits } from './threeRef';
 
 export function ThreeBridge() {
   const camera = useThree((s) => s.camera);
-  const controls = useThree((s) => s.controls) as unknown as { target?: THREE.Vector3 } | null;
+  const controls = useThree((s) => s.controls) as unknown as
+    | ({ target?: THREE.Vector3 } & Partial<DollyLimits>)
+    | null;
   const gl = useThree((s) => s.gl);
   const scene = useThree((s) => s.scene);
   // #168: push the live renderer + scene root once so the out-of-Canvas
@@ -22,7 +24,15 @@ export function ThreeBridge() {
     return () => useThreeRef.getState().setRenderRefs(null, null);
   }, [gl, scene]);
   useFrame(() => {
-    useThreeRef.getState().set(camera, controls?.target ?? null);
+    // The controls object itself carries the dolly range, so passing it through lets a
+    // framing gesture move the range with the camera (#1179).
+    const limits =
+      controls &&
+      typeof controls.minDistance === 'number' &&
+      typeof controls.maxDistance === 'number'
+        ? (controls as DollyLimits)
+        : null;
+    useThreeRef.getState().set(camera, controls?.target ?? null, limits);
   });
   return null;
 }

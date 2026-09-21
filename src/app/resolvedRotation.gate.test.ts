@@ -342,7 +342,8 @@ describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', 
     expect(angleBetween(shown(qState, qOps), tq(Q))).toBeGreaterThan(15);
   });
 
-  it("Apply's fallback for an Object the scene walk misses (nested) reads the quaternion", () => {
+  /** An Object under a Group, the Group in the scene or (`inScene: false`) hanging off nothing. */
+  function nestedKid(inScene: boolean): DagState {
     let state = buildDefaultDagState();
     state = run(state, [
       { type: 'addNode', nodeId: 'g', nodeType: 'Group', params: {} },
@@ -357,15 +358,33 @@ describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', 
         from: { node: 'kid', socket: 'out' },
         to: { node: 'g', socket: 'children' },
       },
-      {
-        type: 'connect',
-        from: { node: 'g', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
+      ...((inScene
+        ? [
+            {
+              type: 'connect',
+              from: { node: 'g', socket: 'out' },
+              to: { node: 'n_scene', socket: 'children' },
+            },
+          ]
+        : []) as Op[]),
     ]);
-    state = quaternionMode('kid', Q, state);
-    // The precondition that makes this the FALLBACK: the walk does not reach a nested Object.
+    return quaternionMode('kid', Q, state);
+  }
+
+  it("Apply's fallback for an Object the scene walk misses reads the quaternion", () => {
+    const state = nestedKid(false);
+    // The precondition that makes this the FALLBACK: nothing in the scene holds the Group.
     expect(resolveEvaluatedTransform(state, 'kid', at(0) as never)).toBeNull();
+    const mesh = resolveEvaluatedMesh(state, 'kid', at(0) as never) as unknown as {
+      transform: { rotation: Vec3 };
+    } | null;
+    expect(angleBetween(fromDeg(mesh!.transform.rotation), tq(Q))).toBeLessThan(1e-5);
+  });
+
+  it('a nested Object in the scene is read by the walk (#268), and the walk reads the quaternion', () => {
+    const state = nestedKid(true);
+    const walked = resolveEvaluatedTransform(state, 'kid', at(0) as never);
+    expect(angleBetween(fromDeg(walked!.rotation!), tq(Q))).toBeLessThan(1e-5);
     const mesh = resolveEvaluatedMesh(state, 'kid', at(0) as never) as unknown as {
       transform: { rotation: Vec3 };
     } | null;

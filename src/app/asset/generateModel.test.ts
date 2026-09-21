@@ -144,9 +144,14 @@ describe("the identical road — the phase's discriminating observation", () => 
     seedScene();
     const before = new Set(Object.keys(useDagStore.getState().state.nodes));
     await generateModelFromText(PROMPT);
-    const humanShape = Object.values(useDagStore.getState().state.nodes)
-      .filter((n) => !before.has(n.id))
+    const added = Object.values(useDagStore.getState().state.nodes).filter(
+      (n) => !before.has(n.id),
+    );
+    const humanShape = added
       .map((n) => `addNode:${n.type}`)
+      // #1137 — a name the import wrote, one `setMeta` per named node. Read off the nodes rather
+      // than assumed, so a director's import that lost its names still diverges from the agent's.
+      .concat(added.filter((n) => n.meta?.name !== undefined).map(() => 'setMeta'))
       // The import's connects, which the node table cannot report (a connect leaves no
       // node behind). THREE for a native import (#1049): `data → object.data`,
       // `object → group.children`, `group → scene.children`. The count is `1 + two per

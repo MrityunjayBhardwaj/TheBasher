@@ -544,10 +544,12 @@ export interface ClearBakedMotionArgs {
  * Clear a whole character's baked motion in ONE gesture (#813).
  *
  * The per-bone revert (`dispatchRevertGltfChannel`) has existed since #121, and
- * the second-clip refusal tells a director to "remove the existing baked channels
- * first" — an instruction that, on a 22-bone rig, meant finding and clicking that
- * button 22 times. This is the same act at the granularity the refusal asks for:
- * a fan-out, not a new mechanism. No new node type, no new id scheme.
+ * the second-clip refusal USED TO tell a director to "remove the existing baked
+ * channels first" — an instruction that, on a 22-bone rig, meant finding and
+ * clicking that button 22 times. That refusal is gone (#889 slice 3 removed the
+ * eager bake, so a second bind has nothing to collide with); this gesture is not,
+ * because clearing a character's motion in one act is worth having on its own.
+ * A fan-out, not a new mechanism. No new node type, no new id scheme.
  *
  * 🔑 WHAT GETS DELETED IS WHAT THE RENDERER PLAYS. The id set comes from
  * `bakedChannelNodeIdsForAsset`, which shares its membership predicate with the
