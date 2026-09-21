@@ -10,7 +10,7 @@
 // `soma-walk.bvh` rather than the two-frame `walk.bvh`: a real walk moves enough between two
 // playhead times that "the pose follows the playhead" cannot pass on noise.
 
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface DagNode {
   type: string;
@@ -31,6 +31,7 @@ interface Win {
   __basher_gltf_skin?: () => unknown;
   __basher_time: { getState: () => { setTime: (seconds: number) => void } };
   __basher_selection: { getState: () => { selectedNodeId: string | null } };
+  __basher_view_camera?: () => { position: number[]; direction: number[] } | null;
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_armature?: {
     armatures: number;
@@ -156,6 +157,47 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
   await expect(scaleX).toHaveValue('0.01');
   await expect.poll(drawnHeight).toBeGreaterThan(1.4);
   expect(await drawnHeight()).toBeLessThan(2.1);
+});
+
+// #1179 — F on the dropped rig frames it. Its bones are drawn outside the Object's group, so
+// before this the fit found nothing and the camera did not move at all — at file scale (#791)
+// the rig stands ~161 units tall and that silence was the director's first impression.
+test('#1179 — F frames a dropped rig by the bones it draws', async ({ page }) => {
+  await settleViewFit(page);
+  const objectId = await importWalkAlone(page);
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as Win).__basher_selection.getState().selectedNodeId),
+    )
+    .toBe(objectId);
+  const before = await page.evaluate(() => (window as unknown as Win).__basher_view_camera!());
+
+  await page.keyboard.press('f');
+
+  // The drawn bones, as the helper publishes them: the fit must look at THEIR centre.
+  const heads = (await boneMatrices(page)).map((m) => [m[12], m[13], m[14]]);
+  const lo = [0, 1, 2].map((i) => Math.min(...heads.map((h) => h[i])));
+  const hi = [0, 1, 2].map((i) => Math.max(...heads.map((h) => h[i])));
+  const centre = [0, 1, 2].map((i) => (lo[i] + hi[i]) / 2);
+  const extent = Math.max(...[0, 1, 2].map((i) => hi[i] - lo[i]));
+
+  await expect
+    .poll(
+      async () => {
+        const cam = await page.evaluate(() => (window as unknown as Win).__basher_view_camera!());
+        return Math.hypot(...cam!.position.map((p, i) => p - before!.position[i]));
+      },
+      { message: 'F left the camera where it was — the rig had no bounds to fit' },
+    )
+    .toBeGreaterThan(10);
+  const cam = (await page.evaluate(() => (window as unknown as Win).__basher_view_camera!()))!;
+  const toCentre = centre.map((c, i) => c - cam.position[i]);
+  const dist = Math.hypot(...toCentre);
+  const cos = toCentre.reduce((acc, v, i) => acc + (v / dist) * cam.direction[i], 0);
+  expect(cos, 'the camera looks at the rig').toBeGreaterThan(0.99);
+  // Stood back by the rig's own size: the whole ~161-unit figure is in view, not 3 m of it.
+  expect(dist).toBeGreaterThan(extent * 0.5);
+  expect(dist).toBeLessThan(extent * 5);
 });
 
 test('#1056 — the skeleton Object is posed at the playhead', async ({ page }) => {

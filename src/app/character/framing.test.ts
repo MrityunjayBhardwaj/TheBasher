@@ -32,6 +32,11 @@ import { anchorForNode, applyFit, boundsForNode, frameSelected } from './framing
 import { useSelectionStore } from '../stores/selectionStore';
 import { useThreeRef } from './threeRef';
 import type { DagState } from '../../core/dag/state';
+import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
+import { buildDefaultDagState } from '../../core/project/default';
+import type { BoneSpec } from '../../nodes/types';
+import { useTimeStore } from '../stores/timeStore';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -213,5 +218,149 @@ describe('#969 — the framing gesture fits what the subject actually is', () =>
 
     expect(applyFit(boundsForNode('n_box')!)).toBe(true);
     expect(cam.zoom, 'the ortho view zoomed to the subject').toBeGreaterThan(1);
+  });
+});
+
+// #1179 — A SKELETON OBJECT IS FRAMED BY ITS DRAWN BONES
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Measured in the running app: F on a dropped BVH's Object left the camera exactly where it was.
+// The Object's group mounts EMPTY — its bones are chrome, drawn by the armature helper outside
+// it — so the scene walk found nothing, and the anchor road re-centred on the Object's origin,
+// which is where the camera already pointed. Since #791 a centimetre clip stands ~168 units
+// tall, so that silence is the director's first impression.
+//
+// GROUNDED in the reference (Blender 5.1.1, measured): View Selected on an armature Object fits
+// the POSED bones, heads and tails, carried by the Object's transform — one bone
+// (0,0,0)→(0,0,1) posed 90° about X, at (5,0,0) scaled 100×, centres on (5,−50,0).
+describe('#1179 — Frame Selected fits a skeleton Object by the bones it draws', () => {
+  const RIG_BVH = `HIERARCHY
+ROOT Hips
+{
+  OFFSET 0.0 1.0 0.0
+  CHANNELS 6 Xposition Yposition Zposition Xrotation Yrotation Zrotation
+  JOINT Spine
+  {
+    OFFSET 0.0 0.5 0.0
+    CHANNELS 3 Xrotation Yrotation Zrotation
+    End Site
+    {
+      OFFSET 0.0 0.5 0.0
+    }
+  }
+}
+MOTION
+Frames: 2
+Frame Time: 0.0333333
+0.0 1.0 0.0 0.0 0.0 90.0 0.0 0.0 0.0
+0.0 1.0 0.0 0.0 0.0 90.0 0.0 0.0 0.0
+`;
+
+  /** The default project with one BVH and its skeleton Object at `scale` — the graph the viewport
+   *  resolves world transforms through — and a scene holding the EMPTY group the app mounts. */
+  function rigAt(scale: number, { withClip = true } = {}): void {
+    let s = buildDefaultDagState();
+    const sceneNodeId = s.outputs.scene!.node;
+    const chain = buildBvhImportOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of chain.ops) s = applyOp(s, op).next;
+    const bones = (s.nodes.sk.params as { bones: BoneSpec[] }).bones;
+    const { ops } = buildSkeletonObjectOps({
+      skeletonId: 'sk',
+      bones,
+      sceneNodeId,
+      normalise: false,
+      name: 'rig',
+      clipId: 'clip',
+    });
+    for (const op of ops) s = applyOp(s, op).next;
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'sk_object',
+      paramPath: 'scale',
+      value: [scale, scale, scale],
+    }).next;
+    if (!withClip) s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
+    useDagStore.setState({ state: s });
+    const scene = new THREE.Scene();
+    const group = new THREE.Group();
+    group.name = 'sk_object';
+    scene.add(group);
+    useThreeRef.setState({ scene });
+    useTimeStore.setState({ seconds: 0 });
+  }
+
+  it('an empty group is not "nothing drawn": the bones give the bounds', () => {
+    rigAt(1);
+    const b = boundsForNode('sk_object');
+    expect(b, 'the empty group alone measured null — this is the silence').not.toBeNull();
+    expect(b!.radius).toBeGreaterThan(0);
+  });
+
+  it('the bounds are the POSED bones, not the rest pose', () => {
+    // Frame 0 turns the rig 90° about Z at the hips: the spine lies along −X instead of +Y.
+    rigAt(1);
+    const posed = boundsForNode('sk_object')!;
+    rigAt(1, { withClip: false });
+    const rest = boundsForNode('sk_object')!;
+    expect(rest.center[0], 'at rest the rig stands on the Y axis').toBeCloseTo(0, 6);
+    expect(posed.center[0], 'posed, it lies toward −X').toBeLessThan(-0.2);
+    expect(posed.center[1]).toBeLessThan(rest.center[1]);
+  });
+
+  it('the Object carries them: at scale 100 the bounds are 100× larger and 100× further out', () => {
+    rigAt(1);
+    const one = boundsForNode('sk_object')!;
+    rigAt(100);
+    const hundred = boundsForNode('sk_object')!;
+    expect(hundred.radius / one.radius).toBeCloseTo(100, 6);
+    for (let i = 0; i < 3; i++) expect(hundred.center[i]).toBeCloseTo(one.center[i] * 100, 4);
+  });
+
+  it('F moves the camera onto a file-scale rig — it no longer sits where it was', () => {
+    rigAt(100);
+    const target = new THREE.Vector3(0, 0, 0);
+    const cam = new THREE.PerspectiveCamera(50, 16 / 9, 0.01, 500);
+    cam.position.set(1.88, 1.25, 1.88);
+    useThreeRef.setState({ camera: cam, controlsTarget: target });
+    useSelectionStore.setState({ primaryNodeId: 'sk_object' } as never);
+
+    const b = boundsForNode('sk_object')!;
+    expect(frameSelected()).toBe(true);
+    expect(
+      target
+        .toArray()
+        .map((v, i) => v - b.center[i])
+        .every((d) => Math.abs(d) < 1e-6),
+    ).toBe(true);
+    expect(cam.position.distanceTo(target), 'dollied out to the rig').toBeGreaterThan(b.radius);
+  });
+
+  it("the fit moves the controls' dolly range with it, so the next frame cannot clamp it back", () => {
+    // The range the boot fit left for a 1 m cube — measured in the app: (2.94 + 0.866) × 10.
+    rigAt(100);
+    const limits = { minDistance: 0.01, maxDistance: 38.08 };
+    const target = new THREE.Vector3(0, 0, 0);
+    const cam = new THREE.PerspectiveCamera(50, 16 / 9, 0.01, 500);
+    cam.position.set(1.88, 1.25, 1.88);
+    useThreeRef.setState({ camera: cam, controlsTarget: target, dollyLimits: limits });
+    expect(applyFit(boundsForNode('sk_object')!)).toBe(true);
+    const dist = cam.position.distanceTo(target);
+    expect(dist, 'the fit stands back past the old limit').toBeGreaterThan(38.08);
+    expect(limits.maxDistance, 'and the range now admits where it stands').toBeGreaterThanOrEqual(
+      dist,
+    );
+    expect(limits.minDistance).toBeLessThanOrEqual(dist);
+  });
+
+  it('an ordinary Object still measures its meshes only — the bones are not invented for it', () => {
+    rigAt(1);
+    const scene = new THREE.Scene();
+    const box = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2));
+    box.name = 'n_box';
+    scene.add(box);
+    useThreeRef.setState({ scene });
+    const b = boundsForNode('n_box')!;
+    expect(b.center).toEqual([0, 0, 0]);
+    expect(b.radius).toBeCloseTo(Math.sqrt(3), 6);
   });
 });

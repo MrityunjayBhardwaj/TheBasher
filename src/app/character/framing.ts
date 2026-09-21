@@ -14,9 +14,11 @@ import * as THREE from 'three';
 import { evaluate } from '../../core/dag/evaluator';
 import { fitViewToSphere, orthoZoomForView } from '../../viewport/cameraFit';
 import { computeSceneBounds, type SceneBounds } from '../../viewport/sceneBounds';
+import { boneFramesBounds, skeletonObjectFrames } from '../../viewport/skeletonObjectPose';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
 import type { CharacterValue } from '../../nodes/types';
+import { collectSkeletonObjects } from '../skeletonObjects';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { useThreeRef } from './threeRef';
@@ -67,7 +69,8 @@ export function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
 
 /** World-space bounding sphere of what a node actually DRAWS, or null when it
  *  draws nothing measurable (a light, a camera, an empty group, or a node whose
- *  object has not mounted yet).
+ *  object has not mounted yet). A skeleton Object's bones count, though they are
+ *  drawn as chrome outside its group (#1179).
  *
  *  Read off the live scene by object name — `SceneFromDAG` names each object
  *  for its node id, which is the same lookup `__basher_mesh_world_bounds` uses —
@@ -79,10 +82,32 @@ export function anchorForNode(nodeId: NodeId): THREE.Vector3 | null {
  *  and that has to be assertable without a camera. */
 export function boundsForNode(nodeId: NodeId): SceneBounds | null {
   const scene = useThreeRef.getState().scene;
-  if (!scene) return null;
-  const object = scene.getObjectByName(nodeId);
-  if (!object) return null;
-  return computeSceneBounds(object);
+  const object = scene?.getObjectByName(nodeId);
+  return unionBounds(object ? computeSceneBounds(object) : null, skeletonObjectBounds(nodeId));
+}
+
+/** #1179 — the drawn bones of a skeleton Object, or null when the node is not one.
+ *
+ *  Its bones are editor chrome, drawn by the armature helper OUTSIDE the Object's group, so
+ *  the scene walk above finds an empty group and the fit had nothing to fit: `F` fell through
+ *  to the anchor, the Object's own origin, which is where the camera already pointed. The
+ *  bones are measured with the helper's own function at the playhead, so what is fitted is
+ *  what is drawn — posed, heads and tails, in world space, as the reference fits an armature. */
+function skeletonObjectBounds(nodeId: NodeId): SceneBounds | null {
+  const state = useDagStore.getState().state;
+  if (state.nodes[nodeId]?.type !== 'Object') return null;
+  const rig = collectSkeletonObjects(state).find((o) => o.id === nodeId);
+  if (!rig) return null;
+  return boneFramesBounds(skeletonObjectFrames(rig, useTimeStore.getState().seconds));
+}
+
+/** The sphere enclosing both, or whichever one exists. */
+function unionBounds(a: SceneBounds | null, b: SceneBounds | null): SceneBounds | null {
+  if (!a || !b) return a ?? b;
+  const sphere = new THREE.Sphere(new THREE.Vector3(...a.center), a.radius).union(
+    new THREE.Sphere(new THREE.Vector3(...b.center), b.radius),
+  );
+  return { center: [sphere.center.x, sphere.center.y, sphere.center.z], radius: sphere.radius };
 }
 
 /** Frame a bounding sphere: re-centre on it AND set the distance so it fills
@@ -127,6 +152,18 @@ export function applyFit(bounds: SceneBounds): boolean {
   cam.position.set(fit.position[0], fit.position[1], fit.position[2]);
   if (ctrlTarget) ctrlTarget.copy(center);
   cam.lookAt(center);
+
+  // #1179 — move the dolly range WITH the camera. OrbitControls clamps the distance into
+  // [minDistance, maxDistance] on its next update, and that range was last set by the boot
+  // fit for whatever the scene held then: fitting a 161-unit rig after booting on a 1 m cube
+  // was measured landing at 38.08 = (2.94 + 0.866) × 10, the cube's limit, not the rig's fit.
+  // Same rule the boot fit applies: the range is the fit's, and never excludes where the
+  // camera now stands.
+  const limits = useThreeRef.getState().dollyLimits;
+  if (limits) {
+    limits.minDistance = Math.min(fit.minDistance, fit.distance);
+    limits.maxDistance = Math.max(fit.maxDistance, fit.distance);
+  }
 
   // An ORTHOGRAPHIC editor view is not framed by position at all — its frustum
   // extent is `zoom` (`orthoZoomForView`, the same math the boot fit uses), so
