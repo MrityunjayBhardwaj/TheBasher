@@ -312,6 +312,9 @@ export interface QuatKey {
   readonly time: number;
   readonly value: Quat;
   readonly easing: Easing;
+  /** A quat key has no handle TYPE — its handles are stored, never computed. Typed `never` so
+   *  code shared with the scalar/vec keys can read the field and always finds it absent. */
+  readonly handleType?: never;
   readonly inHandle?: QuatHandle;
   readonly outHandle?: QuatHandle;
 }
@@ -599,7 +602,7 @@ function correctBezpart(
 }
 
 /** A key with stored bézier handles: {@link ScalarKey}, {@link Vec2Key} or {@link Vec3Key}. */
-export type HandledKey = ScalarKey | Vec2Key | Vec3Key;
+export type HandledKey = ScalarKey | Vec2Key | Vec3Key | QuatKey;
 
 const componentsOf = (v: number | readonly number[]): number[] =>
   typeof v === 'number' ? [v] : [...v];
@@ -904,22 +907,63 @@ function segmentQuat(a: QuatKey, b: QuatKey, t: number): Quat {
     const f = b.easing === 'cubic' ? smoothstep(u) : u;
     return slerp(a.value, b.value, f);
   }
-  // One shared x→s solve, then the same cubic per component — the vec path's shape
-  // (`segmentVec2`), over four components instead of two.
+  return normalizeQuat(rawQuatCubic(a, b, t));
+}
+
+/**
+ * The handled segment's cubic at `t`, per component and NOT normalized — the point the curve
+ * actually passes through before {@link segmentQuat} puts it on the unit sphere.
+ *
+ * One shared x→s solve, then the same cubic per component: the vec path's shape (`segmentVec2`),
+ * over four components instead of two. A side with no handle falls back to its easing's
+ * auto-tangent, as the vec path does — reached only when exactly one side is edited; a glTF
+ * CUBICSPLINE track writes both, except at the ends the spec leaves unused (`:3638`).
+ */
+function rawQuatCubic(a: QuatKey, b: QuatKey, t: number): Quat {
+  const span = b.time - a.time;
   const ohTime = a.outHandle ? a.outHandle.time : span / 3;
   const ihTime = b.inHandle ? b.inHandle.time : -span / 3;
   const s = solveParamForX(a.time, a.time + ohTime, b.time + ihTime, b.time, t);
   const out: number[] = [0, 0, 0, 0];
   for (let i = 0; i < 4; i++) {
     const delta = b.value[i] - a.value[i];
-    // A side with no handle falls back to its easing's auto-tangent, as the vec path does.
-    // Reached only when exactly one side is edited; a glTF CUBICSPLINE track writes both,
-    // except at the ends the spec leaves unused (`:3638`).
     const ohV = a.outHandle ? a.outHandle.value[i] : autoValueOffset(a.easing, delta);
     const ihV = b.inHandle ? b.inHandle.value[i] : autoValueOffset(b.easing, delta);
     out[i] = bezierAt(a.value[i], a.value[i] + ohV, b.value[i] + ihV, b.value[i], s);
   }
-  return normalizeQuat(out as unknown as Quat);
+  return out as unknown as Quat;
+}
+
+/**
+ * #1177 — the value a new quaternion key STORES when it lands inside a handled segment.
+ *
+ * Blender keeps a quaternion as four independent F-curves and keys each from the property's
+ * value as it stands (animrig `keyframing.cc` `get_keyframe_values` → `get_rna_values`, one
+ * insert per array index), and that value is the curves' RAW evaluation — not unit: measured in
+ * 5.1.1, |q| = 0.797 mid-segment, and the I key stored exactly that. Normalizing happens only
+ * where the rotation is used. Its split then keeps every component curve's shape, so keying the
+ * rotation a curve already has moves it by nothing (0.0° measured).
+ *
+ * Our channel normalizes when it samples, so the value a keying call hands in is the UNIT
+ * rotation, not the raw point the split cuts at. This puts it back on the curve's ray: the same
+ * rotation — unchanged once normalized — at the raw curve's magnitude and in its hemisphere (q and
+ * −q are one rotation). Keying the curve's own rotation therefore stores exactly the raw point,
+ * as Blender does; a different rotation is stored at the magnitude the curve has there, so it
+ * reshapes only the two segments beside it and never kinks the curve's length.
+ *
+ * Returns the value unchanged where there is no handled cubic to sit on (a slerp or held
+ * segment, or a time outside it).
+ */
+export function quatValueOnCurve(a: QuatKey, b: QuatKey, value: Quat, t: number): Quat {
+  if (!(a.time < t && t < b.time)) return value;
+  if (b.easing === 'constant' || (!a.outHandle && !b.inHandle)) return value;
+  const raw = rawQuatCubic(a, b, t);
+  const len = Math.hypot(raw[0], raw[1], raw[2], raw[3]);
+  const vLen = Math.hypot(value[0], value[1], value[2], value[3]);
+  if (len === 0 || vLen === 0) return value;
+  const dot = value[0] * raw[0] + value[1] * raw[1] + value[2] * raw[2] + value[3] * raw[3];
+  const k = ((dot < 0 ? -1 : 1) * len) / vLen;
+  return [value[0] * k, value[1] * k, value[2] * k, value[3] * k];
 }
 
 /**

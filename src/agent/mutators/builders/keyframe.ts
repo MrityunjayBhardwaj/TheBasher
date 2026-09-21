@@ -24,6 +24,8 @@ import {
   type EaseDir,
   type HandleType,
   type HandledKey,
+  type QuatKey,
+  quatValueOnCurve,
   splitSegmentForKey,
 } from '../../../nodes/keyframeInterp';
 import {
@@ -73,11 +75,14 @@ const VALUE_SHAPE_BY_TYPE: Record<string, (v: unknown) => boolean> = {
   KeyframeChannelImage: (v) => typeof v === 'string',
 };
 
-/** The channels whose keys carry bézier handles — the ones an insert can split (#1165). */
+/** The channels whose keys carry bézier handles — the ones an insert can split (#1165). A
+ *  quaternion joined when its keys gained handles (#1157), split per component the way
+ *  Blender splits its four rotation F-curves (#1177). */
 const HANDLED_CHANNEL_TYPES: ReadonlySet<string> = new Set([
   'KeyframeChannelNumber',
   'KeyframeChannelVec2',
   'KeyframeChannelVec3',
+  'KeyframeChannelQuat',
 ]);
 
 const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
@@ -221,6 +226,17 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
       if (HANDLED_CHANNEL_TYPES.has(view.type) && i > 0 && i < next.length - 1) {
         const prev = next[i - 1] as HandledKey;
         const after = next[i + 1] as HandledKey;
+        // #1177 — a quaternion arrives as the UNIT rotation the channel samples, but the split cuts
+        // the curve at its raw, un-normalized point. Put the rotation back on the curve's ray first
+        // so keying the rotation a curve already has stores that raw point, as Blender's I key does.
+        if (view.type === 'KeyframeChannelQuat') {
+          (key as { value: unknown }).value = quatValueOnCurve(
+            prev as QuatKey,
+            after as QuatKey,
+            key.value as QuatKey['value'],
+            key.time,
+          );
+        }
         const split = splitSegmentForKey(prev, after, key as HandledKey);
         if (split) next.splice(i - 1, 3, split.a as Key, split.key as Key, split.b as Key);
       }
