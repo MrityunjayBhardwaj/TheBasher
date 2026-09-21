@@ -12,7 +12,8 @@
 //
 // Also observed: the file is native (nothing reads it after import), the animation survives save and
 // reload, a file this road cannot hold is refused by name, and an Auto-Key on the imported cube
-// edits the channel the import wrote rather than minting a second one.
+// edits the channel the import wrote rather than minting a second one. A CUBICSPLINE ROTATION is
+// no longer among the refusals — it imports native, observed in p1157-cubicspline-rotation.spec.ts.
 //
 // REF: src/core/import/nativeGltfClip.ts, src/core/import/nativeGltfImport.ts; glTF 2.0
 //      Specification.adoc Appendix C; Blender io_scene_gltf2/blender/imp/animation_node.py;
@@ -288,8 +289,10 @@ test('#1051 — a clip this road cannot hold is refused by name, and the file st
     if (m.type() === 'warning') warnings.push(m.text());
   });
   await openFresh(page);
-  // A second clip (#1154), then a CUBICSPLINE rotation (#1157): each takes the file's-copy road
-  // and the notice says why.
+  // A second clip (#1154) takes the file's-copy road and the notice says why. A CUBICSPLINE
+  // rotation used to be the other half of this row; it imports native now (#1157, observed in
+  // p1157-cubicspline-rotation.spec.ts), so what is left of that case is the spec's own count
+  // rule: three values per key (`:3615`), and a file that breaks it is malformed.
   await ingest(page, 'json.animations.push({ ...json.animations[0], name: "Drop" });', 'p1051-two');
   await expect
     .poll(() => warnings.find((t) => t.includes('not as native geometry')) ?? '')
@@ -300,16 +303,13 @@ test('#1051 — a clip this road cannot hold is refused by name, and the file st
       'const a = json.animations[0];',
       'const s = a.samplers[a.channels.find((c) => c.target.path === "rotation" && c.target.node === 0).sampler];',
       's.interpolation = "CUBICSPLINE";',
-      'const acc = json.accessors[s.output];',
-      // Three values per key: the output accessor must hold 3× as many. Reuse the input's keys by
-      // pointing at a larger zeroed view is not possible here, so the count is what the check reads.
-      'acc.count = acc.count * 3;',
+      // The output still holds ONE value per key, which CUBICSPLINE does not allow.
     ].join('\n'),
     'p1051-cubic-rot',
   );
   await expect
     .poll(() => warnings.filter((t) => t.includes('not as native geometry')).join('\n'))
-    .toContain('#1157');
+    .toContain('#1063');
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });
 
