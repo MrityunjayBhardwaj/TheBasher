@@ -2,7 +2,15 @@
 // the whole import is refused by name.
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { buildNativeGltfImportOps, readGltfMesh, triangulate } from './nativeGltfImport';
+import {
+  buildNativeGltfImportOps,
+  primitiveSlots,
+  readGltfMesh,
+  triangulate,
+} from './nativeGltfImport';
+import { attributeAt, MATERIAL_INDEX } from '../../nodes/attributes';
+import { read as readAttributes } from '../../app/attributeStore';
+import { readGeometry } from '../../app/geometryRegistry';
 import { parseGltfContainer, resolveBuffers } from './glb';
 import { meshGeometryRef, packMeshData, buildMeshGeometry } from '../../app/meshGeometryData';
 import { cornerCountOf, faceCountOf } from '../../app/faceCount';
@@ -17,6 +25,7 @@ import { emptyDagState, type DagState } from '../dag/state';
 import { PolyMeshDataNode, PolyMeshDataParams } from '../../nodes/PolyMeshData';
 import type { Op } from '../dag/types';
 import type { MeshDataValue } from '../../nodes/types';
+import { nodeDisplayName } from '../../app/sceneTreeWalk';
 import { join } from 'node:path';
 import * as THREE from 'three';
 import { MemoryStorage } from '../storage';
@@ -299,6 +308,121 @@ function polyMeshParamsOf(ops: readonly Op[]) {
   return PolyMeshDataParams.parse(data.params);
 }
 
+// #1052 — the two-material quads: one glTF node, two primitives sharing one POSITION accessor, a red
+// and a blue material. Blender's importer makes ONE mesh of them with 2 material slots and
+// `material_index` [0, 1] (measured on #1052), and so must this.
+const TWO_MATERIAL = 'public/assets/two-material-quad.gltf';
+const TWO_MATERIAL_TEXTURED = 'public/assets/two-material-textured-quad.gltf';
+
+type PrimitiveJson = { attributes: Record<string, number>; material?: number; indices: number };
+/** The textured two-material quad, edited: its accessors are 0 POSITION, 1 and 2 the two index lists, 3 UV. */
+function twoPrimitiveFixture(mutate: (primitives: PrimitiveJson[]) => void) {
+  const json = JSON.parse(readFileSync(TWO_MATERIAL_TEXTURED, 'utf8')) as Record<string, unknown>;
+  mutate((json.meshes as { primitives: PrimitiveJson[] }[])[0].primitives);
+  return json;
+}
+async function readFirstMesh(json: Record<string, unknown>) {
+  const parsed = json as never as Parameters<typeof readGltfMesh>[0];
+  // The fixture's one buffer is a data URI, so there is no embedded binary chunk to hand over.
+  return readGltfMesh(parsed, await resolveBuffers(parsed, new Uint8Array(0)), 0);
+}
+
+describe('#1052 — readGltfMesh reads every primitive into one mesh', () => {
+  it('two primitives over one POSITION: 4 welded points, 2 faces, and a material_index of [0, 1]', async () => {
+    const data = await readFirstMesh(JSON.parse(readFileSync(TWO_MATERIAL, 'utf8')));
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.points.length / 3).toBe(4);
+    expect(Array.from(data.faceSizes)).toEqual([3, 3]);
+    expect(data.faceLayers.map((l) => [l.name, l.type, Array.from(l.data)])).toEqual([
+      ['material_index', 'int', [0, 1]],
+    ]);
+  });
+
+  it('primitives sharing a material share a slot, and a one-slot mesh writes no face layer', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[1].material = 0;
+    });
+    expect(primitiveSlots(json as never, 0).slotOfPrimitive).toEqual([0, 0]);
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.faceLayers).toEqual([]);
+  });
+
+  it('primitives with no material share one slot; vertex colours on one of them make it a slot of its own', () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[0].material;
+      delete prims[1].material;
+    });
+    expect(primitiveSlots(json as never, 0).slotOfPrimitive).toEqual([0, 0]);
+    const coloured = twoPrimitiveFixture((prims) => {
+      delete prims[0].material;
+      delete prims[1].material;
+      prims[1].attributes.COLOR_0 = 0;
+    });
+    const slots = primitiveSlots(coloured as never, 0);
+    expect(slots.slotOfPrimitive).toEqual([0, 1]);
+    expect(slots.slots.map((s) => s.vertexColors)).toEqual([false, true]);
+  });
+
+  it('a UV set one primitive lacks is zeros on its corners; a colour it lacks is white', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[1].attributes.TEXCOORD_0;
+      delete prims[1].material; // its material samples UV set 0, which it would no longer carry
+      prims[0].attributes.COLOR_0 = 0;
+    });
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    const uv = data.cornerLayers.find((l) => l.name === 'UVMap')!;
+    const colour = data.cornerLayers.find((l) => l.name === 'Color')!;
+    // Corners 0-2 are the first primitive's, 3-5 the second's.
+    expect(Array.from(uv.data.subarray(0, 6)).some((v) => v !== 0)).toBe(true);
+    expect(Array.from(uv.data.subarray(6))).toEqual([0, 0, 0, 0, 0, 0]);
+    expect(Array.from(colour.data.subarray(12))).toEqual(Array(12).fill(1));
+    expect(Array.from(colour.data.subarray(0, 12))).not.toEqual(Array(12).fill(1));
+  });
+
+  it('when only one primitive has normals, the other takes its faces’ own normals and draws flat', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[0].attributes.NORMAL = 0;
+    });
+    const data = await readFirstMesh(json);
+    if ('refused' in data) throw new Error(data.refused);
+    const second = Array.from(data.cornerNormals!.subarray(9));
+    // The quad lies in z = 0, so a face normal is (0, 0, ±1) at every corner.
+    for (let c = 0; c < 3; c++) {
+      expect(second.slice(c * 3, c * 3 + 3).map(Math.abs)).toEqual([0, 0, 1]);
+    }
+  });
+
+  it('a map sampling a UV set is asked of the primitive that uses the material, not of the mesh', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      delete prims[1].attributes.TEXCOORD_0; // the blue material samples UV set 0; its sibling still has one
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.refused).toContain(
+      'material 1 pbrMetallicRoughness.metallicRoughnessTexture samples UV set 0, which mesh 0 does not carry',
+    );
+  });
+
+  it('an attribute no buffer draws is refused on any primitive, not only the first', async () => {
+    const json = twoPrimitiveFixture((prims) => {
+      prims[1].attributes.TANGENT = 0;
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.issue).toBe('#1125');
+  });
+});
+
 describe('buildNativeGltfImportOps', () => {
   beforeEach(() => {
     __resetRegistryForTests();
@@ -341,6 +465,46 @@ describe('buildNativeGltfImportOps', () => {
     expect(value.material?.base.color.toLowerCase()).toMatch(/^#[0-9a-f]{6}$/);
   });
 
+  /** The display name every surface shows for each Object an import writes, in file order. */
+  async function importedNames(buffer: ArrayBuffer): Promise<string[]> {
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/named.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state: DagState = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    return result.objectIds.map((id) => nodeDisplayName(state.nodes, id));
+  }
+
+  it('#1137 — an Object takes the file node’s name, as the outliner shows it', async () => {
+    expect(await importedNames(fixture(CUBE))).toEqual(['cube']);
+    // Written as the file spells it: the clone road's lookup key strips three's reserved
+    // characters, but a name nothing looks up by has no reason to.
+    expect(
+      await importedNames(
+        jsonFixture((json) => {
+          (json.nodes as Record<string, unknown>[])[0].name = 'Hero.Body/L';
+        }),
+      ),
+    ).toEqual(['Hero.Body/L']);
+  });
+
+  it('#1137 — an unnamed node falls back to its mesh’s name, then to Mesh_<index>, as Blender does', async () => {
+    const unnamedNode = (meshName?: string) =>
+      jsonFixture((json) => {
+        const node = (json.nodes as Record<string, unknown>[])[0];
+        node.name = '';
+        const mesh = (json.meshes as Record<string, unknown>[])[0];
+        if (meshName === undefined) delete mesh.name;
+        else mesh.name = meshName;
+      });
+    expect(await importedNames(unnamedNode('CubeMesh'))).toEqual(['CubeMesh']);
+    expect(await importedNames(unnamedNode())).toEqual(['Mesh_0']);
+  });
+
   it('is deterministic: the same file imports to the same op stream', async () => {
     const args = {
       buffer: fixture(CUBE),
@@ -358,14 +522,6 @@ describe('buildNativeGltfImportOps', () => {
     | readonly [string, () => ArrayBuffer, string]
     | readonly [string, () => ArrayBuffer, string, string]
   > = [
-    // Lifting this refusal gives a native Object one slot per primitive, and that is the day a
-    // MaterialOverride's `slotIndex` needs a native meaning: today only the clone road reads it
-    // (#1090). The row's name carries the issue so the red that retires it says what else is owed.
-    [
-      'a mesh with two primitives (lifting it makes #1090 reachable)',
-      () => fixture('public/assets/two-material-quad.gltf'),
-      '#1052',
-    ],
     // #1050 — a texture comes across only as the native material holds it; each guard gets a case
     // only it can refuse.
     [
@@ -398,9 +554,24 @@ describe('buildNativeGltfImportOps', () => {
         texturedFixture((json) => {
           (
             materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
-          ).extensions = { KHR_texture_transform: { offset: [0.5, 0] } };
+          ).extensions = { EXT_texture_webp: { source: 0 } };
         }),
       '#1123',
+      'uses EXT_texture_webp',
+    ],
+    // #1123 — a transform is carried, but one that also moves the map onto another UV set is not:
+    // the material names its UV set from `texCoord` alone.
+    [
+      'a texture transform that names its own UV set',
+      () =>
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_texture_transform'];
+          (
+            materialOf(json).pbrMetallicRoughness.baseColorTexture as Record<string, unknown>
+          ).extensions = { KHR_texture_transform: { scale: [2, 2], texCoord: 1 } };
+        }),
+      '#1123',
+      'names its own UV set',
     ],
     [
       'a normal map with a scale',
@@ -418,7 +589,6 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1123',
     ],
-    ['the UV-transform quad', () => fixture('public/assets/uv-transform-quad.gltf'), '#1123'],
     [
       'an image that is neither PNG nor JPEG',
       () =>
@@ -445,14 +615,16 @@ describe('buildNativeGltfImportOps', () => {
     ],
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
     [
-      'a nested hierarchy',
+      // #1051 made a hierarchy native; what this fixture actually carries is the one shape still
+      // refused — the holder node has a mesh AND children, and an Object cannot parent (#1152).
+      'a node that is both a mesh and a parent',
       () =>
         jsonFixture((json) => {
           const nodes = json.nodes as Record<string, unknown>[];
           nodes.push({ name: 'holder', children: [0], mesh: 0 });
           json.scenes = [{ nodes: [1] }];
         }),
-      '#1051',
+      '#1152',
     ],
     [
       'a mesh drawn as lines',
@@ -610,6 +782,68 @@ describe('buildNativeGltfImportOps', () => {
     expect(ops).not.toContain('data:image');
   });
 
+  it('#1123 — the UV-transform quad arrives native, its placement restated about the centre pivot', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/uv-transform-quad.gltf'),
+      assetRef: 'user-imports/native/uvt.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    // The file: scale [2,3], offset [0.1,0.2], rotation 0, about the UV origin. three's matrix puts
+    // `-s·pivot + pivot + offset` in the translation, so about the centre the same draw needs
+    // 0.1 + (2 - 1)·0.5 = 0.6 and 0.2 + (3 - 1)·0.5 = 1.2.
+    expect(material.uvTransform.tiling).toEqual([2, 3]);
+    expect(material.uvTransform.rotation).toBe(0);
+    expect(material.uvTransform.offset[0]).toBeCloseTo(0.6, 12);
+    expect(material.uvTransform.offset[1]).toBeCloseTo(1.2, 12);
+    expect(material.mapUvTransforms).toBeUndefined();
+  });
+
+  it('#1123 — a per-map transform is restated slot by slot, and an untransformed slot stays identity', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: texturedFixture((json) => {
+        json.extensionsUsed = ['KHR_texture_transform'];
+        const material = materialOf(json);
+        (material.pbrMetallicRoughness.baseColorTexture as Record<string, unknown>).extensions = {
+          KHR_texture_transform: { scale: [4, 4], rotation: Math.PI / 2 },
+        };
+        material.emissiveTexture = { index: 0 };
+        material.emissiveFactor = [1, 1, 1];
+      }),
+      assetRef: 'user-imports/native/permap.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    const albedo = material.mapUvTransforms!.albedo!;
+    const emission = material.mapUvTransforms!.emissive!;
+    const origin = new THREE.Matrix3().setUvTransform(0, 0, 4, 4, Math.PI / 2, 0, 0).toArray();
+    const drawn = new THREE.Matrix3()
+      .setUvTransform(
+        albedo.offset[0],
+        albedo.offset[1],
+        albedo.tiling[0],
+        albedo.tiling[1],
+        albedo.rotation,
+        0.5,
+        0.5,
+      )
+      .toArray();
+    for (let i = 0; i < 9; i++) expect(drawn[i]).toBeCloseTo(origin[i], 12);
+    expect(emission).toEqual({ tiling: [1, 1], offset: [0, 0], rotation: 0 });
+  });
+
   it('#1050 — a multi-file glTF reads the image beside it', async () => {
     const entry = 'public/fixtures/multifile/spaced/scene.gltf';
     const storage = new MemoryStorage();
@@ -699,6 +933,52 @@ describe('buildNativeGltfImportOps', () => {
     expect(params.material?.maps.albedo?.store).toBe('project');
   });
 
+  it('#1052 — the two-material quad arrives native: one mesh, a red and a blue slot, each face drawn by its own', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TWO_MATERIAL),
+      assetRef: 'user-imports/native/two-material-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
+    expect(types.sort()).toEqual(['Group', 'Object', 'PolyMeshData']);
+    const params = polyMeshParamsOf(result.ops);
+    expect(params.materialSlots?.map((m) => m?.base.color.toLowerCase())).toEqual([
+      '#ff0000',
+      '#0000ff',
+    ]);
+    expect(params.material).toEqual(params.materialSlots![0]);
+    const value = PolyMeshDataNode.evaluate(params, {} as never, {} as never) as MeshDataValue;
+    const index = attributeAt(readAttributes(value.attributeKey!), MATERIAL_INDEX, 'face');
+    expect(Array.from(index!.data)).toEqual([0, 1]);
+    const read = readGeometry(value.geometry);
+    if (read.status !== 'ok') throw new Error(read.status);
+    expect(read.geometry.groups).toEqual([
+      { start: 0, count: 3, materialIndex: 0 },
+      { start: 3, count: 3, materialIndex: 1 },
+    ]);
+  });
+
+  it('#1052 — the textured two-material quad stores its image once, and only the blue slot samples it', async () => {
+    const storage = new MemoryStorage();
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TWO_MATERIAL_TEXTURED),
+      assetRef: 'user-imports/native/two-material-textured-quad.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: (bytes, mime) => writeProjectImage(storage, 'p', bytes, mime),
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const slots = polyMeshParamsOf(result.ops).materialSlots!;
+    expect(slots).toHaveLength(2);
+    const held = (slot: (typeof slots)[number]) =>
+      Object.values(slot!.maps).filter((m) => m !== null && m !== undefined);
+    expect(held(slots[0])).toEqual([]);
+    expect(held(slots[1]).length).toBeGreaterThan(0);
+    expect(held(slots[1]).every((m) => m!.store === 'project')).toBe(true);
+    expect(await listProjectImages(storage, 'p')).toHaveLength(1);
+  });
+
   it.each(refusals)(
     'refuses %s whole, naming the issue that brings it across',
     async (_, buffer, issue, says?: string) => {
@@ -736,5 +1016,170 @@ describe('triangulate — three’s toTrianglesDrawMode rule', () => {
 
   it('refuses a mode that is not a triangle mode', () => {
     expect(triangulate(Uint32Array.from([0, 1]), 1)).toBeNull();
+  });
+});
+
+describe('#1051 — a hierarchy comes across as parent edges', () => {
+  /** The cube, hung under an empty parent node that carries its own transform. */
+  function nestedFixture(mutate: (json: Record<string, unknown>) => void = () => {}): ArrayBuffer {
+    return jsonFixture((json) => {
+      json.nodes = [
+        { name: 'cube', mesh: 0 },
+        { name: 'Pivot', children: [0], translation: [0, 3, 0] },
+      ];
+      json.scenes = [{ nodes: [1] }];
+      mutate(json);
+    });
+  }
+
+  async function importNested(buffer: ArrayBuffer) {
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/nested.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    return result;
+  }
+
+  /** Who each node is wired under, by node id → parent id, read off the emitted connects. */
+  function parentOf(ops: readonly Op[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const op of ops) {
+      if (op.type !== 'connect' || op.to.socket !== 'children') continue;
+      out[op.from.node] = op.to.node;
+    }
+    return out;
+  }
+
+  const typeOf = (ops: readonly Op[], id: string) =>
+    ops.find((o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === id)
+      ?.nodeType;
+
+  it('an empty becomes a Group carrying the file’s transform and name', async () => {
+    const { ops, groupId } = await importNested(nestedFixture());
+    const parents = parentOf(ops);
+    const emptyId = Object.keys(parents).find(
+      (id) => typeOf(ops, id) === 'Group' && id !== groupId,
+    );
+    expect(emptyId, 'the empty node is written as a Group').toBeDefined();
+    const added = ops.find(
+      (o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === emptyId,
+    )!;
+    // Blender writes an Empty for a node with no mesh (`imp/node.py:84-88`); a Group is ours.
+    expect(added.params).toMatchObject({
+      position: [0, 3, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
+    });
+    expect(
+      ops.find((o) => o.type === 'setMeta' && o.nodeId === emptyId),
+      'the outliner shows the file’s own name',
+    ).toMatchObject({ name: 'Pivot' });
+  });
+
+  // Blender puts EVERY imported object in quaternion mode and writes the file's quaternion as it
+  // is (`imp/node.py:113-116`; measured in 4.5.9 and 5.1.1, animated or not). The euler stays at
+  // its zero default, as Blender's does, because in quaternion mode nothing reads it.
+  const ROT_CUBE = [0.1, 0.7, -0.3, 0.6403124237432849];
+  const ROT_PIVOT = [0, 0, 0.3826834323650898, 0.9238795325112867];
+  const paramsOf = (ops: readonly Op[], id: string) =>
+    ops.find((o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === id)!
+      .params as Record<string, unknown>;
+
+  it('every node holds the file’s own quaternion, in quaternion mode, as Blender imports it', async () => {
+    const { ops, groupId, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[0].rotation = ROT_CUBE;
+        nodes[1].rotation = ROT_PIVOT;
+      }),
+    );
+    const emptyId = parentOf(ops)[objectIds[0]];
+    for (const [id, q] of [
+      [objectIds[0], ROT_CUBE],
+      [emptyId, ROT_PIVOT],
+    ] as const) {
+      // EXACT — the file's own numbers, never a round trip through an euler.
+      expect(paramsOf(ops, id)).toMatchObject({
+        rotationMode: 'quaternion',
+        quaternion: q,
+        rotation: [0, 0, 0],
+      });
+    }
+    // The import Group is ours, not the file's: it keeps the euler mode every native node has.
+    expect(paramsOf(ops, groupId).rotationMode).toBeUndefined();
+  });
+
+  it('a matrix-form node holds the quaternion its matrix decomposes to', async () => {
+    const q = new THREE.Quaternion(...(ROT_PIVOT as [number, number, number, number]));
+    const m = new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 3, 0),
+      q,
+      new THREE.Vector3(2, 2, 2),
+    );
+    const { ops, objectIds } = await importNested(
+      nestedFixture((json) => {
+        const nodes = json.nodes as Record<string, unknown>[];
+        nodes[1] = { name: 'Pivot', children: [0], matrix: m.toArray() };
+      }),
+    );
+    const p = paramsOf(ops, parentOf(ops)[objectIds[0]]);
+    expect(p.rotationMode).toBe('quaternion');
+    const got = new THREE.Quaternion(...(p.quaternion as [number, number, number, number]));
+    expect((2 * Math.acos(Math.min(1, Math.abs(got.dot(q)))) * 180) / Math.PI).toBeLessThan(1e-5);
+    (p.position as number[]).forEach((v, i) => expect(v).toBeCloseTo([0, 3, 0][i], 12));
+    (p.scale as number[]).forEach((v) => expect(v).toBeCloseTo(2, 12));
+  });
+
+  it('the mesh node hangs under the empty, and the empty under the import Group', async () => {
+    const { ops, groupId, objectIds } = await importNested(nestedFixture());
+    const parents = parentOf(ops);
+    const emptyId = parents[objectIds[0]];
+    expect(emptyId, 'the cube’s parent is not the import Group any more').not.toBe(groupId);
+    expect(typeOf(ops, emptyId)).toBe('Group');
+    expect(parents[emptyId], 'and the empty hangs under the import Group').toBe(groupId);
+  });
+
+  it('a child written BEFORE its parent still connects — glTF fixes no node order', async () => {
+    // The cube is node 0 and its parent is node 1, so the parent edge names a node the op stream
+    // has not added yet unless every parent edge comes after every node. `applyOp` throws if not.
+    const { ops } = await importNested(nestedFixture());
+    const addedBy: string[] = [];
+    for (const op of ops) {
+      if (op.type === 'addNode') addedBy.push(op.nodeId);
+      if (op.type === 'connect' && op.to.socket === 'children' && op.to.node !== 'n_scene') {
+        expect(addedBy, `connect to ${op.to.node} before it exists`).toContain(op.to.node);
+        expect(addedBy, `connect from ${op.from.node} before it exists`).toContain(op.from.node);
+      }
+    }
+  });
+
+  it('a node that carries a mesh AND children is refused by name', async () => {
+    const buffer = jsonFixture((json) => {
+      json.nodes = [
+        { name: 'cube', mesh: 0 },
+        { name: 'holder', mesh: 0, children: [0] },
+      ];
+      json.scenes = [{ nodes: [1] }];
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/x.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+    expect('refused' in result && result.refused).toContain('carries a mesh and also has children');
+    expect('refused' in result && result.issue).toBe('#1152');
+  });
+
+  it('an empty is not mistaken for a second node sharing a mesh', async () => {
+    // The shared-mesh refusal (#1061) reads `node.mesh` for every node; an empty has none, and
+    // reading it as mesh 0 would refuse a file that is perfectly importable.
+    const { ops } = await importNested(nestedFixture());
+    expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'PolyMeshData')).toBe(true);
   });
 });

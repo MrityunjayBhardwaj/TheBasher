@@ -250,17 +250,26 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     'src/nodes/types.ts': 'declares the field',
     'src/nodes/materialSchema.ts': 'the two parse roads',
     'src/core/import/gltfJsonMaterialToOpenpbr.ts': 'the producer — captures KHR values',
+    // #1123 — the native importer takes the producer's origin-pivot values and restates each one
+    // about the centre, the pivot native mesh data is drawn with, so no origin value reaches the
+    // AUTHORED road.
+    'src/core/import/nativeGltfImport.ts':
+      'restates the captured bag about the centre pivot — hands the AUTHORED road centre values',
     // #550 render slice — the readers, each with the road it feeds.
     'src/app/material/openpbrToThree.ts':
       'translates the bag into THREE slot names — road-neutral, the pivot is the caller’s',
     'src/app/material/primitiveMaterialInputs.ts':
       'carries the translated bag onto the spec — AUTHORED road (centre pivot)',
     'src/app/materialRegistry.ts': 'AUTHORED road — resolves per slot, pivots about the centre',
+    // #1139 — the primitive bake keeps the placement each mapped slot draws with. It reads the
+    // AUTHORED road's compile, so the values are already centre-pivot and carry unchanged.
+    'src/app/animate/dispatchApplyTransform.ts':
+      'AUTHORED road — bakes each slot’s resolved placement, centre pivot, unconverted',
     'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
     // #550 inspector slice — the EDIT side. Owns the field's presence so the panel
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':
-      'the inspector’s read/write rule — glTF editor only, ORIGIN road, values unconverted',
+      'the inspector’s read/write rule — pass-through, the drawing road supplies the pivot',
     // #389 → #936 — `src/app/NPanel.tsx` is BACK, and the round trip is worth recording
     // because this row is the clearest evidence of what went wrong.
     //
@@ -276,7 +285,7 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // names the field again — one aria path per row, `<base>.mapUvTransforms.<slot>`, where
     // `<base>` is `material` or `materialSlots.<i>` depending on the mesh's slot count.
     'src/app/NPanel.tsx':
-      'the inspector’s per-map placement rows — ORIGIN road, values passed through unconverted',
+      'the inspector’s per-map placement rows — values unconverted, the drawing road supplies the pivot',
   };
 
   /**
@@ -292,6 +301,9 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // REPLACES, which arrive later from OPFS on a deferred pass. Same road, so the same
     // pivot — it was the missing caller here that let a replaced map draw unplaced.
     'src/app/material/gltfMapOverlay.ts': 'ORIGIN_PIVOT',
+    // #1136 — `BakedMeshR` places the per-map placement a bake captured. The capture restates
+    // whatever pivot the source drew with about the centre, so this road is the authored one's.
+    'src/viewport/SceneFromDAG.tsx': 'CENTRE_PIVOT',
   };
 
   it('is named by exactly the declared modules', () => {

@@ -36,6 +36,10 @@
 //      rule), src/viewport/applyGltfUvTransform.ts (the road that applies them,
 //      ORIGIN pivot); issues #550, #551, #217, #181.
 
+// #1123 — a drop now brings this fixture across native, so it imports through `__basher_importGltf`,
+// the entry that never tries native. This spec's subject is the clone road's per-map placement,
+// which still serves every file the native road refuses.
+
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
 import { firstMaterialChild } from './_importedChild';
@@ -58,10 +62,8 @@ interface BasherWindow {
     };
   };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
-  __basher_ingestGltfFolder: (
-    files: { relativePath: string; bytes: Uint8Array }[],
-    folderName: string,
-  ) => Promise<string>;
+  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
   __basher_gltf_meshes?: () => MeshSummary[];
 }
 
@@ -73,7 +75,7 @@ interface BasherWindow {
 async function ingestPerMap(page: import('@playwright/test').Page, folder: string) {
   await page.goto('/');
   await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
+    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
   );
   await page.evaluate(async (name) => {
     const w = window as unknown as BasherWindow;
@@ -84,7 +86,9 @@ async function ingestPerMap(page: import('@playwright/test').Page, folder: strin
     };
     json.materials[0].emissiveFactor = [1, 1, 1];
     const bytes = new TextEncoder().encode(JSON.stringify(json));
-    await w.__basher_ingestGltfFolder([{ relativePath: 'permap.gltf', bytes }], name);
+    const ref = `assets/${name}.gltf`;
+    await w.__basher_writeOpfsBytes(ref, bytes);
+    await w.__basher_importGltf(bytes.buffer as ArrayBuffer, ref);
   }, folder);
 }
 

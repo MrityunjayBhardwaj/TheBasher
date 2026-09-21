@@ -39,6 +39,10 @@
 # ── Accepted headless-linux rendering/environment debt (9) ─────────────────────
 # All nine pass on darwin locally. They fail on the CI runner's software GL
 # (SwiftShader) and its slow OPFS. Long-standing, tracked, not regressions.
+#
+# Nine, not ten: the p6-w10 zoom readout row came out on 2026-09-18. It passed in
+# all seven CI runs of that day (six stacked PRs and one re-run), on top of the four
+# earlier passes that first raised the question, and the check itself asks for two.
 gizmo-autokey-record.spec.ts › Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working) › arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer
 menu-import-gltf.spec.ts › picking a multi-file .gltf alone AUTO-ESCALATES to the folder picker
 menu-import-gltf.spec.ts › picking a multi-file .gltf TOGETHER with its siblings imports successfully

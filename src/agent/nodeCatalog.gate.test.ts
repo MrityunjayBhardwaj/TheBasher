@@ -191,8 +191,127 @@ describe('node schema payload (#1007)', () => {
     expect(text).toContain('Object | in: data:ObjectData');
     expect(text).toContain('Param paths are exactly the paths setParam takes');
     // The whole reason this file exists: dag.inspect's JSON is 120,813 B.
-    expect(text.length).toBeLessThan(40_000);
+    //
+    // 25,000 since #1149, down from 40,000 — and the number is a budget with slack again, not a
+    // line the next material field pushes. It was 40,059 B against a 40,000 B ceiling the day
+    // #1140 added three fields, because five node types each printed the whole material tree and
+    // every field in it cost ~90 B five times over. The tree is printed once now (21,573 B total),
+    // so a material field costs its own bytes and no more.
+    expect(text.length).toBeLessThan(25_000);
     console.log(`[#1007] renderNodeCatalog = ${text.length} B over ${schemas.length} types`);
+  });
+
+  // #1149 — the payload prints a repeated subtree once and refers to it by name. The rows below
+  // are about the ONE property that makes that safe: a reader must still end up with exactly the
+  // param paths the registry has, and not one fewer. The saving is real but it is not the subject;
+  // a smaller payload that lost a path would be a worse payload.
+  describe('shared param blocks (#1149)', () => {
+    /**
+     * Read the payload the way its legend tells a reader to: expand every `x:<name>` against the
+     * `<name> = …` block, and hand back the full param paths per node type.
+     */
+    /**
+     * Split a rendered field list. Not `split(' ')`: a tuple prints its arity and element kind as
+     * `[3 number]`, so a space inside brackets belongs to the field it is in.
+     */
+    function fieldsOf(list: string): string[] {
+      return list === '-' ? [] : (list.match(/(?:[^\s[]|\[[^\]]*\])+/g) ?? []);
+    }
+
+    function pathsFromText(text: string): Map<string, string[]> {
+      const blocks = new Map<string, string[]>();
+      const byType = new Map<string, string[]>();
+      for (const line of text.split('\n')) {
+        const block = /^<(\w+)> = (.*)$/.exec(line);
+        if (block) {
+          blocks.set(
+            block[1],
+            fieldsOf(block[2]).map((f) => f.split(':')[0]),
+          );
+          continue;
+        }
+        const row = /^(\w+) \| in: .* \| out: .* \| params: (.*)$/.exec(line);
+        if (!row) continue;
+        const fields = fieldsOf(row[2]);
+        byType.set(
+          row[1],
+          fields.flatMap((f) => {
+            const ref = /^(\w+):<(\w+)>$/.exec(f);
+            if (!ref) return [f.split(':')[0]];
+            const body = blocks.get(ref[2]);
+            expect(body, `the line refers to <${ref[2]}>, which must exist`).toBeDefined();
+            return body!.map((p) => `${ref[1]}.${p}`);
+          }),
+        );
+      }
+      return byType;
+    }
+
+    it('a reader who expands the blocks gets exactly the registry’s paths, for every type', () => {
+      const fromText = pathsFromText(renderNodeCatalog(schemas));
+      // The denominator beside the comparison: a walk that read nothing agrees with everything.
+      expect(fromText.size).toBe(schemas.length);
+      for (const s of schemas) {
+        expect(fromText.get(s.type), s.type).toEqual(s.params.map((p) => p.path));
+      }
+    });
+
+    it('the material tree is printed once and shared by every type that embeds it', () => {
+      const text = renderNodeCatalog(schemas);
+      expect(text.match(/^<material> = /gm)).toHaveLength(1);
+      for (const type of ['BoxData', 'SphereData', 'PolyMeshData', 'GltfData', 'Material']) {
+        expect(text, type).toContain(`${type} | `);
+        const line = text.split('\n').find((l) => l.startsWith(`${type} | `))!;
+        expect(line, type).toContain('material:<material>');
+      }
+    });
+
+    it('a different tree under the same prefix prints in full — BakedData keeps its own', () => {
+      // `BakedData.material` is the baked snapshot, not the OpenPBR IR. It prints in full because
+      // it is the only one of its shape in the registry, so it is never a candidate — the name
+      // clash below is the OTHER reason a tree can be passed over, and it needs its own row.
+      const line = renderNodeCatalog(schemas)
+        .split('\n')
+        .find((l) => l.startsWith('BakedData | '))!;
+      expect(line).not.toContain('material:<material>');
+      expect(line).toContain('material.materialClass:');
+    });
+
+    it('two different shared trees cannot both be called <material>', () => {
+      // Not reachable from the live registry today: it needs two DISTINCT trees under one prefix,
+      // each shared by two or more types. It is reachable the day a second material shape is
+      // embedded twice, and then an ambiguous payload — one name, two meanings — is the kind of
+      // wrongness a reader cannot detect. So the state is minted by hand here, and this row goes
+      // red the day the guard is removed.
+      const leaf = (path: string): ParamField => ({ path, kind: 'number' });
+      const wide = (n: number) =>
+        Array.from({ length: n }, (_, i) => leaf(`material.wide${i}.value`));
+      const type = (name: string, params: ParamField[]): NodeSchema => ({
+        type: name as NodeSchema['type'],
+        inputs: [],
+        outputs: [],
+        params,
+      });
+      const a = wide(40);
+      const b = wide(40).map((p) => leaf(p.path.replace('wide', 'other')));
+      const text = renderNodeCatalog([type('A1', a), type('A2', a), type('B1', b), type('B2', b)]);
+      expect(text.match(/^<material> = /gm), 'exactly one block may hold the name').toHaveLength(1);
+      // The one that missed out is printed in full, not dropped and not silently renamed.
+      const printedInFull = ['B1', 'B2', 'A1', 'A2'].filter((t) =>
+        text.split('\n').some((l) => l.startsWith(`${t} | `) && l.includes('material.')),
+      );
+      expect(printedInFull).toHaveLength(2);
+    });
+
+    it('a repeat too small to name stays inline', () => {
+      // `sourceTransform` repeats on three types at 128 B — 256 B saved, under the threshold, and
+      // a block a reader has to hold in mind is not worth 256 B.
+      const line = renderNodeCatalog(schemas)
+        .split('\n')
+        .find((l) => l.startsWith('ParamDriver | '))!;
+      expect(line).toContain('sourceTransform.');
+      expect(line).not.toContain('sourceTransform:<');
+    });
   });
 });
 
