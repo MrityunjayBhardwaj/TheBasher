@@ -36,15 +36,30 @@
 #   below passed. Seeded from that run alone this file would hold six entries
 #   and the next build would have gone red on the other four.
 
-# ── Accepted headless-linux rendering/environment debt (9) ─────────────────────
-# All nine pass on darwin locally. They fail on the CI runner's software GL
-# (SwiftShader) and its slow OPFS. Long-standing, tracked, not regressions.
-gizmo-autokey-record.spec.ts › Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working) › arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer
+# ── Accepted debt (9) — each row's reason measured 2026-09-21, locally on darwin ───
+# This block used to say all nine pass on darwin and fail only on the CI runner.
+# Measured, that was true for four of them. The other five fail on darwin too, so
+# they sit under the reason that actually holds.
+
+# Runner environment: pass on darwin, fail on the CI runner's software GL
+# (SwiftShader) and its slow OPFS.
 menu-import-gltf.spec.ts › picking a multi-file .gltf alone AUTO-ESCALATES to the folder picker
 menu-import-gltf.spec.ts › picking a multi-file .gltf TOGETHER with its siblings imports successfully
+p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
+spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
+
+# Superseded behaviour — #1178. Red everywhere, with the same numbers on darwin
+# and CI: they assert the auto bounds-fit far plane that the fixed default
+# viewport clip (DEFAULT_VIEWPORT_CLIP, 0.01–500) replaced. To be re-pointed or
+# retired there, not fixed here.
 p165-blender-camera.spec.ts › #165 Blender-style camera › boots the editor view framing the scene bounds, not looking through
 p186-frame-all-clip-planes.spec.ts › #186 frame-all clip planes › a large model is framed and the far plane scales past the old 1000
 p191-saved-view-clip-planes.spec.ts › #191 saved-view clip planes › a restored saved view keeps its pose AND derives far from the bounds
+
+# Product gap — #1075. Red everywhere: the spec finds the import and clicks one of
+# its meshes, and the click selects the whole import instead of that child.
 p233-leaf-pick-select.spec.ts › #233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears
-p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
-spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
+
+# Red everywhere, reason not yet traced. The test's own title carries "REPRO: not
+# working"; it fails on darwin run alone, not only under load.
+gizmo-autokey-record.spec.ts › Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working) › arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer
