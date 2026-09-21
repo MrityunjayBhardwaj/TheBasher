@@ -40,19 +40,31 @@ interface W {
   };
 }
 
-async function waitForEditor(page: Page): Promise<void> {
-  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 30_000 });
-  await page.waitForFunction(
-    () => {
-      const w = window as unknown as W;
-      return Boolean(
-        w.__basher_dag?.getState().state.outputs.scene &&
-        w.__basher_three?.getState().scene &&
-        w.__basher_ingestGltfFolder,
-      );
-    },
-    { timeout: 20_000 },
-  );
+/**
+ * Waits for the editor to come up. If it doesn't, and the page threw on the way, the red names what
+ * the page threw: the crash this spec guards unmounts the editor, and a bare locator timeout says
+ * nothing about why (#1168).
+ */
+async function waitForEditor(page: Page, errors: readonly string[]): Promise<void> {
+  try {
+    await expect(page.getByTestId('layout')).toBeVisible({ timeout: 30_000 });
+    await page.waitForFunction(
+      () => {
+        const w = window as unknown as W;
+        return Boolean(
+          w.__basher_dag?.getState().state.outputs.scene &&
+          w.__basher_three?.getState().scene &&
+          w.__basher_ingestGltfFolder,
+        );
+      },
+      { timeout: 20_000 },
+    );
+  } catch (e) {
+    if (errors.length === 0) throw e;
+    throw new Error(`the editor did not come up; the page threw:\n${errors.join('\n')}`, {
+      cause: e,
+    });
+  }
 }
 
 /** The import's shape, read through the graph's own edges rather than re-derived from a hash. */
@@ -131,7 +143,7 @@ test('#1158 — a keyed Group over an imported mesh survives save and reload, dr
     }
   });
   await page.reload();
-  await waitForEditor(page);
+  await waitForEditor(page, errors);
   await page.evaluate(async () => {
     const w = window as unknown as W;
     const bytes = new Uint8Array(await fetch('/assets/cube.gltf').then((r) => r.arrayBuffer()));
@@ -180,7 +192,7 @@ test('#1158 — a keyed Group over an imported mesh survives save and reload, dr
     .toBe(true);
 
   await page.reload();
-  await waitForEditor(page);
+  await waitForEditor(page, errors);
   await page.evaluate(() => (window as unknown as W).__basher_time!.getState().pause());
   for (const [t, y] of [
     [1, 3.5],
