@@ -17,12 +17,13 @@
 //   CUBICSPLINE → bézier handles at ±Δt/3 carrying the file's tangents, which is the spec's Hermite
 //                 curve exactly (2.5e-8 over 12,012 samples, measured). Blender drops the tangents
 //                 (`animation_node.py:67-69`, "TODO manage tangent?"): 1.92 units off, measured.
-//                 A CUBICSPLINE ROTATION has no handles to land in and is refused (#1157).
+//                 A CUBICSPLINE ROTATION lands the same way (#1157): the quaternion channel
+//                 holds per-component handles, evaluated as the spec's Hermite and normalized.
 //
 // ── WHAT IS REFUSED ─────────────────────────────────────────────────────────────────────────────
 //
 // Refused whole, by name, like every other native-import refusal: a second clip (#1154), a morph
-// weights track (#1060), a CUBICSPLINE rotation (#1157), an accessor this reader cannot read
+// weights track (#1060), an accessor this reader cannot read
 // correctly (sparse, bufferless, interleaved — `readAccessor` would silently misread each), and a
 // file that breaks the spec's own rules for animation data. A channel with no target node is
 // skipped, which is what the spec says to do with it (`:2782`).
@@ -67,7 +68,9 @@ export interface Vec3ClipKey {
 export interface QuatClipKey {
   time: number;
   value: Quat;
-  easing: 'linear' | 'constant';
+  easing: 'linear' | 'constant' | 'cubic';
+  inHandle?: { time: number; value: Quat };
+  outHandle?: { time: number; value: Quat };
 }
 
 export type ClipChannel =
@@ -166,13 +169,6 @@ export function readNativeClip(
     if (interpolation !== 'LINEAR' && interpolation !== 'STEP' && interpolation !== 'CUBICSPLINE') {
       return malformed(`uses an interpolation "${interpolation}"`);
     }
-    if (interpolation === 'CUBICSPLINE' && path === 'rotation') {
-      return {
-        refused: `it animates node ${node}'s rotation as CUBICSPLINE, and a quaternion channel has no handles to hold the tangents`,
-        issue: '#1157',
-      };
-    }
-
     // Input: float scalars with min/max (`:2833`), time[0] >= 0 and strictly increasing (schema).
     const inputRefusal = unreadable(json, sampler.input, 'input');
     if (inputRefusal) return inputRefusal;
@@ -217,12 +213,36 @@ export function readNativeClip(
     const at = (k: number, slot: number): number[] =>
       Array.from(values.subarray((k * perKey + slot) * width, (k * perKey + slot + 1) * width));
 
-    if (path === 'rotation') {
+    if (path === 'rotation' && interpolation !== 'CUBICSPLINE') {
       const easing = interpolation === 'STEP' ? 'constant' : 'linear';
       channels.push({
         node,
         path,
         keyframes: Array.from(times, (time, k) => ({ time, value: quat(at(k, 0)), easing })),
+      });
+      continue;
+    }
+    if (path === 'rotation') {
+      // #1157 — the same conversion the vec3 arm does below, over four components: the spec's
+      // Hermite IS the bézier whose inner controls sit a third of the span in, so the tangents
+      // become handles at ±Δt/3. The channel evaluates them per component and normalizes, which
+      // is the spec's own definition of a CUBICSPLINE rotation (`:3628`) — the arc a slerp draws
+      // cannot hold a tangent, which is why this road exists.
+      channels.push({
+        node,
+        path,
+        keyframes: Array.from(times, (time, k) => {
+          const key: QuatClipKey = { time, value: quat(at(k, 1)), easing: 'cubic' };
+          if (k > 0) {
+            const dt = time - times[k - 1];
+            key.inHandle = { time: -dt / 3, value: quat(at(k, 0).map((a) => (-a * dt) / 3)) };
+          }
+          if (k < times.length - 1) {
+            const dt = times[k + 1] - time;
+            key.outHandle = { time: dt / 3, value: quat(at(k, 2).map((b) => (b * dt) / 3)) };
+          }
+          return key;
+        }),
       });
       continue;
     }
