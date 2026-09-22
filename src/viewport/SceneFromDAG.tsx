@@ -112,7 +112,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
-import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
+import { buildPickChain, DRAWN_NODE_ID_KEY, type Obj3DLike } from './pickChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
@@ -2012,10 +2012,10 @@ const SceneChildNode = memo(function SceneChildNode({
       // #233 — nearest-SURFACE leaf-pick (V75, replaces the UX#7 broad-first
       // drill). A single click selects the LEAF whose visible surface is under
       // the cursor: the frontmost ray hit (`e.intersections[0]`, depth-sorted
-      // nearest-first by R3F) mapped to its addressable DAG node. For a glTF that
-      // is the GltfChild under the cursor — exactly `buildGltfDrillChain`'s
-      // `chain[last]`; for a plain mesh the chain is null (≤1) and we select the
-      // top-level pickId itself.
+      // nearest-first by R3F) mapped to the DAG node that drew it — the Object
+      // under an imported Group, the box inside a user's Group, or a glTF clone's
+      // GltfChild — exactly `buildPickChain`'s `chain[last]`; for a plain
+      // top-level mesh the chain is null and we select the top-level pickId itself.
       //
       // Alt+click selects UP one level (the inverse of the retired drill-in):
       // from the current selection's place in the chain toward `chain[0]` (the
@@ -2026,7 +2026,7 @@ const SceneChildNode = memo(function SceneChildNode({
       // node id to hand it (the brush gate above is its other superset layer).
       const state = useDagStore.getState().state;
       const hit = (e.intersections?.[0]?.object ?? e.object) as unknown as Obj3DLike | null;
-      const chain = buildGltfDrillChain(state, pickId, hit);
+      const chain = buildPickChain(state, pickId, hit);
       let target = pickId;
       if (chain && chain.length > 1) {
         if (e.altKey) {
@@ -2118,7 +2118,7 @@ function RenderChild({
   override?: MaterialValue;
 }) {
   const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
-  return (
+  const drawn = (
     <OverlayDispatch
       value={value}
       nodeId={nodeId}
@@ -2127,6 +2127,13 @@ function RenderChild({
       override={override}
     />
   );
+  // #1075 — a nested node has no click handler of its own: the click reaches the
+  // top-level SceneChildNode's wrapper, which maps the hit object back to the node
+  // that drew it (`buildPickChain`). This identity group is that mapping, written
+  // here because every nested node is drawn through this one seam, whatever
+  // produced it (an import's Objects, a user's Group, a Transform's child).
+  if (nodeId == null) return drawn;
+  return <group userData={{ [DRAWN_NODE_ID_KEY]: nodeId }}>{drawn}</group>;
 }
 
 // v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
@@ -3276,7 +3283,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // consumers (later effects + the useFrame) read the populated ref.
   const childIdToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   // #233 / H90 — stamp each clone object that maps to a GltfChild with its DAG
-  // node id, so viewport leaf-pick (buildGltfDrillChain) can address children by a
+  // node id, so viewport leaf-pick (buildPickChain) can address children by a
   // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
   // (sanitizeBoneName + `__n` dedup, `node_i` for unnamed nodes) DIVERGES from
   // three's GLTFLoader clone NAME space (sanitizeNodeName + `_n` dedup, `''` for
@@ -3295,7 +3302,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // per-instance clone (never the shared drei cache → no substrate leak,
   // B-substrate-purity); `basherGltfChildId` is a new userData key (no V20
   // single-writer collision with the TRS/material/visibility writers).
-  // REF: gltfDrillChain.ts; H90.
+  // REF: pickChain.ts; H90.
   useEffect(() => {
     const assoc = gltf.parser?.associations;
     const keyByIndex = value.keyByGltfNodeIndex;

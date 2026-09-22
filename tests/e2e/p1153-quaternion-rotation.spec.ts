@@ -233,9 +233,10 @@ test('#1153 — a Group in quaternion mode turns the child it holds', async ({ p
     },
     ...setParams('g1153', { rotation: DECOY, rotationMode: 'quaternion', quaternion: Q170 }),
   ]);
-  // Read through the Group: a NESTED object's drawn three object carries no node id (#1075), so
-  // the seam is addressed at the top-level Group and returns the first mesh under it — the kid,
-  // whose own rotation is identity, so its world orientation is the Group's.
+  // Read through the Group: a NESTED object carries its node id in `userData.basherNodeId`, not
+  // as a name (#1075), and this seam looks up by name, so it is addressed at the top-level Group
+  // and returns the first mesh under it — the kid, whose own rotation is identity, so its world
+  // orientation is the Group's.
   await expect
     .poll(async () => angleDeg((await drawnQuat(page, 'g1153'))!, Q170))
     .toBeLessThan(1e-3);

@@ -98,9 +98,9 @@ async function imported(page: Page) {
  * Where three actually draws the one mesh under `groupId`, in world space.
  *
  * Found by walking the import Group rather than by node id: only a TOP-LEVEL scene child carries
- * its node id on the drawn object (`SceneFromDAG.tsx:2038`), so a nested object has no name to look
- * up. That is #1075, and it is why a click inside an import selects the whole import — a gap this
- * change neither creates nor closes.
+ * its node id as the drawn object's NAME (`SceneChildNode` in `SceneFromDAG.tsx`); a nested object
+ * carries it in `userData.basherNodeId` instead (#1075, written by `RenderChild`), which this
+ * helper does not read.
  */
 async function drawnMeshWorld(page: Page, groupId: string): Promise<number[] | null> {
   return page.evaluate((id) => {

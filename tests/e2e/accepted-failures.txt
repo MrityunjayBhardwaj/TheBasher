@@ -36,12 +36,13 @@
 #   below passed. Seeded from that run alone this file would hold six entries
 #   and the next build would have gone red on the other four.
 
-# ── Accepted debt (9) — each row's reason measured 2026-09-21, locally on darwin ───
+# ── Accepted debt (8) — each row's reason measured 2026-09-21, locally on darwin ───
 # This block used to say all nine pass on darwin and fail only on the CI runner.
-# Measured, that was true for four of them. The other five fail on darwin too, so
-# they sit under the reason that actually holds.
+# Measured, that was true for four of them. Four of the others fail on darwin too, so
+# they sit under the reason that actually holds. The ninth, p233, was a product gap
+# (#1075); fixed, it left the list.
 #
-# Nine, not ten: the p6-w10 zoom readout row came out on 2026-09-18. It passed in
+# Nine before that, not ten: the p6-w10 zoom readout row came out on 2026-09-18. It passed in
 # all seven CI runs of that day (six stacked PRs and one re-run), on top of the four
 # earlier passes that first raised the question, and the check itself asks for two.
 
@@ -59,10 +60,6 @@ spline-projection.spec.ts › Spline ortho|persp projection toggle › switching
 p165-blender-camera.spec.ts › #165 Blender-style camera › boots the editor view framing the scene bounds, not looking through
 p186-frame-all-clip-planes.spec.ts › #186 frame-all clip planes › a large model is framed and the far plane scales past the old 1000
 p191-saved-view-clip-planes.spec.ts › #191 saved-view clip planes › a restored saved view keeps its pose AND derives far from the bounds
-
-# Product gap — #1075. Red everywhere: the spec finds the import and clicks one of
-# its meshes, and the click selects the whole import instead of that child.
-p233-leaf-pick-select.spec.ts › #233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears
 
 # Red everywhere, reason not yet traced. The test's own title carries "REPRO: not
 # working"; it fails on darwin run alone, not only under load.
