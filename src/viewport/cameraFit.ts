@@ -87,6 +87,34 @@ export function clipPlanesForView(
   };
 }
 
+/**
+ * How deep the box `[min, max]` reaches along the camera's view direction: the
+ * largest `dot(corner − eye, forward)` over its eight corners. A far plane
+ * shallower than this cuts the box off (#1188). The far plane is a plane at
+ * that depth along `forward`, so this is the exact reach, where a
+ * distance-to-sphere test would fire early on a long flat scene. Negative when
+ * the whole box is behind the eye. `forward` need not be normalized. Pure.
+ */
+export function boxDepthAlongView(
+  min: readonly [number, number, number],
+  max: readonly [number, number, number],
+  eye: readonly [number, number, number],
+  forward: readonly [number, number, number],
+): number {
+  const len = Math.hypot(forward[0], forward[1], forward[2]);
+  if (!(len > 0)) return Number.NaN;
+  const f = [forward[0] / len, forward[1] / len, forward[2] / len];
+  // Per axis, the corner coordinate that maximizes the dot product is the max
+  // bound when the axis points away from the eye, else the min — so the
+  // deepest corner is picked directly instead of walking all eight.
+  let depth = 0;
+  for (let i = 0; i < 3; i += 1) {
+    const c = f[i] >= 0 ? max[i] : min[i];
+    depth += (c - eye[i]) * f[i];
+  }
+  return depth;
+}
+
 export interface FitOptions {
   margin?: number;
   /** Override the viewing direction (already-normalized or not — normalized

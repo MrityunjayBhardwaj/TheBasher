@@ -26,14 +26,18 @@ export interface SceneBounds {
 const tmpBox = new THREE.Box3();
 
 /**
- * World-space bounding sphere of all non-chrome meshes in `root`, or null when
+ * World-space axis-aligned box of all non-chrome meshes in `root`, or null when
  * there is no measurable content (empty scene / chrome only). Each mesh is
  * measured by its OWN geometry box transformed to world space — NOT
  * `Box3.setFromObject`, which would recurse into (and so include) any chrome
  * descendant. Pure read: it does not mutate the scene beyond refreshing world
  * matrices (idempotent), which R3F also does each frame.
+ *
+ * The box, not only the sphere, because the far plane is a PLANE: whether the
+ * scene reaches past it is a question about the box's corners along the view
+ * direction (#1188), which the sphere over-answers.
  */
-export function computeSceneBounds(root: THREE.Object3D): SceneBounds | null {
+export function computeSceneBox(root: THREE.Object3D): THREE.Box3 | null {
   // Ensure world matrices are current (a just-mounted glTF clone may not have
   // been through a render frame yet). Idempotent.
   root.updateMatrixWorld(true);
@@ -60,6 +64,13 @@ export function computeSceneBounds(root: THREE.Object3D): SceneBounds | null {
   walk(root);
 
   if (!any || box.isEmpty()) return null;
+  return box;
+}
+
+/** World-space bounding sphere of `computeSceneBox`, or null with it. */
+export function computeSceneBounds(root: THREE.Object3D): SceneBounds | null {
+  const box = computeSceneBox(root);
+  if (!box) return null;
 
   const sphere = new THREE.Sphere();
   box.getBoundingSphere(sphere);

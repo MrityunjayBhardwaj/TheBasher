@@ -180,6 +180,12 @@ export interface ViewportStore {
    *  reaching into the camera component's local state (mirrors the `cameraZoom`
    *  readout pattern). Not persisted — recomputed live. */
   viewportClipReadout: { near: number; far: number };
+  /** Whether the scene reaches deeper along the FREE view's direction than its
+   *  Clip End (#1188) — the one thing a fixed clip (Blender's model, #1178)
+   *  does not tell you on its own. Measured on a cadence by `EditorViewCamera`
+   *  from the non-chrome content box; always false while looking through a
+   *  camera (that view uses the camera's own clip). Not persisted. */
+  viewportClipExceeded: boolean;
   /** React-bypass escape hatch for the 60fps timeline playhead.
    *
    *  The OBJECT is created once at store init and is stable for the store's
@@ -221,6 +227,9 @@ export interface ViewportStore {
   setViewportClipOverride(clip: { near: number; far: number } | null): void;
   /** Publish the live effective clip planes (called by `EditorViewCamera`). */
   setViewportClipReadout(clip: { near: number; far: number }): void;
+  /** Publish whether the scene reaches past the free view's Clip End. Writes
+   *  only on a change, so the cadence that measures it re-renders nothing. */
+  setViewportClipExceeded(exceeded: boolean): void;
   toggleGridVisible(): void;
   toggleAxisWidgetVisible(): void;
   toggleSourceRigVisible(): void;
@@ -277,6 +286,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // Seeded with the default; EditorViewCamera republishes the live effective
   // planes.
   viewportClipReadout: DEFAULT_VIEWPORT_CLIP,
+  viewportClipExceeded: false,
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
   // reassign this object. See D-W9-1, D-W9-9.
@@ -312,6 +322,9 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setViewportClipReadout: (clip) => {
     const next = normalizeViewportClip(clip);
     if (next) set({ viewportClipReadout: next });
+  },
+  setViewportClipExceeded: (exceeded) => {
+    if (get().viewportClipExceeded !== exceeded) set({ viewportClipExceeded: exceeded });
   },
   toggleGridVisible: () => set({ gridVisible: !get().gridVisible }),
   toggleAxisWidgetVisible: () => set({ axisWidgetVisible: !get().axisWidgetVisible }),

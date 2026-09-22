@@ -2,7 +2,12 @@
 // planes + orbit limits derived from the radius, never from constants.
 
 import { describe, expect, it } from 'vitest';
-import { clipPlanesForView, fitDistanceForSphere, fitViewToSphere } from './cameraFit';
+import {
+  boxDepthAlongView,
+  clipPlanesForView,
+  fitDistanceForSphere,
+  fitViewToSphere,
+} from './cameraFit';
 
 describe('fitDistanceForSphere', () => {
   it('places the camera so the sphere is tangent to the frustum (vertical fit)', () => {
@@ -141,5 +146,38 @@ describe('clipPlanesForView', () => {
     expect(Number.isFinite(bad.far)).toBe(true);
     expect(bad.far).toBeGreaterThan(bad.near);
     expect(bad.near).toBeGreaterThan(0);
+  });
+});
+
+// #1188 — how deep a box reaches along the view: the far plane is a PLANE, so
+// the notice asks about the deepest corner along `forward`, not a sphere.
+describe('boxDepthAlongView', () => {
+  it('is the deepest corner along the view direction', () => {
+    // Unit cube at the origin, eye 10 back on +Z looking down -Z: the deepest
+    // corner is on the far face z = -0.5 → depth 10.5.
+    expect(boxDepthAlongView([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], [0, 0, 10], [0, 0, -1])).toBe(
+      10.5,
+    );
+  });
+
+  it('does not over-answer a long flat scene seen along its short axis', () => {
+    // A 2000 × 0 × 2000 ground plane seen from 5 above, looking straight down:
+    // every point is 5 deep. A distance-to-sphere test (5 + radius ~1414)
+    // would call this past a 1000 far plane; the plane test must not.
+    const d = boxDepthAlongView([-1000, 0, -1000], [1000, 0, 1000], [0, 5, 0], [0, -1, 0]);
+    expect(d).toBeCloseTo(5, 9);
+    expect(d).toBeLessThan(1000);
+  });
+
+  it('normalizes forward and picks the corner per axis sign', () => {
+    const f: [number, number, number] = [3, 0, 4]; // |f| = 5
+    const d = boxDepthAlongView([-1, -1, -1], [1, 1, 1], [0, 0, 0], f);
+    // Deepest corner (1, ±1, 1): (1·3 + 1·4) / 5 = 1.4.
+    expect(d).toBeCloseTo(1.4, 9);
+  });
+
+  it('is negative when the whole box is behind the eye, NaN with no direction', () => {
+    expect(boxDepthAlongView([-1, -1, 5], [1, 1, 6], [0, 0, 10], [0, 0, 1])).toBeLessThan(0);
+    expect(boxDepthAlongView([0, 0, 0], [1, 1, 1], [0, 0, 0], [0, 0, 0])).toBeNaN();
   });
 });

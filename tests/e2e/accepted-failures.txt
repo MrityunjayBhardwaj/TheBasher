@@ -53,13 +53,6 @@ menu-import-gltf.spec.ts › picking a multi-file .gltf TOGETHER with its siblin
 p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
 spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
 
-# Superseded behaviour — #1178. Red everywhere, with the same numbers on darwin
-# and CI: they assert the auto bounds-fit far plane that the fixed default
-# viewport clip (DEFAULT_VIEWPORT_CLIP, Blender's 0.01–1000) replaced. Re-pointed
-# at the past-Clip-End notice by #1188, which takes these two rows off.
-p186-frame-all-clip-planes.spec.ts › #186 frame-all clip planes › a large model is framed and the far plane scales past the old 1000
-p191-saved-view-clip-planes.spec.ts › #191 saved-view clip planes › a restored saved view keeps its pose AND derives far from the bounds
-
 # Red everywhere, reason not yet traced. The test's own title carries "REPRO: not
 # working"; it fails on darwin run alone, not only under load.
 gizmo-autokey-record.spec.ts › Gizmo + Auto-Key — drag-to-record an animation (REPRO: not working) › arm Auto-Key, drag the scale gizmo at two times → records a transform.scale channel that EVALUATES through the AnimationLayer

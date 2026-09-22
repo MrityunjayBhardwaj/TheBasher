@@ -291,3 +291,22 @@ describe('how the armature helper draws (#973)', () => {
     expect(useViewportStore.getState().bonesInFront).toBe(true);
   });
 });
+
+// #1188 — the past-Clip-End flag is measured on a cadence; writing it only on a
+// change is what keeps that cadence from re-rendering its subscribers.
+describe('setViewportClipExceeded', () => {
+  it('writes only when the value changes', () => {
+    useViewportStore.setState({ viewportClipExceeded: false });
+    let writes = 0;
+    const unsub = useViewportStore.subscribe(() => {
+      writes += 1;
+    });
+    useViewportStore.getState().setViewportClipExceeded(false);
+    expect(writes).toBe(0);
+    useViewportStore.getState().setViewportClipExceeded(true);
+    useViewportStore.getState().setViewportClipExceeded(true);
+    expect(writes).toBe(1);
+    expect(useViewportStore.getState().viewportClipExceeded).toBe(true);
+    unsub();
+  });
+});

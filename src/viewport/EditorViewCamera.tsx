@@ -48,8 +48,13 @@ import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
-import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
-import { computeSceneBounds } from './sceneBounds';
+import {
+  boxDepthAlongView,
+  clipPlanesForView,
+  fitViewToSphere,
+  type ClipPlanes,
+} from './cameraFit';
+import { computeSceneBounds, computeSceneBox } from './sceneBounds';
 import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
 import { applyTarget } from '../app/character/framing';
 
@@ -72,6 +77,11 @@ const MAX_FRAMES = 300;
  *  own rescan: ~0.25s at 60fps is the longest a rig that was just loaded or
  *  swapped can go unfollowed. */
 const LOCK_RESCAN_INTERVAL = 15;
+
+/** Frames between checks of whether the scene reaches past Clip End (#1188).
+ *  The check walks the scene for its content box, so it runs on the same
+ *  cadence as the lock's rescan; a clip change re-checks on the next frame. */
+const CLIP_REACH_INTERVAL = 15;
 
 // `orthoZoomForView` lives in `cameraFit.ts` beside the rest of the pure fit
 // math (#969 needed it from `src/app/character/framing.ts`, and importing this
@@ -126,6 +136,7 @@ export function EditorViewCamera() {
   // Applies to the FREE view only — look-through uses the scene camera's own
   // near/far.
   const clipOverride = useViewportStore((s) => s.viewportClipOverride);
+  const freeClip = clipOverride ?? DEFAULT_VIEWPORT_CLIP;
   // Canvas pixel size — drei's OrthographicCamera frustum is in pixels, so the
   // ortho zoom that matches the perspective framing depends on viewport height.
   const viewportHeight = useThree((s) => s.size.height);
@@ -409,6 +420,42 @@ export function EditorViewCamera() {
     applyTarget(lockPoint.set(found.point[0], found.point[1], found.point[2]));
   });
 
+  // #1188 — does the scene reach past the free view's Clip End? The clip is
+  // fixed (Blender's model, #1178), so nothing else would say that a far part
+  // of the scene is missing because the camera cuts it off. Measured along the
+  // view direction against the content box's deepest corner, on a cadence;
+  // look-through is the scene camera's own clip, so it reports false there.
+  const sinceClipReach = useRef(CLIP_REACH_INTERVAL);
+  const eyeDir = useMemo(() => new THREE.Vector3(), []);
+  const eyePos = useMemo(() => new THREE.Vector3(), []);
+  useEffect(() => {
+    sinceClipReach.current = CLIP_REACH_INTERVAL;
+  }, [freeClip.far, lookThrough]);
+  useFrame((state) => {
+    const cam = ref.current;
+    const store = useViewportStore.getState();
+    if (lookThrough || !cam) {
+      store.setViewportClipExceeded(false);
+      return;
+    }
+    if (++sinceClipReach.current < CLIP_REACH_INTERVAL) return;
+    sinceClipReach.current = 0;
+    const box = computeSceneBox(state.scene);
+    if (!box) {
+      store.setViewportClipExceeded(false);
+      return;
+    }
+    cam.getWorldDirection(eyeDir);
+    cam.getWorldPosition(eyePos);
+    const depth = boxDepthAlongView(
+      [box.min.x, box.min.y, box.min.z],
+      [box.max.x, box.max.y, box.max.z],
+      [eyePos.x, eyePos.y, eyePos.z],
+      [eyeDir.x, eyeDir.y, eyeDir.z],
+    );
+    store.setViewportClipExceeded(depth > freeClip.far);
+  });
+
   // #190 — while looking THROUGH the production camera, follow the EVALUATED
   // camera pose at the live playhead each frame, so a keyframed camera animates
   // in the viewport during playback AND on scrub. SNAPSHOT reads (never a time
@@ -474,7 +521,6 @@ export function EditorViewCamera() {
   // Free-view EFFECTIVE clip planes: the manual override (#192) when set, else
   // the default. Look-through ignores both and uses the scene camera's own
   // near/far (you're previewing that camera).
-  const freeClip = clipOverride ?? DEFAULT_VIEWPORT_CLIP;
   const freeNearEff = freeClip.near;
   const freeFarEff = freeClip.far;
   const near = lookThrough ? pose.near : freeNearEff;

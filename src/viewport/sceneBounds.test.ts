@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { computeSceneBounds } from './sceneBounds';
+import { computeSceneBounds, computeSceneBox } from './sceneBounds';
 
 function boxMesh(size: number, at: [number, number, number]): THREE.Mesh {
   const m = new THREE.Mesh(new THREE.BoxGeometry(size, size, size));
@@ -69,5 +69,21 @@ describe('computeSceneBounds', () => {
     expect(b).not.toBeNull();
     expect(b!.center).toEqual([3, 4, 5]);
     expect(b!.radius).toBe(0);
+  });
+});
+
+// #1188 — the box behind the sphere, for the past-Clip-End test.
+describe('computeSceneBox', () => {
+  it('is null for an empty scene and the content box otherwise, chrome excluded', () => {
+    expect(computeSceneBox(new THREE.Scene())).toBeNull();
+    const scene = new THREE.Scene();
+    scene.add(boxMesh(2, [5, 0, 0]));
+    const chrome = new THREE.Group();
+    chrome.userData.editorChrome = true;
+    chrome.add(boxMesh(100, [1000, 0, 0]));
+    scene.add(chrome);
+    const box = computeSceneBox(scene)!;
+    expect(box.min.toArray()).toEqual([4, -1, -1]);
+    expect(box.max.toArray()).toEqual([6, 1, 1]);
   });
 });
