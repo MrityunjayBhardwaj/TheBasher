@@ -8,7 +8,8 @@
 // HTML5 DnD driven by dragstart→dragover→drop with ONE shared DataTransfer.
 
 import { expect, test } from './_fixtures';
-import type { Page, JSHandle } from '@playwright/test';
+import { dragRowOnto } from './_treeDrag';
+import type { Page } from '@playwright/test';
 
 interface W {
   __basher_dag: {
@@ -41,15 +42,6 @@ const groupChildren = (page: Page) =>
     const st = (window as unknown as W).__basher_dag.getState().state;
     return (st.nodes[g].inputs.children ?? []).map((r) => r.node);
   }, GRP_ID);
-
-async function dragRowOnto(page: Page, srcId: string, dstId: string) {
-  const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
-  const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
-  const dst = page.locator(`[data-testid="scene-tree-row-${dstId}"]`);
-  await src.dispatchEvent('dragstart', { dataTransfer: dt });
-  await dst.dispatchEvent('dragover', { dataTransfer: dt });
-  await dst.dispatchEvent('drop', { dataTransfer: dt });
-}
 
 test.describe('#231 Inc 2a.2 — light reparent in the outliner', () => {
   test('a light drags from scene.lights into a Group and back', async ({ page }) => {

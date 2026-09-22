@@ -5,7 +5,8 @@
 // nested cameras (mirrors p231-grouped-light for lights).
 
 import { expect, test } from './_fixtures';
-import type { JSHandle, Page } from '@playwright/test';
+import { dragRowOnto } from './_treeDrag';
+import type { Page } from '@playwright/test';
 import { splitCameraDataId, splitCameraOps } from './_splitCamera';
 
 interface CamRef {
@@ -26,15 +27,6 @@ interface W {
     kind: 'rotate' | 'translate' | 'aim',
     target: [number, number, number],
   ) => void;
-}
-
-async function dragRowOnto(page: Page, srcId: string, dstId: string) {
-  const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
-  const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
-  const dst = page.locator(`[data-testid="scene-tree-row-${dstId}"]`);
-  await src.dispatchEvent('dragstart', { dataTransfer: dt });
-  await dst.dispatchEvent('dragover', { dataTransfer: dt });
-  await dst.dispatchEvent('drop', { dataTransfer: dt });
 }
 
 const groupChildren = (page: Page, groupId: string) =>

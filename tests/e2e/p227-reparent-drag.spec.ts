@@ -8,8 +8,9 @@
 // DataTransfer so the dragstart's setData survives to the drop handler.
 
 import { expect, test } from './_fixtures';
+import { dragRowOnto } from './_treeDrag';
 import { splitCubeOps } from './_splitCube';
-import type { Page, JSHandle } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 interface ReparentWindow {
   __basher_dag: {
@@ -30,15 +31,6 @@ const childIds = (page: Page, nodeId: string) =>
     const node = id === '__scene__' ? s.nodes[s.outputs.scene.node] : s.nodes[id];
     return (node.inputs.children ?? []).map((c) => c.node);
   }, nodeId);
-
-async function dragRowOnto(page: Page, srcId: string, dstId: string) {
-  const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
-  const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
-  const dst = page.locator(`[data-testid="scene-tree-row-${dstId}"]`);
-  await src.dispatchEvent('dragstart', { dataTransfer: dt });
-  await dst.dispatchEvent('dragover', { dataTransfer: dt });
-  await dst.dispatchEvent('drop', { dataTransfer: dt });
-}
 
 test.beforeEach(async ({ page }) => {
   await page.goto('/');
@@ -200,7 +192,9 @@ test('same-parent sibling drag still REORDERS (regression)', async ({ page }) =>
     { ops: splitCubeOps({ objectId: 'n_box_b', position: [3, 0, 0] }) },
   );
   // Order is [n_box, n_box_b]. Drag n_box_b onto n_box → swap to [n_box_b, n_box].
+  // #1152 — aimed at n_box's TOP EDGE: n_box is an Object, which can parent now, so the middle of
+  // its row parents into it and the edges reorder (treeDropIntent.ts).
   expect(await childIds(page, '__scene__')).toEqual(['n_box', 'n_box_b']);
-  await dragRowOnto(page, 'n_box_b', 'n_box');
+  await dragRowOnto(page, 'n_box_b', 'n_box', 'before');
   expect(await childIds(page, '__scene__')).toEqual(['n_box_b', 'n_box']);
 });
