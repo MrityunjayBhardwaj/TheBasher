@@ -152,7 +152,7 @@ function extractBones(group: import('three').Group): Bone[] {
     if (found) return;
     const sm = obj as unknown as SkinnedMesh;
     if ((obj as unknown as SkinnedMesh).isSkinnedMesh && sm.skeleton?.bones?.length) {
-      found = [...sm.skeleton.bones];
+      found = sm.skeleton.bones.map(sceneBoneOf);
     }
   });
   if (found) return found;
@@ -163,4 +163,31 @@ function extractBones(group: import('three').Group): Bone[] {
     if ((obj as unknown as Bone).isBone) bones.push(obj as Bone);
   });
   return bones;
+}
+
+/**
+ * #1181 — the Bone in the scene graph that a skin's bone stands for.
+ *
+ * FBXLoader builds one Bone per skin a bone deforms. When a second skin shares it — Mixamo
+ * exports two, `Alpha_Surface` and `Alpha_Joints` — the loader makes a new Bone and nests the
+ * previous one under it (`FBXLoader.js`, `buildSkeleton`), so an earlier skin's `skeleton.bones`
+ * holds the INNER twin: at [0, 0, 0] under a parent of its own name. Read as they are, every
+ * rest offset is zero and, since parents resolve by name, every bone is its own parent. The
+ * outermost twin sits in the real hierarchy with the file's transform; twins share the FBX
+ * node's `ID`, which is what identifies them — a name alone could be a real child that
+ * happens to share its parent's.
+ *
+ * The outer twin's local offsets equal the rest Blender builds from each cluster's
+ * `TransformLink` made local to its parent's (`import_fbx.py:3480-3491`, `:2562-2573`,
+ * Blender 4.5.9) — measured on `mixamo-samba.fbx`, every bone, largest difference 0.
+ */
+function sceneBoneOf(bone: Bone): Bone {
+  const id = (bone as Bone & { ID?: unknown }).ID;
+  if (id === undefined) return bone;
+  let outer = bone;
+  for (;;) {
+    const parent = outer.parent as (Bone & { ID?: unknown }) | null;
+    if (!parent?.isBone || parent.ID !== id) return outer;
+    outer = parent;
+  }
 }
