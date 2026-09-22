@@ -106,10 +106,8 @@ async function expectWhereBlenderPutsThem(page: Page): Promise<void> {
   }
 }
 
-test('#1152 — a mesh that holds children imports native, drawn where Blender puts it', async ({
-  page,
-}) => {
-  test.slow(); // an ingest, a save, a reload, each observed
+/** The starter with its boxes aside and its camera and light gone, then the fixture ingested. */
+async function importFixture(page: Page): Promise<void> {
   await openStarter(page);
   // Clear the ground the model stands on: the starter boxes aside, the camera and light (whose
   // helpers span the origin and would take the click) removed.
@@ -137,9 +135,16 @@ test('#1152 — a mesh that holds children imports native, drawn where Blender p
     );
     await w.__basher_ingestGltfFolder([{ relativePath: 'mesh-parent.gltf', bytes }], 'p1152');
   });
+  await expect.poll(() => idNamed(page, 'Body'), { timeout: 20_000 }).not.toBeNull();
+}
+
+test('#1152 — a mesh that holds children imports native, drawn where Blender puts it', async ({
+  page,
+}) => {
+  test.slow(); // an ingest, a save, a reload, each observed
+  await importFixture(page);
 
   // Native: the mesh that holds children is an Object, and nothing reads the file as a clone.
-  await expect.poll(() => idNamed(page, 'Body'), { timeout: 20_000 }).not.toBeNull();
   const types = await page.evaluate(() =>
     Object.values((window as unknown as W).__basher_dag.getState().state.nodes).map((n) => n.type),
   );
@@ -200,4 +205,35 @@ test('#1152 — a mesh that holds children imports native, drawn where Blender p
   await page.reload();
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 30_000 });
   await expectWhereBlenderPutsThem(page);
+});
+
+// #1185 — Apply on the Body takes its turn and scale into the mesh. Its children are drawn in its
+// space, so unless each is re-solved they move with it (or, on the primitive road, fall out of the
+// scene). Blender keeps them where they are; so does this, read off what three draws.
+test('#1185 — Apply all on the Body leaves its children drawn where they were', async ({
+  page,
+}) => {
+  test.slow();
+  await importFixture(page);
+  await expectWhereBlenderPutsThem(page);
+  const bodyId = (await idNamed(page, 'Body'))!;
+  const result = await page.evaluate(async (id) => {
+    const mod = await import('/src/app/animate/dispatchApplyTransform.ts');
+    return (await mod.dispatchApplyTransform(id, 'all')) as { ok: boolean; reason?: string };
+  }, bodyId);
+  expect(result, JSON.stringify(result)).toEqual(expect.objectContaining({ ok: true }));
+  // The Body's pose is identity now — the turn and scale are in its mesh — and the children draw
+  // exactly where they did.
+  for (const name of ['Lamp', 'Bulb'] as const) {
+    const id = (await idNamed(page, name))!;
+    await expect
+      .poll(async () => {
+        const d = await drawn(page, id);
+        return d
+          ? d.at.map((v, i) => Math.abs(v - BLENDER[name].at[i])).every((e) => e < 1e-3)
+          : false;
+      })
+      .toBe(true);
+    expect((await drawn(page, id))!.scale).toBeCloseTo(BLENDER[name].scale, 3);
+  }
 });
