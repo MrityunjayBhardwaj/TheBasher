@@ -106,10 +106,12 @@ describe('#1152 — an Object parents, and its children sit where Blender puts t
 
   it('carries `children` on its value only when it holds any', () => {
     const params = ObjectNode.paramSchema.parse({});
-    expect('children' in ObjectNode.evaluate(params, {})).toBe(false);
-    expect('children' in ObjectNode.evaluate(params, { children: [] })).toBe(false);
-    const kid = ObjectNode.evaluate(params, {});
-    expect(ObjectNode.evaluate(params, { children: [kid] }).children).toEqual([kid]);
+    const ev = (inputs: Record<string, unknown>) =>
+      ObjectNode.evaluate(params, inputs, ctx as Parameters<typeof ObjectNode.evaluate>[2]);
+    expect('children' in ev({})).toBe(false);
+    expect('children' in ev({ children: [] })).toBe(false);
+    const kid = ev({});
+    expect(ev({ children: [kid] }).children).toEqual([kid]);
   });
 
   it('the walk pairs each evaluated child with its node, in socket order', () => {
