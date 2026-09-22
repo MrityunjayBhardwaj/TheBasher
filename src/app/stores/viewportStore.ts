@@ -162,9 +162,11 @@ export interface ViewportStore {
    *  (§5.3 anatomy). See P6 W10 UIR c-1. */
   cameraZoom: number;
   /** Manual override for the FREE editor-view clip planes (#192). `null` =
-   *  AUTO: the planes derive from the scene bounds every load (#186/#191). A
-   *  non-null `{ near, far }` overrides that — the user's explicit Clip
-   *  Start/End from the View menu.
+   *  no clip of your own: the view uses `DEFAULT_VIEWPORT_CLIP` — the same
+   *  answer in the session and after a reload (#1187). A non-null
+   *  `{ near, far }` is the user's explicit Clip Start/End from the View menu.
+   *  Nothing derives these from the scene: Blender's model, a fixed clip you
+   *  raise yourself (#1178), told when the scene reaches past it (#1188).
    *
    *  Viewport-ONLY: this never touches the scene camera node's near/far (that
    *  drives the render + look-through). It is an editor-session projection like
@@ -173,7 +175,7 @@ export interface ViewportStore {
    *  class as the editor-view pose), hydrated on project change. */
   viewportClipOverride: { near: number; far: number } | null;
   /** Live readout of the FREE view's EFFECTIVE clip planes (override ?? the
-   *  auto-derived planes), published each frame by `EditorViewCamera`. Lets the
+   *  default), published each frame by `EditorViewCamera`. Lets the
    *  View-menu Clipping items DISPLAY and SEED the current numbers without
    *  reaching into the camera component's local state (mirrors the `cameraZoom`
    *  readout pattern). Not persisted — recomputed live. */
@@ -213,7 +215,7 @@ export interface ViewportStore {
   setTimelineDrawerOpen(open: boolean): void;
   setCameraZoom(zoom: number): void;
   /** Set (or clear, with `null`) the manual viewport clip override. Validated
-   *  via `normalizeViewportClip` — invalid input falls back to `null` (auto).
+   *  via `normalizeViewportClip` — invalid input falls back to `null` (the default).
    *  PURE state only; persistence is the caller's job (the View-menu handler
    *  calls `saveViewportClip`; hydration calls this without saving). */
   setViewportClipOverride(clip: { near: number; far: number } | null): void;
@@ -230,13 +232,12 @@ export interface ViewportStore {
   toggleCameraProjection(): void;
 }
 
-/** The DEFAULT free editor-view clip range applied to EVERY project that has no
- *  explicit saved override (#192 default flipped from AUTO bounds-fit → a fixed
- *  0.01–500 range, per user request "camera clip default for all projects"). A
- *  project's own saved override (View ▸ Clipping) still wins; this is only the
- *  fallback the per-load hydration + store init use instead of `null` (AUTO).
- *  Declared before `create()` so the store-init reference is not in the TDZ. */
-export const DEFAULT_VIEWPORT_CLIP: { near: number; far: number } = { near: 0.01, far: 500 };
+/** The free editor-view clip range of EVERY project that has no clip of its own
+ *  (`viewportClipOverride === null`). Blender's viewport default — `SpaceView3D`
+ *  `clip_start 0.01` / `clip_end 1000`, read from `bl_rna` in 5.1.1 (#1178). A
+ *  project's own saved clip (View ▸ Clipping) wins. Declared before `create()`
+ *  so the store-init reference is not in the TDZ. */
+export const DEFAULT_VIEWPORT_CLIP: { near: number; far: number } = { near: 0.01, far: 1000 };
 
 export const useViewportStore = create<ViewportStore>((set, get) => ({
   pivot: 'median',
@@ -270,11 +271,11 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   // OrbitControls onChange listener recomputes this from the live
   // camera→target distance; nothing persists it.
   cameraZoom: 100,
-  // Default null — AUTO clip planes (bounds-fit, #186/#191). Hydrated from
+  // null = no clip of your own → DEFAULT_VIEWPORT_CLIP. Hydrated from
   // localStorage per project on load (viewportClipPersistence).
-  viewportClipOverride: DEFAULT_VIEWPORT_CLIP,
-  // Seeded with three's historical defaults; EditorViewCamera overwrites it
-  // each frame with the live effective planes.
+  viewportClipOverride: null,
+  // Seeded with the default; EditorViewCamera republishes the live effective
+  // planes.
   viewportClipReadout: DEFAULT_VIEWPORT_CLIP,
   // Created once here; the object reference is stable for the store lifetime.
   // `.current` is mutated only by timeStore's frame chokepoint — never
@@ -330,7 +331,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
 }));
 
 /** Validate a viewport clip override (#192). Returns a sane `{ near, far }` or
- *  `null` (= AUTO / invalid). A valid frustum needs near > 0 and far > near; a
+ *  `null` (= the default / invalid). A valid frustum needs near > 0 and far > near; a
  *  non-finite or mis-ordered pair falls back to `null` rather than producing a
  *  degenerate camera. Pure + exported for unit tests and the persistence layer. */
 export function normalizeViewportClip(

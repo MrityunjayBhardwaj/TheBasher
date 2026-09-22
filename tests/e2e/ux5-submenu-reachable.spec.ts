@@ -30,12 +30,12 @@ test.describe('MenuBar submenu reachability', () => {
     const tb = (await page.getByTestId('menu-view-clipping').boundingBox())!;
     // Hover opens it, then a real click on the trigger — must stay open.
     await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
-    await expect(page.getByTestId('menu-view-clip-auto')).toBeVisible();
+    await expect(page.getByTestId('menu-view-clip-default')).toBeVisible();
     await page.mouse.down();
     await page.mouse.up();
     await page.waitForTimeout(120);
     // Reverting the fix (onClick toggles) → the click closes it → this fails.
-    await expect(page.getByTestId('menu-view-clip-auto')).toBeVisible();
+    await expect(page.getByTestId('menu-view-clip-default')).toBeVisible();
   });
 
   test('reaching the flyout by moving the pointer right then selecting an item works', async ({
@@ -44,15 +44,15 @@ test.describe('MenuBar submenu reachability', () => {
     await openViewMenu(page);
     const tb = (await page.getByTestId('menu-view-clipping').boundingBox())!;
     await page.mouse.move(tb.x + tb.width / 2, tb.y + tb.height / 2);
-    await expect(page.getByTestId('menu-view-clip-auto')).toBeVisible();
+    await expect(page.getByTestId('menu-view-clip-default')).toBeVisible();
     // Travel into the flyout (crosses the trigger→flyout seam). Reverting the
     // close-delay → the flyout unmounts mid-travel → the item is gone.
     await page.mouse.move(tb.x + tb.width + 40, tb.y + tb.height / 2, { steps: 10 });
     await page.waitForTimeout(150);
-    const auto = page.getByTestId('menu-view-clip-auto');
-    await expect(auto).toBeVisible();
+    const dflt = page.getByTestId('menu-view-clip-default');
+    await expect(dflt).toBeVisible();
     // And the item is actually selectable → the whole menu closes on select.
-    await auto.click();
+    await dflt.click();
     await expect(page.getByTestId('menu-view-panel')).toHaveCount(0);
   });
 });

@@ -1,7 +1,8 @@
 // #192 — manual VIEWPORT clip override (View ▸ Clip Start/End). The free editor
-// view derives near/far from the scene bounds by default (#186/#191); a manual
-// override replaces those WITHOUT touching the scene camera node, and persists
-// per project across reloads.
+// view uses Blender's default clip, 0.01–1000 (#1178); a manual override replaces
+// it WITHOUT touching the scene camera node, and persists per project across
+// reloads. Clearing it (View ▸ Clipping ▸ Default) means the default before AND
+// after a reload (#1187).
 //
 // Observes the REAL R3F camera (Lokayata) via __basher_view_camera, and drives
 // the store/persistence via the __basher_viewport DEV seam (the menu UI is
@@ -26,21 +27,23 @@ async function waitReady(page: import('@playwright/test').Page) {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_view_camera && w.__basher_viewport && w.__basher_dag);
   });
-  await page.waitForTimeout(400); // let the bounds-fit settle converge
+  await page.waitForTimeout(400); // let the boot framing settle
 }
 
 test.describe('#192 viewport clip override', () => {
-  test('a manual override replaces the auto planes; clearing restores auto', async ({ page }) => {
+  test('a manual override replaces the default planes; clearing restores the default', async ({
+    page,
+  }) => {
     await waitReady(page);
 
-    // Auto (default): the seed box frames with bounds-derived planes — NOT the
-    // override values we are about to set.
-    const auto = await page.evaluate(() =>
+    // The default: Blender's viewport clip, not the override values we are
+    // about to set.
+    const dflt = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
-    expect(auto).not.toBeNull();
-    expect(auto!.near).not.toBeCloseTo(7, 1);
-    expect(auto!.far).not.toBeCloseTo(99, 1);
+    expect(dflt).not.toBeNull();
+    expect(dflt!.near).toBeCloseTo(0.01, 5);
+    expect(dflt!.far).toBeCloseTo(1000, 5);
 
     // Set a manual override → the live viewport camera adopts exactly it.
     await page.evaluate(() => {
@@ -63,7 +66,7 @@ test.describe('#192 viewport clip override', () => {
     expect(readout.near).toBeCloseTo(7, 3);
     expect(readout.far).toBeCloseTo(99, 3);
 
-    // Clear → back to AUTO (no longer the override values).
+    // Clear → back to the default.
     await page.evaluate(() => {
       (window as unknown as BasherWindow)
         .__basher_viewport!.getState()
@@ -73,7 +76,8 @@ test.describe('#192 viewport clip override', () => {
     const cleared = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
-    expect(cleared!.far).not.toBeCloseTo(99, 1);
+    expect(cleared!.near).toBeCloseTo(0.01, 5);
+    expect(cleared!.far).toBeCloseTo(1000, 5);
   });
 
   test('a persisted override is hydrated on reload (per project)', async ({ page }) => {
@@ -90,12 +94,12 @@ test.describe('#192 viewport clip override', () => {
     const cam = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
-    // Reverting the hydration effect → planes stay auto → far ≠ 42 → fails.
+    // Reverting the hydration effect → planes stay default → far ≠ 42 → fails.
     expect(cam!.near).toBeCloseTo(3, 3);
     expect(cam!.far).toBeCloseTo(42, 3);
   });
 
-  test('View ▸ Clipping ▸ Clip End sets + persists the far plane; Auto clears it', async ({
+  test('View ▸ Clipping ▸ Clip End sets + persists the far plane; Default clears it', async ({
     page,
   }) => {
     await waitReady(page);
@@ -120,20 +124,39 @@ test.describe('#192 viewport clip override', () => {
     expect(saved).not.toBeNull();
     expect(JSON.parse(saved!).far).toBeCloseTo(250, 3);
 
-    // View ▸ Clipping ▸ Auto → clears the override AND the persisted entry.
+    // View ▸ Clipping ▸ Default → clears the override AND the persisted entry.
     await page.getByTestId('menu-view-button').click();
     await page.getByTestId('menu-view-clipping').hover();
-    await page.getByTestId('menu-view-clip-auto').click();
+    await page.getByTestId('menu-view-clip-default').click();
     await page.waitForTimeout(150);
 
     const cleared = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
-    expect(cleared!.far).not.toBeCloseTo(250, 1);
+    expect(cleared!.far).toBeCloseTo(1000, 5);
     const afterClear = await page.evaluate(() => {
       const id = localStorage.getItem('basher.lastProjectId')!;
       return localStorage.getItem('basher.viewportClip.' + id);
     });
     expect(afterClear).toBeNull();
+
+    // #1187 — and a reload answers the SAME: the default, with no override
+    // standing in the store. Before, the session's cleared value meant the
+    // bounds-fit while a reload hydrated the fixed clip, so the two disagreed.
+    await waitReady(page);
+    const reloaded = await page.evaluate(() => {
+      const w = window as unknown as BasherWindow;
+      return {
+        cam: w.__basher_view_camera!(),
+        override: (
+          w.__basher_viewport!.getState() as unknown as {
+            viewportClipOverride: unknown;
+          }
+        ).viewportClipOverride,
+      };
+    });
+    expect(reloaded.cam!.near).toBeCloseTo(0.01, 5);
+    expect(reloaded.cam!.far).toBeCloseTo(1000, 5);
+    expect(reloaded.override).toBeNull();
   });
 });

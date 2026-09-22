@@ -55,9 +55,8 @@ spline-projection.spec.ts › Spline ortho|persp projection toggle › switching
 
 # Superseded behaviour — #1178. Red everywhere, with the same numbers on darwin
 # and CI: they assert the auto bounds-fit far plane that the fixed default
-# viewport clip (DEFAULT_VIEWPORT_CLIP, 0.01–500) replaced. To be re-pointed or
-# retired there, not fixed here.
-p165-blender-camera.spec.ts › #165 Blender-style camera › boots the editor view framing the scene bounds, not looking through
+# viewport clip (DEFAULT_VIEWPORT_CLIP, Blender's 0.01–1000) replaced. Re-pointed
+# at the past-Clip-End notice by #1188, which takes these two rows off.
 p186-frame-all-clip-planes.spec.ts › #186 frame-all clip planes › a large model is framed and the far plane scales past the old 1000
 p191-saved-view-clip-planes.spec.ts › #191 saved-view clip planes › a restored saved view keeps its pose AND derives far from the bounds
 

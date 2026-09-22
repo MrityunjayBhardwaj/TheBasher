@@ -6,7 +6,7 @@
 // View ▸ Clip Start/End with the viewport/workspace, never in the rendered
 // scene. It is viewport-only and must NOT touch the scene camera node's
 // near/far (that drives the render + look-through). Keyed per project so each
-// project remembers its own override; absence means AUTO (bounds-fit, #186/#191).
+// project remembers its own override; absence means the default (`DEFAULT_VIEWPORT_CLIP`, #1178).
 //
 // Saved by the View-menu Clipping handler (MenuBar), hydrated on project change
 // by EditorViewCamera into `viewportStore.viewportClipOverride`.
@@ -51,8 +51,8 @@ function safeRemoveItem(key: string): void {
 }
 
 /** Load the saved clip override for a project, or null when none / malformed /
- *  no id (null = AUTO). Validated through `normalizeViewportClip` so a corrupt
- *  or degenerate stored pair degrades to AUTO rather than a broken frustum. */
+ *  no id (null = the default). Validated through `normalizeViewportClip` so a corrupt
+ *  or degenerate stored pair degrades to the default rather than a broken frustum. */
 export function loadViewportClip(projectId: string | null | undefined): ViewportClip | null {
   if (!projectId) return null;
   const raw = safeGetItem(PREFIX + projectId);
@@ -63,12 +63,12 @@ export function loadViewportClip(projectId: string | null | undefined): Viewport
       return normalizeViewportClip(parsed as { near: number; far: number });
     }
   } catch {
-    // corrupt entry — treat as absent (AUTO).
+    // corrupt entry — treat as absent (the default).
   }
   return null;
 }
 
-/** Save (or, with `null`, CLEAR back to AUTO) the clip override for a project.
+/** Save (or, with `null`, CLEAR back to the default) the clip override for a project.
  *  No-op when projectId is missing. An invalid clip clears the entry. */
 export function saveViewportClip(
   projectId: string | null | undefined,

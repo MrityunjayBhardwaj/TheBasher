@@ -40,7 +40,7 @@ describe('normalizeViewportClip', () => {
     expect(normalizeViewportClip({ near: 0.5, far: 200 })).toEqual({ near: 0.5, far: 200 });
   });
 
-  it('returns null for AUTO (null/undefined input)', () => {
+  it('returns null for the default (null/undefined input)', () => {
     expect(normalizeViewportClip(null)).toBeNull();
     expect(normalizeViewportClip(undefined)).toBeNull();
   });
@@ -74,7 +74,7 @@ describe('viewportClipPersistence', () => {
     expect(loadViewportClip('proj_b')).toEqual({ near: 1, far: 50 });
   });
 
-  it('saving null CLEARS the entry (back to AUTO)', () => {
+  it('saving null CLEARS the entry (back to the default)', () => {
     saveViewportClip('proj_a', { near: 0.2, far: 500 });
     saveViewportClip('proj_a', null);
     expect(loadViewportClip('proj_a')).toBeNull();
@@ -91,12 +91,12 @@ describe('viewportClipPersistence', () => {
     expect(loadViewportClip('never-saved')).toBeNull();
   });
 
-  it('treats a corrupt stored value as AUTO', () => {
+  it('treats a corrupt stored value as the default', () => {
     localStorage.setItem('basher.viewportClip.proj_a', '{not json');
     expect(loadViewportClip('proj_a')).toBeNull();
   });
 
-  it('degrades a degenerate stored pair to AUTO (normalizer guards load)', () => {
+  it('degrades a degenerate stored pair to the default (normalizer guards load)', () => {
     localStorage.setItem('basher.viewportClip.proj_a', JSON.stringify({ near: -5, far: 10 }));
     expect(loadViewportClip('proj_a')).toBeNull();
   });
