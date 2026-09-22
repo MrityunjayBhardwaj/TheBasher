@@ -72,6 +72,7 @@ import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstrain
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
+import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
 export type CameraKind = 'PerspectiveCamera' | 'OrthographicCamera';
 
@@ -94,8 +95,8 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
   fov: 45,
-  near: 0.01,
-  far: 1000,
+  near: DEFAULT_CAMERA_NEAR,
+  far: DEFAULT_CAMERA_FAR,
   roll: 0,
 };
 

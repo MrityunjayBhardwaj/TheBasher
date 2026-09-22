@@ -17,6 +17,7 @@
 import { useThreeRef } from './threeRef';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
+import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../../nodes/CameraData';
 
 export async function snapshotCameraFromOrbit(): Promise<void> {
   const cam = useThreeRef.getState().camera;
@@ -59,8 +60,8 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     params: {
       projection: 'Perspective',
       fov,
-      near: 0.01,
-      far: 1000,
+      near: DEFAULT_CAMERA_NEAR,
+      far: DEFAULT_CAMERA_FAR,
       lookAt: target ? [target.x, target.y, target.z] : [0, 0, 0],
     },
   });

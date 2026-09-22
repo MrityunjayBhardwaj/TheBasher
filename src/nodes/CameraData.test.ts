@@ -12,10 +12,11 @@ import { CameraDataNode, CameraDataParams } from './CameraData';
 import { registerAllNodes } from './registerAll';
 
 const BLENDER_CLIP_END = 1000;
+const BLENDER_CLIP_START = 0.1;
 
 beforeAll(() => registerAllNodes());
 
-describe('#1193 — CameraData far defaults to Blender’s 1000', () => {
+describe('#1193 / #1195 — CameraData clip planes default to Blender’s 0.1–1000', () => {
   it('the schema fills a missing far with 1000', () => {
     expect(CameraDataParams.parse({ projection: 'Perspective', fov: 45 }).far).toBe(
       BLENDER_CLIP_END,
@@ -48,5 +49,33 @@ describe('#1193 — CameraData far defaults to Blender’s 1000', () => {
 
   it('control: a far the author wrote is kept', () => {
     expect(CameraDataParams.parse({ projection: 'Perspective', fov: 45, far: 500 }).far).toBe(500);
+  });
+
+  // #1195 — the near plane, the same way. 0.1 is `Camera.clip_start` on Blender 5.1.1,
+  // NOT the viewport's 0.01 (that is `SpaceView3D.clip_start`, a different camera).
+  it('the schema fills a missing near with 0.1', () => {
+    expect(CameraDataParams.parse({ projection: 'Perspective', fov: 45 }).near).toBe(
+      BLENDER_CLIP_START,
+    );
+  });
+
+  it('the evaluated value falls back to 0.1 for a bag with no near', () => {
+    const value = CameraDataNode.evaluate(
+      { projection: 'Perspective', fov: 45 } as never,
+      {} as never,
+      {} as never,
+    );
+    expect((value as { near: number }).near).toBe(BLENDER_CLIP_START);
+  });
+
+  it('the default project’s camera is at 0.1', () => {
+    const params = buildDefaultDagState().nodes.n_camera_data.params as { near: number };
+    expect(params.near).toBe(BLENDER_CLIP_START);
+  });
+
+  it('control: a near the author wrote is kept', () => {
+    expect(CameraDataParams.parse({ projection: 'Perspective', fov: 45, near: 0.01 }).near).toBe(
+      0.01,
+    );
   });
 });

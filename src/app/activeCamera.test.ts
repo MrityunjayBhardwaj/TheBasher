@@ -262,7 +262,7 @@ describe('activeCamera — cameraPoseFromPair', () => {
       position: [3, 2, 3],
       lookAt: [0, 0, 0],
       fov: 45,
-      near: 0.01,
+      near: 0.1,
       far: 1000,
       roll: 0,
     });
@@ -584,7 +584,7 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(pose.lookAt).toEqual([1, 1, 1]);
     expect(pose.fov).toBe(50);
     // near/far untouched → base.
-    expect(pose.near).toBe(0.01);
+    expect(pose.near).toBe(0.1);
     expect(pose.far).toBe(1000);
   });
 

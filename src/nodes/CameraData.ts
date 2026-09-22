@@ -55,6 +55,11 @@ import type { CameraDataValue } from './types';
  *  fills in a missing `far` falls back to: the schema, the value below, the lens inspector. */
 export const DEFAULT_CAMERA_FAR = 1000;
 
+/** #1195 — Blender's camera Clip Start (`Camera.clip_start`, 0.1 — measured on 5.1.1).
+ *  ⚠️ NOT the viewport's 0.01: that one matches Blender's 3D VIEW (`SpaceView3D.clip_start`),
+ *  a different camera with its own default. This is the scene camera node's. */
+export const DEFAULT_CAMERA_NEAR = 0.1;
+
 export const CameraDataParams = z.object({
   /** Perspective vs orthographic — the single discriminator that collapses the two
    *  fused camera NODES into one datablock (Blender's Camera Type enum). */
@@ -74,7 +79,7 @@ export const CameraDataParams = z.object({
   /** Orthographic scale. Owned here regardless of how #478 resolves — it is a lens
    *  param by every definition including Blender's. (#478: nothing currently READS it.) */
   zoom: z.number().positive().default(50),
-  near: z.number().positive().default(0.01),
+  near: z.number().positive().default(DEFAULT_CAMERA_NEAR),
   far: z.number().positive().default(DEFAULT_CAMERA_FAR),
   /** Sensor height (mm) along the vertical FOV axis — authoring metadata for the
    *  focal-length inspector (UX #12). The renderer reads `fov`, not this. */
@@ -149,7 +154,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       // above refuses, just moved a layer further from where anyone would look for it.
       fov: params.fov,
       zoom: params.zoom ?? 50,
-      near: params.near ?? 0.01,
+      near: params.near ?? DEFAULT_CAMERA_NEAR,
       far: params.far ?? DEFAULT_CAMERA_FAR,
       sensorSize: params.sensorSize ?? 36,
       dofEnabled: params.dofEnabled ?? false,
