@@ -35,9 +35,9 @@
 //
 // TYPE vs VALUE KIND — the bridge that makes a type-keyed answer legitimate. `childEdges`
 // switches on the evaluated value's `kind`; the two scan sites have no value in hand, only
-// nodes. For all three hierarchy types the two agree by construction: Transform.evaluate
+// nodes. For every hierarchy type the two agree by construction: Transform.evaluate
 // returns `kind: 'Transform'`, MaterialOverride returns `kind: 'MaterialOverride'`, Group
-// returns `kind: 'Group'`. `mirrorsChildEdges` in the test suite pins that agreement, so a
+// returns `kind: 'Group'`, Object returns `kind: 'Object'` (#1152). `mirrorsChildEdges` in the test suite pins that agreement, so a
 // kind that stops matching its type name fails there rather than silently splitting the
 // two halves of this module apart.
 //
@@ -75,12 +75,16 @@ const CHILDREN_SOCKET = 'children';
 
 /** Types that parent MANY children through {@link CHILDREN_SOCKET}.
  *
+ *  `Object` joined in #1152: an Object that is a mesh can hold children too, as every Blender
+ *  object can, so a thing that both IS something and HOLDS something has one node, not a mesh
+ *  beside a Group.
+ *
  *  `Scene` is here and is NOT descended by `childEdges` — the walk starts AT the scene
  *  rather than descending into it, so childEdges never sees a Scene value. It still
  *  parents its children for the two SCAN sites, whose question is "is anything holding
  *  this node as a child?" rather than "what do I descend next". Keeping it out would
  *  re-open the flat/nested confusion the fast path exists to resolve. */
-const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Scene']);
+const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Scene', 'Object']);
 
 /** Types that parent exactly ONE child, through their declared chain socket.
  *

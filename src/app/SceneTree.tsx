@@ -35,10 +35,18 @@ const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
 // Row types that own a collapsible subtree and so get a chevron. GltfAsset
 // defaults COLLAPSED (node-flood, D-05); the rest default EXPANDED.
-const COLLAPSIBLE_TYPES = new Set(['Group', 'Transform', 'MaterialOverride', 'GltfAsset']);
+const COLLAPSIBLE_TYPES = new Set([
+  'Group',
+  'Transform',
+  'MaterialOverride',
+  'GltfAsset',
+  'Object',
+]);
 // The collapsible types that default EXPANDED (opt-out via `collapsedNodes`),
 // in contrast to GltfAsset which defaults collapsed (opt-in via `expandedAssets`).
-const CONTAINER_TYPES = new Set(['Group', 'Transform', 'MaterialOverride']);
+// #1152 — an Object joins both: it can parent now. A row gets a chevron only when it has child
+// rows (`rowsWithChildren`), so an Object that parents nothing draws exactly as before.
+const CONTAINER_TYPES = new Set(['Group', 'Transform', 'MaterialOverride', 'Object']);
 
 interface SceneTreeProps {
   /**

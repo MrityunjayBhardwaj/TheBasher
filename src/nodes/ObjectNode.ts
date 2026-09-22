@@ -16,7 +16,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
-import type { ObjectData, ObjectValue } from './types';
+import type { ObjectData, ObjectValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
 
 export const ObjectParams = z.object({
@@ -85,7 +85,14 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   paramSchema: ObjectParams,
   // #1056 — a `Skeleton` is accepted as data directly: an armature is its own Object, pointing
   // at the skeleton, rather than the skeleton being re-wrapped to speak 'ObjectData'.
-  inputs: { data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' } },
+  //
+  // #1152 — `children`: an Object parents other scene objects, as a Group does (the socket and its
+  // cardinality are the Group's), so a node that both IS something and HOLDS something has one
+  // representation. `sceneHierarchy` is what makes the walk treat it as a parent.
+  inputs: {
+    data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' },
+    children: { type: 'SceneObject', cardinality: 'list' },
+  },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The posable node — 'transform' implies 'constraint' (a pose can be
   // constrained) implies 'driver'. The data socket carries no pose, so those
@@ -159,6 +166,14 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       ...(params.slotOverrides && Object.keys(params.slotOverrides).length > 0
         ? { slotOverrides: params.slotOverrides }
         : {}),
+      // #1152 — the same rule: carried only when it holds something, so an Object with no
+      // children keeps the shape (and the cache identity) it had before it could parent.
+      ...(childrenOf(inputs.children).length > 0 ? { children: childrenOf(inputs.children) } : {}),
     };
   },
 };
+
+/** The evaluated children list, empty when the socket is unbound. */
+function childrenOf(v: unknown): SceneObject[] {
+  return Array.isArray(v) ? (v as SceneObject[]) : [];
+}

@@ -210,7 +210,10 @@ export function childEdges(
       if (!childId || !v.child) return [];
       return [{ id: childId, value: v.child }];
     }
-    case 'Group': {
+    case 'Group':
+    case 'Object': {
+      // #1152 — an Object parents through the same list socket, and its value carries
+      // `children` only when it holds any (absent reads as none, below).
       // Group aggregates via its list socket (Group.ts:19); index i in the value's
       // `children` corresponds to index i in the binding. Read by INDEX rather than
       // through `hierarchyChildIds`, which compacts: an unbound entry must consume its

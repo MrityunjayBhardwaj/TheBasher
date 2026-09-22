@@ -216,13 +216,15 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // resolving one, so it was neither a road NOR the counted hatch below — invisible to
     // this row in both directions. It resolves through the derivation now, like every other
     // arm that has an Object in reach.
+    // #1152 — the same seven; the two `ObjectR` reads moved with the Object's own draw into
+    // `ObjectSelfR` when `ObjectR` became "the Object, and its children in its space".
     const road = invocationsOf('objectSlotsOf', PRODUCTION_ROADS);
     expect(road).toHaveLength(7);
     expect(road.map((c) => c.fn).sort()).toEqual([
       'GltfAssetR',
       'ObjectMeshR',
-      'ObjectR',
-      'ObjectR',
+      'ObjectSelfR',
+      'ObjectSelfR',
       'evaluatedMeshFromMeshData',
       'resolveEvaluatedMesh',
       'resolveEvaluatedMesh',
@@ -342,6 +344,8 @@ describe('#645 — the slot table is derived once, through the Object', () => {
       'scale',
       'data',
       'slotOverrides',
+      // #1152 — what the Object parents; not a slot field, listed so the census stays exact.
+      'children',
       'rotationMode',
       'quaternion',
     ]);

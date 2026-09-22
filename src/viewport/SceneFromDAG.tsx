@@ -1921,7 +1921,7 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
     // #361 — the object↔data split's Object half. Renders its data's geometry at
     // its own TRS, byte-identical to the fused mesh it will replace (Phase 1).
     case 'Object':
-      return <ObjectR value={value} override={override} />;
+      return <ObjectR value={value} override={override} nodeId={nodeId} />;
     // #415 S5 — CLOSED BY A `never` ([[V109]]). It was not closed before, and two arms
     // above claimed in prose that it was ("dropping it would leave this switch
     // non-exhaustive"). MEASURED: deleting the `ModifiedMesh` arm typechecked cleanly,
@@ -2465,7 +2465,42 @@ function ModifiedMeshR({
 // a <mesh>; a mesh Object (box/sphere/…) renders through ObjectMeshR. Dispatching
 // here — not inside ObjectMeshR — keeps the hook order stable per branch
 // (rules-of-hooks) and is the arm the compiler forces once ObjectData widens.
-function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+// #1152 — an Object draws ITSELF (the arms below, each at the Object's own pose) and, when it
+// parents anything, its CHILDREN in its space: a group carrying the Object's pose, the children
+// inside it through `RenderChild` — the seam that mounts their overlays and stamps their ids for
+// picking, exactly as `GroupR` does. The two are siblings rather than the children nesting inside
+// the drawn mesh, because every arm below poses its own three object and several of them
+// (a light, a camera, a skeleton) draw nothing to nest under.
+function ObjectR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: ObjectValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
+  const self = <ObjectSelfR value={value} override={override} />;
+  if (!value.children || value.children.length === 0) return self;
+  // Index-aligned with `value.children`, as in GroupR; an absent id degrades to the bare draw.
+  const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];
+  return (
+    <>
+      {self}
+      <group
+        position={value.position as [number, number, number]}
+        rotation={degVec3ToRad(value.rotation as [number, number, number])}
+        scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+      >
+        {value.children.map((c, i) => (
+          <RenderChild key={`o:${i}`} value={c} nodeId={edges[i]?.id ?? null} override={override} />
+        ))}
+      </group>
+    </>
+  );
+}
+
+function ObjectSelfR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
   const data = value.data;
   if (data?.kind === 'CurveData') {
     // TRS is the Object's; samples/points are LOCAL (CurveLineChrome's enclosing

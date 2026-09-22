@@ -2157,6 +2157,17 @@ export interface ObjectValue extends RotationModeFields {
    * object that overrides nothing, and disagrees only on the case under test.
    */
   readonly slotOverrides?: Readonly<Record<string, InlineMaterialSpec>>;
+  /**
+   * #1152 — the scene objects this Object PARENTS, drawn in its space, as a Group's are. Present
+   * only when there is at least one: an Object that parents nothing evaluates to exactly the value
+   * it did before this field existed, the same one-spelling rule `slotOverrides` follows.
+   *
+   * Blender has no Object/Group split here — its glTF importer makes one object per node and
+   * parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`) — so a headlamp under
+   * a car body, a handle on a door, is an Object under an Object, not a mesh beside a Group that
+   * stands for nothing a director placed.
+   */
+  readonly children?: readonly SceneObject[];
 }
 
 export type SceneChild =
