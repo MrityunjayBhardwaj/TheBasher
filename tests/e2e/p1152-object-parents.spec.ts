@@ -168,3 +168,89 @@ test('the edges of a sibling Object reorder instead of parenting; the row shows 
   expect(await order()).toEqual(['n_box', 'n_box_2']);
   expect(await childIds(page, 'n_box')).toEqual([]);
 });
+
+// A keyed Object's draw goes through an overlay that copies its value (#1158 is where that copy once
+// lost typed data under a keyed Group). The children ride on that copy, so a keyed parent Object
+// must carry them, drawn and read alike, at every time.
+test('a keyed parent Object carries its child, drawn and read alike', async ({ page }) => {
+  await dragRowOnto(page, 'n_box_2', 'n_box');
+  expect(await childIds(page, 'n_box')).toEqual(['n_box_2']);
+  await page.evaluate(() => {
+    const w = window as unknown as ParentWindow & {
+      __basher_time: { getState: () => { pause: () => void } };
+    };
+    w.__basher_dag.getState().dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'n_box_position_channel',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'position',
+            target: 'n_box',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 2, 0], easing: 'linear' },
+              { time: 2, value: [0, 6, 0], easing: 'linear' },
+            ],
+          },
+        },
+      ],
+      'user',
+      'key the parent',
+    );
+    w.__basher_time.getState().pause();
+  });
+  for (const [t, parentY] of [
+    [0, 2],
+    [1, 4],
+    [2, 6],
+  ] as const) {
+    await page.evaluate(
+      (s) =>
+        (
+          window as unknown as {
+            __basher_time: { getState: () => { setTime: (s: number) => void } };
+          }
+        ).__basher_time
+          .getState()
+          .setTime(s),
+      t,
+    );
+    // The child's local (1,0,0) under the parent's 90° turn and scale 2 is (0,0,-2) from it.
+    const read = await page.evaluate(
+      (s) =>
+        (
+          window as unknown as {
+            __basher_world_transform: (
+              id: string,
+              ctx: unknown,
+            ) => { position: [number, number, number] } | null;
+          }
+        ).__basher_world_transform('n_box_2', {
+          time: { frame: s * 60, seconds: s, normalized: 0 },
+        }),
+      t,
+    );
+    expect(read!.position[1]).toBeCloseTo(parentY, 3);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const scene = (
+            window as unknown as {
+              __basher_three: { getState: () => { scene: import('three').Scene } };
+            }
+          ).__basher_three.getState().scene;
+          let y: number | null = null;
+          scene.traverse((o) => {
+            if (y !== null || !(o as import('three').Mesh).isMesh) return;
+            if (o.parent?.userData?.basherNodeId !== 'n_box_2') return;
+            o.updateWorldMatrix(true, false);
+            y = o.matrixWorld.elements[13];
+          });
+          return y;
+        }),
+      )
+      .toBeCloseTo(parentY, 3);
+  }
+});
