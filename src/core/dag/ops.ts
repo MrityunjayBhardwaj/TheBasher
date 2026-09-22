@@ -442,11 +442,23 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
   // reference by setting its path to `undefined`; treating "no value at the path"
   // as a defect would badge the product's own cleanup.
   if (op.value !== undefined && getAtPath(parsed.data, op.paramPath) === undefined) {
+    // 🔴 #1192 — A REFUSED WRITE COMMITS NOTHING, INCLUDING WHAT THE PATH WALK BUILT ON
+    // THE WAY DOWN. `setAtPath` creates each missing container to reach the leaf, so a
+    // refused `overridden.bogus` on a node whose `overridden` was absent left an empty
+    // `overridden: {}` behind — a real content change, so `sameParamValue` above says
+    // "changed" and the store committed it: one undo step and an unsaved dot for a write
+    // the user was told was ignored. Measured, and it is the ONLY shape of it: a census
+    // across the unit tier (a log here when `next !== state`) found exactly one hit, the
+    // row in `ops.reportable.test.ts` that documented the residue.
+    //
+    // So the refusal hands back the state it was given. `next` is discarded rather than
+    // never built, because the strip is only detectable AFTER the parse — which is also
+    // why this cannot be folded into the `unchanged` check above.
     const rootKey = paramRootKey(op.paramPath);
     const rootSurvived =
       rootKey === '' || Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey);
     return {
-      next,
+      next: state,
       inverse,
       reportable: {
         badge: 'stripped-write',

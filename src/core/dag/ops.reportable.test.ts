@@ -122,15 +122,13 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
     // already names it, and repeating it renders the path twice in one sentence.
     expect(result.reportable?.reason).toBe('Object has no such parameter');
     expect(result.reportable?.reason).not.toContain('overridden');
-    // The value did not land — which is the claim. Note what it DOES leave behind:
-    // `setAtPath` creates the container on the way down and zod keeps it, so the
-    // params gain an empty `overridden: {}`. So the write is not a clean no-op; it
-    // is a no-op with a residue that still moves the params hash. That is a second
-    // reason to surface it rather than let it pass, and it is asserted here so the
-    // next reader meets the residue in the row instead of in a diff.
+    // The value did not land — which is the claim. It used to leave a residue: `setAtPath`
+    // creates each container on the way down to the leaf, so the params gained an empty
+    // `overridden: {}` and the refused write committed, undo step and all. #1192 made the
+    // refusal hand back the state it was given, so the node is untouched — `overridden`
+    // is absent again, exactly as before the write.
     const params = result.next.nodes.n.params as Record<string, unknown>;
-    expect((params.overridden as Record<string, unknown>).bogus).toBeUndefined();
-    expect(params.overridden).toEqual({});
+    expect(params.overridden).toBeUndefined();
     expect(params.position).toEqual([0, 0, 0]);
   });
 

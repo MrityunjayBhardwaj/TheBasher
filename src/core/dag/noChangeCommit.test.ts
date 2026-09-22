@@ -40,6 +40,13 @@ const NO_CHANGE: [string, Op][] = [
     'the value it already has',
     { type: 'setParam', nodeId: 'n_box_data', paramPath: 'size', value: [1, 1, 1] },
   ],
+  // #1192 — the same refusal, but under a container the node owns and has not created yet.
+  // The path walk builds `overridden` on the way down to the leaf, so this row is the one
+  // that commits unless the refusal itself hands back the state it was given.
+  [
+    'a wrong leaf under a container that does not exist yet',
+    { type: 'setParam', nodeId: 'n_box', paramPath: 'overridden.bogus', value: true },
+  ],
 ];
 
 beforeEach(() => {
