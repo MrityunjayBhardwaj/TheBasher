@@ -109,7 +109,12 @@ export function renderNoOpReport(reportable: ReadonlyArray<Reportable | null>): 
   if (hits.length === 0) return '';
   const lines = hits.map(
     (r) =>
-      `  - ${badgeLabel(r.badge, { paramPath: r.paramPath, nodeId: r.nodeId, reason: r.reason })}`,
+      `  - ${badgeLabel(r.badge, {
+        paramPath: r.paramPath,
+        nodeId: r.nodeId,
+        reason: r.reason,
+        owner: r.owner,
+      })}`,
   );
   // The closing line stays badge-agnostic on purpose. A stripped write changed
   // NOTHING; a displaced edge changed the graph and destroyed a connection. A

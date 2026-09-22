@@ -116,6 +116,11 @@ export interface Reportable {
   nodeId: string;
   paramPath: string;
   reason: string;
+  /** #1189 — the node that DOES own this param, when the write aimed at the wrong half
+   *  of a split object. Never filled here: the core cannot see the data-lane walk. It is
+   *  filled by the app-layer reader that renders the refusal (`createFork`), through the
+   *  one ownership rule, `resolveDataParamOwner`. Absent when nothing owns it. */
+  owner?: string;
 }
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
@@ -389,11 +394,19 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
       op,
     );
   }
-  const nextNode: Node = { ...node, params: parsed.data };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1189 — A WRITE THAT CHANGES NOTHING HANDS BACK THE SAME STATE OBJECT. Everything
+  // downstream keys on the reference: the store's undo push, the unsaved flag and
+  // autosave (`installDirtyTracking` in boot.ts). A fresh object with identical
+  // contents read as an edit to all three — measured: a stripped write and a same-value
+  // write each left an undo step and the unsaved dot. So "nothing changed" is decided
+  // HERE, once, by the one function that knows, and said in the only language those
+  // readers already speak. The inverse is still returned (a caller may hold it), and the
+  // stripped-write flag below still fires: the refusal stays visible, it just no longer
+  // commits.
+  const unchanged = sameParamValue(node.params, parsed.data);
+  const next: DagState = unchanged
+    ? state
+    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, params: parsed.data } } };
   const inverse: Op = {
     type: 'setParam',
     nodeId: op.nodeId,
@@ -449,6 +462,36 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     };
   }
   return { next, inverse };
+}
+
+/**
+ * #1189 — structural equality over param values, CONSERVATIVE by construction: plain
+ * objects, arrays and primitives (`Object.is`, so NaN equals NaN and -0 differs from 0)
+ * are compared by content; anything else — a typed array, a class instance, a Map — only
+ * by reference. So it can answer "different" for two equal exotic values (the write then
+ * commits as before), and can never answer "same" for two different ones, which is the
+ * direction that would silently drop an edit.
+ */
+function sameParamValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameParamValue(a[i], b[i])) return false;
+    return true;
+  }
+  if (Array.isArray(b) || !isPlainRecord(a) || !isPlainRecord(b)) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) {
+    if (!Object.prototype.hasOwnProperty.call(b, k) || !sameParamValue(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+function isPlainRecord(v: object): v is Record<string, unknown> {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
 }
 
 // #291 (Epic 1 Inc 0) — spare params live in `node.spare`, validated by the ONE

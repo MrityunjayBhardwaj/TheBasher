@@ -147,9 +147,27 @@ export const useDagStore = create<DagStore>((set, get) => ({
 
   dispatch(op, source = 'user', description) {
     const validated = validateOp(op);
-    const { next, inverse, reportable } = applyOp(get().state, validated);
+    const prev = get().state;
+    const { next, inverse, reportable } = applyOp(prev, validated);
     assertNoDanglingIdRef([validated], next); // #435
     const inv: InverseOp = { forward: validated, inverse };
+    // #1189 — an op that changed nothing hands back the SAME state object (applyOp's
+    // contract). It commits nothing: no state set (so the unsaved flag and autosave, which
+    // key on the reference, stay put) and no undo step. The activity entry IS kept, so a
+    // refusal the op carries stays visible. The inverse is still returned to the caller.
+    if (next === prev) {
+      if (interaction) return inv;
+      const entry: ActivityEntry = {
+        id: ++activityCounter,
+        timestamp: timeNow(),
+        source,
+        op: validated,
+        description,
+        ...(reportable ? { reportable } : {}),
+      };
+      set((s) => ({ activity: [...s.activity, entry] }));
+      return inv;
+    }
     // Inside a drag transaction: mutate state, buffer the undo/activity record.
     if (interaction) {
       if (interaction.entries.length === 0) {
@@ -181,11 +199,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
     const result: InverseOp[] = [];
     let working = get().state;
     const newActivity: ActivityEntry[] = [];
+    // #1189 — `changed` holds only the ops that moved the state; the undo record is
+    // built from it, so an op that changed nothing leaves no step. `result` stays
+    // index-aligned with `ops` for the caller.
+    const changed: InverseOp[] = [];
     for (const op of ops) {
       const validated = validateOp(op);
       const { next, inverse } = applyOp(working, validated);
-      working = next;
       const inv: InverseOp = { forward: validated, inverse };
+      if (next !== working) changed.push(inv);
+      working = next;
       result.push(inv);
       newActivity.push({
         id: ++activityCounter,
@@ -202,13 +225,17 @@ export const useDagStore = create<DagStore>((set, get) => ({
         interaction.source = source;
         interaction.description = description ?? '';
       }
-      interaction.entries.push(...result);
-      set({ state: working });
+      interaction.entries.push(...changed);
+      if (changed.length > 0) set({ state: working });
+      return result;
+    }
+    if (changed.length === 0) {
+      set((s) => ({ activity: [...s.activity, ...newActivity] }));
       return result;
     }
     set((s) => ({
       state: working,
-      undoStack: [...s.undoStack, ...result],
+      undoStack: [...s.undoStack, ...changed],
       redoStack: [],
       activity: [...s.activity, ...newActivity],
     }));
@@ -221,11 +248,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
     let working = get().state;
     const newActivity: ActivityEntry[] = [];
     // Apply forward; collect inverses pre-mutation per op (K2 step 3).
+    // #1189 — `changed` holds only the ops that moved the state; the undo record is
+    // built from it, so an op that changed nothing leaves no step. `result` stays
+    // index-aligned with `ops` for the caller.
+    const changed: InverseOp[] = [];
     for (const op of ops) {
       const validated = validateOp(op);
       const { next, inverse } = applyOp(working, validated);
-      working = next;
       const inv: InverseOp = { forward: validated, inverse };
+      if (next !== working) changed.push(inv);
+      working = next;
       result.push(inv);
       newActivity.push({
         id: ++activityCounter,
@@ -243,14 +275,18 @@ export const useDagStore = create<DagStore>((set, get) => ({
         interaction.source = source;
         interaction.description = description ?? '';
       }
-      interaction.entries.push(...result);
-      set({ state: working });
+      interaction.entries.push(...changed);
+      if (changed.length > 0) set({ state: working });
+      return result;
+    }
+    if (changed.length === 0) {
+      set((s) => ({ activity: [...s.activity, ...newActivity] }));
       return result;
     }
     const group: AtomicGroup = {
       __atomic: true,
       description: description ?? '',
-      entries: result,
+      entries: changed,
     };
     set((s) => ({
       state: working,

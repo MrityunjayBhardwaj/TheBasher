@@ -10,6 +10,7 @@
 import type { DagState } from '../../core/dag/state';
 import type { Op, InverseOp } from '../../core/dag/types';
 import { applyOp, validateOp, type Reportable } from '../../core/dag/ops';
+import { resolveDataParamOwner } from '../../app/resolveDataParamOwner';
 
 export interface ForkResult {
   /** The forked DAG state after applying all ops. */
@@ -48,12 +49,27 @@ export function createFork(state: DagState, ops: Op[]): ForkResult {
     const op = ops[i];
     const validated = validateOp(op);
     const result = applyOp(fork, validated);
+    reportable.push(withOwner(fork, result.reportable));
     fork = result.next;
     inverseOps.push({ forward: validated, inverse: result.inverse });
-    reportable.push(result.reportable ?? null);
   }
 
   return { fork, inverseOps, reportable };
+}
+
+/**
+ * #1189 — a write refused because it aimed at the wrong half of a split object names the
+ * half that owns the param, so the model (and the director reading the DiffBar) can re-aim
+ * in one step. Read against the state the op was applied TO. The reach stays the reader's:
+ * the op is still refused — an outer node reaches an inner value only explicitly (promote),
+ * never by the op layer forwarding it.
+ */
+function withOwner(state: DagState, r: Reportable | undefined): Reportable | null {
+  if (!r) return null;
+  if (r.badge !== 'stripped-write') return r;
+  const root = r.paramPath.split(/[.[]/)[0];
+  const owner = resolveDataParamOwner(state, r.nodeId, root);
+  return owner && owner !== r.nodeId ? { ...r, owner } : r;
 }
 
 /**

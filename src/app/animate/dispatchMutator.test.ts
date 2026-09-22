@@ -25,6 +25,7 @@ import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveCameraPoseAt } from '../activeCamera';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
+import { linkedDataNodeId } from '../resolveDataParamOwner';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -692,12 +693,18 @@ describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE 
   // would let three different failures read as success.
   function seedAnimatedCamera(): DagState {
     let s = buildSceneWithCamera();
+    // The lens lives on the camera's DATA node. This once wrote `fov` onto the Object
+    // `n_cam`, which the schema strips — so the "28 base" stayed at the data's 45, the
+    // same number as DEFAULT_CAMERA_POSE.fov, and the pairwise-distinct rule above held
+    // only on paper (#1189). Written to the owner and read back so it cannot drift again.
+    const camData = linkedDataNodeId(s, 'n_cam')!;
     s = applyOp(s, {
       type: 'setParam',
-      nodeId: 'n_cam',
+      nodeId: camData,
       paramPath: 'fov',
       value: 28,
     }).next;
+    expect((s.nodes[camData].params as { fov: number }).fov).toBe(28);
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'cam_fov_channel',

@@ -324,7 +324,18 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
     const edits: [string, Op][] = [
       ['the source clip', { type: 'setParam', nodeId: 'srcClip', paramPath: 'name', value: 'run' }],
       ['the bone map', { type: 'setParam', nodeId: 'map', paramPath: 'name', value: 'other' }],
-      ['the source rig', { type: 'setParam', nodeId: 'srcRig', paramPath: 'bones', value: [] }],
+      // A bone the fixture's EMPTY rig does not have. This row once wrote `bones: []` over
+      // `bones: []` — a write that changed nothing, which passed only while every write
+      // minted a new state (#1189). A row that proves "an edit re-renders" needs an edit.
+      [
+        'the source rig',
+        {
+          type: 'setParam',
+          nodeId: 'srcRig',
+          paramPath: 'bones',
+          value: [{ name: 'src_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+        },
+      ],
     ];
     for (const [what, op] of edits) {
       const after = gltfAssetDepNodes(applyOp(base, op).next.nodes, ASSET, NODE_NAME_MAP);
