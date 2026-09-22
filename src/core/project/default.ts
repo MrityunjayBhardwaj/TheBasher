@@ -27,13 +27,14 @@ const DEFAULT_OPS: Op[] = [
   // with are therefore the same shape with the same id — a new project is split-native, so it
   // needs no migration on boot (K23).
   //
-  // Values preserved EXACTLY as the fused seed carried them (fov 45 / near 0.01 / far 500 /
-  // position [3,2,3] / lookAt [0,0,0]): the flip changes the shape, not the framing.
+  // Values preserved EXACTLY as the fused seed carried them (fov 45 / near 0.01 /
+  // position [3,2,3] / lookAt [0,0,0]): the flip changes the shape, not the framing. The one
+  // exception is far, 500 → 1000 in #1193, Blender's camera Clip End.
   {
     type: 'addNode',
     nodeId: 'n_camera_data',
     nodeType: 'CameraData',
-    params: { projection: 'Perspective', fov: 45, near: 0.01, far: 500, lookAt: [0, 0, 0] },
+    params: { projection: 'Perspective', fov: 45, near: 0.01, far: 1000, lookAt: [0, 0, 0] },
   },
   {
     type: 'addNode',

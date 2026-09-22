@@ -591,9 +591,9 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * #387 C4 — the CameraData (lens) half of a newly added camera. Sister to
  * `lightDataParamsFor`: the pose lives on the Object (`paramsFor`), the lens lives here.
  *
- * ⚠️ EVERY VALUE IS PRESERVED EXACTLY as the fused builders seeded it — `far: 1000` (which
- * differs from `CameraData`'s own zod default of 500, and from the seed project's 500) and
- * the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
+ * ⚠️ EVERY VALUE IS PRESERVED EXACTLY as the fused builders seeded it — `far: 1000` (since
+ * #1193 also `CameraData`'s own default and the seed project's, Blender's Clip End; it was
+ * the lone 1000 against their 500 before) and the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
  * changes the SHAPE a new camera is minted in, nothing about what it looks like. The ortho
  * `zoom: 1` in particular is currently read by no renderer at all (#478) — it is seeded here
  * unchanged so that issue stays exactly as measurable as it was, and is fixed under #478.

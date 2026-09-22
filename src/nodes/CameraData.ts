@@ -50,6 +50,11 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { CameraDataValue } from './types';
 
+/** #1193 — Blender's camera Clip End (`Camera.clip_end`, 1000 — measured on 5.1.1), the
+ *  same far plane the viewport already defaults to (#1187). The one value every road that
+ *  fills in a missing `far` falls back to: the schema, the value below, the lens inspector. */
+export const DEFAULT_CAMERA_FAR = 1000;
+
 export const CameraDataParams = z.object({
   /** Perspective vs orthographic — the single discriminator that collapses the two
    *  fused camera NODES into one datablock (Blender's Camera Type enum). */
@@ -70,7 +75,7 @@ export const CameraDataParams = z.object({
    *  param by every definition including Blender's. (#478: nothing currently READS it.) */
   zoom: z.number().positive().default(50),
   near: z.number().positive().default(0.01),
-  far: z.number().positive().default(500),
+  far: z.number().positive().default(DEFAULT_CAMERA_FAR),
   /** Sensor height (mm) along the vertical FOV axis — authoring metadata for the
    *  focal-length inspector (UX #12). The renderer reads `fov`, not this. */
   sensorSize: z.number().positive().default(36),
@@ -145,7 +150,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       fov: params.fov,
       zoom: params.zoom ?? 50,
       near: params.near ?? 0.01,
-      far: params.far ?? 500,
+      far: params.far ?? DEFAULT_CAMERA_FAR,
       sensorSize: params.sensorSize ?? 36,
       dofEnabled: params.dofEnabled ?? false,
       focusDistance: params.focusDistance ?? 5,
