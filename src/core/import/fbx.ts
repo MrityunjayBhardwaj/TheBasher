@@ -86,6 +86,17 @@ export function fbxMetresPerUnit(group: { userData?: Record<string, unknown> }):
  * reaches that number differently — it leaves the bones in centimetres and puts 0.01 on the
  * armature OBJECT's scale — so the two agree in the world and differ in what the Scale field
  * reads (#1086).
+ *
+ * The unit goes into the bones on purpose, not by omission. Blender's placement is forced by
+ * its axis conversion, not chosen for the unit: it multiplies the unit into the same matrix
+ * as FBX's Y-up → Z-up rotation (`import_fbx.py:3135`, `:3146`, Blender 4.5.9) and hangs that
+ * matrix on the root objects (`:2364`), because its option to bake the transform into data
+ * skips armatures and bones (`:2358`) and is labelled broken with them (`__init__.py:90`).
+ * Its own BVH importer, which has no axis matrix to carry, bakes its scale into the bone
+ * data (`io_anim_bvh/import_bvh.py:151`, `:277`). Three is Y-up like FBX, so there is no
+ * matrix here, and putting the unit in the bones keeps one convention across roads: a
+ * generated clip's declared unit lands in its bones too (#790), and every stand-in Object
+ * stays at scale 1.
  */
 export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): FbxImportResult {
   const loader = new FBXLoader();
