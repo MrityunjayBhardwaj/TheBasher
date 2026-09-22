@@ -325,14 +325,22 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
     }
   }
 
-  const nextNode: Node = {
-    ...consumer,
-    inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
-  };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [consumer.id]: nextNode },
-  };
+  // #1191 — re-binding the producer a single socket already holds changes nothing, so it
+  // hands back the same state (the #1189 contract, `sameParamValue` below). A list socket
+  // is not covered: connecting there always inserts, so the list really does grow.
+  const unchanged = sameParamValue(prior, nextBinding);
+  const next: DagState = unchanged
+    ? state
+    : {
+        ...state,
+        nodes: {
+          ...state.nodes,
+          [consumer.id]: {
+            ...consumer,
+            inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
+          },
+        },
+      };
   return reportable ? { next, inverse, reportable } : { next, inverse };
 }
 
@@ -471,6 +479,9 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
  * by reference. So it can answer "different" for two equal exotic values (the write then
  * commits as before), and can never answer "same" for two different ones, which is the
  * direction that would silently drop an edit.
+ *
+ * #1191 — also the one comparison for the other ops that can be asked to change nothing:
+ * `connect`'s binding, `setMeta`'s whole meta, `setSpareParam`'s param.
  */
 function sameParamValue(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true;
@@ -510,8 +521,16 @@ function applySetSpareParam(
     );
   }
   const prior = node.spare?.[op.key];
-  const nextNode: Node = { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } };
-  const next: DagState = { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+  // #1191 — the value it already holds changes nothing: the same state (#1189 contract).
+  const next: DagState = sameParamValue(prior, parsed.data)
+    ? state
+    : {
+        ...state,
+        nodes: {
+          ...state.nodes,
+          [node.id]: { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } },
+        },
+      };
   // Inverse: restore the prior value if the key existed, else remove the new key.
   const inverse: Op = prior
     ? { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior }
@@ -597,11 +616,12 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
   // An empty meta object is normalized away so a renamed-then-cleared node is
   // byte-identical to one that was never named (keeps save diffs minimal).
   const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
-  const nextNode: Node = { ...node, meta: nextMeta };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1191 — judged on the WHOLE resulting meta, not on the name alone: a write that keeps
+  // the name but drops a `nameFrom` link, or clears a name, is a change; one that lands on
+  // exactly the meta already there is not, and hands back the same state (#1189 contract).
+  const next: DagState = sameParamValue(node.meta, nextMeta)
+    ? state
+    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
   const inverse: Op = {
     type: 'setMeta',
     nodeId: op.nodeId,
@@ -621,11 +641,15 @@ function applySetHidden(state: DagState, op: Extract<Op, { type: 'setHidden' }>)
   if (op.hidden) meta.hidden = true;
   else delete meta.hidden;
   const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
-  const nextNode: Node = { ...node, meta: nextMeta };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1191 — judged by MEANING, unlike setMeta: this op owns one boolean, so the same
+  // visibility is no change and hands back the same state (#1189 contract). The only other
+  // difference it could make is normalizing a stored `hidden: false` / empty `meta` away;
+  // committing that would record an undo step that changes nothing visible and cannot put
+  // the stored key back (the inverse is `hidden: false`, which deletes it).
+  const next: DagState =
+    prior === op.hidden
+      ? state
+      : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
   const inverse: Op = { type: 'setHidden', nodeId: op.nodeId, hidden: prior };
   return { next, inverse };
 }
