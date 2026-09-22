@@ -1,8 +1,8 @@
 // FBX integration tests — synthetic THREE.Group with a SkinnedMesh +
 // embedded clip. Avoids needing a real .fbx fixture by exercising the
 // extractBones + threeAdapter conversion paths via constructed THREE
-// objects. The actual FBXLoader.parse() round-trip is left to manual
-// verification (the loader is upstream / well-tested by THREE).
+// objects. The real FBXLoader.parse() road, on the committed ASCII
+// `rig.fbx`, is covered in fbxUnit.test.ts (the declared unit, #1086).
 //
 // Why this approach: FBX files are binary or massive ASCII; bundling a
 // minimal valid one in the repo adds heft without much coverage. The

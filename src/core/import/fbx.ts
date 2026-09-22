@@ -22,6 +22,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { Bone, AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes, type ClipShape } from './threeAdapter';
+import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface FbxSkeletonParams {
@@ -41,8 +42,50 @@ export interface FbxImportResult {
 }
 
 /**
+ * FBX's base length unit is the centimetre: `UnitScaleFactor` is centimetres per file unit, and
+ * a file that omits it means 1 — centimetres. Blender reads it exactly so, and multiplies its
+ * scene scale by `UnitScaleFactor / 100` for a metre scene (`io_scene_fbx/import_fbx.py:3132-3135`,
+ * default 1.0 at `:3133`).
+ */
+const FBX_DEFAULT_UNIT_SCALE_FACTOR = 1;
+const CENTIMETRES_PER_METRE = 100;
+
+/**
+ * #1086 — metres per file unit, from the unit the file DECLARES.
+ *
+ * Three's FBXLoader reads `GlobalSettings.UnitScaleFactor` and records it on the returned group
+ * (`FBXLoader.js`, `userData.unitScaleFactor`) without applying it, so a Mixamo file — which
+ * declares 1, centimetres — parses with its hips 99.67 units up. Read here, where every FBX
+ * door passes, so the drop, the picker, the Library and both dev seams all get it.
+ *
+ * A declared factor that is not a positive, finite number is refused rather than defaulted:
+ * the file has stated its unit and stated it wrongly, and guessing over that is the silent
+ * wrong size this exists to remove.
+ */
+export function fbxMetresPerUnit(group: { userData?: Record<string, unknown> }): number {
+  const declared = group.userData?.unitScaleFactor;
+  const factor = declared === undefined ? FBX_DEFAULT_UNIT_SCALE_FACTOR : declared;
+  if (typeof factor !== 'number' || !Number.isFinite(factor) || factor <= 0) {
+    throw new Error(
+      `FBX declares UnitScaleFactor ${String(declared)} — not a positive number of centimetres per unit, so its size cannot be read.`,
+    );
+  }
+  return factor / CENTIMETRES_PER_METRE;
+}
+
+/**
  * Parse an FBX payload (ArrayBuffer for binary, string for ASCII).
  * Throws when three's FBXLoader rejects the input.
+ *
+ * Lengths come out in METRES, in the unit the file declares (`fbxMetresPerUnit`) — the same
+ * place the BVH road applies a unit its producer declares (#790), so nothing downstream sizes
+ * the rig a second time.
+ *
+ * Measured against the reference on `mixamo-samba.fbx`: Blender 5.1.1 imports it with the hips
+ * at 0.95577 m world height on its first frame; this road draws them at 0.95577 m. Blender
+ * reaches that number differently — it leaves the bones in centimetres and puts 0.01 on the
+ * armature OBJECT's scale — so the two agree in the world and differ in what the Scale field
+ * reads (#1086).
  */
 export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): FbxImportResult {
   const loader = new FBXLoader();
@@ -50,6 +93,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   // FBXLoader.parse signature: (data: ArrayBuffer, path: string) → Group
   // The path is used to resolve textures; we pass empty since we don't
   // import meshes/textures in this wave.
+  const metresPerUnit = fbxMetresPerUnit(group);
 
   const bones = extractBones(group);
   if (bones.length === 0) {
@@ -62,14 +106,14 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
-      skeletonParams: { bones: skeletonBones },
+      skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
     };
   }
 
   const keyframes = clipToKeyframes(clip as ClipShape, skeletonBones);
   return {
-    skeletonParams: { bones: skeletonBones },
+    skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,
@@ -80,7 +124,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       // away from its own end instead of stopping there. The skeleton-only branch
       // above has always said `false`; these two now agree.
       loop: 'hold',
-      keyframes,
+      keyframes: scaleKeyframePositions(keyframes, metresPerUnit),
     },
   };
 }

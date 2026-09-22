@@ -14,6 +14,7 @@ import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
 import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes } from './threeAdapter';
 import { readPosedJoints } from './bvhProfile';
+import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface BvhSkeletonParams {
@@ -164,19 +165,4 @@ function replaceRestOffsetOnPosedJoints(
       ] as Vec3,
     };
   });
-}
-
-const scaled = (v: Vec3, by: number): Vec3 => [v[0] * by, v[1] * by, v[2] * by];
-
-function scaleBonePositions(bones: readonly BoneSpec[], by: number): readonly BoneSpec[] {
-  if (by === 1) return bones;
-  return bones.map((bone) => ({ ...bone, position: scaled(bone.position, by) }));
-}
-
-function scaleKeyframePositions(
-  keyframes: readonly AnimationKeyframe[],
-  by: number,
-): readonly AnimationKeyframe[] {
-  if (by === 1) return keyframes;
-  return keyframes.map((kf) => ({ ...kf, position: scaled(kf.position, by) }));
 }
