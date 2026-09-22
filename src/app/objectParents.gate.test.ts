@@ -12,8 +12,9 @@
 //   Bulb    mesh   parent Socket   world (0, 2, 2)    scale 0.4
 //
 // every `matrix_parent_inverse` identity — a child's world is its parent's world times its own
-// local transform. The rows below build that same tree by hand (Objects over split cubes, an
-// empty as a Group) and ask for Blender's numbers.
+// local transform. The first rows build that same tree by hand (Objects over split cubes, an
+// empty as a Group) and ask for Blender's numbers; the last rows import the FILE itself through the
+// native importer and ask for the same numbers of what it wrote.
 //
 // The parent is in QUATERNION mode with a DECOY euler, as every native import writes it: a
 // reader that bypasses the resolved orientation composes the decoy and lands measurably wrong.
@@ -34,6 +35,10 @@ import {
 import { hierarchyChildIds, HIERARCHY_PARENT_TYPES } from './sceneHierarchy';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { evaluate } from '../core/dag/evaluator';
+import { readFileSync } from 'node:fs';
+import { Matrix4, Vector3 } from 'three';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
+import { nodeDisplayName } from './sceneTreeWalk';
 
 const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 const H = Math.SQRT1_2;
@@ -148,5 +153,50 @@ describe('#1152 — an Object parents, and its children sit where Blender puts t
     expect(at('bulb').depth).toBe(at('body').depth + 2);
     expect(at('lamp').parent).toEqual({ nodeId: 'body', socket: 'children', index: 0 });
     expect(at('socket').parent).toEqual({ nodeId: 'body', socket: 'children', index: 1 });
+  });
+});
+
+describe('#1152 — the file imports native, and lands where Blender puts it', () => {
+  /** The fixture through the native importer, applied to the starter scene. */
+  async function importFixture() {
+    const bytes = readFileSync('public/assets/mesh-parent.gltf');
+    const result = await buildNativeGltfImportOps({
+      buffer: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      assetRef: 'user-imports/native/mesh-parent.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'unused',
+    });
+    if ('refused' in result) throw new Error(`refused: ${result.refused}`);
+    let s: DagState = buildDefaultDagState();
+    for (const op of result.ops) s = applyOp(s, op).next;
+    const idOf = (name: string) =>
+      Object.values(s.nodes).find(
+        (n) => nodeDisplayName(s.nodes, n.id) === name && n.type !== 'PolyMeshData',
+      )!.id;
+    return { s, idOf };
+  }
+
+  it('the mesh that holds children is an Object, and they hang on it', async () => {
+    const { s, idOf } = await importFixture();
+    expect(s.nodes[idOf('Body')].type).toBe('Object');
+    expect(hierarchyChildIds(s.nodes[idOf('Body')])).toEqual([idOf('Lamp'), idOf('Socket')]);
+    expect(s.nodes[idOf('Socket')].type).toBe('Group');
+    expect(hierarchyChildIds(s.nodes[idOf('Socket')])).toEqual([idOf('Bulb')]);
+  });
+
+  it.each([
+    ['Body', [0, 1, 0], 2],
+    ['Lamp', [0, 2, -2], 0.5],
+    ['Socket', [0, 1, 2], 2],
+    ['Bulb', [0, 2, 2], 0.4],
+  ] as const)('%s: the import’s world · Blender’s world for it', async (name, position, scale) => {
+    const { s, idOf } = await importFixture();
+    // The import Group places the model as a whole (its pivot at the model's centre); Blender's
+    // numbers are the file's own, so they are composed under the import Group's world.
+    const importWorld = resolveParentWorldMatrix(s, idOf('Body'), ctx) ?? new Matrix4();
+    const want = new Vector3(...position).applyMatrix4(importWorld);
+    const w = resolveWorldTransform(s, idOf(name), ctx)!;
+    expectVec(w.position, want.toArray());
+    expectVec(w.scale, [scale, scale, scale]);
   });
 });

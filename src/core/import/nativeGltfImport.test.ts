@@ -615,18 +615,6 @@ describe('buildNativeGltfImportOps', () => {
     ],
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
     [
-      // #1051 made a hierarchy native; what this fixture actually carries is the one shape still
-      // refused — the holder node has a mesh AND children, and an Object cannot parent (#1152).
-      'a node that is both a mesh and a parent',
-      () =>
-        jsonFixture((json) => {
-          const nodes = json.nodes as Record<string, unknown>[];
-          nodes.push({ name: 'holder', children: [0], mesh: 0 });
-          json.scenes = [{ nodes: [1] }];
-        }),
-      '#1152',
-    ],
-    [
       'a mesh drawn as lines',
       () =>
         jsonFixture((json) => {
@@ -1158,11 +1146,16 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     }
   });
 
-  it('a node that carries a mesh AND children is refused by name', async () => {
+  // #1152 — this shape was refused by name until an Object could parent. It is an Object now, and its
+  // child's edge goes to it, as Blender parents object to object (`imp/node.py:105-108`). Where the
+  // child then lands is measured against Blender in `objectParents.gate.test.ts`.
+  it('a node that carries a mesh AND children imports as an Object that parents', async () => {
     const buffer = jsonFixture((json) => {
+      const meshes = json.meshes as Record<string, unknown>[];
+      meshes.push({ ...meshes[0] });
       json.nodes = [
         { name: 'cube', mesh: 0 },
-        { name: 'holder', mesh: 0, children: [0] },
+        { name: 'holder', mesh: 1, children: [0] },
       ];
       json.scenes = [{ nodes: [1] }];
     });
@@ -1172,8 +1165,15 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
       sceneNodeId: 'n_scene',
       storeImage: noImages,
     });
-    expect('refused' in result && result.refused).toContain('carries a mesh and also has children');
-    expect('refused' in result && result.issue).toBe('#1152');
+    if ('refused' in result) throw new Error(result.refused);
+    const added = new Map<string, string>();
+    for (const op of result.ops) if (op.type === 'addNode') added.set(op.nodeId, op.nodeType);
+    const edge = result.ops.find(
+      (op) =>
+        op.type === 'connect' && op.to.socket === 'children' && added.get(op.to.node) === 'Object',
+    );
+    expect(edge, 'a child edge into an Object').toBeDefined();
+    expect(result.objectIds).toHaveLength(2);
   });
 
   it('an empty is not mistaken for a second node sharing a mesh', async () => {

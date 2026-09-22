@@ -310,21 +310,12 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1123',
     };
   }
-  for (let i = 0; i < json.nodes.length; i++) {
-    const node = json.nodes[i];
-    // #1051 — a hierarchy comes across now: an empty is a Group, a mesh node is an Object, and the
-    // parent is an edge. What still has no shape is a node that is BOTH — an Object cannot parent
-    // (`connect` refuses: "Object has no input socket 'children'"), where Blender makes one object
-    // per node and parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`).
-    if (typeof node.mesh === 'number' && (node.children?.length ?? 0) > 0) {
-      return {
-        refused: `node ${i} carries a mesh and also has children, and an Object cannot parent`,
-        issue: '#1152',
-      };
-    }
-  }
-  // After the hierarchy refusal, so a file is refused for its shape first. A node without a mesh is
-  // an empty and shares nothing.
+  // #1051 — a hierarchy comes across: an empty is a Group, a mesh node is an Object, and the parent
+  // is an edge. #1152 — a node that is BOTH a mesh and a parent is an Object that parents, as in
+  // Blender, which makes one object per node and parents object to object
+  // (`io_scene_gltf2/blender/imp/node.py:105-108`); its children's edges go to it like any other.
+  //
+  // A node without a mesh is an empty and shares nothing.
   const nodeOfMesh = new Map<number, number>();
   for (let i = 0; i < json.nodes.length; i++) {
     if (typeof json.nodes[i].mesh !== 'number') continue;

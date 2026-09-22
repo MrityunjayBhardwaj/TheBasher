@@ -11,7 +11,9 @@
 // The parent's rotation and scale are there so a reader that drops the parent's transform, or
 // applies only its translation, lands somewhere measurably different.
 //
-// Geometry and material are nested-cube.gltf's cube, shared by all three meshes.
+// Geometry and material are nested-cube.gltf's cube. Each mesh node gets its OWN mesh entry over
+// those accessors: two nodes naming one mesh is a different shape (a shared mesh, #1061), refused
+// on its own account, and this fixture is about parenting only.
 //
 // Run: node scripts/gen-mesh-parent-fixture.mjs
 
@@ -37,6 +39,9 @@ doc.nodes = [
   { name: 'Socket', translation: [-1, 0, 0], children: [3] },
   { name: 'Bulb', mesh: 0, translation: [0, 0.5, 0], scale: [0.2, 0.2, 0.2] },
 ];
+doc.meshes = ['Body', 'Lamp', 'Bulb'].map((name) => ({ ...doc.meshes[0], name }));
+doc.nodes[1].mesh = 1;
+doc.nodes[3].mesh = 2;
 doc.scenes = [{ nodes: [0] }];
 doc.scene = 0;
 doc.asset.generator = 'basher gen-mesh-parent-fixture';
