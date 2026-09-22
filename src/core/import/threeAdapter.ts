@@ -18,6 +18,7 @@ import {
   AnimationClip,
   Bone,
   Euler,
+  type Object3D,
   QuaternionKeyframeTrack,
   Quaternion,
   Skeleton,
@@ -61,17 +62,18 @@ export function sanitizeBoneName(name: string): string {
   return name.replace(/[[\].:/]/g, '_');
 }
 
-export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
-  // THREE bones carry parent references. Build a name → index map so we
-  // can resolve parent indices in one pass. Root bones have parent = -1.
-  // Index by ORIGINAL name (THREE-side) so parent links stay correct;
-  // sanitize only the value we project into the POJO BoneSpec.
-  const indexByName = new Map<string, number>();
-  bones.forEach((b, i) => indexByName.set(b.name, i));
+export function bonesToSpec(bones: readonly Object3D[]): BoneSpec[] {
+  // THREE nodes carry parent references. A bone's parent is its parent NODE when that node is
+  // in the list, found by identity — so a parent that is not a three `Bone` (an FBX `Null`
+  // inside a chain, #1184) still links, and two bones that share a name cannot swap parents.
+  // A node whose parent is outside the list is a root (-1). Sanitize only the value we
+  // project into the POJO BoneSpec.
+  const indexOf = new Map<Object3D, number>();
+  bones.forEach((b, i) => indexOf.set(b, i));
 
   return bones.map((bone): BoneSpec => {
     const parent = bone.parent;
-    const parentIdx = parent && (parent as Bone).isBone ? (indexByName.get(parent.name) ?? -1) : -1;
+    const parentIdx = parent ? (indexOf.get(parent) ?? -1) : -1;
     return {
       name: sanitizeBoneName(bone.name),
       parent: parentIdx,

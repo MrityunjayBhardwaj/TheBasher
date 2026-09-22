@@ -19,7 +19,13 @@
 // REF: THESIS §42.1 (P3.1); project_p31_plan.md.
 
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import type { Bone, AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
+import type {
+  Bone,
+  Group,
+  Object3D,
+  AnimationClip as ThreeAnimationClip,
+  SkinnedMesh,
+} from 'three';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import { bonesToSpec, clipToKeyframes, type ClipShape } from './threeAdapter';
 import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
@@ -141,28 +147,80 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
 }
 
 /**
- * Walk the imported Group to find the first non-empty skeleton.
- * Preference order:
- *   1. Any SkinnedMesh.skeleton (most common — Mixamo, character FBXs)
- *   2. Root-level bones (skeleton-only FBX)
+ * The rig's bones, root first and every parent before its children.
+ *
+ * #1184 — a skin lists only the bones it is weighted to, so reading the bone set off one skin
+ * dropped every bone no mesh is weighted to: on `mixamo-samba.fbx` the head top, both eyes,
+ * the ten fingertips and both toe ends — 52 of the file's 67. The file declares its bones by
+ * node type, and a skin only supplies bind data; Blender reads it so, making every `LimbNode`
+ * a bone (`io_scene_fbx/import_fbx.py:3397`, Blender 4.5.9) and keeping leaf bones by default
+ * (`:3039`). Measured in Blender 5.1.1 on the same file: 67 bones.
+ *
+ * Which rig: the one holding the FIRST skin — the topmost bone above its first bone, and
+ * everything under that. A file with two characters stays two skeletons in Blender (measured:
+ * a two-armature export re-imports as two armatures), so taking every bone in the file would
+ * merge them under two roots.
+ *
+ * A node inside the rig that is not a bone but has bones under it is a bone too — Blender's
+ * "fake bone" (`import_fbx.py:2511-2513`). Three types a `Null` as a `Group` (`FBXLoader.js`,
+ * `parseModels`), so a walk that kept only `Bone`s split `Hips → Mid → Tip` at a `Null` Mid
+ * into two roots; Blender keeps the chain (measured). The node above the root — the armature
+ * — is not a bone in Blender either, and its transform is #1190's.
+ *
+ * Children are visited in the loader's order: ascending FBX node ID, since it builds its node
+ * map with `for…in` over `Objects.Model` (`FBXLoader.js`, `parseModels`) — not the file's
+ * order. On samba it keeps the order the skin listed its 52 bones in, under every parent
+ * (measured). The retarget aligns a bone by the first of its children it maps (#1186), so this
+ * order is load-bearing.
+ *
+ * A file with no skin keeps what it had: every Bone in the subtree.
  */
-function extractBones(group: import('three').Group): Bone[] {
-  let found: Bone[] | null = null;
+function extractBones(group: Group): Object3D[] {
+  let skin: SkinnedMesh | null = null;
   group.traverse((obj) => {
-    if (found) return;
-    const sm = obj as unknown as SkinnedMesh;
-    if ((obj as unknown as SkinnedMesh).isSkinnedMesh && sm.skeleton?.bones?.length) {
-      found = sm.skeleton.bones.map(sceneBoneOf);
-    }
+    const sm = obj as SkinnedMesh;
+    if (!skin && sm.isSkinnedMesh && sm.skeleton?.bones?.length) skin = sm;
   });
-  if (found) return found;
+  if (skin) return rigOf(sceneBoneOf((skin as SkinnedMesh).skeleton.bones[0]));
 
   // Fallback: collect every Bone in the subtree.
   const bones: Bone[] = [];
   group.traverse((obj) => {
-    if ((obj as unknown as Bone).isBone) bones.push(obj as Bone);
+    if ((obj as Bone).isBone) bones.push(obj as Bone);
   });
   return bones;
+}
+
+/** The topmost bone above `bone` — through fake bones — and every rig node under it, in order. */
+function rigOf(bone: Bone): Object3D[] {
+  let root: Object3D = bone;
+  for (let node = bone.parent; node; node = node.parent) if (isBone(node)) root = node;
+
+  const rig: Object3D[] = [];
+  const visit = (node: Object3D): void => {
+    rig.push(node);
+    for (const child of node.children)
+      if (!isTwinOf(child, node) && holdsABone(child)) visit(child);
+  };
+  visit(root);
+  return rig;
+}
+
+const isBone = (node: Object3D): boolean => (node as Bone).isBone === true;
+
+/** A node is in the rig when it is a bone or has a bone under it (a fake bone). */
+function holdsABone(node: Object3D): boolean {
+  let found = false;
+  node.traverse((n) => {
+    if (isBone(n)) found = true;
+  });
+  return found;
+}
+
+/** #1181 — an inner per-skin copy of `parent`: a Bone of the same FBX node. */
+function isTwinOf(child: Object3D, parent: Object3D): boolean {
+  const id = (child as Object3D & { ID?: unknown }).ID;
+  return isBone(child) && id !== undefined && (parent as Object3D & { ID?: unknown }).ID === id;
 }
 
 /**
