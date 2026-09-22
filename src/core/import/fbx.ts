@@ -3,10 +3,10 @@
 //
 // THREE.FBXLoader.parse(buffer) returns a THREE.Group whose subtree may
 // contain SkinnedMesh children (each with their own .skeleton) and a
-// .animations[] array of THREE.AnimationClip. We pick the first
-// non-empty skeleton and the first clip — multi-skeleton / multi-clip
-// FBX files are rare in director workflows; revisit if a real authoring
-// case appears.
+// .animations[] array of THREE.AnimationClip. We take the rig that holds
+// the first skin (every bone in it, not only the skin's — `extractBones`)
+// and the first clip — multi-skeleton / multi-clip FBX files are rare in
+// director workflows; revisit if a real authoring case appears.
 //
 // SkinnedMesh geometry import is deferred to a later wave / phase.
 // The skeleton + clip alone are enough to drive Mixamo retargeting onto

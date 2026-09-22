@@ -148,6 +148,25 @@ describe('parseFbx — the bones are the rig, not one skin', () => {
   });
 });
 
+describe('parseFbx — a node typed Root above the rig', () => {
+  // Blender reads a `Root` node as the armature object, not a bone (`import_fbx.py:3394-3396`).
+  // Three builds it as a `Bone`, the same as a `LimbNode`, and keeps no type, so today it comes
+  // in as an extra root. #1194 — reds (passes) once the node's FBX type decides.
+  it.fails('#1194: is the armature, not a bone', () => {
+    const skeleton = '\tModel: 900, "Model::Skeleton", "Root" {\n\t\tVersion: 232\n\t}\n';
+    const hipsLink = '\tC: "OO",100,0\n';
+    expect(TWO_SKINS.includes(hipsLink)).toBe(true);
+    const text = TWO_SKINS.replace('\tGeometry: 3000', skeleton + '\tGeometry: 3000').replace(
+      hipsLink,
+      '\tC: "OO",900,0\n\tC: "OO",100,900\n',
+    );
+    expect(shape(bonesOf(new TextEncoder().encode(text).buffer as ArrayBuffer))).toEqual([
+      ['Hips', null],
+      ['Spine', 'Hips'],
+    ]);
+  });
+});
+
 describe('parseFbx — a Null inside a chain, from a Blender export', () => {
   // `null-in-chain.fbx`: a 3-bone chain `Hips → Mid → Tip` exported by Blender, with `Mid`
   // patched from `LimbNode` to a `Null` with no cluster (Blender's own `parse_fbx` +
