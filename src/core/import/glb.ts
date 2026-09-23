@@ -49,6 +49,8 @@ export interface GltfNode {
    */
   matrix?: number[];
   children?: number[];
+  /** #393 — index into `skins`: the skin that binds this node's mesh to its joints. */
+  skin?: number;
   /**
    * #178 (S2) — index into the glTF top-level `meshes` array. Present when this
    * node instantiates a mesh; absent for pure transform/bone nodes.

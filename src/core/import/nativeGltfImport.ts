@@ -57,6 +57,7 @@ import {
   RepeatWrapping,
 } from 'three';
 import type {
+  AnimationKeyframe,
   BakedTextureRef,
   InlineMaterialSpec,
   MeshCornerLayer,
@@ -82,6 +83,8 @@ import {
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
+import { nativeSkeletonClip, readNativeSkeleton, type NativeSkeleton } from './nativeGltfSkeleton';
+import { buildSkeletonObjectOps } from './skeletonObject';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
@@ -312,12 +315,6 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
     return {
       refused: `it requires extensions this reader does not implement (${json.extensionsRequired!.join(', ')})`,
       issue: '#1063',
-    };
-  }
-  if ((json.skins?.length ?? 0) > 0) {
-    return {
-      refused: 'it is skinned, and skinning as a deform relation is not native yet',
-      issue: '#393',
     };
   }
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
@@ -1114,6 +1111,66 @@ function withProjectImages(
 }
 
 /**
+ * #393 — the skeleton, its clip, and the Object that stands it, hung under `parentId`.
+ *
+ * The Object comes from `buildSkeletonObjectOps`, the builder the FBX and BVH roads use, so a glTF
+ * rig is the same citizen theirs are. It is not normalised: a glTF declares metres (§3.4), so the
+ * rig already has its size. Ids are content-addressed off the asset, as every id on this road is.
+ */
+function skeletonOps(
+  args: NativeGltfImportArgs,
+  json: NativeGltfJson,
+  skeleton: NativeSkeleton,
+  clip: { keyframes: AnimationKeyframe[]; duration: number },
+  parentId: string,
+): Op[] {
+  const skeletonId = hashId('nativeSkeleton', args.assetRef);
+  const clipId = hashId('nativeClip', args.assetRef);
+  const name = json.animations?.[0]?.name || baseNameOf(args.assetRef);
+  return [
+    {
+      type: 'addNode',
+      nodeId: skeletonId,
+      nodeType: 'Skeleton',
+      params: { bones: skeleton.bones },
+    },
+    {
+      type: 'addNode',
+      nodeId: clipId,
+      nodeType: 'AnimationClip',
+      // The FBX road's rules for the same two questions (`fbx.ts`, `parseFbx`): a clip with no
+      // length still has one second, and a file never asserts that its motion loops.
+      params: {
+        name,
+        duration: clip.duration > 0 ? clip.duration : 1,
+        loop: 'hold',
+        keyframes: clip.keyframes,
+      },
+    },
+    {
+      type: 'connect',
+      from: { node: skeletonId, socket: 'out' },
+      to: { node: clipId, socket: 'skeleton' },
+    },
+    ...buildSkeletonObjectOps({
+      skeletonId,
+      bones: skeleton.bones,
+      clip: null,
+      sceneNodeId: parentId,
+      normalise: false,
+      name,
+      clipId,
+    }).ops,
+  ];
+}
+
+/** A path's file name without its extension. */
+function baseNameOf(path: string): string {
+  const base = path.split('/').filter(Boolean).pop() ?? path;
+  return base.replace(/\.[^.]+$/, '') || base;
+}
+
+/**
  * Build the native import's ops, or refuse the whole file by name.
  *
  * Deterministic: ids are content-addressed off the asset ref and each node's sanitised name, so
@@ -1122,14 +1179,49 @@ function withProjectImages(
 export async function buildNativeGltfImportOps(
   args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
+  return buildNativeOps(args, false);
+}
+
+/**
+ * #393 (step 1) — the same build, past the skin refusal: a skinned file's joints become a
+ * `Skeleton`, its standing `Object` and an `AnimationClip`, and each skinned mesh carries the
+ * `vertexGroups` its joint numbers index.
+ *
+ * TESTS ONLY, and only until #1197. Nothing deforms or draws the skin yet, so a skinned import that
+ * took this road would freeze in its rest pose where the clone road deforms it today; the product
+ * keeps refusing: the refusal guards the whole capability, not its storage. #1197 lifts
+ * the refusal in the change that makes the skin draw, and this export goes with it.
+ */
+export async function __buildSkinnedNativeGltfImportOpsForTests(
+  args: NativeGltfImportArgs,
+): Promise<NativeImportResult | NativeImportRefusal> {
+  return buildNativeOps(args, true);
+}
+
+async function buildNativeOps(
+  args: NativeGltfImportArgs,
+  pastSkinRefusal: boolean,
+): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
   const json = parsed as NativeGltfJson;
   const refusal = fileRefusal(json);
   if (refusal !== null) return refusal;
+  if (!pastSkinRefusal && (json.skins?.length ?? 0) > 0) {
+    return {
+      refused: 'it is skinned, and skinning as a deform relation is not native yet',
+      issue: '#393',
+    };
+  }
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
   const clip = readNativeClip(json as ClipGltfJson, buffers);
   if ('refused' in clip) return clip;
+  // #393 — the skin's joints as a skeleton, and the clip's channels on them as its clip.
+  const skeleton = readNativeSkeleton(json);
+  if (skeleton !== null && 'refused' in skeleton) return skeleton;
+  const boneClip = skeleton === null ? null : nativeSkeletonClip(skeleton, clip.channels, json);
+  if (boneClip !== null && 'refused' in boneClip) return boneClip;
+  const isBone = new Set(skeleton?.boneNodes ?? []);
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
 
   const groupId = hashId('nativeGrp', args.assetRef);
@@ -1166,7 +1258,10 @@ export async function buildNativeGltfImportOps(
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
     const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
-    const data = readGltfMesh(json, buffers, node.mesh as number);
+    // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
+    const vertexGroups =
+      typeof node.skin === 'number' && skeleton !== null ? skeleton.vertexGroups : null;
+    const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
     meshes.set(i, data);
     const primitives = json.meshes![node.mesh as number].primitives!;
@@ -1210,6 +1305,15 @@ export async function buildNativeGltfImportOps(
     const node = json.nodes[i];
     const key = keyByGltfNodeIndex[i];
     const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    // #393 — a bone is data of the skeleton, not a node of the scene. The skeleton's standing
+    // Object takes the place of the first bone below the armature, so it joins its parent's
+    // children where the file's joint chain did.
+    if (isBone.has(i)) {
+      if (skeleton !== null && boneClip !== null && i === skeleton.boneNodes[0]) {
+        parentEdges.push(...skeletonOps(args, json, skeleton, boneClip, parentId));
+      }
+      continue;
+    }
     if (typeof node.mesh !== 'number') {
       const emptyId = idOfNode(i);
       ops.push(
@@ -1292,6 +1396,8 @@ export async function buildNativeGltfImportOps(
   // the same parameter: the same node type, the same `<target>_<param>_channel` id (these three
   // param names are already id-safe), named by its param. Nothing refers back to the file.
   for (const channel of clip.channels) {
+    // #393 — a bone's channels are the skeleton's clip, written above.
+    if (isBone.has(channel.node)) continue;
     const target = idOfNode(channel.node);
     const paramPath = CLIP_PARAM[channel.path];
     ops.push({
