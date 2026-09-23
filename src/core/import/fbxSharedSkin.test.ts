@@ -26,8 +26,8 @@ const ONE_SKELETON = read('rig.fbx');
 
 /**
  * The same file with Hips' Y translation keyed too (at its resting 1), so no axis of the
- * clip falls back to a default. A shared skin loses an UNKEYED axis's value inside three's
- * loader (#1182) — a different defect, which the rows that compare motion must not measure.
+ * clip falls back to the bone's own value. The rows that compare motion use it so they
+ * measure the keys alone; the unkeyed axis has a row of its own below (#1182).
  */
 function keyingEveryMovedAxis(buf: ArrayBuffer): ArrayBuffer {
   const text = new TextDecoder().decode(buf);
@@ -118,11 +118,14 @@ describe('parseFbx — a shared skeleton parses as the one skeleton it is', () =
     expect(shared).toEqual(plain);
   });
 
-  // #1182 — reds (passes) once an unkeyed axis keeps its value on a shared skin.
-  it.fails("#1182: an axis the curve leaves unkeyed keeps the bone's value", () => {
-    expect(parseFbx(TWO_SKINS, 'rig').clipParams.keyframes).toEqual(
-      parseFbx(ONE_SKELETON, 'rig').clipParams.keyframes,
-    );
+  // #1182 — three's loader fills an unkeyed axis from the node it finds by FBX ID, and kept the
+  // LAST match: the inner twin, at identity, so Hips' Y read 0. `patches/three+0.169.0.patch`
+  // keeps the first match, the twin that holds the file's transform. This row reds without it.
+  it("an axis the curve leaves unkeyed keeps the bone's value (#1182)", () => {
+    const shared = parseFbx(TWO_SKINS, 'rig').clipParams.keyframes;
+    expect(shared.length).toBeGreaterThan(0);
+    for (const k of shared) expect(k.position[1], "Hips' unkeyed Y").toBeCloseTo(0.01, 9);
+    expect(shared).toEqual(parseFbx(ONE_SKELETON, 'rig').clipParams.keyframes);
   });
 });
 
