@@ -189,10 +189,13 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(importsOf('src/core/dag/socketMembership.ts')).toEqual(['./types']);
   });
 
-  it('THE LANE MAP: all eleven chain declarers land on a lane, none unreadable', () => {
+  it('THE LANE MAP: all twelve chain declarers land on a lane, none unreadable', () => {
     // Stated as a literal rather than derived a second way. Two derivations checked against
     // each other agree when BOTH are wrong; a literal is the row that cannot.
     expect(laneMap()).toEqual({
+      // #393 — the seventh geometry modifier. Its second input is the armature Object, and the
+      // lane is still the spine's: an `ObjectData` flows through it like any other.
+      ArmatureModifier: 'ObjectData',
       ArrayModifier: 'ObjectData',
       // #818 — the fourth geometry modifier. It lands on the data lane by having the sockets,
       // exactly as the row below insists is a DIFFERENT question from which stack offers it.
@@ -215,7 +218,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     expect(Object.values(laneMap())).not.toContain('NO LANE');
   });
 
-  it('THE LANE IS NOT THE SECTION: eight on the data lane, six in the modifier set', () => {
+  it('THE LANE IS NOT THE SECTION: nine on the data lane, seven in the modifier set', () => {
     // The discrepancy is the finding, not a defect. The lane answers a question about SHAPE
     // ("does this kind of value flow through?") and every node with that shape has to be
     // walked past. Which STACK offers an operator is a different question with a different
@@ -223,6 +226,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // menu. That split is `chain.section`'s job, one step later, which is why these are two
     // steps and not one.
     expect(laneMembers('ObjectData')).toEqual([
+      'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
       'ComponentGroupOp',
@@ -233,6 +237,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'UVProjectModifier',
     ]);
     expect(operatorTypesInSection('modifier')).toEqual([
+      'ArmatureModifier', // #393 — the seventh, a modifier by its own declaration
       'ArrayModifier',
       'BevelModifier',
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
@@ -255,6 +260,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     registerLaneOp('Ns2SyntheticDataOp', 'ObjectData');
 
     expect(laneMembers('ObjectData')).toEqual([
+      'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
       'ComponentGroupOp',
@@ -274,6 +280,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
     // when it retired the lists (a member joins a stack by declaring the section, never by
     // having the right sockets).
     expect(operatorTypesInSection('modifier')).toEqual([
+      'ArmatureModifier', // #393 — the seventh, a modifier by its own declaration
       'ArrayModifier',
       'BevelModifier',
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set

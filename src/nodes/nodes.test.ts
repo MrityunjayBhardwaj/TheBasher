@@ -63,6 +63,7 @@ const ALL_TYPES = [
   'Action',
   'AmbientLight',
   'AnimationClip',
+  'ArmatureModifier',
   'ArrayModifier',
   // #388 (Stage C · C5) — the baked mesh's data half. Sorts before the fused node it
   // will retire, exactly as BoxData sorts before BoxMesh.

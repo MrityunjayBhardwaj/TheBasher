@@ -115,6 +115,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // its neighbours on this node: no inspector card draws it yet.
   AnimationClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
+  // #393 — one cell, and it routes: the armature is an INPUT (the Object it points at), not a
+  // param, so the only thing to author on the card is the stack mute.
+  ArmatureModifier: '[modifier] muted=modifier',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   // ADDED at #1049 — a stored polygon mesh. Placed beside its sibling data kind rather than in
@@ -359,4 +362,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //
 // #1153 routes four rows under the transform section's rotation arm (see their rows): +4 routed.
 //   types 88 · routed 139 + 4 = 143 · unrouted 236
-export const GOLDEN_TOTALS = { types: 88, routed: 143, unrouted: 236 } as const;
+//
+// #393 adds `ArmatureModifier` as a wholly new node type: +1 type, +1 routed (`muted`). Nothing
+// existing moved:
+//   types 88 + 1 = 89 · routed 143 + 1 = 144 · unrouted 236
+export const GOLDEN_TOTALS = { types: 89, routed: 144, unrouted: 236 } as const;

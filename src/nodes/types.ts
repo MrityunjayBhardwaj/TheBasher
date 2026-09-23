@@ -2097,6 +2097,36 @@ export interface ModifiedDataValue {
    * with no index has nothing selecting between its entries.
    */
   readonly attributeKey?: string;
+  /**
+   * #393 — the armature deform an `ArmatureModifier` put on this mesh, when one did. `geometry`
+   * stays the REST mesh (a query answers bind pose until #1198); where the points are at a time is
+   * `sampleSkinDeform(skin, mesh, seconds)`.
+   */
+  readonly skin?: SkinDeformValue;
+}
+
+/**
+ * #393 — a mesh deformed by an armature, as data: what Blender's Armature modifier reads at
+ * evaluation, frozen on the value so the deform is a function of time alone.
+ *
+ * PLAIN DATA, NO CLOSURE. Time enters as an argument to `sampleSkinDeform`, never as an edge, and
+ * the value carries no `sample` function of its own: an overlay copies a value the way JSON does
+ * and drops every function in it (`cloneForOverlay`), so a closure here would vanish the moment a
+ * channel touched the mesh's Object, and the deform with it.
+ */
+export interface SkinDeformValue {
+  readonly kind: 'SkinDeform';
+  /** The armature's rest bones — Blender's `arm_mat`, relative to the armature Object. */
+  readonly bones: readonly BoneSpec[];
+  /** The armature Object's action, or null: with no action the rig rests and no point moves. */
+  readonly action: AnimationClipValue | null;
+  /**
+   * Per vertex group, in the mesh's `vertexGroups` order: the bone its NAME joins, or -1. Joined
+   * once, at evaluation — Blender's `pose_channel_by_vertex_group` (`armature_deform.cc:330`).
+   */
+  readonly boneOfGroup: readonly number[];
+  /** Where the armature Object stands in the mesh's space, column-major (Blender's premat). */
+  readonly armatureMatrix: readonly number[];
 }
 
 /**

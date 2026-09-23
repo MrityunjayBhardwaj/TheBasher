@@ -126,7 +126,7 @@ function refNode(binding: unknown): string | null {
  * matrix). Rotation is DEGREES in the DAG (rotation.ts) → radians via Euler
  * 'XYZ' (three.js Object3D default), so this `compose()` == Object3D.updateMatrix.
  */
-function localMatrix(value: SceneChild): THREE.Matrix4 {
+export function localMatrix(value: SceneChild): THREE.Matrix4 {
   const m = new THREE.Matrix4();
   // #1153 — the one composition point of this resolver, called on each value after its
   // overlay: a quaternion-mode value's orientation is read into `rotation` here.

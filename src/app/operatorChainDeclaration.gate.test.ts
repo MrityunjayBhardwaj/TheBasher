@@ -86,8 +86,9 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     registerAllNodes();
   });
 
-  it('all eleven operators declare a TOTAL chain — no partial operator exists', () => {
+  it('all twelve operators declare a TOTAL chain — no partial operator exists', () => {
     expect(operators().map(([type]) => type)).toEqual([
+      'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS over time)
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
       'ColorCorrect', // effect lane
@@ -189,7 +190,13 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // spelling and would have made this row empty and wrong — which is precisely the failure
     // the two-armed `why` exists to prevent, now exercised by a live member rather than by a
     // fixture.
+    //
+    // #393 is the FOURTH, and a deferral of the same kind: `ArmatureModifier` stands on an
+    // `ObjectData` spine, and Blender's own Armature modifier can be limited to one vertex group
+    // — a scope this could have and does not yet. Declared `'declined'`, never the false
+    // `'no-component-domain'`.
     expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
+      'ArmatureModifier',
       'UVProjectModifier',
     ]);
   });
@@ -211,6 +218,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
 
   it('SECTION is declared, and the two nodes in no stack are the two with nothing to bypass', () => {
     expect(where((c) => c.section === 'modifier')).toEqual([
+      'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
       'ComponentGroupOp',

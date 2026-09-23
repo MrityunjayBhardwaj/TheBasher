@@ -84,7 +84,7 @@ import {
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
 import { nativeSkeletonClip, readNativeSkeleton, type NativeSkeleton } from './nativeGltfSkeleton';
-import { buildSkeletonObjectOps } from './skeletonObject';
+import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
@@ -1124,7 +1124,7 @@ function skeletonOps(
   clip: { keyframes: AnimationKeyframe[]; duration: number },
   parentId: string,
 ): Op[] {
-  const skeletonId = hashId('nativeSkeleton', args.assetRef);
+  const skeletonId = nativeSkeletonId(args.assetRef);
   const clipId = hashId('nativeClip', args.assetRef);
   const name = json.animations?.[0]?.name || baseNameOf(args.assetRef);
   return [
@@ -1162,6 +1162,11 @@ function skeletonOps(
       clipId,
     }).ops,
   ];
+}
+
+/** The skeleton's id: one skin per import, so the asset alone addresses it. */
+function nativeSkeletonId(assetRef: string): string {
+  return hashId('nativeSkeleton', assetRef);
 }
 
 /** A path's file name without its extension. */
@@ -1243,6 +1248,7 @@ async function buildNativeOps(
   ];
   const objectIds: string[] = [];
   const parentEdges: Op[] = [];
+  const armatureEdges: Op[] = [];
   const materialTables = { textures: json.textures as never, samplers: json.samplers };
 
   // #1050 — everything that can refuse is read before anything is stored: every mesh, every
@@ -1372,12 +1378,39 @@ async function buildNativeOps(
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
-      {
+    );
+    if (typeof node.skin === 'number' && skeleton !== null) {
+      // #393 — a skinned mesh is deformed by an Armature modifier on its own stack, pointed at the
+      // skeleton's Object — what Blender's importer makes of this file (measured, 5.1.1: `Mesh_0`
+      // carries `('ARMATURE', 'SkinnedBar')`, `q13_skinned_bar_oracle.py`). The parenting says
+      // nothing about the deform.
+      const modifierId = hashId('nativeArmatureMod', args.assetRef, key);
+      ops.push(
+        { type: 'addNode', nodeId: modifierId, nodeType: 'ArmatureModifier', params: {} },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: modifierId, socket: 'target' },
+        },
+        {
+          type: 'connect',
+          from: { node: modifierId, socket: 'out' },
+          to: { node: objectId, socket: 'data' },
+        },
+      );
+      // After every parent edge: the skeleton's Object is written there.
+      armatureEdges.push({
+        type: 'connect',
+        from: { node: skeletonObjectId(nativeSkeletonId(args.assetRef)), socket: 'out' },
+        to: { node: modifierId, socket: 'armature' },
+      });
+    } else {
+      ops.push({
         type: 'connect',
         from: { node: dataId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
-      },
-    );
+      });
+    }
     parentEdges.push({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
@@ -1389,7 +1422,7 @@ async function buildNativeOps(
   // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
   // can be written before the parent it names, and a `connect` to a node that does not exist yet
   // throws. Within this list the order is the file's, which is what fixes each parent's child order.
-  ops.push(...parentEdges);
+  ops.push(...parentEdges, ...armatureEdges);
 
   // #1051 — the clip as ordinary channels on the Objects and Groups it animates, written after
   // every node so each names a target that exists. Each is what Auto-Key or I would have made for

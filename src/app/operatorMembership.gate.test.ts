@@ -100,6 +100,9 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     // pattern one field too tight returns an empty set, and an empty set reads exactly like
     // "this stack has no members", which agrees with nothing and alarms nobody.
     expect(operatorTypesInSection('modifier')).toEqual([
+      // #393 — the seventh, the Armature deform. A modifier by its own declaration and nothing
+      // else, joining exactly as the fifth and sixth did.
+      'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
@@ -124,6 +127,9 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
     registerOp('Ns2SyntheticModifier', 'modifier', 'ObjectData');
 
     expect(operatorTypesInSection('modifier')).toEqual([
+      // #393 — the seventh, the Armature deform. A modifier by its own declaration and nothing
+      // else, joining exactly as the fifth and sixth did.
+      'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
@@ -135,7 +141,10 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'UVProjectModifier',
     ]);
     expect(addableOperators('modifier', { ArrayModifier: 'Array' }).map((o) => o.type)).toEqual([
+      // The one LABELLED member first — order comes from the label map — then the rest; #393's
+      // `ArmatureModifier` is unlabelled in this probe, so it follows `Array` here.
       'ArrayModifier',
+      'ArmatureModifier',
       'BevelModifier',
       'ComponentGroupOp',
       'MaskModifier',

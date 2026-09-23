@@ -153,11 +153,15 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 86 -> 87 at #1027 (ComponentGroupOp), which is also an OPERATOR, so the operator
     // census next door moves with it rather than independently.
     // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator.
-    expect(listNodeTypes()).toHaveLength(88);
+    // 88 -> 89 at #393 (ArmatureModifier), an OPERATOR, so the operator census moves with it.
+    expect(listNodeTypes()).toHaveLength(89);
   });
 
-  it('`muted` is declared TEN times in source, and that is three different populations', () => {
+  it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
     expect(zodDeclarations('muted')).toEqual([
+      // #393 — the seventh geometry modifier, joining as every one before it did: by declaring
+      // the field its own `chain.bypass` names. The first whose effect is a function of time.
+      ['src/nodes/ArmatureModifier.ts', 1],
       ['src/nodes/ArrayModifier.ts', 1],
       // #818 — the fourth geometry modifier. It joins this census by declaring the field,
       // not by being added to a list, which is the whole property this row measures.
@@ -182,8 +186,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       ['src/nodes/channelModifiers.ts', 1],
     ]);
 
-    // Nine of the ten are on registered node types; the tenth is that shared base.
+    // Ten of the eleven are on registered node types; the eleventh is that shared base.
     expect(registeredDeclaring('muted')).toEqual([
+      'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
@@ -196,12 +201,13 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'UVProjectModifier',
     ]);
 
-    // Six are inside the operator category, and that number is DERIVED — the category is
+    // Ten are inside the operator category (#393 is the tenth), and that number is DERIVED — the category is
     // "declares a chain spine", not a list someone maintains. `Strip` drops out on its own.
     const operatorsDeclaringMuted = chainInputDeclarers().filter((t) =>
       registeredDeclaring('muted').includes(t),
     );
     expect(operatorsDeclaringMuted).toEqual([
+      'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
@@ -244,7 +250,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 22 -> 23 at #1027, by the same mechanism and no second one: `ComponentGroupOp` names
     // `muted` because its own `chain.bypass` names it, and registration refuses a declaration
     // whose named param the schema does not declare.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(23);
+    // 23 -> 24 at #393, the same mechanism a third time: `ArmatureModifier` names `muted`.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(24);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -293,6 +300,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
 
   it('THE DEFECT IN ONE LINE: being an operator and being bypassable are remembered separately', () => {
     expect(chainInputDeclarers()).toEqual([
+      'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
       'ColorCorrect',
@@ -337,6 +345,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // The derivation those four now go through, non-empty, so the zeros above are
     // retirements rather than a census that lost its subject.
     expect(operatorTypesInSection('modifier')).toEqual([
+      'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
       'ComponentGroupOp',
@@ -360,7 +369,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // line, so the formatter breaks it one member per line and adds the comma the style
       // requires. This row extracts SOURCE TEXT, so it sees formatting as well as membership —
       // worth knowing before someone "cleans up" the expectation and reds the gate.
-      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier', 'ComponentGroupOp',",
+      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier', 'ComponentGroupOp', 'ArmatureModifier',",
     );
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines

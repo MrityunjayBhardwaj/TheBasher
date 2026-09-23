@@ -107,10 +107,12 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const types = Object.values(state.nodes)
       .map((n) => n.type)
       .sort();
-    // The import Group, the mesh node's Object + PolyMeshData, and the rig: Skeleton, its Object,
-    // its clip. Before #393 the joints were two Group empties with a KeyframeChannelQuat on one.
+    // The import Group, the mesh node's Object + PolyMeshData + the Armature modifier that deforms
+    // it, and the rig: Skeleton, its Object, its clip. Before #393 the joints were two Group
+    // empties with a KeyframeChannelQuat on one.
     expect(types).toEqual([
       'AnimationClip',
+      'ArmatureModifier',
       'Group',
       'Object',
       'Object',
