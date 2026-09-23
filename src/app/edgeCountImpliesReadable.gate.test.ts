@@ -97,6 +97,8 @@ const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
       cornerLayers: [],
       cornerNormals: null,
       faceLayers: [],
+      pointLayers: [],
+      vertexGroups: [],
     }),
   ),
 };

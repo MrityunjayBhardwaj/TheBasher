@@ -59,6 +59,8 @@ function quad(
     })),
     cornerNormals: null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   };
 }
 

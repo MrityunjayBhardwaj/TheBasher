@@ -29,6 +29,8 @@ const grid = (n: number) => {
     ],
     cornerNormals: null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   });
 };
 
@@ -44,6 +46,8 @@ describe('paramsForAgent', () => {
         layers: [{ name: 'UVMap', type: 'float2' }],
         normals: false,
         faceLayers: [],
+        pointLayers: [],
+        vertexGroups: 0,
       },
     };
     expect(shown).toEqual({

@@ -129,6 +129,66 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
       return `face layer '${layer.name}' holds ${layer.data.length} values for ${data.faceSizes.length} faces`;
     }
   }
+  return pointLayerProblem(data, pointCount);
+}
+
+/**
+ * #1196 — why a stored mesh's point layers or vertex groups are not well formed, or `null`.
+ *
+ * A mesh holds at most ONE set of four joints and weights, and never half a set: a vertex with more
+ * than four influences arrives in glTF as a second set, which the importer refuses by name rather
+ * than store a mesh that holds less than the file. Every joint number must name a vertex group the
+ * mesh has, which glTF requires of the file too ("All joint values MUST be within the range of
+ * joints in the skin", §Skins); a number past the table would bind a point to nothing.
+ */
+function pointLayerProblem(data: MeshGeometryData, pointCount: number): string | null {
+  const groups = new Set<string>();
+  for (const group of data.vertexGroups) {
+    if (group === '') return 'a vertex group has no name';
+    if (groups.has(group)) return `two vertex groups are both named '${group}'`;
+    groups.add(group);
+  }
+  const names = new Set<string>();
+  let jointLayers = 0;
+  let weightLayers = 0;
+  for (const layer of data.pointLayers) {
+    if (layer.name === '') return 'a point layer has no name';
+    if (names.has(layer.name)) return `two point layers are both named '${layer.name}'`;
+    names.add(layer.name);
+    switch (layer.type) {
+      case 'int4':
+        jointLayers++;
+        break;
+      case 'float4':
+        weightLayers++;
+        break;
+      default: {
+        const unreachable: never = layer;
+        return `point layer '${String((unreachable as { name: unknown }).name)}' is a type a stored mesh does not hold`;
+      }
+    }
+    if (layer.data.length !== pointCount * 4) {
+      return `point layer '${layer.name}' holds ${layer.data.length} numbers for ${pointCount} points of '${layer.type}'`;
+    }
+    for (let i = 0; i < layer.data.length; i++) {
+      const value = layer.data[i];
+      if (layer.type === 'int4' && (value < 0 || value >= data.vertexGroups.length)) {
+        return `point layer '${layer.name}' binds point ${Math.floor(i / 4)} to joint ${value}, but the mesh has ${data.vertexGroups.length} vertex groups`;
+      }
+      // Written as "not at least 0" so a NaN is refused with the negatives.
+      if (layer.type === 'float4' && !(value >= 0)) {
+        return `point layer '${layer.name}' gives point ${Math.floor(i / 4)} the weight ${value}; a weight is never negative`;
+      }
+    }
+  }
+  if (jointLayers > 1 || weightLayers > 1) {
+    return `${jointLayers} joint layers and ${weightLayers} weight layers, but a stored mesh holds one set of four`;
+  }
+  if (jointLayers !== weightLayers) {
+    return jointLayers === 1
+      ? 'the mesh has joint numbers and no weights to go with them'
+      : 'the mesh has weights and no joint numbers to go with them';
+  }
   return null;
 }
 

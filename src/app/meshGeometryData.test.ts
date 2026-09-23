@@ -74,6 +74,8 @@ function cube(withNormals = true): MeshGeometryData {
       ? Float32Array.from(CUBE_FACES.flatMap(([, n]) => [...n, ...n, ...n, ...n]))
       : null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   };
 }
 

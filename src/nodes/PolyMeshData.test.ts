@@ -4,14 +4,15 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   migrateAddFaceLayers,
+  migrateAddPointLayers,
   migrateCornerUVsToLayers,
   PolyMeshDataNode,
   PolyMeshDataParams,
 } from './PolyMeshData';
 import { read as readAttributes } from '../app/attributeStore';
-import { attributeAt, MATERIAL_INDEX } from './attributes';
+import { attributeAt, MATERIAL_INDEX, SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
 import { openpbrMaterialSchema } from './materialSchema';
-import { packMeshData } from '../app/meshGeometryData';
+import { meshGeometryRef, packMeshData, unpackMeshData } from '../app/meshGeometryData';
 import { faceCountOf } from '../app/faceCount';
 import { readGeometry } from '../app/geometryRegistry';
 import { __resetRegistryForTests } from '../core/dag/registry';
@@ -28,6 +29,8 @@ const tetra = () =>
     cornerLayers: [],
     cornerNormals: null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   });
 
 /** The tetrahedron with a UV per corner, so a migration has a real string to move. */
@@ -128,10 +131,11 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     };
   };
 
-  it('is at version 3, with a migration from each earlier version', () => {
-    expect(PolyMeshDataNode.version).toBe(3);
+  it('is at version 4, with a migration from each earlier version', () => {
+    expect(PolyMeshDataNode.version).toBe(4);
     expect(PolyMeshDataNode.migrations?.[1]).toBe(migrateCornerUVsToLayers);
     expect(PolyMeshDataNode.migrations?.[2]).toBe(migrateAddFaceLayers);
+    expect(PolyMeshDataNode.migrations?.[3]).toBe(migrateAddPointLayers);
   });
 
   it('moves a version-1 cornerUVs string into cornerLayers as UVMap, byte for byte', () => {
@@ -139,8 +143,8 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     const migrated = migrateCornerUVsToLayers(v1(uvs)) as { mesh: Record<string, unknown> };
     expect('cornerUVs' in migrated.mesh).toBe(false);
     expect(migrated.mesh.cornerLayers).toEqual([{ name: 'UVMap', type: 'float2', data: uvs }]);
-    // And the result, carried on through the version-3 step the ladder runs next, draws a uv buffer.
-    const value = evaluate(migrateAddFaceLayers(migrated));
+    // And the result, carried on through the steps the ladder runs next, draws a uv buffer.
+    const value = evaluate(migrateAddPointLayers(migrateAddFaceLayers(migrated)));
     const read = readGeometry(value.geometry);
     if (read.status !== 'ok') throw new Error(read.status);
     expect(read.geometry.getAttribute('uv')?.count).toBeGreaterThan(0);
@@ -158,7 +162,9 @@ describe('PolyMeshData version 1 → 2 (#1117)', () => {
     expect(migrated.mesh.cornerPoints).toBe(before.mesh.cornerPoints);
     expect(migrated.mesh.cornerNormals).toBe(before.mesh.cornerNormals);
     expect(migrated.material).toBeNull();
-    expect(PolyMeshDataParams.safeParse(migrateAddFaceLayers(migrated)).success).toBe(true);
+    expect(
+      PolyMeshDataParams.safeParse(migrateAddPointLayers(migrateAddFaceLayers(migrated))).success,
+    ).toBe(true);
   });
 
   it('returns a mesh already in the version-2 shape as it is', () => {
@@ -180,12 +186,14 @@ describe('PolyMeshData version 2 → 3 and material slots (#1052)', () => {
   it('gives a version-2 mesh an empty face layer list, and leaves everything else as it was', () => {
     const v2mesh: Record<string, unknown> = { ...tetra() };
     delete v2mesh.faceLayers;
+    delete v2mesh.pointLayers;
+    delete v2mesh.vertexGroups;
     const before = { mesh: v2mesh, material: null };
     const migrated = migrateAddFaceLayers(before) as { mesh: Record<string, unknown> };
     expect(migrated.mesh.faceLayers).toEqual([]);
     expect(migrated.mesh.points).toBe(v2mesh.points);
     expect(migrated.mesh.cornerLayers).toBe(v2mesh.cornerLayers);
-    expect(PolyMeshDataParams.safeParse(migrated).success).toBe(true);
+    expect(PolyMeshDataParams.safeParse(migrateAddPointLayers(migrated)).success).toBe(true);
     const current = { mesh: tetra(), material: null };
     expect(migrateAddFaceLayers(current)).toBe(current);
   });
@@ -225,6 +233,163 @@ describe('PolyMeshData version 2 → 3 and material slots (#1052)', () => {
   });
 });
 
+describe('PolyMeshData version 3 → 4 and skin weights (#1196)', () => {
+  /** The tetra bound to two joints: point p leans on joint p % 2, with the rest on the other. */
+  const bound = (overrides: Record<string, unknown> = {}) => ({
+    ...decodeTetra(),
+    pointLayers: [
+      {
+        name: SKIN_JOINTS,
+        type: 'int4' as const,
+        data: Int32Array.from([0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0]),
+      },
+      {
+        name: SKIN_WEIGHTS,
+        type: 'float4' as const,
+        data: Float32Array.from([0.75, 0.25, 0, 0, 1, 0, 0, 0, 0.5, 0.5, 0, 0, 1, 0, 0, 0]),
+      },
+    ],
+    vertexGroups: ['Bone0', 'Bone1'],
+    ...overrides,
+  });
+  const refusal = (mesh: Parameters<typeof packMeshData>[0]) =>
+    PolyMeshDataParams.safeParse({ mesh: packMeshData(mesh), material: null }).error?.issues[0]
+      .message;
+
+  it('gives a version-3 mesh no point layers and no vertex groups, and leaves the rest as it was', () => {
+    const v3mesh: Record<string, unknown> = { ...tetra() };
+    delete v3mesh.pointLayers;
+    delete v3mesh.vertexGroups;
+    const before = { mesh: v3mesh, material: null };
+    expect(PolyMeshDataParams.safeParse(before).success).toBe(false);
+    const migrated = migrateAddPointLayers(before) as { mesh: Record<string, unknown> };
+    expect(migrated.mesh.pointLayers).toEqual([]);
+    expect(migrated.mesh.vertexGroups).toEqual([]);
+    expect(migrated.mesh.points).toBe(v3mesh.points);
+    expect(migrated.mesh.faceLayers).toBe(v3mesh.faceLayers);
+    expect(PolyMeshDataParams.safeParse(migrated).success).toBe(true);
+    const current = { mesh: tetra(), material: null };
+    expect(migrateAddPointLayers(current)).toBe(current);
+  });
+
+  it('holds joints as integers and weights as fractions, through a save and back', () => {
+    const packed = packMeshData(bound());
+    const back = unpackMeshData(JSON.parse(JSON.stringify(packed)));
+    expect(back.vertexGroups).toEqual(['Bone0', 'Bone1']);
+    const [joints, weights] = back.pointLayers;
+    expect(joints.data).toBeInstanceOf(Int32Array);
+    expect(Array.from(joints.data)).toEqual(Array.from(bound().pointLayers[0].data));
+    expect(weights.data).toBeInstanceOf(Float32Array);
+    expect(Array.from(weights.data)).toEqual(Array.from(bound().pointLayers[1].data));
+    expect(PolyMeshDataParams.safeParse({ mesh: packed, material: null }).success).toBe(true);
+  });
+
+  it('a different binding is a different mesh: the weights, the joints and the group names each move the key', () => {
+    const key = (mesh: Parameters<typeof packMeshData>[0]) =>
+      meshGeometryRef(packMeshData(mesh)).key;
+    const base = key(bound());
+    expect(key(bound())).toBe(base);
+    expect(key(decodeTetra())).not.toBe(base);
+    const weights = Float32Array.from(bound().pointLayers[1].data);
+    weights[0] = 0.5;
+    weights[1] = 0.5;
+    expect(
+      key(
+        bound({
+          pointLayers: [
+            bound().pointLayers[0],
+            { name: SKIN_WEIGHTS, type: 'float4', data: weights },
+          ],
+        }),
+      ),
+    ).not.toBe(base);
+    const joints = Int32Array.from(bound().pointLayers[0].data);
+    joints[0] = 1;
+    joints[1] = 0;
+    expect(
+      key(
+        bound({
+          pointLayers: [{ name: SKIN_JOINTS, type: 'int4', data: joints }, bound().pointLayers[1]],
+        }),
+      ),
+    ).not.toBe(base);
+    expect(key(bound({ vertexGroups: ['Bone1', 'Bone0'] }))).not.toBe(base);
+  });
+
+  it('refuses at the door a joint number past the vertex group table', () => {
+    expect(refusal(bound({ vertexGroups: ['Bone0'] }))).toContain(
+      "point layer 'skin_joints' binds point 0 to joint 1, but the mesh has 1 vertex groups",
+    );
+  });
+
+  it('refuses half a set: joints with no weights, and weights with no joints', () => {
+    expect(refusal(bound({ pointLayers: [bound().pointLayers[0]] }))).toContain(
+      'joint numbers and no weights',
+    );
+    expect(refusal(bound({ pointLayers: [bound().pointLayers[1]] }))).toContain(
+      'weights and no joint numbers',
+    );
+  });
+
+  it('refuses a second set of four, which a stored mesh does not hold', () => {
+    const [joints, weights] = bound().pointLayers;
+    expect(
+      refusal(
+        bound({
+          pointLayers: [
+            joints,
+            weights,
+            { ...joints, name: 'skin_joints.001' },
+            { ...weights, name: 'skin_weights.001' },
+          ],
+        }),
+      ),
+    ).toContain('2 joint layers and 2 weight layers, but a stored mesh holds one set of four');
+  });
+
+  it('refuses a negative weight, a layer of the wrong length, and two groups of one name', () => {
+    const weights = Float32Array.from(bound().pointLayers[1].data);
+    weights[5] = -0.25;
+    expect(
+      refusal(
+        bound({
+          pointLayers: [
+            bound().pointLayers[0],
+            { name: SKIN_WEIGHTS, type: 'float4', data: weights },
+          ],
+        }),
+      ),
+    ).toContain('gives point 1 the weight -0.25');
+    expect(
+      refusal(
+        bound({
+          pointLayers: [
+            bound().pointLayers[0],
+            { name: SKIN_WEIGHTS, type: 'float4', data: new Float32Array(12) },
+          ],
+        }),
+      ),
+    ).toContain("point layer 'skin_weights' holds 12 numbers for 4 points");
+    expect(refusal(bound({ vertexGroups: ['Bone0', 'Bone0'] }))).toContain(
+      "two vertex groups are both named 'Bone0'",
+    );
+  });
+
+  it('evaluates like the same mesh unbound: a binding changes nothing a draw reads yet', () => {
+    const plain = readGeometry(evaluate({ mesh: tetra(), material: null }).geometry);
+    const skinned = readGeometry(
+      evaluate({ mesh: packMeshData(bound()), material: null }).geometry,
+    );
+    if (plain.status !== 'ok' || skinned.status !== 'ok') throw new Error('unbuilt');
+    expect(Array.from(skinned.geometry.getAttribute('position').array)).toEqual(
+      Array.from(plain.geometry.getAttribute('position').array),
+    );
+    expect(
+      faceCountOf(evaluate({ mesh: packMeshData(bound()), material: null }).geometry.descriptor),
+    ).toBe(4);
+  });
+});
+
 function decodeTetra() {
   return {
     points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
@@ -233,5 +398,7 @@ function decodeTetra() {
     cornerLayers: [],
     cornerNormals: null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   };
 }

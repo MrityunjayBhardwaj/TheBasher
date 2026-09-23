@@ -1021,6 +1021,10 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
     // A pose moves points and turns corners; it leaves faces where they are, in the same order,
     // so every face layer (a material index above all) comes through as it was (#1052).
     faceLayers: data.faceLayers.map((layer) => ({ ...layer, data: new Int32Array(layer.data) })),
+    // #1196 — nor does it rebind a point: a point keeps its joints and weights wherever it moves,
+    // as Blender's Apply keeps a mesh's vertex groups.
+    pointLayers: data.pointLayers,
+    vertexGroups: data.vertexGroups,
   };
 }
 

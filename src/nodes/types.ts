@@ -643,6 +643,20 @@ export interface MeshFaceLayer {
   readonly data: Int32Array;
 }
 
+/** #1196 — the point layer types a stored mesh holds: joint numbers and their weights. */
+export type MeshPointLayerType = Extract<import('./attributes').AttributeType, 'int4' | 'float4'>;
+
+/**
+ * #1196 — one named, typed point layer of a stored mesh, four values per point, in point order.
+ *
+ * A union on the type rather than one shape with a loose array, because the two hold different
+ * numbers: joint numbers are integers that index a table, and a weight is a fraction. Typed this
+ * way, an `int4` layer cannot be handed a `Float32Array` that would round a joint number.
+ */
+export type MeshPointLayer =
+  | { readonly name: string; readonly type: 'int4'; readonly data: Int32Array }
+  | { readonly name: string; readonly type: 'float4'; readonly data: Float32Array };
+
 /**
  * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
  *
@@ -664,6 +678,19 @@ export interface MeshGeometryData {
   readonly cornerLayers: readonly MeshCornerLayer[];
   /** Every face attribute, by name; empty when the mesh has none (#1052). */
   readonly faceLayers: readonly MeshFaceLayer[];
+  /**
+   * Every point attribute, by name; empty when the mesh has none (#1196). Today that is a skinned
+   * mesh's joint numbers and weights, which belong to the point: a UV seam splits a render vertex,
+   * never a vertex's binding to its bones.
+   */
+  readonly pointLayers: readonly MeshPointLayer[];
+  /**
+   * #1196 — the names an `int4` point layer's numbers index, in order: Blender's vertex groups,
+   * one per joint the mesh is bound to. Empty when the mesh is bound to nothing. The NUMBER is the
+   * key a weight uses; the name labels it, as a Blender weight's group index is joined to its
+   * group's name (`armature_deform.cc:330`).
+   */
+  readonly vertexGroups: readonly string[];
   /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
   readonly cornerNormals: Float32Array | null;
 }

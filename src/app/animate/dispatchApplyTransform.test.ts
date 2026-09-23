@@ -776,6 +776,8 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
       ],
       cornerNormals: Float32Array.from(axes.flatMap((a) => Array(4).fill(turned(a, 0)).flat())),
       faceLayers: [],
+      pointLayers: [],
+      vertexGroups: [],
     };
   }
 
@@ -1240,6 +1242,34 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
     expect(params.materialSlots).toEqual([red, blue]);
   });
 
+  it('#1196 — a skinned mesh keeps every point’s joints and weights, and its vertex groups, through a mirroring Apply', async () => {
+    const points = cubeData().points.length / 3;
+    const joints = Int32Array.from({ length: points * 4 }, (_, i) => (i % 4 === 0 ? i % 2 : 0));
+    const weights = Float32Array.from({ length: points * 4 }, (_, i) => (i % 4 === 0 ? 1 : 0));
+    const bound = {
+      ...cubeData(),
+      pointLayers: [
+        { name: 'skin_joints', type: 'int4' as const, data: joints },
+        { name: 'skin_weights', type: 'float4' as const, data: weights },
+      ],
+      vertexGroups: ['Bone0', 'Bone1'],
+    };
+    const state = applyAll(build({ position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }), [
+      { type: 'setParam', nodeId: DATA, paramPath: 'mesh', value: packMeshData(bound) },
+      { type: 'setParam', nodeId: OBJ, paramPath: 'scale', value: [-2, 1, 1] },
+    ]);
+    const { result, next } = await apply(state, 'all');
+    expect(result.ok).toBe(true);
+    const after = unpackMeshData((next.nodes[DATA].params as { mesh: PackedMeshData }).mesh);
+    // The points moved, so this is not the mesh that went in; its binding is.
+    expect(Array.from(after.points)).not.toEqual(Array.from(bound.points));
+    expect(after.vertexGroups).toEqual(['Bone0', 'Bone1']);
+    expect(after.pointLayers.map((l) => [l.name, l.type, Array.from(l.data)])).toEqual([
+      ['skin_joints', 'int4', Array.from(joints)],
+      ['skin_weights', 'float4', Array.from(weights)],
+    ]);
+  });
+
   // ── #1153 — Apply on a quaternion-mode Object ─────────────────────────────────────────
   //
   // Every pose below carries a DECOY euler `rotation`: if Apply read it instead of the
@@ -1381,6 +1411,8 @@ describe('#1081 / #1098 — the animated guard asks what the Apply road it takes
       ],
       cornerNormals: Float32Array.from(faces.flatMap(() => Array(4).fill([0, 0, 1]).flat())),
       faceLayers: [],
+      pointLayers: [],
+      vertexGroups: [],
     };
   }
 

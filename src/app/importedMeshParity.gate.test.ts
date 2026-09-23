@@ -121,6 +121,8 @@ const SUBJECTS: ReadonlyArray<readonly [string, GeometryDescriptor]> = [
         cornerLayers: [],
         cornerNormals: null,
         faceLayers: [],
+        pointLayers: [],
+        vertexGroups: [],
       }),
     ).descriptor,
   ],

@@ -62,6 +62,7 @@ import type {
   MeshCornerLayer,
   MeshFaceLayer,
   MeshGeometryData,
+  MeshPointLayer,
   UvPlacement,
   Vec3,
 } from '../../nodes/types';
@@ -85,7 +86,13 @@ import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/mate
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
-import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
+import {
+  COLOR_LAYER,
+  MATERIAL_INDEX,
+  SKIN_JOINTS,
+  SKIN_WEIGHTS,
+  uvLayerName,
+} from '../../nodes/attributes';
 
 /** The native parameter each animated glTF path drives. Rotation drives the quaternion, which is
  *  why every imported node is in quaternion mode. */
@@ -133,11 +140,19 @@ const TRIANGLE_FAN = 6;
 // against the mesh, so a second UV set or a colour now reaches the screen. The list is what the whole
 // road honours, not what the reader can read: derived from the slot counts rather than spelled, so it
 // cannot admit a layer the build has nowhere to draw.
+//
+// #1196 — and ONE set of joints and weights, which a stored mesh holds as point layers. A second
+// set (`JOINTS_1`, a vertex with more than four influences) stays out on purpose and is refused by
+// name below: Blender keeps every set (`io_scene_gltf2/blender/imp/mesh.py:93-96`), three draws only
+// the first (`GLTFLoader.js:2232-2233`), and a native mesh holding the first alone would keep less
+// than the file, with the file gone. Refused, the file takes the clone road and draws as it did.
 const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'POSITION',
   'NORMAL',
   ...Array.from({ length: MAX_UV_LAYERS }, (_, n) => `TEXCOORD_${n}`),
   ...Array.from({ length: MAX_COLOUR_LAYERS }, (_, n) => `COLOR_${n}`),
+  'JOINTS_0',
+  'WEIGHTS_0',
 ]);
 
 const COMPONENT_BYTES: Record<number, number> = {
@@ -450,6 +465,8 @@ interface ReadPrimitive {
   readonly uvAccessors: readonly number[];
   readonly colourAccessor: number | undefined;
   readonly normalAccessor: number | undefined;
+  /** #1196 — `JOINTS_0` and `WEIGHTS_0`, present together or not at all. */
+  readonly skinAccessors: { readonly joints: number; readonly weights: number } | undefined;
 }
 
 function readPrimitive(
@@ -491,10 +508,36 @@ function readPrimitive(
   }
   const colourAccessor = attributes.COLOR_0;
   const normalAccessor = attributes.NORMAL;
+  // #1196 — "the number of JOINTS_n attribute sets MUST be equal to the number of WEIGHTS_n
+  // attribute sets" (glTF 2.0 §Skins). Half a set binds a point to joints with no weights, or
+  // weights to no joints, so it is refused as the malformed file it is.
+  const jointsAccessor = attributes.JOINTS_0;
+  const weightsAccessor = attributes.WEIGHTS_0;
+  if ((typeof jointsAccessor === 'number') !== (typeof weightsAccessor === 'number')) {
+    return {
+      refused: `mesh ${meshIndex} carries ${typeof jointsAccessor === 'number' ? 'JOINTS_0 without WEIGHTS_0' : 'WEIGHTS_0 without JOINTS_0'}, and they come in pairs`,
+      issue: '#1063',
+    };
+  }
+  const skinAccessors =
+    typeof jointsAccessor === 'number' && typeof weightsAccessor === 'number'
+      ? { joints: jointsAccessor, weights: weightsAccessor }
+      : undefined;
+  if (skinAccessors !== undefined) {
+    const problem = skinAccessorProblem(json, skinAccessors);
+    if (problem !== null) return { refused: `mesh ${meshIndex} ${problem}`, issue: '#1063' };
+  }
   // Each accessor's own element size, not a literal per attribute. For POSITION, NORMAL and the UV
   // sets this is the same number the literals used to spell, because a non-float one of those needs
   // `KHR_mesh_quantization`, which `fileRefusal` has already turned away.
-  for (const accessorIndex of [positionAccessor, normalAccessor, ...uvAccessors, colourAccessor]) {
+  for (const accessorIndex of [
+    positionAccessor,
+    normalAccessor,
+    ...uvAccessors,
+    colourAccessor,
+    jointsAccessor,
+    weightsAccessor,
+  ]) {
     if (typeof accessorIndex !== 'number') continue;
     const elementBytes = elementBytesOf(json, accessorIndex);
     if (elementBytes !== undefined && interleaved(json, accessorIndex, elementBytes)) {
@@ -526,7 +569,34 @@ function readPrimitive(
     uvAccessors,
     colourAccessor: typeof colourAccessor === 'number' ? colourAccessor : undefined,
     normalAccessor: typeof normalAccessor === 'number' ? normalAccessor : undefined,
+    skinAccessors,
   };
+}
+
+/**
+ * #1196 — why a primitive's joints or weights are not what glTF allows, or `null`.
+ *
+ * glTF 2.0 §Skins: `JOINTS_n` is a VEC4 of unsigned bytes or shorts, and `WEIGHTS_n` a VEC4 of
+ * floats or of NORMALISED unsigned bytes or shorts. An un-normalised byte weight would be read as
+ * 0–255 and bind a point 255 times too hard, so it is refused rather than read.
+ */
+function skinAccessorProblem(
+  json: NativeGltfJson,
+  skin: { readonly joints: number; readonly weights: number },
+): string | null {
+  const joints = json.accessors?.[skin.joints];
+  const weights = json.accessors?.[skin.weights];
+  if (!joints || !weights) return 'names a JOINTS_0 or WEIGHTS_0 accessor the file does not have';
+  if (joints.type !== 'VEC4' || (joints.componentType !== 5121 && joints.componentType !== 5123)) {
+    return 'has a JOINTS_0 that is not four unsigned bytes or shorts';
+  }
+  const normalised =
+    (weights.componentType === 5121 || weights.componentType === 5123) &&
+    (weights as { normalized?: boolean }).normalized === true;
+  if (weights.type !== 'VEC4' || (weights.componentType !== 5126 && !normalised)) {
+    return 'has a WEIGHTS_0 that is not four floats or four normalised unsigned bytes or shorts';
+  }
+  return null;
 }
 
 /** The unit normal of triangle `(a, b, c)`, read off `positions`, xyz per vertex. */
@@ -558,6 +628,7 @@ export function readGltfMesh(
   json: NativeGltfJson,
   buffers: Uint8Array[],
   meshIndex: number,
+  vertexGroups: readonly string[] | null = null,
 ): MeshGeometryData | NativeImportRefusal {
   const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
   if (primitives.length === 0) {
@@ -587,11 +658,21 @@ export function readGltfMesh(
     for (const v of one.corners) corners[cornerAt++] = v + vertexBase[i];
   });
 
+  // #1196 — each vertex's joints and weights, in the same numbering. A primitive without them, in a
+  // mesh whose others have them, is bound to nothing: joint 0 at weight 0 on every lane.
+  const skin = readVertexSkin(json, buffers, meshIndex, read, vertexBase, vertices, vertexGroups);
+  if (skin !== null && 'refused' in skin) return skin;
+
   // The weld: split vertices at one position are one point. `map[v]` is vertex v's point.
   const scratch = new BufferGeometry();
   scratch.setAttribute('position', new BufferAttribute(positions, 3));
-  const weld = weldByPosition(scratch);
+  const byPosition = weldByPosition(scratch);
   scratch.dispose();
+  // #1196 — two vertices at one position with different bindings stay two points, which is
+  // Blender's rule: its importer welds only vertices whose joints and weights match as well
+  // (`merge_duplicate_verts`, `io_scene_gltf2/blender/imp/mesh.py`, the `joint%d`/`weight%d` fields
+  // of its key). Welding them anyway would keep one binding and drop the other.
+  const weld = skin === null ? byPosition : splitByBinding(byPosition, skin);
   const points = new Float32Array(weld.points * 3);
   const seen = new Uint8Array(weld.points);
   for (let v = 0; v < vertices; v++) {
@@ -681,6 +762,21 @@ export function readGltfMesh(
     faceLayers.push({ name: MATERIAL_INDEX, type: 'int', data: index });
   }
 
+  // #1196 — a point's binding is its vertices' binding: `splitByBinding` has made them all agree.
+  const pointLayers: MeshPointLayer[] = [];
+  if (skin !== null) {
+    const joints = new Int32Array(weld.points * 4);
+    const weights = new Float32Array(weld.points * 4);
+    for (let v = 0; v < vertices; v++) {
+      joints.set(skin.joints.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
+      weights.set(skin.weights.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
+    }
+    pointLayers.push(
+      { name: SKIN_JOINTS, type: 'int4', data: joints },
+      { name: SKIN_WEIGHTS, type: 'float4', data: weights },
+    );
+  }
+
   return {
     points,
     faceSizes: new Uint32Array(faceCount).fill(3),
@@ -688,7 +784,83 @@ export function readGltfMesh(
     cornerLayers,
     cornerNormals,
     faceLayers,
+    pointLayers,
+    vertexGroups: vertexGroups ?? [],
   };
+}
+
+/** #1196 — every vertex's four joints and four weights, one mesh-wide numbering. */
+interface VertexSkin {
+  readonly joints: Int32Array;
+  readonly weights: Float32Array;
+}
+
+/**
+ * #1196 — read every primitive's `JOINTS_0` and `WEIGHTS_0` into one numbering, or `null` when no
+ * primitive carries them.
+ *
+ * A joint number indexes the skin's `joints` list, so it means something only beside the names of
+ * that list: `vertexGroups`, which the node that skins this mesh supplies. Joint numbers with no
+ * table are refused, and so is a number past the table, which glTF forbids ("All joint values MUST
+ * be within the range of joints in the skin", §Skins).
+ */
+function readVertexSkin(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  meshIndex: number,
+  read: readonly ReadPrimitive[],
+  vertexBase: readonly number[],
+  vertices: number,
+  vertexGroups: readonly string[] | null,
+): VertexSkin | NativeImportRefusal | null {
+  if (read.every((one) => one.skinAccessors === undefined)) return null;
+  if (vertexGroups === null) {
+    return {
+      refused: `mesh ${meshIndex} carries JOINTS_0, but no node skins it, so its joint numbers name nothing`,
+      issue: '#1063',
+    };
+  }
+  const joints = new Int32Array(vertices * 4);
+  const weights = new Float32Array(vertices * 4);
+  for (let i = 0; i < read.length; i++) {
+    const accessors = read[i].skinAccessors;
+    if (accessors === undefined) continue;
+    const count = read[i].positions.length / 3;
+    const j = readAccessor(json, buffers, accessors.joints);
+    const w = readAccessor(json, buffers, accessors.weights);
+    if (j.length !== count * 4) return mismatched(meshIndex, 'JOINTS_0');
+    if (w.length !== count * 4) return mismatched(meshIndex, 'WEIGHTS_0');
+    for (let k = 0; k < j.length; k++) {
+      if (j[k] >= vertexGroups.length) {
+        return {
+          refused: `mesh ${meshIndex} binds a vertex to joint ${j[k]}, but its skin lists ${vertexGroups.length} joints`,
+          issue: '#1063',
+        };
+      }
+    }
+    joints.set(j, vertexBase[i] * 4);
+    weights.set(w, vertexBase[i] * 4);
+  }
+  return { joints, weights };
+}
+
+/** A position weld refined so that no point holds two different bindings (#1196). */
+function splitByBinding(
+  byPosition: { readonly map: Uint32Array; readonly points: number },
+  skin: VertexSkin,
+): { readonly map: Uint32Array; readonly points: number } {
+  const map = new Uint32Array(byPosition.map.length);
+  const seen = new Map<string, number>();
+  for (let v = 0; v < map.length; v++) {
+    const key = `${byPosition.map[v]}|${skin.joints.subarray(v * 4, v * 4 + 4).join(',')}|${skin.weights.subarray(v * 4, v * 4 + 4).join(',')}`;
+    let point = seen.get(key);
+    if (point === undefined) {
+      point = seen.size;
+      seen.set(key, point);
+    }
+    map[v] = point;
+  }
+  return { map, points: seen.size };
 }
 
 /** #1050 — the native road's own arguments: the shared ones, plus where its images go. */

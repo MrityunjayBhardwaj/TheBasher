@@ -671,6 +671,8 @@ describe('#1099 — a handle over stored mesh data is taken from the un-overlaid
         cornerLayers: [],
         cornerNormals: null,
         faceLayers: [],
+        pointLayers: [],
+        vertexGroups: [],
       }),
     );
   const valueOver = (geometry: GeometryRef) => ({

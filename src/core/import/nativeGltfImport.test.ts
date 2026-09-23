@@ -8,10 +8,10 @@ import {
   readGltfMesh,
   triangulate,
 } from './nativeGltfImport';
-import { attributeAt, MATERIAL_INDEX } from '../../nodes/attributes';
+import { attributeAt, MATERIAL_INDEX, SKIN_JOINTS, SKIN_WEIGHTS } from '../../nodes/attributes';
 import { read as readAttributes } from '../../app/attributeStore';
 import { readGeometry } from '../../app/geometryRegistry';
-import { parseGltfContainer, resolveBuffers } from './glb';
+import { parseGltfContainer, readAccessor, resolveBuffers } from './glb';
 import { meshGeometryRef, packMeshData, buildMeshGeometry } from '../../app/meshGeometryData';
 import { cornerCountOf, faceCountOf } from '../../app/faceCount';
 import { pointCountOf } from '../../app/pointIdentity';
@@ -64,6 +64,58 @@ function texturedFixture(mutate: (json: Record<string, unknown>) => void): Array
 const cubeAttributes = (json: Record<string, unknown>) =>
   (json.meshes as { primitives: { attributes: Record<string, number> }[] }[])[0].primitives[0]
     .attributes;
+
+/**
+ * #1196 — give the cube's one primitive a `JOINTS_0` and a `WEIGHTS_0`, one row of four per vertex,
+ * in a buffer of their own. `jointType` and `weightType` are glTF component types; a byte weight is
+ * written normalised unless `normalized` says otherwise.
+ */
+function withSkinData(
+  json: Record<string, unknown>,
+  joints: readonly (readonly number[])[],
+  weights: readonly (readonly number[])[],
+  opts: { weightType?: 5126 | 5121; normalized?: boolean } = {},
+): { joints: number; weights: number } {
+  const weightType = opts.weightType ?? 5126;
+  const jointBytes = new Uint8Array(new Uint16Array(joints.flat()).buffer);
+  const weightBytes =
+    weightType === 5126
+      ? new Uint8Array(new Float32Array(weights.flat()).buffer)
+      : Uint8Array.from(weights.flat(), (w) => Math.round(w * 255));
+  const bytes = new Uint8Array(jointBytes.length + weightBytes.length);
+  bytes.set(jointBytes);
+  bytes.set(weightBytes, jointBytes.length);
+  const buffers = json.buffers as Record<string, unknown>[];
+  buffers.push({
+    byteLength: bytes.length,
+    uri: `data:application/octet-stream;base64,${Buffer.from(bytes).toString('base64')}`,
+  });
+  const views = json.bufferViews as Record<string, unknown>[];
+  views.push(
+    { buffer: buffers.length - 1, byteOffset: 0, byteLength: jointBytes.length },
+    { buffer: buffers.length - 1, byteOffset: jointBytes.length, byteLength: weightBytes.length },
+  );
+  const accessors = json.accessors as Record<string, unknown>[];
+  accessors.push(
+    { bufferView: views.length - 2, componentType: 5123, count: joints.length, type: 'VEC4' },
+    {
+      bufferView: views.length - 1,
+      componentType: weightType,
+      count: weights.length,
+      type: 'VEC4',
+      ...(weightType === 5126 ? {} : { normalized: opts.normalized ?? true }),
+    },
+  );
+  const attributes = cubeAttributes(json);
+  attributes.JOINTS_0 = accessors.length - 2;
+  attributes.WEIGHTS_0 = accessors.length - 1;
+  return { joints: accessors.length - 2, weights: accessors.length - 1 };
+}
+
+/** One binding row per cube vertex (24): all on joint 0, fully weighted. */
+const CUBE_VERTICES = 24;
+const uniformJoints = () => Array.from({ length: CUBE_VERTICES }, () => [0, 0, 0, 0]);
+const uniformWeights = () => Array.from({ length: CUBE_VERTICES }, () => [1, 0, 0, 0]);
 
 type MaterialJson = Record<string, unknown> & { pbrMetallicRoughness: Record<string, unknown> };
 const materialOf = (json: Record<string, unknown>) => (json.materials as MaterialJson[])[0];
@@ -326,6 +378,154 @@ async function readFirstMesh(json: Record<string, unknown>) {
   // The fixture's one buffer is a data URI, so there is no embedded binary chunk to hand over.
   return readGltfMesh(parsed, await resolveBuffers(parsed, new Uint8Array(0)), 0);
 }
+
+describe('#1196 — readGltfMesh reads a skin into point layers', () => {
+  /** The file's own joint names, in `skin.joints` order: what the joint numbers index. */
+  const jointNames = (json: { nodes: { name?: string }[]; skins?: { joints: number[] }[] }) =>
+    json.skins![0].joints.map((node) => json.nodes[node].name ?? `Joint_${node}`);
+
+  /**
+   * Every corner of the stored mesh carries, on its point, exactly the joints and weights the file
+   * gives the vertex that corner came from. Checked corner by corner rather than point by point, so
+   * a weld that merged two differently bound vertices is caught whichever one it kept.
+   */
+  async function expectBindingPerCorner(path: string) {
+    const { json, bin } = parseGltfContainer(fixture(path));
+    const buffers = await resolveBuffers(json, bin);
+    const groups = jointNames(json as never);
+    const data = readGltfMesh(json, buffers, 0, groups);
+    if ('refused' in data) throw new Error(data.refused);
+    const prim = (
+      json as unknown as {
+        meshes: { primitives: { attributes: Record<string, number>; indices: number }[] }[];
+      }
+    ).meshes[0].primitives[0];
+    const fileJoints = readAccessor(json, buffers, prim.attributes.JOINTS_0);
+    const fileWeights = readAccessor(json, buffers, prim.attributes.WEIGHTS_0);
+    const order = readAccessor(json, buffers, prim.indices);
+    const [joints, weights] = data.pointLayers;
+    expect([joints.name, joints.type, weights.name, weights.type]).toEqual([
+      SKIN_JOINTS,
+      'int4',
+      SKIN_WEIGHTS,
+      'float4',
+    ]);
+    expect(data.vertexGroups).toEqual(groups);
+    expect(data.cornerPoints.length).toBe(order.length);
+    for (let c = 0; c < order.length; c++) {
+      const v = order[c];
+      const p = data.cornerPoints[c];
+      expect(Array.from(joints.data.subarray(p * 4, p * 4 + 4))).toEqual(
+        Array.from(fileJoints.subarray(v * 4, v * 4 + 4)),
+      );
+      expect(Array.from(weights.data.subarray(p * 4, p * 4 + 4))).toEqual(
+        Array.from(fileWeights.subarray(v * 4, v * 4 + 4)),
+      );
+    }
+    // And what was read is a mesh the stored node accepts, round-tripped through a save.
+    const packed = JSON.parse(JSON.stringify(packMeshData(data)));
+    expect(PolyMeshDataParams.safeParse({ mesh: packed, material: null }).success).toBe(true);
+    return data;
+  }
+
+  it('skinned-bar: every corner keeps its vertex’s joints and weights, indexing Bone0 and Bone1', async () => {
+    const data = await expectBindingPerCorner('public/assets/skinned-bar.glb');
+    // skin.joints is [1, 0]: joint number 0 is node 1, Bone0. The order is the file's, not the nodes'.
+    expect(data.vertexGroups).toEqual(['Bone0', 'Bone1']);
+    expect(data.points.length / 3).toBe(6);
+  });
+
+  it('many-bone-rig: 128 points bound across a table of 64 joints', async () => {
+    const data = await expectBindingPerCorner('public/assets/many-bone-rig.glb');
+    expect(data.vertexGroups).toHaveLength(64);
+    expect(data.points.length / 3).toBe(128);
+  });
+
+  it('a binding that agrees at each position welds as before: the cube keeps its 8 points', async () => {
+    const { json, bin } = parseGltfContainer(
+      jsonFixture((j) => {
+        withSkinData(j, uniformJoints(), uniformWeights());
+      }),
+    );
+    const data = readGltfMesh(json, await resolveBuffers(json, bin), 0, ['Root']);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.points.length / 3).toBe(8);
+  });
+
+  it('two vertices at one position with different bindings stay two points, as Blender keeps them', async () => {
+    // Each cube vertex bound by its own number: every position's three vertices disagree.
+    const joints = Array.from({ length: CUBE_VERTICES }, (_, v) => [v % 2, 0, 0, 0]);
+    const weights = Array.from({ length: CUBE_VERTICES }, (_, v) => [1 - v / 48, v / 48, 0, 0]);
+    const { json, bin } = parseGltfContainer(
+      jsonFixture((j) => {
+        withSkinData(j, joints, weights);
+      }),
+    );
+    const buffers = await resolveBuffers(json, bin);
+    const data = readGltfMesh(json, buffers, 0, ['A', 'B']);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.points.length / 3).toBe(CUBE_VERTICES);
+    const order = readAccessor(
+      json,
+      buffers,
+      (json as never as { meshes: { primitives: { indices: number }[] }[] }).meshes[0].primitives[0]
+        .indices,
+    );
+    for (let c = 0; c < order.length; c++) {
+      const p = data.cornerPoints[c];
+      expect(Array.from(data.pointLayers[1].data.subarray(p * 4, p * 4 + 2))).toEqual([
+        Math.fround(1 - order[c] / 48),
+        Math.fround(order[c] / 48),
+      ]);
+    }
+  });
+
+  it('normalised byte weights arrive as fractions', async () => {
+    const { json, bin } = parseGltfContainer(
+      jsonFixture((j) => {
+        withSkinData(
+          j,
+          uniformJoints(),
+          Array.from({ length: CUBE_VERTICES }, () => [0.6, 0.4, 0, 0]),
+          { weightType: 5121 },
+        );
+      }),
+    );
+    const data = readGltfMesh(json, await resolveBuffers(json, bin), 0, ['A', 'B']);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(Array.from(data.pointLayers[1].data.subarray(0, 4))).toEqual([
+      Math.fround(153 / 255),
+      Math.fround(102 / 255),
+      0,
+      0,
+    ]);
+  });
+
+  it('refuses a joint number past the skin’s table, and joint numbers with no table at all', async () => {
+    const joints = uniformJoints();
+    joints[5] = [0, 2, 0, 0];
+    const { json, bin } = parseGltfContainer(
+      jsonFixture((j) => {
+        withSkinData(j, joints, uniformWeights());
+      }),
+    );
+    const buffers = await resolveBuffers(json, bin);
+    expect(readGltfMesh(json, buffers, 0, ['A', 'B'])).toEqual({
+      refused: 'mesh 0 binds a vertex to joint 2, but its skin lists 2 joints',
+      issue: '#1063',
+    });
+    expect(readGltfMesh(json, buffers, 0)).toMatchObject({ issue: '#1063' });
+    expect(readGltfMesh(json, buffers, 0, ['A', 'B', 'C'])).not.toHaveProperty('refused');
+  });
+
+  it('a mesh with no skin data holds no point layers and no vertex groups', async () => {
+    const { json, bin } = parseGltfContainer(fixture(CUBE));
+    const data = readGltfMesh(json, await resolveBuffers(json, bin), 0);
+    if ('refused' in data) throw new Error(data.refused);
+    expect(data.pointLayers).toEqual([]);
+    expect(data.vertexGroups).toEqual([]);
+  });
+});
 
 describe('#1052 — readGltfMesh reads every primitive into one mesh', () => {
   it('two primitives over one POSITION: 4 welded points, 2 faces, and a material_index of [0, 1]', async () => {
@@ -613,7 +813,56 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1063',
     ],
+    // #1196 — the point layers can hold a skin now, and the refusal stays: nothing deforms a native
+    // mesh yet, and the file's copy does (#393 lifts this with the deform).
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
+    // #1196 — a vertex with more than four influences carries a second set, which a stored mesh does
+    // not hold. Refused by the attribute guard, by name.
+    [
+      'a second joint set',
+      () =>
+        jsonFixture((json) => {
+          const skin = withSkinData(json, uniformJoints(), uniformWeights());
+          const attributes = cubeAttributes(json);
+          attributes.JOINTS_1 = skin.joints;
+          attributes.WEIGHTS_1 = skin.weights;
+        }),
+      '#1125',
+      'carries JOINTS_1, WEIGHTS_1,',
+    ],
+    // The same file with ONE set passes that guard, which is what makes the row above its witness:
+    // it is refused one step later, because no node skins the mesh its joints would index.
+    [
+      'joint numbers on a mesh no node skins',
+      () =>
+        jsonFixture((json) => {
+          withSkinData(json, uniformJoints(), uniformWeights());
+        }),
+      '#1063',
+      'carries JOINTS_0, but no node skins it',
+    ],
+    [
+      'joints without weights',
+      () =>
+        jsonFixture((json) => {
+          withSkinData(json, uniformJoints(), uniformWeights());
+          delete cubeAttributes(json).WEIGHTS_0;
+        }),
+      '#1063',
+      'JOINTS_0 without WEIGHTS_0',
+    ],
+    [
+      'byte weights that are not normalised',
+      () =>
+        jsonFixture((json) => {
+          withSkinData(json, uniformJoints(), uniformWeights(), {
+            weightType: 5121,
+            normalized: false,
+          });
+        }),
+      '#1063',
+      'WEIGHTS_0 that is not four floats or four normalised',
+    ],
     [
       'a mesh drawn as lines',
       () =>

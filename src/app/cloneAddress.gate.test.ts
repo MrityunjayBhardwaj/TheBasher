@@ -73,6 +73,8 @@ const sample: Record<GeometryDescriptor['kind'], GeometryRef> = {
       cornerLayers: [],
       cornerNormals: null,
       faceLayers: [],
+      pointLayers: [],
+      vertexGroups: [],
     }),
   ),
 };
