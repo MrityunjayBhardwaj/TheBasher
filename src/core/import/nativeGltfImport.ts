@@ -141,7 +141,9 @@ const TRIANGLE_FAN = 6;
 // road honours, not what the reader can read: derived from the slot counts rather than spelled, so it
 // cannot admit a layer the build has nowhere to draw.
 //
-// #1196 — and ONE set of joints and weights, which a stored mesh holds as point layers. A second
+// #1196 — and ONE set of joints and weights, which a stored mesh HOLDS as point layers; nothing
+// draws them until the skinned draw lands (#1197), and a skinned file is refused whole until the
+// deform does (#393), so today they reach a stored mesh only through the reader itself. A second
 // set (`JOINTS_1`, a vertex with more than four influences) stays out on purpose and is refused by
 // name below: Blender keeps every set (`io_scene_gltf2/blender/imp/mesh.py:93-96`), three draws only
 // the first (`GLTFLoader.js:2232-2233`), and a native mesh holding the first alone would keep less

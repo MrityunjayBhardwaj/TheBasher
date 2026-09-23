@@ -361,8 +361,8 @@ export function componentCountOf(
       // it looks like it should. A scope's domain is chosen by an OPERATOR'S DECLARATION, and
       // `ScopeDomain` is `['face', 'edge']` — so no operator can name `'point'` until that set
       // admits it. `SCOPE_ABSENT.point` carries why it does not, and carries NO `until` — the
-      // backlog was censused and nothing filed would author a point-domain layer, so there is
-      // no issue to name. The type refuses it today rather than allowing it quietly, so
+      // backlog was censused and nothing filed would select points (the one point-domain layer,
+      // a skin binding since #1196, is read whole), so there is no issue to name. The type refuses it today rather than allowing it quietly, so
       // this arm is reachable from a test and from that widening, and from nothing else.
       return pointCountOf(descriptor);
     case 'edge':

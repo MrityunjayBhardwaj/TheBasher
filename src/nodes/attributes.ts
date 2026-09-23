@@ -161,8 +161,10 @@ export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
  * that issue and the record points at a closed one, which is the failure #958 is open about
  * one file over. `corner` genuinely awaits a filed consumer (#786, the authored layer its own
  * reason already argues for). `point` awaits NOTHING FILED — the whole open backlog was
- * censused and nothing would author a point-domain layer — so it carries no `until` at all
- * rather than a target invented to fill the field. The union makes the empty case
+ * censused and nothing would SELECT points — so it carries no `until` at all rather than a
+ * target invented to fill the field. (#1196 since authors the first point-domain layer, a skin
+ * binding on a stored mesh, and the deform that reads it, #393, reads every point whole: a
+ * layer to read is not a subset to select, so the absence below is unchanged.) The union makes the empty case
  * REPRESENTABLE, so the next author is not forced to point somewhere false.
  *
  * 🔑 THE TYPE MAKES THE TWO SETS PARTITION {@link KNOWN_DOMAINS}. `Exclude<KnownDomain,
@@ -184,7 +186,8 @@ export const SCOPE_ABSENT: Readonly<Record<Exclude<KnownDomain, ScopeDomain>, Sc
     why:
       'a point count has been derivable since #716 and total since #754, but no operator has ' +
       'a per-point semantic anybody has stated — a point selection would be a subset of a set ' +
-      'nothing consumes, and no open issue would author a point-domain layer',
+      'nothing consumes; the one point-domain layer that exists, a stored skin binding (#1196), ' +
+      'is read whole by a deform and names no subset of points',
   },
   corner: {
     kind: 'awaits-consumer',
