@@ -171,8 +171,8 @@ describe('parseFbx — a Null inside a chain, from a Blender export', () => {
   // `null-in-chain.fbx`: a 3-bone chain `Hips → Mid → Tip` exported by Blender, with `Mid`
   // patched from `LimbNode` to a `Null` with no cluster (Blender's own `parse_fbx` +
   // `encode_bin`). Blender 5.1.1 re-imports it as one armature, `Hips → Mid → Tip`, with Mid's
-  // head 1 and Tip's 1.5 file units from Hips' (import_fbx.py:2511-2513, the fake bone). The
-  // transform ABOVE Hips (the armature node) is #1190's, so heads are compared relative to Hips.
+  // head 1 m and Tip's 1.5 m from Hips' (import_fbx.py:2511-2513, the fake bone). Where the whole
+  // chain stands — the armature node above Hips — is `fbxArmatureNode.test.ts`'s (#1190).
   const bones = bonesOf(readBinary('null-in-chain.fbx'));
 
   it("keeps the chain Blender keeps, with Blender's distances from Hips", () => {
@@ -186,7 +186,7 @@ describe('parseFbx — a Null inside a chain, from a Blender export', () => {
     rig[0].updateMatrixWorld(true);
     const heads = rig.map((b) => new Vector3().setFromMatrixPosition(b.matrixWorld));
     const fromHips = (i: number) => heads[i].distanceTo(heads[0]);
-    expect(fromHips(1)).toBeCloseTo(0.01, 9);
-    expect(fromHips(2)).toBeCloseTo(0.015, 9);
+    expect(fromHips(1)).toBeCloseTo(1, 9);
+    expect(fromHips(2)).toBeCloseTo(1.5, 9);
   });
 });

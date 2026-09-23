@@ -19,15 +19,24 @@
 // REF: THESIS §42.1 (P3.1); project_p31_plan.md.
 
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
-import type {
-  Bone,
-  Group,
-  Object3D,
-  AnimationClip as ThreeAnimationClip,
-  SkinnedMesh,
+import {
+  Euler,
+  Quaternion,
+  Vector3,
+  type Bone,
+  type Group,
+  type Object3D,
+  type AnimationClip as ThreeAnimationClip,
+  type SkinnedMesh,
 } from 'three';
-import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
-import { bonesToSpec, clipToKeyframes, type ClipShape } from './threeAdapter';
+import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
+import {
+  bonesToSpec,
+  clipToKeyframes,
+  continuousEuler,
+  quaternionToEulerVec3,
+  type ClipShape,
+} from './threeAdapter';
 import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
@@ -116,10 +125,19 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   if (bones.length === 0) {
     throw new Error('FBX contains no skeleton or skinned mesh — nothing to import.');
   }
-  const skeletonBones = bonesToSpec(bones);
-
   // First animation clip wins. group.animations[] is THREE.AnimationClip[].
   const clip = (group as unknown as { animations: ThreeAnimationClip[] }).animations[0];
+  // The clip's keys are read against the rest AS THE FILE HOLDS IT (a rotation-only bone's key
+  // takes its position from that rest), and only then is the node above the rig folded into
+  // both, so the two move together.
+  const fileRest = bonesToSpec(bones);
+  const { bones: skeletonBones, keyframes } = foldTransformAboveRoots(
+    group,
+    bones,
+    fileRest,
+    clip ? clipToKeyframes(clip as ClipShape, fileRest) : [],
+  );
+
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
@@ -128,7 +146,6 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     };
   }
 
-  const keyframes = clipToKeyframes(clip as ClipShape, skeletonBones);
   return {
     skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
     clipParams: {
@@ -144,6 +161,101 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       keyframes: scaleKeyframePositions(keyframes, metresPerUnit),
     },
   };
+}
+
+/**
+ * #1190 — fold the transform of the nodes ABOVE each root bone into that root, and into the keys.
+ *
+ * Blender writes an armature as a `Null` above the bones and puts its axis and unit conversion
+ * on that node: on a Blender export it reads −90° about X and ×100. Starting at the bones, the
+ * rig came in 100× small and lying along +Z. Blender treats that node as the armature OBJECT
+ * (`io_scene_fbx/import_fbx.py:2473-2497`, 4.5.9), and on re-import its own Y-up → Z-up and
+ * unit conversion cancel it: measured in Blender 5.1.1, the armature Object reads location 0,
+ * rotation 0, scale 1, and the chain stands upright at 1 m and 1.5 m.
+ *
+ * So the transform goes into the rig, not onto our stand-in Object — the same place the unit
+ * goes (#1086), and the stand-in's fields then read what Blender's do: nothing. Carried on the
+ * Object instead, they would read −90° and ×100, which Blender never shows for this file.
+ *
+ * How it folds: with the transform above a root `T · R · k` (k a uniform scale), the root's
+ * rest and keys become `T + R·(k·p)` and `R · q`, and every length below it scales by k — which
+ * is exactly what the rig's world pose was. A NON-uniform scale cannot fold into lengths and
+ * rotations without shear, so it is refused rather than approximated. A root with nothing
+ * above it but the loader's own group folds through identity; its values move by rounding only
+ * (measured on `mixamo-samba.fbx`: 561 of 28537 keys, at most 7.1e-15 rad).
+ *
+ * Only the transform at load is read: a node above the rig that is itself animated keeps its
+ * rest here (its track is not a bone's).
+ */
+function foldTransformAboveRoots(
+  group: Group,
+  nodes: readonly Object3D[],
+  rest: readonly BoneSpec[],
+  keyframes: readonly AnimationKeyframe[],
+): { bones: BoneSpec[]; keyframes: AnimationKeyframe[] } {
+  group.updateMatrixWorld(true);
+  const groupInverse = group.matrixWorld.clone().invert();
+  const bones = rest.map((b) => ({ ...b }));
+  let keys = keyframes.map((k) => ({ ...k }));
+
+  rest.forEach((spec, root) => {
+    if (spec.parent >= 0) return;
+    const above = nodes[root].parent;
+    if (!above) return;
+    const matrix = groupInverse.clone().multiply(above.matrixWorld);
+
+    const offset = new Vector3();
+    const turn = new Quaternion();
+    const scale = new Vector3();
+    matrix.decompose(offset, turn, scale);
+    const k = scale.x;
+    if (!(k > 0) || Math.abs(scale.y - k) > 1e-9 * k || Math.abs(scale.z - k) > 1e-9 * k) {
+      throw new Error(
+        `FBX node "${above.name}" above the rig's root "${spec.name}" has scale ` +
+          `${scale.toArray().join(', ')} — not one uniform scale, so it cannot be folded into the ` +
+          'bones without distorting them.',
+      );
+    }
+
+    const inSubtree = new Set<number>([root]);
+    rest.forEach((b, i) => {
+      if (inSubtree.has(b.parent)) inSubtree.add(i);
+    });
+    const placeRoot = (p: Vec3): Vec3 => {
+      const v = new Vector3(...p).multiplyScalar(k).applyQuaternion(turn).add(offset);
+      return [v.x, v.y, v.z];
+    };
+    const turnRoot = (r: Vec3): Vec3 =>
+      quaternionToEulerVec3(
+        turn.clone().multiply(new Quaternion().setFromEuler(new Euler(...r, 'XYZ'))),
+      );
+    const lengthen = (p: Vec3): Vec3 => [p[0] * k, p[1] * k, p[2] * k];
+
+    for (const i of inSubtree) {
+      const b = bones[i];
+      bones[i] =
+        i === root
+          ? { ...b, position: placeRoot(b.position), rotation: turnRoot(b.rotation) }
+          : { ...b, position: lengthen(b.position) };
+    }
+    // The root's new angles are chained in time order onto the branch nearest the key before,
+    // as the import road already does (#867): the sampler interpolates Euler components
+    // linearly, and a freshly converted triple can sit a whole turn from its neighbour.
+    const rootAngles = new Map<AnimationKeyframe, Vec3>();
+    let previous: Vec3 | null = null;
+    for (const key of keys.filter((k) => k.bone === root).sort((a, b) => a.time - b.time)) {
+      previous = continuousEuler(turnRoot(key.rotation), previous);
+      rootAngles.set(key, previous);
+    }
+    keys = keys.map((key) => {
+      if (!inSubtree.has(key.bone)) return key;
+      const angles = rootAngles.get(key);
+      return angles
+        ? { ...key, position: placeRoot(key.position), rotation: angles }
+        : { ...key, position: lengthen(key.position) };
+    });
+  });
+  return { bones, keyframes: keys };
 }
 
 /**
