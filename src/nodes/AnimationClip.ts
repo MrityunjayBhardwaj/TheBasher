@@ -33,6 +33,7 @@ import type {
   AnimationClipValue,
   AnimationKeyframe,
   BonePose,
+  ObjectValue,
   PosedSkeletonValue,
   SkeletonValue,
   Vec3,
@@ -203,6 +204,26 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
       return poses;
     },
   };
+}
+
+/**
+ * #1203 — an armature Object's pose: its action, played on its skeleton, or `null` when it has no
+ * action or the action is keyed on a different rig.
+ *
+ * A clip's keys address bones by INDEX into the skeleton it was made against, so it can only pose
+ * a skeleton whose bones are the same list. Blender binds an action to pose bones by NAME and
+ * leaves an unmatched channel doing nothing; the index form cannot do that partially, so a clip
+ * whose bone names differ from the Object's, anywhere, poses nothing rather than the wrong bones.
+ */
+export function actionPoseOf(object: ObjectValue): PosedSkeletonValue | null {
+  const { data, action } = object;
+  if (data?.kind !== 'Skeleton' || action === undefined) return null;
+  const own = data.bones;
+  const keyed = action.skeleton.bones;
+  if (own.length !== keyed.length || own.some((bone, i) => bone.name !== keyed[i].name)) {
+    return null;
+  }
+  return posedSkeletonFromClip(action);
 }
 
 export function buildClipBoneSamplers(

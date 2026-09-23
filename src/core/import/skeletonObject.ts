@@ -138,8 +138,12 @@ export interface SkeletonObjectArgs {
 }
 
 /**
- * The Object, its name, its `data` edge from the skeleton, and its place among the scene's
- * children.
+ * The Object, its name, its `data` edge from the skeleton, its `action` edge from the clip, and
+ * its place among the scene's children.
+ *
+ * #1203 — the clip is the Object's ACTION, as an armature Object carries its action in Blender:
+ * the armature band poses the rig from this edge, and a deform pointed at the Object reads the
+ * pose through it (#393). Wired here, so every road that stands a rig wires it.
  *
  * The name goes on `meta.name` through a `setMeta` op, because that is the field the outliner's
  * rename writes and `nodeDisplayName` reads first, and `addNode` carries no meta. It lands in the
@@ -167,6 +171,11 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         type: 'connect',
         from: { node: args.skeletonId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: args.clipId, socket: 'out' },
+        to: { node: objectId, socket: 'action' },
       },
       {
         type: 'connect',

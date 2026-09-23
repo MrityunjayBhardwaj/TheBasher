@@ -5,10 +5,12 @@
 // the armature band. This is the read that band needs: which Objects those are, where they
 // stand, their rest bones, and the clip that poses them.
 //
-// THE POSE COMES FROM THE CLIPS WIRED TO THE SKELETON. The import already makes the
-// `Skeleton → AnimationClip` edge, so no new wiring is asked for. Exactly one clip poses the
-// rig; none draws the rest pose; several also draw the rest pose, and `clipCount` says why,
-// because picking one of several would be a guess the director cannot see being made.
+// THE POSE IS THE OBJECT'S ACTION (#1203). An armature Object carries the clip that poses it on
+// its `action` edge, as in Blender, and that is the one answer to "what poses this rig": the band
+// here and a deform pointed at the Object (#393) both read it. Before #1203 the band chose "the one
+// clip wired to the skeleton, else rest"; the format-15 migration wrote that choice down as the
+// edge, so a saved project poses exactly as it did. `clipCount` still counts the clips wired to the
+// skeleton, as a diagnostic: a rig resting with clips beside it has no action, not a broken one.
 //
 // Pure over the DAG, so it is testable without a renderer. Evaluated at frame 0 like the other
 // chrome bands: a clip is sampled at the playhead later, per frame, by the helper.
@@ -18,7 +20,8 @@
 
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { AnimationClipValue, BoneSpec } from '../nodes/types';
+import { actionPoseOf } from '../nodes/AnimationClip';
+import type { AnimationClipValue, BoneSpec, ObjectValue } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
 
 export interface SkeletonObject {
@@ -30,9 +33,9 @@ export interface SkeletonObject {
   readonly world: readonly number[];
   /** The rest bones. */
   readonly bones: readonly BoneSpec[];
-  /** The one clip wired to the skeleton, or null when there is none or more than one. */
+  /** The Object's action, or null when it has none or it is keyed on another rig (`actionPoseOf`). */
   readonly clip: AnimationClipValue | null;
-  /** How many clips are wired to the skeleton — the reason a rig with `clip: null` rests. */
+  /** How many clips are wired to the skeleton — a diagnostic beside an unposed rig. */
   readonly clipCount: number;
 }
 
@@ -62,23 +65,18 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
       // Not reachable as a scene descendant ⇒ nothing in the scene stands there to draw.
       const world = resolveWorldTransform(state, node.id, FRAME_0, cache);
       if (!world) continue;
-      const clipIds = nodes
-        .filter((n) => n.type === 'AnimationClip' && refNode(n.inputs.skeleton) === skeletonId)
-        .map((n) => n.id);
-      let clip: AnimationClipValue | null = null;
-      if (clipIds.length === 1) {
-        const value = evaluate(state, clipIds[0], { cache, ctx: FRAME_0 }).value as
-          | AnimationClipValue
-          | undefined;
-        clip = value?.kind === 'AnimationClip' ? value : null;
-      }
+      const clipCount = nodes.filter(
+        (n) => n.type === 'AnimationClip' && refNode(n.inputs.skeleton) === skeletonId,
+      ).length;
+      const object = evaluate(state, node.id, { cache, ctx: FRAME_0 }).value as ObjectValue;
+      const clip = actionPoseOf(object) === null ? null : (object.action ?? null);
       out.push({
         id: node.id,
         skeletonId,
         world: world.matrix,
         bones: data.bones,
         clip,
-        clipCount: clipIds.length,
+        clipCount,
       });
     } catch {
       // A half-wired or mid-edit graph draws no rig. This runs in a render path, and a throw

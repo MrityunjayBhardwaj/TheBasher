@@ -85,6 +85,8 @@ describe('node schema payload (#1007)', () => {
     expect(obj.inputs).toEqual([
       { socket: 'data', type: 'ObjectData|Skeleton', cardinality: 'single' },
       { socket: 'children', type: 'SceneObject', cardinality: 'list' },
+      // #1203 — and `action`: the clip that poses an armature Object, as in Blender.
+      { socket: 'action', type: 'AnimationClip', cardinality: 'single' },
     ]);
     expect(obj.outputs).toEqual([{ socket: 'out', type: 'SceneObject', cardinality: 'single' }]);
     // and `position` IS real — as a PARAM, which is the distinction nobody was given

@@ -16,7 +16,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
-import type { ObjectData, ObjectValue, SceneObject } from './types';
+import type { AnimationClipValue, ObjectData, ObjectValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
 
 export const ObjectParams = z.object({
@@ -92,6 +92,9 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   inputs: {
     data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' },
     children: { type: 'SceneObject', cardinality: 'list' },
+    // #1203 — the clip that poses this Object's skeleton, as an armature Object carries its action
+    // in Blender. A deform reads the armature's pose through this Object (#393).
+    action: { type: 'AnimationClip', cardinality: 'single' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The posable node — 'transform' implies 'constraint' (a pose can be
@@ -169,9 +172,15 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       // #1152 — the same rule: carried only when it holds something, so an Object with no
       // children keeps the shape (and the cache identity) it had before it could parent.
       ...(childrenOf(inputs.children).length > 0 ? { children: childrenOf(inputs.children) } : {}),
+      // #1203 — the same rule once more: an Object with no action keeps its old shape.
+      ...(isClip(inputs.action) ? { action: inputs.action } : {}),
     };
   },
 };
+
+function isClip(v: unknown): v is AnimationClipValue {
+  return (v as { kind?: unknown } | null | undefined)?.kind === 'AnimationClip';
+}
 
 /** The evaluated children list, empty when the socket is unbound. */
 function childrenOf(v: unknown): SceneObject[] {

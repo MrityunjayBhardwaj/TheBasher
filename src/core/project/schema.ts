@@ -72,7 +72,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // would never split — and unlike the earlier kinds there is no fused fallback left to
 // render it, because `GltfChild` retires in the same change. See migrations.ts
 // formatMigrations[12].
-export const PROJECT_FORMAT_VERSION = 14;
+// v15 (#1203): an armature Object carries the clip that poses it on an `action` edge. The band
+// used to choose the pose by a rule; a saved rig would stop playing without the pass that writes
+// the rule down as the edge. See migrations.ts formatMigrations[14].
+export const PROJECT_FORMAT_VERSION = 15;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

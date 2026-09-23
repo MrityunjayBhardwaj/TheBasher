@@ -76,6 +76,7 @@ describe('buildSkeletonObjectOps', () => {
       sceneNodeId: 'scene',
       normalise: false,
       name: 'soma-walk',
+      clipId: 'clip',
     });
     expect(objectId).toBe(skeletonObjectId('sk'));
     expect(ops).toEqual([
@@ -85,11 +86,17 @@ describe('buildSkeletonObjectOps', () => {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
-      { type: 'setMeta', nodeId: objectId, name: 'soma-walk' },
+      { type: 'setMeta', nodeId: objectId, name: 'soma-walk', nameFrom: 'clip' },
       {
         type: 'connect',
         from: { node: 'sk', socket: 'out' },
         to: { node: objectId, socket: 'data' },
+      },
+      // #1203 — the clip is the Object's action: what poses the rig, for the band and a deform.
+      {
+        type: 'connect',
+        from: { node: 'clip', socket: 'out' },
+        to: { node: objectId, socket: 'action' },
       },
       {
         type: 'connect',
@@ -110,6 +117,7 @@ describe('buildSkeletonObjectOps', () => {
       sceneNodeId: 'scene',
       normalise: true,
       name: 'sk',
+      clipId: 'clip',
     });
     for (const op of ops) state = applyOp(state, op).next;
 
@@ -215,6 +223,7 @@ describe('normalisedRigScale', () => {
       sceneNodeId: 'scene',
       normalise: false,
       name: 'sk',
+      clipId: 'clip',
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
   });
@@ -223,7 +232,12 @@ describe('normalisedRigScale', () => {
 describe('#1101 — the Object carries its motion name', () => {
   it('applied, the name is the one the outliner reads; a blank name adds no op', () => {
     let state = sceneState();
-    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    // The clip is named as the import names it; the Object's name follows its clip (#1122).
+    const imported = buildBvhImportOps({
+      text: BVH,
+      name: 'soma-walk',
+      ids: { skeleton: 'sk', clip: 'clip' },
+    });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const named = buildSkeletonObjectOps({
       skeletonId: 'sk',
@@ -231,6 +245,7 @@ describe('#1101 — the Object carries its motion name', () => {
       sceneNodeId: 'scene',
       normalise: false,
       name: 'soma-walk',
+      clipId: 'clip',
     });
     for (const op of named.ops) state = applyOp(state, op).next;
     expect(state.nodes[named.objectId].meta?.name).toBe('soma-walk');
@@ -241,6 +256,7 @@ describe('#1101 — the Object carries its motion name', () => {
       sceneNodeId: 'scene',
       normalise: false,
       name: '   ',
+      clipId: 'clip',
     });
     expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
   });
@@ -267,6 +283,7 @@ describe('standingObjectsOf (#1100)', () => {
         sceneNodeId: 'scene',
         normalise: false,
         name: 'sk',
+        clipId: 'clip',
       }).ops,
     ];
     for (const op of ops) state = applyOp(state, op).next;

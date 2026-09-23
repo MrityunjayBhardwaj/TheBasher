@@ -94,6 +94,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // rewrite them. Without it a saved material keeps a number that nothing reads any more, and its
   // replaced map silently samples UV set 0 — a picture that is wrong with nothing said.
   13: migrateMaterialLayerNames,
+  // v14 → v15 (#1203): an armature Object carries its pose as an `action` edge. The band used to
+  // pick a rig's pose by a rule (the one clip wired to its skeleton); this pass writes that rule
+  // down as the edge, so every saved rig poses exactly as it did.
+  14: migrateSkeletonObjectAction,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1655,4 +1659,57 @@ export function migrateMaterialLayerNames(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 14 };
+}
+
+/**
+ * v14 → v15 (#1203) — an armature Object carries its pose as an `action` edge.
+ *
+ * Before this version the armature band chose a rig's pose by a rule: "the one `AnimationClip`
+ * wired to its skeleton; none or several, and it rests". The pose now lives on the Object, as an
+ * armature Object carries its action in Blender, so a deform pointed at the Object can read it
+ * (#393). This pass writes the old rule down as the edge: an Object whose `data` is a `Skeleton`
+ * with exactly one clip wired to it, and no action yet, gets that clip as its action. With none or
+ * several, nothing is wired and the rig rests — exactly what it did before.
+ *
+ * Its OWN format version for the reason every step above owns one: a project saved at v14 would
+ * never re-run an earlier pass, and without it every saved rig would stop playing on load, because
+ * the band no longer reads the rule.
+ */
+export function migrateSkeletonObjectAction(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 15 };
+
+  const single = (binding: RawRef | RawRef[] | undefined): string | undefined =>
+    Array.isArray(binding) ? binding[0]?.node : binding?.node;
+  const clipsBySkeleton = new Map<string, string[]>();
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'AnimationClip') continue;
+    const skeleton = single(node.inputs?.skeleton);
+    if (skeleton === undefined) continue;
+    clipsBySkeleton.set(skeleton, [...(clipsBySkeleton.get(skeleton) ?? []), id]);
+  }
+
+  let wired = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'Object' || node.inputs?.action !== undefined) continue;
+    const data = single(node.inputs?.data);
+    if (data === undefined || nodes[data]?.type !== 'Skeleton') continue;
+    const clips = clipsBySkeleton.get(data) ?? [];
+    if (clips.length !== 1) continue;
+    node.inputs = { ...node.inputs, action: { node: clips[0], socket: 'out' } };
+    wired++;
+  }
+
+  if (wired > 0) {
+    console.warn(
+      `[migrateSkeletonObjectAction] wired ${wired} armature Object(s) to the one clip that ` +
+        `posed each (#1203 — the pose now lives on the Object as its action).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 15 };
 }

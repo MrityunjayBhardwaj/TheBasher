@@ -2195,6 +2195,17 @@ export interface ObjectValue extends RotationModeFields {
    * stands for nothing a director placed.
    */
   readonly children?: readonly SceneObject[];
+  /**
+   * #1203 — the clip that poses this Object's skeleton: Blender's action, which an armature Object
+   * carries and its Armature modifier reads through it. Present only when one is bound, so an
+   * Object with none evaluates to the value it always did.
+   *
+   * It is ON the Object because the Object is what a deform points at (#393): a mesh's armature
+   * operator takes the armature Object as an input, and the pose it deforms by has to arrive with
+   * it. The clip cannot sit on the skeleton instead — it reads the skeleton, so the edge would be
+   * a cycle. Read through `actionPoseOf`, which refuses a clip keyed on another rig.
+   */
+  readonly action?: AnimationClipValue;
 }
 
 export type SceneChild =

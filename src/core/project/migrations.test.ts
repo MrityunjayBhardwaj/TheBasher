@@ -36,7 +36,7 @@ import {
 import { sampleScalarKeyframesExtended, type ChannelExtend } from '../../nodes/keyframeInterp';
 import type { FModNoise } from '../../nodes/channelModifiers';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
-import { migrateNodes, migrateProjectFormat } from './migrations';
+import { migrateNodes, migrateProjectFormat, migrateSkeletonObjectAction } from './migrations';
 import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import { defaultModifier } from '../../nodes/channelModifiers';
@@ -3513,7 +3513,7 @@ describe('v13 → v14: a material names the layers it reads (#1062)', () => {
   };
 
   it('stamps the new version', () => {
-    expect(migrated().formatVersion).toBe(14);
+    expect(migrated().formatVersion).toBe(PROJECT_FORMAT_VERSION);
   });
 
   it('names each numbered UV set, and retires the numeric key', () => {
@@ -3540,5 +3540,113 @@ describe('v13 → v14: a material names the layers it reads (#1062)', () => {
     // 1.5 was never an index the parse would have honoured, so it names no layer either.
     expect(material.mapUvLayers).toBeUndefined();
     expect(material.mapUvSets).toBeUndefined();
+  });
+});
+
+describe('v14 → v15: an armature Object carries its pose as an action (#1203)', () => {
+  // The band's old rule, written as the edge: exactly one clip on the skeleton → that clip is
+  // the Object's action; none or several → nothing wired, and the rig rests as it did.
+  const v14 = () => ({
+    formatVersion: 14,
+    id: 'p',
+    name: 'p',
+    state: {
+      nodes: {
+        sk1: { id: 'sk1', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        clip1: {
+          id: 'clip1',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk1', socket: 'out' } },
+        },
+        rig1: {
+          id: 'rig1',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk1', socket: 'out' } },
+        },
+        sk2: { id: 'sk2', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        clip2a: {
+          id: 'clip2a',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk2', socket: 'out' } },
+        },
+        clip2b: {
+          id: 'clip2b',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk2', socket: 'out' } },
+        },
+        rig2: {
+          id: 'rig2',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk2', socket: 'out' } },
+        },
+        sk3: { id: 'sk3', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        rig3: {
+          id: 'rig3',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk3', socket: 'out' } },
+        },
+        mesh: {
+          id: 'mesh',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'clip1', socket: 'out' } },
+        },
+      },
+    },
+  });
+  const migrated = () =>
+    migrateSkeletonObjectAction(v14()) as {
+      formatVersion: number;
+      state: { nodes: Record<string, { inputs: Record<string, unknown> }> };
+    };
+
+  it('stamps v15', () => {
+    expect(migrated().formatVersion).toBe(15);
+  });
+
+  it('wires the one clip on a rig’s skeleton as its action', () => {
+    expect(migrated().state.nodes.rig1.inputs.action).toEqual({ node: 'clip1', socket: 'out' });
+  });
+
+  it('wires nothing where the old rule rested: two clips, or none', () => {
+    expect(migrated().state.nodes.rig2.inputs.action).toBeUndefined();
+    expect(migrated().state.nodes.rig3.inputs.action).toBeUndefined();
+  });
+
+  it('touches only an Object whose data is a Skeleton', () => {
+    expect(migrated().state.nodes.mesh.inputs.action).toBeUndefined();
+  });
+
+  it('keeps an action already wired, even where the rule would pick another clip', () => {
+    // rig1's skeleton has exactly one clip, so the rule would wire clip1; an edge already there wins.
+    const project = v14();
+    (project.state.nodes.rig1.inputs as Record<string, unknown>).action = {
+      node: 'clip2a',
+      socket: 'out',
+    };
+    const out = migrateSkeletonObjectAction(project) as typeof project;
+    expect((out.state.nodes.rig1.inputs as Record<string, unknown>).action).toEqual({
+      node: 'clip2a',
+      socket: 'out',
+    });
+  });
+
+  it('runs on the ladder from v14', () => {
+    const out = migrateProjectFormat(v14()) as ReturnType<typeof migrated>;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    expect(out.state.nodes.rig1.inputs.action).toEqual({ node: 'clip1', socket: 'out' });
   });
 });

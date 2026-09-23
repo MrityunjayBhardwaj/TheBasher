@@ -279,7 +279,15 @@ Frame Time: 0.0333333
       paramPath: 'scale',
       value: [scale, scale, scale],
     }).next;
-    if (!withClip) s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
+    if (!withClip) {
+      // Deleted as the product deletes it: the Object's action lets go first (#1203).
+      s = applyOp(s, {
+        type: 'disconnect',
+        from: { node: 'clip', socket: 'out' },
+        to: { node: 'sk_object', socket: 'action' },
+      }).next;
+      s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
+    }
     useDagStore.setState({ state: s });
     const scene = new THREE.Scene();
     const group = new THREE.Group();

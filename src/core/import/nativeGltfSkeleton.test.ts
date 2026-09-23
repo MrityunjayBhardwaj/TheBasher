@@ -18,9 +18,9 @@ import { applyOp } from '../dag/ops';
 import { evaluate } from '../dag';
 import { emptyDagState, type DagState } from '../dag/state';
 import type { Op } from '../dag/types';
-import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { actionPoseOf, posedSkeletonFromClip } from '../../nodes/AnimationClip';
 import { unpackMeshData } from '../../app/meshGeometryData';
-import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
+import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
 
 const SKINNED_BAR = 'public/assets/skinned-bar.glb';
 const STANDIN = 'public/fixtures/rig/standin-character.glb';
@@ -132,6 +132,16 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     expect(children.map((c) => c.node)).toEqual([standIn]);
     expect(state.nodes[standIn!].params).toMatchObject({ scale: [1, 1, 1] });
     expect(state.nodes[standIn!].meta?.name).toBe('bend');
+    // #1203 — the clip is the Object's action: what the band draws and a deform reads.
+    const [clipId] = nodesOfType(state, 'AnimationClip');
+    expect(state.nodes[standIn!].inputs.action).toEqual({ node: clipId, socket: 'out' });
+    const rig = evaluate(state, standIn!, {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    }).value as ObjectValue;
+    expect(actionPoseOf(rig)?.sample(1)[1].rotation[2]).toBeCloseTo(
+      2 * Math.atan2(0.6756, 0.7373),
+      3,
+    );
   });
 
   it('skinned-bar: the clip plays on the skeleton, and at 0.5 s Bone1 is half of its 85° bend', async () => {

@@ -423,9 +423,12 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // pose-bearing socket, so it cannot hold two poses at once. It is the first
     // consumer the pose lane has ever had — which is what makes the lane
     // terminate somewhere — and the property this row guards is untouched.
+    // #1203 adds a FIFTH, and it is not a fold: `Object.action` is the clip that poses an armature
+    // Object, exactly one, and the Object has no other pose-bearing socket.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.clip: AnimationClip (single)',
+      'Object.action: AnimationClip (single)',
       'PoseOverride.pose: PosedSkeleton (single)',
       'RetargetClip.sourceClip: AnimationClip (single)',
     ]);
