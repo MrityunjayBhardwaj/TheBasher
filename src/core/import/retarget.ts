@@ -46,6 +46,7 @@ type RetargetClipOptionsWithOffsets = Parameters<typeof threeRetargetClip>[3] & 
 };
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import {
+  boneOnACycle,
   bonesToSpec,
   clipToKeyframes,
   paramsToThreeClip,
@@ -580,6 +581,21 @@ export function restDirectionLocalOffsets(
 }
 
 export function retargetClip(args: RetargetArgs): RetargetResult {
+  // #1183 — refused before anything walks a parent chain: a cyclic skeleton made
+  // `shallowestMapped` loop forever, synchronously, freezing the tab.
+  for (const [rig, bones] of [
+    ['source', args.sourceBones],
+    ['target', args.targetBones],
+  ] as const) {
+    const bone = boneOnACycle(bones);
+    if (bone !== null) {
+      throw new Error(
+        `retargetClip: the ${rig} skeleton's bone "${bone}" is its own ancestor — its parent ` +
+          'chain loops instead of reaching a root, so the skeleton is not a tree.',
+      );
+    }
+  }
+
   const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(args.sourceBones);
   const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(args.targetBones);
 

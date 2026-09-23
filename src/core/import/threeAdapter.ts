@@ -235,6 +235,33 @@ export function continuousEuler(e: Vec3, prev: Vec3 | null): Vec3 {
 // ---------------------------------------------------------------------------
 
 /**
+ * #1183 — a bone whose parent chain never reaches a root, or null when every chain does.
+ *
+ * A skeleton is a tree: every bone's parents lead to a root (-1). `parent` is only a number,
+ * so a list can say otherwise — a bone its own parent, or two bones each other's — and every
+ * walk up such a chain runs forever. `retargetClip` froze the tab that way (a synchronous
+ * loop in `shallowestMapped`), on skeletons every Mixamo FBX produced before #1181.
+ *
+ * Named, so a refusal can say which bone. The walk is bounded by the bone count: a chain
+ * longer than that has revisited a bone. A parent index outside the list is left to the
+ * readers that already treat it as a root.
+ */
+export function boneOnACycle(
+  bones: readonly { readonly name: string; readonly parent: number }[],
+): string | null {
+  for (let i = 0; i < bones.length; i++) {
+    let cur = i;
+    for (let step = 0; step <= bones.length; step++) {
+      const parent = bones[cur]?.parent ?? -1;
+      if (parent < 0 || parent >= bones.length) break;
+      cur = parent;
+      if (step === bones.length) return bones[cur].name;
+    }
+  }
+  return null;
+}
+
+/**
  * Build a THREE.Skeleton from a BoneSpec[]. Each Bone gets its bind-pose
  * position + rotation; parent references are wired by parent index.
  *
