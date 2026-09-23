@@ -262,9 +262,8 @@ export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
     packed.cornerLayers.length === 0
       ? '-'
       : packed.cornerLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
-    (packed.cornerNormals ?? packed.vertexGroups.length === 0)
-      ? '-'
-      : JSON.stringify(packed.vertexGroups),
+    packed.cornerNormals ?? '-',
+    packed.vertexGroups.length === 0 ? '-' : JSON.stringify(packed.vertexGroups),
     packed.faceLayers.length === 0
       ? '-'
       : packed.faceLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
