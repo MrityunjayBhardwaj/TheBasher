@@ -74,6 +74,13 @@ export const ObjectParams = z.object({
    * the schema so the frozen param-home row (paramHomeGolden.ts) is appended to, not reordered.
    */
   ...rotationModeParams,
+  /**
+   * #1210 — the bone of the parent armature Object this Object hangs from (Blender's
+   * `parent_bone`). Optional and absent for every Object that is not parented to a bone, for the
+   * reason `slotOverrides` is. Appended after the rotation mode, so the frozen param-home row is
+   * appended to, not reordered.
+   */
+  parentBone: z.string().min(1).optional(),
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 
@@ -174,6 +181,8 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       ...(childrenOf(inputs.children).length > 0 ? { children: childrenOf(inputs.children) } : {}),
       // #1203 — the same rule once more: an Object with no action keeps its old shape.
       ...(isClip(inputs.action) ? { action: inputs.action } : {}),
+      // #1210 — and once more: only an Object parented to a bone names one.
+      ...(params.parentBone ? { parentBone: params.parentBone } : {}),
     };
   },
 };

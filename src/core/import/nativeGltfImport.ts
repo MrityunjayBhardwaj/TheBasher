@@ -1329,6 +1329,12 @@ async function buildNativeOps(
     boneClips.push(boneClip);
   }
   const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
+  // #1210 — each bone node's skeleton and name, for a mesh the file hangs under it.
+  const boneAt = new Map(
+    skeletons.flatMap((skeleton, k) =>
+      skeleton.boneNodes.map((node, b) => [node, { skeleton: k, name: skeleton.bones[b].name }]),
+    ),
+  );
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
   // The skeleton that stands in place of each armature's first bone, by that bone's node.
   const skeletonAtNode = new Map(skeletons.map((skeleton, i) => [skeleton.boneNodes[0], i]));
@@ -1482,11 +1488,17 @@ async function buildNativeOps(
     const objectId = leftBehind
       ? hashId('nativeObject', args.assetRef, `${key}.skinned`)
       : idOfNode(i);
-    const objectParentId = !skinnedElsewhere
-      ? parentId
-      : ownArmature === null || ownArmature === undefined
-        ? groupId
-        : idOfNode(ownArmature);
+    // #1210 — a mesh under a bone hangs from that bone: its parent is the armature's Object, and
+    // it names the bone (Blender `imp/node.py:104-117`). Its TRS stays the file's — glTF states it
+    // from the joint's origin, where Basher parents (`boneParent.ts`), so nothing is moved back.
+    const underBone = skinnedElsewhere ? undefined : boneAt.get(parentOfNode.get(i) ?? -1);
+    const objectParentId = underBone
+      ? skeletonObjectOf(underBone.skeleton)
+      : !skinnedElsewhere
+        ? parentId
+        : ownArmature === null || ownArmature === undefined
+          ? groupId
+          : idOfNode(ownArmature);
     if (leftBehind) {
       const emptyId = idOfNode(i);
       ops.push(
@@ -1538,7 +1550,10 @@ async function buildNativeOps(
               rotationMode: 'quaternion',
               quaternion: [0, 0, 0, 1],
             }
-          : nodeTransformOf(node),
+          : {
+              ...nodeTransformOf(node),
+              ...(underBone ? { parentBone: underBone.name } : {}),
+            },
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
@@ -1575,7 +1590,9 @@ async function buildNativeOps(
         to: { node: objectId, socket: 'data' },
       });
     }
-    parentEdges.push({
+    // Under a bone, after every parent edge: the armature's Object is written among them, and the
+    // file may number the mesh before its bones.
+    (underBone ? armatureEdges : parentEdges).push({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
       to: { node: objectParentId, socket: 'children' },

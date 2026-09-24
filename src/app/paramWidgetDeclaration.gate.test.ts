@@ -336,6 +336,8 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelVec2.target': WIRING,
       'KeyframeChannelVec3.paramPath': WIRING,
       'KeyframeChannelVec3.target': WIRING,
+      // #1210 — a bone of the parent armature, by name; wants a picker over that armature's bones.
+      'Object.parentBone': WIRING,
       'ParamDriver.paramPath': WIRING,
       'ParamDriver.target': WIRING,
       'Strip.action': WIRING,
@@ -387,7 +389,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(34);
+    expect(readOnly.length).toBe(35);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {

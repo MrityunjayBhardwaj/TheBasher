@@ -325,30 +325,64 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     ).toEqual({ keyframes: [], duration: 0 });
   });
 
-  it.each<[string, (json: Json) => void, string]>([
+  /** A second mesh like mesh 0, so a row is not refused first for sharing one (#1061). */
+  const copyOfMesh0 = (json: Json): number => {
+    const meshes = (json as unknown as { meshes: unknown[] }).meshes;
+    meshes.push(structuredClone(meshes[0]));
+    return meshes.length - 1;
+  };
+
+  it.each<[string, (json: Json) => void, string, string]>([
     [
       'a bone channel is STEP',
       (json) => {
         json.animations![0].samplers[0].interpolation = 'STEP';
       },
       'moves bone Bone1 by STEP',
+      '#393',
     ],
     [
-      'a node hangs under a bone',
+      // #1219 — a MESH under a bone comes across parented to it (#1210); an empty does not yet.
+      'an empty hangs under a bone',
       (json) => {
-        json.nodes.push({ name: 'Prop' });
+        json.nodes.push({ name: 'Socket' });
         json.nodes[0].children = [json.nodes.length - 1];
       },
-      'hangs under bone node 0',
+      'node 3 is an empty under bone node 0',
+      '#1219',
     ],
-  ])('refused: %s', async (_label, mutate, why) => {
+    [
+      // A skinned node under a bone that has a child would be left behind there as an empty.
+      'a skinned node with a child hangs under a bone',
+      (json) => {
+        json.nodes.push({ name: 'Tag' });
+        json.nodes.push({
+          name: 'Skin2',
+          mesh: copyOfMesh0(json),
+          skin: 0,
+          children: [json.nodes.length - 1],
+        });
+        json.nodes[0].children = [json.nodes.length - 1];
+      },
+      'node 4 is an empty under bone node 0',
+      '#1219',
+    ],
+    [
+      'a bone is also a mesh',
+      (json) => {
+        json.nodes[0].mesh = copyOfMesh0(json);
+      },
+      'node 0 is both a bone and a mesh',
+      '#1209',
+    ],
+  ])('refused: %s', async (_label, mutate, why, issue) => {
     const result = await __buildSkinnedNativeGltfImportOpsForTests({
       buffer: glbWith(SKINNED_BAR, mutate),
       assetRef: 'user-imports/native/skinned-bar.glb',
       sceneNodeId: 'n_scene',
       storeImage: async () => 'img',
     });
-    expect(result).toMatchObject({ issue: '#393' });
+    expect(result).toMatchObject({ issue });
     expect('refused' in result && result.refused).toContain(why);
   });
 });

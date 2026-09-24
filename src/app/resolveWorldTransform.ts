@@ -80,6 +80,7 @@ import { cameraOrientationQuat } from './cameraOrientation';
 import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { withResolvedRotation } from './resolvedRotation';
+import { boneParentMatrix } from '../nodes/boneParent';
 
 type Vec3 = [number, number, number];
 
@@ -251,7 +252,7 @@ function walk(
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
     if (!child) continue;
-    const found = walk(state, edge.id, child, world, targetId, at);
+    const found = walk(state, edge.id, child, underParent(world, value, child, at), targetId, at);
     if (found) return found;
   }
   return null;
@@ -275,10 +276,32 @@ function walkParent(
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
     if (!child) continue;
-    const found = walkParent(state, edge.id, child, world, targetId, at);
+    const found = walkParent(
+      state,
+      edge.id,
+      child,
+      underParent(world, value, child, at),
+      targetId,
+      at,
+    );
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * #1210 — the space a child of `parent` hangs in: the parent's world, then the pose of the bone the
+ * child is parented to when it names one (`boneParentMatrix`, Blender's `ob_parbone`). The renderer
+ * composes the same product (`ObjectR`), so the drawn child and this read agree.
+ */
+function underParent(
+  parentWorld: THREE.Matrix4,
+  parent: SceneChild,
+  child: SceneChild,
+  at: Overlay,
+): THREE.Matrix4 {
+  const bone = boneParentMatrix(parent, child, at.ctx.time.seconds);
+  return bone ? parentWorld.clone().multiply(bone) : parentWorld;
 }
 
 /** The time, evaluation context and held edits a walk overlays each node with. */

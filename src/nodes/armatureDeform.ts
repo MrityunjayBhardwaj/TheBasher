@@ -25,7 +25,7 @@ import { Matrix4, Vector3 } from 'three';
 import { boneWorldMatrices } from '../viewport/boneShape';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
 import { posedSkeletonFromClip } from './AnimationClip';
-import type { BoneSpec, MeshGeometryData, SkinDeformValue } from './types';
+import type { AnimationClipValue, BoneSpec, MeshGeometryData, SkinDeformValue } from './types';
 
 /** Below this matched weight a point is left where it is — Blender's `contrib_threshold`. */
 const CONTRIB_THRESHOLD = 0.0001;
@@ -45,18 +45,33 @@ export function boneOfGroups(
   return vertexGroups.map((name) => byName.get(name) ?? -1);
 }
 
-/** Each bone's skinning matrix at `seconds`, in armature space: pose · rest⁻¹. */
-function skinningMatrices(skin: SkinDeformValue, seconds: number): Matrix4[] {
-  const rest = boneWorldMatrices(skin.bones);
-  if (skin.action === null) return rest.map(() => new Matrix4());
-  const pose = posedSkeletonFromClip(skin.action).sample(seconds);
-  const posed = boneWorldMatrices(
-    skin.bones.map((bone, i) => ({
+/**
+ * Each bone's posed matrix at `seconds`, in armature space — Blender's `pose_mat`, at the bone's
+ * head — or the rest matrices when there is no action. THE one answer to where a bone is: the
+ * deform reads it here, and an Object parented to a bone reads it too (`boneParent.ts`, #1210), so
+ * a prop in a hand cannot drift from the skin the hand deforms.
+ */
+export function posedBoneMatrices(
+  bones: readonly BoneSpec[],
+  action: AnimationClipValue | null,
+  seconds: number,
+): Matrix4[] {
+  if (action === null) return boneWorldMatrices(bones);
+  const pose = posedSkeletonFromClip(action).sample(seconds);
+  return boneWorldMatrices(
+    bones.map((bone, i) => ({
       ...bone,
       position: pose[i]?.position ?? bone.position,
       rotation: pose[i]?.rotation ?? bone.rotation,
     })),
   );
+}
+
+/** Each bone's skinning matrix at `seconds`, in armature space: pose · rest⁻¹. */
+function skinningMatrices(skin: SkinDeformValue, seconds: number): Matrix4[] {
+  const rest = boneWorldMatrices(skin.bones);
+  if (skin.action === null) return rest.map(() => new Matrix4());
+  const posed = posedBoneMatrices(skin.bones, skin.action, seconds);
   return posed.map((m, i) => m.clone().multiply(rest[i].clone().invert()));
 }
 

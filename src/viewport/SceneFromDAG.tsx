@@ -26,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -72,6 +73,7 @@ import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import { createFoldCache, foldOverlays, type FoldCache } from '../app/cookState';
@@ -689,8 +691,20 @@ function MeshScaleProbe() {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const w = window as unknown as Record<string, unknown>;
+    // A top-level scene child's group is NAMED by its producer id; a nested node's is tagged
+    // with it instead (`RenderChild`, #1075). Both are looked up, so a probe addresses a node
+    // parented under an Object — a prop on a bone (#1210) — the same way.
+    const byNodeId = (nodeId: string): THREE.Object3D | undefined => {
+      const named = scene.getObjectByName(nodeId);
+      if (named) return named;
+      let tagged: THREE.Object3D | undefined;
+      scene.traverse((o) => {
+        if (!tagged && o.userData?.[DRAWN_NODE_ID_KEY] === nodeId) tagged = o;
+      });
+      return tagged;
+    };
     w.__basher_mesh_world_scale = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       // The wrapping group is named with the node id; its scale is identity, so
       // the inner mesh's world scale IS value.scale. Descend to the first Mesh.
@@ -713,7 +727,7 @@ function MeshScaleProbe() {
     // wrapping group is identity, so the inner mesh's world position IS the
     // rendered value. Read-only (V8 clean).
     w.__basher_mesh_world_position = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Object3D | null = null;
       grp.traverse((o) => {
@@ -733,7 +747,7 @@ function MeshScaleProbe() {
     w.__basher_mesh_world_quaternion = (
       nodeId: string,
     ): [number, number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Object3D | null = null;
       grp.traverse((o) => {
@@ -799,7 +813,7 @@ function MeshScaleProbe() {
     // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
     // (side A == side B) instead of inferring from params. Read-only (V8 clean).
     w.__basher_mesh_world_bounds = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Mesh | null = null;
       grp.traverse((o) => {
@@ -864,7 +878,7 @@ function MeshScaleProbe() {
       mapRotation: number | null;
       mapCenter: [number, number] | null;
     } | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Mesh | null = null;
       grp.traverse((o) => {
@@ -2609,11 +2623,72 @@ function ObjectR({
         rotation={degVec3ToRad(value.rotation as [number, number, number])}
         scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
       >
-        {value.children.map((c, i) => (
-          <RenderChild key={`o:${i}`} value={c} nodeId={edges[i]?.id ?? null} override={override} />
-        ))}
+        {value.children.map((c, i) => {
+          const child = (
+            <RenderChild
+              key={`o:${i}`}
+              value={c}
+              nodeId={edges[i]?.id ?? null}
+              override={override}
+            />
+          );
+          // #1210 — a child parented to one of this armature's bones hangs in that bone's pose.
+          return (c as { parentBone?: unknown }).parentBone === undefined ? (
+            child
+          ) : (
+            <BoneParentR key={`b:${i}`} parent={value} child={c}>
+              {child}
+            </BoneParentR>
+          );
+        })}
       </group>
     </>
+  );
+}
+
+/**
+ * #1210 — the bone's posed matrix between an armature Object and a child parented to that bone,
+ * at the playhead: `boneParentMatrix`, the product `resolveWorldTransform` composes too (its
+ * `underParent`), so what is drawn and what a constraint or the gizmo reads agree. Written on the
+ * group's matrix every frame, as a bone moves without the graph changing; set once at render too,
+ * so the first frame is already in place.
+ */
+function BoneParentR({
+  parent,
+  child,
+  children,
+}: {
+  parent: ObjectValue;
+  child: SceneObject;
+  children: ReactNode;
+}) {
+  const ref = useRef<THREE.Group | null>(null);
+  const place = (group: THREE.Group, seconds: number): void => {
+    const m = boneParentMatrix(parent, child, seconds);
+    if (m) group.matrix.copy(m);
+    else group.matrix.identity();
+    group.matrixWorldNeedsUpdate = true;
+  };
+  const last = useRef<{ seconds: number; parent: unknown; child: unknown } | null>(null);
+  useFrame(() => {
+    const group = ref.current;
+    if (!group) return;
+    const seconds = useTimeStore.getState().seconds;
+    const la = last.current;
+    if (la && la.seconds === seconds && la.parent === parent && la.child === child) return;
+    last.current = { seconds, parent, child };
+    place(group, seconds);
+  });
+  return (
+    <group
+      ref={(group) => {
+        ref.current = group;
+        if (group) place(group, useTimeStore.getState().seconds);
+      }}
+      matrixAutoUpdate={false}
+    >
+      {children}
+    </group>
   );
 }
 

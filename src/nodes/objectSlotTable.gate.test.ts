@@ -348,6 +348,8 @@ describe('#645 — the slot table is derived once, through the Object', () => {
       'children',
       // #1203 — the clip that poses an armature Object; not a slot field either.
       'action',
+      // #1210 — the bone an Object hangs from; not a slot field either.
+      'parentBone',
       'rotationMode',
       'quaternion',
     ]);

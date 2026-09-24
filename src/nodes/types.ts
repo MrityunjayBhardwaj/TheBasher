@@ -2236,6 +2236,13 @@ export interface ObjectValue extends RotationModeFields {
    * a cycle. Read through `actionPoseOf`, which refuses a clip keyed on another rig.
    */
   readonly action?: AnimationClipValue;
+  /**
+   * #1210 — the bone of its parent armature Object this Object hangs from: Blender's
+   * `parent_type = 'BONE'` with `parent_bone`, a property of the CHILD (`Object.parsubstr`). The
+   * parent edge stays the armature's `children` socket; this names which bone's pose sits between
+   * the two. Read through `boneParentMatrix`. Present only when set.
+   */
+  readonly parentBone?: string;
 }
 
 export type SceneChild =

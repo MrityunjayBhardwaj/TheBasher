@@ -54,7 +54,7 @@ import { continuousEuler, quaternionToEulerVec3, sanitizeBoneName } from './thre
 import type { GltfJson } from './glb';
 
 /** The slice of a glTF document the skeleton reader looks at. */
-export type SkeletonGltfJson = Pick<GltfJson, 'nodes' | 'skins'>;
+export type SkeletonGltfJson = Pick<GltfJson, 'nodes' | 'skins' | 'animations'>;
 
 /** Every refusal on this road names the issue that will bring its case across. */
 const ISSUE = '#393';
@@ -178,21 +178,32 @@ export function readNativeSkeletons(
   };
   for (const node of topLevel) walk(node, kind.get(FILE_ROOT) === 'armature' ? FILE_ROOT : null);
 
-  // A bone that is also a mesh, or a non-bone hanging under a bone, would need an Object parented
-  // to a bone, which the native model has no edge for.
+  // A bone that is also a mesh would need its mesh moved onto a child of the bone (Blender's
+  // `fixup_multitype_nodes`, #1209). A mesh hanging under a bone comes across parented to that bone
+  // (#1210); an EMPTY under a bone does not yet (#1219) — nor does a skinned node the reader would
+  // leave behind as one (it has children, or is animated: `vnode.py:349-408`).
+  const animated = new Set(
+    (json.animations ?? []).flatMap((a) => a.channels.map((c) => c.target.node)),
+  );
   for (const node of armatureOf.keys()) {
     if (typeof json.nodes[node].mesh === 'number') {
       return {
         refused: `node ${node} is both a bone and a mesh, which the native model cannot hold`,
-        issue: ISSUE,
+        issue: '#1209',
       };
     }
-    const underBone = (json.nodes[node].children ?? []).find((child) => !armatureOf.has(child));
-    if (underBone !== undefined) {
-      return {
-        refused: `node ${underBone} hangs under bone node ${node}, and parenting to a bone is not native yet`,
-        issue: ISSUE,
-      };
+    for (const child of json.nodes[node].children ?? []) {
+      if (armatureOf.has(child)) continue;
+      const under = json.nodes[child];
+      const leftAsEmpty =
+        typeof under.skin === 'number' &&
+        ((under.children?.length ?? 0) > 0 || animated.has(child));
+      if (typeof under.mesh !== 'number' || leftAsEmpty) {
+        return {
+          refused: `node ${child} is an empty under bone node ${node}, and an empty cannot be parented to a bone yet`,
+          issue: '#1219',
+        };
+      }
     }
   }
 

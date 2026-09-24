@@ -22,6 +22,10 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1210): `Object` appends `parentBone=(unrouted)` — the bone an Object is parented
+// to is written by the importer before any panel draws it (Blender shows it under Relations).
+// `unrouted` 236 → 237, `routed` untouched.
+//
 // USED AGAIN (#1153): `Object` and `Group` each append `rotationMode=(unrouted)
 // quaternion=(unrouted)` — the rotation mode lands before the inspector draws it, so the
 // honest cell is `(unrouted)` (the #645 P6 precedent below). `unrouted` 235 → 239, `routed`
@@ -209,7 +213,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -366,4 +370,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #393 adds `ArmatureModifier` as a wholly new node type: +1 type, +1 routed (`muted`). Nothing
 // existing moved:
 //   types 88 + 1 = 89 · routed 143 + 1 = 144 · unrouted 236
-export const GOLDEN_TOTALS = { types: 89, routed: 144, unrouted: 236 } as const;
+export const GOLDEN_TOTALS = { types: 89, routed: 144, unrouted: 237 } as const;
