@@ -35,7 +35,12 @@ import { Bone, Euler, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
 import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
-import type { MeshGeometryData, PosedSkeletonValue, SkinDeformValue } from '../nodes/types';
+import type {
+  AnimationClipValue,
+  MeshGeometryData,
+  PosedSkeletonValue,
+  SkinDeformValue,
+} from '../nodes/types';
 import { meshSplitLayout } from './polygonLayout';
 
 /** Below this joined weight a point stays at rest — Blender's `contrib_threshold`. */
@@ -49,8 +54,21 @@ export interface SkinnedDraw {
   /** Per buffer vertex, four joint numbers and four weights, as `buildMeshGeometry` lays them. */
   readonly skinIndex: Uint16Array;
   readonly skinWeight: Float32Array;
-  /** Pose the armature's bones at `seconds`. With no action the rig keeps its rest. */
-  readonly pose: (seconds: number) => void;
+  /**
+   * Pose the armature's bones by `action` at `seconds`; with no action, back to rest. The action is
+   * passed per call rather than fixed at build (#1207): an overlay copies the value it comes on
+   * every frame, and the build must not be redone for a copy of the same clip.
+   */
+  readonly pose: (seconds: number, action: AnimationClipValue | null) => void;
+}
+
+/**
+ * What the build depends on, as content (#1207): the mesh's geometry key and the skin's rest
+ * bones, group join and armature placement — never object identity, which an overlay's per-frame
+ * copy changes. The action is not in it; `pose` takes that.
+ */
+export function skinnedDrawKey(geometryKey: string, skin: SkinDeformValue): string {
+  return JSON.stringify([geometryKey, skin.bones, skin.boneOfGroup, skin.armatureMatrix]);
 }
 
 /** Build the draw of `mesh` deformed by `skin`. */
@@ -71,23 +89,30 @@ export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData):
 
   const { skinIndex, skinWeight } = vertexBindings(skin, mesh, groups);
   const roots = bones.filter((b) => !b.parent);
-  const sampler: PosedSkeletonValue | null =
-    skin.action === null ? null : posedSkeletonFromClip(skin.action);
   const euler = new Euler();
+  // The sampler of the last action posed with, rebuilt only when a different clip value arrives.
+  let sampled: { action: AnimationClipValue; sampler: PosedSkeletonValue } | null = null;
+  const place = (i: number, position: readonly number[], rotation: readonly number[]): void => {
+    bones[i].position.set(position[0], position[1], position[2]);
+    bones[i].quaternion.setFromEuler(euler.set(rotation[0], rotation[1], rotation[2], 'XYZ'));
+  };
   return {
     skeleton: new Skeleton(palette, inverses),
     bindMatrix: new Matrix4().fromArray(skin.armatureMatrix).invert(),
     skinIndex,
     skinWeight,
-    pose(seconds) {
-      if (sampler === null) return;
-      const pose = sampler.sample(seconds);
-      bones.forEach((bone, i) => {
-        const p = pose[i];
-        if (!p) return;
-        bone.position.set(p.position[0], p.position[1], p.position[2]);
-        bone.quaternion.setFromEuler(euler.set(p.rotation[0], p.rotation[1], p.rotation[2], 'XYZ'));
-      });
+    pose(seconds, action) {
+      if (action === null) {
+        skin.bones.forEach((b, i) => place(i, b.position, b.rotation));
+      } else {
+        if (sampled?.action !== action) {
+          sampled = { action, sampler: posedSkeletonFromClip(action) };
+        }
+        const pose = sampled.sampler.sample(seconds);
+        pose.forEach((p, i) => {
+          if (bones[i]) place(i, p.position, p.rotation);
+        });
+      }
       for (const root of roots) root.updateMatrixWorld(true);
     },
   };

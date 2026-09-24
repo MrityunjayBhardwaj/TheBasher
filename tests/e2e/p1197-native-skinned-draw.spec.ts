@@ -120,5 +120,72 @@ test('#1197 — skinned-bar draws natively, deformed as Blender deforms it', asy
       expect(c - offset[k], `tip at ${t}s, axis ${k}`).toBeCloseTo(BLENDER_TIP[t][k], 3),
     );
   }
+
+  // #1207 — key the mesh Object's position. The overlay now copies its value every frame; the
+  // draw must be built once and still pose by the action, and a registry sweep (which evicts the
+  // shared geometry the draw only clones) must not rebuild it either.
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const dag = w.__basher_dag.getState();
+    const nodes = dag.state.nodes as Record<
+      string,
+      { type: string; inputs?: Record<string, unknown> }
+    >;
+    const [meshId] = Object.entries(nodes).find(
+      ([, n]) =>
+        n.type === 'Object' &&
+        nodes[(n.inputs?.data as { node?: string } | undefined)?.node ?? '']?.type ===
+          'ArmatureModifier',
+    )!;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'p1207_key',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'position',
+            target: meshId,
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 1, value: [1, 0, 0], easing: 'linear' },
+            ],
+          },
+        },
+      ],
+      'user',
+      'key the skinned Object',
+    );
+  });
+  await setTime(page, 0);
+  const held = await page.evaluate(async () => {
+    const w = window as unknown as BasherWindow;
+    const sweep = await import('/src/viewport/geometrySweep.ts');
+    const first = w.__basher_gltf_skin!();
+    const before = sweep.sweepStats().sweeps;
+    let frames = 0;
+    let rebuilt = 0;
+    // Step time until a sweep has run, and a little past it.
+    while (frames < 240 && (sweep.sweepStats().sweeps === before || frames < 40)) {
+      w.__basher_time.getState().setTime((frames % 20) * 0.05);
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      if (w.__basher_gltf_skin!() !== first) rebuilt++;
+      frames++;
+    }
+    return { frames, rebuilt, sweeps: sweep.sweepStats().sweeps - before };
+  });
+  expect(held.sweeps, 'a sweep ran while the keyed Object was drawn').toBeGreaterThan(0);
+  expect(held.rebuilt, `frames on a different build, of ${held.frames}`).toBe(0);
+  // Still posed by the action, now also moved by its key: +1 on x at 1 s.
+  await setTime(page, 1);
+  const keyedTip = await page.evaluate(
+    (i) => (window as unknown as BasherWindow).__basher_gltf_skin!()!.vertex(i),
+    seam.tip,
+  );
+  const keyedOffset = [offset[0] + 1, offset[1], offset[2]];
+  keyedTip.forEach((c, k) =>
+    expect(c - keyedOffset[k], `keyed tip at 1s, axis ${k}`).toBeCloseTo(BLENDER_TIP[1][k], 3),
+  );
   expect(errors).toEqual([]);
 });

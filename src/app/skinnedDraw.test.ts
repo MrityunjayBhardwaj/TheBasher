@@ -26,7 +26,8 @@ import type {
 } from '../nodes/types';
 import { buildMeshGeometry } from './meshGeometryData';
 import { meshSplitLayout } from './polygonLayout';
-import { buildSkinnedDraw } from './skinnedDraw';
+import { buildSkinnedDraw, skinnedDrawKey } from './skinnedDraw';
+import { cloneForOverlay } from '../nodes/overlayChannels';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -70,8 +71,15 @@ function drawn(skin: SkinDeformValue, mesh: MeshGeometryData) {
   skinned.bind(draw.skeleton, draw.bindMatrix);
   const { vertexCorner } = meshSplitLayout(mesh);
   return {
+    /** Pose at 1 s, then pose with no action, and read every drawn vertex. */
+    restAfterPose(): number[][] {
+      draw.pose(1, skin.action);
+      draw.pose(1, null);
+      const v3 = new Vector3();
+      return Array.from(vertexCorner, (_, v) => skinned.getVertexPosition(v, v3).toArray());
+    },
     at(seconds: number): { vertex: number[][]; point: number[][] } {
-      draw.pose(seconds);
+      draw.pose(seconds, skin.action);
       const expected = sampleSkinDeform(skin, mesh, seconds);
       const vertex: number[][] = [];
       const point: number[][] = [];
@@ -222,5 +230,27 @@ describe('#1197 — the join rows, drawn as the modifier evaluates them', () => 
     const skin = skinOf(groups, placement);
     const draw = drawn(skin, triangle(groups, lanes, at));
     for (const t of [0, 0.5, 1]) expectEqualEverywhere(draw.at(t));
+  });
+});
+
+describe('#1207 — the draw is built once per content, and the action is read per frame', () => {
+  it('an overlay’s copy of the skin keeps the build key; a changed binding does not', async () => {
+    const { skin } = await modifierOf('public/assets/skinned-bar.glb');
+    const key = skinnedDrawKey('mesh|k', skin);
+    expect(skinnedDrawKey('mesh|k', cloneForOverlay(skin))).toBe(key);
+    expect(skinnedDrawKey('mesh|k', { ...skin, boneOfGroup: [1, 0] })).not.toBe(key);
+    expect(skinnedDrawKey('mesh|other', skin)).not.toBe(key);
+    // The action is not part of it: a different clip poses the same build.
+    expect(skinnedDrawKey('mesh|k', { ...skin, action: null })).toBe(key);
+  });
+
+  it('posing with no action returns the bones to rest after a pose', async () => {
+    const { skin, mesh } = await modifierOf('public/assets/skinned-bar.glb');
+    const draw = drawn(skin, mesh);
+    const posed = draw.at(1).vertex;
+    const rest = drawn({ ...skin, action: null }, mesh).at(0).vertex;
+    expect(posed).not.toEqual(rest);
+    // The same build, posed at 1 s and then with its action taken away, draws the rest again.
+    expectEqualEverywhere({ vertex: draw.restAfterPose(), point: rest });
   });
 });

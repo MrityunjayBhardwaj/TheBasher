@@ -112,7 +112,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
-import { buildSkinnedDraw } from '../app/skinnedDraw';
+import { buildSkinnedDraw, skinnedDrawKey, type SkinnedDraw } from '../app/skinnedDraw';
 import { buildPickChain, DRAWN_NODE_ID_KEY, type Obj3DLike } from './pickChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -2488,24 +2488,43 @@ function SkinnedMeshR({
     null,
     cornerLayerNamesOf(data.geometry.descriptor),
   );
-  const shared = getForAttach(data.geometry);
-  const descriptor = data.geometry.descriptor;
-  const built = useMemo(() => {
-    if (!shared || descriptor.kind !== 'mesh') return null;
-    const draw = buildSkinnedDraw(skin, descriptor.data);
-    const geometry = shared.clone();
-    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
-    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
-    const mesh = new THREE.SkinnedMesh(geometry);
-    mesh.bindMode = THREE.DetachedBindMode;
-    mesh.bind(draw.skeleton, draw.bindMatrix);
-    mesh.frustumCulled = false;
-    draw.pose(useTimeStore.getState().seconds);
-    return { mesh, draw, geometry };
-  }, [shared, descriptor, skin]);
+  // #1207 — built once per CONTENT, cached in a ref. A keyed mesh Object has its value copied by the
+  // overlay every frame, `skin` and the descriptor with it, so a build keyed on identity would redo
+  // a geometry clone and a GPU upload every frame. The action is read per frame instead.
+  // The shared geometry is taken only to build: the draw attaches its own CLONE, so the shared
+  // instance is attached to nothing and the registry's sweep evicts it. Asking for it every render
+  // re-built it after each sweep, and keying on its identity then rebuilt the draw (measured: one
+  // rebuild per quiet sweep on a keyed Object). Its content is already in the key.
+  const buildKey = skinnedDrawKey(data.geometry.key, skin);
+  const cache = useRef<{
+    key: string;
+    built: { mesh: THREE.SkinnedMesh; draw: SkinnedDraw; geometry: THREE.BufferGeometry } | null;
+  } | null>(null);
+  // A null build retries: a baked geometry arrives after its async read.
+  if (cache.current?.key !== buildKey || cache.current.built === null) {
+    const shared = getForAttach(data.geometry);
+    const descriptor = data.geometry.descriptor;
+    let next: NonNullable<typeof cache.current>['built'] = null;
+    if (shared && descriptor.kind === 'mesh') {
+      const draw = buildSkinnedDraw(skin, descriptor.data);
+      const geometry = shared.clone();
+      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
+      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
+      const mesh = new THREE.SkinnedMesh(geometry);
+      mesh.bindMode = THREE.DetachedBindMode;
+      mesh.bind(draw.skeleton, draw.bindMatrix);
+      mesh.frustumCulled = false;
+      draw.pose(useTimeStore.getState().seconds, skin.action);
+      next = { mesh, draw, geometry };
+    }
+    cache.current = { key: buildKey, built: next };
+  }
+  const built = cache.current.built;
+  const action = useRef(skin.action);
+  action.current = skin.action;
   useEffect(() => () => built?.geometry.dispose(), [built]);
   useFrame(() => {
-    built?.draw.pose(useTimeStore.getState().seconds);
+    built?.draw.pose(useTimeStore.getState().seconds, action.current);
   });
   // DEV-only — the skin seam the skinned e2e reads (`__basher_gltf_skin`), now on the native road
   // too (#1197): the clone road's shape, plus the vertex count and each vertex's REST position, so a
