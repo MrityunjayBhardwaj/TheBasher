@@ -630,9 +630,10 @@ export function ArmatureHelper({
           for (const f of posed) {
             if (refCount >= MAX_BONES) break;
             // Skip the rig's transport node for the same reason armatureBounds
-            // excludes it: its octahedron runs from the world origin to a pelvis
-            // that walks away, so it is a connector rather than anatomy and it
-            // dominates the very comparison this rig is drawn for.
+            // excludes it: its octahedron runs from the world origin toward the
+            // pelvis, a connector rather than anatomy, and it dominates the very
+            // comparison this rig is drawn for. (Before #1206 it also stretched
+            // to the walking pelvis; it now keeps its rest length.)
             if (f.parent < 0) continue;
             local.multiplyMatrices(parentInverse.current, place).multiply(f.matrix);
             refMesh.setMatrixAt(refCount++, local);

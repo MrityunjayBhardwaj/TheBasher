@@ -45,12 +45,13 @@ const MIN_HEIGHT = 1e-6;
  *
  * 🔴 ROOT BONES ARE EXCLUDED, and that is a measurement decision, not tidying.
  * A parentless bone's tail is manufactured from its child, and on a BVH rig
- * whose transport node sits at the world origin while the body walks away, that
- * one bone spans from the origin to the pelvis. Measured on our own clip: it
- * grew the rig's Z extent from 25 to 238 units across 1.5 s while the body
- * itself never changed size. Including it makes the "height" of a rig a
- * function of how far it has walked, so the normalising scale drifts every
- * frame and the figure slides out of frame.
+ * whose transport node sits at the world origin that one bone is a connector
+ * from the origin toward the pelvis, not anatomy. Measured on our own clip,
+ * before #1206, when a tail still followed the POSED child: it grew the rig's
+ * Z extent from 25 to 238 units across 1.5 s while the body itself never
+ * changed size. Since #1206 the bone keeps its rest length, so it no longer
+ * grows with the walk, but it still measures the rig's transport rather than
+ * its body, so it stays out of the extent.
  *
  * Falls back to all frames when every bone is a root, so a one-bone rig still
  * reports a real extent instead of an empty one.
