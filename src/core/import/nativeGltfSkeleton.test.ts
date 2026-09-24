@@ -368,6 +368,20 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
       '#1219',
     ],
     [
+      // …and one that is animated, the other half of the same rule (#1221).
+      'an animated skinned node hangs under a bone',
+      (json) => {
+        json.nodes.push({ name: 'Skin2', mesh: copyOfMesh0(json), skin: 0 });
+        json.nodes[0].children = [json.nodes.length - 1];
+        json.animations![0].channels.push({
+          sampler: 0,
+          target: { node: json.nodes.length - 1, path: 'rotation' },
+        });
+      },
+      'node 3 is an empty under bone node 0',
+      '#1219',
+    ],
+    [
       'a bone is also a mesh',
       (json) => {
         json.nodes[0].mesh = copyOfMesh0(json);

@@ -97,7 +97,12 @@ import {
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
-import { nativeSkeletonClip, readNativeSkeletons, type NativeSkeleton } from './nativeGltfSkeleton';
+import {
+  leftBehindAsEmpty,
+  nativeSkeletonClip,
+  readNativeSkeletons,
+  type NativeSkeleton,
+} from './nativeGltfSkeleton';
 import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
 import { boneWorldMatrices } from '../../viewport/boneShape';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
@@ -1482,9 +1487,7 @@ async function buildNativeOps(
         ? skeletons[read.skins[node.skin].skeleton].armatureNode
         : undefined;
     const skinnedElsewhere = ownArmature !== undefined && ownArmature !== i;
-    const leftBehind =
-      skinnedElsewhere &&
-      ((node.children?.length ?? 0) > 0 || clip.channels.some((c) => c.node === i));
+    const leftBehind = skinnedElsewhere && leftBehindAsEmpty(json, i);
     const objectId = leftBehind
       ? hashId('nativeObject', args.assetRef, `${key}.skinned`)
       : idOfNode(i);

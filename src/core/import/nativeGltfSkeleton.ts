@@ -182,9 +182,6 @@ export function readNativeSkeletons(
   // `fixup_multitype_nodes`, #1209). A mesh hanging under a bone comes across parented to that bone
   // (#1210); an EMPTY under a bone does not yet (#1219) — nor does a skinned node the reader would
   // leave behind as one (it has children, or is animated: `vnode.py:349-408`).
-  const animated = new Set(
-    (json.animations ?? []).flatMap((a) => a.channels.map((c) => c.target.node)),
-  );
   for (const node of armatureOf.keys()) {
     if (typeof json.nodes[node].mesh === 'number') {
       return {
@@ -195,9 +192,7 @@ export function readNativeSkeletons(
     for (const child of json.nodes[node].children ?? []) {
       if (armatureOf.has(child)) continue;
       const under = json.nodes[child];
-      const leftAsEmpty =
-        typeof under.skin === 'number' &&
-        ((under.children?.length ?? 0) > 0 || animated.has(child));
+      const leftAsEmpty = typeof under.skin === 'number' && leftBehindAsEmpty(json, child);
       if (typeof under.mesh !== 'number' || leftAsEmpty) {
         return {
           refused: `node ${child} is an empty under bone node ${node}, and an empty cannot be parented to a bone yet`,
@@ -230,6 +225,20 @@ export function readNativeSkeletons(
     });
   }
   return { skeletons, skins: skinsOut };
+}
+
+/**
+ * Whether a skinned node that is not its armature's node is LEFT BEHIND as an empty, with its mesh
+ * moved to a new object under the armature: when anything else rides on it — it has children, or
+ * it is animated (Blender `vnode.py:349-408`). Otherwise the node itself moves. THE one answer: the
+ * build makes the empty by it (`nativeGltfImport.ts`), and the refusal of an empty under a bone
+ * (#1219) reads it too, so the two cannot disagree about which nodes become empties (#1221).
+ */
+export function leftBehindAsEmpty(json: SkeletonGltfJson, node: number): boolean {
+  return (
+    (json.nodes[node].children?.length ?? 0) > 0 ||
+    (json.animations ?? []).some((a) => a.channels.some((c) => c.target.node === node))
+  );
 }
 
 /** One armature's skeleton: its bones in Blender's creation order, named, at their node rests. */

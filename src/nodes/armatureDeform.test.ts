@@ -419,6 +419,51 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
     expect((behind.params as { position: number[] }).position).toEqual([5, 0, 0]);
   });
 
+  it('an ANIMATED skinned node stays behind as an empty too, keeping its motion', async () => {
+    // The other half of the same rule (#1221): Blender moves a skinned node only when it is not
+    // animated and has no children (`vnode.py`, `move_skinned_meshes`, `ok_to_move`); otherwise
+    // the node stays, as an empty, and a new object under the armature takes the mesh. Here
+    // skinned-bar-mesh-elsewhere's mesh node gains a rotation channel of its own.
+    const src = readFileSync('public/assets/skinned-bar-mesh-elsewhere.glb');
+    const length = src.readUInt32LE(12);
+    const json = JSON.parse(src.subarray(20, 20 + length).toString());
+    json.animations[0].channels.push({ sampler: 0, target: { node: 2, path: 'rotation' } });
+    let text = JSON.stringify(json);
+    text += ' '.repeat((4 - (text.length % 4)) % 4);
+    const head = Buffer.alloc(20);
+    const body = Buffer.from(text);
+    const rest = src.subarray(20 + length);
+    head.writeUInt32LE(0x46546c67, 0);
+    head.writeUInt32LE(2, 4);
+    head.writeUInt32LE(20 + body.length + rest.length, 8);
+    head.writeUInt32LE(body.length, 12);
+    head.writeUInt32LE(0x4e4f534a, 16);
+    const out = Buffer.concat([head, body, rest]);
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer,
+      assetRef: 'user-imports/native/animated-skin.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
+    const mesh = Object.values(state.nodes).find(
+      (n) => (n.inputs.data as { node?: string } | undefined)?.node === modifierId,
+    )!;
+    expect((parentOf(state, mesh.id)!.params as { position: number[] }).position).toEqual([
+      3, 0, 0,
+    ]);
+    // The node left behind is an empty at the file's (5, 0, 0), and its motion is on it.
+    const channel = Object.values(state.nodes).find(
+      (n) => n.type === 'KeyframeChannelQuat' && n.id !== mesh.id,
+    )!;
+    const behind = state.nodes[(channel.params as { target: string }).target];
+    expect(behind.type).toBe('Group');
+    expect((behind.params as { position: number[] }).position).toEqual([5, 0, 0]);
+  });
+
   it('control: when the mesh node IS the armature node, its transform is kept and nothing is re-skinned', async () => {
     // skinned-bar with its armature/mesh node at (3, 0, 0), turned 45° about Z; Blender (same probe
     // family) puts the corner resting at file (0.2, 2, 0) at world (1.3026, 0.9505, 0) at frame 12.
