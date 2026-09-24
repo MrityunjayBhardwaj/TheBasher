@@ -163,14 +163,28 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     expect(posed.sample(0.5)[0].rotation).toEqual([0, 0, 0]);
   });
 
-  it('the product entry still refuses a skinned file, until the skin draws (#1197)', async () => {
+  it('the product entry still refuses a skinned file, until a native character can take a motion (#1205)', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: glbWith(SKINNED_BAR),
       assetRef: 'user-imports/native/skinned-bar.glb',
       sceneNodeId: 'n_scene',
       storeImage: async () => 'img',
     });
-    expect(result).toMatchObject({ issue: '#393' });
+    expect(result).toMatchObject({ issue: '#1205' });
+  });
+
+  it('past the refusal, nothing points at the file: no asset, no clone, no reference to it', async () => {
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: glbWith(SKINNED_BAR),
+      assetRef: 'user-imports/native/skinned-bar.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const text = JSON.stringify(result.ops);
+    expect(text).not.toContain('GltfAsset');
+    expect(text).not.toContain('GltfData');
+    expect(text).not.toContain('skinned-bar.glb');
   });
 
   it('the stand-in rig: 23 bones under the mesh node, the matrix-form Root decomposed, every group a bone', async () => {

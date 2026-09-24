@@ -371,6 +371,11 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // octahedral bone body, and the stick-mode buffer that is re-filled per frame WITHIN a fixed
   // allocation (`setDrawRange`, never a re-`setIndex`). Nothing it writes was handed to it.
   'src/viewport/ArmatureHelper.tsx': 'builds its own octahedral bone body and stick line buffer',
+  // #1197 — the native skinned draw (`SkinnedMeshR`). The stored mesh's build is SHARED, so it is
+  // CLONED first and the skin attributes (`skinIndex`, `skinWeight`) go on the clone, which the
+  // component owns and disposes; the registry's instance is only ever read.
+  'src/viewport/SceneFromDAG.tsx':
+    'SkinnedMeshR clones the shared build and writes skin attributes on its own copy only',
   // #1040 — the import capture, and it is the safe category by construction rather than by
   // care: it is reached during IMPORT, before any descriptor for this child exists, so there
   // is no registry instance for it to write through to even in principle. It fills a throwaway

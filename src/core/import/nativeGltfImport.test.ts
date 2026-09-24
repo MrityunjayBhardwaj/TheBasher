@@ -813,9 +813,9 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1063',
     ],
-    // #1196 — the point layers can hold a skin now, and the refusal stays: nothing deforms a native
-    // mesh yet, and the file's copy does (#393 lifts this with the deform).
-    ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#393'],
+    // A skin can deform and draw natively now (#393, #1197), and the refusal stays: a character on
+    // the native road could not yet take a motion or have its bones posed (#1205).
+    ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#1205'],
     // #1196 — a vertex with more than four influences carries a second set, which a stored mesh does
     // not hold. Refused by the attribute guard, by name.
     [

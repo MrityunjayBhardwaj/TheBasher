@@ -365,8 +365,9 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // flattened IR with `materialKeyOf`, the evaluator's own function — #545's argument.
     'src/viewport/SceneFromDAG.tsx':
       'ModifiedMeshR — ModifiedDataValue mints no materialKey, and #545 measured the ' +
-      'downstream fallback as the right permanent answer for it rather than as a gap; and ' +
-      'FlattenedBakedMeshR (#1091) — a flattened material is the override alone, which ' +
+      'downstream fallback as the right permanent answer for it rather than as a gap; ' +
+      'SkinnedMeshR (#1197) — the same ModifiedDataValue, drawn skinned, so the same answer; ' +
+      'and FlattenedBakedMeshR (#1091) — a flattened material is the override alone, which ' +
       'nothing mints',
     // ⚠️ #638 (ns-1b step 5) — RESTATED, NOT FLOORED. This is one ROAD that costs EIGHT
     // call sites, and the two numbers below say so separately for that reason.
@@ -402,15 +403,15 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     // Anti-vacuity, and it is not theoretical: a parser that found nothing would make every
     // assertion below green while counting an empty set.
     //
-    // ELEVEN: the two single-material components, the flattened baked mesh (#1091), plus the
-    // slot table's eight fixed calls (#638). The number is restated rather than relaxed — a
+    // TWELVE: the two single-material components, the flattened baked mesh (#1091), the skinned
+    // draw (#1197), plus the slot table's eight fixed calls (#638). The number is restated rather than relaxed — a
     // floor would let the set grow one quiet caller at a time, which is the failure this whole
     // case exists to stop.
     expect(
       calls.length,
-      'the call-site parse does not read the eleven known calls — under-reading makes every ' +
+      'the call-site parse does not read the twelve known calls — under-reading makes every ' +
         'assertion below vacuous, and over-reading means a further road now attaches here',
-    ).toBe(11);
+    ).toBe(12);
 
     // The type system already refuses an omitted argument. This re-checks it structurally,
     // because the way this gate dies is someone widening the parameter back to optional to
@@ -428,17 +429,17 @@ describe('#542 — the reach of render identity, so §4 cannot overstate it', ()
     ).toEqual([]);
 
     const unkeyed = calls.filter((c) => c.args[3] === 'null');
-    // TEN calls, THREE roads in TWO modules — and both numbers are asserted because they
+    // ELEVEN calls, FOUR roads in TWO modules — and both numbers are asserted because they
     // answer different questions. The call count catches another site appearing inside an
     // existing road (a wider cap, a copied line); the module set below catches a road joining
     // from a new module, which is #545's actual reopen condition. #1091's flattened baked mesh
     // joined inside `SceneFromDAG.tsx`, so it moved the count and not the set — which is why
-    // its entry above names it. Collapsing the two numbers would hide whichever was not chosen.
+    // its entry above names it — and #1197's skinned draw joined the same way. Collapsing the two numbers would hide whichever was not chosen.
     expect(
       unkeyed.length,
       'a further call now attaches with no minted key — #545 reopen condition 3. The ' +
         'fallback is only safe while this set is the decided roads; decide, do not drift',
-    ).toBe(10);
+    ).toBe(11);
     expect([...new Set(unkeyed.map((c) => c.path))].sort()).toEqual(
       Object.keys(UNKEYED_ATTACH_CALLERS).sort(),
     );

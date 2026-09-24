@@ -112,6 +112,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
+import { buildSkinnedDraw } from '../app/skinnedDraw';
 import { buildPickChain, DRAWN_NODE_ID_KEY, type Obj3DLike } from './pickChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -187,7 +188,9 @@ import type {
   MaterialValue,
   MeshDataValue,
   ModifiedMeshValue,
+  ModifiedDataValue,
   ObjectValue,
+  SkinDeformValue,
   PointLightValue,
   RenderOutputValue,
   ScatterValue,
@@ -2452,6 +2455,101 @@ function ModifiedMeshR({
   );
 }
 
+/**
+ * #1197 — a mesh deformed by an armature, drawn as a three `SkinnedMesh` and skinned on the GPU.
+ *
+ * The geometry is the stored mesh's shared build, CLONED before the skin attributes go on: the
+ * registry's instance is shared by every reader of that mesh (#533), and an attribute written onto
+ * it would reach them all. The skeleton, the palette and the weights come from `buildSkinnedDraw`,
+ * which states the rule; each frame poses the armature's bones at the playhead. What is drawn equals
+ * the Armature modifier's `sampleSkinDeform` vertex for vertex (`skinnedDraw.test.ts`).
+ *
+ * Frustum culling is off: the bounds three would test are the REST mesh's, and a deformed mesh
+ * leaves them.
+ */
+function SkinnedMeshR({
+  pose,
+  data,
+  skin,
+  override,
+}: {
+  pose: ModifiedMeshValue;
+  data: ModifiedDataValue;
+  skin: SkinDeformValue;
+  override?: MaterialValue;
+}) {
+  const shading = useViewportStore((s) => s.shading);
+  const mat = data.material;
+  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const material = usePrimitiveMaterial(
+    inlineMat,
+    override,
+    shading,
+    null,
+    cornerLayerNamesOf(data.geometry.descriptor),
+  );
+  const shared = getForAttach(data.geometry);
+  const descriptor = data.geometry.descriptor;
+  const built = useMemo(() => {
+    if (!shared || descriptor.kind !== 'mesh') return null;
+    const draw = buildSkinnedDraw(skin, descriptor.data);
+    const geometry = shared.clone();
+    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
+    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
+    const mesh = new THREE.SkinnedMesh(geometry);
+    mesh.bindMode = THREE.DetachedBindMode;
+    mesh.bind(draw.skeleton, draw.bindMatrix);
+    mesh.frustumCulled = false;
+    draw.pose(useTimeStore.getState().seconds);
+    return { mesh, draw, geometry };
+  }, [shared, descriptor, skin]);
+  useEffect(() => () => built?.geometry.dispose(), [built]);
+  useFrame(() => {
+    built?.draw.pose(useTimeStore.getState().seconds);
+  });
+  // DEV-only — the skin seam the skinned e2e reads (`__basher_gltf_skin`), now on the native road
+  // too (#1197): the clone road's shape, plus the vertex count and each vertex's REST position, so a
+  // spec can find a vertex by where it rests rather than by a buffer index the two roads number
+  // differently. One getter, last mounted wins, as on the clone road.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !built) return;
+    const mesh = built.mesh;
+    const handle = {
+      boneCount: mesh.skeleton.bones.length,
+      bound: mesh.skeleton.bones.length > 0,
+      count: mesh.geometry.attributes.position.count,
+      rest: (i: number): [number, number, number] => {
+        const v = new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, i);
+        mesh.localToWorld(v);
+        return [v.x, v.y, v.z];
+      },
+      vertex: (i: number): [number, number, number] => {
+        const v = new THREE.Vector3();
+        mesh.getVertexPosition(i, v);
+        mesh.localToWorld(v);
+        return [v.x, v.y, v.z];
+      },
+    };
+    const w = window as unknown as Record<string, unknown>;
+    const getter = () => handle;
+    w.__basher_gltf_skin = getter;
+    return () => {
+      // Only its own: a clone-road asset may have registered the getter since.
+      if (w.__basher_gltf_skin === getter) delete w.__basher_gltf_skin;
+    };
+  }, [built]);
+  if (!built) return null;
+  return (
+    <primitive
+      object={built.mesh}
+      position={pose.position as [number, number, number]}
+      rotation={degVec3ToRad(pose.rotation as [number, number, number])}
+      scale={(pose.scale ?? [1, 1, 1]) as [number, number, number]}
+      material={material}
+    />
+  );
+}
+
 // #361 — ObjectR: renders the object↔data split's Object half (Phase 1).
 // An Object OWNS the TRS and points at data; it draws `data.geometry` (a shared
 // GeometryRef handle) at its own transform with the data's inline material — the
@@ -2602,6 +2700,12 @@ function ObjectSelfR({ value, override }: { value: ObjectValue; override?: Mater
     // modifier pair.
     const modified = recomposeModifiedObject(value);
     if (!modified) return null;
+    // #1197 — a mesh an Armature modifier deforms draws SKINNED, at the same recomposed pose. It
+    // forks before the slot fork: the recompose carries no skin, and a skinned mesh's per-slot
+    // draw is not built yet, so it draws with its first material.
+    if (data.skin) {
+      return <SkinnedMeshR pose={modified} data={data} skin={data.skin} override={override} />;
+    }
     // #638 (ns-1b step 6) — the same 1↔N fork the MeshData arm takes, and it has to be
     // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot
     // table anywhere, and its output is a `ModifiedData`. Without this arm the op could
