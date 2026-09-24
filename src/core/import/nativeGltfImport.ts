@@ -26,8 +26,9 @@
 // clip as its action (`nativeGltfSkeleton.ts`); each skinned mesh keeps its joint numbers and
 // weights as point layers beside the group names they index, and an Armature modifier on its
 // stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). What a skin or
-// its clip needs that this model cannot hold — a second skin, a bone's scale keyed, a stepped or
-// cubic bone channel, an object hung under a bone — is refused by name like everything above.
+// its clip needs that this model cannot hold — a bone scaled away from its rest (#1212), a stepped
+// or cubic bone channel (#1211), a bone that is also a mesh (#1209), an empty hung under a bone
+// (#1219) — is refused by name like everything above.
 //
 // The product still refuses a skin, because the clone road does more for a CHARACTER than deform
 // it: a motion binds to it (only a `GltfSkeleton` is a motion target) and its bones can be
@@ -131,6 +132,12 @@ export interface NativeImportResult {
   readonly ops: Op[];
   readonly groupId: string;
   readonly objectIds: readonly string[];
+  /**
+   * #1212 — how many bone scale channels were dropped because they hold their bone at its rest
+   * scale (`nativeSkeletonClip`), which no clip key can carry and no pose needs. Always present,
+   * zero included, so a file that lost nothing says so rather than saying nothing.
+   */
+  readonly restScaleChannels: number;
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -1328,10 +1335,12 @@ async function buildNativeOps(
   if (read !== null && 'refused' in read) return read;
   const skeletons = read?.skeletons ?? [];
   const boneClips: { keyframes: AnimationKeyframe[]; duration: number }[] = [];
+  let restScaleChannels = 0;
   for (const skeleton of skeletons) {
     const boneClip = nativeSkeletonClip(skeleton, clip.channels, json);
     if ('refused' in boneClip) return boneClip;
     boneClips.push(boneClip);
+    restScaleChannels += boneClip.restScaleChannels;
   }
   const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
   // #1210 — each bone node's skeleton and name, for a mesh the file hangs under it.
@@ -1630,5 +1639,5 @@ async function buildNativeOps(
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
   });
-  return { ops, groupId, objectIds };
+  return { ops, groupId, objectIds, restScaleChannels };
 }

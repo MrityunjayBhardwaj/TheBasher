@@ -36,8 +36,11 @@
 // linearly. Keys are written at the union of the bone's own channel times, each channel sampled
 // there by the ONE channel sampler (`sampleQuatKeyframes` / `sampleVec3Keyframes`), so at every key
 // the pose is the file's exactly. What a clip cannot hold is refused whole, by name: a bone channel
-// that is not LINEAR (a step or a cubic between two keys is not a straight line), and a bone's
-// scale (a clip key has no scale). Between two keys a rotation about more than one axis follows the
+// that is not LINEAR (a step or a cubic between two keys is not a straight line, #1211), and a
+// bone's scale keyed AWAY from its rest (a clip key has no scale, #1212). A scale channel that holds
+// the rest scale changes no pose, so it is dropped and counted — exporters key every bone's scale,
+// and on the four Khronos samples that carry scale channels every key sits at rest to 2e-5.
+// Between two keys a rotation about more than one axis follows the
 // euler lerp rather than the spec's slerp — the FBX road's clip does the same. Measured 0° on every
 // skinned fixture we hold and 24.8° at the middle of a 120° two-axis segment (#1202).
 //
@@ -48,7 +51,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import type { AnimationKeyframe, BoneSpec, Quat, Vec3 } from '../../nodes/types';
 import { sampleQuatKeyframes, sampleVec3Keyframes } from '../../nodes/keyframeInterp';
-import type { ClipChannel } from './nativeGltfClip';
+import type { ClipChannel, Vec3ClipKey } from './nativeGltfClip';
 import type { NativeImportRefusal } from './nativeGltfImport';
 import { continuousEuler, quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
 import type { GltfJson } from './glb';
@@ -311,19 +314,30 @@ export function nativeSkeletonClip(
   skeleton: NativeSkeleton,
   channels: readonly ClipChannel[],
   json: SkeletonGltfJson,
-): { keyframes: AnimationKeyframe[]; duration: number } | NativeImportRefusal {
+):
+  | { keyframes: AnimationKeyframe[]; duration: number; restScaleChannels: number }
+  | NativeImportRefusal {
   const boneOf = new Map(skeleton.boneNodes.map((node, i) => [node, i]));
   const perBone = new Map<number, { translation?: ClipChannel; rotation?: ClipChannel }>();
   let duration = 0;
+  let restScaleChannels = 0;
   for (const channel of channels) {
     const bone = boneOf.get(channel.node);
     if (bone === undefined) continue;
     const name = skeleton.bones[bone].name;
     if (channel.path === 'scale') {
-      return {
-        refused: `its clip scales bone ${name}, and a clip key holds no scale`,
-        issue: ISSUE,
-      };
+      // #1212 — a scale channel that holds the bone at its rest scale changes no pose: the clip
+      // already rests an unkeyed channel there. It is dropped and COUNTED; one that scales is
+      // refused. Its times still count toward the clip's length, as its F-curve would in Blender.
+      if (!holdsRestScale(channel.keyframes, restOf(json.nodes[channel.node]).scale)) {
+        return {
+          refused: `its clip scales bone ${name} away from its rest scale, and a clip key holds no scale`,
+          issue: '#1212',
+        };
+      }
+      restScaleChannels++;
+      duration = Math.max(duration, ...channel.keyframes.map((k) => k.time));
+      continue;
     }
     const stepped = channel.keyframes.find((k) => k.easing !== 'linear');
     if (stepped !== undefined) {
@@ -366,5 +380,30 @@ export function nativeSkeletonClip(
     }
   }
   keyframes.sort((a, b) => a.time - b.time || a.bone - b.bone);
-  return { keyframes, duration };
+  return { keyframes, duration, restScaleChannels };
+}
+
+/**
+ * How far a scale key may sit from the rest scale and still hold it: 1e-4 of the rest (or of 1,
+ * when the rest is smaller) — a 0.2 mm change on a 2 m figure. Measured on the four Khronos
+ * samples whose bones carry scale channels (BrainStem, CesiumMan, RiggedFigure, RiggedSimple):
+ * the largest departure from rest is 1.97e-5, float noise from the exporter (#1212).
+ */
+const REST_SCALE_TOLERANCE = 1e-4;
+
+/**
+ * Whether a scale channel holds its bone at `rest` for its whole length: every key's value at the
+ * rest scale, and every cubic handle flat — a handle is an offset from its key, so a CUBICSPLINE
+ * channel whose keys sit at rest can still swing between them when its tangents are not zero.
+ */
+function holdsRestScale(keys: readonly Vec3ClipKey[], rest: Vec3): boolean {
+  const near = (v: Vec3, to: Vec3): boolean =>
+    v.every((c, i) => Math.abs(c - to[i]) <= REST_SCALE_TOLERANCE * Math.max(1, Math.abs(to[i])));
+  const flat: Vec3 = [0, 0, 0];
+  return keys.every(
+    (k) =>
+      near(k.value, rest) &&
+      (k.inHandle === undefined || near(k.inHandle.value, flat)) &&
+      (k.outHandle === undefined || near(k.outHandle.value, flat)),
+  );
 }

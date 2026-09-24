@@ -86,6 +86,62 @@ beforeEach(() => {
   registerAllNodes();
 });
 
+describe('#1212 — a file whose bones carry scale channels held at rest comes across', () => {
+  // Blender 5.1.1 (ref/probes/blender-native-character/q1212_rest_scale_oracle.py) keys every
+  // pose bone's scale at rest on skinned-bar and exports it: two CUBICSPLINE scale channels, with
+  // the tangents Blender's Bézier keys give. Re-imported, its tip is where skinned-bar's is.
+  const SAMPLED_TIP = {
+    0: [0.2, 2.0, 0.0],
+    0.5: [-0.528135, 1.872395, 0.0],
+    1: [-0.978764, 1.286394, 0.0],
+  } as const;
+
+  async function sampled() {
+    const bytes = readFileSync('public/assets/skinned-bar-rest-scale.glb');
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+      assetRef: 'user-imports/native/skinned-bar-rest-scale.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
+    return { result, state, modifierId };
+  }
+
+  it('reads natively and says how many channels it dropped: one per bone', async () => {
+    const { result } = await sampled();
+    expect(result.restScaleChannels).toBe(2);
+  });
+
+  it('a file with no scale channels says zero, not nothing', async () => {
+    const bytes = readFileSync('public/assets/skinned-bar.glb');
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+      assetRef: 'user-imports/native/skinned-bar.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.restScaleChannels).toBe(0);
+  });
+
+  it.each([0, 0.5, 1] as const)('at %s s the tip is where Blender puts it', async (t) => {
+    const { state, modifierId } = await sampled();
+    const { skin, mesh } = deformed(state, modifierId);
+    const tip = pointAt(sampleSkinDeform(skin, mesh, t), tipOf(mesh));
+    SAMPLED_TIP[t].forEach((v, k) => expect(tip[k]).toBeCloseTo(v, 4));
+  });
+});
+
 describe('#393 step 2 — skinned-bar deformed through the graph matches Blender', () => {
   it.each([0, 0.5, 1] as const)(
     'at %s s the tip vertex is where Blender puts it, to 3 decimals',

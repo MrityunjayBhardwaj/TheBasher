@@ -12,6 +12,7 @@ import {
 import { nativeBoneNames, nativeSkeletonClip, readNativeSkeletons } from './nativeGltfSkeleton';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { parseGltfContainer } from './glb';
+import type { ClipChannel, Vec3ClipKey } from './nativeGltfClip';
 import { skeletonObjectId, standInObjectOf } from './skeletonObject';
 import { __resetRegistryForTests } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -299,30 +300,95 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
   });
 
   // ── WHAT A CLIP OR THE NATIVE MODEL CANNOT HOLD IS REFUSED WHOLE, BY NAME ─────────────────────
-  it('refused: a bone’s scale is animated, because a clip key holds no scale', () => {
-    const json = jsonOf(glbWith(SKINNED_BAR));
-    const read = readNativeSkeletons(json as never);
-    if (read === null || 'refused' in read) throw new Error('no skeleton');
-    const [skeleton] = read.skeletons;
-    const scale = [{ time: 0, value: [1, 1, 1] as const, easing: 'linear' as const }];
-    expect(
-      nativeSkeletonClip(
-        skeleton,
-        [{ node: 0, path: 'scale', keyframes: [...scale] }],
-        json as never,
-      ),
-    ).toEqual({
-      refused: 'its clip scales bone Bone1, and a clip key holds no scale',
-      issue: '#393',
+  // #1212 — a bone's scale channel that HOLDS the rest scale changes no pose (the clip already
+  // rests an unkeyed channel there), so it is dropped and counted; one that scales is refused.
+  describe('#1212 — a bone scale channel', () => {
+    /** Bone1's first skeleton, read from skinned-bar with `mutate` applied. */
+    const skeletonOf = (mutate?: (json: Json) => void) => {
+      const json = jsonOf(glbWith(SKINNED_BAR, mutate));
+      const read = readNativeSkeletons(json as never);
+      if (read === null || 'refused' in read) throw new Error('no skeleton');
+      return { json, skeleton: read.skeletons[0] };
+    };
+    const linear = (time: number, value: [number, number, number]) => ({
+      time,
+      value,
+      easing: 'linear' as const,
     });
-    // A scale on a node that is not a bone is not this clip's, and passes.
-    expect(
-      nativeSkeletonClip(
-        skeleton,
-        [{ node: 2, path: 'scale', keyframes: [...scale] }],
-        json as never,
-      ),
-    ).toEqual({ keyframes: [], duration: 0 });
+    const scaleOn = (node: number, keyframes: Vec3ClipKey[]): ClipChannel[] => [
+      { node, path: 'scale', keyframes },
+    ];
+
+    it('at the rest scale is dropped, counted, and still counts toward the length', () => {
+      const { json, skeleton } = skeletonOf();
+      expect(
+        nativeSkeletonClip(
+          skeleton,
+          scaleOn(0, [linear(0, [1, 1, 1]), linear(3, [1, 1, 1])]),
+          json as never,
+        ),
+      ).toEqual({ keyframes: [], duration: 3, restScaleChannels: 1 });
+    });
+
+    it('away from the rest scale is refused, naming the bone', () => {
+      const { json, skeleton } = skeletonOf();
+      expect(
+        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [1.5, 1, 1])]), json as never),
+      ).toEqual({
+        refused:
+          'its clip scales bone Bone1 away from its rest scale, and a clip key holds no scale',
+        issue: '#1212',
+      });
+    });
+
+    it('is measured against the bone’s OWN rest scale, not against 1', () => {
+      const { json, skeleton } = skeletonOf((j) => {
+        j.nodes[0].scale = [2, 2, 2];
+      });
+      const at = (v: number) =>
+        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [v, v, v])]), json as never);
+      expect(at(2)).toMatchObject({ restScaleChannels: 1 });
+      expect(at(1)).toMatchObject({ issue: '#1212' });
+    });
+
+    it('holds within 1e-4 of the rest and not beyond', () => {
+      const { json, skeleton } = skeletonOf();
+      const at = (v: number) =>
+        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [v, 1, 1])]), json as never);
+      expect(at(1 + 0.9e-4)).toMatchObject({ restScaleChannels: 1 });
+      expect(at(1 + 1.1e-4)).toMatchObject({ issue: '#1212' });
+    });
+
+    it('a CUBICSPLINE channel at rest with a tangent that swings between keys is refused', () => {
+      const { json, skeleton } = skeletonOf();
+      const cubic = (outY: number): Vec3ClipKey[] => [
+        {
+          time: 0,
+          value: [1, 1, 1],
+          easing: 'cubic',
+          outHandle: { time: 1 / 3, value: [0, outY, 0] },
+        },
+        {
+          time: 1,
+          value: [1, 1, 1],
+          easing: 'cubic',
+          inHandle: { time: -1 / 3, value: [0, 0, 0] },
+        },
+      ];
+      expect(nativeSkeletonClip(skeleton, scaleOn(0, cubic(0)), json as never)).toMatchObject({
+        restScaleChannels: 1,
+      });
+      expect(nativeSkeletonClip(skeleton, scaleOn(0, cubic(0.5)), json as never)).toMatchObject({
+        issue: '#1212',
+      });
+    });
+
+    it('on a node that is not a bone is not this clip’s, and passes uncounted', () => {
+      const { json, skeleton } = skeletonOf();
+      expect(
+        nativeSkeletonClip(skeleton, scaleOn(2, [linear(0, [3, 3, 3])]), json as never),
+      ).toEqual({ keyframes: [], duration: 0, restScaleChannels: 0 });
+    });
   });
 
   /** A second mesh like mesh 0, so a row is not refused first for sharing one (#1061). */
