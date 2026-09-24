@@ -99,6 +99,7 @@ import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
 import { nativeSkeletonClip, readNativeSkeleton, type NativeSkeleton } from './nativeGltfSkeleton';
 import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
+import { boneWorldMatrices } from '../../viewport/boneShape';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
@@ -1124,6 +1125,86 @@ function withProjectImages(
 }
 
 /**
+ * #1218 — a skinned mesh re-skinned into its armature's space, at the bind pose, as Blender's
+ * importer does (`io_scene_gltf2/blender/imp/mesh.py:673-718`, `skin_into_bind_pose`):
+ * `v' = Σ w · (boneRest[j] · inverseBind[j]) · v`, normalised by the weight sum.
+ *
+ * WHY. glTF places a skinned mesh by its joints alone; the mesh node's own transform has no effect,
+ * and its points are in whatever space the file's inverse bind matrices undo. Blender makes that
+ * explicit: the points become the bind pose in the ARMATURE's space and the mesh hangs under the
+ * armature with an identity transform (`vnode.py:349-408`, `move_skinned_meshes`). Then the mesh and
+ * its armature share one space, which is what the Armature modifier and the skinned draw assume.
+ * Storing the file's points as they were drew a mesh under a moved armature offset twice (#1218).
+ *
+ * A point with no weight at all is given wholly to its first joint, Blender's repair for an invalid
+ * file (`mesh.py:702-716`), in the stored weights too, so the deform moves it as Blender's does.
+ * Normals turn by the same matrix and are renormalised.
+ */
+function skinIntoArmatureSpace(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  skin: { joints: number[]; inverseBindMatrices?: number },
+  skeleton: NativeSkeleton,
+  data: MeshGeometryData,
+): MeshGeometryData {
+  const joints = data.pointLayers.find((l) => l.name === SKIN_JOINTS)?.data;
+  const weightLayer = data.pointLayers.find((l) => l.name === SKIN_WEIGHTS);
+  if (!joints || !weightLayer) return data;
+  const rest = boneWorldMatrices(skeleton.bones);
+  const inverseBind =
+    skin.inverseBindMatrices === undefined
+      ? null
+      : readAccessor(json as unknown as GltfJson, buffers, skin.inverseBindMatrices);
+  const jointMatrix = skin.joints.map((node, j) => {
+    const m = rest[skeleton.boneNodes.indexOf(node)].clone();
+    return inverseBind ? m.multiply(new Matrix4().fromArray(inverseBind, j * 16)) : m;
+  });
+  const weights = Float32Array.from(weightLayer.data);
+  const points = new Float32Array(data.points.length);
+  const perPoint: Matrix4[] = [];
+  const v = new Vector3();
+  for (let p = 0; p * 3 < points.length; p++) {
+    let sum = 0;
+    for (let lane = 0; lane < 4; lane++) sum += weights[p * 4 + lane];
+    if (sum === 0) {
+      weights[p * 4] = 1;
+      sum = 1;
+    }
+    const m = new Matrix4().makeScale(0, 0, 0);
+    m.elements[15] = 0;
+    for (let lane = 0; lane < 4; lane++) {
+      const w = weights[p * 4 + lane];
+      if (!w) continue;
+      const e = jointMatrix[joints[p * 4 + lane]].elements;
+      for (let k = 0; k < 16; k++) m.elements[k] += (w / sum) * e[k];
+    }
+    perPoint.push(m);
+    v.fromArray(data.points, p * 3)
+      .applyMatrix4(m)
+      .toArray(points, p * 3);
+  }
+  let cornerNormals = data.cornerNormals;
+  if (cornerNormals) {
+    const out = new Float32Array(cornerNormals.length);
+    const n = new Vector3();
+    for (let c = 0; c * 3 < out.length; c++) {
+      n.fromArray(cornerNormals, c * 3)
+        .transformDirection(perPoint[data.cornerPoints[c]])
+        .toArray(out, c * 3);
+    }
+    cornerNormals = out;
+  }
+  return {
+    ...data,
+    points,
+    cornerNormals,
+    pointLayers: data.pointLayers.map((l) =>
+      l === weightLayer ? { name: l.name, type: 'float4' as const, data: weights } : l,
+    ),
+  };
+}
+
+/**
  * #393 — the skeleton, its clip, and the Object that stands it, hung under `parentId`.
  *
  * The Object comes from `buildSkeletonObjectOps`, the builder the FBX and BVH roads use, so a glTF
@@ -1283,7 +1364,12 @@ async function buildNativeOps(
       typeof node.skin === 'number' && skeleton !== null ? skeleton.vertexGroups : null;
     const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
-    meshes.set(i, data);
+    meshes.set(
+      i,
+      typeof node.skin === 'number' && skeleton !== null
+        ? skinIntoArmatureSpace(json, buffers, json.skins![node.skin], skeleton, data)
+        : data,
+    );
     const primitives = json.meshes![node.mesh as number].primitives!;
     for (let p = 0; p < primitives.length; p++) {
       const materialIndex = primitives[p].material;
@@ -1356,7 +1442,36 @@ async function buildNativeOps(
     }
     const data = meshes.get(i)!;
     const dataId = hashId('nativeMesh', args.assetRef, key);
-    const objectId = idOfNode(i);
+    // #1218 — a skinned mesh stands where its armature stands, with no transform of its own: its
+    // points were re-skinned into the armature's space above. Blender moves the node itself when
+    // nothing else rides on it (not animated, no children), and otherwise leaves the node behind as
+    // an empty and hangs a new object under the armature (`vnode.py:349-408`). A mesh node that IS
+    // its armature's node already stands there.
+    const skinnedElsewhere =
+      typeof node.skin === 'number' && skeleton !== null && skeleton.armatureNode !== i;
+    const leftBehind =
+      skinnedElsewhere &&
+      ((node.children?.length ?? 0) > 0 || clip.channels.some((c) => c.node === i));
+    const objectId = leftBehind
+      ? hashId('nativeObject', args.assetRef, `${key}.skinned`)
+      : idOfNode(i);
+    const objectParentId = !skinnedElsewhere
+      ? parentId
+      : skeleton!.armatureNode === null
+        ? groupId
+        : idOfNode(skeleton!.armatureNode);
+    if (leftBehind) {
+      const emptyId = idOfNode(i);
+      ops.push(
+        { type: 'addNode', nodeId: emptyId, nodeType: 'Group', params: nodeTransformOf(node) },
+        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
+      );
+      parentEdges.push({
+        type: 'connect',
+        from: { node: emptyId, socket: 'out' },
+        to: { node: parentId, socket: 'children' },
+      });
+    }
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
       withProjectImages(
@@ -1388,7 +1503,15 @@ async function buildNativeOps(
         type: 'addNode',
         nodeId: objectId,
         nodeType: 'Object',
-        params: nodeTransformOf(node),
+        params: skinnedElsewhere
+          ? {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              rotationMode: 'quaternion',
+              quaternion: [0, 0, 0, 1],
+            }
+          : nodeTransformOf(node),
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
@@ -1428,7 +1551,7 @@ async function buildNativeOps(
     parentEdges.push({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
-      to: { node: parentId, socket: 'children' },
+      to: { node: objectParentId, socket: 'children' },
     });
     objectIds.push(objectId);
   }

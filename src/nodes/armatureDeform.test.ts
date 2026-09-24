@@ -275,3 +275,161 @@ describe('the join, by Blender’s rules', () => {
     close(pointAt(sampleSkinDeform(skinFor(groups, moved), mesh, 1), 0), [4, 1, 0]);
   });
 });
+
+describe('#1218 — a skinned mesh under a moved armature stands in the armature’s space, as in Blender', () => {
+  async function imported(
+    path: string,
+  ): Promise<{ state: DagState; objectId: string; modifierId: string }> {
+    const bytes = readFileSync(path);
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+      assetRef: `user-imports/native/${path.split('/').pop()}`,
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
+    const objectId = Object.values(state.nodes).find(
+      (n) =>
+        n.type === 'Object' &&
+        (n.inputs.data as { node?: string } | undefined)?.node === modifierId,
+    )!.id;
+    return { state, objectId, modifierId };
+  }
+  const parentOf = (state: DagState, id: string) =>
+    Object.values(state.nodes).find((n) =>
+      ([] as { node: string }[])
+        .concat((n.inputs.children as never) ?? [])
+        .some((c) => c?.node === id),
+    );
+  /** The point resting at `rest` in the mesh's stored space, deformed at `t`. */
+  function pointAtRest(state: DagState, modifierId: string, rest: number[], t: number): number[] {
+    const { skin, mesh } = deformed(state, modifierId);
+    for (let p = 0; p * 3 < mesh.points.length; p++) {
+      if (pointAt(mesh.points, p).every((c, k) => Math.abs(c - rest[k]) < 1e-5)) {
+        return Array.from(sampleSkinDeform(skin, mesh, t).subarray(p * 3, p * 3 + 3));
+      }
+    }
+    throw new Error(`no point rests at ${rest}`);
+  }
+
+  // Blender 5.1.1 (ref/probes/blender-native-character/q1218_child_mesh_oracle.py): skinned-bar
+  // re-exported with its armature at x = 3 and the mesh node its CHILD. The top corners rest at
+  // world (2.8, 2, 0) and (3.2, 2, 0); at frame 12 they are at (2.1770, 1.6022, 0) and
+  // (2.4719, 1.8724, 0). In the armature's own space that is the same bend skinned-bar makes.
+  it('the mesh hangs under the armature’s node with no transform, its points in that node’s space', async () => {
+    const { state, objectId } = await imported('public/assets/skinned-bar-child-mesh.glb');
+    const object = state.nodes[objectId].params as { position: number[]; quaternion: number[] };
+    expect(object.position).toEqual([0, 0, 0]);
+    expect(object.quaternion).toEqual([0, 0, 0, 1]);
+    const armatureNode = parentOf(state, objectId)!;
+    expect((armatureNode.params as { position: number[] }).position).toEqual([3, 0, 0]);
+    // The skeleton's Object stands under the same node, so mesh and armature share one space.
+    const skeletonObject = Object.values(state.nodes).find(
+      (n) =>
+        n.type === 'Object' &&
+        state.nodes[(n.inputs.data as { node?: string })?.node ?? '']?.type === 'Skeleton',
+    )!;
+    expect(parentOf(state, skeletonObject.id)!.id).toBe(armatureNode.id);
+  });
+
+  it.each([
+    [
+      [-0.2, 2, 0],
+      [2.177, 1.6022, 0],
+    ],
+    [
+      [0.2, 2, 0],
+      [2.4719, 1.8724, 0],
+    ],
+  ])(
+    'the point resting at armature-space %j lands where Blender puts it at 0.5 s',
+    async (rest, world) => {
+      const { state, modifierId } = await imported('public/assets/skinned-bar-child-mesh.glb');
+      const moved = pointAtRest(state, modifierId, rest, 0.5);
+      // World = the armature node's (3, 0, 0) + the armature-space point.
+      moved.forEach((c, k) => expect(c + [3, 0, 0][k], `axis ${k}`).toBeCloseTo(world[k], 3));
+    },
+  );
+
+  it('a skinned mesh node elsewhere in the file, with a transform of its own, still stands under its armature', async () => {
+    // skinned-bar-child-mesh with the mesh node moved to the scene root and given t = (5, 0, 0).
+    // glTF places a skinned mesh by its joints alone; Blender 5.1.1 reparents it under SkinnedBar at
+    // location 0 and draws the corners exactly as in the child-mesh file (frame 12: (2.1770,
+    // 1.6022, 0) and (2.4719, 1.8724, 0)) — q1218_elsewhere.py.
+    const { state, objectId, modifierId } = await imported(
+      'public/assets/skinned-bar-mesh-elsewhere.glb',
+    );
+    expect((state.nodes[objectId].params as { position: number[] }).position).toEqual([0, 0, 0]);
+    expect((parentOf(state, objectId)!.params as { position: number[] }).position).toEqual([
+      3, 0, 0,
+    ]);
+    const moved = pointAtRest(state, modifierId, [0.2, 2, 0], 0.5);
+    moved.forEach((c, k) =>
+      expect(c + [3, 0, 0][k], `axis ${k}`).toBeCloseTo([2.4719, 1.8724, 0][k], 3),
+    );
+  });
+
+  it('a skinned node with a child stays behind as an empty; the mesh hangs under the armature', async () => {
+    // skinned-bar-mesh-elsewhere plus a child "Tag" under the mesh node. Blender 5.1.1
+    // (q1218_left.py): Mesh_0 becomes an EMPTY at (5, 0, 0) that keeps Tag, and a new Mesh_0.001
+    // hangs under SkinnedBar with no transform (`vnode.py:398-408`).
+    const src = readFileSync('public/assets/skinned-bar-mesh-elsewhere.glb');
+    const length = src.readUInt32LE(12);
+    const json = JSON.parse(src.subarray(20, 20 + length).toString());
+    json.nodes.push({ name: 'Tag', translation: [0, 1, 0] });
+    json.nodes[2].children = [json.nodes.length - 1];
+    let text = JSON.stringify(json);
+    text += ' '.repeat((4 - (text.length % 4)) % 4);
+    const head = Buffer.alloc(20);
+    const body = Buffer.from(text);
+    const rest = src.subarray(20 + length);
+    head.writeUInt32LE(0x46546c67, 0);
+    head.writeUInt32LE(2, 4);
+    head.writeUInt32LE(20 + body.length + rest.length, 8);
+    head.writeUInt32LE(body.length, 12);
+    head.writeUInt32LE(0x4e4f534a, 16);
+    const out = Buffer.concat([head, body, rest]);
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer,
+      assetRef: 'user-imports/native/with-child.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    let state = emptyDagState();
+    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
+    const mesh = Object.values(state.nodes).find(
+      (n) => (n.inputs.data as { node?: string } | undefined)?.node === modifierId,
+    )!;
+    expect((mesh.params as { position: number[] }).position).toEqual([0, 0, 0]);
+    expect((parentOf(state, mesh.id)!.params as { position: number[] }).position).toEqual([
+      3, 0, 0,
+    ]);
+    // The node left behind: an empty at the file's (5, 0, 0), still holding its child.
+    const tag = Object.values(state.nodes).find((n) => n.meta?.name === 'Tag')!;
+    const behind = parentOf(state, tag.id)!;
+    expect(behind.type).toBe('Group');
+    expect((behind.params as { position: number[] }).position).toEqual([5, 0, 0]);
+  });
+
+  it('control: when the mesh node IS the armature node, its transform is kept and nothing is re-skinned', async () => {
+    // skinned-bar with its armature/mesh node at (3, 0, 0), turned 45° about Z; Blender (same probe
+    // family) puts the corner resting at file (0.2, 2, 0) at world (1.3026, 0.9505, 0) at frame 12.
+    const { state, objectId, modifierId } = await imported(
+      'public/assets/skinned-bar-moved-armature.glb',
+    );
+    const object = state.nodes[objectId].params as { position: number[]; quaternion: number[] };
+    expect(object.position).toEqual([3, 0, 0]);
+    const [x, y, z] = pointAtRest(state, modifierId, [0.2, 2, 0], 0.5);
+    const c = Math.SQRT1_2;
+    const world = [c * x - c * y + 3, c * x + c * y, z];
+    [1.3026, 0.9505, 0].forEach((v, k) => expect(world[k], `axis ${k}`).toBeCloseTo(v, 3));
+  });
+});
