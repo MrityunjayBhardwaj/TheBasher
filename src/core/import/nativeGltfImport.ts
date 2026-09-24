@@ -97,7 +97,7 @@ import {
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
-import { nativeSkeletonClip, readNativeSkeleton, type NativeSkeleton } from './nativeGltfSkeleton';
+import { nativeSkeletonClip, readNativeSkeletons, type NativeSkeleton } from './nativeGltfSkeleton';
 import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
 import { boneWorldMatrices } from '../../viewport/boneShape';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
@@ -1217,9 +1217,10 @@ function skeletonOps(
   skeleton: NativeSkeleton,
   clip: { keyframes: AnimationKeyframe[]; duration: number },
   parentId: string,
+  key: string,
 ): Op[] {
-  const skeletonId = nativeSkeletonId(args.assetRef);
-  const clipId = hashId('nativeClip', args.assetRef);
+  const skeletonId = nativeSkeletonId(args.assetRef, key);
+  const clipId = hashId('nativeClip', args.assetRef, key);
   const name = json.animations?.[0]?.name || baseNameOf(args.assetRef);
   return [
     {
@@ -1258,9 +1259,9 @@ function skeletonOps(
   ];
 }
 
-/** The skeleton's id: one skin per import, so the asset alone addresses it. */
-function nativeSkeletonId(assetRef: string): string {
-  return hashId('nativeSkeleton', assetRef);
+/** A skeleton's id: the asset and the node key of its first bone, one skeleton per armature. */
+function nativeSkeletonId(assetRef: string, key: string): string {
+  return hashId('nativeSkeleton', assetRef, key);
 }
 
 /** A path's file name without its extension. */
@@ -1316,13 +1317,26 @@ async function buildNativeOps(
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
   const clip = readNativeClip(json as ClipGltfJson, buffers);
   if ('refused' in clip) return clip;
-  // #393 — the skin's joints as a skeleton, and the clip's channels on them as its clip.
-  const skeleton = readNativeSkeleton(json);
-  if (skeleton !== null && 'refused' in skeleton) return skeleton;
-  const boneClip = skeleton === null ? null : nativeSkeletonClip(skeleton, clip.channels, json);
-  if (boneClip !== null && 'refused' in boneClip) return boneClip;
-  const isBone = new Set(skeleton?.boneNodes ?? []);
+  // #393 — each armature's joints as a skeleton, and the clip's channels on them as its clip
+  // (#1208: one skeleton per armature, as Blender's importer makes one armature Object each).
+  const read = readNativeSkeletons(json);
+  if (read !== null && 'refused' in read) return read;
+  const skeletons = read?.skeletons ?? [];
+  const boneClips: { keyframes: AnimationKeyframe[]; duration: number }[] = [];
+  for (const skeleton of skeletons) {
+    const boneClip = nativeSkeletonClip(skeleton, clip.channels, json);
+    if ('refused' in boneClip) return boneClip;
+    boneClips.push(boneClip);
+  }
+  const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
+  // The skeleton that stands in place of each armature's first bone, by that bone's node.
+  const skeletonAtNode = new Map(skeletons.map((skeleton, i) => [skeleton.boneNodes[0], i]));
+  /** The Object standing skeleton `i` — what a skinned mesh's Armature modifier points at. */
+  const skeletonObjectOf = (i: number): string =>
+    skeletonObjectId(
+      nativeSkeletonId(args.assetRef, keyByGltfNodeIndex[skeletons[i].boneNodes[0]]),
+    );
 
   const groupId = hashId('nativeGrp', args.assetRef);
   const position: Vec3 = args.position ?? [0, 0, 0];
@@ -1361,13 +1375,19 @@ async function buildNativeOps(
     if (undrawable !== null) return undrawable;
     // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
     const vertexGroups =
-      typeof node.skin === 'number' && skeleton !== null ? skeleton.vertexGroups : null;
+      typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;
     const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
     meshes.set(
       i,
-      typeof node.skin === 'number' && skeleton !== null
-        ? skinIntoArmatureSpace(json, buffers, json.skins![node.skin], skeleton, data)
+      typeof node.skin === 'number' && read !== null
+        ? skinIntoArmatureSpace(
+            json,
+            buffers,
+            json.skins![node.skin],
+            skeletons[read.skins[node.skin].skeleton],
+            data,
+          )
         : data,
     );
     const primitives = json.meshes![node.mesh as number].primitives!;
@@ -1415,8 +1435,11 @@ async function buildNativeOps(
     // Object takes the place of the first bone below the armature, so it joins its parent's
     // children where the file's joint chain did.
     if (isBone.has(i)) {
-      if (skeleton !== null && boneClip !== null && i === skeleton.boneNodes[0]) {
-        parentEdges.push(...skeletonOps(args, json, skeleton, boneClip, parentId));
+      const standing = skeletonAtNode.get(i);
+      if (standing !== undefined) {
+        parentEdges.push(
+          ...skeletonOps(args, json, skeletons[standing], boneClips[standing], parentId, key),
+        );
       }
       continue;
     }
@@ -1447,8 +1470,12 @@ async function buildNativeOps(
     // nothing else rides on it (not animated, no children), and otherwise leaves the node behind as
     // an empty and hangs a new object under the armature (`vnode.py:349-408`). A mesh node that IS
     // its armature's node already stands there.
-    const skinnedElsewhere =
-      typeof node.skin === 'number' && skeleton !== null && skeleton.armatureNode !== i;
+    // The armature node this skinned mesh's skeleton stands under, when it has one.
+    const ownArmature =
+      typeof node.skin === 'number' && read !== null
+        ? skeletons[read.skins[node.skin].skeleton].armatureNode
+        : undefined;
+    const skinnedElsewhere = ownArmature !== undefined && ownArmature !== i;
     const leftBehind =
       skinnedElsewhere &&
       ((node.children?.length ?? 0) > 0 || clip.channels.some((c) => c.node === i));
@@ -1457,9 +1484,9 @@ async function buildNativeOps(
       : idOfNode(i);
     const objectParentId = !skinnedElsewhere
       ? parentId
-      : skeleton!.armatureNode === null
+      : ownArmature === null || ownArmature === undefined
         ? groupId
-        : idOfNode(skeleton!.armatureNode);
+        : idOfNode(ownArmature);
     if (leftBehind) {
       const emptyId = idOfNode(i);
       ops.push(
@@ -1516,7 +1543,7 @@ async function buildNativeOps(
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
     );
-    if (typeof node.skin === 'number' && skeleton !== null) {
+    if (typeof node.skin === 'number' && read !== null) {
       // #393 — a skinned mesh is deformed by an Armature modifier on its own stack, pointed at the
       // skeleton's Object — what Blender's importer makes of this file (measured, 5.1.1: `Mesh_0`
       // carries `('ARMATURE', 'SkinnedBar')`, `q13_skinned_bar_oracle.py`). The parenting says
@@ -1538,7 +1565,7 @@ async function buildNativeOps(
       // After every parent edge: the skeleton's Object is written there.
       armatureEdges.push({
         type: 'connect',
-        from: { node: skeletonObjectId(nativeSkeletonId(args.assetRef)), socket: 'out' },
+        from: { node: skeletonObjectOf(read.skins[node.skin].skeleton), socket: 'out' },
         to: { node: modifierId, socket: 'armature' },
       });
     } else {

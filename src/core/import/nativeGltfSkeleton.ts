@@ -63,16 +63,30 @@ export interface NativeSkeleton {
   /** The glTF node each bone is, in bone order: parents before children, Blender's creation order. */
   readonly boneNodes: readonly number[];
   readonly bones: readonly BoneSpec[];
-  /** Bone names in `skin.joints` order — what `JOINTS_0` indexes, and what the mesh stores. */
-  readonly vertexGroups: readonly string[];
   /** The glTF node the skeleton stands under, or `null` when that is the file's root. */
   readonly armatureNode: number | null;
+}
+
+/** Every armature in the file, and which one each skin binds to. */
+export interface NativeSkeletons {
+  /** One skeleton per armature, in the order a depth-first walk of the file meets them. */
+  readonly skeletons: readonly NativeSkeleton[];
+  /**
+   * Per skin, in `json.skins` order: the skeleton it binds to (its first joint's, as Blender
+   * picks — `vnode.py`, `move_skinned_meshes`), and its bone names in `skin.joints` order — what
+   * `JOINTS_0` indexes, and what the mesh stores as `vertexGroups`.
+   */
+  readonly skins: readonly {
+    readonly skeleton: number;
+    readonly vertexGroups: readonly string[];
+  }[];
 }
 
 /**
  * The name each bone is known by, on the skeleton AND in every skinned mesh's `vertexGroups` —
  * THE one spelling of a joint on this road. `sanitizeBoneName`, then `.001`, `.002`, … for a name
- * already taken, in the order given (bone order).
+ * already taken, in the order given (bone order). Unique within one skeleton, as Blender's names
+ * are within one armature: two armatures may each have a `Bone0`.
  */
 export function nativeBoneNames(json: SkeletonGltfJson, boneNodes: readonly number[]): string[] {
   const taken = new Set<string>();
@@ -101,73 +115,79 @@ function pathFromRoot(parent: ReadonlyMap<number, number>, node: number): number
   return path.reverse();
 }
 
+/** The file's root, above every scene root — where an armature stands when no node holds it. */
+const FILE_ROOT = -1;
+
 /**
- * The file's skin read as a skeleton, `null` when the file has no skin, or the refusal naming why
- * it cannot be one yet.
+ * The file's skins read as skeletons, `null` when the file has no skin, or the refusal naming why
+ * it cannot be read yet.
+ *
+ * ── ONE SKELETON PER ARMATURE, AND AN ARMATURE IS A NODE, NOT A SKIN (#1208) ────────────────────
+ *
+ * Blender's importer, `vnode.py` `mark_bones_and_armas` (5.1.1), in order: for EACH skin, the
+ * armature is the deepest common ancestor of its joints (and its declared skeleton root), or that
+ * node's parent when it is itself a joint; the node becomes an armature unless a skin before it
+ * already made it a bone; then every node from each joint up to that armature becomes a bone — which
+ * can turn an armature an earlier skin chose into a bone of a later one. Finally a depth-first walk
+ * gives each bone the nearest armature above it. So two skins over the same joints (a body and its
+ * eyes) share ONE armature, and skins under different ancestors get one each. Measured on
+ * `two-skinned-bars.glb`: two armature Objects, each mesh deformed by its own, both named
+ * `Bone0`/`Bone1` (`ref/probes/blender-native-character/q1208_two_skins_oracle.py`).
  */
-export function readNativeSkeleton(
+export function readNativeSkeletons(
   json: SkeletonGltfJson,
-): NativeSkeleton | NativeImportRefusal | null {
+): NativeSkeletons | NativeImportRefusal | null {
   const skins = json.skins ?? [];
   if (skins.length === 0) return null;
-  if (skins.length > 1) {
-    return {
-      refused: `it has ${skins.length} skins, and a native import builds one skeleton`,
-      issue: ISSUE,
-    };
-  }
-  const skin = skins[0];
-  if (skin.joints.length === 0) return { refused: 'its skin lists no joints', issue: ISSUE };
   const parent = parentsOf(json);
+  const up = (node: number): number => parent.get(node) ?? FILE_ROOT;
 
-  // The armature: the deepest common ancestor of the joints (and the declared skeleton root), or
-  // its parent when that ancestor is itself a joint — `vnode.py`, `mark_bones_and_armas`. `null`
-  // stands for the file's root, above every scene root.
-  const tracked = [...skin.joints, ...(skin.skeleton === undefined ? [] : [skin.skeleton])];
-  let common: (number | null)[] = [null, ...pathFromRoot(parent, tracked[0])];
-  for (const node of tracked.slice(1)) {
-    const path = [null, ...pathFromRoot(parent, node)];
-    let k = 0;
-    while (k < common.length && k < path.length && common[k] === path[k]) k++;
-    common = common.slice(0, k);
-  }
-  let armatureNode = common[common.length - 1];
-  if (armatureNode !== null && skin.joints.includes(armatureNode)) {
-    armatureNode = parent.get(armatureNode) ?? null;
-  }
-
-  // Every node from a joint up to (not including) the armature is a bone.
-  const isBone = new Set<number>();
-  for (const joint of skin.joints) {
-    for (let at: number | undefined = joint; at !== undefined && at !== armatureNode; ) {
-      isBone.add(at);
-      at = parent.get(at);
+  const kind = new Map<number, 'bone' | 'armature'>();
+  for (const [index, skin] of skins.entries()) {
+    if (skin.joints.length === 0) {
+      return { refused: `its skin ${index} lists no joints`, issue: ISSUE };
+    }
+    const tracked = [...skin.joints, ...(skin.skeleton === undefined ? [] : [skin.skeleton])];
+    let common = [FILE_ROOT, ...pathFromRoot(parent, tracked[0])];
+    for (const node of tracked.slice(1)) {
+      const path = [FILE_ROOT, ...pathFromRoot(parent, node)];
+      let k = 0;
+      while (k < common.length && k < path.length && common[k] === path[k]) k++;
+      common = common.slice(0, k);
+    }
+    let armature = common[common.length - 1];
+    if (armature !== FILE_ROOT && skin.joints.includes(armature)) armature = up(armature);
+    if (kind.get(armature) !== 'bone') kind.set(armature, 'armature');
+    for (const joint of skin.joints) {
+      for (let at = joint; at !== armature; at = up(at)) kind.set(at, 'bone');
     }
   }
 
-  // Bone order: depth-first from the armature's children, through bones only — `create_bones`.
-  const topLevel =
-    armatureNode === null
-      ? json.nodes.map((_, i) => i).filter((i) => !parent.has(i))
-      : (json.nodes[armatureNode].children ?? []);
-  const boneNodes: number[] = [];
-  const visit = (node: number): void => {
-    if (!isBone.has(node)) return;
-    boneNodes.push(node);
-    for (const child of json.nodes[node].children ?? []) visit(child);
+  // Each bone's armature: the nearest one above it, by a depth-first walk from the file root.
+  const armatureOf = new Map<number, number>();
+  const armatures: number[] = [];
+  const topLevel = json.nodes.map((_, i) => i).filter((i) => !parent.has(i));
+  const walk = (node: number, current: number | null): void => {
+    const k = kind.get(node);
+    if (k === 'armature') current = node;
+    else if (k === 'bone' && current !== null) {
+      armatureOf.set(node, current);
+      if (!armatures.includes(current)) armatures.push(current);
+    } else current = null;
+    for (const child of json.nodes[node].children ?? []) walk(child, current);
   };
-  for (const node of topLevel) visit(node);
+  for (const node of topLevel) walk(node, kind.get(FILE_ROOT) === 'armature' ? FILE_ROOT : null);
 
   // A bone that is also a mesh, or a non-bone hanging under a bone, would need an Object parented
   // to a bone, which the native model has no edge for.
-  for (const node of boneNodes) {
+  for (const node of armatureOf.keys()) {
     if (typeof json.nodes[node].mesh === 'number') {
       return {
         refused: `node ${node} is both a bone and a mesh, which the native model cannot hold`,
         issue: ISSUE,
       };
     }
-    const underBone = (json.nodes[node].children ?? []).find((child) => !isBone.has(child));
+    const underBone = (json.nodes[node].children ?? []).find((child) => !armatureOf.has(child));
     if (underBone !== undefined) {
       return {
         refused: `node ${underBone} hangs under bone node ${node}, and parenting to a bone is not native yet`,
@@ -176,27 +196,67 @@ export function readNativeSkeleton(
     }
   }
 
+  const skeletons = armatures.map((armature) =>
+    skeletonUnder(json, parent, armature, (node) => armatureOf.get(node) === armature),
+  );
+  const skeletonOfNode = new Map<number, number>();
+  skeletons.forEach((skeleton, i) => skeleton.boneNodes.forEach((n) => skeletonOfNode.set(n, i)));
+
+  const skinsOut: { skeleton: number; vertexGroups: string[] }[] = [];
+  for (const [index, skin] of skins.entries()) {
+    const skeleton = skeletonOfNode.get(skin.joints[0])!;
+    const stray = skin.joints.find((joint) => skeletonOfNode.get(joint) !== skeleton);
+    if (stray !== undefined) {
+      return {
+        refused: `skin ${index} weights joints under two armatures (node ${stray} is not under its first joint's)`,
+        issue: ISSUE,
+      };
+    }
+    const { boneNodes, bones } = skeletons[skeleton];
+    skinsOut.push({
+      skeleton,
+      vertexGroups: skin.joints.map((joint) => bones[boneNodes.indexOf(joint)].name),
+    });
+  }
+  return { skeletons, skins: skinsOut };
+}
+
+/** One armature's skeleton: its bones in Blender's creation order, named, at their node rests. */
+function skeletonUnder(
+  json: SkeletonGltfJson,
+  parent: ReadonlyMap<number, number>,
+  armature: number,
+  isBone: (node: number) => boolean,
+): NativeSkeleton {
+  // Bone order: depth-first from the armature's children, through bones only — `create_bones`.
+  const topLevel =
+    armature === FILE_ROOT
+      ? json.nodes.map((_, i) => i).filter((i) => !parent.has(i))
+      : (json.nodes[armature].children ?? []);
+  const boneNodes: number[] = [];
+  const visit = (node: number): void => {
+    if (!isBone(node)) return;
+    boneNodes.push(node);
+    for (const child of json.nodes[node].children ?? []) visit(child);
+  };
+  for (const node of topLevel) visit(node);
+
   const names = nativeBoneNames(json, boneNodes);
   const boneOf = new Map(boneNodes.map((node, i) => [node, i]));
   const bones = boneNodes.map((node, i): BoneSpec => {
     const rest = restOf(json.nodes[node]);
-    const up = parent.get(node);
+    const above = parent.get(node);
     const [rx, ry, rz] = quaternionToEulerVec3(new Quaternion(...rest.quaternion));
     return {
       name: names[i],
-      parent: up === undefined ? -1 : (boneOf.get(up) ?? -1),
+      parent: above === undefined ? -1 : (boneOf.get(above) ?? -1),
       position: rest.position,
       // `+ 0` writes an identity rest as 0, not the -0 the euler conversion can return.
       rotation: [rx + 0, ry + 0, rz + 0],
-      ...(rest.scale.every((s) => s === 1) ? {} : { scale: rest.scale }),
+      ...(rest.scale.every((v) => v === 1) ? {} : { scale: rest.scale }),
     };
   });
-  return {
-    boneNodes,
-    bones,
-    vertexGroups: skin.joints.map((joint) => names[boneOf.get(joint)!]),
-    armatureNode,
-  };
+  return { boneNodes, bones, armatureNode: armature === FILE_ROOT ? null : armature };
 }
 
 /** A node's own TRS; a `matrix` node decomposed (glTF forbids shear, so TRS is exact). */

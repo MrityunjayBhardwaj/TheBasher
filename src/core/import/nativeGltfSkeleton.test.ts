@@ -9,7 +9,8 @@ import {
   buildNativeGltfImportOps,
   type NativeImportResult,
 } from './nativeGltfImport';
-import { nativeBoneNames, nativeSkeletonClip, readNativeSkeleton } from './nativeGltfSkeleton';
+import { nativeBoneNames, nativeSkeletonClip, readNativeSkeletons } from './nativeGltfSkeleton';
+import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { parseGltfContainer } from './glb';
 import { skeletonObjectId, standInObjectOf } from './skeletonObject';
 import { __resetRegistryForTests } from '../dag/registry';
@@ -20,7 +21,12 @@ import { emptyDagState, type DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import { actionPoseOf, posedSkeletonFromClip } from '../../nodes/AnimationClip';
 import { unpackMeshData } from '../../app/meshGeometryData';
-import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
+import type {
+  AnimationClipValue,
+  BoneSpec,
+  ModifiedDataValue,
+  ObjectValue,
+} from '../../nodes/types';
 
 const SKINNED_BAR = 'public/assets/skinned-bar.glb';
 const STANDIN = 'public/fixtures/rig/standin-character.glb';
@@ -243,8 +249,9 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
       expect(groups.filter((g) => !boneNames.has(g))).toEqual([]);
       expect(boneNames.size).toBe(bones.length); // unique, so a name join is unambiguous
       // And each group is the bone of ITS joint: joint number i is node skin.joints[i].
-      const skeleton = readNativeSkeleton(json as never);
-      if (skeleton === null || 'refused' in skeleton) throw new Error('no skeleton');
+      const read = readNativeSkeletons(json as never);
+      if (read === null || 'refused' in read) throw new Error('no skeleton');
+      const [skeleton] = read.skeletons;
       json.skins[0].joints.forEach((node, i) => {
         expect(groups[i]).toBe(bones[skeleton.boneNodes.indexOf(node)].name);
       });
@@ -294,8 +301,9 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
   // ── WHAT A CLIP OR THE NATIVE MODEL CANNOT HOLD IS REFUSED WHOLE, BY NAME ─────────────────────
   it('refused: a bone’s scale is animated, because a clip key holds no scale', () => {
     const json = jsonOf(glbWith(SKINNED_BAR));
-    const skeleton = readNativeSkeleton(json as never);
-    if (skeleton === null || 'refused' in skeleton) throw new Error('no skeleton');
+    const read = readNativeSkeletons(json as never);
+    if (read === null || 'refused' in read) throw new Error('no skeleton');
+    const [skeleton] = read.skeletons;
     const scale = [{ time: 0, value: [1, 1, 1] as const, easing: 'linear' as const }];
     expect(
       nativeSkeletonClip(
@@ -326,13 +334,6 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
       'moves bone Bone1 by STEP',
     ],
     [
-      'the file has two skins',
-      (json) => {
-        json.skins.push({ ...json.skins[0] });
-      },
-      'it has 2 skins',
-    ],
-    [
       'a node hangs under a bone',
       (json) => {
         json.nodes.push({ name: 'Prop' });
@@ -349,5 +350,122 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     });
     expect(result).toMatchObject({ issue: '#393' });
     expect('refused' in result && result.refused).toContain(why);
+  });
+});
+
+describe('#1208 — several skins: one skeleton and one armature Object per armature, as Blender makes them', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const TWO_BARS = 'public/assets/two-skinned-bars.glb';
+  /** Blender 5.1.1 on two-skinned-bars.glb (ref/probes/blender-native-character/
+   *  q1208_two_skins_oracle.py), each bar's tip in glTF world space at 0 / 0.5 / 1 s. Bar B's armature
+   *  node stands at (3, 0, 0), so its mesh-local tip is the world tip less that. */
+  const BLENDER = {
+    a: { rest: [0.2, 2, 0], 0.5: [-0.528135, 1.872395, 0], 1: [-0.978764, 1.286394, 0] },
+    b: { rest: [2.8, 2, 0], 0.5: [3.528135, 1.872395, 0], 1: [3.978764, 1.286395, 0] },
+  } as const;
+  const B_ARMATURE = [3, 0, 0];
+
+  /** Every skinned mesh's modifier, with the Skeleton behind the Object its armature edge names. */
+  function deforms(state: DagState): { modifierId: string; skeletonId: string }[] {
+    return Object.values(state.nodes)
+      .filter((n) => n.type === 'ArmatureModifier')
+      .map((n) => {
+        const object = (n.inputs.armature as { node: string }).node;
+        return {
+          modifierId: n.id,
+          skeletonId: (state.nodes[object].inputs.data as { node: string }).node,
+        };
+      });
+  }
+
+  function tipAt(state: DagState, modifierId: string, rest: readonly number[], t: number) {
+    const ctx = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
+    const value = evaluate(state, modifierId, ctx).value as ModifiedDataValue;
+    if (value.kind !== 'ModifiedData' || !value.skin || value.geometry.descriptor.kind !== 'mesh')
+      throw new Error('not a skinned stored mesh');
+    const mesh = value.geometry.descriptor.data;
+    let tip = -1;
+    for (let p = 0; p * 3 < mesh.points.length; p++) {
+      const q = mesh.points.subarray(p * 3, p * 3 + 3);
+      if (q.every((c, k) => Math.abs(c - rest[k]) < 1e-5)) tip = p;
+    }
+    if (tip < 0) throw new Error(`no point rests at ${rest}`);
+    return Array.from(sampleSkinDeform(value.skin, mesh, t).subarray(tip * 3, tip * 3 + 3));
+  }
+
+  it('two rigs under two nodes: two Skeletons, two Objects, each mesh deformed by its own', async () => {
+    const state = applied((await importSkinned(glbWith(TWO_BARS))).ops);
+    expect(nodesOfType(state, 'Skeleton')).toHaveLength(2);
+    const pairs = deforms(state);
+    expect(pairs).toHaveLength(2);
+    expect(new Set(pairs.map((p) => p.skeletonId)).size).toBe(2);
+    // Names are unique within an armature, as Blender's are: both rigs keep Bone0 / Bone1.
+    for (const id of nodesOfType(state, 'Skeleton')) {
+      const bones = (state.nodes[id].params as { bones: BoneSpec[] }).bones;
+      expect(bones.map((b) => b.name)).toEqual(['Bone0', 'Bone1']);
+    }
+  });
+
+  it.each([0.5, 1] as const)("at %s s each bar's tip is where Blender puts it", async (t) => {
+    const state = applied((await importSkinned(glbWith(TWO_BARS))).ops);
+    const [first, second] = deforms(state)
+      .map((d) => d.modifierId)
+      .sort();
+    // Which modifier is which bar: the one whose mesh has a point resting at A's local tip.
+    const rows: number[][] = [];
+    for (const modifierId of [first, second]) {
+      try {
+        const a = tipAt(state, modifierId, BLENDER.a.rest, t);
+        a.forEach((c, k) => expect(c, `bar A axis ${k}`).toBeCloseTo(BLENDER.a[t][k], 4));
+        rows.push(a);
+      } catch {
+        const localRest = BLENDER.b.rest.map((c, k) => c - B_ARMATURE[k]);
+        const b = tipAt(state, modifierId, localRest, t);
+        b.forEach((c, k) =>
+          expect(c + B_ARMATURE[k], `bar B axis ${k}`).toBeCloseTo(BLENDER.b[t][k], 4),
+        );
+        rows.push(b);
+      }
+    }
+    expect(rows).toHaveLength(2);
+  });
+
+  it('two skins over the same joints (a body and its eyes) share ONE skeleton', async () => {
+    // A second skinned mesh node on a copy of skin 0: same joints, so the same armature node.
+    const state = applied(
+      (
+        await importSkinned(
+          glbWith(SKINNED_BAR, (json) => {
+            json.skins.push({ ...json.skins[0] });
+            const meshNode = json.nodes.findIndex((n) => typeof n.skin === 'number');
+            const meshes = (json as unknown as { meshes: unknown[] }).meshes;
+            meshes.push({ ...(meshes[json.nodes[meshNode].mesh as number] as object) });
+            const copy = {
+              ...json.nodes[meshNode],
+              name: 'Eyes',
+              skin: 1,
+              mesh: meshes.length - 1,
+            };
+            json.nodes.push(copy);
+            const holder = json.nodes.findIndex((n) =>
+              ((n.children as number[] | undefined) ?? []).includes(meshNode),
+            );
+            if (holder >= 0) (json.nodes[holder].children as number[]).push(json.nodes.length - 1);
+            else
+              (json as unknown as { scenes: { nodes: number[] }[] }).scenes[0].nodes.push(
+                json.nodes.length - 1,
+              );
+          }),
+        )
+      ).ops,
+    );
+    expect(nodesOfType(state, 'Skeleton')).toHaveLength(1);
+    const pairs = deforms(state);
+    expect(pairs).toHaveLength(2);
+    expect(new Set(pairs.map((p) => p.skeletonId)).size).toBe(1);
   });
 });
