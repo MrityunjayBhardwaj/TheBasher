@@ -417,8 +417,11 @@ export function ArmatureHelper({
     // and placed against the bounds of the one character it belongs beside.
     resetDegenerateBasisCount();
     const perArmature = current.map((s) =>
+      // The clone road's live bones carry no rest pose here, so they pass their pose as rest and
+      // keep the pose-derived shape; they go when the clone road retires (#1205).
       placeBones(
         s.bones.map((b, i) => ({ name: b.name, parent: s.parents[i], matrix: b.matrixWorld })),
+        s.bones.map((b) => b.matrixWorld),
       ),
     );
     // #1056 — skeleton Objects: rigs the DAG owns with no live `Bone`s behind them, so the scan
@@ -616,7 +619,10 @@ export function ArmatureHelper({
           }
           if (!best || bestScore < NAME_MATCH_THRESHOLD) continue;
 
-          const posed = boneTransforms(posedSourceBones(rig.clip, seconds));
+          const posed = boneTransforms(
+            posedSourceBones(rig.clip, seconds),
+            rig.clip.skeleton.bones,
+          );
           if (posed.length === 0) continue;
           const srcB = armatureBounds(posed);
           const tgtB = armatureBounds(best);

@@ -256,7 +256,48 @@ export function resetDegenerateBasisCount(): void {
   degenerateBasisNames.length = 0;
 }
 
-export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
+/**
+ * Place every bone as Blender draws it (#1206): the display frame (head, tail, roll, length) is
+ * decided ONCE, at rest, in each bone's own rest frame, and carried by that bone's own posed
+ * matrix — `posedWorld · restWorld⁻¹ · restDisplay`. Blender draws `pchan->pose_mat` scaled by
+ * the REST length (overlay_armature.cc:957-986), and a tail is edit-bone data on the bone's own
+ * +Y (io_scene_gltf2/blender/imp/node.py:216-221). Measured on Blender 5.1.1
+ * (ref/probes/blender-native-character/): a rotated LEAF swings its tail with its own rotation
+ * (skinned-bar Bone1 at frame 12, error 0), and a PARENT's tail stays put when its child
+ * translates. Deriving tails from POSED heads got both wrong: the leaf followed its parent and
+ * the parent stretched to a moving child (the BVH Root reaching for the walking Hips).
+ *
+ * `rest[i]` is bone i's rest world matrix, in the same space as `bones[i].matrix`. A caller with
+ * no rest to offer passes the posed matrices themselves, which draws exactly the pose-derived
+ * shape this used to (the clone road's live scans, until that road retires).
+ */
+export function placeBones(
+  bones: readonly BoneWorld[],
+  rest: readonly THREE.Matrix4[],
+): BoneFrame[] {
+  const atRest = placeAtRest(
+    bones.map((b, i) => ({ name: b.name, parent: b.parent, matrix: rest[i] ?? b.matrix })),
+  );
+  const inverse = new THREE.Matrix4();
+  return atRest.map((f, i) => {
+    const restWorld = rest[i] ?? bones[i].matrix;
+    // The display frame in the bone's own rest frame, then carried by its pose.
+    const own = inverse.copy(restWorld).invert().multiply(f.matrix);
+    const matrix = new THREE.Matrix4().multiplyMatrices(bones[i].matrix, own);
+    const head = new THREE.Vector3().setFromMatrixPosition(matrix);
+    const tail = new THREE.Vector3(0, 1, 0).applyMatrix4(matrix);
+    return {
+      ...f,
+      head: [head.x, head.y, head.z],
+      tail: [tail.x, tail.y, tail.z],
+      length: tail.distanceTo(head),
+      matrix,
+    };
+  });
+}
+
+/** The display frame of every bone in the pose it is given — the rest pose, from `placeBones`. */
+function placeAtRest(bones: readonly BoneWorld[]): BoneFrame[] {
   const heads = bones.map((b) => new THREE.Vector3().setFromMatrixPosition(b.matrix));
 
   // Children per bone, in index order (stable, so the averaged tail is stable).
@@ -390,7 +431,9 @@ export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
 }
 
 /**
- * Re-express a `BoneSpec` skeleton (DAG params, bind pose) as placement input.
+ * Re-express a posed `BoneSpec` skeleton, and the rest pose it was posed from, as placement
+ * input (#1206: the shape is decided at `rest` and carried by `posed`). A rig at rest passes the
+ * same bones twice.
  *
  * The other producer is the LIVE three.js rig: `GltfSkeleton.evaluate` returns
  * the bind pose captured at import (GltfSkeleton.ts:48-53, no time argument),
@@ -398,7 +441,10 @@ export function placeBones(bones: readonly BoneWorld[]): BoneFrame[] {
  * useFrame in SceneFromDAG. Those feed `placeBones` directly through their
  * `matrixWorld` — same core, same roll handling, no second implementation.
  */
-export function boneTransforms(bones: readonly BoneSpec[]): BoneFrame[] {
-  const world = boneWorldMatrices(bones);
-  return placeBones(bones.map((b, i) => ({ name: b.name, parent: b.parent, matrix: world[i] })));
+export function boneTransforms(posed: readonly BoneSpec[], rest: readonly BoneSpec[]): BoneFrame[] {
+  const world = boneWorldMatrices(posed);
+  return placeBones(
+    posed.map((b, i) => ({ name: b.name, parent: b.parent, matrix: world[i] })),
+    boneWorldMatrices(rest),
+  );
 }

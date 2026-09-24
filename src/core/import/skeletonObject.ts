@@ -54,7 +54,7 @@ export function normalisedRigScale(
   clip?: AnimationClipValue | null,
 ): number {
   const pose = clip ? posedSourceBones(clip, 0) : bones;
-  const { empty, size } = armatureBounds(boneTransforms(pose));
+  const { empty, size } = armatureBounds(boneTransforms(pose, bones));
   const extent = Math.max(size.x, size.y, size.z);
   if (empty || !(extent >= MIN_HEIGHT)) return 1;
   return UNBOUND_RIG_HEIGHT_METRES / extent;

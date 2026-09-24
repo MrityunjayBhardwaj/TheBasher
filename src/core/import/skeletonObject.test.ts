@@ -155,7 +155,7 @@ describe('buildSkeletonObjectOps', () => {
 describe('normalisedRigScale', () => {
   it('stands an upright rest pose at the rig height', () => {
     const s = normalisedRigScale(RIG);
-    const height = armatureBounds(boneTransforms(scaled(RIG, s))).height;
+    const height = armatureBounds(boneTransforms(scaled(RIG, s), scaled(RIG, s))).height;
     expect(height).toBeCloseTo(UNBOUND_RIG_HEIGHT_METRES, 6);
   });
 
@@ -166,7 +166,7 @@ describe('normalisedRigScale', () => {
       ...b,
       position: [b.position[1], -b.position[0], b.position[2]] as BoneSpec['position'],
     }));
-    expect(armatureBounds(boneTransforms(lying)).height).toBeLessThan(1);
+    expect(armatureBounds(boneTransforms(lying, lying)).height).toBeLessThan(1);
     expect(normalisedRigScale(lying)).toBeCloseTo(normalisedRigScale(RIG), 6);
   });
 
@@ -187,7 +187,9 @@ describe('normalisedRigScale', () => {
     expect(clip.kind).toBe('AnimationClip');
 
     const s = normalisedRigScale(bones, clip);
-    const drawn = armatureBounds(boneTransforms(scaled(posedSourceBones(clip, 0), s))).height;
+    const drawn = armatureBounds(
+      boneTransforms(scaled(posedSourceBones(clip, 0), s), scaled([...clip.skeleton.bones], s)),
+    ).height;
     expect(drawn).toBeGreaterThan(1.5);
     expect(drawn).toBeLessThan(2.1);
   });

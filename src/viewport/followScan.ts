@@ -124,12 +124,14 @@ export function pointFromScan(
     rig.root.updateWorldMatrix(true, true);
     armatures.push({
       ids: rig.ids,
+      // Clone-road live bones: no rest pose to hand, so the pose stands in for it (#1205).
       frames: placeBones(
         rig.bones.map((b, i) => ({
           name: b.name,
           parent: rig.parents[i],
           matrix: b.matrixWorld,
         })),
+        rig.bones.map((b) => b.matrixWorld),
       ),
     });
   }

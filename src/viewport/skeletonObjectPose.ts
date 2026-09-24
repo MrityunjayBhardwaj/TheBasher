@@ -46,7 +46,7 @@ function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): B
  *  has none (or several). */
 export function skeletonObjectFrames(o: SkeletonObject, seconds: number): BoneFrame[] {
   return placeInWorld(
-    boneTransforms(o.clip ? posedSourceBones(o.clip, seconds) : o.bones),
+    boneTransforms(o.clip ? posedSourceBones(o.clip, seconds) : o.bones, o.bones),
     o.world,
   );
 }

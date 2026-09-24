@@ -19,6 +19,11 @@ import {
   octahedralWireSegments,
 } from './boneShape';
 
+/** A rig drawn in its own rest pose: posed and rest are the same bones. */
+function atRest(bones: readonly BoneSpec[]) {
+  return boneTransforms(bones, bones);
+}
+
 /** The 6 unit-shape vertices put through a bone matrix, rounded and sorted —
  *  i.e. what the eye actually sees, independent of vertex ORDER. */
 function drawnPoints(m: THREE.Matrix4): string[] {
@@ -152,7 +157,7 @@ describe('boneWorldMatrices', () => {
 
 describe('boneTransforms — placement', () => {
   it("takes a bone's tail from its child's head", () => {
-    const [root] = boneTransforms(twoBoneRig([0, 0, 0]));
+    const [root] = atRest(twoBoneRig([0, 0, 0]));
     expect(root.tail).toEqual([0, 1, 0]);
     expect(root.length).toBeCloseTo(1);
     expect(root.isLeaf).toBe(false);
@@ -164,7 +169,7 @@ describe('boneTransforms — placement', () => {
       { name: 'l', parent: 0, position: [-1, 2, 0], rotation: [0, 0, 0] },
       { name: 'r', parent: 0, position: [1, 2, 0], rotation: [0, 0, 0] },
     ];
-    expect(boneTransforms(bones)[0].tail).toEqual([0, 2, 0]);
+    expect(atRest(bones)[0].tail).toEqual([0, 2, 0]);
   });
 
   it('scales the shape UNIFORMLY by length (overlay_armature.cc:970-983)', () => {
@@ -172,14 +177,14 @@ describe('boneTransforms — placement', () => {
       { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
       { name: 'child', parent: 0, position: [0, 4, 0], rotation: [0, 0, 0] },
     ];
-    const m = boneTransforms(bones)[0].matrix;
+    const m = atRest(bones)[0].matrix;
     const basis = [0, 1, 2].map((c) => new THREE.Vector3().setFromMatrixColumn(m, c).length());
     // A 4-long bone is 4x wider too — not just 4x longer.
     basis.forEach((len) => expect(len).toBeCloseTo(4));
   });
 
   it('manufactures a leaf tail at LEAF_LENGTH_RATIO of the parent, continuing its direction', () => {
-    const frames = boneTransforms(twoBoneRig([0, 0, 0]));
+    const frames = atRest(twoBoneRig([0, 0, 0]));
     const leaf = frames[1];
     expect(leaf.isLeaf).toBe(true);
     // Parent runs +Y with length 1, so the leaf continues +Y at the ratio.
@@ -189,7 +194,7 @@ describe('boneTransforms — placement', () => {
 
   it('yields finite matrices for a single degenerate bone', () => {
     const lone: BoneSpec[] = [{ name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }];
-    const f = boneTransforms(lone)[0];
+    const f = atRest(lone)[0];
     expect(f.matrix.elements.every((n) => Number.isFinite(n))).toBe(true);
     expect(f.length).toBeGreaterThan(0);
   });
@@ -199,7 +204,7 @@ describe('boneTransforms — placement', () => {
       { name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
       { name: 'b', parent: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
     ];
-    const frames = boneTransforms(bones);
+    const frames = atRest(bones);
     expect(frames.every((f) => f.matrix.elements.every((n) => Number.isFinite(n)))).toBe(true);
     expect(frames.every((f) => f.length > 0)).toBe(true);
   });
@@ -211,8 +216,8 @@ describe('boneTransforms — placement', () => {
 
 describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqualified)', () => {
   it('a 45° roll changes the drawing while every joint POSITION stays put', () => {
-    const straight = boneTransforms(twoBoneRig([0, 0, 0]));
-    const rolled = boneTransforms(twoBoneRig([0, 45, 0]));
+    const straight = atRest(twoBoneRig([0, 0, 0]));
+    const rolled = atRest(twoBoneRig([0, 45, 0]));
 
     // The position-only witness — SkeletonHelper's `setFromMatrixPosition` — is
     // blind here: heads and tails are identical to the last decimal. V427.
@@ -226,8 +231,8 @@ describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqu
   });
 
   it('roll survives as an actual 45° turn of the ring, not just any difference', () => {
-    const straight = boneTransforms(twoBoneRig([0, 0, 0]))[0];
-    const rolled = boneTransforms(twoBoneRig([0, 45, 0]))[0];
+    const straight = atRest(twoBoneRig([0, 0, 0]))[0];
+    const rolled = atRest(twoBoneRig([0, 45, 0]))[0];
     // Ring vertex v1 sits at local (0.1, 0.1, 0.1). Its angle about the bone's
     // +Y axis must have moved by exactly the roll we applied.
     const ringOf = (m: THREE.Matrix4) => {
@@ -244,8 +249,8 @@ describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqu
     // Not a bug and not a gap in the witness: Blender's own table has the same
     // 4-fold symmetry. It is here so nobody "fixes" a falsification test by
     // reaching for 90/180/270 and concludes the helper is roll-blind.
-    const straight = boneTransforms(twoBoneRig([0, 0, 0]))[0];
-    const quarter = boneTransforms(twoBoneRig([0, 90, 0]))[0];
+    const straight = atRest(twoBoneRig([0, 0, 0]))[0];
+    const quarter = atRest(twoBoneRig([0, 90, 0]))[0];
     expect(drawnPoints(quarter.matrix)).toEqual(drawnPoints(straight.matrix));
   });
 
@@ -255,7 +260,7 @@ describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqu
     // these rolls would draw identically. Sweep past the 90° symmetry.
     const seen = new Set<string>();
     for (const deg of [0, 15, 30, 45, 60, 75]) {
-      seen.add(drawnPoints(boneTransforms(twoBoneRig([0, deg, 0]))[0].matrix).join('|'));
+      seen.add(drawnPoints(atRest(twoBoneRig([0, deg, 0]))[0].matrix).join('|'));
     }
     expect(seen.size).toBe(6);
   });
@@ -267,7 +272,7 @@ describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqu
       { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
       { name: 'child', parent: 0, position: [3, 0, 0], rotation: [0, 0, 0] },
     ];
-    const m = boneTransforms(bones)[0].matrix;
+    const m = atRest(bones)[0].matrix;
     // Local tail (0,1,0) must land on the child's head.
     const tip = new THREE.Vector3(0, 1, 0).applyMatrix4(m);
     expect(tip.x).toBeCloseTo(3);
@@ -276,12 +281,62 @@ describe('boneTransforms — roll is visible (the reason SkeletonHelper is disqu
   });
 
   it('stays orthonormal-up-to-scale so the shape is never sheared', () => {
-    const m = boneTransforms(twoBoneRig([20, 35, 50]))[0].matrix;
+    const m = atRest(twoBoneRig([20, 35, 50]))[0].matrix;
     const [x, y, z] = [0, 1, 2].map((c) => new THREE.Vector3().setFromMatrixColumn(m, c));
     expect(x.dot(y)).toBeCloseTo(0, 6);
     expect(y.dot(z)).toBeCloseTo(0, 6);
     expect(x.dot(z)).toBeCloseTo(0, 6);
     expect(x.length()).toBeCloseTo(y.length(), 6);
     expect(y.length()).toBeCloseTo(z.length(), 6);
+  });
+});
+
+describe('#1206 — a bone is drawn by its own pose, from a shape decided at rest', () => {
+  // skinned-bar's rig: Bone0 at the origin, Bone1 (the leaf) one unit up.
+  const REST: BoneSpec[] = [
+    { name: 'Bone0', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'Bone1', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+
+  it('a rotated leaf swings its tail with its own rotation, as Blender 5.1.1 draws it', () => {
+    // Blender, skinned-bar frame 12 (ref/probes/blender-native-character/q1206_leaf_tail.py):
+    // Bone1's pose quaternion (w 0.8686, z 0.3378) and its tail − head = (−0.6756, 0, 0.7373)
+    // in Blender's Z-up, i.e. (−0.6756, 0.7373, 0) in glTF's Y-up.
+    const angle = 2 * Math.atan2(0.3378, 0.8686);
+    const posed: BoneSpec[] = [REST[0], { ...REST[1], rotation: [0, 0, angle] }];
+    const leaf = boneTransforms(posed, REST)[1];
+    const dir = new THREE.Vector3(...leaf.tail).sub(new THREE.Vector3(...leaf.head)).normalize();
+    expect(dir.x).toBeCloseTo(-0.6756, 4);
+    expect(dir.y).toBeCloseTo(0.7373, 4);
+    expect(dir.z).toBeCloseTo(0, 6);
+    // The rest length is kept: posing never stretches a bone.
+    expect(leaf.length).toBeCloseTo(boneTransforms(REST, REST)[1].length, 9);
+  });
+
+  it("a parent's tail stays put when its child translates, as Blender 5.1.1 draws it", () => {
+    // Blender (q1206_child_translate.py): child moved +0.5 on x, parent tail still (0, 0, 1).
+    const posed: BoneSpec[] = [REST[0], { ...REST[1], position: [0.5, 1, 0] }];
+    const parent = boneTransforms(posed, REST)[0];
+    expect(parent.tail[0]).toBeCloseTo(0, 9);
+    expect(parent.tail[1]).toBeCloseTo(1, 9);
+    expect(parent.tail[2]).toBeCloseTo(0, 9);
+  });
+
+  it('a whole-rig pose carries every bone rigidly, head, tail and roll together', () => {
+    const turned: BoneSpec[] = [{ ...REST[0], rotation: [0.3, 0.2, 0.1] }, REST[1]];
+    const rest = boneTransforms(REST, REST);
+    const posed = boneTransforms(turned, REST);
+    const root = boneWorldMatrices(turned)[0];
+    for (let i = 0; i < 2; i++) {
+      const expected = new THREE.Matrix4().multiplyMatrices(root, rest[i].matrix);
+      posed[i].matrix.elements.forEach((e, k) => expect(e).toBeCloseTo(expected.elements[k], 9));
+    }
+  });
+
+  it('with the pose standing in for rest, the drawing is the pose-derived shape', () => {
+    // The clone road's live scans pass their pose as rest: they must draw what they drew.
+    const posed: BoneSpec[] = [REST[0], { ...REST[1], position: [0.5, 1, 0] }];
+    const asRest = boneTransforms(posed, posed);
+    expect(asRest[0].tail[0]).toBeCloseTo(0.5, 9);
   });
 });

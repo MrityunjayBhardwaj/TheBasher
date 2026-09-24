@@ -397,7 +397,9 @@ describe('a generated motion stands its skeleton in the scene (#1078)', () => {
     expect(worldScale).toBeCloseTo(1, 6);
 
     // Frame 0, the pose first drawn. Measured 1.68 m on this file.
-    const posed = armatureBounds(boneTransforms(posedSourceBones(drawn!.clip!, 0)));
+    const posed = armatureBounds(
+      boneTransforms(posedSourceBones(drawn!.clip!, 0), drawn!.clip!.skeleton.bones),
+    );
     expect(posed.size.y * worldScale).toBeGreaterThan(1.5);
     expect(posed.size.y * worldScale).toBeLessThan(2.1);
   });

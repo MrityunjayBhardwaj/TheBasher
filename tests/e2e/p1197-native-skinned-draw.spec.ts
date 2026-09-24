@@ -33,6 +33,7 @@ interface BasherWindow {
   };
   __basher_time: { getState: () => { setTime: (s: number) => void } };
   __basher_gltf_skin?: () => SkinSeam | null;
+  __basher_armature?: { names: string[]; matrices: number[][] };
 }
 
 /** Blender's tip, glTF space: frame 0 (rest), 12 (0.5 s), 24 (1 s). */
@@ -120,6 +121,21 @@ test('#1197 — skinned-bar draws natively, deformed as Blender deforms it', asy
       expect(c - offset[k], `tip at ${t}s, axis ${k}`).toBeCloseTo(BLENDER_TIP[t][k], 3),
     );
   }
+
+  // #1206 — the bone chrome over the mesh bends with it. Bone1 is a LEAF; Blender draws it along
+  // its own posed +Y, so at 0.5 s (frame 12) its drawn axis is Blender's tail − head, (−0.6756, 0,
+  // 0.7373) in Z-up = (−0.6756, 0.7373, 0) in glTF (ref/probes/blender-native-character/
+  // q1206_leaf_tail.py). Before #1206 it continued its parent and stayed at (0, 1, 0).
+  await setTime(page, 0.5);
+  const leafAxis = await page.evaluate(() => {
+    const a = (window as unknown as BasherWindow).__basher_armature!;
+    const m = a.matrices[a.names.indexOf('Bone1')];
+    const len = Math.hypot(m[4], m[5], m[6]);
+    return [m[4] / len, m[5] / len, m[6] / len];
+  });
+  [-0.6756, 0.7373, 0].forEach((c, k) =>
+    expect(leafAxis[k], `drawn leaf axis at 0.5s, axis ${k}`).toBeCloseTo(c, 3),
+  );
 
   // #1207 — key the mesh Object's position. The overlay now copies its value every frame; the
   // draw must be built once and still pose by the action, and a registry sweep (which evicts the
