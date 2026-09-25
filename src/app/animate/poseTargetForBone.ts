@@ -24,8 +24,12 @@ import type { DagState } from '../../core/dag/state';
 import { boundClipsForAsset } from './boundClipsForAsset';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { bonesOfSkeletonNode } from './retargetFromNodes';
-import { overrideChain, poseLayerChain } from './poseChain';
-import type { PoseLayerMember } from '../../nodes/PoseLayer';
+import { handPoseLayerOf, overrideChain } from './poseChain';
+import {
+  memberEulerDegreesAt,
+  poseLayerChannelOf,
+  type PoseLayerParams,
+} from '../../nodes/PoseLayer';
 import type { Vec3 } from '../../nodes/types';
 import { resolveBoneNames } from '../../core/import/retarget';
 import { selectedAssetRefs } from '../asset/bindMotionToCharacter';
@@ -44,8 +48,15 @@ export interface ObjectPoseTarget {
   readonly objectId: string;
   /** The bone, in the skeleton's own spelling. */
   readonly bone: string;
-  /** The rotation already posed for this bone (degrees, the verb's order), or null when none is. */
+  /**
+   * The bone's rotation in the layer a hand-pose writes, AS PLAYED at the time asked (degrees, the
+   * member's order): its keyed curve's value there, else its static value; null when it has none.
+   */
   readonly rotation: Vec3 | null;
+  /** #1215 — the layer a hand-pose writes (`handPoseLayerOf`), or null when one will be inserted. */
+  readonly layerId: string | null;
+  /** #1215 — the rotation is keyed in that layer (a curve in the member's mode), so an edit is a key. */
+  readonly keyed: boolean;
 }
 
 export interface PoseTarget {
@@ -70,6 +81,7 @@ export function poseTargetForBone(
   state: DagState,
   nodeId: string,
   liveBoneName: string,
+  seconds = 0,
 ): BonePoseTarget | null {
   const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
 
@@ -86,16 +98,23 @@ export function poseTargetForBone(
       ? liveBoneName
       : resolveBoneNames([liveBoneName], bones as never)[liveBoneName];
     if (resolved === undefined || !bones.some((b) => b.name === resolved)) return null;
-    const top = poseLayerChain(nodes, nodeId).layers[0];
-    const members = top
-      ? ((state.nodes[top].params as { members?: PoseLayerMember[] }).members ?? [])
-      : [];
-    const member = members.find((m) => m.bone === resolved);
+    // The layer the pose mutator writes, by the same walk — not the chain's top, which can be a muted
+    // or additive layer the pose never lands in.
+    const layerId = handPoseLayerOf(nodes, nodeId);
+    const params = layerId ? (state.nodes[layerId].params as PoseLayerParams) : null;
+    const member = params?.members.find((m) => m.bone === resolved);
+    const channels = params?.channels ?? [];
+    const keyed =
+      member !== undefined &&
+      member.rotationMode !== 'quaternion' &&
+      poseLayerChannelOf(channels, resolved, 'rotation') !== undefined;
     return {
       kind: 'object',
       objectId: nodeId,
       bone: resolved,
-      rotation: member?.rotation ? (member.rotation as Vec3) : null,
+      rotation: member ? memberEulerDegreesAt(member, channels, seconds) : null,
+      layerId,
+      keyed,
     };
   }
 

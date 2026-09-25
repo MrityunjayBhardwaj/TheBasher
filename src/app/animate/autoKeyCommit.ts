@@ -26,6 +26,8 @@ import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationStat
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import { boneComponentAddress } from './clipRowMint';
+import type { ObjectPoseTarget } from './poseTargetForBone';
+import type { Vec3 } from '../../nodes/types';
 
 /**
  * THE single animated-param edit-route gate (P7.3 / D-02 — lifted here in
@@ -251,4 +253,63 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
     // eslint-disable-next-line no-alert
     window.alert?.(result.reason);
   }
+}
+
+type Dispatched = { ok: true } | { ok: false; reason: string };
+
+/**
+ * #1215 — the inspector's edit of a native bone's rotation, as Blender's pose-bone Rotation field
+ * behaves under Auto-Key. A field's auto-key keys ONLY a property that already has an F-curve
+ * (`button_anim_autokey` passes `only_if_property_keyed`, `interface_anim.cc:318-321`, and
+ * `autokeyframe_property` returns early without one, `keyframing_auto.cc`); otherwise the edit just
+ * sets the value. So:
+ *   - keyed in the layer the pose writes, Auto-Key ON  → a key at the playhead in that curve;
+ *   - keyed, Auto-Key OFF → refused with the reason: the static value would sit under the curve and
+ *     show nothing (Blender holds it until the next frame; that transient is #1256);
+ *   - not keyed → the hand-pose itself: the member's static rotation (`mutator.animate.poseBone`).
+ */
+export function commitObjectBoneRotation(target: ObjectPoseTarget, rotation: Vec3): Dispatched {
+  if (target.keyed && target.layerId !== null) {
+    if (!useAutoKeyStore.getState().enabled) {
+      return {
+        ok: false,
+        reason: `${target.bone}'s rotation is keyed here: turn on Auto-Key to key this change at the playhead.`,
+      };
+    }
+    return dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      {
+        layer: { layerId: target.layerId, bone: target.bone, component: 'rotation' },
+        time: useTimeStore.getState().seconds,
+        value: rotation,
+      },
+      `Auto-Key ${target.bone} rotation`,
+    );
+  }
+  return dispatchMutatorFromUI(
+    'mutator.animate.poseBone',
+    { object: target.objectId, bone: target.bone, rotation },
+    `pose ${target.bone}`,
+  );
+}
+
+/**
+ * #1215 — the pose row's key button (Blender's I over a field): key the rotation the field shows at
+ * the playhead, into the layer the pose writes. The first key creates the bone's curve there; with
+ * a curve, it adds or replaces the key at this time. Offered once the bone has a rotation in that
+ * layer, so there is always a value to key.
+ */
+export function keyObjectBoneRotation(target: ObjectPoseTarget): Dispatched {
+  if (target.layerId === null || target.rotation === null) {
+    return { ok: false, reason: `pose ${target.bone} first: there is no rotation to key yet.` };
+  }
+  return dispatchMutatorFromUI(
+    'mutator.timeline.keyframe',
+    {
+      layer: { layerId: target.layerId, bone: target.bone, component: 'rotation' },
+      time: useTimeStore.getState().seconds,
+      value: target.rotation,
+    },
+    `Key ${target.bone} rotation`,
+  );
 }

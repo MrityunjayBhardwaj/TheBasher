@@ -179,6 +179,9 @@ describe('#1244 — hand-posing a native character', () => {
       objectId: armatureId,
       bone: 'Bone1',
       rotation: null,
+      // #1215 — no hand-pose layer yet (the first pose inserts one), so nothing is keyed there.
+      layerId: null,
+      keyed: false,
     });
     expect(poseTargetForBone(state, armatureId, 'Tail')).toBeNull();
     pose(armatureId, 'Bone1', [0, 0, 25]);

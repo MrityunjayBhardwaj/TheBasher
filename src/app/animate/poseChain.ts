@@ -11,6 +11,7 @@
 //      src/app/animate/poseTargetForBone.ts (the inspector's lookup); issues #993, #1156.
 
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import type { PoseLayerParams } from '../../nodes/PoseLayer';
 
 export interface OverrideNode {
   readonly id: string;
@@ -115,4 +116,42 @@ function baseOf(
   if (nodes[source.node]?.type !== 'Skeleton' || source.socket !== 'pose') return null;
   const mode = (nodes[bottom].params as { mode?: unknown } | undefined)?.mode;
   return mode === undefined || mode === 'override' ? bottom : null;
+}
+
+/**
+ * The layer a hand-pose on `objectId` is written into: the nearest OVERRIDE layer in the Object's
+ * chain, walking down from the top (#1245). Additive layers above it keep adding on top of the pose,
+ * which is what a layer stack means; only a chain with no override layer needs one inserted.
+ *
+ * #1211 — never the chain's BASE layer (an imported file's motion, as keys): a bind mutes that one,
+ * and a hand-pose survives a rebind (#1244). Never a MUTED layer either, where a pose would do
+ * nothing. With neither to take it, null: the pose mutator inserts one directly under the Object.
+ *
+ * ONE answer for the writer (`poseBone`) and the reader (the inspector's pose row, #1215): the row
+ * shows, keys and auto-keys the layer the pose lands in, never a different one.
+ */
+export function handPoseLayerOf(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  objectId: string,
+): string | null {
+  const { layers, base } = poseLayerChain(nodes, objectId);
+  for (const id of layers) {
+    if (whyNotHandPosable(nodes, id, base) === null) return id;
+  }
+  return null;
+}
+
+/** Why the chain layer `id` cannot take a hand-pose, or null when it can. The walk only passes
+ *  through `PoseLayer`s, so its params are that node's. */
+export function whyNotHandPosable(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  id: string,
+  base: string | null,
+): string | null {
+  if (id === base) return "is this Object's base layer, which a bind replaces";
+  const params = nodes[id].params as Partial<PoseLayerParams> | undefined;
+  if (params?.mute === true) return 'is muted';
+  if (params?.mode !== undefined && params.mode !== 'override')
+    return `is ${params.mode}, not override`;
+  return null;
 }

@@ -56,7 +56,7 @@ import type {
   WireClipInfo,
 } from './types';
 import { nameParam } from './paramWidget';
-import { EULER_ORDERS, quatFromEuler, type EulerOrder } from './bonePose';
+import { EULER_ORDERS, eulerFromQuat, quatFromEuler, type EulerOrder } from './bonePose';
 import { foldChannelValue } from './foldChannel';
 import { KeyframeChannelVec3Node, KeyframeChannelVec3Params } from './KeyframeChannelVec3';
 import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
@@ -263,6 +263,30 @@ function resolveMember(
 
   const quaternion = memberRotationSampler(member, channels);
   return { index, position, quaternion, scale };
+}
+
+/**
+ * #1215 — an euler member's rotation at `seconds`, in degrees in its own order, as the layer plays it:
+ * the keyed curve in the member's mode (read synchronized when the member says so), else its static
+ * value, else null. Null too for a quaternion member, whose rotation is not written in degrees. What a
+ * field showing this bone's rotation shows, so the value on screen is the value played (H40).
+ */
+export function memberEulerDegreesAt(
+  member: PoseLayerMember,
+  channels: readonly PoseLayerChannel[],
+  seconds: number,
+): Vec3 | null {
+  if (member.rotationMode === 'quaternion') return null;
+  const order: EulerOrder = member.rotationMode;
+  const keys = poseLayerChannelOf(channels, member.bone, 'rotation');
+  if (keys && member.eulerInterp === 'quaternion') {
+    const toQuat = (deg: Vec3): Quat =>
+      quatFromEuler([deg[0] * DEG, deg[1] * DEG, deg[2] * DEG], order);
+    const r = eulerFromQuat(synchronizedSampler(keys, toQuat)(seconds), order);
+    return [r[0] / DEG, r[1] / DEG, r[2] / DEG];
+  }
+  if (keys) return vec3Sampler(keys)(seconds);
+  return member.rotation ? (member.rotation as Vec3) : null;
 }
 
 /**

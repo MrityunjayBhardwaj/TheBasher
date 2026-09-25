@@ -87,7 +87,12 @@ import {
 } from './animate/dispatchApplyTransform';
 import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
-import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
+import {
+  autoKeyCommit,
+  commitObjectBoneRotation,
+  keyObjectBoneRotation,
+  routeAnimatedGrab,
+} from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
@@ -3937,9 +3942,11 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
  */
 function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
   const state = useDagStore((s) => s.state);
+  // #1215 — the playhead: a keyed rotation is shown as played at this time.
+  const seconds = useTimeStore((s) => s.seconds);
   const target = useMemo(
-    () => poseTargetForBone(state, nodeId, boneName),
-    [state, nodeId, boneName],
+    () => poseTargetForBone(state, nodeId, boneName, seconds),
+    [state, nodeId, boneName, seconds],
   );
   const [refusal, setRefusal] = useState<string | null>(null);
   if (!target) return null;
@@ -3990,21 +3997,21 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
 }
 
 /**
- * #1244 — the pose row for a bone of an armature Object. Both gestures go through
- * `mutator.animate.poseBone` (the agent's verb, anchored on the Object): the first pose inserts a
- * pose layer under the Object, and every edit after it rewrites that bone's member. A member is an
- * entry in a list found by bone name, so there is no param path for an ordinary param row to write.
+ * #1244 — the pose row for a bone of an armature Object. The first pose goes through
+ * `mutator.animate.poseBone` (the agent's verb, anchored on the Object), which inserts a pose layer
+ * under the Object; an edit after it rewrites that bone's member. A member is an entry in a list
+ * found by bone name, so there is no param path for an ordinary param row to write.
+ *
+ * #1215 — the field shows the rotation as played at the playhead. Once the rotation is keyed in that
+ * layer an edit is a key, as Blender's field auto-keys a keyed property (`commitObjectBoneRotation`),
+ * and the key button keys what the field shows (`keyObjectBoneRotation`).
  */
 function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
   const [refusal, setRefusal] = useState<string | null>(null);
-  const pose = (rotation: [number, number, number]) => {
-    const res = dispatchMutatorFromUI(
-      'mutator.animate.poseBone',
-      { object: target.objectId, bone: target.bone, rotation },
-      `pose ${target.bone}`,
-    );
+  const said = (res: { ok: true } | { ok: false; reason: string }) =>
     setRefusal(res.ok ? null : res.reason);
-  };
+  const pose = (rotation: [number, number, number]) =>
+    said(commitObjectBoneRotation(target, rotation));
   const rotation = target.rotation;
   return (
     <div className="mt-2" data-testid="inspector-bone-pose">
@@ -4021,6 +4028,21 @@ function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
         </button>
       ) : (
         <div className="flex items-center gap-1 text-[11px] text-fg/80">
+          <button
+            type="button"
+            data-testid="inspector-bone-pose-key"
+            data-keyed={target.keyed || undefined}
+            aria-label={`Key ${target.bone} rotation at the playhead`}
+            title={
+              target.keyed
+                ? 'Keyed: click to key the rotation shown at the playhead. With Auto-Key on, an edit keys.'
+                : 'Click to key the rotation shown at the playhead.'
+            }
+            className={`select-none px-1 text-[11px] leading-none ${target.keyed ? 'text-warn' : 'text-fg/40'} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+            onClick={() => said(keyObjectBoneRotation(target))}
+          >
+            {target.keyed ? '◆' : '◇'}
+          </button>
           <span className="w-14 font-mono text-[10px] text-fg/50">rotation</span>
           {(['x', 'y', 'z'] as const).map((axis, i) => (
             <input
@@ -4028,7 +4050,7 @@ function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
               type="number"
               step="1"
               aria-label={`rotation ${axis}`}
-              value={rotation[i]}
+              value={Math.round(rotation[i] * 1000) / 1000}
               data-testid={`inspector-bone-pose-rotation-${axis}`}
               className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
               onChange={(e) => {
