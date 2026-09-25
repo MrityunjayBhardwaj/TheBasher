@@ -47,7 +47,14 @@
 
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
-import type { BonePose, ChannelBlendMode, PosedSkeletonValue, Quat, Vec3 } from './types';
+import type {
+  BonePose,
+  ChannelBlendMode,
+  PosedSkeletonValue,
+  Quat,
+  Vec3,
+  WireClipInfo,
+} from './types';
 import { nameParam } from './paramWidget';
 import { EULER_ORDERS, quatFromEuler, type EulerOrder } from './bonePose';
 import { foldChannelValue } from './foldChannel';
@@ -316,6 +323,28 @@ export function poseLayerUnmatchedMembers(
   return params.members.filter((m) => !names.has(m.bone)).map((m) => m.bone);
 }
 
+/**
+ * #1225 — the range a base layer's keys cover, and how densely, for the wire's `clip`: from the
+ * earliest key to the latest, at the densest channel's key count over that span (the rule a clip's
+ * range uses, `clipInfoOf`). The weight's keys are not motion and do not count. Nothing when the keys
+ * span no time.
+ */
+export function poseLayerClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
+  let start = Infinity;
+  let end = -Infinity;
+  let densest = 0;
+  for (const c of channels) {
+    if (c.component === 'weight' || c.keyframes.length === 0) continue;
+    for (const k of c.keyframes) {
+      if (k.time < start) start = k.time;
+      if (k.time > end) end = k.time;
+    }
+    densest = Math.max(densest, c.keyframes.length);
+  }
+  if (!(end > start)) return undefined;
+  return { start, end, rate: densest / (end - start) };
+}
+
 export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> = {
   type: 'PoseLayer',
   version: 1,
@@ -349,6 +378,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
             sample: source.sample,
             source,
             soloed: true,
+            ...(incoming.clip ? { clip: incoming.clip } : {}),
           };
     }
 
@@ -376,10 +406,14 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       return built;
     };
 
+    // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range; any
+    // other layer passes the incoming range through.
+    const range = isBase ? poseLayerClipInfo(params.channels) : incoming.clip;
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
       source,
+      ...(range ? { clip: range } : {}),
       ...(params.solo || incoming.soloed === true ? { soloed: true } : {}),
       sample: (seconds: number): readonly BonePose[] => {
         const base = upstream.sample(seconds);

@@ -37,6 +37,7 @@ import type {
   Quat,
   SkeletonValue,
   Vec3,
+  WireClipInfo,
 } from './types';
 import {
   sampleQuatKeyframesExtended,
@@ -203,9 +204,11 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
   const { skeleton } = clip;
   const rest = skeleton.bones.map(restBonePose);
   let samplers: Map<number, ClipBoneSampler> | null = null;
+  const range = clipInfoOf(clip);
   const posed: PosedSkeletonValue = {
     kind: 'PosedSkeleton',
     skeleton,
+    ...(range ? { clip: range } : {}),
     sample: (seconds: number): readonly BonePose[] => {
       if (samplers === null) {
         samplers = buildClipBoneSamplers(clip);
@@ -222,6 +225,22 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
   };
   posedByClip.set(clip, posed);
   return posed;
+}
+
+/**
+ * #1225 — a clip's range and rate on the wire: `[0, duration]` at the densest bone's key count over
+ * the duration, three's own rule (`SkeletonUtils.js:204`), so a retarget reading the wire samples a
+ * clip exactly where it sampled the clip's keys. Nothing on a clip with no duration or no keys.
+ */
+export function clipInfoOf(clip: {
+  readonly duration: number;
+  readonly keyframes: readonly AnimationKeyframe[];
+}): WireClipInfo | undefined {
+  if (!(clip.duration > 0)) return undefined;
+  const perBone = new Map<number, number>();
+  for (const k of clip.keyframes) perBone.set(k.bone, (perBone.get(k.bone) ?? 0) + 1);
+  if (perBone.size === 0) return undefined;
+  return { start: 0, end: clip.duration, rate: Math.max(...perBone.values()) / clip.duration };
 }
 
 let samplerBuilds = 0;

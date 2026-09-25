@@ -1629,6 +1629,25 @@ export interface PosedSkeletonValue {
    * wire's `source`, so a soloed layer above plays over that motion as it played over a clip.
    */
   readonly rest?: true;
+  /**
+   * #1225 — the time range this motion covers and how densely, Houdini's `clipinfo` detail attribute
+   * (`kinefx--gltfcharacterimport.txt:290-294`, `kinefx--motionclip.txt` "Frame Range"). A consumer
+   * that turns the wire into samples — a retarget — reads it instead of asking where the wire came from.
+   * Set by a clip's pose and by a base layer from its keys; a layer or override passes it through, as
+   * a detail attribute rides through SOPs. Absent on a pose with no range: a skeleton at rest, a sway.
+   */
+  readonly clip?: WireClipInfo;
+}
+
+/**
+ * #1225 — a wire's range and rate. `round((end - start) · rate)` samples cover `[start, end]`, both
+ * ends included: three's retarget rule (`SkeletonUtils.js:204,213-214`), under which a clip whose
+ * densest bone has n keys is sampled n times, landing on its keys.
+ */
+export interface WireClipInfo {
+  readonly start: number;
+  readonly end: number;
+  readonly rate: number;
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */

@@ -126,6 +126,8 @@ export const PoseOverrideNode: NodeDefinition<PoseOverrideParams, PosedSkeletonV
     return {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
+      // #1225 — the upstream motion's range rides through, as a detail attribute through a SOP.
+      ...(upstream.clip ? { clip: upstream.clip } : {}),
       sample: (seconds: number): readonly BonePose[] => {
         const base = upstream.sample(seconds);
         // Copy-on-write: only the overridden bone's entry is replaced, so every
