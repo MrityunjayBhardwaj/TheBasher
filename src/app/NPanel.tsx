@@ -91,6 +91,7 @@ import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
+import { renameBone, rigReach } from './animate/renameBone';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   boneMapView,
@@ -4052,6 +4053,95 @@ function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
   );
 }
 
+/**
+ * #1201 — the selected bone's name, editable where a rename can reach every record naming it (a native
+ * armature Object), as Blender's Bone properties name field is. Enter or leaving the field renames;
+ * Escape puts the name back. The rename is ONE undo step, and the selection follows the new name.
+ * What was refused, or left because rewriting it would change what another rig means, is said here.
+ */
+function BoneNameField({
+  nodeId,
+  boneName,
+  chain,
+}: {
+  nodeId: string;
+  boneName: string;
+  chain: readonly string[];
+}) {
+  const state = useDagStore((s) => s.state);
+  const renamable = useMemo(() => rigReach(state, nodeId) !== null, [state, nodeId]);
+  const [value, setValue] = useState(boneName);
+  const [notice, setNotice] = useState<string | null>(null);
+  useEffect(() => setValue(boneName), [boneName]);
+
+  if (!renamable) {
+    return (
+      <div
+        className="truncate font-mono text-[12px] text-accent"
+        data-testid="inspector-selected-bone-name"
+        title={boneName}
+      >
+        {boneName}
+      </div>
+    );
+  }
+
+  const commit = () => {
+    const result = renameBone(useDagStore.getState().state, nodeId, boneName, value.trim());
+    if (!result.ok) {
+      setNotice(result.reason);
+      setValue(boneName);
+      return;
+    }
+    const { name, left } = result.report;
+    if (result.ops.length > 0) {
+      useDagStore
+        .getState()
+        .dispatchAtomic([...result.ops], 'user', `rename bone ${boneName} → ${name}`);
+      useBoneSelectionStore.getState().selectBone(nodeId, name, [...chain.slice(0, -1), name]);
+    }
+    setValue(name);
+    setNotice(left.length > 0 ? left.map((l) => l.why).join('; ') : null);
+  };
+
+  return (
+    <>
+      <input
+        type="text"
+        value={value}
+        aria-label="Bone name"
+        data-testid="inspector-selected-bone-name"
+        title={boneName}
+        className="w-full rounded border border-transparent bg-transparent px-0 py-0 font-mono text-[12px] text-accent hover:border-border focus-visible:border-accent focus-visible:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={() => {
+          if (value !== boneName) commit();
+        }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            e.currentTarget.blur();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            setValue(boneName);
+            // The value is back, so the blur that follows renames nothing.
+            requestAnimationFrame(() => (e.target as HTMLInputElement).blur());
+          }
+          e.stopPropagation();
+        }}
+      />
+      {notice !== null ? (
+        <div
+          className="mt-1 font-mono text-[10px] text-warn"
+          data-testid="inspector-selected-bone-name-notice"
+        >
+          {notice}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
 function SelectedBoneSection() {
   const bone = useActiveBone();
   if (!bone) return null;
@@ -4072,13 +4162,7 @@ function SelectedBoneSection() {
           clear
         </button>
       </div>
-      <div
-        className="truncate font-mono text-[12px] text-accent"
-        data-testid="inspector-selected-bone-name"
-        title={bone.boneName}
-      >
-        {bone.boneName}
-      </div>
+      <BoneNameField nodeId={bone.nodeId} boneName={bone.boneName} chain={bone.chain} />
       {above.length > 0 ? (
         <div
           className="mt-0.5 break-words font-mono text-[10px] leading-tight text-fg/40"

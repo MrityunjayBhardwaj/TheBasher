@@ -90,12 +90,31 @@ export interface NativeSkeletons {
 export function nativeBoneNames(json: SkeletonGltfJson, boneNodes: readonly number[]): string[] {
   const taken = new Set<string>();
   return boneNodes.map((node) => {
-    const base = sanitizeBoneName(json.nodes[node].name || `Node_${node}`);
-    let name = base;
-    for (let n = 1; taken.has(name); n++) name = `${base}.${String(n).padStart(3, '0')}`;
+    const name = uniqueBoneName(sanitizeBoneName(json.nodes[node].name || `Node_${node}`), (n) =>
+      taken.has(n),
+    );
     taken.add(name);
     return name;
   });
+}
+
+/**
+ * `name`, or — when `taken` says another bone already has it — the next free `<base>.NNN`, as Blender
+ * spells a bone name (`BLI_uniquename_cb`, `blenlib/intern/string_utils.cc:421-456`): a trailing
+ * `.<digits>` is split off and counting resumes after it, so `Bone0` becomes `Bone0.001` and a taken
+ * `Bone0.005` becomes `Bone0.006`. An empty name is Blender's default, `Bone`. The one rule for the
+ * reader above and for a rename (#1201).
+ */
+export function uniqueBoneName(name: string, taken: (candidate: string) => boolean): string {
+  const wanted = name === '' ? 'Bone' : name;
+  if (!taken(wanted)) return wanted;
+  const suffix = /^(.*)\.(\d+)$/.exec(wanted);
+  const base = suffix ? suffix[1] : wanted;
+  let number = suffix ? Number(suffix[2]) : 0;
+  let candidate: string;
+  do candidate = `${base}.${String(++number).padStart(3, '0')}`;
+  while (taken(candidate));
+  return candidate;
 }
 
 /** The parent of each node, by the `children` lists. A node no one names is a root. */

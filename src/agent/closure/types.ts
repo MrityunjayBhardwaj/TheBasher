@@ -43,7 +43,13 @@ export type EdgeKind =
   // producer-side by socket name, so a writer that edits or rewires the layer chain under an
   // Object has that chain in scope. Stops at the pose's source (a clip or a retarget carries
   // no `pose` input), so it reaches layers and nothing past them.
-  | 'pose';
+  | 'pose'
+  // #1201 — a rig's bone names: from an armature Object, every node that can hold a name of its
+  // skeleton's bones (`rigReach` in src/app/animate/renameBone.ts — the one walk the rename itself
+  // rewrites through). A bone name is stored by value in records on BOTH sides of the armature Object
+  // (its skeleton and layers upstream; the Armature modifiers, their mesh data and the retarget bone
+  // maps downstream), which no single-direction kind reaches.
+  | 'rig';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */

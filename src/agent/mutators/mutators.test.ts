@@ -157,10 +157,12 @@ describe('mutator catalog', () => {
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`, a pose layer member's rotation mode.
-    expect(mutators).toHaveLength(31);
+    // 31 → 32 at #1201 — `animate.renameBone`.
+    expect(mutators).toHaveLength(32);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.poseBone',
+      'mutator.animate.renameBone',
       'mutator.animate.setPoseMemberMode',
       'mutator.animation.retarget',
       'mutator.camera.trajectory',
@@ -2306,7 +2308,8 @@ describe('agent.listMutators tool', () => {
     // 28 → 29 at #993 — `animate.poseBone`, for the mirror-image reason: a node type
     // the agent surface could not reach at all.
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`.
-    expect(parsed.mutators).toHaveLength(31);
+    // 31 → 32 at #1201 — `animate.renameBone`.
+    expect(parsed.mutators).toHaveLength(32);
   });
 });
 
@@ -3930,6 +3933,7 @@ import {
   cameraTrajectoryMutator as _cameraTrajM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
+  renameBoneMutator as _renameBoneM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4030,6 +4034,36 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       nodeType: 'PoseLayer',
       params: { members: [{ bone: 'Bone1', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
     }).next;
+  }
+
+  // #1201 — an armature Object standing the default 3-bone skeleton, posed through one layer that
+  // keys `torso`: the rename rewrites the skeleton and the layer.
+  function buildSceneForBoneRename(): DagState {
+    let s = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'br_skel',
+      nodeType: 'Skeleton',
+      params: {},
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'br_layer',
+      nodeType: 'PoseLayer',
+      params: { members: [{ bone: 'torso', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'br_arm', nodeType: 'Object', params: {} }).next;
+    for (const [from, fromSocket, to, toSocket] of [
+      ['br_skel', 'out', 'br_arm', 'data'],
+      ['br_skel', 'pose', 'br_layer', 'pose'],
+      ['br_layer', 'out', 'br_arm', 'pose'],
+    ] as const) {
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: from, socket: fromSocket },
+        to: { node: to, socket: toSocket },
+      }).next;
+    }
+    return s;
   }
 
   function buildSceneForPoseBone(): DagState {
@@ -4297,6 +4331,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,
       build: buildSceneForPoseLayer,
       spec: { layer: 'pl_layer', bone: 'Bone1', rotationMode: 'quaternion' },
+    },
+    'mutator.animate.renameBone': {
+      mutator: _renameBoneM as MutatorDefinition<unknown>,
+      build: buildSceneForBoneRename,
+      spec: { object: 'br_arm', bone: 'torso', name: 'spine' },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

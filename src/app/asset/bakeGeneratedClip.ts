@@ -137,7 +137,8 @@ export interface ClipBakeState {
 }
 
 /** The producer feeding this clip, when it is a node that generates one. */
-function producerOf(state: DagState, clipId: string): string | null {
+/** The generator a clip is cooked from, or null: a clip whose params (and rig) each cook rewrites. */
+export function producerOf(state: DagState, clipId: string): string | null {
   const producerId = edgeTarget(state.nodes[clipId], 'source');
   if (!producerId) return null;
   return state.nodes[producerId]?.type === 'MotionGenerate' ? producerId : null;

@@ -60,7 +60,7 @@ test('#1244 — the pose row poses a native bone, and the drawn skin holds it', 
     return id;
   });
 
-  await expect(page.getByTestId('inspector-selected-bone-name')).toHaveText('Bone1');
+  await expect(page.getByTestId('inspector-selected-bone-name')).toHaveValue('Bone1');
   await page.getByTestId('inspector-bone-pose-add').click();
   const z = page.getByTestId('inspector-bone-pose-rotation-z');
   await expect(z).toBeVisible();

@@ -56,6 +56,7 @@ import { setTrackStateMutator } from './builders/setTrackState';
 import { setComponentScopeMutator } from './builders/setComponentScope';
 import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
+import { renameBoneMutator } from './builders/renameBone';
 
 export {
   rotateMutator,
@@ -89,6 +90,7 @@ export {
   setComponentScopeMutator,
   poseBoneMutator,
   setPoseMemberModeMutator,
+  renameBoneMutator,
 };
 
 export function registerAllMutators(): void {
@@ -173,4 +175,6 @@ export function registerAllMutators(): void {
   registerMutator(poseBoneMutator);
   // #1242 — a pose layer member's rotation mode, converted or resampled.
   registerMutator(setPoseMemberModeMutator);
+  // #1201 — rename a bone, and every record that names it.
+  registerMutator(renameBoneMutator);
 }

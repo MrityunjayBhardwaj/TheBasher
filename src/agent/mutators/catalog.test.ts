@@ -49,8 +49,13 @@ describe('mutator catalog — PICKER/DETAIL split (#332)', () => {
     // descriptions, or re-adding pretty-print fails HERE, loudly, instead of
     // silently re-inflating every agent turn. 8 KB leaves headroom for a few
     // new mutators; still ~70% under the 26 KB it replaced.
+    // RAISED 8192 → 9216 at #1201 (2026-09-25): measured 8,190 B with 31 mutators — two bytes of
+    // headroom, so no new mutator of any size could fit — and 8,346 B with `animate.renameBone` (a
+    // 155 B entry, first sentence + specExample only). 9 KB is still ~65% under the 26 KB it replaced;
+    // what the pin guards against (the contract or full descriptions back in, pretty-print) each add
+    // kilobytes and still fail here.
     const payload = listMutatorsTool.handler({}, ctx()).text;
-    expect(payload.length).toBeLessThan(8192);
+    expect(payload.length).toBeLessThan(9216);
   });
 
   it('every summary is a genuine prefix of its description — DERIVED, never authored', () => {

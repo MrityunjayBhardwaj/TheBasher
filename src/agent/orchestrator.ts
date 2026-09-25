@@ -1153,6 +1153,8 @@ const KNOWN_EDGE_KINDS_LIST = [
   'id-ref',
   // #1244 — the pose wire under an armature Object (its `pose` input and each layer's).
   'pose',
+  // #1201 — the records holding a rig's bone names, on both sides of its armature Object.
+  'rig',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind
