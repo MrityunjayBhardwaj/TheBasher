@@ -291,7 +291,8 @@ export function renameBone(
     if (!map) continue;
     const readers = retargets.filter((r) => edgeTarget(r, 'boneMap') === mapId);
     const asTarget = readers.map((r) => edgeTarget(r, 'skeleton') === skeletonId);
-    const asSource = readers.map((r) => sourceSkeletonOf(state, r.id) === skeletonId);
+    const sources = readers.map((r) => sourceSkeletonOf(state, r.id));
+    const asSource = sources.map((id) => id === skeletonId);
     // Which entries name the bone is the retarget's own question (`resolveBoneNames`: the exact name,
     // else the one bone sharing its separator-free spelling), asked of the bones before the rename — an
     // exact-match test here would leave a `mixamorigHips` naming a bone that is gone.
@@ -301,6 +302,14 @@ export function renameBone(
     const isOldKey = (from: string) => (resolvedKeys[from] ?? from) === oldName;
     const valueNames = Object.values(map).some(isOldValue) && asTarget.some(Boolean);
     const keyNames = Object.keys(map).some(isOldKey) && asSource.some(Boolean);
+    // #1253 — a key naming the bone, read by a retarget whose source rig the graph does not say: it may
+    // mean this rig's bone or another's. Not guessed, and not silent either.
+    if (!keyNames && Object.keys(map).some(isOldKey) && sources.some((id) => id === null)) {
+      left.push({
+        node: mapId,
+        why: `its bone map has an entry for “${oldName}” read from a motion whose rig cannot be told from the graph, so it was left`,
+      });
+    }
     if (!valueNames && !keyNames) continue;
     const values = valueNames && asTarget.every(Boolean);
     const keys = keyNames && asSource.every(Boolean) && !(name in map);

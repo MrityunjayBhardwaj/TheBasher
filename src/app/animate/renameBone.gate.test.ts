@@ -330,6 +330,41 @@ describe('#1201 — a bone map follows on the side this rig stands on', () => {
     expect(report.left.map((l) => l.node)).toEqual(['m']);
   });
 
+  it('#1253 — a key naming the bone, read from a motion whose rig cannot be told, is left and said', async () => {
+    const bar = await importBar();
+    const state = apply(bar.state, [
+      { type: 'addNode', nodeId: 'other', nodeType: 'Skeleton', params: {} } as Op,
+      // A clip with no rig edge: which rig its pose wire carries is not in the graph.
+      { type: 'addNode', nodeId: 'clip', nodeType: 'AnimationClip', params: {} } as Op,
+      {
+        type: 'addNode',
+        nodeId: 'm',
+        nodeType: 'BoneNameMap',
+        params: { map: { Bone1: 'torso' } },
+      } as Op,
+      { type: 'addNode', nodeId: 'rt', nodeType: 'RetargetClip', params: {} } as Op,
+      {
+        type: 'connect',
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: 'rt', socket: 'source' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'other', socket: 'out' },
+        to: { node: 'rt', socket: 'skeleton' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'm', socket: 'out' },
+        to: { node: 'rt', socket: 'boneMap' },
+      },
+    ]);
+    const { state: after, report } = renamed(state, bar.armature, 'Bone1', 'Renamed');
+    // Not guessed: the key stays.
+    expect(mapOf(after, 'm')).toEqual({ Bone1: 'torso' });
+    expect(report.left).toEqual([{ node: 'm', why: expect.stringMatching(/cannot be told/) }]);
+  });
+
   it('a map that does not name the bone is not touched', async () => {
     const r = await withRetargets([{ source: 'other', target: 'bar', map: 'm' }], {
       m: { root: 'Bone0' },
