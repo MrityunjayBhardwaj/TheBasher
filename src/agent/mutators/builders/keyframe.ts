@@ -32,7 +32,6 @@ import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
-  channelViewAfterMint,
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
@@ -148,7 +147,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     // The channel's TYPE, read through the mint: on the bone road the node is
     // not in state yet, and the value-shape gate still has to run against the
     // type it is ABOUT to have.
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
@@ -169,7 +168,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     type Key = {
       time: number;
@@ -242,14 +241,6 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
       }
     }
 
-    return [
-      ...resolved.mintOps,
-      {
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'keyframes',
-        value: next,
-      },
-    ];
+    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
   },
 };

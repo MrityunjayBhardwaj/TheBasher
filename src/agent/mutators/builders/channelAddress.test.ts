@@ -287,7 +287,12 @@ describe('the agent surface says so', () => {
         ['addChannelModifier', addChannelModifierMutator],
       ] as const
     )
-      .filter(([, m]) => !m.description.includes('is REFUSED for a'))
+      .filter(
+        ([, m]) =>
+          !m.description.includes('is REFUSED for a') ||
+          // #1215 — and the layer form, a bone's keys where they live.
+          !m.description.includes('`layer` = {layerId, bone, component}'),
+      )
       .map(([n]) => n);
     // Named, not counted — a count says how many drifted, never which.
     expect(silent).toEqual([]);

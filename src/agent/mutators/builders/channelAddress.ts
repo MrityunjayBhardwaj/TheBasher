@@ -62,6 +62,13 @@ import type { NodeId, Op } from '../../../core/dag/types';
 import { gltfChannelDagId, gltfChildDagId } from '../../../core/import/gltfImportChain';
 import { ensureChannelForBone } from '../../../app/animate/ensureChannelForBone';
 import { BAKED_COMPONENTS, type BakedComponent } from './bakeChannelOps';
+import {
+  PoseLayerChannelSchema,
+  poseLayerChannelOf,
+  type PoseLayerChannel,
+  type PoseLayerMember,
+  type PoseLayerParams,
+} from '../../../nodes/PoseLayer';
 
 /**
  * The agent-facing address contract, WORD FOR WORD, for every authoring mutator's
@@ -77,20 +84,21 @@ import { BAKED_COMPONENTS, type BakedComponent } from './bakeChannelOps';
  * still works, typechecking still passes, and only the caller is misinformed.
  */
 export const CHANNEL_ADDRESS_DOC =
-  'Address the channel EITHER by `channelId` (one that already exists and is NOT a ' +
-  'glTF bone\u2019s) OR by `bone` = {assetRef, childName, component} for a glTF bone, ' +
-  'which mints that bone\u2019s channel, seeded from the clip, when it has none yet. ' +
-  'Exactly one of the two. A bone MUST use the bone form: `channelId` is REFUSED for a ' +
-  'bone\u2019s channel even when that channel already exists, because an id can only name ' +
-  'something that exists and under copy-on-write most bones have no channel.';
+  'Address the channel by exactly one of: `channelId` (one that already exists and is NOT a ' +
+  'glTF bone\u2019s); `layer` = {layerId, bone, component} for a bone\u2019s keys in a ' +
+  'PoseLayer (component position|rotation|quaternion|scale|weight; the curve and the bone\u2019s ' +
+  'membership are created when absent); or `bone` = {assetRef, childName, component} for a ' +
+  'clone-road glTF bone, which mints that bone\u2019s channel, seeded from the clip. A clone-road ' +
+  'bone MUST use the bone form: `channelId` is REFUSED for a bone\u2019s channel.';
 
 /** The same contract for a SUBTRACTIVE op, which addresses without ever minting. */
 export const CHANNEL_ADDRESS_DOC_NO_MINT =
-  'Address the channel EITHER by `channelId` (one that already exists and is NOT a ' +
-  'glTF bone\u2019s) OR by `bone` = {assetRef, childName, component} for a glTF bone. ' +
-  'Exactly one of the two, and a bone MUST use the bone form \u2014 `channelId` is REFUSED ' +
-  'for a bone\u2019s channel. The bone form never mints: a bone with no channel follows the ' +
-  'clip and has no edit to remove, so it is refused rather than handed an empty channel.';
+  'Address the channel by exactly one of: `channelId` (one that already exists and is NOT a ' +
+  'glTF bone\u2019s); `layer` = {layerId, bone, component} for a bone\u2019s keys in a ' +
+  'PoseLayer (removing its last key removes the curve, as Blender does); or `bone` = ' +
+  '{assetRef, childName, component} for a clone-road glTF bone, which never mints: a bone ' +
+  'with no channel follows the clip and has no edit to remove. `channelId` is REFUSED for a ' +
+  'clone-road bone\u2019s channel.';
 
 /** The bone form: the parts a channel id is hashed FROM, so both the bone's id
  *  and the channel's id are pure functions of the spec. */
@@ -101,18 +109,40 @@ export const BoneChannelAddress = z.object({
 });
 export type BoneChannelAddress = z.infer<typeof BoneChannelAddress>;
 
+/**
+ * #1215 — the layer form: a bone's keys where they live, inside a `PoseLayer` (design D-A, K2). The
+ * channel is found by its `bone` and `component` FIELDS, never by a path (bone names keep Blender's
+ * spelling, dots included), and a write rewrites the layer's whole channel list.
+ */
+export const LAYER_CHANNEL_COMPONENTS = [
+  'position',
+  'rotation',
+  'quaternion',
+  'scale',
+  'weight',
+] as const satisfies readonly PoseLayerChannel['component'][];
+export const LayerChannelAddress = z.object({
+  layerId: z.string().min(1),
+  /** The bone, in the skeleton's spelling. Unused for `weight`. */
+  bone: z.string().default(''),
+  component: z.enum(LAYER_CHANNEL_COMPONENTS),
+});
+export type LayerChannelAddress = z.infer<typeof LayerChannelAddress>;
+
 /** Spread into an authoring spec's `z.object({...})`. Pair with
  *  `superRefineChannelAddress` — the fields are optional individually and the
  *  XOR is what makes exactly one of them mandatory. */
 export const CHANNEL_ADDRESS_FIELDS = {
   channelId: z.string().min(1).optional(),
   bone: BoneChannelAddress.optional(),
+  layer: LayerChannelAddress.optional(),
 };
 
 /** The addressed part of any authoring spec. */
 export interface ChannelAddressed {
   readonly channelId?: string;
   readonly bone?: BoneChannelAddress;
+  readonly layer?: LayerChannelAddress;
 }
 
 /**
@@ -123,14 +153,17 @@ export interface ChannelAddressed {
  * so at the schema keeps every mutator's `preconditions` free of the question.
  */
 export function superRefineChannelAddress(spec: ChannelAddressed, ctx: z.RefinementCtx): void {
-  const has = (spec.channelId !== undefined ? 1 : 0) + (spec.bone !== undefined ? 1 : 0);
+  const has =
+    (spec.channelId !== undefined ? 1 : 0) +
+    (spec.bone !== undefined ? 1 : 0) +
+    (spec.layer !== undefined ? 1 : 0);
   if (has === 1) return;
   ctx.addIssue({
     code: z.ZodIssueCode.custom,
     message:
       has === 0
-        ? 'provide exactly one of `channelId` or `bone` ({assetRef, childName, component}).'
-        : 'provide `channelId` OR `bone`, not both — they name the same thing two ways.',
+        ? 'provide exactly one of `channelId`, `layer` ({layerId, bone, component}) or `bone` ({assetRef, childName, component}).'
+        : 'provide ONE of `channelId`, `layer` or `bone` — two of them name the same thing two ways.',
   });
 }
 
@@ -145,6 +178,7 @@ export function superRefineChannelAddress(spec: ChannelAddressed, ctx: z.Refinem
  * already-minted case take the same road.
  */
 export function channelRootSelectors(spec: ChannelAddressed): NodeId[] {
+  if (spec.layer) return [spec.layer.layerId];
   if (spec.bone) {
     const { assetRef, childName, component } = spec.bone;
     return [gltfChildDagId(assetRef, childName), gltfChannelDagId(assetRef, childName, component)];
@@ -152,11 +186,128 @@ export function channelRootSelectors(spec: ChannelAddressed): NodeId[] {
   return spec.channelId ? [spec.channelId] : [];
 }
 
-/** What the address resolved to. `mintOps` is empty whenever the channel was
- *  already there — the caller prepends it either way and never branches. */
+/** A channel's type and params as a channel node would carry them: what a tool reads before it
+ *  writes. */
+export interface ChannelView {
+  readonly type: string;
+  readonly params: Record<string, unknown>;
+}
+
+/**
+ * What the address resolved to. `mintOps` is empty whenever the channel was already there — the
+ * caller prepends it either way and never branches. `view` is the channel as it will be once the
+ * mint lands; `write` turns field changes into the ops that make them wherever the channel LIVES
+ * (its own node, or its entry in a layer's list). `channelId` names it in a reason.
+ */
 export type ResolvedChannel =
-  | { readonly ok: true; readonly channelId: string; readonly mintOps: readonly Op[] }
+  | {
+      readonly ok: true;
+      readonly channelId: string;
+      readonly mintOps: readonly Op[];
+      readonly view: ChannelView;
+      readonly write: (fields: Readonly<Record<string, unknown>>) => Op[];
+    }
   | { readonly ok: false; readonly reason: string };
+
+/** The channel node type a layer channel's component is sampled as. */
+const LAYER_CHANNEL_TYPE: Record<LayerChannelAddress['component'], string> = {
+  position: 'KeyframeChannelVec3',
+  rotation: 'KeyframeChannelVec3',
+  scale: 'KeyframeChannelVec3',
+  quaternion: 'KeyframeChannelQuat',
+  weight: 'KeyframeChannelNumber',
+};
+
+/** A write to a channel node: one setParam per field. */
+function nodeWrite(channelId: string) {
+  return (fields: Readonly<Record<string, unknown>>): Op[] =>
+    Object.entries(fields).map(([paramPath, value]) => ({
+      type: 'setParam' as const,
+      nodeId: channelId,
+      paramPath,
+      value,
+    }));
+}
+
+/**
+ * #1215 — a bone's channel inside a pose layer. Keying a curve that is not there creates it (and the
+ * bone's membership, in the mode the component implies), as Blender's key insert creates an F-curve
+ * in the action; a curve left with no keys is removed, as Blender's key delete removes an emptied
+ * F-curve. A rotation curve must be the member's mode's: the layer would ignore the other one.
+ */
+function resolveLayerChannel(
+  state: DagState,
+  address: LayerChannelAddress,
+  mint: boolean,
+): ResolvedChannel {
+  const { layerId, component } = address;
+  const bone = component === 'weight' ? '' : address.bone;
+  const node = state.nodes[layerId];
+  if (!node || node.type !== 'PoseLayer') {
+    return { ok: false, reason: `"${layerId}" is not a pose layer.` };
+  }
+  const label = component === 'weight' ? `${layerId} weight` : `${layerId} ${bone} ${component}`;
+  const params = node.params as PoseLayerParams;
+  const members = params.members ?? [];
+  const channels = params.channels ?? [];
+  let member: PoseLayerMember | undefined;
+  if (component !== 'weight') {
+    if (bone.length === 0) return { ok: false, reason: `name the bone whose ${component} to key.` };
+    member = members.find((m) => m.bone === bone);
+    const mode = member?.rotationMode;
+    if (member && component === 'rotation' && mode === 'quaternion') {
+      return {
+        ok: false,
+        reason: `"${bone}" is keyed as a quaternion in "${layerId}": address component "quaternion".`,
+      };
+    }
+    if (member && component === 'quaternion' && mode !== 'quaternion') {
+      return {
+        ok: false,
+        reason: `"${bone}" is keyed in ${mode} euler in "${layerId}": address component "rotation".`,
+      };
+    }
+  }
+  const existing = poseLayerChannelOf(channels, bone, component);
+  if (!existing && !mint) {
+    return { ok: false, reason: `${label} has no keys; there is nothing to remove.` };
+  }
+  const entry: PoseLayerChannel =
+    existing ?? PoseLayerChannelSchema.parse({ bone, component, keyframes: [] });
+  const spec: Record<string, unknown> = { ...entry };
+  delete spec.bone;
+  delete spec.component;
+  const addMember: PoseLayerMember | null =
+    component !== 'weight' && !member
+      ? { bone, rotationMode: component === 'quaternion' ? 'quaternion' : 'XYZ' }
+      : null;
+  return {
+    ok: true,
+    channelId: label,
+    mintOps: [],
+    view: { type: LAYER_CHANNEL_TYPE[component], params: spec },
+    write: (fields) => {
+      const next = PoseLayerChannelSchema.parse({ ...entry, ...fields, bone, component });
+      const emptied = Array.isArray(next.keyframes) && next.keyframes.length === 0;
+      const at = existing ? channels.indexOf(existing) : -1;
+      const list = [...channels];
+      if (at >= 0) {
+        if (emptied) list.splice(at, 1);
+        else list[at] = next;
+      } else if (!emptied) list.push(next);
+      const ops: Op[] = [{ type: 'setParam', nodeId: layerId, paramPath: 'channels', value: list }];
+      if (addMember && !emptied) {
+        ops.push({
+          type: 'setParam',
+          nodeId: layerId,
+          paramPath: 'members',
+          value: [...members, addMember],
+        });
+      }
+      return ops;
+    },
+  };
+}
 
 /**
  * Resolve an address to the channel id the ops will write to, minting the
@@ -171,6 +322,7 @@ export function resolveChannelAddress(
   spec: ChannelAddressed,
   opts: { readonly mint: boolean },
 ): ResolvedChannel {
+  if (spec.layer) return resolveLayerChannel(state, spec.layer, opts.mint);
   if (spec.bone) {
     const { assetRef, childName, component } = spec.bone;
     const boneId = gltfChildDagId(assetRef, childName);
@@ -178,7 +330,7 @@ export function resolveChannelAddress(
       return { ok: false, reason: `bone "${childName}" is not a child of asset "${assetRef}".` };
     }
     const channelId = gltfChannelDagId(assetRef, childName, component);
-    if (state.nodes[channelId]) return { ok: true, channelId, mintOps: [] };
+    if (state.nodes[channelId]) return resolvedNode(state, channelId, []);
     if (!opts.mint) {
       // The reason names the STATE, not the missing node. Under copy-on-write
       // "no channel" is the normal, healthy condition of every bone nobody has
@@ -193,14 +345,14 @@ export function resolveChannelAddress(
     if (!ensured) {
       return { ok: false, reason: `node "${boneId}" is not a glTF bone.` };
     }
-    return { ok: true, channelId: ensured.channelId, mintOps: ensured.ops };
+    return resolvedNode(state, ensured.channelId, ensured.ops);
   }
 
   const channelId = spec.channelId;
   if (channelId === undefined) {
     // Unreachable through the schema (the XOR above). Stated rather than
     // asserted so a direct caller that skipped `safeParse` gets a reason.
-    return { ok: false, reason: 'no channel address: provide `channelId` or `bone`.' };
+    return { ok: false, reason: 'no channel address: provide `channelId`, `layer` or `bone`.' };
   }
   const node = state.nodes[channelId];
   if (!node) {
@@ -216,7 +368,13 @@ export function resolveChannelAddress(
         'name a channel that already exists, and under copy-on-write most bones have none.',
     };
   }
-  return { ok: true, channelId, mintOps: [] };
+  return resolvedNode(state, channelId, []);
+}
+
+function resolvedNode(state: DagState, channelId: string, mintOps: readonly Op[]): ResolvedChannel {
+  const view = channelViewAfterMint(state, channelId, mintOps);
+  if (!view) return { ok: false, reason: `channel "${channelId}" could not be resolved.` };
+  return { ok: true, channelId, mintOps, view, write: nodeWrite(channelId) };
 }
 
 /**
