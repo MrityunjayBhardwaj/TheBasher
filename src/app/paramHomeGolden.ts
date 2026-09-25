@@ -229,7 +229,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // #1240 — the pose layer that absorbs PoseOverride. No `home` declared, for PoseOverride's
   // reason: the params are the layer itself. Its controls arrive with the writers (#1244).
   PoseLayer:
-    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) members=(unrouted) channels=(unrouted)',
+    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted)',
   PoseOverride:
     '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
@@ -379,4 +379,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // from the constant as committed (237 — one more than the trail above ends on; that gap predates
 // this arrival and is not resolved here):
 //   types 89 + 1 = 90 · routed 144 · unrouted 237 + 6 = 243
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 243 } as const;
+//
+// #1241 appends `PoseLayer.solo`, unrouted (see its row): +1 unrouted.
+//   types 90 · routed 144 · unrouted 243 + 1 = 244
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 244 } as const;

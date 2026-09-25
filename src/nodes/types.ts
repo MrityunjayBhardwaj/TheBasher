@@ -1615,6 +1615,14 @@ export interface PosedSkeletonValue {
    * Caller owns invocation cadence, exactly as with `TransformClipValue.sample`.
    */
   readonly sample: (seconds: number) => readonly BonePose[];
+  /**
+   * #1241 — the pose this one's layers started from: set by the first `PoseLayer` on a wire and
+   * carried by every layer after it; absent on a source (a clip, a retarget). What a soloed layer
+   * applies onto, so solo needs no node to look across the graph.
+   */
+  readonly source?: PosedSkeletonValue;
+  /** #1241 — a soloed layer is at or above this point: layers that are not soloed pass it by. */
+  readonly soloed?: boolean;
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */

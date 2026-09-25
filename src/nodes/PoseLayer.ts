@@ -130,6 +130,11 @@ export const PoseLayerParams = z.object({
   mode: z.enum(POSE_LAYER_MODES).default('override'),
   weight: z.number().min(0).max(1).default(1),
   mute: z.boolean().default(false),
+  /**
+   * #1241 — play this layer alone over the source pose, as an APEX layer solos: every layer that is
+   * not soloed is silent while one is. Several soloed layers play together, in chain order.
+   */
+  solo: z.boolean().default(false),
   members: z.array(PoseLayerMemberSchema).default([]),
   channels: z.array(PoseLayerChannelSchema).default([]),
 });
@@ -277,11 +282,31 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
   outputs: { out: { type: 'PosedSkeleton', cardinality: 'single' } },
   inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs): PosedSkeletonValue {
-    const upstream = inputs.pose as PosedSkeletonValue | undefined;
-    if (!upstream) return EMPTY_POSE;
-    // Muted, or touching nothing: hand the incoming pose back BY REFERENCE, so a layer that does
-    // nothing cannot perturb a downstream identity check and costs nothing to leave in a graph.
-    if (params.mute || params.members.length === 0) return upstream;
+    const incoming = inputs.pose as PosedSkeletonValue | undefined;
+    if (!incoming) return EMPTY_POSE;
+    // Muted, touching nothing, or silenced by a soloed layer below: hand the incoming pose back BY
+    // REFERENCE, so a layer that does nothing cannot perturb a downstream identity check and costs
+    // nothing to leave in a graph.
+    if (params.mute) return incoming;
+    if (incoming.soloed === true && !params.solo) return incoming;
+
+    // #1241 — the pose the chain's layers started from, carried on the wire. A soloed layer applies
+    // onto it, unless a soloed layer below already did (then it builds on that one, so two soloed
+    // layers play together).
+    const source = incoming.source ?? incoming;
+    const upstream = params.solo && incoming.soloed !== true ? source : incoming;
+    if (params.members.length === 0) {
+      // Touching nothing. Soloed, it still silences every other layer: the source plays alone.
+      return upstream === incoming
+        ? incoming
+        : {
+            kind: 'PosedSkeleton',
+            skeleton: source.skeleton,
+            sample: source.sample,
+            source,
+            soloed: true,
+          };
+    }
 
     const blend = BLEND[params.mode];
     let built: { members: ResolvedMember[]; weight: (seconds: number) => number } | null = null;
@@ -300,6 +325,8 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
     return {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
+      source,
+      ...(params.solo || incoming.soloed === true ? { soloed: true } : {}),
       sample: (seconds: number): readonly BonePose[] => {
         const base = upstream.sample(seconds);
         const { members, weight } = build();

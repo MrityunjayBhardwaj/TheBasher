@@ -390,3 +390,50 @@ describe('#1240 — a pose layer edits the character', () => {
     expect(objectPose(state, rig.armatureId, 0.5)).toHaveLength(2);
   });
 });
+
+/** Two layers stacked between the clip and the Object: `lower` reads the clip, `upper` feeds the Object. */
+function withTwoLayers(rig: Rig, lower: Partial<PoseLayerParams>, upper: Partial<PoseLayerParams>) {
+  let s = withLayer(rig, lower, 'lower');
+  s = applyOp(s, { type: 'addNode', nodeId: 'upper', nodeType: 'PoseLayer', params: upper }).next;
+  s = applyOp(s, {
+    type: 'connect',
+    from: { node: 'lower', socket: 'out' },
+    to: { node: 'upper', socket: 'pose' },
+  }).next;
+  return applyOp(s, {
+    type: 'connect',
+    from: { node: 'upper', socket: 'out' },
+    to: { node: rig.armatureId, socket: 'pose' },
+    replace: true,
+  }).next;
+}
+
+describe('#1241 — a soloed layer plays alone over the source', () => {
+  const add = (degrees: number, solo = false): Partial<PoseLayerParams> => ({
+    mode: 'additive',
+    solo,
+    members: [{ bone: 'Bone1', rotationMode: 'XYZ', rotation: [0, 0, degrees] }],
+  });
+  const turned = async (lower: Partial<PoseLayerParams>, upper: Partial<PoseLayerParams>) => {
+    const rig = await bar();
+    const state = withTwoLayers(rig, lower, upper);
+    const own = objectPose(rig.state, rig.armatureId, 0.5)[1].quaternion;
+    return angleDeg(own, objectPose(state, rig.armatureId, 0.5)[1].quaternion);
+  };
+
+  it('with no solo, both layers fold', async () => {
+    expect(await turned(add(30), add(20))).toBeCloseTo(50, 6);
+  });
+  it('the lower one soloed: the upper is silent', async () => {
+    expect(await turned(add(30, true), add(20))).toBeCloseTo(30, 6);
+  });
+  it('the upper one soloed: the lower is skipped', async () => {
+    expect(await turned(add(30), add(20, true))).toBeCloseTo(20, 6);
+  });
+  it('both soloed: both play', async () => {
+    expect(await turned(add(30, true), add(20, true))).toBeCloseTo(50, 6);
+  });
+  it('an empty soloed layer silences the rest: the source plays alone', async () => {
+    expect(await turned(add(30), { solo: true, members: [] })).toBeCloseTo(0, 6);
+  });
+});
