@@ -28,6 +28,7 @@
 //      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889.
 
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
+import { poseLayerChain } from './poseChain';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { retargetClipParamsFromNodes } from './retargetFromNodes';
 
@@ -199,8 +200,10 @@ export interface DrivenCharacter {
  * #1213 — every character a clip drives, on both roads, in one answer.
  *
  * Clone road: the `GltfSkeleton`s {@link riggedSkeletonsForClip} finds, with no Object. Native: every
- * armature Object whose `pose` edge is a `RetargetClip` reading this clip — the bind's own edge,
- * since the Object's pose is the one thing that poses a native rig (#1224). The motion's own rig is
+ * armature Object whose pose chain's SOURCE is a `RetargetClip` reading this clip — the bind's own
+ * edge, since the Object's pose is the one thing that poses a native rig (#1224). Found through the
+ * one chain walk, `poseLayerChain`: pose layers sit between the Object and the retarget (a hand-pose,
+ * #1244; the base layer, #1211), so reading the Object's edge one hop missed them (#1246). The motion's own rig is
  * posed by the clip itself, not a retarget of it, so it is not a character here. #1053 deletes the
  * clone half. Sorted by the node that IS the character (V22).
  */
@@ -215,8 +218,8 @@ export function charactersDrivenByClip(
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
     if (n.type !== 'Object') continue;
-    const poseFrom = edgeTarget(n, 'pose');
-    const producer = poseFrom ? nodes[poseFrom] : undefined;
+    const source = poseLayerChain(nodes, id).source;
+    const producer = source ? nodes[source.node] : undefined;
     if (producer?.type !== 'RetargetClip' || edgeTarget(producer, 'sourceClip') !== clipId)
       continue;
     const skeletonId = edgeTarget(n, 'data');
