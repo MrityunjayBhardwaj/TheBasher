@@ -56,6 +56,7 @@ function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
     bones,
     sceneNodeId,
     normalise: false,
+    name: 'wave',
   });
   return apply(s, inScene ? ops : ops.slice(0, 2));
 }

@@ -64,6 +64,8 @@ import { keyParamFromTransient } from './animate/autoKeyCommit';
 import { historyUndo, historyRedo } from './history';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolvedQuaternionOf } from './resolvedRotation';
+import type { RotationModeFields } from '../nodes/types';
 import { getActiveCurvePoint } from './curvePointSelection';
 import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curvePointCommands';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
@@ -541,9 +543,17 @@ export function KeyboardShortcuts() {
             // overlays any transient) when available, else the authored param.
             // keyParamFromTransient additionally prefers the transient, so a held
             // edit is captured; an un-edited band keys the current pose (LocRotScale).
-            const bands: Array<['position' | 'rotation' | 'scale', unknown]> = [
+            // #1153 — a quaternion-mode node keys its quaternion (the orientation shown), so
+            // the key lands on the channel that drives it; an euler node keys `rotation` as ever.
+            const staticQuat = resolvedQuaternionOf(params as RotationModeFields);
+            const rotationBand: ['rotation' | 'quaternion', unknown] = (
+              evalT ? evalT.quaternion : staticQuat
+            )
+              ? ['quaternion', evalT ? evalT.quaternion : staticQuat]
+              : ['rotation', evalT?.rotation ?? params.rotation];
+            const bands: Array<['position' | 'rotation' | 'quaternion' | 'scale', unknown]> = [
               ['position', evalT?.position ?? params.position],
-              ['rotation', evalT?.rotation ?? params.rotation],
+              rotationBand,
               ['scale', evalT?.scale ?? params.scale],
             ];
             for (const [band, v] of bands) {

@@ -96,11 +96,13 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
   name: 'motion.generate',
   description:
     'Generate an animation clip from a text description. Returns an Op[] that adds ' +
-    'a MotionGenerate producer feeding a Skeleton + AnimationClip wired to the ' +
-    'project TimeSource — the same three nodes a director gets. The clip itself is ' +
+    'a MotionGenerate producer feeding a Skeleton + AnimationClip, and an Object that ' +
+    'stands the Skeleton in the scene so the motion can be seen — the same nodes a ' +
+    'director gets. The clip itself is ' +
     'an ordinary AnimationClip carrying no mark of having been generated, so every ' +
     'road open to an imported clip is open to this one: retarget it with ' +
-    'mutator.animation.retarget. The producer keeps the prompt and seed, so the ' +
+    'mutator.animation.retarget, which hides that Object once a character plays the ' +
+    'clip. The producer keeps the prompt and seed, so the ' +
     'clip can be re-generated later without retyping them. The checkpoint is ' +
     'configured in Settings, not chosen per call.',
   paramSchema: motionGenerateSchema,
@@ -197,12 +199,22 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       // on a server hiccup takes the prompt and the seed with it, and re-cooking a
       // node that is already there beats retyping a sentence. The text says the
       // clip is empty so the model does not report success.
+      //
+      // #1104 — the mint includes the Object standing the skeleton in the scene, so
+      // the text names it here too, as the success text does. A model planning its
+      // next step from this text (tidying up, or describing the scene) would
+      // otherwise not know it had added one.
       return {
         ops: mint.ops,
         text:
           `Added a motion generator for "${subject}" (${ctx.motionModel}), but it ` +
           `produced no clip — AnimationClip ${mint.clipId} is still empty` +
           (refusal !== undefined ? `: ${refusal}` : '.') +
+          (mint.objectId !== undefined
+            ? ` Object ${mint.objectId} was added to stand the skeleton in the scene; it ` +
+              `draws nothing until the generator is re-cooked, because the skeleton has ` +
+              `no bones yet.`
+            : '') +
           ` The generator keeps the prompt and seed, so once the cause is fixed it ` +
           `can be re-cooked from its inspector card rather than asked for again.` +
           owed,
@@ -214,7 +226,11 @@ export const motionGenerateTool: ToolDefinition<MotionGenerateArgs> = {
       text:
         `Generated "${subject}" with ${ctx.motionModel} — MotionGenerate ` +
         `${mint.producerId} feeding Skeleton ${mint.skeletonId} and AnimationClip ` +
-        `${mint.clipId}. The clip is ordinary, with nothing in the graph marking it ` +
+        `${mint.clipId}` +
+        (mint.objectId !== undefined
+          ? `, with Object ${mint.objectId} standing the skeleton in the scene`
+          : '') +
+        `. The clip is ordinary, with nothing in the graph marking it ` +
         `as generated: retarget it onto a character with mutator.animation.retarget. ` +
         `The producer keeps the prompt and seed, so moving a curve control point and ` +
         `re-cooking regenerates it.` +

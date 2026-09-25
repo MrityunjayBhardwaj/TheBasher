@@ -129,15 +129,26 @@ function productionSources(dir = 'src'): readonly string[] {
   return out;
 }
 
-/** The declared field names of an interface, read off the type declaration itself. */
+/**
+ * The declared field names of an interface, read off the type declaration itself — its own,
+ * then those of any interface it `extends` in the same file (#1153: the rotation-mode fields
+ * are inherited, and a census that skipped them would call the list complete when it is not).
+ */
 function fieldsOf(file: string, interfaceName: string): readonly string[] {
   const src = readFileSync(file, 'utf8');
-  const start = src.indexOf(`export interface ${interfaceName} {`);
-  if (start < 0) throw new Error(`${interfaceName} not found in ${file}`);
+  const header = new RegExp(`export interface ${interfaceName}(?: extends ([A-Za-z0-9_, ]+))? \\{`);
+  const found = header.exec(src);
+  if (!found) throw new Error(`${interfaceName} not found in ${file}`);
+  const start = found.index;
   const end = src.indexOf('\n}', start);
-  return [...src.slice(start, end).matchAll(/^\s*readonly\s+([A-Za-z0-9_]+)\??:/gm)].map(
+  const own = [...src.slice(start, end).matchAll(/^\s*readonly\s+([A-Za-z0-9_]+)\??:/gm)].map(
     (m) => m[1],
   );
+  const parents = (found[1] ?? '')
+    .split(',')
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return [...own, ...parents.flatMap((p) => fieldsOf(file, p))];
 }
 
 beforeEach(() => {
@@ -331,6 +342,8 @@ describe('#645 — the slot table is derived once, through the Object', () => {
       'scale',
       'data',
       'slotOverrides',
+      'rotationMode',
+      'quaternion',
     ]);
 
     // Schema'd on the node, so an authored write is not silently dropped, and `.optional()`

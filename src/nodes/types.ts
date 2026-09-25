@@ -22,6 +22,24 @@ export type Vec3 = readonly [number, number, number];
 /** Quaternion stored as xyzw (THREE convention). */
 export type Quat = readonly [number, number, number, number];
 
+/**
+ * #1153 — how a posable value holds its orientation, beside the euler `rotation` it always
+ * carries. Blender's shape: an Object keeps BOTH an euler and a quaternion and `rotmode` picks
+ * which one composes (`object.cc:2794-2815`). Absent `rotationMode` is today's XYZ euler, so
+ * every value that never opts in keeps exactly the shape it had.
+ *
+ * Present only in quaternion mode, and then both together — `rotationModeFieldsOf` is the one
+ * writer. What `rotation` reads in that mode is decided by `withResolvedRotation`
+ * (`src/app/resolvedRotation.ts`), which every reader goes through AFTER the channel overlay:
+ * a channel on `quaternion` patches this field, not `rotation`.
+ */
+export interface RotationModeFields {
+  readonly rotationMode?: 'quaternion';
+  /** [x, y, z, w], w LAST as everywhere in Basher (Blender stores wxyz). Not necessarily
+   *  unit length: it is normalised where it composes, as Blender does. */
+  readonly quaternion?: Quat;
+}
+
 // ---------------------------------------------------------------------------
 // Cameras (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
@@ -54,7 +72,7 @@ export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;
 // Lights (socket type: 'SceneObject')
 // ---------------------------------------------------------------------------
 
-export interface DirectionalLightValue {
+export interface DirectionalLightValue extends RotationModeFields {
   readonly kind: 'DirectionalLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -63,7 +81,7 @@ export interface DirectionalLightValue {
   readonly color: string;
 }
 
-export interface PointLightValue {
+export interface PointLightValue extends RotationModeFields {
   readonly kind: 'PointLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -74,7 +92,7 @@ export interface PointLightValue {
   readonly decay: number;
 }
 
-export interface SpotLightValue {
+export interface SpotLightValue extends RotationModeFields {
   readonly kind: 'SpotLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -88,7 +106,7 @@ export interface SpotLightValue {
   readonly decay: number;
 }
 
-export interface AreaLightValue {
+export interface AreaLightValue extends RotationModeFields {
   readonly kind: 'AreaLight';
   readonly intensity: number;
   readonly position: Vec3;
@@ -289,7 +307,13 @@ export interface InlineMaterialSpec {
   readonly geometry: {
     readonly opacity: number;
     readonly alphaCutoff?: number;
-    readonly vertexColors?: boolean;
+    /**
+     * #1062 — the NAME of the colour layer this material reads, or absent for a material that
+     * asks for none. It replaces a `vertexColors: true` boolean, which could only mean "whatever
+     * colour the geometry happens to carry" — true for exactly as long as a mesh could carry only
+     * one. An old `true` migrates to {@link COLOR_LAYER}, the name an import writes.
+     */
+    readonly colorLayer?: string;
     /** glTF direct-import — render both faces (three `side=DoubleSide`), captured
      *  from a material's `doubleSided:true`. Absent = front-only (the default). */
     readonly doubleSided?: boolean;
@@ -349,8 +373,21 @@ export interface InlineMaterialSpec {
    * The INHERITED road needs nothing from this — three's own loader already binds a
    * captured texture to its set (`GLTFLoader.js:3354-3357`). This is only ever consulted
    * for a slot the director has replaced.
+   *
+   * 🔑 A LAYER NAME, NOT AN INDEX (#1062). It used to be the number glTF writes in `texCoord`,
+   * which only ever meant "whatever the drawn geometry's nth UV buffer happens to be". A stored
+   * mesh now carries NAMED UV layers, and its layers are not always the import's own — a
+   * projection authors one under its own name ({@link PROJECTED_UV}) — so an index cannot say
+   * which of them a slot samples. The reference addresses them by name for the same reason: a UV
+   * Map node names the layer it reads (measured, and grounded in
+   * `ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md`).
+   *
+   * 🔴 UNLIKE BLENDER, A NAME THAT THE DRAWN MESH DOES NOT HAVE IS NOT HONOURED, rather than
+   * drawn as zeros. Blender renders such a material BLACK (measured: both a UV Map and a Color
+   * Attribute node naming a missing layer emit `0,0,0`). There is no active-layer notion here to
+   * fall back to, and a silently black mesh is the failure #1062 set out to remove.
    */
-  readonly mapUvSets?: { readonly [K in keyof InlineMaterialMaps]?: number };
+  readonly mapUvLayers?: { readonly [K in keyof InlineMaterialMaps]?: string };
   /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
@@ -412,13 +449,29 @@ export interface BakedTextureRef {
   readonly minFilter?: number;
 }
 
+/** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
+export type BakedMapSlot =
+  | 'map'
+  | 'normalMap'
+  | 'roughnessMap'
+  | 'metalnessMap'
+  | 'aoMap'
+  | 'emissiveMap';
+
 /**
  * The rich PBR material a BakedMesh carries — ONE shape for every source
  * (box, sphere, AND glTF). Scalar names mirror {@link MaterialValue} 1:1
  * (Chesterton — the renderer/override/inspector already speak those names).
- * A primitive bake populates the scalars and leaves all 6 map refs null (M6);
- * a glTF bake captures the resolved post-override material incl. textures
- * (Wave 3/4). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
+ * Both roads capture what their source DRAWS: a glTF bake reads the resolved
+ * post-override material off the live clone (Wave 3/4), and a primitive bake
+ * compiles its inline material through the same `openpbrToThree` its own draw
+ * reads (#1139 — it used to leave all 6 map refs null, which dropped a textured
+ * primitive's maps). `materialClass` selects which three.js ctor BakedMeshR rebuilds.
+ *
+ * Its field list is CLOSED, and that is this type's standing hazard: whatever a
+ * source draws with that has no field here is gone after Apply, and the Apply
+ * reports ok. #1119, #1136, #1139 and #1140 were each one such field. A new one
+ * belongs here AND in `BakedMaterialSpecSchema`, or the parse strips it on the way in.
  */
 export interface BakedMaterialSpec {
   readonly materialClass: 'standard' | 'physical' | 'basic';
@@ -436,9 +489,36 @@ export interface BakedMaterialSpec {
   readonly metalnessMap: BakedTextureRef | null;
   readonly aoMap: BakedTextureRef | null;
   readonly emissiveMap: BakedTextureRef | null;
+  /**
+   * #1136 — each map's UV placement as it drew at bake time, restated about the CENTRE pivot
+   * `BakedMeshR` places with. Only slots whose placement is not identity are listed, and the field
+   * is absent when none is, so a bake of an untransformed material, and every save before this
+   * field, reads exactly as it did.
+   */
+  readonly mapPlacements?: { readonly [K in BakedMapSlot]?: UvPlacement };
+  /**
+   * #1140 — the cutout threshold the source drew with (three's `alphaTest`, from the IR's
+   * `geometry.alphaCutoff`). Absent when it draws no cutout, which is three's own default of 0, so
+   * an ordinary bake and every save before this field read exactly as they did.
+   */
+  readonly alphaTest?: number;
+  /**
+   * #1140 — the source drew both faces. Absent when it drew front faces only.
+   *
+   * The IR's boolean, not three's `side` enum, for the reason `threeSide.ts` gives: the enum is
+   * spelled in exactly one place, and a snapshot that spelled it a second time could only ever
+   * diverge by inverting. `BakedMeshR` passes this through `threeSideFor` like every other road.
+   */
+  readonly doubleSided?: boolean;
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;
+    /**
+     * #1140 — how deep the refraction is (three's `thickness`). Transmission only refracts through
+     * a material with thickness, so a captured `transmission` without this drew clear glass as a
+     * flat surface.
+     */
+    readonly thickness?: number;
     readonly clearcoatRoughness?: number;
     readonly transmission?: number;
     readonly ior?: number;
@@ -522,12 +602,54 @@ export interface MeshTransform {
 }
 
 /**
+ * #1117 — the corner layer types a stored mesh holds: `float2` for a UV set, `float4` for an RGBA
+ * colour. Drawn from `AttributeType`, so a layer can never carry a width the attribute model does
+ * not declare.
+ */
+export type MeshCornerLayerType = Extract<
+  import('./attributes').AttributeType,
+  'float2' | 'float4'
+>;
+
+/**
+ * #1117 — one named, typed corner layer of a stored mesh: a UV set or a colour.
+ *
+ * Named and listed rather than a field each, for the reason `AttributeSet` gives: a closed struct
+ * cannot hold the next layer. ORDER IS MEANINGFUL: the build draws the `float2` layers to three's
+ * `uv`, `uv1`, `uv2`, `uv3` in the order they appear, which is the order glTF numbers `TEXCOORD_n`.
+ */
+export interface MeshCornerLayer {
+  /** Unique within the mesh (`UVMap`, `UVMap.001`, `Color`: Blender's names on import). */
+  readonly name: string;
+  readonly type: MeshCornerLayerType;
+  /** The type's width per corner, corner-major. */
+  readonly data: Float32Array;
+}
+
+/** #1052 — the face layer types a stored mesh holds. */
+export type MeshFaceLayerType = Extract<import('./attributes').AttributeType, 'int'>;
+
+/**
+ * #1052 — one named, typed face layer of a stored mesh, one value per face, in face order.
+ *
+ * Blender keeps `material_index` as an ordinary int attribute on the mesh's FACE domain, and so
+ * does this: the per-face slot index is the first face layer anything writes. Listed by name, like
+ * the corner layers, so the next face attribute needs no new field.
+ */
+export interface MeshFaceLayer {
+  /** Unique within the mesh (`material_index` is Blender's own name). */
+  readonly name: string;
+  readonly type: MeshFaceLayerType;
+  readonly data: Int32Array;
+}
+
+/**
  * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
  *
  * Points are TOPOLOGICAL (a cube has 8), matching what `pointCountOf` means for a box. What makes
- * a render vertex split — a UV seam, a hard normal — lives on the CORNER, which is where Blender
- * keeps it too (`UVMap` is a corner attribute). Faces are listed in order; face `f` owns the next
- * `faceSizes[f]` entries of every corner array.
+ * a render vertex split — a UV seam, a colour edge, a hard normal — lives on the CORNER, which is
+ * where Blender keeps it too (`UVMap` and `Color` are corner attributes). Faces are listed in order;
+ * face `f` owns the next `faceSizes[f]` entries of every corner array.
  *
  * Immutable by contract: instances are shared by every descriptor minted from one params object.
  */
@@ -538,8 +660,10 @@ export interface MeshGeometryData {
   readonly faceSizes: Uint32Array;
   /** The point each corner sits on. Length = the sum of `faceSizes`. */
   readonly cornerPoints: Uint32Array;
-  /** uv per corner, or `null` when the mesh has no UV map. */
-  readonly cornerUVs: Float32Array | null;
+  /** Every UV set and colour, in order; empty when the mesh has none (#1117). */
+  readonly cornerLayers: readonly MeshCornerLayer[];
+  /** Every face attribute, by name; empty when the mesh has none (#1052). */
+  readonly faceLayers: readonly MeshFaceLayer[];
   /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
   readonly cornerNormals: Float32Array | null;
 }
@@ -1142,8 +1266,8 @@ export interface EvaluatedMesh {
  * A standalone scene mesh whose TRS has been composed into its geometry: the
  * `geometry` is a `GeometryRef{kind:'baked'}` handle into OPFS-persisted bytes
  * (authoritative, NOT rebuildable from params — bakedGeometryStore.ts), the
- * transform is IDENTITY (the TRS is baked INTO the verts, so the renderer must
- * render at identity scale — H40 band-drift guard), and `material` is the ONE
+ * transform is the Object's (identity for every band an Apply baked into the verts,
+ * drawn as-is for any band it kept — #1080, #489), and `material` is the ONE
  * rich {@link BakedMaterialSpec} (scalars + nullable maps).
  *
  * The 4th `EvaluatedMesh` producer (V29): no consumer branches on this kind;
@@ -1323,7 +1447,7 @@ export interface NullValue {
 // arc-length seam (curveSampleSource.ts) still measures those LOCAL samples in world (#349
 // unchanged). Old saves split on load (migrateFusedCurveToSplit).
 
-export interface GroupValue {
+export interface GroupValue extends RotationModeFields {
   readonly kind: 'Group';
   // #222 — a Group is transformable as a unit (Blender's parent/Empty). `pivot`
   // is the local point rotation/scale happen around; the renderer applies
@@ -1990,7 +2114,7 @@ export type ObjectData =
  * `Object → MeshData` pair is byte-identical to the fused node beside it.
  * `data: null` is an Empty (the Group/Null/Transform collapse, a later phase).
  */
-export interface ObjectValue {
+export interface ObjectValue extends RotationModeFields {
   readonly kind: 'Object';
   readonly position: Vec3;
   readonly rotation: Vec3;
@@ -2094,13 +2218,6 @@ export interface KeyframeVec3 {
   readonly easing: Easing;
   readonly inHandle?: BezierHandle<Vec3>;
   readonly outHandle?: BezierHandle<Vec3>;
-}
-
-export interface KeyframeQuat {
-  readonly time: number;
-  readonly value: Quat;
-  readonly easing: Easing;
-  // Quaternion handles are deferred — slerp interpolation only in v0.5.
 }
 
 export interface KeyframeColor {

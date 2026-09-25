@@ -44,6 +44,7 @@
 import type * as THREE from 'three';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { usePrimitiveMaterial } from './usePrimitiveMaterial';
+import type { NamedCornerLayer } from '../cornerLayerNames';
 
 /**
  * The most material slots one mesh can render with.
@@ -68,6 +69,12 @@ export function useSlotMaterials(
   fallback: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
+  /**
+   * #1062 — the ordered corner layers of the mesh these slots draw on. ONE list for all
+   * eight, because they are eight materials on ONE mesh: the slot decides which faces a
+   * material paints, never which layers the geometry carries.
+   */
+  layers: readonly NamedCornerLayer[],
 ): {
   readonly materials: readonly THREE.MeshPhysicalMaterial[];
   readonly capRefusal: string | null;
@@ -76,14 +83,14 @@ export function useSlotMaterials(
   // module constant does call the hook the same number of times every render, but it needs
   // an eslint escape at the one seam whose whole argument is that hook counts are fixed —
   // and an escape is exactly how the next edit turns the constant into a variable.
-  const m0 = usePrimitiveMaterial(slots[0] ?? fallback, override, shading, null);
-  const m1 = usePrimitiveMaterial(slots[1] ?? fallback, override, shading, null);
-  const m2 = usePrimitiveMaterial(slots[2] ?? fallback, override, shading, null);
-  const m3 = usePrimitiveMaterial(slots[3] ?? fallback, override, shading, null);
-  const m4 = usePrimitiveMaterial(slots[4] ?? fallback, override, shading, null);
-  const m5 = usePrimitiveMaterial(slots[5] ?? fallback, override, shading, null);
-  const m6 = usePrimitiveMaterial(slots[6] ?? fallback, override, shading, null);
-  const m7 = usePrimitiveMaterial(slots[7] ?? fallback, override, shading, null);
+  const m0 = usePrimitiveMaterial(slots[0] ?? fallback, override, shading, null, layers);
+  const m1 = usePrimitiveMaterial(slots[1] ?? fallback, override, shading, null, layers);
+  const m2 = usePrimitiveMaterial(slots[2] ?? fallback, override, shading, null, layers);
+  const m3 = usePrimitiveMaterial(slots[3] ?? fallback, override, shading, null, layers);
+  const m4 = usePrimitiveMaterial(slots[4] ?? fallback, override, shading, null, layers);
+  const m5 = usePrimitiveMaterial(slots[5] ?? fallback, override, shading, null, layers);
+  const m6 = usePrimitiveMaterial(slots[6] ?? fallback, override, shading, null, layers);
+  const m7 = usePrimitiveMaterial(slots[7] ?? fallback, override, shading, null, layers);
 
   return {
     materials: [m0, m1, m2, m3, m4, m5, m6, m7],

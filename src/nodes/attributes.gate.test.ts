@@ -278,6 +278,7 @@ describe('#633 attribute value types', () => {
     expect(componentsOf('int')).toBe(1);
     expect(componentsOf('float2')).toBe(2);
     expect(componentsOf('float3')).toBe(3);
+    expect(componentsOf('float4')).toBe(4);
   });
 
   it('names the mismatch between declared element count and carried components', () => {

@@ -11,6 +11,7 @@
 //
 // REF: THESIS.md §12, §39 (P1 Wave C).
 
+import { ownName } from '../core/dag/nodeName';
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
@@ -95,9 +96,9 @@ function pushRow(ctx: WalkCtx, row: TreeRow): void {
 export function nodeDisplayName(nodes: Readonly<Record<NodeId, Node>>, nodeId: NodeId): string {
   const node = nodes[nodeId];
   if (!node) return nodeId;
-  const params = node.params as Record<string, unknown>;
-  const paramName = typeof params?.name === 'string' ? params.name : undefined;
-  return node.meta?.name ?? paramName ?? importedChildOf(nodes, nodeId)?.childName ?? node.id;
+  // Rungs 1–2 are the node's own name, asked through the same function the reducer copies a
+  // followed name with (#1122), so a follower can never carry a name no surface shows.
+  return ownName(node) ?? importedChildOf(nodes, nodeId)?.childName ?? node.id;
 }
 
 function display(state: DagState, nodeId: NodeId): string {

@@ -40,6 +40,8 @@ import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
+import { rotationWriteOf, withResolvedRotation } from '../../../app/resolvedRotation';
+import type { RotationModeFields } from '../../../nodes/types';
 import type { Op } from '../../../core/dag/types';
 import { mulberry32, randRange } from '../../../nodes/random';
 import { resolveDataParamOwner } from '../../../app/resolveDataParamOwner';
@@ -351,14 +353,17 @@ export const randomizeMutator: MutatorDefinition<RandomizeSpec> = {
           // mirror rotate.ts:59-72 — add deltaDeg to current rotation vec3
           const { axis, deltaDeg } = sampleRotationDelta(rng, spec.ranges.rotation!);
           const axisIdx = { x: 0, y: 1, z: 2 }[axis];
-          const current = params.rotation as [number, number, number];
+          // #1153 — as rotate.ts: added to the orientation shown, written through the mode.
+          // `canRotation` above has already checked the triple is there.
+          const current = withResolvedRotation(params).rotation as [number, number, number];
           const next: [number, number, number] = [...current];
           next[axisIdx] += deltaDeg;
+          const write = rotationWriteOf(params as RotationModeFields, next);
           ops.push({
             type: 'setParam',
             nodeId: id,
-            paramPath: 'rotation',
-            value: next,
+            paramPath: write.paramPath,
+            value: write.value,
           });
         } else {
           // scale — mirror scale.ts — uniform scalar multiply size (resolved owner) or radius

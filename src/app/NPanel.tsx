@@ -52,7 +52,7 @@ import {
 } from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import type { BakedTextureRef, UvPlacement } from '../nodes/types';
+import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { importedChildOf } from './importedChild';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
@@ -78,7 +78,7 @@ import {
   widgetOf,
 } from '../nodes/paramWidget';
 import { OptionsSelect } from './OptionsSelect';
-import type { NodeRef } from '../core/dag/types';
+import type { NodeRef, Op } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
@@ -89,15 +89,17 @@ import {
   slotAbsenceOf,
 } from './objectSlotAuthoring';
 import {
-  dispatchApplyTransform,
   canApplyTransform,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
+import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
+import { poseTargetForBone } from './animate/poseTargetForBone';
+import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   boneMapView,
   elidePrefix,
@@ -150,6 +152,8 @@ import { MultiSelectInspector } from './MultiSelectInspector';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveTransformParam, TRANSFORM_PARAMS } from './resolveTransformParam';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { paramAnimationState } from './animate/paramAnimationState';
 import { driverNodesForTarget } from './paramDrivers';
 import { ParamDriverBind } from './ParamDriverBind';
 import { SpareParamControls } from './SpareParamControls';
@@ -158,6 +162,8 @@ import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
+import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
+import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
   buildRevertedSet,
   isFieldOverridden,
@@ -882,6 +888,10 @@ function QueryField({
       return; // the draft stays, so the typo is correctable
     }
     setRefusal(null);
+    // #1127 — Enter commits and the blur that follows commits again, and a click in and out
+    // commits with nothing typed. Only a value that moved is an edit; the rest would each be
+    // an undo entry that changes nothing (the guard `RenameInput` and `MaterialNameRow` carry).
+    if (next === value) return;
     dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`);
   };
 
@@ -2644,7 +2654,9 @@ function MaterialColorRow({
   // scrub, animation, agent edit) — the input is otherwise locally edited.
   useEffect(() => setDraft(effective), [effective]);
   const commit = (next: string) => {
-    if (!isHex6(next)) return;
+    // #1127 — the same value is not an edit (Enter then blur, or a click in and out), compared
+    // against what the field shows, so a scrubbed or animated colour is judged as seen.
+    if (!isHex6(next) || next === effective) return;
     onEdit(next);
   };
   const swatch = isHex6(draft) ? draft : '#000000';
@@ -2935,8 +2947,9 @@ function MaterialEditor({
           entirely, so each row is an absolute placement. Rows come from the IR's closed
           slot table rather than the bag's own key order, and each keeps a reset back to
           shared so a captured placement can always be undone. Values pass through
-          unconverted — this editor places about the UV origin, the convention they were
-          captured in (#551). */}
+          unconverted: they are the node's own, and the road that draws the node supplies
+          the pivot — the UV origin for a clone-road import, the centre for native mesh
+          data, which the native importer restates at import (#1123, #551). */}
       {perMapRows.map(({ slot: mapSlot, placement }) => (
         <UvTransformSection
           key={mapSlot}
@@ -3145,7 +3158,8 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   const currentFrame = useTimeStore((s) => s.frame);
   const animated = isApplySourceAnimated(state, nodeId, currentFrame);
   const onApply = (mask: ApplyMask) => {
-    void dispatchApplyTransform(nodeId, mask);
+    // #1130 — a refusal is shown, never dropped.
+    void applyTransformFromUi(nodeId, mask);
   };
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5" data-testid="npanel-apply-transform">
@@ -3205,7 +3219,9 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
     const next = originToGeometry(
       {
         position: params.position,
-        rotation: params.rotation,
+        // #1153 — the orientation in the Group's own mode, not a quaternion-mode Group's stale
+        // euler, or the new pivot lands where the old euler would have put the geometry.
+        rotation: withResolvedRotation(params).rotation as [number, number, number],
         scale: params.scale,
         pivot: params.pivot,
       },
@@ -3786,6 +3802,135 @@ function LinkedDataSections({
  * about, so offer and accept stay the same node. The lens control takes BOTH —
  * its lens params and its pose live on opposite halves of a split camera.
  */
+/**
+ * #1153 — the rotation row of an Object or a Group, in whichever mode it is held.
+ *
+ * Blender's panel: a mode switch, and the rotation shown in that mode — XYZ euler as the
+ * ordinary vector row (the SAME `VectorField` this row always was), or W X Y Z for a
+ * quaternion, W first as Blender shows it (stored [x, y, z, w]).
+ *
+ * Switching CONVERTS, as Blender's does (`armature.cc:2417-2443`): to quaternion writes the
+ * quaternion of the current euler; to euler writes the euler of the current quaternion and
+ * clears the mode, so an euler node goes back to exactly the shape it had. Both writes land in
+ * one atomic step — one Cmd+Z. Only the stored values convert; a channel keeps driving the
+ * param it names, which in the other mode composes nothing, as in Blender.
+ */
+function RotationModeControl({ nodeId }: { nodeId: string }) {
+  const node = useDagStore((s) => s.state.nodes[nodeId]);
+  const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
+  const params = (node?.params ?? {}) as RotationModeFields & { rotation?: unknown };
+  const quaternionMode = params.rotationMode === 'quaternion';
+  const onMode = (next: string) => {
+    if ((next === 'quaternion') === quaternionMode) return;
+    const euler = (isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3;
+    const ops: Op[] =
+      next === 'quaternion'
+        ? [
+            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: 'quaternion' },
+            {
+              type: 'setParam',
+              nodeId,
+              paramPath: 'quaternion',
+              value: rotationWriteOf({ ...params, rotationMode: 'quaternion' }, euler).value,
+            },
+          ]
+        : [
+            {
+              type: 'setParam',
+              nodeId,
+              paramPath: 'rotation',
+              value: withResolvedRotation(params).rotation,
+            },
+            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: undefined },
+          ];
+    dispatchAtomic(
+      ops,
+      'user',
+      `rotation mode → ${next === 'quaternion' ? 'Quaternion' : 'XYZ Euler'}`,
+    );
+  };
+  return (
+    <div className="flex flex-col">
+      <label className="flex items-center justify-between gap-2 px-3 pt-1.5 text-[11px] text-fg/80">
+        <span className="font-mono text-fg/60">rotation mode</span>
+        <select
+          data-testid={`inspector-rotation-mode-${nodeId}`}
+          value={quaternionMode ? 'quaternion' : 'euler'}
+          onChange={(e) => onMode(e.target.value)}
+          className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          <option value="euler">XYZ Euler</option>
+          <option value="quaternion">Quaternion (WXYZ)</option>
+        </select>
+      </label>
+      {quaternionMode ? (
+        <QuaternionField nodeId={nodeId} authored={params.quaternion ?? IDENTITY_QUATERNION} />
+      ) : (
+        <VectorField
+          nodeId={nodeId}
+          paramPath="rotation"
+          label="rotation"
+          value={(isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3}
+          overrideInfo={node ? overrideInfoFor(node, 'rotation') : undefined}
+        />
+      )}
+    </div>
+  );
+}
+
+/** W X Y Z → the stored index of each, since Basher stores [x, y, z, w]. */
+const QUATERNION_AXES = [
+  ['w', 3],
+  ['x', 0],
+  ['y', 1],
+  ['z', 2],
+] as const;
+
+/** #1153 — a quaternion's four components, as STORED. Blender shows and edits the stored
+ *  values and normalises only where it composes (`object.cc:2807`); showing the normalised one
+ *  here would make an edit to one component silently rewrite the other three. Only while a
+ *  channel actually animates the quaternion does the field show the evaluated sample (as the
+ *  euler row shows its evaluated triple), read-only while playing. Each component commits
+ *  through the same animated re-route and Auto-Key the vector rows use. */
+function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat }) {
+  const frame = useTimeStore((s) => s.frame);
+  const seconds = useTimeStore((s) => s.seconds);
+  const normalized = useTimeStore((s) => s.normalized);
+  const playing = useTimeStore((s) => s.playing);
+  const dagState = useDagStore((s) => s.state);
+  const evaluated = useMemo(
+    () =>
+      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } })
+        ?.quaternion ?? null,
+    [dagState, nodeId, frame, seconds, normalized],
+  );
+  const animated = paramAnimationState(dagState, nodeId, 'quaternion', frame) !== 'none';
+  const shown: Quat = animated && evaluated ? evaluated : authored;
+  const readOnly = playing && animated;
+  return (
+    <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
+      <span className="flex items-center gap-1">
+        <ParamDiamond nodeId={nodeId} paramPath="quaternion" value={authored} />
+        <span className="font-mono text-fg/60">rotation</span>
+      </span>
+      <div className="flex gap-1" data-testid={`inspector-quaternion-${nodeId}`}>
+        {QUATERNION_AXES.map(([axis, index]) => (
+          <VectorComponent
+            key={axis}
+            nodeId={nodeId}
+            paramPath="quaternion"
+            axisLabel={axis}
+            axisIndex={index}
+            value={shown[index]}
+            vec={shown}
+            readOnly={readOnly}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
   gltfMaterialReadout: (ctx) => (
@@ -3814,6 +3959,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   channelModifiers: (ctx) => <ChannelModifierControls nodeId={ctx.paramsNodeId} />,
   boneMap: (ctx) => <BoneMapEditor nodeId={ctx.paramsNodeId} />,
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
+  rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block
@@ -3834,6 +3980,76 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
  * `Hips → Spine → … → LeftHand → LeftHandIndex1` says where in the body the
  * director is — which is the question they clicked to ask.
  */
+/**
+ * The WRITE half of the bone section (#1156).
+ *
+ * The lane could already be authored — by an agent, through `mutator.animate.poseBone` —
+ * and by nobody else. This is the director's way in, and it goes through the SAME mutator
+ * rather than minting a `PoseOverride` itself: one road in means the two cannot drift about
+ * what a hand-pose is, and the mutator already refuses a bone the rig does not carry,
+ * refuses an override that authors nothing, and extends a bone's existing override instead
+ * of stacking a second one. Re-deriving any of that here would be a second answer.
+ *
+ * Once an override EXISTS, its rotation is edited by the ordinary param row — the same
+ * widget every other node gets. Minting is the gesture that needed a road; editing already
+ * had one.
+ *
+ * It renders nothing when there is no retarget driving this rig, or when the rig does not
+ * carry the selected bone. That is an ordinary state, not an error: without a pose chain
+ * there is nothing for an override to hang off.
+ */
+function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
+  const state = useDagStore((s) => s.state);
+  const target = useMemo(
+    () => poseTargetForBone(state, nodeId, boneName),
+    [state, nodeId, boneName],
+  );
+  const [refusal, setRefusal] = useState<string | null>(null);
+  if (!target) return null;
+
+  if (target.overrideId !== null) {
+    const rotation = (state.nodes[target.overrideId]?.params as { rotation?: unknown } | undefined)
+      ?.rotation;
+    return (
+      <div className="mt-2" data-testid="inspector-bone-pose">
+        <ParamRow nodeId={target.overrideId} paramPath="rotation" value={rotation} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2" data-testid="inspector-bone-pose">
+      <button
+        type="button"
+        className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
+        data-testid="inspector-bone-pose-add"
+        onClick={() => {
+          // Seeded at zero rotation so the mint is not itself a pose: the director gets an
+          // override to drag, and the rig does not jump the moment they ask for one. The
+          // `overridden` bit is what makes it authored, never value-vs-default, so a pose
+          // dragged back to zero still holds against the motion underneath.
+          const res = dispatchMutatorFromUI(
+            'mutator.animate.poseBone',
+            { retarget: target.retargetId, bone: target.bone, rotation: [0, 0, 0] },
+            `pose ${target.bone}`,
+          );
+          setRefusal(res.ok ? null : res.reason);
+        }}
+      >
+        pose this bone
+      </button>
+      {refusal !== null ? (
+        <div
+          className="mt-1 font-mono text-[10px] text-warn"
+          data-testid="inspector-bone-pose-refusal"
+        >
+          {refusal}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SelectedBoneSection() {
   const bone = useActiveBone();
   if (!bone) return null;
@@ -3870,6 +4086,7 @@ function SelectedBoneSection() {
           {above.join(' → ')}
         </div>
       ) : null}
+      <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
     </div>
   );
 }

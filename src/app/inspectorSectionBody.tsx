@@ -109,14 +109,20 @@ export type ControlKey =
   | 'boneMap'
   | 'applyTransform'
   | 'setOrigin'
-  | 'objectSlots';
+  | 'objectSlots'
+  | 'rotationMode';
 
 export type SectionControl = {
   key: ControlKey;
   /** Possession, never identity. */
   applies: (ctx: SectionCtx) => boolean;
-  /** `before` renders above the generic rows, `after` below them. */
-  placement: 'before' | 'after';
+  /** `before` renders above the generic rows, `after` below them, and `inPlaceOf` renders the
+   *  control exactly where that row would have been (#1153: the rotation control stands where
+   *  the rotation row stood, so the section still reads position, rotation, scale). The anchor
+   *  is REPLACED, not omitted: it is not listed in `omitRowKeys`, so it still reaches its
+   *  section and still counts as a row wherever rows are projected (an exposable param stays
+   *  exposable). If the anchor is absent, the control renders after the rows, never dropped. */
+  placement: 'before' | 'after' | { readonly inPlaceOf: string };
   /** This control authors the WHOLE section — suppress every generic row. The
    *  params still route to the section (that is what keeps them out of the
    *  unrouted bucket); the control owns their presentation. */
@@ -154,6 +160,16 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // #228 Slice D — Set Origin to Geometry, for a node whose origin is its own
   // `pivot` row above (a Group today).
   transform: [
+    // #1153 — Blender's rotation mode: a switch that CONVERTS (armature.cc:2417-2443) and, in
+    // quaternion mode, W X Y Z in place of the euler row. Possession of the declared param, so
+    // an Object and a Group get it and nothing else does. It REPLACES the rotation row (in
+    // quaternion mode that row would be a field that edits nothing) and owns the two new keys.
+    {
+      key: 'rotationMode',
+      applies: (c) => c.ownsParam('rotationMode'),
+      placement: { inPlaceOf: 'rotation' },
+      omitRowKeys: ['rotationMode', 'quaternion'],
+    },
     { key: 'applyTransform', applies: (c) => c.canApplyTransform, placement: 'after' },
     { key: 'setOrigin', applies: (c) => c.ownsParam('pivot'), placement: 'after' },
   ],
@@ -498,14 +514,29 @@ export function SectionBody<R extends SectionBodyRow>({
 }) {
   const active = activeControls(sectionId, ctx);
   const { suppressAllRows, omitted } = sectionRowFilter(sectionId, ctx);
+  const draw = (c: SectionControl) => <Fragment key={c.key}>{renderers[c.key](ctx)}</Fragment>;
   const at = (placement: 'before' | 'after') =>
-    active
-      .filter((c) => c.placement === placement)
-      .map((c) => <Fragment key={c.key}>{renderers[c.key](ctx)}</Fragment>);
+    active.filter((c) => c.placement === placement).map(draw);
+  // #1153 — a control anchored to a row takes that row's place. One whose anchor is not among
+  // the rows (or whose rows are all suppressed) is drawn after them: shown, never dropped.
+  const anchored = active.filter(
+    (c): c is SectionControl & { placement: { inPlaceOf: string } } =>
+      typeof c.placement === 'object',
+  );
+  const anchorOf = new Map(anchored.map((c) => [c.placement.inPlaceOf, c]));
+  const shownRows = suppressAllRows ? [] : rows;
+  const placed = new Set(
+    anchored.filter((c) => shownRows.some((r) => r.key === c.placement.inPlaceOf)),
+  );
   return (
     <>
       {at('before')}
-      {suppressAllRows ? null : rows.filter((r) => !omitted.has(r.key)).map((r) => renderRow(r))}
+      {shownRows.map((r) => {
+        const control = anchorOf.get(r.key);
+        if (control) return draw(control);
+        return omitted.has(r.key) ? null : renderRow(r);
+      })}
+      {anchored.filter((c) => !placed.has(c)).map(draw)}
       {at('after')}
     </>
   );

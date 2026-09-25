@@ -220,8 +220,9 @@ describe('#631 — project save is O(scene), not O(vertices)', () => {
       points: Float32Array.from(points),
       faceSizes: Uint32Array.from(faceSizes),
       cornerPoints: Uint32Array.from(cornerPoints),
-      cornerUVs: null,
+      cornerLayers: [],
       cornerNormals: null,
+      faceLayers: [],
     });
     const added = applyOp(emptyDagState(), {
       type: 'addNode',

@@ -55,12 +55,14 @@
 import { useDagStore } from '../../core/dag/store';
 import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
+import { standInObjectOf, standingObjectsOf } from '../../core/import/skeletonObject';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 // #1001 — the two-hop rig→asset read moved to the module that owns the graph
 // walks, where `placeGeneratedMotion`'s id-returning half already points.
 import { assetRefOfSkeleton } from '../animate/boundClipsForAsset';
+import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
-import { useNotificationStore } from '../stores/notificationStore';
+import { useNotificationStore, type ToastSeverity } from '../stores/notificationStore';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import type { DagState } from '../../core/dag/state';
 import type { BoneSpec, SkeletonValue } from '../../nodes/types';
@@ -181,6 +183,20 @@ export function selectedAssetRefs(state: DagState, selectedNodeId: string | null
 }
 
 /**
+ * The Object standing this skeleton in the scene, or null when none does.
+ *
+ * The import's own Object first — the one the retarget's hide names (`standInObjectOf`,
+ * #1088), so a message naming it names the Object a bind would hide. Without it, any
+ * Object whose `data` is the skeleton still says where the motion is, id-sorted (V22) so
+ * a skeleton two Objects show is named the same way every time. Null when nothing stands:
+ * a project with no scene aggregator, or a motion with no bones to draw.
+ */
+export function standingObjectOf(state: DagState, skeletonId: string): string | null {
+  // The shared lookups, so the Object named here is one path placement moves (#1100).
+  return standInObjectOf(state, skeletonId) ?? standingObjectsOf(state, skeletonId)[0] ?? null;
+}
+
+/**
  * Choose the character this motion should drive.
  *
  * One candidate means one answer, selection or not — asking a director to select
@@ -188,18 +204,43 @@ export function selectedAssetRefs(state: DagState, selectedNodeId: string | null
  * more, and the selection decides. Neither resolvable is a refusal that NAMES the
  * candidates, because the difference between "nothing happened" and "pick one of
  * these two" is the whole of what the director needs.
+ *
+ * `sourceSkeletonId` is REQUIRED for the same reason `arrival` is (#1103): whether
+ * "no character" is news or a problem depends on whether the motion already
+ * stands in the scene, and a caller that could leave it out, or pass nothing,
+ * would silently get the warning back.
  */
 export function chooseMotionTarget(
   state: DagState,
   selectedNodeId: string | null,
   arrival: MotionArrival,
-): { ok: true; target: Candidate } | { ok: false; refusal: BindMotionRefusal; reason: string } {
+  sourceSkeletonId: string,
+):
+  | { ok: true; target: Candidate }
+  | { ok: false; refusal: BindMotionRefusal; reason: string; severity: ToastSeverity } {
   const { verb, retry } = ARRIVAL[arrival];
   const candidates = motionTargetCandidates(state);
   if (candidates.length === 0) {
+    // #1103 — since #1056 (files) and #1078 (generation) a motion with no character
+    // is not left with nothing: its skeleton stands in the scene as an Object. So
+    // when that Object is there, the message says where the motion is, and it is a
+    // notice, because nothing went wrong. When it is not, nothing visible happened
+    // and the warning stays.
+    const standing = standingObjectOf(state, sourceSkeletonId);
+    if (standing !== null) {
+      return {
+        ok: false,
+        refusal: 'no-character',
+        severity: 'info',
+        reason:
+          `${verb} the motion — it stands in the scene as ` +
+          `${nodeDisplayName(state.nodes, standing)} until a character is added to play it.`,
+      };
+    }
     return {
       ok: false,
       refusal: 'no-character',
+      severity: 'warn',
       reason: `${verb} the motion — there is no character in the scene for it to drive yet.`,
     };
   }
@@ -212,6 +253,7 @@ export function chooseMotionTarget(
   return {
     ok: false,
     refusal: 'ambiguous',
+    severity: 'warn',
     reason:
       `${verb} the motion — select the character it should drive, then ${retry}. ` +
       `In the scene: ${candidates.map((c) => c.label).join(', ')}.`,
@@ -242,9 +284,14 @@ export function bindMotionToCharacter(
   const notify = useNotificationStore.getState().notify;
   const state = useDagStore.getState().state;
 
-  const chosen = chooseMotionTarget(state, useSelectionStore.getState().selectedNodeId, arrival);
+  const chosen = chooseMotionTarget(
+    state,
+    useSelectionStore.getState().selectedNodeId,
+    arrival,
+    source.skeletonId,
+  );
   if (!chosen.ok) {
-    notify({ severity: 'warn', message: chosen.reason });
+    notify({ severity: chosen.severity, message: chosen.reason });
     return { ok: false, refusal: chosen.refusal, reason: chosen.reason };
   }
   const target = chosen.target;

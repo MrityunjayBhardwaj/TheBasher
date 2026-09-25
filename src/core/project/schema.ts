@@ -72,7 +72,7 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // would never split — and unlike the earlier kinds there is no fused fallback left to
 // render it, because `GltfChild` retires in the same change. See migrations.ts
 // formatMigrations[12].
-export const PROJECT_FORMAT_VERSION = 13;
+export const PROJECT_FORMAT_VERSION = 14;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

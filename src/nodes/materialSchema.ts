@@ -150,19 +150,20 @@ const mapUvTransformsSchema = z
  * above states: a materialised empty bag keys differently from an absent one and would
  * re-mint every existing material's identity.
  *
- * `int().nonnegative()` rather than a bare number, because a fractional or negative
- * channel is not a UV set — three would read it as one and bind whatever `uv{n}`
- * stringifies to, which is an attribute that does not exist and renders untextured
- * with nothing said.
+ * #1062 — A LAYER NAME, NOT AN INDEX. A number could only ever mean "the drawn geometry's
+ * nth UV buffer", which stopped being enough when a stored mesh began carrying named layers
+ * that are not always an import's own. `min(1)` because the empty string is not a name: in
+ * the reference an empty name is the documented request for the ACTIVE layer, a fallback this
+ * project does not have, so admitting it here would store a wish nothing can grant.
  */
-const mapUvSetsSchema = z
+const mapUvLayersSchema = z
   .object({
-    albedo: z.number().int().nonnegative().optional(),
-    normal: z.number().int().nonnegative().optional(),
-    roughness: z.number().int().nonnegative().optional(),
-    metalness: z.number().int().nonnegative().optional(),
-    emissive: z.number().int().nonnegative().optional(),
-    ao: z.number().int().nonnegative().optional(),
+    albedo: z.string().min(1).optional(),
+    normal: z.string().min(1).optional(),
+    roughness: z.string().min(1).optional(),
+    metalness: z.string().min(1).optional(),
+    emissive: z.string().min(1).optional(),
+    ao: z.string().min(1).optional(),
   })
   .optional();
 
@@ -215,14 +216,15 @@ export function openpbrMaterialSchema() {
           // glTF direct-import (texture-maps milestone) — OPTIONAL so a native
           // box/sphere + pre-milestone save re-parse unchanged (V10/H14).
           alphaCutoff: z.number().optional(),
-          vertexColors: z.boolean().optional(),
+          // #1062 — the NAME of the colour layer this material reads (was `vertexColors: true`).
+          colorLayer: z.string().min(1).optional(),
           doubleSided: z.boolean().optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
       uvTransform: uvTransformSchema,
       mapUvTransforms: mapUvTransformsSchema,
-      mapUvSets: mapUvSetsSchema,
+      mapUvLayers: mapUvLayersSchema,
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -304,13 +306,13 @@ export function hydrateInlineMaterial(
     emission?: PartialLobe;
     geometry?: PartialLobe & {
       alphaCutoff?: unknown;
-      vertexColors?: unknown;
+      colorLayer?: unknown;
       doubleSided?: unknown;
     };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
-    mapUvSets?: Record<string, unknown>;
+    mapUvLayers?: Record<string, unknown>;
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -334,8 +336,8 @@ export function hydrateInlineMaterial(
       ...(typeof m.geometry?.alphaCutoff === 'number'
         ? { alphaCutoff: m.geometry.alphaCutoff }
         : {}),
-      ...(typeof m.geometry?.vertexColors === 'boolean'
-        ? { vertexColors: m.geometry.vertexColors }
+      ...(typeof m.geometry?.colorLayer === 'string' && m.geometry.colorLayer.length > 0
+        ? { colorLayer: m.geometry.colorLayer }
         : {}),
       ...(typeof m.geometry?.doubleSided === 'boolean'
         ? { doubleSided: m.geometry.doubleSided }
@@ -361,9 +363,9 @@ export function hydrateInlineMaterial(
   // a different key and re-mint the whole cache on first load. Absent must mean absent.
   const perMap = hydrateMapUvTransforms(m.mapUvTransforms);
   const withPerMap = perMap ? { ...out, mapUvTransforms: perMap } : out;
-  // #997 — the per-slot UV set, conditional for exactly the reason above.
-  const uvSets = hydrateMapUvSets(m.mapUvSets);
-  const withUvSets = uvSets ? { ...withPerMap, mapUvSets: uvSets } : withPerMap;
+  // #997 — the per-slot UV layer, conditional for exactly the reason above.
+  const uvSets = hydrateMapUvLayers(m.mapUvLayers);
+  const withUvSets = uvSets ? { ...withPerMap, mapUvLayers: uvSets } : withPerMap;
   return m.unsupported ? { ...withUvSets, unsupported: m.unsupported } : withUvSets;
 }
 
@@ -374,22 +376,23 @@ export function hydrateInlineMaterial(
  * and "every slot uses the shared placement" is exactly what absence already means.
  */
 /**
- * #997 — a legacy/serialized per-slot UV-set bag → the IR's, or `undefined` when it
- * names none. Non-integer, negative and non-numeric entries are DROPPED rather than
- * coerced: a channel is an index into a list of attributes, so a value that is not one
- * has no nearest sensible reading, and silently rounding it would bind a slot to a set
- * the author never named.
+ * #997/#1062 — a serialized per-slot UV-LAYER bag → the IR's, or `undefined` when it names none.
+ *
+ * Anything that is not a non-empty string is DROPPED rather than coerced, for the reason the
+ * numeric version gave and one more. A name has no nearest sensible reading, so there is nothing
+ * to round to; and a NUMBER here is a format-13 save that the ladder should already have turned
+ * into a name, so honouring it would quietly keep the old spelling alive past its migration.
  */
-function hydrateMapUvSets(
+function hydrateMapUvLayers(
   raw: Record<string, unknown> | undefined,
-): InlineMaterialSpec['mapUvSets'] | undefined {
+): InlineMaterialSpec['mapUvLayers'] | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const out: Record<string, number> = {};
+  const out: Record<string, string> = {};
   for (const slot of MAP_UV_SLOTS) {
     const v = raw[slot];
-    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) out[slot] = v;
+    if (typeof v === 'string' && v.length > 0) out[slot] = v;
   }
-  return Object.keys(out).length > 0 ? (out as InlineMaterialSpec['mapUvSets']) : undefined;
+  return Object.keys(out).length > 0 ? (out as InlineMaterialSpec['mapUvLayers']) : undefined;
 }
 
 function hydrateMapUvTransforms(

@@ -92,12 +92,25 @@ import { useBakedTexture } from '../asset/bakedTextureLoader';
 // see `registryDoors.gate.test.ts` case 1, which refuses the namespace form outright.
 import { get as getMaterial, release, retain } from '../materialRegistry';
 import { compilePrimitiveMaterial, primitiveMaterialInputs } from './primitiveMaterialInputs';
+import type { NamedCornerLayer } from '../cornerLayerNames';
 
 export function usePrimitiveMaterial(
   ir: InlineMaterialSpec,
   override: MaterialValue | undefined,
   shading: string,
   mintedKey: string | null,
+  /**
+   * #1062 — the ordered corner layers of the mesh this material will draw on, from
+   * `cornerLayerNamesOf(ref.descriptor)`. The material NAMES the UV and colour layers it
+   * reads, and this is what those names are resolved against.
+   *
+   * REQUIRED, and for the same reason `mintedKey` is (see above): `[]` and "I forgot" are
+   * byte-identical downstream — both make every name fail to resolve — so an omitting caller
+   * would be EQUAL BY CONSTRUCTION to a correct caller over geometry with no layer list, and
+   * no test at any tier could red on it. Passing `[]` is a claim: this road's geometry
+   * carries no layer list, so no name resolves and nothing is drawn that was not before.
+   */
+  layers: readonly NamedCornerLayer[],
 ): THREE.MeshPhysicalMaterial {
   const compiled = compilePrimitiveMaterial(ir, override);
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
@@ -121,6 +134,7 @@ export function usePrimitiveMaterial(
     override,
     shading,
     compiled,
+    layers,
     textures: {
       map: mapTex,
       normalMap: normalTex,

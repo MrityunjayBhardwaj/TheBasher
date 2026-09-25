@@ -69,13 +69,17 @@ import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { directChannelValuesForTarget, bareChannelValuesForSubject } from './nodeChannels';
+import { bareChannelValuesForSubject } from './nodeChannels';
+import { layeredChannelValues } from './layeredChannels';
+import { driverChannelValuesForTarget } from './paramDrivers';
+import type { KeyframeChannelValue } from '../nodes/types';
 import { cameraLensParams, isCameraNode } from './cameraNode';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
 import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { withResolvedRotation } from './resolvedRotation';
 
 type Vec3 = [number, number, number];
 
@@ -114,7 +118,7 @@ function refNode(binding: unknown): string | null {
  *   - Group → `<group pos/rot°/scale><group -pivot>`   (GroupR, #222) — pivot-aware
  *   - MaterialOverride → pass-through, identity         (MaterialOverrideR)
  *   - BoxMesh / SphereMesh → `<mesh pos/rot°/scale>`   (Box/SphereMeshR)
- *   - BakedMesh → `<mesh pos/rot° scale=[1,1,1]>`      (transform baked into verts)
+ *   - a baked Object → `<mesh pos/rot°/scale>`          (BakedMeshR, #489)
  *   - other (GltfAsset root, etc.) → its TRS when present, else identity
  *
  * `.scale` is the TRANSFORM band (the `<mesh scale>` three multiplies into the
@@ -124,7 +128,9 @@ function refNode(binding: unknown): string | null {
  */
 function localMatrix(value: SceneChild): THREE.Matrix4 {
   const m = new THREE.Matrix4();
-  const v = value as unknown as {
+  // #1153 — the one composition point of this resolver, called on each value after its
+  // overlay: a quaternion-mode value's orientation is read into `rotation` here.
+  const v = withResolvedRotation(value) as unknown as {
     kind: string;
     position?: unknown;
     rotation?: unknown;
@@ -135,22 +141,13 @@ function localMatrix(value: SceneChild): THREE.Matrix4 {
   if (v.kind === 'MaterialOverride') return m;
   const pos = isVec3(v.position) ? v.position : ([0, 0, 0] as Vec3);
   const rot = isVec3(v.rotation) ? v.rotation : ([0, 0, 0] as Vec3);
-  // A baked mesh renders at identity scale (the transform is in the geometry) — and that
-  // has to hold for BOTH shapes it comes in. #388 split the baked mesh into an `Object`
-  // posing a `BakedData`, whose value kind is 'Object', so keying this rule on the fused
-  // kind alone put the read road (which would take the Object's scale) and the render road
-  // (`BakedMeshR`, still identity) into disagreement the moment anyone scaled a baked pair
-  // — measured at [3,3,3] vs [1,1,1] against the fused node as a control. The fused node
-  // kept the two roads in agreement by ignoring scale on both; the pair is the same mesh
-  // and inherits the same answer.
-  //
-  // If #489 decides a baked mesh SHOULD honour its scale, both roads change together:
-  // this predicate and `BakedMeshR`'s `scale={[1,1,1]}`. That they are two places is the
-  // reason this comment names the other one.
-  const isBakedShape =
-    v.kind === 'BakedMesh' ||
-    (v.kind === 'Object' && (v as { data?: { kind?: string } }).data?.kind === 'BakedData');
-  const scl: Vec3 = isBakedShape ? [1, 1, 1] : isVec3(v.scale) ? v.scale : ([1, 1, 1] as Vec3);
+  // #489 — a baked mesh honours its scale like every other kind, so there is no baked special
+  // case here any more. It used to read identity, to agree with `BakedMeshR`'s pinned
+  // `scale={[1,1,1]}` (the two roads had to move together, and that pin is why this comment
+  // named the renderer). Both now take the Object's scale: what an Apply baked reads identity
+  // on the Object, so nothing is applied twice, and a band the Apply kept (#1080) or a later
+  // edit is read and drawn the same.
+  const scl: Vec3 = isVec3(v.scale) ? v.scale : ([1, 1, 1] as Vec3);
   const q = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(rot[0] * DEG2RAD, rot[1] * DEG2RAD, rot[2] * DEG2RAD, 'XYZ'),
   );
@@ -243,11 +240,15 @@ function walk(
   value: SceneChild,
   acc: THREE.Matrix4,
   targetId: string,
+  at: Overlay,
 ): THREE.Matrix4 | null {
   const world = acc.clone().multiply(localMatrix(value));
   if (nodeId === targetId) return world;
+  // `childEdges` reads the children off the RAW value, so each one is overlaid on the way down.
   for (const edge of childEdges(state, nodeId, value)) {
-    const found = walk(state, edge.id, edge.value, world, targetId);
+    const child = overlaidAt(state, edge.id, edge.value, at);
+    if (!child) continue;
+    const found = walk(state, edge.id, child, world, targetId, at);
     if (found) return found;
   }
   return null;
@@ -264,14 +265,54 @@ function walkParent(
   value: SceneChild,
   acc: THREE.Matrix4,
   targetId: string,
+  at: Overlay,
 ): THREE.Matrix4 | null {
   if (nodeId === targetId) return acc;
   const world = acc.clone().multiply(localMatrix(value));
   for (const edge of childEdges(state, nodeId, value)) {
-    const found = walkParent(state, edge.id, edge.value, world, targetId);
+    const child = overlaidAt(state, edge.id, edge.value, at);
+    if (!child) continue;
+    const found = walkParent(state, edge.id, child, world, targetId, at);
     if (found) return found;
   }
   return null;
+}
+
+/** The time, evaluation context and held edits a walk overlays each node with. */
+interface Overlay {
+  readonly ctx: EvalCtx;
+  readonly cache: EvaluatorCache | undefined;
+  readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
+}
+
+/**
+ * #1166 — the channels the renderer folds onto `nodeId`: its bare channels, the channels its
+ * placed Strips contribute, then its drivers — SceneFromDAG's `useLayeredChannels`, the set
+ * `resolveEvaluatedTransform` folds too. Reading only the bare channels left a node moved by a
+ * strip or a driver drawn in one place while this read sat on its static pose.
+ */
+function drawnChannels(state: DagState, nodeId: string, at: Overlay): KeyframeChannelValue[] {
+  const layered = layeredChannelValues(state.nodes, nodeId);
+  const drivers = driverChannelValuesForTarget(state, nodeId, at.ctx, at.cache);
+  return drivers.length === 0 ? layered : [...layered, ...drivers];
+}
+
+/**
+ * One node's value as the renderer draws it: the channels it folds ({@link drawnChannels}), then its
+ * held transient — the band DirectChannelsR applies to a node at ANY depth (#266). #268 — this used to
+ * run for top-level scene children only, so a channel on a nested node, or on a nested ancestor,
+ * moved the drawn mesh and left this read on the static pose.
+ */
+function overlaidAt(
+  state: DagState,
+  nodeId: string,
+  value: SceneChild,
+  at: Overlay,
+): SceneChild | null {
+  let child: SceneChild | null = value;
+  const channels = drawnChannels(state, nodeId, at);
+  if (channels.length > 0) child = overlayChannels(child, channels, 1, at.ctx.time.seconds);
+  return overlayTransients(child, nodeId, at.transients);
 }
 
 function isIdentityMatrix(m: THREE.Matrix4): boolean {
@@ -389,17 +430,13 @@ export function resolveWorldTransform(
   //    SAME way DirectChannelsR renders it (free-floating channels → held
   //    transient, at ctx.time.seconds) so an animated ancestor moves its
   //    descendants' world transform in lockstep with the render (H40, one band).
+  const at: Overlay = { ctx, cache, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;
-    let child: SceneChild | null = value.scene.children[i];
-    const directChannels = directChannelValuesForTarget(state.nodes, topId);
-    if (child && directChannels.length > 0) {
-      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
-    }
-    child = overlayTransients(child, topId, transients);
+    const child = overlaidAt(state, topId, value.scene.children[i], at);
     if (!child) continue;
-    const world = walk(state, topId, child, identity, selectedId);
+    const world = walk(state, topId, child, identity, selectedId, at);
     if (world) return decompose(world);
   }
 
@@ -427,12 +464,8 @@ export function resolveWorldTransform(
   }
   for (const edge of lightEdges) {
     if (edge.id !== selectedId) continue;
-    let lit: SceneChild | null = edge.value;
-    const directChannels = directChannelValuesForTarget(state.nodes, edge.id);
-    if (lit && directChannels.length > 0) {
-      lit = overlayChannels(lit, directChannels, 1, ctx.time.seconds);
-    }
-    lit = overlayTransients(lit, edge.id, transients);
+    // A light folds what DirectChannelsLightR draws it with, as every other node does.
+    const lit = overlaidAt(state, edge.id, edge.value, { ctx, cache, transients });
     if (!lit) continue;
     return decompose(identity.clone().multiply(localMatrix(lit)));
   }
@@ -512,17 +545,13 @@ export function resolveParentWorldMatrix(
   const transients = useTransientEditStore.getState().edits;
   const identity = new THREE.Matrix4();
 
+  const at: Overlay = { ctx, cache, transients };
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
     if (!topId) continue;
-    let child: SceneChild | null = value.scene.children[i];
-    const directChannels = directChannelValuesForTarget(state.nodes, topId);
-    if (child && directChannels.length > 0) {
-      child = overlayChannels(child, directChannels, 1, ctx.time.seconds);
-    }
-    child = overlayTransients(child, topId, transients);
+    const child = overlaidAt(state, topId, value.scene.children[i], at);
     if (!child) continue;
-    const parent = walkParent(state, topId, child, identity, selectedId);
+    const parent = walkParent(state, topId, child, identity, selectedId, at);
     if (parent) return isIdentityMatrix(parent) ? null : parent;
   }
 

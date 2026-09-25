@@ -575,9 +575,14 @@ describe('library.import tool', () => {
     const result = await libraryImportTool.handler({ assetRef }, ctx);
 
     const nodeTypes = nodeTypesOf(result.ops);
-    expect(nodeTypes).toContain('GltfAsset');
     expect(nodeTypes).not.toContain('ClipSelect');
     expect(nodeTypes).not.toContain('TransformClip');
+    // #1051 — this fixture's only node has no mesh, which was a native refusal ("an empty") and is
+    // now a Group, so the file no longer reaches the clone road at all. The claim under test is
+    // unchanged and still falsifies the row above: a file with no animation gets no clip nodes,
+    // whichever road carries it. The animated fixture keeps the clone road's own coverage.
+    expect(nodeTypes).not.toContain('GltfAsset');
+    expect(nodeTypes).toContain('Group');
   });
 
   // V22 — two imports of the same assetRef yield byte-identical node ids

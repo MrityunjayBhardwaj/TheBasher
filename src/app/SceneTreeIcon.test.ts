@@ -19,7 +19,8 @@ import { emptyDagState, applyOp } from '../core/dag';
 import { listNodeTypes, getNodeType } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
-import { isDataKindDef } from '../test-utils/splitKinds';
+import { acceptedTypes } from '../core/dag/socketMembership';
+import { isDataOperatorDef } from '../test-utils/splitKinds';
 import { iconKindForNode } from './SceneTreeIcon';
 
 describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries it', () => {
@@ -101,10 +102,26 @@ describe('SceneTreeIcon — a row is iconed by what it IS, not what type carries
     // without being a KIND of data, and has no outliner row of its own to icon (it lives
     // in the Object's modifier stack). The discriminator is shared with the conformance
     // registry gate, which derived this same set independently and broke identically.
-    const dataKinds = listNodeTypes().filter((type) => isDataKindDef(getNodeType(type)));
+    //
+    // #1120 — and "can sit on the `data` socket" is read from the SOCKET, not from what a
+    // node emits. This set used to be "emits `ObjectData`", which was the same set until
+    // #1056 let the socket accept a `Skeleton` directly; from then on the sweep's promise
+    // was wider than its corpus, and a motion's Object drew the unknown dot under a green
+    // test. Deriving the types from the declaration means the next type the socket admits
+    // is swept the moment it is admitted.
+    const accepted = acceptedTypes(getNodeType('Object')!.inputs!.data!);
+    const dataKinds = listNodeTypes().filter((type) => {
+      const def = getNodeType(type);
+      const emits = def?.outputs?.out?.type;
+      return emits !== undefined && accepted.includes(emits) && !isDataOperatorDef(def);
+    });
     // Guard the guard: if this ever finds nothing, the filter has drifted and the
     // test would pass vacuously for every future data kind.
     expect(dataKinds.length).toBeGreaterThan(0);
+    // And both rigs are in it — the kinds that reach the socket by the second route. If the
+    // derivation narrows back to one emitted type, this reds before the icon check can pass
+    // over the gap again.
+    expect(dataKinds).toEqual(expect.arrayContaining(['Skeleton', 'GltfSkeleton']));
 
     const state = emptyDagState();
     const unanswered = dataKinds.filter((type) => iconKindForNode(state, 'x', type) === 'dot');

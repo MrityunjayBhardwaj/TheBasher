@@ -1,4 +1,4 @@
-import { BoxGeometry } from 'three';
+import { BoxGeometry, Float32BufferAttribute } from 'three';
 import { describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import {
@@ -7,6 +7,7 @@ import {
   deserializeGeometry,
   readBakedGeometry,
   serializeGeometry,
+  unheldBakeAttributes,
   writeBakedGeometry,
 } from './bakedGeometryStore';
 
@@ -86,5 +87,30 @@ describe('bakedGeometryStore', () => {
     );
     expect(loaded.getAttribute('position').count).toBe(box.getAttribute('position').count);
     expect(ref.descriptor.vertexCount).toBe(box.getAttribute('position').count);
+  });
+});
+
+// #1119 — the header has a slot for position, normal, uv and index and for nothing else.
+describe('bakedGeometryStore — what it cannot hold', () => {
+  const layered = () => {
+    const box = makeBox();
+    const count = box.getAttribute('position').count;
+    box.setAttribute('uv1', new Float32BufferAttribute(new Float32Array(count * 2), 2));
+    box.setAttribute('color', new Float32BufferAttribute(new Float32Array(count * 3), 3));
+    box.morphAttributes.position = [new Float32BufferAttribute(new Float32Array(count * 3), 3)];
+    return box;
+  };
+
+  it('names every attribute and morph target outside the layout, sorted', () => {
+    expect(unheldBakeAttributes(makeBox())).toEqual([]);
+    expect(unheldBakeAttributes(layered())).toEqual(['color', 'morph:position', 'uv1']);
+  });
+
+  it('refuses to serialize or write a geometry it would drop data from', async () => {
+    expect(() => serializeGeometry(layered())).toThrow('cannot hold color, morph:position, uv1');
+    const storage = new MemoryStorage();
+    const writeSpy = vi.spyOn(storage, 'write');
+    await expect(writeBakedGeometry(storage, layered())).rejects.toThrow('cannot hold');
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 });

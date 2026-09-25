@@ -36,6 +36,7 @@ import {
   resetDegenerateBasisCount,
 } from './boneShape';
 import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
+import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useDagStore } from '../core/dag/store';
@@ -152,32 +153,6 @@ function scanSignature(scans: ArmatureScan[]): string {
   return scans.map((s) => `${s.root.uuid}:${s.bones.length}`).join('|');
 }
 
-const _world = new THREE.Matrix4();
-const _point = new THREE.Vector3();
-
-/**
- * #1056 — a skeleton Object's bones, carried from the rig's own space into the world by the
- * Object's matrix. Head, tail and instance matrix all move together, and the length scales
- * with the Object, so sticks, bounds and picking read the same bone the octahedron draws.
- */
-function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): BoneFrame[] {
-  _world.fromArray(world);
-  const scale = _world.getMaxScaleOnAxis();
-  return frames.map((f) => {
-    _point.set(f.head[0], f.head[1], f.head[2]).applyMatrix4(_world);
-    const head = [_point.x, _point.y, _point.z] as const;
-    _point.set(f.tail[0], f.tail[1], f.tail[2]).applyMatrix4(_world);
-    const tail = [_point.x, _point.y, _point.z] as const;
-    return {
-      ...f,
-      head,
-      tail,
-      length: f.length * scale,
-      matrix: new THREE.Matrix4().multiplyMatrices(_world, f.matrix),
-    };
-  });
-}
-
 /**
  * One InstancedMesh for ALL armatures in the scene.
  *
@@ -233,6 +208,10 @@ export function ArmatureHelper({
   // rewritten when it CHANGES rather than on every frame of a 4096-instance
   // mesh.
   const lastHighlight = useRef(-2);
+  /** How many instances the last repaint actually reached. The highlight alone does not
+   *  say it: the drawn count grows on events that never touch it, and every instance past
+   *  this number is still at three's white default (#1148). */
+  const lastPaintedCount = useRef(0);
   const lineRef = useRef<THREE.LineSegments>(null);
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
@@ -454,9 +433,9 @@ export function ArmatureHelper({
       standaloneSignature.current = standaloneSig;
     }
     const playhead = useTimeStore.getState().seconds;
-    const standalone = standaloneInputs.map((o) =>
-      placeInWorld(boneTransforms(o.clip ? posedSourceBones(o.clip, playhead) : o.bones), o.world),
-    );
+    // #1179 — posed and placed by the SAME function Frame Selected measures, so the camera
+    // fits exactly the bones drawn here.
+    const standalone = standaloneInputs.map((o) => skeletonObjectFrames(o, playhead));
     const armatures = [...perArmature, ...standalone];
     const frames = armatures.flat();
 
@@ -558,8 +537,20 @@ export function ArmatureHelper({
         }
       }
     }
-    if (highlighted !== lastHighlight.current || mesh.instanceColor === null) {
+    // 🔴 The drawn COUNT is part of this condition, not the highlight alone (#1148).
+    // `setColorAt` allocates the buffer as `new Float32Array(...).fill(1)` — WHITE — and
+    // the material is white too, so any instance the last repaint did not reach draws
+    // #ffffff rather than the bone colour. The count grows on events that leave the
+    // highlight exactly where it was: a motion's rig Object unhidden in the outliner, a
+    // second character imported. Those bones then drew brighter than the character beside
+    // them, for no reason a director could see.
+    if (
+      highlighted !== lastHighlight.current ||
+      count !== lastPaintedCount.current ||
+      mesh.instanceColor === null
+    ) {
       lastHighlight.current = highlighted;
+      lastPaintedCount.current = count;
       for (let i = 0; i < count; i++) {
         mesh.setColorAt(i, i === highlighted ? SELECTED_COLOR : BASE_COLOR);
       }
@@ -676,6 +667,11 @@ export function ArmatureHelper({
           // not posed: without `clipCount`, a rig resting because two clips are wired reads
           // the same as a rig whose clip failed to sample.
           skeletonObjects: { id: string; bones: number; clipCount: number; posed: boolean }[];
+          // #1087 — the colours actually drawn, read off the two meshes: every distinct colour
+          // among the drawn bones, and the source rig's. The source rig and a rig Object can
+          // both show one motion, and the colour is what tells them apart on screen.
+          boneColors: string[];
+          sourceColor: string | null;
         };
       };
       w.__basher_armature = {
@@ -689,6 +685,19 @@ export function ArmatureHelper({
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),
         matrices: frames.slice(0, count).map((f) => [...f.matrix.elements]),
+        boneColors: (() => {
+          const seen = new Set<string>();
+          const c = new THREE.Color();
+          for (let i = 0; i < count; i++) {
+            mesh.getColorAt(i, c);
+            seen.add(`#${c.getHexString()}`);
+          }
+          return [...seen].sort();
+        })(),
+        sourceColor:
+          refMesh && refMesh.count > 0
+            ? `#${(refMesh.material as THREE.MeshBasicMaterial).color.getHexString()}`
+            : null,
         sourceRigsOffered: showSourceRigs ? (sourceRigs?.length ?? 0) : 0,
         sourceBones: refMeshRef.current?.count ?? 0,
         sourceNames: refNames,

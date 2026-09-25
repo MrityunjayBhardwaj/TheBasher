@@ -9,9 +9,9 @@
 // #1071 — the two fixtures now take different roads, and each test asserts its own:
 //   · the cutout quad arrives as native geometry, so the cutout is drawn by the native
 //     material built from the captured `alphaCutoff` / `doubleSided`;
-//   · the vertex-colour quad is still refused (the stored mesh does not hold COLOR_0,
-//     #1062) and imports through the file's copy. Its road assertion is deliberate: when
-//     #1062 lands, this reds, and the test should then move to the native road.
+//   · the vertex-colour quad arrives native too (#1062): its COLOR_0 is stored as the corner
+//     layer `Color`, the captured material names that layer, and the draw resolves the name
+//     against the mesh. Its road assertion stays, so a fall back to the file's copy reds.
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
@@ -41,7 +41,7 @@ const firstDrawn = async (page: import('@playwright/test').Page) =>
 const capturedGeometry = async (page: import('@playwright/test').Page) => {
   const mesh = await firstMaterialMesh(page);
   const slot = mesh?.slots[0] as
-    | { geometry?: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean } }
+    | { geometry?: { alphaCutoff?: number; colorLayer?: string; doubleSided?: boolean } }
     | undefined;
   return slot?.geometry ?? null;
 };
@@ -70,21 +70,21 @@ test.describe('glTF alphaMode + vertex-color — drawn material + captured mater
     await expect.poll(async () => (await capturedGeometry(page))?.doubleSided).toBe(true);
   });
 
-  test('COLOR_0 → clone renders vertex colors; IR captures the flag', async ({ page }) => {
+  test('COLOR_0 → native draws the Color layer; the material names it', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
     await ingest(page, 'vertex-color-quad.gltf', 'vcolor');
 
-    // Still the clone road until the stored mesh holds COLOR_0 (#1062) — see the header.
-    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('clone');
+    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
 
-    // side B — the clone renders vertex colours (GLTFLoader set
-    // material.vertexColors=true from the COLOR_0 attribute).
+    // side B — the drawn material reads vertex colours, AND the drawn geometry carries the
+    // buffer it reads: the flag over a geometry with no `color` buffer draws black.
     await expect.poll(async () => (await firstDrawn(page))?.vertexColors).toBe(true);
+    await expect.poll(async () => (await firstDrawn(page))?.buffers).toContain('color');
 
-    // side A — the importer captured the vertexColors flag into the IR.
-    await expect.poll(async () => (await capturedGeometry(page))?.vertexColors).toBe(true);
+    // side A — the importer captured the NAME of the colour layer into the material.
+    await expect.poll(async () => (await capturedGeometry(page))?.colorLayer).toBe('Color');
   });
 });

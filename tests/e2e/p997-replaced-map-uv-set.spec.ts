@@ -1,13 +1,17 @@
 // #997 — a REPLACED map must sample the UV set its material names, ON SCREEN.
 //
-// ── WHY THIS SPEC IS THE ONLY COVER FOR ITS SUBJECT ───────────────────────────────────
+// ── WHAT THIS SPEC COVERS, AND WHAT IT STOPPED COVERING ──────────────────────────────
 //
-// `replacedMapUvSet.gate.test.ts` proves `applyEditedMaps` writes the captured set onto
-// the texture it hands back. It cannot prove the CALLER passes the captured sets in at
-// all. Measured, not assumed: deleting `uvSets: ir.mapUvSets` from the call site in
-// `SceneFromDAG` — which reinstates exactly the defect this issue is about — leaves the
-// ENTIRE unit tier green (5589 passed, the only red being the pre-existing
-// `external-model-audit` one from untracked scratch files). This file reds on it.
+// Written for the file's-copy road, where `replacedMapUvSet.gate.test.ts` proved
+// `applyEditedMaps` writes the captured set onto the texture but not that the CALLER passes
+// the sets in: deleting that argument at the call site in `SceneFromDAG` left the whole unit
+// tier green, and only this file redded.
+//
+// Since #1062 the subject imports as native geometry, so this file now observes the NATIVE
+// road: a map naming a UV layer, resolved against the drawn mesh's own layers, before and after
+// a replacement. The file's-copy call site (`uvLayers: ir.mapUvLayers`) is no longer reached by
+// any e2e — the same hole #1079 records for that road's bake, and closed the same way (a fixture
+// that stays on that road), not by keeping this subject refused.
 //
 // ── AND WHY IT READS PIXELS RATHER THAN `Texture.channel` ─────────────────────────────
 //
@@ -37,27 +41,28 @@
 // texel edge and answers by rounding. `twoUvFixture.gate.test.ts` pins the same four
 // points against the image bytes, so the two tiers are one argument.
 //
-// ── BOTH ROADS, IN THE SAME RUN ───────────────────────────────────────────────────────
+// ── BEFORE AND AFTER, IN THE SAME RUN ─────────────────────────────────────────────────
 //
-// BEFORE the replacement the quad draws the imported clone's own texture, bound by three's
-// loader (`GLTFLoader.js:3354-3357`) — the "renders but isn't editable" half of the
-// importer's notice, which nothing observed until now. AFTER, it draws a replacement built
-// by the production pick → bake → apply road. Different hues on purpose (the fixture's
-// image is green/magenta, the replacement blue/red) so neither state can be mistaken for
-// the other, and the 64×64 replacement's dimensions identify it independently.
+// BEFORE the replacement the quad draws the project's copy of the file's own image, sampled
+// through the UV layer its material names. AFTER, it draws a replacement built by the
+// production pick → bake → apply road, which must keep sampling that same layer. Different
+// hues on purpose (the fixture's image is green/magenta, the replacement blue/red) so neither
+// state can be mistaken for the other, and the 64×64 replacement's dimensions identify it
+// independently.
 //
-// ── THE TWO CASES NOW TAKE DIFFERENT ROADS (#1071) ───────────────────────────────────
+// ── BOTH CASES ON ONE ROAD (#1062) ────────────────────────────────────────────────────
 //
-// `one-uv-quad` is a file the native model holds, so the control arrives as native geometry
-// and draws the project's copy of its image. `two-uv-quad` binds its map to TEXCOORD_1, which
-// the stored mesh does not hold yet (#1062), so the subject still arrives through the file's
-// copy. Until #1062 lands the centre-point control is weaker than the argument above says: the
-// road is a second difference between subject and control. Each case asserts its road, so the
-// day the subject turns native this file reds and the two cases are back on one road.
+// Both files now arrive as native geometry. `two-uv-quad`'s mesh stores `TEXCOORD_1` as the
+// corner layer `UVMap.001`, its material names that layer, and the draw resolves the name
+// against the mesh to the `uv1` buffer. With subject and control on the same road the only
+// difference between them is the UV set, which is what makes the centre-point control above
+// hold. Each case still asserts its road, so a file that falls back to the file's copy reds
+// here rather than passing on the other road's drawing.
 //
 // REF: src/app/material/gltfMapOverlay.ts (`applyEditedMaps` — the write),
 //      src/viewport/SceneFromDAG.tsx (the call site this file is the only cover for),
-//      src/core/import/gltfJsonMaterialToOpenpbr.ts (`capturePerMapUvSets` — the capture),
+//      src/core/import/gltfJsonMaterialToOpenpbr.ts (`capturePerMapUvLayers` — the capture),
+//      src/app/cornerLayerNames.ts (`uvChannelOf` — a layer name resolved on the drawn mesh),
 //      src/core/import/twoUvFixture.gate.test.ts (the fixture's own gate),
 //      tests/e2e/_importedMesh.ts (the lookup + drawn reader, both roads);
 //      issues #997, #553, #550, #1071, #1062.
@@ -347,8 +352,7 @@ const CASES = [
     asset: 'two-uv-quad.gltf',
     mesh: 'TwoUvQuad',
     title: 'a map bound to TEXCOORD_1 draws the CENTRE QUARTER',
-    // Refused until the stored mesh holds TEXCOORD_1 (#1062) — see the header.
-    road: 'clone',
+    road: 'native',
     // Set 1 spans the centre quarter, so every corner of the quad shows the image's centre.
     inherited: 'magenta',
     replaced: 'red',
@@ -369,8 +373,7 @@ for (const c of CASES) {
     const child = await importAndSelect(page, c.asset, `p997-${c.mesh}`);
     expect(child.road, `${c.asset} arrived on the ${child.road} road`).toBe(c.road);
 
-    // ── The INHERITED image: the file's own texture, bound to the named set — by three's
-    // loader on the clone road, by the native material from the captured set on the native one.
+    // ── The INHERITED image: the file's own texture, sampled through the layer the material names.
     const before = await sampleQuad(page, child.rootId);
     for (const [k, v] of Object.entries(before))
       expect(v.inFrustum, `${k} is off screen — the sample would be background`).toBe(true);

@@ -21,7 +21,7 @@
 //
 // REF: issue #149, PLAN.md Wave B (B1); hetvabhasa H40; vyapti V20.
 
-import { writeAt } from '../nodes/overlayChannels';
+import { cloneForOverlay, writeAt } from '../nodes/overlayChannels';
 import type { TransientEdit } from './stores/transientEditStore';
 
 /**
@@ -54,7 +54,8 @@ export function overlayTransients<T>(
   }
   if (!hasMatch) return base; // identity — no clone, no churn
 
-  const clone = JSON.parse(JSON.stringify(base)) as Record<string, unknown>;
+  // #1158 — the overlay's own clone, which keeps a subtree's typed arrays (see cloneForOverlay).
+  const clone = cloneForOverlay(base) as Record<string, unknown>;
   for (const edit of edits.values()) {
     if (edit.nodeId !== nodeId) continue;
     writeAt(clone, edit.paramPath, edit.value); // transient > channel (applied last)

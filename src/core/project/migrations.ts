@@ -23,6 +23,7 @@ import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
+import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 
 type FormatMigration = (raw: unknown) => unknown;
 
@@ -86,6 +87,13 @@ const formatMigrations: Record<number, FormatMigration> = {
   // so its child would never split — and unlike the earlier kinds there is no fused
   // fallback left to render it, because `GltfChild` retires in the same change.
   12: migrateFusedGltfChildToSplit,
+  // v13 → v14 (#1062): a material NAMES the UV layer it samples and the colour layer it reads,
+  // instead of pointing at a numbered UV set and carrying a `vertexColors` boolean. Its OWN format
+  // version for the reason every step above owns one, and with a sharper edge here: node params
+  // are NOT re-parsed through their schemas on load, so this pass is the only thing that can
+  // rewrite them. Without it a saved material keeps a number that nothing reads any more, and its
+  // replaced map silently samples UV set 0 — a picture that is wrong with nothing said.
+  13: migrateMaterialLayerNames,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1570,4 +1578,81 @@ export function migrateClipLoopToTriState(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 12 };
+}
+
+// ── v13 → v14: a material names its layers (#1062) ─────────────────────────
+//
+// `mapUvSets: { albedo: 1 }` → `mapUvLayers: { albedo: 'UVMap.001' }`, and
+// `geometry.vertexColors: true` → `geometry.colorLayer: 'Color'`. The names are the ones an import
+// writes onto the mesh's layer list, so a migrated material asks for the layer it has always been
+// drawing (`attributes.ts`, grounded in `ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md`).
+//
+// 🔑 RECOGNISED BY SHAPE, NOT BY NODE TYPE. Sixteen node types declare a `material` param, an
+// override carries a partial one, and nothing stops the next one from nesting it somewhere new. A
+// walk that enumerated types would silently skip whichever it had not heard of — and a skipped
+// material is exactly the silent wrong picture this change exists to remove. So the pass rewrites
+// any object carrying the old keys, wherever it sits in a node's params.
+//
+// A `vertexColors: false` becomes ABSENT rather than a name, because that is what it meant: this
+// material asks for no colour. Only `true` names one.
+export function migrateMaterialLayerNames(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, { params?: unknown }> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 14 };
+
+  let namedSlots = 0;
+  let namedColours = 0;
+
+  const rewrite = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) rewrite(entry);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const obj = value as Record<string, unknown>;
+
+    const sets = obj.mapUvSets;
+    if (sets !== null && typeof sets === 'object' && !Array.isArray(sets)) {
+      const named: Record<string, string> = {};
+      for (const [slot, set] of Object.entries(sets as Record<string, unknown>)) {
+        // A non-integer or negative entry named no set that could be read, so it names no layer
+        // either — dropped, exactly as the parse that read it dropped it.
+        if (typeof set === 'number' && Number.isInteger(set) && set >= 0) {
+          named[slot] = uvLayerName(set);
+          namedSlots++;
+        }
+      }
+      delete obj.mapUvSets;
+      if (Object.keys(named).length > 0) obj.mapUvLayers = named;
+    }
+
+    const geometry = obj.geometry;
+    if (geometry !== null && typeof geometry === 'object' && !Array.isArray(geometry)) {
+      const lobe = geometry as Record<string, unknown>;
+      if ('vertexColors' in lobe) {
+        if (lobe.vertexColors === true) {
+          lobe.colorLayer = COLOR_LAYER;
+          namedColours++;
+        }
+        delete lobe.vertexColors;
+      }
+    }
+
+    for (const nested of Object.values(obj)) rewrite(nested);
+  };
+
+  for (const node of Object.values(nodes)) rewrite(node?.params);
+
+  if (namedSlots > 0 || namedColours > 0) {
+    console.warn(
+      `[migrateMaterialLayerNames] named ${namedSlots} per-map UV set(s) and ${namedColours} ` +
+        `colour layer(s) (#1062). A slot that sampled set n now names the layer that set arrives ` +
+        `under, and a material that asked for vertex colours now names '${COLOR_LAYER}'.`,
+    );
+  }
+
+  return { ...proj, formatVersion: 14 };
 }

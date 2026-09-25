@@ -26,6 +26,9 @@ import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
+import * as THREE from 'three';
+import { buildDefaultDagState } from '../../core/project/default';
+import { collectSkeletonObjects } from '../skeletonObjects';
 import { validatePlan } from '../../agent/mutators/index';
 import { retargetMutator } from '../../agent/mutators/builders/retarget';
 
@@ -366,7 +369,8 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('REFUSES rather than silently leaving a character at the origin', async () => {
-    // Cooked with an offset, but the clip was never bound to a character rig.
+    // Cooked with an offset, but the clip was never bound to a character rig, and the project
+    // has no scene for the motion's own rig to stand in (#1100) — so nothing at all stands.
     const s = project();
     const { ops, clipId } = mintMotionGenerateOps(s, {
       prompt: 'a slow walk',
@@ -383,6 +387,198 @@ describe('placeCookedMotionOps (#935)', () => {
     expect(out.refusals).toHaveLength(1);
     expect(out.refusals[0]).toMatchObject({ clipId });
     expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1100 — THE MOTION'S OWN RIG IS PLACED TOO
+// ─────────────────────────────────────────────────────────────────────────────
+// Since #1078 a generated motion's skeleton stands in the scene as an Object of its own. With
+// no character to play it, that Object is the thing a director sees walk, and it used to walk
+// from the origin while placement reported "nothing to place".
+
+/** The same project, with a scene for the motion's own rig to stand in. */
+function projectWithScene(): DagState {
+  const s = apply(project(), [
+    { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+  ] as Op[]);
+  return { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+}
+
+/** Mint on the curve, cook and bake, with no character bound. */
+async function mintAndCookUnbound(s: DagState, cap: MotionGenerationCapability) {
+  const { ops, clipId, objectId } = mintMotionGenerateOps(s, {
+    prompt: 'a slow walk',
+    seed: 7,
+    model: 'kimodo-base',
+    curveObjectId: 'pathObj',
+  });
+  if (!objectId) throw new Error('the mint stood no Object — every row below would be vacuous');
+  let next = apply(s, ops);
+  await resolvePendingMotionGenerations(next, cap);
+  next = apply(next, bakeGeneratedClipOps(next));
+  return { state: next, clipId, objectId };
+}
+
+const poseOf = (s: DagState, id: string) =>
+  s.nodes[id].params as { position: number[]; rotation: number[] };
+
+describe('#1100 — the motion’s own rig is placed at the path start', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+  });
+
+  it('with no character, moves the rig to where the path was drawn, facing the way it was asked', async () => {
+    const { state, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    expect(poseOf(state, objectId).position).toEqual([0, 0, 0]);
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    expect(poseOf(placed, objectId).position).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    // Degrees into the same Euler a Group takes, so +pi/2 lands as -90 here too.
+    expect(poseOf(placed, objectId).rotation).toEqual([0, -90, 0]);
+    // The curve's own Object is an Object with data as well, and it is not this motion's rig.
+    expect(poseOf(placed, 'pathObj').position).toEqual([0, 0, 0]);
+  });
+
+  it('leaves the rig’s facing alone when the clip states none, and a second cook writes the same pose', async () => {
+    const { state, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, null),
+    );
+    const once = apply(state, placeCookedMotionOps(state).ops);
+    const twice = apply(once, placeCookedMotionOps(once).ops);
+    expect(poseOf(twice, objectId).position).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(poseOf(twice, objectId).rotation).toEqual([0, 0, 0]);
+  });
+
+  it('leaves an Object the director pointed at the motion’s skeleton where they put it', async () => {
+    // A second placement or a reference copy of the same motion. Placement runs after every
+    // re-cook, so moving it would snap the director's copy onto the generated rig each time.
+    const { state: cooked, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    const skeletonId = edgeTarget(cooked.nodes[objectId], 'data')!;
+    const state = apply(cooked, [
+      {
+        type: 'addNode',
+        nodeId: 'a_by_hand',
+        nodeType: 'Object',
+        params: { position: [9, 0, 9], rotation: [0, 45, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: 'a_by_hand', socket: 'data' },
+      },
+    ] as Op[]);
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    expect(poseOf(placed, objectId).position).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(poseOf(placed, 'a_by_hand')).toMatchObject({
+      position: [9, 0, 9],
+      rotation: [0, 45, 0],
+    });
+  });
+
+  it('with the generated rig deleted, refuses — and says the director’s Object stays put', async () => {
+    const { state: cooked, objectId } = await mintAndCookUnbound(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    const skeletonId = edgeTarget(cooked.nodes[objectId], 'data')!;
+    const state = apply(cooked, [
+      {
+        type: 'disconnect',
+        from: { node: objectId, socket: 'out' },
+        to: { node: 'scene', socket: 'children' },
+      },
+      {
+        type: 'disconnect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: objectId, socket: 'data' },
+      },
+      { type: 'removeNode', nodeId: objectId },
+      {
+        type: 'addNode',
+        nodeId: 'a_by_hand',
+        nodeType: 'Object',
+        params: { position: [9, 0, 9], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: skeletonId, socket: 'out' },
+        to: { node: 'a_by_hand', socket: 'data' },
+      },
+    ] as Op[]);
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(ops).toEqual([]);
+    expect(refusals).toHaveLength(1);
+    expect(refusals[0].reason).toMatch(/no longer stands in the scene/);
+    expect(refusals[0].reason).toMatch(/stay where you put them/);
+    expect(refusals[0].reason).not.toMatch(/does not stand in the scene/);
+  });
+
+  it('with a character bound, places the character AND the rig the bind hid', async () => {
+    const { state } = await mintAndCookThroughRetarget(
+      projectWithScene(),
+      capability(true, Math.PI / 2),
+    );
+    const standIn = Object.values(state.nodes).find(
+      (n) => n.type === 'Object' && n.id !== 'pathObj',
+    );
+    expect(standIn?.meta?.hidden, 'the bind did not hide a stand-in — not the bound shape').toBe(
+      true,
+    );
+
+    const { ops, refusals } = placeCookedMotionOps(state);
+    expect(refusals).toEqual([]);
+    const placed = apply(state, ops);
+    expect(posOf(placed)).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(poseOf(placed, standIn!.id).position).toEqual([OFFSET[0], 0, OFFSET[1]]);
+    expect(poseOf(placed, standIn!.id).rotation).toEqual([0, -90, 0]);
+  });
+
+  // The rows above read params. This one reads what the armature band DRAWS with — the world
+  // matrix `collectSkeletonObjects` composes the bones over — on the default project, whose
+  // render output is what resolves a world transform at all. It is the row that proves the
+  // yaw sign rather than restating it: generation sets a walk off toward +X, and a walk asked
+  // to set off toward +Z must be drawn heading +Z.
+  it('the rig is DRAWN starting where the path starts, heading the way it was asked', async () => {
+    let s = buildDefaultDagState();
+    s = apply(s, [
+      { type: 'addNode', nodeId: 'curve', nodeType: 'CurveData', params: {} },
+      { type: 'addNode', nodeId: 'pathObj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'curve', socket: 'out' },
+        to: { node: 'pathObj', socket: 'data' },
+      },
+    ] as Op[]);
+    const { state, objectId } = await mintAndCookUnbound(s, capability(true, Math.PI / 2));
+    const placed = apply(state, placeCookedMotionOps(state).ops);
+
+    const rig = collectSkeletonObjects(placed).find((r) => r.id === objectId);
+    expect(
+      rig,
+      'the band draws no rig for the stand-in — the reads below would be vacuous',
+    ).toBeDefined();
+    const world = new THREE.Matrix4().fromArray(rig!.world);
+    const start = new THREE.Vector3(0, 0, 0).applyMatrix4(world);
+    expect(start.x).toBeCloseTo(OFFSET[0], 6);
+    expect(start.z).toBeCloseTo(OFFSET[1], 6);
+    const heading = new THREE.Vector3(1, 0, 0).transformDirection(world);
+    expect(heading.x).toBeCloseTo(0, 6);
+    expect(heading.z).toBeCloseTo(1, 6);
   });
 });
 

@@ -3,9 +3,12 @@
 // The claim under test is a NEGATIVE one as much as a positive: the bytes reach
 // storage and a row appears, AND the graph does not change. Saving is a storage
 // act on a clip that is already in the scene, so a save that took the import
-// road would parse the same motion again, add a second Skeleton + AnimationClip,
-// and attempt a second bind the character correctly refuses — a button that
-// silently duplicates the user's work while reporting success.
+// road would parse the same motion again and add a second Skeleton +
+// AnimationClip — a button that silently duplicates the user's work while
+// reporting success. This header used to add "and attempt a second bind the
+// character correctly refuses": there is no such refusal, and #918 struck that
+// clause from `saveGeneratedMotion.ts` without reaching this copy of it. The
+// reason above stands on its own, which is why the clause was never load-bearing.
 //
 // Shaped after generateMotion.test.ts, which is shaped after importBvhFbx.test.ts.
 

@@ -154,6 +154,7 @@ import { flattenedMaterial, flattens } from '../app/material/flattenMaterial';
 // one consumer that takes a share of ownership can be named at an import line. This file
 // no longer reaches the registry at all.
 import { usePrimitiveMaterial } from '../app/material/usePrimitiveMaterial';
+import { cornerLayerNamesOf } from '../app/cornerLayerNames';
 // #638 (ns-1b step 5) — the ONE function that decides array-or-single, and the fixed-count
 // hydration a multi-slot mesh needs. No renderer decides for itself: each one supplies the
 // geometry, the assignment and the hydrated table, and draws whatever comes back.
@@ -166,10 +167,13 @@ import {
   type ObjectSlotSource,
 } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
+import { CENTRE_PIVOT, placeTexture } from '../app/material/uvPlacement';
+import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type {
   AmbientLightValue,
   AreaLightValue,
   BakedMeshValue,
+  BakedMapSlot,
   BakedMaterialSpec,
   CharacterValue,
   DirectionalLightValue,
@@ -785,9 +789,9 @@ function MeshScaleProbe() {
       return out;
     };
     // Phase 151 (Wave 2, SC-1/SC-2) — the H40 side-A observation for BakedMesh.
-    // A baked mesh renders at IDENTITY scale (the transform is in the verts), so
-    // `__basher_mesh_world_scale` always reports [1,1,1] for it. The size now
-    // lives in the geometry bounds. This seam reports the REAL rendered object's
+    // A fresh Apply All leaves a baked mesh at identity scale (the transform is in the
+    // verts), so `__basher_mesh_world_scale` reports [1,1,1] for it and the size lives in
+    // the geometry bounds. This seam reports the REAL rendered object's
     // WORLD-space axis-aligned bounding-box DIMENSIONS by node id, so the
     // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
     // (side A == side B) instead of inferring from params. Read-only (V8 clean).
@@ -971,7 +975,7 @@ const LightNode = memo(function LightNode({
  *  and the animated path (DirectChannelsLightR) so the channel overlay reuses the
  *  SAME projection as a static light — render == resolver for free (H40). */
 function LightKindR({
-  value,
+  value: raw,
   nodeId,
   constrained,
 }: {
@@ -979,6 +983,10 @@ function LightKindR({
   nodeId: string | null;
   constrained: boolean;
 }) {
+  // #1153 — every light road ends here (static, channel-driven, nested, MeshChild's arm), so
+  // this is the light's counterpart of MeshChild: a quaternion-mode light's orientation
+  // becomes the `rotation` its kind reads. Memoised; an euler light comes back as itself.
+  const value = useMemo(() => withResolvedRotation(raw), [raw]);
   switch (value.kind) {
     case 'DirectionalLight':
       // #265 — a Track-To'd sun aims its `.target` at the resolved world point.
@@ -1366,12 +1374,14 @@ function LightHelperFollower({
   // is unchanged (the ConstrainedR / useAreaLightAim pattern).
   const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const patched = usePlayheadFollow((seconds) => {
-    const base =
+    // #1153 — resolved after the overlay, as the light it follows is.
+    const base = withResolvedRotation(
       overlayTransients(
         overlayChannels(value, channels, 1, seconds) ?? value,
         nodeId,
         transients,
-      ) ?? value;
+      ) ?? value,
+    );
     // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
     // derives its aim from the Track-To target per frame; the wireframe helper
     // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
@@ -1803,7 +1813,12 @@ interface MeshChildProps {
   nodeId?: string | null;
 }
 
-const MeshChild = memo(function MeshChild({ value, override, nodeId }: MeshChildProps) {
+const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: MeshChildProps) {
+  // #1153 — every scene child is drawn through here, downstream of every overlay road
+  // (DirectChannelsR, ConstrainedR, GroupR's children), so this is where a quaternion-mode
+  // value's orientation becomes the `rotation` every arm below already reads. Memoised on the
+  // value: an euler value comes back as itself, so nothing that never opts in re-renders.
+  const value = useMemo(() => withResolvedRotation(raw), [raw]);
   switch (value.kind) {
     // #388 S5 / #415 S5 — no DAG node evaluates to a `BakedMeshValue` or a
     // `ModifiedMeshValue` any more (the fused baked kind is retired; the modifiers emit
@@ -2253,7 +2268,8 @@ function ConstrainedR({
     const followed = resolveConstraintPosition(state, pickId, ctx, cache);
     const rec = base as unknown as Record<string, unknown>;
     const patch: Record<string, unknown> = {};
-    if (aim && 'rotation' in rec) patch.rotation = aim;
+    // #1153 — the aim replaces the orientation in either mode (see `aimPatch`).
+    if (aim && 'rotation' in rec) Object.assign(patch, aimPatch(rec, aim));
     if (followed && 'position' in rec) patch.position = followed;
     // #536 S3 — the spread builds a SECOND value after the seam already ran, so it owes the
     // same debt the overlay does: it must not hand on an identity its own writes made stale.
@@ -2352,7 +2368,15 @@ function ModifiedMeshR({
   // spelling of identity to drift from. What it must NOT be is an omission, because an
   // omission computes the identical key and no tier below the signature can tell the two
   // apart.
-  const material = usePrimitiveMaterial(inlineMat, override, shading, null);
+  const material = usePrimitiveMaterial(
+    inlineMat,
+    override,
+    shading,
+    null,
+    // #1062 — a modifier's output carries its source's layers (the derived builders merge
+    // attributes by name), so the descriptor walk answers for the whole chain from here.
+    cornerLayerNamesOf(value.geometry.descriptor),
+  );
   const geom = getForAttach(value.geometry);
   // #258 (V38, the sibling of #83's glTF blank-slot boundary): a null geom means
   // the modifier's source could not be built synchronously — reachable when the
@@ -2640,6 +2664,10 @@ function ObjectMeshR({
     // third: an absent key and a road that has none are different claims, and only the
     // caller knows which one it is making.
     mat && mat === data?.material ? (data?.materialKey ?? null) : null,
+    // #1062 — the layers of the mesh THIS object draws, so the material's named UV and
+    // colour layers resolve against the geometry actually in hand. `[]` for an Empty: no
+    // data, no mesh, nothing for a name to resolve against.
+    data ? cornerLayerNamesOf(data.geometry.descriptor) : [],
   );
   // #389 — an Object does not draw what the asset clone is already drawing: without that
   // rule the pair draws a second mesh from one geometry, and on a skinned child the second
@@ -2748,6 +2776,8 @@ function MultiMaterialMeshR({
     MODIFIED_FALLBACK_MATERIAL,
     override,
     shading,
+    // #1062 — one list for all eight slots: they are eight materials on THIS mesh.
+    cornerLayerNamesOf(geometry.descriptor),
   );
   const geom = getForAttach(geometry);
   const assignment = materialAssignmentOf(attributeKey, slots, geometry);
@@ -2823,10 +2853,10 @@ function needsMaterialSlots(slots: readonly unknown[]): boolean {
 //   - `useBakedGeometry(value.geometry)` suspends on the first render (the OPFS
 //     read), primes geometryRegistry, then returns the cached BufferGeometry.
 //     The viewport already wraps the scene in <Suspense> (glTF uses it).
-//   - The mesh renders at IDENTITY scale [1,1,1] — the TRS is baked INTO the
-//     verts, so applying value.scale would double-transform (H40 band drift).
-//     position/rotation are kept for re-transform-after-Apply (a baked mesh is
-//     first-class), but a fresh Apply produces identity TRS.
+//   - The mesh renders at the Object's full TRS. What an Apply baked is in the verts
+//     and reads identity on the Object, so nothing is applied twice; every band the
+//     Apply kept (#1080), and any later edit, draws like any other mesh's (#489 — scale
+//     used to be pinned to [1,1,1] here while the inspector row edited it to no effect).
 //   - It feeds the SAME wireframe + MaterialOverride path a Box gets (first-class
 //     scene mesh, V20). Wave 2 built the SCALAR material; Wave 3 (t8) brings the
 //     6 texture-map slots online — built imperatively per `materialClass` so a
@@ -2853,6 +2883,24 @@ function BakedMeshR({ value, override }: { value: BakedMeshValue; override?: Mat
   return <CapturedBakedMeshR value={value} override={override} />;
 }
 
+/**
+ * #489 — the pose a baked mesh draws at: the Object's OWN position, rotation AND scale. What an
+ * Apply baked is already in the verts and the Object reads identity for it, so this never
+ * double-transforms; a band the Apply kept (#1080) or a later edit is drawn instead of silently
+ * ignored. `resolveWorldTransform`'s `localMatrix` reads the same scale.
+ *
+ * ONE spelling for both arms of {@link BakedMeshR}. The flatten arm (#1091) was written with its own
+ * copy while #489 changed the other, and kept the old identity scale: a flattened baked mesh drew
+ * none of its scale while the inspector and the world resolver said it did.
+ */
+function bakedMeshPose(value: BakedMeshValue) {
+  return {
+    position: value.position as [number, number, number],
+    rotation: degVec3ToRad(value.rotation as [number, number, number]),
+    scale: (value.scale ?? [1, 1, 1]) as [number, number, number],
+  };
+}
+
 function FlattenedBakedMeshR({
   value,
   override,
@@ -2866,17 +2914,23 @@ function FlattenedBakedMeshR({
   // evaluator minted describes it — the captured spec is exactly what flatten discards. The
   // seam's fallback keys the flattened IR with the evaluator's own function
   // (`materialKeyReach.gate.test.ts` case D counts this call).
-  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null);
-  return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // IDENTITY scale — the transform is baked into the geometry verts (H40), as below.
-      scale={[1, 1, 1]}
-      geometry={geom}
-      material={material}
-    />
-  );
+  // `[]` stated, not omitted: a bake keeps position/normal/uv/index only, and a FLATTENED
+  // material is built from the override alone — which carries no layer names to resolve
+  // anyway. Nothing here can name a layer, so nothing resolves, which is the answer.
+  const material = usePrimitiveMaterial(flattenedMaterial(override), override, shading, null, []);
+  return <mesh {...bakedMeshPose(value)} geometry={geom} material={material} />;
+}
+
+/**
+ * #1140 — draw the surface the bake captured: its cutout threshold and which faces it drew.
+ *
+ * Both are absent from an ordinary spec, and three's own constructor defaults (alphaTest 0,
+ * FrontSide) are exactly what absence means, so this writes nothing for a material that had
+ * neither. `threeSideFor` stays the one place the boolean becomes the enum.
+ */
+function bakedSurface(m: THREE.Material, spec: BakedMaterialSpec): void {
+  if (spec.alphaTest !== undefined) m.alphaTest = spec.alphaTest;
+  if (spec.doubleSided !== undefined) m.side = threeSideFor(spec.doubleSided);
 }
 
 function CapturedBakedMeshR({
@@ -2931,6 +2985,18 @@ function CapturedBakedMeshR({
       if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
       return t;
     };
+    // #1136 — a slot baked with a placement draws a CLONE placed about the centre. The loaded
+    // texture is cached and shared by hash, so placing it in place would move every other baked
+    // mesh drawing the same image. The clones are this material's, disposed with it below.
+    const clones: THREE.Texture[] = [];
+    const placed = (t: THREE.Texture | null, slot: BakedMapSlot) => {
+      const placement = spec.mapPlacements?.[slot];
+      if (!t || !placement) return t;
+      const c = t.clone();
+      placeTexture(c, placement, CENTRE_PIVOT);
+      clones.push(c);
+      return c;
+    };
 
     if (spec.materialClass === 'basic') {
       // MeshBasicMaterial (KHR_materials_unlit) — NO roughness/metalness/emissive
@@ -2941,7 +3007,9 @@ function CapturedBakedMeshR({
         transparent: scalar.transparent,
         wireframe: shading === 'wireframe',
       });
-      m.map = sRGB(mapTex);
+      m.map = placed(sRGB(mapTex), 'map');
+      bakedSurface(m, spec);
+      m.userData.__placedClones = clones;
       return m;
     }
 
@@ -2963,12 +3031,14 @@ function CapturedBakedMeshR({
     // and `:185`), so honouring a captured set here would point a sampler at an
     // attribute that does not exist. The discharge is upstream — carry the second set
     // through the bake first; only then does binding it here mean anything.
-    m.map = sRGB(mapTex);
-    m.normalMap = linear(normalTex);
-    m.roughnessMap = linear(roughnessTex);
-    m.metalnessMap = linear(metalnessTex);
-    m.aoMap = linear(aoTex);
-    m.emissiveMap = sRGB(emissiveTex);
+    m.map = placed(sRGB(mapTex), 'map');
+    m.normalMap = placed(linear(normalTex), 'normalMap');
+    m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
+    m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
+    m.aoMap = placed(linear(aoTex), 'aoMap');
+    m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
+    bakedSurface(m, spec);
+    m.userData.__placedClones = clones;
 
     if (spec.materialClass === 'physical' && spec.physical) {
       const p = m as THREE.MeshPhysicalMaterial;
@@ -2976,6 +3046,9 @@ function CapturedBakedMeshR({
       if (ph.clearcoat !== undefined) p.clearcoat = ph.clearcoat;
       if (ph.clearcoatRoughness !== undefined) p.clearcoatRoughness = ph.clearcoatRoughness;
       if (ph.transmission !== undefined) p.transmission = ph.transmission;
+      // #1140 — without this a captured transmission drew at three's thickness 0, which refracts
+      // nothing: the glass baked flat.
+      if (ph.thickness !== undefined) p.thickness = ph.thickness;
       if (ph.ior !== undefined) p.ior = ph.ior;
       if (ph.sheen !== undefined) p.sheen = ph.sheen;
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
@@ -2998,20 +3071,26 @@ function CapturedBakedMeshR({
     metalnessTex,
     aoTex,
     emissiveTex,
+    spec.mapPlacements,
+    spec.alphaTest,
+    spec.doubleSided,
   ]);
 
   // Dispose the built material when it is replaced or the node unmounts — it is
-  // owned here (single writer V20), so this renderer owns its lifecycle.
-  useEffect(() => () => material.dispose(), [material]);
+  // owned here (single writer V20), so this renderer owns its lifecycle. Material.dispose does not
+  // free textures, so the placed clones (#1136) go explicitly; the shared loaded ones stay.
+  useEffect(
+    () => () => {
+      material.dispose();
+      (material.userData.__placedClones as THREE.Texture[] | undefined)?.forEach((t) =>
+        t.dispose(),
+      );
+    },
+    [material],
+  );
 
   return (
-    <mesh
-      position={value.position as [number, number, number]}
-      rotation={degVec3ToRad(value.rotation as [number, number, number])}
-      // IDENTITY scale — the transform is baked into the geometry verts (H40).
-      scale={[1, 1, 1]}
-      geometry={geom}
-    >
+    <mesh {...bakedMeshPose(value)} geometry={geom}>
       <primitive object={material} attach="material" />
     </mesh>
   );
@@ -3093,7 +3172,14 @@ function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void
   // the cutout render respond. vertexColors only ever set to its captured value
   // (the clone's shader is already compiled for it → no needsUpdate churn).
   if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
-  if ('vertexColors' in next) next.vertexColors = tp.vertexColors;
+  // #1062 — the compile carries the colour layer's NAME now, and the reduction to three's
+  // flag happens HERE, at this road's own boundary, because the answer is road-specific.
+  // This road draws three's copy of the file, which carries no layer list to resolve a name
+  // against — so the only question it can answer is whether a colour was asked for at all,
+  // which is exactly what the boolean meant before names existed. The native road resolves
+  // the name properly against the drawn mesh's layers (`cornerLayerNames.ts`). Same split as
+  // `uvLayerIndex` vs that module, for the same reason.
+  if ('vertexColors' in next) next.vertexColors = tp.colorLayer !== undefined;
   // doubleSided → three `side`. Identity for an unedited import (matches the
   // clone); editing re-clones first, so the new `side` compiles correctly. The
   // mapping is shared with the native road's spec assembly (#532) rather than
@@ -3524,7 +3610,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
               perMap: ir.mapUvTransforms,
               // #997 — the UV set a REPLACED slot samples. The inherited road needs
               // nothing: three's loader already bound the clone's texture to its set.
-              uvSets: ir.mapUvSets,
+              uvLayers: ir.mapUvLayers,
             },
           });
         }

@@ -29,11 +29,17 @@
 // ─────────────────────────────────────────────────────────────────────────
 // WHAT IS ACTUALLY TRUE, AND IT IS WORTH KNOWING
 // ─────────────────────────────────────────────────────────────────────────
-// A second bind is ACCEPTED, and which clip drives a bone afterwards is decided
-// by `clipIds.sort()` (`boundClipsForAsset.ts:86`) — so the winner is the
-// id-sorted-FIRST clip, NOT the one bound most recently. Binding a second motion
-// can therefore leave the first one driving the rig, which is not what "I just
-// dropped this on the character" leads anyone to expect.
+// A second bind is ACCEPTED. Which clip drives a bone afterwards was decided by
+// `clipIds.sort()` alone when this file was written — so the winner was the
+// id-sorted-FIRST clip, NOT the one bound most recently, and binding a second
+// motion could leave the first one driving the rig. That was the defect #907
+// then fixed: `boundClipsForAsset` now ranks ACTIVE first and keeps the id only
+// as the tie-break, and the binding mutator stands the predecessor down. So the
+// LAST bind wins, and the id order decides only when nothing is active — which
+// is every project saved before #907.
+//
+// Both halves are pinned below: "with NO active clip, the id order still
+// decides", and the `#907` pair that holds whatever the ids sort like.
 //
 // REF: src/app/animate/boundClipsForAsset.ts (the sort that decides it);
 //      src/app/asset/bindMotionToCharacter.ts (the refusal set that does not

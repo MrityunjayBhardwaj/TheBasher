@@ -20,6 +20,7 @@
 // `lookAt` (area) live on the LightData (authored shading orientation, parity-first
 // #386) and are merged back here.
 
+import { rotationModeFieldsOf } from './rotationMode';
 import type { LightDataValue, LightValue, ObjectValue, Vec3 } from './types';
 
 /** LightData.light (the enum discriminator) → the flat LightValue kind. */
@@ -43,6 +44,10 @@ export function recomposeLightObject(value: unknown): LightValue | null {
   const position: Vec3 = obj.position;
   const rotation: Vec3 = obj.rotation;
   const scale: Vec3 = obj.scale ?? [1, 1, 1];
+  // #1153 — the mode rides onto the flat light, because a light's channels overlay the FLAT
+  // value (DirectChannelsLightR), so a channel on `quaternion` needs the field to land on and
+  // the resolution happens after it, not here.
+  const mode = rotationModeFieldsOf(obj);
   switch (d.light) {
     case 'Directional':
       return {
@@ -50,6 +55,7 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         intensity: d.intensity,
         position,
         rotation,
+        ...mode,
         scale,
         color: d.color,
       };
@@ -59,6 +65,7 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         intensity: d.intensity,
         position,
         rotation,
+        ...mode,
         scale,
         color: d.color,
         distance: d.distance,
@@ -71,6 +78,7 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         position,
         target: d.target,
         rotation,
+        ...mode,
         scale,
         color: d.color,
         angle: d.angle,
@@ -84,6 +92,7 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         intensity: d.intensity,
         position,
         rotation,
+        ...mode,
         scale,
         color: d.color,
         width: d.width,

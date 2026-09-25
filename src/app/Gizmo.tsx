@@ -52,11 +52,12 @@ import { TransformGizmo } from './TransformGizmo';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
+import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
-import type { CharacterValue } from '../nodes/types';
+import type { CharacterValue, RotationModeFields } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
 import { useEditorStore } from './stores/editorStore';
@@ -168,7 +169,10 @@ function getManipulable(node: Node | null): Manipulable | null {
   if (!node) return null;
   const p = node.params as Record<string, unknown>;
   if (!isVec3(p.position)) return null;
-  const rotation = isVec3(p.rotation) ? (p.rotation as Vec3) : null;
+  // #1153 — the static fallback (no evaluated transform, e.g. a nested Object) reads the
+  // orientation in the node's own mode, not a quaternion-mode node's stale euler.
+  const r = withResolvedRotation(p).rotation;
+  const rotation = isVec3(r) ? (r as Vec3) : null;
   const explicitScale = isVec3(p.scale) ? (p.scale as Vec3) : null;
   return {
     position: p.position as Vec3,
@@ -481,16 +485,21 @@ function SingleGizmo() {
         'rotate',
         local ? local.rotation : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]),
       );
-      if (routeAnimatedGrab(selectedId, 'rotation', value)) return; // D-02: re-route BEFORE setParam
-      if (writeGltfChildOverride('rotation', value)) return; // P7.7 manual layer
+      // #1153 — through the node's mode: `rotation` for euler, `quaternion` otherwise, and the
+      // keying below follows the same path so a quaternion node keys its quaternion channel.
+      const params = (useDagStore.getState().state.nodes[selectedId]?.params ??
+        {}) as RotationModeFields;
+      const write = rotationWriteOf(params, value);
+      if (routeAnimatedGrab(selectedId, write.paramPath, write.value)) return; // D-02: re-route BEFORE setParam
+      if (write.paramPath === 'rotation' && writeGltfChildOverride('rotation', value)) return; // P7.7 manual layer
       useDagStore
         .getState()
         .dispatch(
-          { type: 'setParam', nodeId: selectedId, paramPath: 'rotation', value },
+          { type: 'setParam', nodeId: selectedId, paramPath: write.paramPath, value: write.value },
           'user',
           'gizmo rotate',
         );
-      autoKeyCommit(selectedId, 'rotation', value); // #141 un-animated first-key (see translate)
+      autoKeyCommit(selectedId, write.paramPath, write.value); // #141 un-animated first-key (see translate)
       return;
     }
     // scale
@@ -769,7 +778,16 @@ function MultiGizmo() {
       // Position changes under translate AND under rotate/scale-about-pivot.
       ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'position', value: local.position });
       if (liveMode === 'rotate' && sn.manip.rotation) {
-        ops.push({ type: 'setParam', nodeId: sn.id, paramPath: 'rotation', value: local.rotation });
+        // #1153 — through each node's own mode, as the single-node write is.
+        const params = (useDagStore.getState().state.nodes[sn.id]?.params ??
+          {}) as RotationModeFields;
+        const write = rotationWriteOf(params, local.rotation);
+        ops.push({
+          type: 'setParam',
+          nodeId: sn.id,
+          paramPath: write.paramPath,
+          value: write.value,
+        });
       }
       // Only an explicit `scale` band is multi-scaled (never a geometry `size`).
       if (liveMode === 'scale' && sn.manip.scaleParamPath === 'scale') {

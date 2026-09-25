@@ -22,6 +22,15 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1153): `Object` and `Group` each append `rotationMode=(unrouted)
+// quaternion=(unrouted)` — the rotation mode lands before the inspector draws it, so the
+// honest cell is `(unrouted)` (the #645 P6 precedent below). `unrouted` 235 → 239, `routed`
+// untouched; the inspector commit routes all four under the fourth arm.
+//
+// FOURTH ARM USED (#1153): those four cells are ROUTED to `transform` in the commit that adds
+// the rotation-mode control drawing them (inspectorSectionBody.ts), with each param's `home`.
+// `routed` 139 → 143 and `unrouted` 239 → 235 — one in each direction per cell.
+//
 // USED THREE TIMES (#607, ns-2 steps 12, 13a and 13b), and every use is recorded here
 // because an amendment nobody tracks is a rule that quietly became the norm.
 // `SetMaterialOp.scope`, `ArrayModifier.scope` and `MirrorModifier.scope` each appended ONE
@@ -111,7 +120,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // ADDED at #1049 — a stored polygon mesh. Placed beside its sibling data kind rather than in
   // strict order; the gate compares sorted keys. `mesh` is unrouted for the reason `GltfData`'s
   // address is: nothing edits a stored mesh's elements yet, so a home would be an empty card.
-  PolyMeshData: '[material] mesh=(unrouted) material=material',
+  // #1052 appends `materialSlots`, unrouted for the reason `GltfData`'s is: the material section
+  // edits it through the slot selector, which reads the param directly rather than by a home.
+  PolyMeshData: '[material] mesh=(unrouted) material=material materialSlots=(unrouted)',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
@@ -142,7 +153,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
-    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform',
+    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform',
   IDPass: '[render] width=(unrouted) height=(unrouted)',
   KeyframeChannelColor:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
@@ -187,14 +198,15 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
   MotionGenerate:
-    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) name=(unrouted)',
+    // #1124 — `name` retired: the clip owns a generated motion's name.
+    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted)',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -341,4 +353,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1049 adds `PolyMeshData` as a wholly new node type: +1 type, +1 routed (`material`), +1
 // unrouted (`mesh`, see its row). Nothing existing moved:
 //   types 87 + 1 = 88 · routed 138 + 1 = 139 · unrouted 235 + 1 = 236
-export const GOLDEN_TOTALS = { types: 88, routed: 139, unrouted: 236 } as const;
+//
+// #1052 appends `PolyMeshData.materialSlots`, unrouted (see its row): +1 unrouted.
+//   types 88 · routed 139 · unrouted 235 + 1 = 236
+//
+// #1153 routes four rows under the transform section's rotation arm (see their rows): +4 routed.
+//   types 88 · routed 139 + 4 = 143 · unrouted 236
+export const GOLDEN_TOTALS = { types: 88, routed: 143, unrouted: 236 } as const;

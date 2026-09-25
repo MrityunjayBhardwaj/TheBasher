@@ -201,7 +201,9 @@ export function overlayWithIdentity<T>(
   // the static scene, which must cost nothing and must not churn the caller's memo.
   if (patched === base) return base as IdentityIntact<T>;
 
-  return repairInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients));
+  // `base` goes along as the handles' source: the patched value is a JSON clone, and a handle
+  // read off it has lost every typed array it carried (#1099).
+  return repairInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients), base);
 }
 
 /**
@@ -248,13 +250,33 @@ function rebuildInvalidatedHandles(
   band: OverlayBand,
   value: unknown,
   paths: readonly string[],
+  source: unknown,
 ): void {
   const fields = handleFieldsForBand(band);
   if (fields.length === 0) return;
 
   const clone = value as Record<string, unknown>;
   for (const field of fields) {
-    const ref = readAt(clone, field.handlePath) as GeometryRef | null | undefined;
+    // A write that reaches the handle itself hands over a whole ref, and that writer owns it:
+    // it is neither rebuilt from a descriptor field nor put back from the source.
+    if (paths.some((p) => writeInvalidates(p, field.handlePath))) continue;
+
+    // #1099 — the handle comes from the UN-OVERLAID value, never from the clone. Both overlay
+    // primitives clone through JSON, and a handle whose descriptor carries stored mesh data
+    // (a native import, or a modifier whose `source` is one) comes back from JSON with every
+    // typed array turned into a plain `{ "0": …, "1": … }` object. Rebuilding an Array over
+    // that source re-minted its tiled attributes from points with no `length` and threw,
+    // unmounting the editor. The written PARAMS still come from the clone, which is where
+    // the overlay put them; only the handle is taken from the value the evaluator produced.
+    //
+    // The source's ref is written back even when nothing it builds from was written, so the
+    // clone never carries the damaged copy for a registry miss to build from. That shares the
+    // ref between the base and the clone, which is safe for the reason keys are: a geometry
+    // ref is never mutated in place, only replaced (as `rebuildGeometryRef` does).
+    const ref = readAt(source as Record<string, unknown>, field.handlePath) as
+      | GeometryRef
+      | null
+      | undefined;
     // A data kind in this band may carry no handle at all (a curve has no geometry), and a
     // loose value may carry something that is not a ref. Neither is an error here.
     if (!ref || typeof ref !== 'object' || !('descriptor' in ref)) continue;
@@ -273,7 +295,7 @@ function rebuildInvalidatedHandles(
     // Returned by reference when nothing it builds from was written — so a value whose
     // animation never touches geometry keeps the key the evaluator minted, and two objects
     // sharing a build do not stop sharing because one of them moved.
-    if (rebuilt !== ref) writeAt(clone, field.handlePath, rebuilt);
+    if (rebuilt !== ref || source !== value) writeAt(clone, field.handlePath, rebuilt);
 
     // ⚠️ THE OVERLAY'S OWN WRITE IS LEFT WHERE IT LANDED, and a reader should know why. The
     // clone still carries `data.size` — a field with no consumer, which is precisely the
@@ -307,13 +329,18 @@ function rebuildInvalidatedHandles(
  * ⚠️ PRECONDITION: `value` must be freshly built and not yet handed to anyone — this
  * mutates in place. Both callers satisfy it (the overlay's own clone, and the constraint's
  * spread), and it is the same precondition the overlay has always relied on.
+ *
+ * `source` is the value a handle is read from (#1099). The overlay passes the un-overlaid
+ * base, because its clone went through JSON; the constraint road's spread copies no handle,
+ * so there it is the value itself, the default.
  */
 export function repairInvalidatedIdentity<T>(
   band: OverlayBand,
   value: T,
   paths: readonly string[],
+  source: T = value,
 ): IdentityIntact<T> {
-  rebuildInvalidatedHandles(band, value, paths);
+  rebuildInvalidatedHandles(band, value, paths, source);
 
   const fields = identityFieldsForBand(band);
   if (fields.length === 0) return value as IdentityIntact<T>;

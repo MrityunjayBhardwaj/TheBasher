@@ -16,10 +16,8 @@
 // pair draws through the identical component the fused `BakedMesh` draws through, so
 // they cannot drift while both exist.
 //
-// The pose comes off the Object, the substance off the data. `scale` is carried for
-// completeness and byte-identity with the fused value; `BakedMeshR` deliberately
-// renders at IDENTITY scale because the TRS is baked into the verts, and that
-// behaviour is inherited unchanged rather than re-decided here.
+// The pose comes off the Object, the substance off the data — all three bands, and
+// `BakedMeshR` draws all three (#489; scale used to be pinned to identity there).
 //
 // REF: src/nodes/lightRecompose.ts (the same play for C3); src/nodes/BakedData.ts
 //      (why a baked payload is not a MeshData); src/viewport/SceneFromDAG.tsx

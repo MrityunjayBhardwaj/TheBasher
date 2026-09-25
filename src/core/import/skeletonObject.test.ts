@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../dag';
 import type { DagState } from '../dag/state';
+import type { Op } from '../dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
@@ -16,6 +17,8 @@ import {
   buildSkeletonObjectOps,
   normalisedRigScale,
   skeletonObjectId,
+  standInObjectOf,
+  standingObjectsOf,
 } from './skeletonObject';
 
 const BVH = `HIERARCHY
@@ -72,6 +75,7 @@ describe('buildSkeletonObjectOps', () => {
       bones: RIG,
       sceneNodeId: 'scene',
       normalise: false,
+      name: 'soma-walk',
     });
     expect(objectId).toBe(skeletonObjectId('sk'));
     expect(ops).toEqual([
@@ -81,6 +85,7 @@ describe('buildSkeletonObjectOps', () => {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
+      { type: 'setMeta', nodeId: objectId, name: 'soma-walk' },
       {
         type: 'connect',
         from: { node: 'sk', socket: 'out' },
@@ -104,6 +109,7 @@ describe('buildSkeletonObjectOps', () => {
       bones,
       sceneNodeId: 'scene',
       normalise: true,
+      name: 'sk',
     });
     for (const op of ops) state = applyOp(state, op).next;
 
@@ -208,7 +214,98 @@ describe('normalisedRigScale', () => {
       bones: scaled(RIG, 100),
       sceneNodeId: 'scene',
       normalise: false,
+      name: 'sk',
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
+  });
+});
+
+describe('#1101 — the Object carries its motion name', () => {
+  it('applied, the name is the one the outliner reads; a blank name adds no op', () => {
+    let state = sceneState();
+    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of imported.ops) state = applyOp(state, op).next;
+    const named = buildSkeletonObjectOps({
+      skeletonId: 'sk',
+      bones: [],
+      sceneNodeId: 'scene',
+      normalise: false,
+      name: 'soma-walk',
+    });
+    for (const op of named.ops) state = applyOp(state, op).next;
+    expect(state.nodes[named.objectId].meta?.name).toBe('soma-walk');
+
+    const blank = buildSkeletonObjectOps({
+      skeletonId: 'sk2',
+      bones: [],
+      sceneNodeId: 'scene',
+      normalise: false,
+      name: '   ',
+    });
+    expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
+  });
+});
+
+describe('standingObjectsOf (#1100)', () => {
+  it('finds every Object whose data is the skeleton, id-sorted, and no other Object', () => {
+    let state = sceneState();
+    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    for (const op of imported.ops) state = applyOp(state, op).next;
+    const ops: Op[] = [
+      // Pointed at the skeleton by hand — found by its edge, not by the importer's id.
+      { type: 'addNode', nodeId: 'z_by_hand', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'sk', socket: 'out' },
+        to: { node: 'z_by_hand', socket: 'data' },
+      },
+      // An Empty that sorts FIRST, so a lookup that forgot the edge check would return it.
+      { type: 'addNode', nodeId: 'a_empty', nodeType: 'Object', params: {} },
+      ...buildSkeletonObjectOps({
+        skeletonId: 'sk',
+        bones: [],
+        sceneNodeId: 'scene',
+        normalise: false,
+        name: 'sk',
+      }).ops,
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    expect(standingObjectsOf(state, 'sk')).toEqual([skeletonObjectId('sk'), 'z_by_hand']);
+    expect(standingObjectsOf(state, 'clip')).toEqual([]);
+  });
+});
+
+describe('standInObjectOf (#1088)', () => {
+  /** A skeleton `sk`, a second skeleton `other`, and an Object with `objectId` on `dataFrom`. */
+  function withObject(objectId: string, dataFrom: string): DagState {
+    let state = sceneState();
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'sk', nodeType: 'Skeleton', params: { bones: [] } },
+      { type: 'addNode', nodeId: 'other', nodeType: 'Skeleton', params: { bones: [] } },
+      { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: dataFrom, socket: 'out' },
+        to: { node: objectId, socket: 'data' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  it("names the import's Object while it shows the skeleton", () => {
+    expect(standInObjectOf(withObject(skeletonObjectId('sk'), 'sk'), 'sk')).toBe('sk_object');
+  });
+
+  it('names no Object the director pointed at the skeleton', () => {
+    const state = withObject('a_by_hand', 'sk');
+    expect(standingObjectsOf(state, 'sk')).toEqual(['a_by_hand']);
+    expect(standInObjectOf(state, 'sk')).toBeNull();
+  });
+
+  it("names nothing once the import's Object is pointed at another skeleton", () => {
+    const state = withObject(skeletonObjectId('sk'), 'other');
+    expect(standInObjectOf(state, 'sk')).toBeNull();
+    expect(standInObjectOf(state, 'other')).toBeNull();
   });
 });

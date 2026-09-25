@@ -95,7 +95,10 @@ test.describe('#165 Blender-style camera', () => {
         (window as unknown as BasherWindow).__basher_project_ndc!([3, 2, 3]),
       );
       if (ndcCam && ndcCam[2] < 1 && Math.abs(ndcCam[0]) < 0.9 && Math.abs(ndcCam[1]) < 0.9) break;
-      await page.mouse.wheel(0, 240); // dolly out, past the camera apex
+      // A mouse notch (deltaY 100): since #1128 a wheel step is sized by its delta, and this loop
+      // stops at the first step past the apex, so the step size decides where the eye lands.
+      // Close behind the apex the click lands on the box instead (#1129), so keep the notch.
+      await page.mouse.wheel(0, 100); // dolly out, past the camera apex
       await page.waitForTimeout(80);
     }
     expect(ndcCam).not.toBeNull();

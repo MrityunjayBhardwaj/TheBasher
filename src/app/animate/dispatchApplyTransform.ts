@@ -11,7 +11,8 @@
 // THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
 // Lifecycle (K15 extension, ORDERED):
-//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh.
+//   1. resolve(sync) — read the resolved transform via resolveEvaluatedMesh, and ask EVERY
+//      refusal here (#1132): a refusal asked after step 3 leaves an orphan file in storage.
 //   2. clone+matrix(sync) — getForRead(ref) returns a SHARED instance;
 //      `.clone()` BEFORE applyMatrix4 (H45 — mutating the cache corrupts every
 //      mesh sharing the key). Recompute normals when rotation/scale was baked.
@@ -38,13 +39,17 @@ import * as THREE from 'three';
 import { useDagStore } from '../../core/dag/store';
 import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
+import { IDENTITY_QUATERNION } from '../../nodes/rotationMode';
+import { rotationWriteOf } from '../resolvedRotation';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
 import type {
+  BakedMapSlot,
   BakedMaterialSpec,
   InlineMaterialSpec,
   MeshGeometryData,
   MeshTransform,
+  UvPlacement,
   Vec3,
 } from '../../nodes/types';
 import {
@@ -55,20 +60,27 @@ import {
 } from '../meshGeometryData';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
-import { writeBakedGeometry } from '../asset/bakedGeometryStore';
+import { unheldBakeAttributes, writeBakedGeometry } from '../asset/bakedGeometryStore';
 import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
-import type { EvaluatedMesh } from '../../nodes/types';
+import type { EvaluatedMesh, Quat, RotationModeFields } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { resolveDataLaneBase } from '../operatorChain';
+import { dataLaneNodeIds } from '../dataLaneOverlay';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { importedChildDataId, importedChildOf, isImportedChild } from '../importedChild';
+import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import { getGltfClone } from '../asset/gltfCloneRegistry';
+import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
+import { resolveParentWorldMatrix, resolveWorldTransform } from '../resolveWorldTransform';
+import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
 import { captureBakedMaterial } from './captureBakedMaterial';
+import { openpbrToThree } from '../material/openpbrToThree';
+import { isIdentityPlacement, resolveSlotPlacement } from '../material/uvPlacement';
 import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
 import type { GltfAssetValue } from '../../nodes/types';
 
@@ -112,9 +124,19 @@ const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animat
  *
  * IT REACHES THROUGH THE SPLIT. Geometry and material live on the DATA node, so a
  * `size` channel targets the BoxData, not the Object the user selected. Without
- * the `linkedDataNodeId` reach the guard would ask the wrong node and get the
- * honest answer "nothing animated here" — the exact shape of the reach bugs the
- * split has produced repeatedly.
+ * the reach the guard would ask the wrong node and get the honest answer "nothing
+ * animated here" — the exact shape of the reach bugs the split has produced repeatedly.
+ *
+ * #1081 / #1098 — AND IT ASKS WHAT THE ROAD CONSUMES, not a fixed pair of nodes. It used
+ * to ask the Object and its first `data` hop for every Apply. A stack puts operators into
+ * that edge, so on the bake road the hop landed on the TOP operator and everything below
+ * it — the data's `size`, a lower modifier's `count` — baked away unrefused (measured: 8
+ * of 24 cases). The bake removes the whole lane, so it asks the whole lane. Stored mesh
+ * data is applied INTO instead (#1077), writing only the base's `mesh` and the Object's
+ * pose and leaving every operator and channel live, so there the Object alone is asked;
+ * the old pair refused over a material or top operator that road never reads. The road is
+ * decided by {@link applyRoadOf}, the same function dispatch branches on, so the offer
+ * (menu, N panel) and the dispatch cannot disagree about which question applies.
  *
  * This ALSO closes the orphaned-channel half of #411: the bake removes the data
  * node, which would leave a `size`/`material` channel targeting a dead id. Since
@@ -134,12 +156,13 @@ export function isApplySourceAnimated(
   nodeId: string,
   currentFrame: number,
 ): boolean {
-  // The Object owns the pose; the data node it points at owns geometry+material.
-  // Both are consumed by the bake, so both are asked. A fused node has no `data`
-  // edge and answers for itself alone.
-  const subjects = [nodeId, linkedDataNodeId(state, nodeId)].filter(
-    (id): id is string => id !== null,
-  );
+  // The Object owns the pose, which both roads write. The bake also consumes every node on
+  // the data lane (base first, then each operator); applying into stored mesh data consumes
+  // none of them. A fused node has no lane and answers for itself alone.
+  const subjects =
+    applyRoadOf(state, nodeId).kind === 'into-stored-mesh'
+      ? [nodeId]
+      : [nodeId, ...dataLaneNodeIds(state, nodeId)];
   return Object.values(state.nodes).some((node) => {
     if (!isKeyframeChannelNode(node)) return false;
     const p = (node.params ?? {}) as { target?: unknown; paramPath?: unknown };
@@ -153,49 +176,164 @@ export function isApplySourceAnimated(
   });
 }
 
-/** Compose a 4×4 from the resolved TRS, including ONLY the masked band(s). */
-function composeMaskedMatrix(
-  transform: { position: Vec3; rotation: Vec3; scale: Vec3 },
-  mask: ApplyMask,
-): THREE.Matrix4 {
-  const includeLoc = mask === 'all' || mask === 'location';
-  const includeRot = mask === 'all' || mask === 'rotation';
-  const includeScale = mask === 'all' || mask === 'scale';
+/** Which of Apply's two roads a node takes, and for stored mesh data, what it applies into. */
+export type ApplyRoad =
+  | { readonly kind: 'into-stored-mesh'; readonly dataId: string; readonly mesh: PackedMeshData }
+  | { readonly kind: 'bake' };
 
-  const pos = includeLoc ? new THREE.Vector3(...transform.position) : new THREE.Vector3(0, 0, 0);
-  const quat = new THREE.Quaternion();
-  if (includeRot) {
-    const [rx, ry, rz] = transform.rotation;
-    const D2R = Math.PI / 180; // rotation is degrees Euler XYZ (codebase convention)
-    quat.setFromEuler(new THREE.Euler(rx * D2R, ry * D2R, rz * D2R, 'XYZ'));
-  }
-  const scl = includeScale ? new THREE.Vector3(...transform.scale) : new THREE.Vector3(1, 1, 1);
-  return new THREE.Matrix4().compose(pos, quat, scl);
+/**
+ * #1081 / #1098 — the ONE decision between applying into stored mesh data (#1077) and baking,
+ * read by the dispatch that branches on it and by the animated guard that must ask what that
+ * branch consumes. Two spellings of this test would let the guard answer for one road while
+ * dispatch took the other.
+ *
+ * Recognised by what the BASE of the data lane holds (a packed mesh), not by its type name, for
+ * the reason `isPackedMeshData` gives — and the base, not the `data` hop, because a modifier or
+ * material operator on the stack sits between the Object and its mesh.
+ */
+export function applyRoadOf(state: DagState, nodeId: string): ApplyRoad {
+  const baseId = resolveDataLaneBase(state, nodeId);
+  if (baseId === nodeId) return { kind: 'bake' };
+  const mesh = (state.nodes[baseId]?.params as { mesh?: unknown } | undefined)?.mesh;
+  return isPackedMeshData(mesh)
+    ? { kind: 'into-stored-mesh', dataId: baseId, mesh }
+    : { kind: 'bake' };
 }
 
-/** Build a BakedMaterialSpec from a primitive's inline material (M6 — null maps). */
+/**
+ * #1080 — what an Apply of `mask` puts into the geometry, and what it leaves on the Object. ONE
+ * answer for every road that moves a pose into geometry: both bakes and the stored-mesh road (#1077).
+ *
+ * `kept` is the resolved pose with the applied bands set to identity, and the geometry takes
+ * `kept⁻¹ · full`, so the Object drawing it under `kept` draws exactly what it drew before, for every
+ * mask. The bake used to put only the applied band into the verts and then reset all three bands,
+ * which moved and reshaped the object on Location, Rotation or Scale alone (measured: every partial
+ * mask, off by up to 4 units) — and a rotation applied under a non-uniform scale that stays on the
+ * Object cannot be kept by baking the band alone at all. Blender keeps the world shape exactly in
+ * both cases (measured on 5.1.1).
+ *
+ * `null` when a kept scale is zero: `kept` has no inverse, so the rest of the pose cannot be taken
+ * back out of the geometry.
+ *
+ * `full` is the pose as a matrix, and defaults to `transform`'s TRS. #1108 passes it explicitly for
+ * an imported child whose pose carries the chain it drew under, which is not always a TRS (a
+ * rotation under a parent's non-uniform scale shears): the bands come from its decomposition and
+ * whatever a TRS cannot hold goes into the geometry, so the world shape stays exact.
+ */
+function splitAppliedPose(
+  transform: MeshTransform,
+  mask: ApplyMask,
+  full: THREE.Matrix4 = trsMatrix(transform),
+): { readonly matrix: THREE.Matrix4; readonly kept: MeshTransform } | null {
+  const kept = { ...transform };
+  for (const band of APPLIED_BANDS[mask]) kept[band] = [...IDENTITY_BAND[band]];
+  const keptMatrix = trsMatrix(kept);
+  if (keptMatrix.determinant() === 0) return null;
+  return { matrix: keptMatrix.invert().multiply(full), kept };
+}
+
+/** The refusal every road gives when {@link splitAppliedPose} has no inverse to take. */
+function zeroKeptScaleReason(name: string): string {
+  return `Apply: "${name}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`;
+}
+
+/**
+ * #1080 — reverse every triangle's winding in place, for a baked matrix that mirrors. three flips
+ * its front face only while an Object's OWN matrix mirrors; once the mirror is in the verts and the
+ * Object no longer carries it, the unchanged winding draws every face inside-out (measured: all 12
+ * of a box's triangles). The first corner stays where it was, as Blender keeps it and as the
+ * stored-mesh road does.
+ *
+ * Through the component accessors rather than `.array`, so an interleaved attribute off a glTF
+ * clone reverses the same way a plain one does.
+ */
+function reverseTriangleWinding(geometry: THREE.BufferGeometry): void {
+  const index = geometry.getIndex();
+  if (index) {
+    for (let i = 0; i + 2 < index.count; i += 3) {
+      const second = index.getX(i + 1);
+      index.setX(i + 1, index.getX(i + 2));
+      index.setX(i + 2, second);
+    }
+    index.needsUpdate = true;
+    return;
+  }
+  const get = ['getX', 'getY', 'getZ', 'getW'] as const;
+  const set = ['setX', 'setY', 'setZ', 'setW'] as const;
+  for (const attribute of Object.values(geometry.attributes)) {
+    for (let i = 0; i + 2 < attribute.count; i += 3) {
+      for (let k = 0; k < attribute.itemSize; k++) {
+        const second = attribute[get[k]](i + 1);
+        attribute[set[k]](i + 1, attribute[get[k]](i + 2));
+        attribute[set[k]](i + 2, second);
+      }
+    }
+    if ('needsUpdate' in attribute) attribute.needsUpdate = true;
+  }
+}
+
+/**
+ * Build a BakedMaterialSpec from a primitive's inline material: the material it DRAWS (#1139).
+ *
+ * Compiled through `openpbrToThree`, the same compile the primitive's own draw reads, so the bake
+ * keeps what was on screen: every map ref in three's slot names, the placement each mapped slot
+ * draws with, and the real scalars. This used to write six null maps and a frozen pre-#178 look
+ * (roughness 0.5, metalness 0), which dropped a textured primitive's maps and shifted a new box's
+ * roughness from its drawn 0.3 on every Apply. The inline road places about the centre, as
+ * `BakedMeshR` does, so a placement carries unchanged.
+ *
+ * `null` (a data node with no material) keeps the frozen default it always baked.
+ */
 function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterialSpec {
+  if (!material) {
+    return {
+      materialClass: 'standard',
+      color: '#ffffff',
+      roughness: 0.5,
+      metalness: 0,
+      opacity: 1,
+      transparent: false,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      map: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+    };
+  }
+  const drawn = openpbrToThree(material);
+  const placements: { [K in BakedMapSlot]?: UvPlacement } = {};
+  for (const slot of Object.keys(drawn.maps) as BakedMapSlot[]) {
+    if (drawn.maps[slot] === null) continue;
+    const placement = resolveSlotPlacement(drawn.uvTransform, drawn.mapUvTransforms, slot);
+    if (!isIdentityPlacement(placement)) placements[slot] = placement;
+  }
   return {
-    materialClass: 'standard',
-    // Primitives expose color only; the remaining scalars are FROZEN at the values
-    // the pre-#178 renderer used when no override was present. This used to cite
-    // `SceneFromDAG.applyOverride`'s no-override branch; #394 S3b deleted that
-    // branch as unreachable, so these are a bake-time snapshot of a historical
-    // look, not a mirror of anything live. Changing them re-bakes differently.
-    // v0.6 #2 (#178): the inline color now lives at base.color (OpenPBR IR).
-    color: material?.base.color ?? '#ffffff',
-    roughness: 0.5,
-    metalness: 0,
-    opacity: 1,
-    transparent: false,
-    emissive: '#000000',
-    emissiveIntensity: 0,
-    map: null,
-    normalMap: null,
-    roughnessMap: null,
-    metalnessMap: null,
-    aoMap: null,
-    emissiveMap: null,
+    // Physical, as the primitive draws (`materialRegistry` builds a MeshPhysicalMaterial).
+    materialClass: 'physical',
+    color: drawn.color,
+    roughness: drawn.roughness,
+    metalness: drawn.metalness,
+    opacity: drawn.opacity,
+    transparent: drawn.transparent,
+    emissive: drawn.emissive,
+    emissiveIntensity: drawn.emissiveIntensity,
+    ...drawn.maps,
+    ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
+    // #1140 — the cutout and the side, absent at three's defaults, as on the clone road.
+    ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
+    ...(drawn.doubleSided ? { doubleSided: true } : {}),
+    physical: {
+      clearcoat: drawn.clearcoat,
+      clearcoatRoughness: drawn.clearcoatRoughness,
+      transmission: drawn.transmission,
+      // #1140 — `openpbrToThree` seeds this whenever transmission is on; without it the baked
+      // mesh drew a transmissive material with three's thickness 0, which does not refract.
+      thickness: drawn.thickness,
+      ior: drawn.ior,
+    },
   };
 }
 
@@ -227,12 +365,35 @@ function bakedSpecFromMeshMaterial(
  * produce a multi-material mesh, so this is the only seam a test can hand one to.
  */
 export function multiMaterialBakeRefusal(
-  selectedId: string,
+  name: string,
   materials: EvaluatedMesh['materials'],
 ): string | null {
   const assigned = assignedMaterials(materials);
   if (assigned.length <= 1) return null;
-  return `Apply: "${selectedId}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
+  return `Apply: "${name}" assigns ${assigned.length} materials across its faces (material_index), and a bake carries one. Reduce it to a single material first.`;
+}
+
+/**
+ * Why this Apply must be refused when the geometry it would bake carries attributes the baked
+ * store cannot hold, or `null` when it holds all of them (#1119).
+ *
+ * A third refusal of the same family as {@link multiMaterialBakeRefusal}: the bake would drop a
+ * colour layer, a second UV set or skin weights with nothing said, and the object would keep
+ * rendering from a file the director believes is saved. It names the attributes so the message
+ * says what would be lost. Asked of the SOURCE geometry, before it is cloned or written.
+ *
+ * Stored mesh data never reaches this: it is applied into, which keeps every corner layer. What
+ * reaches it is an import still drawn from the file's own copy, and it becomes unreachable when
+ * those import natively.
+ */
+export function unheldAttributesBakeRefusal(
+  name: string,
+  geometry: THREE.BufferGeometry,
+): string | null {
+  const unheld = unheldBakeAttributes(geometry);
+  if (unheld.length === 0) return null;
+  const pronoun = unheld.length === 1 ? 'it' : 'them';
+  return `Apply: "${name}" carries ${unheld.join(', ')}, which a baked mesh has no place to keep, so Apply would drop ${pronoun}. Apply stays unavailable on it until the import comes across as native mesh data.`;
 }
 
 /**
@@ -273,13 +434,13 @@ export function multiMaterialBakeRefusal(
  * every input. Refusing honestly is the interim; it is not the destination.
  */
 export function uncapturedMaterialBakeRefusal(
-  selectedId: string,
+  name: string,
   materials: EvaluatedMesh['materials'],
 ): string | null {
   // Slot 0 is the one the bake carries — `primaryMaterial` narrows to it, and the
   // multi-material refusal above has already stopped anything with more than one assigned.
   if (slotMaterialAt(materials, 0).status !== 'elsewhere') return null;
-  return `Apply: "${selectedId}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
+  return `Apply: "${name}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
 }
 
 /**
@@ -407,6 +568,9 @@ export async function dispatchApplyTransform(
 
   const node = state.nodes[selectedId];
   if (!node) return { ok: false, reason: `Apply: node "${selectedId}" not found.` };
+  // #1134 — every sentence a person reads names the object the way the outliner and the inspector
+  // header do. A caller that passed the id still knows it; a director has never seen it.
+  const name = nodeDisplayName(state.nodes, selectedId);
 
   // The glTF-child path (the R-1 edge-less satellite) is materially different —
   // source geometry/material live inside the live render clone, and the asset
@@ -444,17 +608,13 @@ export async function dispatchApplyTransform(
     time: { frame: currentFrame, seconds: currentFrame / 60, normalized: 0 },
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
-  if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${selectedId}".` };
+  if (!mesh) return { ok: false, reason: `Apply: could not resolve mesh "${name}".` };
 
-  // #1077 — stored mesh data is applied INTO, never baked. Recognised by what the base of the
-  // data lane holds (a packed mesh), not by its type name, for the reason `isPackedMeshData`
-  // gives. The BASE, not the `data` hop: a modifier or material operator on the stack sits
-  // between the Object and its mesh, and one hop would land on it and send the Apply to the bake.
-  const baseId = resolveDataLaneBase(state, selectedId);
-  const dataId = baseId !== selectedId ? baseId : null;
-  const storedMesh = dataId ? (state.nodes[dataId]?.params as { mesh?: unknown }).mesh : undefined;
-  if (dataId && isPackedMeshData(storedMesh)) {
-    return applyIntoStoredMesh(selectedId, dataId, storedMesh, mesh.transform, mask, state, {
+  // #1077 — stored mesh data is applied INTO, never baked. `applyRoadOf` makes that call, and the
+  // animated guard above read the same call to decide what to ask (#1081 / #1098).
+  const road = applyRoadOf(state, selectedId);
+  if (road.kind === 'into-stored-mesh') {
+    return applyIntoStoredMesh(selectedId, road.dataId, road.mesh, mesh.transform, mask, state, {
       dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
       clearTransients:
         deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
@@ -462,15 +622,30 @@ export async function dispatchApplyTransform(
     });
   }
 
-  const matrix = composeMaskedMatrix(mesh.transform, mask);
+  // #1080 — the geometry takes `kept⁻¹ · full`, and the Object keeps every band not applied.
+  const split = splitAppliedPose(mesh.transform, mask);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
 
   // 2 — clone the SHARED registry geometry before baking (H45).
   const src = getForRead(mesh.geometry);
-  if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${selectedId}".` };
+  if (!src) return { ok: false, reason: `Apply: geometry not in registry for "${name}".` };
+  const unheld = unheldAttributesBakeRefusal(name, src);
+  if (unheld) return { ok: false, reason: unheld };
+  // #1132 — every refusal is asked BEFORE the write below. A refusal asked after it is still
+  // honest about the graph, but it leaves the baked file in storage with nothing pointing at it.
+  const refusal = multiMaterialBakeRefusal(name, mesh.materials);
+  if (refusal) return { ok: false, reason: refusal };
+  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
+  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
+  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
+  const uncaptured = uncapturedMaterialBakeRefusal(name, mesh.materials);
+  if (uncaptured) return { ok: false, reason: uncaptured };
   const baked = src.clone();
-  baked.applyMatrix4(matrix);
+  baked.applyMatrix4(split.matrix);
+  if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
   // Rotation/scale change the surface orientation — recompute vertex normals so
-  // lighting stays correct (translation-only bakes leave normals untouched).
+  // lighting stays correct. A location-only Apply bakes a pure translation (`kept⁻¹ · full`
+  // conjugates the translation by the kept bands), which leaves normals untouched.
   if (mask !== 'location') baked.computeVertexNormals();
 
   // 3 — persist the baked bytes to OPFS (async, AWAITED before the Op composite).
@@ -487,13 +662,6 @@ export async function dispatchApplyTransform(
   // This is also the rule the object↔data split already chose — the load migration has the
   // Object inherit the fused node's id for exactly this reason (§5 id-stability).
   const bakedId = selectedId;
-  const refusal = multiMaterialBakeRefusal(selectedId, mesh.materials);
-  if (refusal) return { ok: false, reason: refusal };
-  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
-  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
-  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
-  const uncaptured = uncapturedMaterialBakeRefusal(selectedId, mesh.materials);
-  if (uncaptured) return { ok: false, reason: uncaptured };
   const spec = bakedSpecFromMeshMaterial(primaryMaterial(mesh.materials));
 
   // ASCENDING by list index: the edges are replayed after the node is re-added, and
@@ -550,9 +718,13 @@ export async function dispatchApplyTransform(
     type: 'addNode',
     nodeId: bakedId,
     nodeType: 'Object',
-    // IDENTITY pose — the TRS is baked into the verts. This is the one place the value
-    // is genuinely identity rather than defaulted, so it is written explicitly.
-    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // #1080 — the KEPT pose: the applied bands are in the verts and read identity here, and
+    // every band not applied stays exactly as it was. Written explicitly, never defaulted.
+    params: {
+      position: split.kept.position,
+      ...keptRotationParamsOf(node.params as RotationModeFields, split.kept.rotation),
+      scale: split.kept.scale,
+    },
   });
   ops.push({
     type: 'connect',
@@ -623,6 +795,39 @@ const APPLIED_BANDS: Readonly<Record<ApplyMask, ReadonlyArray<'position' | 'rota
   };
 const IDENTITY_BAND = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] } as const;
 
+/**
+ * #1153 — the rotation params of a node Apply re-mints from its KEPT pose. The mode survives the
+ * bake, as it does in Blender (Apply resets values, never `rotmode`): a quaternion-mode Object
+ * comes back in quaternion mode holding the kept orientation (identity when rotation was the
+ * band applied), written through the same path every writer takes.
+ */
+function keptRotationParamsOf(
+  params: RotationModeFields,
+  kept: Vec3,
+): { rotation: Vec3; rotationMode?: 'quaternion'; quaternion?: Quat } {
+  const write = rotationWriteOf(params, kept);
+  if (write.paramPath === 'rotation') return { rotation: kept };
+  return { rotation: kept, rotationMode: 'quaternion', quaternion: write.value };
+}
+
+/**
+ * #1153 — applying rotation resets the quaternion too. Blender clears the euler AND the
+ * quaternion when it applies rotation, whatever the mode (`object_transform.cc:1062-1066`), so
+ * a quaternion-mode Object comes out of Apply at identity rather than re-applying its old turn
+ * on top of the baked mesh. Written only when the node holds one: an absent quaternion is the
+ * identity already, and writing it would change an euler node's saved shape.
+ */
+function quaternionResetFor(
+  state: DagState,
+  nodeId: string,
+  applied: ReadonlyArray<'position' | 'rotation' | 'scale'>,
+): Op[] {
+  if (!applied.includes('rotation')) return [];
+  const params = (state.nodes[nodeId]?.params ?? {}) as { quaternion?: unknown };
+  if (params.quaternion === undefined) return [];
+  return [{ type: 'setParam', nodeId, paramPath: 'quaternion', value: [...IDENTITY_QUATERNION] }];
+}
+
 /** T·R·S from a resolved transform (degrees, Euler XYZ), the order the renderer draws with. */
 function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Matrix4 {
   const D2R = Math.PI / 180;
@@ -638,6 +843,9 @@ function trsMatrix(t: { position: Vec3; rotation: Vec3; scale: Vec3 }): THREE.Ma
  * A stored mesh with `matrix` applied to its points and corner normals. Every array is a COPY: the
  * decoded arrays are cached on the packed object (`unpackMeshData`), and undo puts that same object
  * back, so arrays written in place would draw the posed mesh under unposed strings after Cmd+Z.
+ *
+ * Corner layers (#1117) — UV sets and colours — are not spatial quantities, so the matrix does not
+ * touch their values. Every layer is copied, and it moves with its corner when the corners reorder.
  *
  * A matrix with a negative determinant mirrors the mesh, which turns every face inside out. Each
  * face's corners are reversed with its FIRST corner kept, as Blender does on Apply (measured on
@@ -661,20 +869,30 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
         .toArray(cornerNormals, i);
     }
   }
+  const corners = data.cornerPoints.length;
   const cornerPoints = new Uint32Array(data.cornerPoints);
-  const cornerUVs = data.cornerUVs === null ? null : new Float32Array(data.cornerUVs);
+  const cornerLayers = data.cornerLayers.map((layer) => ({
+    ...layer,
+    data: new Float32Array(layer.data),
+  }));
   if (matrix.determinant() < 0) {
-    const reversed = { points: new Uint32Array(cornerPoints), uvs: cornerUVs?.slice() ?? null };
+    const reversedPoints = new Uint32Array(cornerPoints);
+    // A layer's width is its length per corner: the data check has already tied the two together.
+    const reversedLayers = cornerLayers.map((layer) => ({
+      values: layer.data.slice(),
+      width: corners === 0 ? 0 : layer.data.length / corners,
+    }));
     const normals = cornerNormals?.slice() ?? null;
     let start = 0;
     for (const size of data.faceSizes) {
       for (let k = 1; k < size; k++) {
         const from = start + size - k; // corner k of the reversed run reads corner size-k
         const to = start + k;
-        cornerPoints[to] = reversed.points[from];
-        if (cornerUVs !== null && reversed.uvs !== null) {
-          cornerUVs.set(reversed.uvs.subarray(from * 2, from * 2 + 2), to * 2);
-        }
+        cornerPoints[to] = reversedPoints[from];
+        cornerLayers.forEach((layer, i) => {
+          const { values, width } = reversedLayers[i];
+          layer.data.set(values.subarray(from * width, from * width + width), to * width);
+        });
         if (cornerNormals !== null && normals !== null) {
           cornerNormals.set(normals.subarray(from * 3, from * 3 + 3), to * 3);
         }
@@ -686,8 +904,11 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
     points,
     faceSizes: new Uint32Array(data.faceSizes),
     cornerPoints,
-    cornerUVs,
+    cornerLayers,
     cornerNormals,
+    // A pose moves points and turns corners; it leaves faces where they are, in the same order,
+    // so every face layer (a material index above all) comes through as it was (#1052).
+    faceLayers: data.faceLayers.map((layer) => ({ ...layer, data: new Int32Array(layer.data) })),
   };
 }
 
@@ -738,6 +959,7 @@ function applyIntoStoredMesh(
   // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
   // consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
   // shared operator's result. Either way it would change with this Apply.
+  const name = nodeDisplayName(state.nodes, selectedId);
   const seen = new Set<string>();
   for (let cur = dataId; cur !== selectedId; ) {
     const edges = consumerEdgesOf(state, cur);
@@ -745,24 +967,16 @@ function applyIntoStoredMesh(
       const others = Math.max(edges.length - 1, 0);
       return {
         ok: false,
-        reason: `Apply: "${selectedId}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${cur}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
+        reason: `Apply: "${name}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${nodeDisplayName(state.nodes, cur)}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
       };
     }
     seen.add(cur);
     cur = edges[0].consumer;
   }
   const applied = APPLIED_BANDS[mask];
-  const kept = { ...transform };
-  for (const band of applied) kept[band] = [...IDENTITY_BAND[band]];
-  const keptMatrix = trsMatrix(kept);
-  if (keptMatrix.determinant() === 0) {
-    return {
-      ok: false,
-      reason: `Apply: "${selectedId}" keeps a zero scale on an axis, so the rest of its transform cannot be taken back out of the mesh. Give every axis a non-zero scale first.`,
-    };
-  }
-  const matrix = keptMatrix.invert().multiply(trsMatrix(transform));
-  const next = transformMeshData(unpackMeshData(packed), matrix);
+  const split = splitAppliedPose(transform, mask);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
+  const next = transformMeshData(unpackMeshData(packed), split.matrix);
 
   const ops: Op[] = [
     { type: 'setParam', nodeId: dataId, paramPath: 'mesh', value: packMeshData(next) },
@@ -774,6 +988,7 @@ function applyIntoStoredMesh(
         value: [...IDENTITY_BAND[band]],
       }),
     ),
+    ...quaternionResetFor(state, selectedId, applied),
   ];
   try {
     io.dispatchAtomic(ops, 'user', `Apply ${mask} → mesh data`);
@@ -820,6 +1035,137 @@ function isGltfChildClipDriven(
 }
 
 /**
+ * #1108 — where an imported child's baked Object goes, and the pose it has there.
+ *
+ * The child draws under a chain the DAG does not hold as nodes of its own: the glTF parent nodes
+ * inside the live clone, and any wrapper between the asset and the Group or Scene that holds it.
+ * The bake takes the child out of the clone, so that chain has to go somewhere. Blender says where:
+ * a child whose transform is applied keeps its parent, and nothing moves (measured on 5.1.1). The
+ * nearest node here that holds children is the import's Group, so the baked Object is wired there,
+ * and its pose is the child's pose RELATIVE TO that holder — `wrappers · clone parents · child` —
+ * which the holder keeps drawing its own transform over, exactly as it did over the asset. It used
+ * to go to the scene root with the child's own pose alone, which moved it by the whole chain.
+ *
+ * When nothing sits between the holder and the child, that is the child's resolved pose itself,
+ * with no decomposition, so an import with a flat hierarchy bakes exactly as it did.
+ *
+ * It also names what it read above the child (`wrapperIds`, `cloneAncestorNames`): everything
+ * there is read at the current frame and then gone from the child's chain, so the animated guard
+ * asks exactly these, the same way #1081 made the guard ask what the road consumes.
+ */
+function importedChildPlacement(
+  state: DagState,
+  assetId: string,
+  clone: THREE.Object3D,
+  child: THREE.Object3D,
+  local: MeshTransform,
+  ctx: EvalCtx,
+): {
+  readonly holderId: string;
+  readonly transform: MeshTransform;
+  readonly full?: THREE.Matrix4;
+  readonly wrapperIds: readonly string[];
+  readonly cloneAncestorNames: readonly string[];
+} | null {
+  const nodes = Object.values(state.nodes);
+  const parentOf = (id: string) => nodes.find((n) => hierarchyChildIds(n).includes(id));
+  const assetParent = parentOf(assetId);
+  const wrapperIds: string[] = [];
+  let holder = assetParent;
+  while (holder && hierarchySocketForKind(holder.type, holder) !== 'children') {
+    wrapperIds.push(holder.id);
+    holder = parentOf(holder.id);
+  }
+  const sceneId = state.outputs.scene?.node;
+  const holderId = holder?.id ?? sceneId;
+  if (!holderId) return null;
+
+  // Wrappers between the holder and the asset (a Transform, a MaterialOverride): the holder's world
+  // taken back out of the asset's parent world. Imports wire the asset straight into its Group, so
+  // this is identity without asking the resolver.
+  const between = new THREE.Matrix4();
+  if (assetParent && assetParent.id !== holderId) {
+    const assetParentWorld = resolveParentWorldMatrix(state, assetId, ctx) ?? new THREE.Matrix4();
+    const holderWorld = holderId === sceneId ? null : resolveWorldTransform(state, holderId, ctx);
+    const holderMatrix = holderWorld
+      ? new THREE.Matrix4().fromArray(holderWorld.matrix)
+      : new THREE.Matrix4();
+    between.copy(holderMatrix.invert().multiply(assetParentWorld));
+  }
+
+  // The clone's own chain above the child, up to and including the clone root, as drawn.
+  const parents = new THREE.Matrix4();
+  const cloneAncestorNames: string[] = [];
+  for (let o = child.parent; o; o = o.parent) {
+    parents.premultiply(new THREE.Matrix4().compose(o.position, o.quaternion, o.scale));
+    if (o.name) cloneAncestorNames.push(o.name);
+    if (o === clone) break;
+  }
+
+  const above = between.multiply(parents);
+  if (above.equals(new THREE.Matrix4())) {
+    return { holderId, transform: local, wrapperIds, cloneAncestorNames };
+  }
+  const full = above.multiply(trsMatrix(local));
+  const p = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  full.decompose(p, q, s);
+  // One pose, consumed now and never interpolated against a neighbour, so the canonical
+  // conversion is the right one (the #876 census's POINT_IN_TIME kind), through its one primitive.
+  const [ex, ey, ez] = quaternionToEulerVec3(q);
+  const deg = THREE.MathUtils.radToDeg;
+  return {
+    holderId,
+    transform: {
+      ...local,
+      position: [p.x, p.y, p.z],
+      rotation: [deg(ex), deg(ey), deg(ez)],
+      scale: [s.x, s.y, s.z],
+    },
+    full,
+    wrapperIds,
+    cloneAncestorNames,
+  };
+}
+
+/**
+ * #1108 follow-up — the first thing above an imported child whose animation the bake would freeze,
+ * or `null` when nothing above it animates.
+ *
+ * {@link importedChildPlacement} reads the wrappers and the clone's parent nodes at the current
+ * frame, and the baked Object no longer draws under either, so any motion there would stop at that
+ * frame (measured: a clip track or a baked channel on the glTF parent left the bake 4 units off
+ * the drawn mesh one second later). The holder is not asked: the bake is wired under it and keeps
+ * following it. Each ancestor is asked the questions the child is asked for itself: a keyframe
+ * channel on its node (a baked channel targets the same node), and a clip track for its name.
+ */
+function animatedAncestorOfImportedChild(
+  state: DagState,
+  asset: { readonly params?: unknown },
+  placement: {
+    readonly wrapperIds: readonly string[];
+    readonly cloneAncestorNames: readonly string[];
+  },
+  assetRef: string,
+  currentFrame: number,
+): string | null {
+  const seconds = currentFrame / 60;
+  for (const id of placement.wrapperIds) {
+    if (isApplySourceAnimated(state, id, currentFrame)) return nodeDisplayName(state.nodes, id);
+  }
+  const nameMap = (asset.params as { nodeNameMap?: Record<string, string> }).nodeNameMap ?? {};
+  for (const name of placement.cloneAncestorNames) {
+    // By the mapped id alone: a baked channel is drawn by `nodeNameMap` membership, whether or not
+    // the node it names has a satellite in the graph.
+    const nodeId = nameMap[name];
+    if (nodeId && isApplySourceAnimated(state, nodeId, currentFrame)) return name;
+    if (isGltfChildClipDriven(state, assetRef, name, seconds)) return name;
+  }
+  return null;
+}
+
+/**
  * Apply a glTF child's (masked) RESOLVED transform into a standalone BakedMesh,
  * capturing its resolved geometry + full PBR material off the LIVE render clone
  * (bake-what-renders, H58/H59), persisting both to OPFS, and — in the SAME atomic
@@ -846,6 +1192,9 @@ async function dispatchApplyGltfChild(
     };
   }
   const { assetRef, childName } = imported;
+  // #1134 — `childName` finds the mesh in the clone; `name` is what a message calls it, and differs
+  // once the director renames the object.
+  const name = nodeDisplayName(state.nodes, selectedId);
   const seconds = currentFrame / 60;
 
   // Animated guard (D-04) — keyframe channels on the child node OR a clip track
@@ -865,8 +1214,7 @@ async function dispatchApplyGltfChild(
     time: { frame: currentFrame, seconds, normalized: 0 },
   };
   const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
-  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${selectedId}".` };
-  const matrix = composeMaskedMatrix(mesh.transform, mask);
+  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${name}".` };
 
   // 2 — read source geometry + RESOLVED material off the LIVE render clone (Q4 —
   // registry.get returns null for gltf). The clone is the post-override render
@@ -880,13 +1228,50 @@ async function dispatchApplyGltfChild(
   }
   const child = clone.getObjectByName(childName) as THREE.Mesh | undefined;
   if (!child || !(child as THREE.Mesh).isMesh || !child.geometry) {
-    return { ok: false, reason: `Apply: child "${childName}" is not a renderable mesh.` };
+    return { ok: false, reason: `Apply: child "${name}" is not a renderable mesh.` };
   }
+
+  // The owning GltfAsset node (to append the suppression key on it, and to find what holds it).
+  const asset = Object.values(state.nodes).find(
+    (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
+  );
+  if (!asset) return { ok: false, reason: `Apply: owning GltfAsset for "${assetRef}" not found.` };
+
+  // #1108 — the pose relative to the Group the child drew under, and that Group as the new parent.
+  const placement = importedChildPlacement(state, asset.id, clone, child, mesh.transform, ctx);
+  if (!placement) return { ok: false, reason: 'Apply: project has no `scene` output.' };
+  const animatedAncestor = animatedAncestorOfImportedChild(
+    state,
+    asset,
+    placement,
+    assetRef,
+    currentFrame,
+  );
+  if (animatedAncestor) {
+    return {
+      ok: false,
+      reason: `Apply unavailable — "${animatedAncestor}", which "${name}" draws under, is animated, and the bake would freeze it.`,
+    };
+  }
+  // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
+  const split = splitAppliedPose(placement.transform, mask, placement.full);
+  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
+
+  const unheld = unheldAttributesBakeRefusal(name, child.geometry);
+  if (unheld) return { ok: false, reason: unheld };
+
+  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
+  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
+  // for #151; multi-material merge is a later concern). Textures persist inside.
+  // #1132 — read and refused here, before the geometry write, so a refusal leaves no file behind.
+  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
+  if (!liveMat) return { ok: false, reason: `Apply: child "${name}" has no material.` };
 
   // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
   // every other instance/child sharing the buffer.
   const baked = child.geometry.clone();
-  baked.applyMatrix4(matrix);
+  baked.applyMatrix4(split.matrix);
+  if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
   if (mask !== 'location') baked.computeVertexNormals();
 
   // 3 — persist baked geometry + every texture map to OPFS (async, ALL AWAITED
@@ -894,25 +1279,11 @@ async function dispatchApplyGltfChild(
   const storage = deps?.storage ?? (await getStorage());
   const bakedRef = await writeBakedGeometry(storage, baked);
   baked.dispose();
-
-  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
-  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
-  // for #151; multi-material merge is a later concern). Textures persist inside.
-  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
-  if (!liveMat) return { ok: false, reason: `Apply: child "${childName}" has no material.` };
   const spec = await captureBakedMaterial(storage, liveMat);
 
   // 4 — atomic Op composite (Q1, the R-1 edge-less satellite collapses to):
   //   addNode BakedMesh + connect into Scene.children + removeNode GltfChild +
   //   setParam GltfAsset.suppressedChildren (append childName). ONE Cmd+Z.
-  const sceneRef = state.outputs.scene;
-  if (!sceneRef) return { ok: false, reason: 'Apply: project has no `scene` output.' };
-
-  // The owning GltfAsset node (to append the suppression key on it).
-  const asset = Object.values(state.nodes).find(
-    (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
-  );
-  if (!asset) return { ok: false, reason: `Apply: owning GltfAsset for "${assetRef}" not found.` };
   const prevSuppressed = Array.isArray(
     (asset.params as { suppressedChildren?: unknown }).suppressedChildren,
   )
@@ -936,8 +1307,12 @@ async function dispatchApplyGltfChild(
       type: 'addNode',
       nodeId: bakedId,
       nodeType: 'Object',
-      // IDENTITY pose — the child's world matrix is baked into the verts.
-      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1080 — the KEPT pose, as on the primitive bake: applied bands identity, the rest unchanged.
+      params: {
+        position: split.kept.position,
+        rotation: split.kept.rotation,
+        scale: split.kept.scale,
+      },
     },
     {
       type: 'connect',
@@ -947,7 +1322,7 @@ async function dispatchApplyGltfChild(
     {
       type: 'connect',
       from: { node: bakedId, socket: 'out' },
-      to: { node: sceneRef.node, socket: 'children' },
+      to: { node: placement.holderId, socket: 'children' },
     },
     { type: 'removeNode', nodeId: selectedId },
     // #389 — the DATA half goes too. The apply collapses the imported child into a fresh

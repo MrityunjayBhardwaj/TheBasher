@@ -12,11 +12,12 @@
 // REF: THESIS.md §9 (five primitives), §50, App. B; krama K2 (op dispatch
 // lifecycle).
 
+import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
-import type { InputBinding, Node, NodeRef, Op } from './types';
+import type { InputBinding, Node, NodeId, NodeRef, Op } from './types';
 import { acceptedTypes, inputAccepts, OpSchema, SpareParamSchema } from './types';
 
 export class OpError extends Error {
@@ -128,9 +129,9 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
     case 'disconnect':
       return applyDisconnect(state, op);
     case 'setParam':
-      return applySetParam(state, op);
+      return followNames(state, applySetParam(state, op), op.nodeId);
     case 'setMeta':
-      return applySetMeta(state, op);
+      return followNames(state, applySetMeta(state, op), op.nodeId);
     case 'setHidden':
       return applySetHidden(state, op);
     case 'setSpareParam':
@@ -497,6 +498,33 @@ function applyRemoveSpareParam(
   return { next, inverse };
 }
 
+/**
+ * #1122 — copy a changed name onto every node that follows it.
+ *
+ * Runs inside the one reducer, so each road that changes a name — the inspector's `setParam`
+ * (whose path is a variable no search can list), a re-cook's bake, an agent's batch, undo and
+ * redo — carries its followers with it, and every reader of `meta.name` stays true without
+ * knowing links exist. The inverse needs nothing extra: undoing the source's change replays
+ * through here and copies the old name back.
+ *
+ * One hop. A follower's own followers are not walked, so a hand-edited loop cannot spin.
+ */
+function followNames(prev: DagState, result: ApplyResult, sourceId: NodeId): ApplyResult {
+  const before = prev.nodes[sourceId];
+  const after = result.next.nodes[sourceId];
+  if (!before || !after || ownName(before) === ownName(after)) return result;
+  const name = followableName(after);
+  if (name === undefined) return result;
+  let nodes = result.next.nodes;
+  for (const node of Object.values(nodes)) {
+    if (node.id === sourceId || node.meta?.nameFrom !== sourceId || node.meta.name === name) {
+      continue;
+    }
+    nodes = { ...nodes, [node.id]: { ...node, meta: { ...node.meta, name } } };
+  }
+  return nodes === result.next.nodes ? result : { ...result, next: { ...result.next, nodes } };
+}
+
 function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): ApplyResult {
   // #224 — rename. `meta` is node identity data, not a per-type param, so this
   // bypasses paramSchema (validated only by OpSchema's `name: string?`). Other
@@ -504,11 +532,24 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
   // override key so the label cleanly falls back to the node id.
   const node = getNode(state, op.nodeId);
   const prior = node.meta?.name;
+  const priorFrom = node.meta?.nameFrom;
   const meta = { ...node.meta };
-  if (op.name === undefined) {
+  // #1122 — with a link, the name is the linked node's when it has one (so re-arming a link on
+  // undo cannot restore a name the source has since moved past); without one, the link goes.
+  const linked =
+    op.nameFrom !== undefined && op.nameFrom !== op.nodeId
+      ? followableName(state.nodes[op.nameFrom])
+      : undefined;
+  if (op.nameFrom !== undefined && op.nameFrom !== op.nodeId) {
+    meta.nameFrom = op.nameFrom;
+  } else {
+    delete meta.nameFrom;
+  }
+  const name = linked ?? op.name;
+  if (name === undefined) {
     delete meta.name;
   } else {
-    meta.name = op.name;
+    meta.name = name;
   }
   // An empty meta object is normalized away so a renamed-then-cleared node is
   // byte-identical to one that was never named (keeps save diffs minimal).
@@ -518,7 +559,12 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
     ...state,
     nodes: { ...state.nodes, [node.id]: nextNode },
   };
-  const inverse: Op = { type: 'setMeta', nodeId: op.nodeId, name: prior };
+  const inverse: Op = {
+    type: 'setMeta',
+    nodeId: op.nodeId,
+    name: prior,
+    ...(priorFrom !== undefined ? { nameFrom: priorFrom } : {}),
+  };
   return { next, inverse };
 }
 

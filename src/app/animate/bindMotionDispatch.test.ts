@@ -329,12 +329,59 @@ describe('binding a motion to a character', () => {
     expect(isHidden('n_src_skel_object')).toBe(false);
   });
 
-  it('finds that Object by its data edge, not by the id the importer gives it', () => {
+  // #1088 — only the Object the IMPORT stood the motion up with steps aside. Before this the
+  // hide matched every Object whose `data` was the source skeleton, so an Object the director
+  // pointed at it (a second placement, a reference copy) vanished on a bind nobody asked to
+  // hide it. The import's Object is the one with the id the import derives
+  // (`skeletonObjectId`, `<skeleton>_object` — a rename changes its name, never its id).
+  it('#1088 — an Object the director pointed at the source skeleton stays visible', () => {
+    let s = buildScene('n_clip_a', 60);
+    s = withSkeletonObject(s, 'n_src_skel_object', 'n_src_skel');
+    s = withSkeletonObject(s, 'n_by_hand', 'n_src_skel');
+    useDagStore.getState().hydrate(s);
+
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    expect(isHidden('n_src_skel_object')).toBe(true);
+    expect(isHidden('n_by_hand')).toBe(false);
+  });
+
+  it('#1088 — the import’s Object, re-pointed at another skeleton, is not hidden', () => {
+    // The id alone is not the mark: once the director points that Object at something else it
+    // no longer shows this motion, and hiding it would hide what it shows now.
+    let s = buildScene('n_clip_a', 60);
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_other_skel',
+      nodeType: 'Skeleton',
+      params: { bones: [] },
+    }).next;
+    s = withSkeletonObject(s, 'n_src_skel_object', 'n_other_skel');
+    useDagStore.getState().hydrate(s);
+
+    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
+    expect(isHidden('n_src_skel_object')).toBe(false);
+  });
+
+  it('#1088 — a self-retarget hides nothing: the rig it animates stays on screen', () => {
+    // Source skeleton == target skeleton. The Object standing that skeleton is the very rig the
+    // new clip drives, so hiding it would make the bind's own result disappear.
     useDagStore
       .getState()
-      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_renamed_rig', 'n_src_skel'));
-    expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
-    expect(isHidden('n_renamed_rig')).toBe(true);
+      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+    const result = dispatchMutatorFromUI(
+      'mutator.animation.retarget',
+      {
+        sourceClipId: 'n_clip_a',
+        sourceSkeletonId: 'n_src_skel',
+        targetSkeletonId: 'n_src_skel',
+        customMap: Object.fromEntries(BONES.map((b) => [b, b])),
+        outputClipId: 'n_out_self',
+      },
+      'Bind motion to rig: self',
+    );
+    expect(result).toEqual({ ok: true });
+    expect(edgeOf('n_out_self', 'skeleton')).toBe('n_src_skel');
+    expect(isHidden('n_src_skel_object')).toBe(false);
   });
 
   it('leaves an Object showing the TARGET skeleton visible, though the bind reaches it', () => {

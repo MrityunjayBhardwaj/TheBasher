@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly four times since the freeze — #915, #920, #930, then #389', () => {
+  it('has moved the project format version exactly five times since the freeze — #915, #920, #930, #389, then #1062', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -116,7 +116,11 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // `GltfChild` in the same change rather than leaving it to coexist — so a project
     // saved before this version has no fallback that could render its child, and the
     // pass is the only thing that can split it.
-    const MIGRATIONS_SINCE_FREEZE = 4; // #915, #920, #930, then #389
+    // #1062 is the FIFTH: a material stops pointing at a numbered UV set and a `vertexColors`
+    // boolean, and names the layers it reads instead. Node params are not re-parsed through
+    // their schemas on load, so this pass is the only thing that can respell a saved material —
+    // without it a replaced map silently samples set 0.
+    const MIGRATIONS_SINCE_FREEZE = 5; // #915, #920, #930, #389, then #1062
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

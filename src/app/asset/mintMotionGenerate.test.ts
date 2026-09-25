@@ -43,6 +43,7 @@ function capability() {
         model: request.model,
         unitScale: STUB_UNIT_SCALE,
         worldOffsetXZ: request.constraints?.waypoints ? [3, -1] : null,
+        worldRotationRadians: null,
       };
     },
     cancel: async () => {},
@@ -159,9 +160,11 @@ describe('mintMotionGenerateOps (#935)', () => {
       prompt: 'a slow walk',
       seed: 7,
       model: 'kimodo-base',
-      // The name defaults to the prompt, as an import defaults to its filename.
-      name: 'a slow walk',
     });
+    // #1124 — the generator carries the REQUEST and no name; the clip owns the name, which
+    // defaults to the prompt as an import's defaults to its filename.
+    expect(next.nodes[producerId].params).not.toHaveProperty('name');
+    expect((next.nodes[clipId].params as { name: string }).name).toBe('a slow walk');
   });
 
   it('mints without a curve — "generate a walk" is a whole request', () => {
@@ -197,6 +200,92 @@ describe('mintMotionGenerateOps (#935)', () => {
     const next = apply(s, ops);
     expect(next.nodes[clipId].type).toBe('AnimationClip');
     expect(edgeTarget(next.nodes[clipId], 'time')).toBeNull();
+  });
+
+  // #1078 — the skeleton gets the Object a dropped .bvh's skeleton gets (#1056), in this batch.
+  it('in a project with a scene, stands the skeleton in it as an Object at scale 1', () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, skeletonId, objectId } = mintMotionGenerateOps(s, ARGS);
+    expect(objectId).toBeDefined();
+    const next = apply(s, ops);
+    const object = next.nodes[objectId!];
+    expect(object.type).toBe('Object');
+    expect(edgeTarget(object, 'data')).toBe(skeletonId);
+    expect(next.nodes.scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
+    // The generator declares its unit, so the rig is not normalised.
+    expect((object.params as { scale: number[] }).scale).toEqual([1, 1, 1]);
+    // #1101 — named after its clip, which defaults to the prompt.
+    expect(object.meta?.name).toBe('a slow walk');
+  });
+
+  it('#1101 — a named request names the Object with the clip’s name, not the prompt', () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, clipId, objectId } = mintMotionGenerateOps(s, { ...ARGS, name: 'hero walk' });
+    const next = apply(s, ops);
+    expect((next.nodes[clipId].params as { name: string }).name).toBe('hero walk');
+    expect(next.nodes[objectId!].meta?.name).toBe('hero walk');
+  });
+
+  // #1124 — through a REAL cook. A director renames the clip; the request changes; the cook
+  // lands new motion. The clip keeps the director's name, and the Object standing it (#1122)
+  // keeps following it — before #1124 the cook put both back to the generator's name.
+  it('#1124 — a re-cook lands motion and keeps the name the director gave the clip', async () => {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    const { ops, producerId, clipId, objectId } = mintMotionGenerateOps(s, ARGS);
+    s = apply(s, ops);
+    const { cap } = capability();
+    await resolvePendingMotionGenerations(s, cap);
+    s = apply(s, bakeGeneratedClipOps(s));
+
+    s = apply(s, [
+      { type: 'setParam', nodeId: clipId, paramPath: 'name', value: 'my take' },
+      { type: 'setParam', nodeId: producerId, paramPath: 'prompt', value: 'a fast run' },
+    ] as Op[]);
+    await resolvePendingMotionGenerations(s, cap);
+    const bake = bakeGeneratedClipOps(s);
+    expect(bake.length, 'nothing re-cooked — the name check would be vacuous').toBeGreaterThan(0);
+    expect(bake.some((o) => o.type === 'setParam' && o.paramPath === 'name')).toBe(false);
+    s = apply(s, bake);
+    expect((s.nodes[clipId].params as { sourceHash: string }).sourceHash).not.toBe('');
+    expect((s.nodes[clipId].params as { name: string }).name).toBe('my take');
+    expect(s.nodes[objectId!].meta).toEqual({ name: 'my take', nameFrom: clipId });
+  });
+
+  // #1124 — the cost half. After a reload the generated-clip cache is empty and every producer
+  // reads `pending`; a rename must still leave the clip current, so nothing is paid for.
+  it('#1124 — renaming a generated clip after a reload generates nothing', async () => {
+    const s0 = apply(project(), [] as Op[]);
+    const { ops, producerId, clipId } = mintMotionGenerateOps(s0, ARGS);
+    let s = apply(s0, ops);
+    const { cap, requests } = capability();
+    await resolvePendingMotionGenerations(s, cap);
+    s = apply(s, bakeGeneratedClipOps(s));
+    expect(requests).toHaveLength(1);
+
+    __resetGeneratedClipsForTests(); // the reload
+    s = apply(s, [
+      { type: 'setParam', nodeId: clipId, paramPath: 'name', value: 'my take' },
+    ] as Op[]);
+    await resolvePendingMotionGenerations(s, cap, producerId);
+    expect(requests, 'a rename paid for a generation').toHaveLength(1);
+    expect(bakeGeneratedClipOps(s)).toEqual([]);
+  });
+
+  it('in a project with no scene, adds no Object — there is nowhere to stand one', () => {
+    const s = project();
+    expect(s.outputs.scene).toBeUndefined();
+    const { ops, objectId } = mintMotionGenerateOps(s, ARGS);
+    expect(objectId).toBeUndefined();
+    expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'Object')).toBe(false);
   });
 
   it('two mints in one project do not collide', () => {

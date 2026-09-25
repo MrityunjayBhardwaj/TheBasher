@@ -27,6 +27,7 @@ import type { BakedTextureRef, InlineMaterialMaps, UvPlacement } from '../../nod
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { loadBakedTexture, type LoadBakedTextureHooks } from '../asset/bakedTextureStore';
 import { MATERIAL_MAP_SLOTS, type MaterialMapSlot } from './attachMapFromFile';
+import { uvLayerIndex } from '../../nodes/attributes';
 import { THREE_SLOT_OF } from './openpbrToThree';
 import {
   ORIGIN_PIVOT,
@@ -112,7 +113,7 @@ export interface EditedMapPlacement {
    * this one yields set 0, which is both glTF's default and exactly what this road did
    * before, so the forgetful caller gets today's behaviour rather than a new defect.
    */
-  readonly uvSets?: { readonly [K in MaterialMapSlot]?: number };
+  readonly uvLayers?: { readonly [K in MaterialMapSlot]?: string };
 }
 
 /**
@@ -180,7 +181,12 @@ export async function applyEditedMaps(
     // whatever the previous write left: this texture is freshly decoded per call (see the
     // no-clone note above), but the property has a non-zero default in no case and an
     // explicit 0 states the intent at the boundary the way the colorspace assignments do.
-    texture.channel = placement.uvSets?.[slot] ?? 0;
+    // #1062 — the material names its UV LAYER now. The geometry this road draws is three's own
+    // copy of the file, which carries no layer list: its UV buffers are numbered in the file's
+    // `TEXCOORD` order, so the name's number is the channel. A name that is not one of those is
+    // not honoured — channel 0, exactly as naming nothing has always meant here.
+    const named = placement.uvLayers?.[slot];
+    texture.channel = (named === undefined ? null : uvLayerIndex(named)) ?? 0;
     (std as unknown as Record<string, unknown>)[prop] = texture;
     changed = true;
   }

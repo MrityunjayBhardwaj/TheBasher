@@ -248,7 +248,10 @@ describe('param-reach gate (#492)', () => {
     //
     // 41 → 43 at #1049: `PolyMeshData`'s two params, both TRACED — `mesh` by the module that
     // decodes and keys it, `material` by the scene. The `unverified` ceiling does not move.
-    expect(total).toBe(43);
+    //
+    // 43 → 44 at #1052: `PolyMeshData.materialSlots`, TRACED to the scene, which draws each slot
+    // against the mesh's `material_index` groups. The ceiling does not move.
+    expect(total).toBe(44);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

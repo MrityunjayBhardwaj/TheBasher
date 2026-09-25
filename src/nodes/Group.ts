@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { GroupValue, SceneObject } from './types';
+import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -24,6 +25,8 @@ export const GroupParams = z
     rotation: Vec3.default([0, 0, 0]),
     scale: Vec3.default([1, 1, 1]),
     pivot: Vec3.default([0, 0, 0]),
+    /** #1153 — Blender's rotation mode, as on Object; an imported empty is a Group. */
+    ...rotationModeParams,
   })
   .passthrough();
 export type GroupParams = z.infer<typeof GroupParams>;
@@ -42,6 +45,9 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
     rotation: 'transform',
     scale: 'transform',
     pivot: 'transform',
+    // #1153 — drawn by the transform section's rotation-mode control.
+    rotationMode: 'transform',
+    quaternion: 'transform',
   },
   evaluate(params, inputs) {
     // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)
@@ -55,6 +61,8 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
       rotation: params.rotation ?? [0, 0, 0],
       scale: params.scale ?? [1, 1, 1],
       pivot: params.pivot ?? [0, 0, 0],
+      // #1153 — only in quaternion mode, so an euler Group keeps the shape it always had.
+      ...rotationModeFieldsOf(params),
       children: (inputs.children as SceneObject[] | undefined) ?? [],
     };
   },

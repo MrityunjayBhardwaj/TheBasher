@@ -146,6 +146,10 @@ describe('#458 per-section row suppression is equivalent to the global filter it
       'modifiers',
       'near',
       'points',
+      // #1153 — the rotation-mode control draws both; the rotation row it REPLACES is not
+      // listed, because an anchor is replaced in place rather than omitted.
+      'quaternion',
+      'rotationMode',
       'sensorSize',
       // Was a `node.type === 'MaterialOverride'` skip in the caller. It routes
       // to no section, so only the pre-grouping skip keeps it off screen.
@@ -389,6 +393,30 @@ describe('#458 the shared dispatcher emits the same body for a data half as for 
     );
     expect(emitted('transform', ctx, [['position', [0, 0, 0]]])).toEqual([
       'row:position',
+      // #1153 — no rotation row to stand in for, so the rotation control is drawn after the
+      // rows rather than dropped, still ahead of the `after` controls.
+      'rotationMode(g,g)',
+      'applyTransform(g,g)',
+      'setOrigin(g,g)',
+    ]);
+  });
+
+  it('#1153 — draws the rotation control exactly where the rotation row stood', () => {
+    const ctx = makeSectionCtx(
+      { id: 'g', type: 'Group', version: 1, params: {}, inputs: {} },
+      'g',
+      true,
+    );
+    expect(
+      emitted('transform', ctx, [
+        ['position', [0, 0, 0]],
+        ['rotation', [0, 0, 0]],
+        ['scale', [1, 1, 1]],
+      ]),
+    ).toEqual([
+      'row:position',
+      'rotationMode(g,g)',
+      'row:scale',
       'applyTransform(g,g)',
       'setOrigin(g,g)',
     ]);

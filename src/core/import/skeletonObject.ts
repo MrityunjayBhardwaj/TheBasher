@@ -11,16 +11,17 @@
 // wrapper node is minted, because the skeleton is already the right noun
 // (docs/OBJECT-DATA-SPLIT-DESIGN.md §0, "skeleton-as-data").
 //
-// SCALE. BVH declares no unit, and our own files run from 0.1 to 100 units against a
-// metre-scale scene, so a caller that does not know the unit asks for `normalise` and the
-// Object's `scale` is set so the rest pose stands at a human height. The height is measured
-// the way the source-rig overlay measures one — `armatureBounds` over `boneTransforms`, a
-// rig's transport root excluded — and it lands in `scale`, where it is visible and editable,
-// rather than being baked into the bones.
+// SCALE. The Object's `scale` is where a rig's size is set, visible and editable rather than
+// baked into the bones. A BVH import leaves it at 1 — the format declares no unit, and the
+// reference never guesses one from the content (#791). A caller that asks for `normalise`
+// gets the rig stood at a human height instead; the FBX road does, until it reads the unit
+// its format declares. The height is measured the way the source-rig overlay measures one —
+// `armatureBounds` over `boneTransforms`, a rig's transport root excluded.
 //
 // REF: src/viewport/referenceRig.ts (armatureBounds); src/nodes/ObjectNode.ts (the data
-//      socket); src/app/asset/importBvhFbx.ts (the caller); issue #1056.
+//      socket); src/app/asset/importBvhFbx.ts (the caller); issues #1056, #791.
 
+import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
@@ -64,6 +65,46 @@ export function skeletonObjectId(skeletonId: string): string {
   return `${skeletonId}_object`;
 }
 
+/**
+ * Every Object standing this skeleton in the scene, id-sorted (V22).
+ *
+ * Found by the `data` edge rather than by {@link skeletonObjectId}, so an Object pointed at the
+ * skeleton by hand counts as much as the one an import made.
+ *
+ * ONE lookup for "where does this motion stand": the Object a notice falls back to naming
+ * (`bindMotionToCharacter.ts`) and whether a path placement's refusal can say an Object of the
+ * director's still shows it (`placeGeneratedMotion.ts`). What a bind hides and a placement moves
+ * is narrower — {@link standInObjectOf} (#1088, #1141).
+ */
+export function standingObjectsOf(state: DagState, skeletonId: string): string[] {
+  return Object.values(state.nodes)
+    .filter((n) => n.type === 'Object' && dataSourceOf(n.inputs?.data) === skeletonId)
+    .map((n) => n.id)
+    .sort();
+}
+
+/**
+ * The Object the import stood this skeleton up with, while it still shows the skeleton — or null.
+ *
+ * #1088 — the one Object a bind hides. {@link standingObjectsOf} answers "where does this motion
+ * stand", and an Object the director pointed at the skeleton is a right answer to that; it is not
+ * one a bind may hide unasked. The import's own Object is told apart by the id the import derives
+ * ({@link skeletonObjectId}): a rename writes `meta.name` and never the id, while a duplicate gets
+ * an id of its own. The `data` edge is checked too, because once that Object is pointed at
+ * something else it no longer shows this motion.
+ */
+export function standInObjectOf(state: DagState, skeletonId: string): string | null {
+  const id = skeletonObjectId(skeletonId);
+  const node = state.nodes[id];
+  return node?.type === 'Object' && dataSourceOf(node.inputs?.data) === skeletonId ? id : null;
+}
+
+/** The node an input socket reads from, or null — one binding or the first of a list. */
+function dataSourceOf(binding: unknown): string | null {
+  const one = (Array.isArray(binding) ? binding[0] : binding) as { node?: unknown } | undefined;
+  return typeof one?.node === 'string' ? one.node : null;
+}
+
 export interface SkeletonObjectArgs {
   readonly skeletonId: string;
   /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
@@ -72,11 +113,38 @@ export interface SkeletonObjectArgs {
   readonly clip?: AnimationClipValue | null;
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
-  /** True when the caller does not know the unit and the rig should stand at human height. */
+  /** True to stand the rig at human height — a GUESS from the content, so only for a road
+   *  that cannot yet read a unit its format declares (FBX). A BVH declares none and passes
+   *  false: its size is the director's to set (#791). */
   readonly normalise: boolean;
+  /**
+   * #1101 — the name the Object shows: its clip's, which is the file's base name on the import
+   * road and the prompt on the generation road. Blender's BVH importer does the same, naming
+   * the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
+   *
+   * Required, so a new caller cannot stand an Object the outliner lists by its id. A blank name
+   * adds no op: blank is the unnamed state `nodeDisplayName` falls back from.
+   */
+  readonly name: string;
+  /**
+   * #1122 — the clip this Object's name follows. The Object is named after its clip and keeps
+   * reading as the same motion when the clip is renamed or re-cooked, until a director renames
+   * the Object itself (the link is `meta.nameFrom`; the reducer copies, a rename cuts it).
+   *
+   * Required for the reason `name` is: a road that could leave it out would stand an Object
+   * whose name silently stops following, and both roads would look the same until a rename.
+   */
+  readonly clipId: string;
 }
 
-/** The Object, its `data` edge from the skeleton, and its place among the scene's children. */
+/**
+ * The Object, its name, its `data` edge from the skeleton, and its place among the scene's
+ * children.
+ *
+ * The name goes on `meta.name` through a `setMeta` op, because that is the field the outliner's
+ * rename writes and `nodeDisplayName` reads first, and `addNode` carries no meta. It lands in the
+ * same op list, so the one undo that removes the Object removes its name with it.
+ */
 export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly ops: Op[];
   readonly objectId: string;
@@ -92,6 +160,9 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         nodeType: 'Object',
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
       },
+      ...(args.name.trim()
+        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name, nameFrom: args.clipId }]
+        : []),
       {
         type: 'connect',
         from: { node: args.skeletonId, socket: 'out' },

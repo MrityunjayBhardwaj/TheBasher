@@ -48,6 +48,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Node, Op } from '../../../core/dag/types';
 import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
+import { standInObjectOf } from '../../../core/import/skeletonObject';
 
 /** Node types whose `out` is a `Skeleton` value — accepted as retarget source/target. */
 const SKELETON_NODE_TYPES = ['Skeleton', 'GltfSkeleton'] as const;
@@ -89,8 +90,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     ') or customMap for arbitrary rigs. ' +
     'Emits a RetargetClip node wired to the source clip, the map and the ' +
     'target rig, so editing either operand re-poses the target with no ' +
-    're-run; the source clip is left untouched. An Object showing the source ' +
-    'skeleton is hidden in the same step.',
+    're-run; the source clip is left untouched. The Object the import stood the ' +
+    'source skeleton up with is hidden in the same step, unless source and target are ' +
+    'one skeleton.',
   spec: RetargetSpec,
   specExample: {
     sourceClipId: 'mixamo_clip',
@@ -286,14 +288,20 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     // character does, that Object is a second rig standing beside the character, so the bind
     // hides it — in this same batch, so undoing the bind brings the rig back and a refused
     // bind leaves it visible. Hidden, never removed: it stays in the outliner to unhide, and
-    // outlives the character. Found by its `data` edge rather than by the id the importer
-    // gives it, so a rewired Object is still the one showing this skeleton; the closure's one
-    // `parent` hop from `sourceSkeletonId` is what reaches it.
-    for (const id of _closure.nodes) {
-      const node = _state.nodes[id];
-      if (!node || node.type !== 'Object') continue;
-      if (edgeSource(node, 'data') !== spec.sourceSkeletonId) continue;
-      ops.push({ type: 'setHidden', nodeId: id, hidden: true });
+    // outlives the character. The closure's one `parent` hop from `sourceSkeletonId` is what
+    // reaches it.
+    //
+    // #1088 — ONLY THAT OBJECT, AND NOT ON A SELF-RETARGET. Matching every Object whose `data`
+    // is the source skeleton also hid Objects the director pointed at it; `standInObjectOf`
+    // names the import's own. And when source and target are one skeleton, its Object is the
+    // rig the new clip drives, so hiding it would make the bind's result disappear. The Object
+    // it names reads the source skeleton through `data`, so the closure's `parent` hop holds it.
+    const standIn =
+      spec.sourceSkeletonId === spec.targetSkeletonId
+        ? null
+        : standInObjectOf(_state, spec.sourceSkeletonId);
+    if (standIn !== null) {
+      ops.push({ type: 'setHidden', nodeId: standIn, hidden: true });
     }
 
     return ops;
