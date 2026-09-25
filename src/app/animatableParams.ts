@@ -35,7 +35,7 @@
 
 import type { DagState } from '../core/dag/state';
 import census from './animatableCensus.json';
-import { resolveExposedTarget } from './exposeParams';
+import { exposedTargetResolver, type ExposedTarget } from './exposeParams';
 import { constraintStackForTarget, followPathStackForTarget } from './nodeConstraints';
 import { chainSocketOf, isDataLaneOperator, singleRef } from './operatorChain';
 import { driverStackForTarget } from './paramDrivers';
@@ -102,12 +102,58 @@ export function animatableSubjectOf(state: DagState, nodeId: string): string | n
  * beneath it, so the lookup must know when it is being asked about that case.
  */
 function operatorAbove(state: DagState, nodeId: string): string | null {
-  for (const node of Object.values(state.nodes)) {
-    if (!isDataLaneOperator(node)) continue;
-    const socket = chainSocketOf(node);
-    if (socket && singleRef(node, socket)?.node === nodeId) return node.type;
+  return perState(state).operatorAbove().get(nodeId) ?? null;
+}
+
+/**
+ * Answers derived once per graph state (#1261). A picker asks about every param of every
+ * node, and each of these was a full scan or a full projection per question: the owner
+ * lookup rebuilt a node's exposure once per PATH (3270 of 3740 ms on a 450-node scene). A
+ * `DagState` is replaced, never mutated, on every dispatch, so keying on its identity cannot
+ * serve a stale answer, and the entry goes when the state does.
+ */
+const PER_STATE = new WeakMap<
+  DagState,
+  {
+    readonly operatorAbove: () => ReadonlyMap<string, string>;
+    readonly ownerOf: (nodeId: string, paramPath: string) => ExposedTarget | null;
   }
-  return null;
+>();
+function perState(state: DagState) {
+  let entry = PER_STATE.get(state);
+  if (!entry) {
+    let above: Map<string, string> | null = null;
+    const resolvers = new Map<string, (paramPath: string) => ExposedTarget | null>();
+    entry = {
+      operatorAbove: () => {
+        if (above) return above;
+        above = new Map();
+        for (const node of Object.values(state.nodes)) {
+          if (!isDataLaneOperator(node)) continue;
+          const socket = chainSocketOf(node);
+          const below = socket ? singleRef(node, socket)?.node : undefined;
+          // The first operator found per node, as the scan it replaces returned.
+          if (below && !above.has(below)) above.set(below, node.type);
+        }
+        return above;
+      },
+      ownerOf: (nodeId, paramPath) => {
+        let resolve = resolvers.get(nodeId);
+        if (!resolve) {
+          // `canApply` only decides whether the Apply-Transform button shows; it places a
+          // control after the transform rows and omits none (`SECTION_CONTROLS`), so which
+          // node owns a path cannot depend on it — and computing it evaluates the node's
+          // mesh, 624 of 761 ms of a 450-node picker build. Pinned both ways by a test
+          // (`exposeParams.canApplyOwners.test.ts`) that reds if that ever changes.
+          resolve = exposedTargetResolver(state, nodeId, { canApply: false });
+          resolvers.set(nodeId, resolve);
+        }
+        return resolve(paramPath);
+      },
+    };
+    PER_STATE.set(state, entry);
+  }
+  return entry;
 }
 
 /**
@@ -130,7 +176,7 @@ function suppliedElsewhere(state: DagState, nodeId: string, paramPath: string): 
     return 'a Track-To aims it';
   if (root === 'position' && followPathStackForTarget(state.nodes, nodeId).length > 0)
     return 'a Follow-Path places it';
-  const owner = resolveExposedTarget(state, nodeId, paramPath);
+  const owner = perState(state).ownerOf(nodeId, paramPath);
   if (owner && (owner.nodeId !== nodeId || owner.paramPath !== paramPath))
     return `${owner.nodeId}.${owner.paramPath} supplies it`;
   return null;
