@@ -121,6 +121,7 @@ import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { ClearBakedMotionConnector } from './animate/ClearBakedMotionConnector';
+import { BakePoseConnector } from './animate/BakePoseConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
@@ -4587,6 +4588,8 @@ export function NPanel() {
               connector resolves the character through the bind road's own selection
               walk and renders null when that finds no character with baked motion. */}
           <ClearBakedMotionConnector nodeId={node.id} />
+          {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
+          <BakePoseConnector nodeId={node.id} />
         </>
       )}
     </aside>

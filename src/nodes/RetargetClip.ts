@@ -102,6 +102,21 @@ function both(out: AnimationClipValue): RetargetOutputs {
 }
 
 /**
+ * The times of a wire's poses, counted from its range's start: `round(span · rate)` of them with both
+ * ends included, or one at the start when that rounds below two. On a clip's pose they land on the
+ * clip's keys (`clipInfoOf`). The one rule for "every pose" of a wire: the retarget samples by it, and
+ * a bake keys by it (#1215).
+ */
+export function wirePoseTimes(range: WireClipInfo, rate: number): number[] {
+  const span = range.end - range.start;
+  const count = Math.max(1, Math.round(span * rate));
+  const times: number[] = [];
+  // One sample is a single pose, at the start: three samples a one-key clip once too.
+  for (let i = 0; i < count; i++) times.push(count === 1 ? 0 : (i * span) / (count - 1));
+  return times;
+}
+
+/**
  * #1225 — the source wire as keys the retarget math reads: every bone, sampled `round(span · rate)`
  * times across the wire's range with both ends included (at least twice), at times counted from the
  * range's start. Three's retarget samples the same count over the same span, so on a clip's pose the
@@ -113,12 +128,8 @@ export function wireKeyframes(
   range: WireClipInfo,
   rate: number,
 ): AnimationKeyframe[] {
-  const span = range.end - range.start;
-  const count = Math.max(1, Math.round(span * rate));
   const keyframes: AnimationKeyframe[] = [];
-  for (let i = 0; i < count; i++) {
-    // One sample is a single pose, at the start: three samples a one-key clip once too.
-    const time = count === 1 ? 0 : (i * span) / (count - 1);
+  for (const time of wirePoseTimes(range, rate)) {
     const poses = source.sample(range.start + time);
     poses.forEach((pose, bone) => {
       keyframes.push({

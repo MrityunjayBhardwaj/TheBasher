@@ -180,8 +180,9 @@ export function bakeChannelOpsForBone(args: {
           // raw `lerpVec3`; AnimationClip's `buildClipBoneSamplers` states
           // `easing: 'linear'` for this same reason — its ROTATION slerps since
           // #1223, so this euler copy agrees at every key and sits within 1.29°
-          // of it between keys on the dense BVH clips, until bake replaces the
-          // copy, step 6 of #1233) and whose keyframes cannot
+          // of it between keys on the dense BVH clips. The copy is the clone
+          // road's and retires with it (#1053); the native road bakes a pose
+          // wire into a layer's keys instead, #1215) and whose keyframes cannot
           // express easing at all. Stamping the authored-curve default onto baked data made the
           // bake disagree with its own source between keyframes: identical at
           // every key, but up to |smoothstep(u) - u| = 1/(6*sqrt(3)) ~ 9.6% of

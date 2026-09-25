@@ -158,9 +158,11 @@ describe('mutator catalog', () => {
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`, a pose layer member's rotation mode.
     // 31 → 32 at #1201 — `animate.renameBone`.
-    expect(mutators).toHaveLength(32);
+    // 32 → 33 at #1215 — `animate.bakePose`.
+    expect(mutators).toHaveLength(33);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
+      'mutator.animate.bakePose',
       'mutator.animate.poseBone',
       'mutator.animate.renameBone',
       'mutator.animate.setPoseMemberMode',
@@ -2309,7 +2311,8 @@ describe('agent.listMutators tool', () => {
     // the agent surface could not reach at all.
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`.
     // 31 → 32 at #1201 — `animate.renameBone`.
-    expect(parsed.mutators).toHaveLength(32);
+    // 32 → 33 at #1215 — `animate.bakePose`.
+    expect(parsed.mutators).toHaveLength(33);
   });
 });
 
@@ -3934,6 +3937,7 @@ import {
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
+  bakePoseMutator as _bakePoseM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4063,6 +4067,27 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         to: { node: to, socket: toSocket },
       }).next;
     }
+    return s;
+  }
+
+  // #1215 — the same armature with its layer keyed over a second, baked at that layer.
+  function buildSceneForPoseBake(): DagState {
+    let s = buildSceneForBoneRename();
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'br_layer',
+      paramPath: 'channels',
+      value: [
+        {
+          bone: 'torso',
+          component: 'rotation',
+          keyframes: [
+            { time: 0, value: [0, 0, 0] },
+            { time: 1, value: [0, 0, 90] },
+          ],
+        },
+      ],
+    }).next;
     return s;
   }
 
@@ -4331,6 +4356,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,
       build: buildSceneForPoseLayer,
       spec: { layer: 'pl_layer', bone: 'Bone1', rotationMode: 'quaternion' },
+    },
+    'mutator.animate.bakePose': {
+      mutator: _bakePoseM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseBake,
+      spec: { object: 'br_arm', at: 'br_layer', poses: { nth: 2 } },
     },
     'mutator.animate.renameBone': {
       mutator: _renameBoneM as MutatorDefinition<unknown>,
