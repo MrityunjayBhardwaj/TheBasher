@@ -118,7 +118,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // APPENDED at #907 — `active` says which clip a rebind stood up. Unrouted like
   // its neighbours on this node: no inspector card draws it yet.
   AnimationClip:
-    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
+    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) interpolation=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
   // #393 — one cell, and it routes: the armature is an INPUT (the Object it points at), not a
   // param, so the only thing to author on the card is the stack mute.
   ArmatureModifier: '[modifier] muted=modifier',
@@ -385,4 +385,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //
 // #1225 appends `RetargetClip.sampleRate`, unrouted, beside its other two: +1 unrouted.
 //   types 90 · routed 144 · unrouted 244 + 1 = 245
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 245 } as const;
+//
+// #1225 adds `AnimationClip.interpolation` (Linear / Constant), unrouted beside its keys: +1 unrouted.
+//   types 90 · routed 144 · unrouted 245 + 1 = 246
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 246 } as const;

@@ -1662,6 +1662,9 @@ export interface MotionBonePose {
   readonly scale?: Vec3;
 }
 
+/** #1225 — how a MotionClip reads between two poses. */
+export type MotionInterpolation = 'linear' | 'constant';
+
 /** #1225 — a MotionClip pose: a time, and the bones it holds by name (sparse). */
 export interface MotionPose {
   readonly time: number;
@@ -1716,6 +1719,9 @@ export interface AnimationClipValue {
    * same shape (#1233 step 8).
    */
   readonly poses: readonly MotionPose[];
+  /** #1225 — between poses: `linear` (slerp for rotation) or `constant` (the pose at or before t),
+   *  Houdini's MotionClip Evaluate Interpolation (`kinefx--motionclipevaluate.txt:26-35`). */
+  readonly interpolation: MotionInterpolation;
   /** The rig the poses' bone names are drawn from — its rest is what an unheld bone keeps. */
   readonly skeleton: SkeletonValue;
   /**

@@ -195,6 +195,7 @@ export const RetargetClipNode: NodeDefinition<
         name: params.name || (range?.name ?? 'clip'),
         duration: range ? range.end : 0,
         loop: clipLoopOf(range?.loop),
+        interpolation: 'linear',
         poses: [],
         skeleton: target ?? EMPTY_SKELETON,
       });
@@ -225,6 +226,8 @@ export const RetargetClipNode: NodeDefinition<
       name: result.clipParams.name,
       duration: result.clipParams.duration + range.start,
       loop: result.clipParams.loop,
+      // Sampled from the source at its rate, so the samples read linearly between them.
+      interpolation: 'linear',
       // #1225 — the retargeted keys as timed poses on the TARGET rig's bone names.
       poses: motionPosesFromKeyframes(keyframes, target.bones),
       // The TARGET rig — the poses name its bones.

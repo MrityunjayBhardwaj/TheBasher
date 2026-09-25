@@ -218,6 +218,8 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         // which is a claim about the motion that nothing measured. `'hold'` is
         // what the old `false` meant, in the vocabulary #930 gave the concept.
         loop: 'hold',
+        // A generator writes a pose per frame; they read linearly between.
+        interpolation: 'linear',
         // #1225 — the generated keys as timed poses by bone name, through the one adapter.
         poses: motionPosesFromKeyframes(clip.keyframes, clip.skeleton.bones),
         skeleton: clip.skeleton,
@@ -245,6 +247,7 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
       // length it does not have to every consumer that reads one.
       duration: 0,
       loop: 'hold',
+      interpolation: 'linear',
       poses: [],
       skeleton: EMPTY_SKELETON,
       generation:

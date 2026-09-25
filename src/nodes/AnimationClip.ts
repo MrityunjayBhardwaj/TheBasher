@@ -34,6 +34,7 @@ import type {
   AnimationKeyframe,
   BonePose,
   MotionBonePose,
+  MotionInterpolation,
   MotionPose,
   PosedSkeletonValue,
   Quat,
@@ -87,6 +88,13 @@ export const AnimationClipParams = z.object({
    * the case that looks like it needs a confirmation prompt cannot lose work.
    */
   active: z.boolean().default(false),
+  /**
+   * #1225 — how the clip reads between its keys: `linear` (rotation slerps) or `constant`, the key
+   * at or before the time — Houdini's MotionClip Evaluate Interpolation (Linear / Constant,
+   * `kinefx--motionclipevaluate.txt:26-35`). Linear is what every clip did before the choice
+   * existed, so a saved clip without it plays as it did and needs no migration.
+   */
+  interpolation: z.enum(['linear', 'constant']).default('linear'),
   keyframes: z
     .array(
       z.object({
@@ -177,7 +185,7 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
     sample: (seconds: number): readonly BonePose[] => {
       if (samplers === null) {
         samplers = new Map();
-        for (const [name, track] of tracksOfPoses(clip.poses)) {
+        for (const [name, track] of tracksOfPoses(clip.poses, clip.interpolation)) {
           samplers.set(name, clipTrackSampler(track, clip.duration, clip.loop));
         }
         samplerBuilds++;
@@ -323,18 +331,23 @@ export function clipTrackSampler(
  * key to that component. A bone missing from a pose simply has no key there, so it interpolates
  * between the nearest poses that hold it (Houdini's MotionClip rule, `kinefx-motionclips.txt:16-34`).
  */
-export function tracksOfPoses(poses: readonly MotionPose[]): Map<string, ClipBoneTrack> {
+export function tracksOfPoses(
+  poses: readonly MotionPose[],
+  interpolation: MotionInterpolation = 'linear',
+): Map<string, ClipBoneTrack> {
+  // Each key carries how it leaves: the clip's interpolation, the samplers' own `constant` easing
+  // for a stepped clip (a hold until the next key, as Houdini's Constant evaluates).
+  const easing = interpolation;
   const out = new Map<string, { position: Vec3Key[]; quaternion: QuatKey[]; scale: Vec3Key[] }>();
   for (const pose of poses) {
     for (const [name, bone] of Object.entries(pose.bones)) {
       let track = out.get(name);
       if (!track) out.set(name, (track = { position: [], quaternion: [], scale: [] }));
       const time = pose.time;
-      if (bone.position) track.position.push({ time, value: bone.position, easing: 'linear' });
+      if (bone.position) track.position.push({ time, value: bone.position, easing });
       // No hemisphere bookkeeping: the slerp takes the short arc itself.
-      if (bone.quaternion)
-        track.quaternion.push({ time, value: bone.quaternion, easing: 'linear' });
-      if (bone.scale) track.scale.push({ time, value: bone.scale, easing: 'linear' });
+      if (bone.quaternion) track.quaternion.push({ time, value: bone.quaternion, easing });
+      if (bone.scale) track.scale.push({ time, value: bone.scale, easing });
     }
   }
   return out;
@@ -383,23 +396,27 @@ const posesMemo = new WeakMap<object, WeakMap<object, readonly MotionPose[]>>();
  * ⚠️ The copy-on-first-edit mint (`bakeChannelOps`) copies these keys into an euler channel, which
  * lerps its angles, so an edited bone can differ from an unedited one BETWEEN keys (at most 0.10°
  * walk, 1.29° run, 0.12° jump on the dense BVH clips) and agrees at every key. That copy retires in
- * step 6 of #1233 (bake).
+ * step 6 of #1233 (bake). It also always writes LINEAR keys, so a bone edited on a `constant` clip
+ * (#1225) ramps between keys where the clip steps; not taught, since the copy is what retires.
  */
 export function buildClipBoneSamplers(params: {
   readonly keyframes: readonly AnimationKeyframe[];
   readonly duration: number;
   readonly loop: ClipLoop;
+  /** #1225 — the clip's interpolation; absent is linear, what a clip without it always did. */
+  readonly interpolation?: MotionInterpolation;
 }): Map<number, ClipBoneSampler> {
   const out = new Map<number, ClipBoneSampler>();
+  const easing = params.interpolation ?? 'linear';
   for (const [bone, keys] of groupByBone(params.keyframes)) {
     if (keys.length === 0) continue;
     const sampler = clipTrackSampler(
       {
-        position: keys.map((k) => ({ time: k.time, value: k.position, easing: 'linear' })),
+        position: keys.map((k) => ({ time: k.time, value: k.position, easing })),
         quaternion: keys.map((k) => ({
           time: k.time,
           value: quatFromEulerXYZ(k.rotation),
-          easing: 'linear',
+          easing,
         })),
         scale: [],
       },
@@ -483,6 +500,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
         name: params.name,
         duration: params.duration,
         loop: params.loop,
+        interpolation: params.interpolation,
         // No rig, so no key names a bone.
         poses: [],
         skeleton: { kind: 'Skeleton', bones: [] },
@@ -494,6 +512,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
       name: params.name,
       duration: params.duration,
       loop: params.loop,
+      interpolation: params.interpolation,
       // #1225 — the keys as timed poses by bone name, through the one adapter.
       poses: motionPosesFromKeyframes(params.keyframes, skeleton.bones),
       // The rig the poses name bones on, travelling WITH them so a consumer

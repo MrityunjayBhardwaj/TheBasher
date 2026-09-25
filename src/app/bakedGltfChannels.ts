@@ -212,6 +212,8 @@ function clipBandSamplersForAsset(
       keyframes: params.keyframes ?? [],
       duration: typeof params.duration === 'number' ? params.duration : 1,
       loop: clipLoopOf(params.loop),
+      // #1225 — the clip's own interpolation, so the band draws a constant clip stepped, as its pose does.
+      interpolation: params.interpolation === 'constant' ? 'constant' : 'linear',
     });
 
     for (const [boneIndex, sample] of boneSamplers) {

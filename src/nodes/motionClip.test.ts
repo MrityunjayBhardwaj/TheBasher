@@ -33,6 +33,7 @@ function clip(poses: MotionPose[], over: Partial<AnimationClipValue> = {}): Anim
     name: 'c',
     duration: 2,
     loop: 'hold',
+    interpolation: 'linear',
     poses,
     skeleton: { kind: 'Skeleton', bones: BONES },
     ...over,
@@ -158,5 +159,52 @@ describe('a clip plays as the band plays it', () => {
       }
       expect(compared).toBe(times.length * 78);
     }
+  });
+});
+
+describe('Linear or Constant between poses (Houdini MotionClip Evaluate)', () => {
+  const stepped = (interpolation: 'linear' | 'constant') =>
+    clip(
+      [
+        { time: 0, bones: { arm: { position: [0, 1, 0], quaternion: Q0 } } },
+        { time: 1, bones: { arm: { position: [0, 3, 0], quaternion: QZ90 } } },
+        { time: 2, bones: { arm: { position: [0, 5, 0], quaternion: Q0 } } },
+      ],
+      { interpolation },
+    );
+
+  it('constant holds the pose at or before t, and meets each pose exactly at its time', () => {
+    const pose = posedSkeletonFromClip(stepped('constant'));
+    expect(pose.sample(0.5)[1].position).toEqual([0, 1, 0]);
+    expect(pose.sample(0.5)[1].quaternion).toEqual(Q0);
+    expect(pose.sample(0.999)[1].position).toEqual([0, 1, 0]);
+    expect(pose.sample(1)[1].position).toEqual([0, 3, 0]);
+    expect(pose.sample(1.5)[1].quaternion).toEqual(QZ90);
+    expect(pose.sample(2)[1].position).toEqual([0, 5, 0]);
+  });
+
+  it('linear reads between them, as every clip did before the choice existed', () => {
+    const pose = posedSkeletonFromClip(stepped('linear'));
+    expect(pose.sample(0.5)[1].position).toEqual([0, 2, 0]);
+  });
+
+  it('an AnimationClip node defaults to linear, and the band steps a constant clip as its pose does', () => {
+    expect(AnimationClipParams.parse({}).interpolation).toBe('linear');
+    const keyframes = [
+      { bone: 1, time: 0, position: [0, 1, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
+      { bone: 1, time: 1, position: [0, 3, 0] as Vec3, rotation: [0, 0, 1] as Vec3 },
+    ];
+    const params = AnimationClipParams.parse({ duration: 1, keyframes, interpolation: 'constant' });
+    const { pose } = AnimationClipNode.evaluate(
+      params,
+      { skeleton: { kind: 'Skeleton', bones: BONES } },
+      undefined as never,
+    ) as ClipOutputs;
+    const band = buildClipBoneSamplers(params).get(1)!;
+    for (const t of [0, 0.25, 0.5, 0.99, 1]) {
+      expect(pose.sample(t)[1].position).toEqual(band(t).position);
+      expect(pose.sample(t)[1].quaternion).toEqual(band(t).quaternion);
+    }
+    expect(pose.sample(0.5)[1].position).toEqual([0, 1, 0]);
   });
 });
