@@ -17,7 +17,7 @@
 //
 // REF: src/core/import/nativeGltfClip.ts, src/core/import/nativeGltfImport.ts; glTF 2.0
 //      Specification.adoc Appendix C; Blender io_scene_gltf2/blender/imp/animation_node.py;
-//      issues #1051, #1154, #1157.
+//      issues #1051, #1060, #1154, #1157.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -289,14 +289,15 @@ test('#1051 — a clip this road cannot hold is refused by name, and the file st
     if (m.type() === 'warning') warnings.push(m.text());
   });
   await openFresh(page);
-  // A second clip (#1154) takes the file's-copy road and the notice says why. A CUBICSPLINE
-  // rotation used to be the other half of this row; it imports native now (#1157, observed in
+  // A morph weights track (#1060) takes the file's-copy road and the notice says why. (This row was
+  // a second clip until #1154 brought every animation across; observed in p1154-held-animations.)
+  // A CUBICSPLINE rotation used to be the other half; it imports native now (#1157, observed in
   // p1157-cubicspline-rotation.spec.ts), so what is left of that case is the spec's own count
   // rule: three values per key (`:3615`), and a file that breaks it is malformed.
-  await ingest(page, 'json.animations.push({ ...json.animations[0], name: "Drop" });', 'p1051-two');
+  await ingest(page, 'json.animations[0].channels[0].target.path = "weights";', 'p1051-weights');
   await expect
     .poll(() => warnings.find((t) => t.includes('not as native geometry')) ?? '')
-    .toContain('#1154');
+    .toContain('#1060');
   await ingest(
     page,
     [

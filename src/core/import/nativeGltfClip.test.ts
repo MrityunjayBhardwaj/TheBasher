@@ -4,7 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readNativeClip, type ClipChannel, type ClipGltfJson } from './nativeGltfClip';
+import { readNativeAnimations, type ClipChannel, type ClipGltfJson } from './nativeGltfClip';
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import {
   KeyframeChannelQuatNode,
@@ -43,11 +43,16 @@ type Append = (
 ) => number;
 const floats = (...values: number[]) => new Uint8Array(Float32Array.from(values).buffer);
 
-const read = (mutate?: (json: Json, append: Append) => void) => {
+const readAll = (mutate?: (json: Json, append: Append) => void) => {
   const { json, buffers } = fixture(mutate);
-  return readNativeClip(json, buffers);
+  return readNativeAnimations(json, buffers);
 };
-function channelsOf(result: ReturnType<typeof readNativeClip>): ClipChannel[] {
+/** The first animation's channels (the one that plays), or the refusal. */
+const read = (mutate?: (json: Json, append: Append) => void) => {
+  const result = readAll(mutate);
+  return 'refused' in result ? result : { channels: result.animations[0]?.channels ?? [] };
+};
+function channelsOf(result: ReturnType<typeof read>): ClipChannel[] {
   if ('refused' in result) throw new Error(result.refused);
   return result.channels;
 }
@@ -326,6 +331,48 @@ describe('#1051 — a clip reads into channels that sample as the spec defines',
   });
 });
 
+describe('#1154 — every animation comes across, named as Blender names its tracks', () => {
+  const names = (mutate: (json: Json, append: Append) => void) => {
+    const r = readAll(mutate);
+    if ('refused' in r) throw new Error(r.refused);
+    return r.animations.map((a) => a.name);
+  };
+
+  it('a second animation reads with its own channels, after the first', () => {
+    const r = readAll((j) => {
+      const second = structuredClone(j.animations[0]);
+      second.name = 'Second';
+      second.channels = second.channels.slice(0, 1);
+      j.animations.push(second);
+    });
+    if ('refused' in r) throw new Error(r.refused);
+    expect(r.animations.map((a) => a.channels.length)).toEqual([channelsOf(read()).length, 1]);
+  });
+
+  it('a repeated name takes .001, an unnamed one Anim_<index> (blender_gltf.py:237-244)', () => {
+    expect(
+      names((j) => {
+        const a = j.animations[0];
+        j.animations = [
+          { ...a, name: 'Walk' },
+          { ...a, name: 'Walk' },
+          { ...a, name: undefined },
+          { ...a, name: 'Walk' },
+        ];
+      }),
+    ).toEqual(['Walk', 'Walk.001', 'Anim_2', 'Walk.002']);
+  });
+
+  it('one refused animation refuses the file, whichever it is', () => {
+    const r = readAll((j) => {
+      const second = structuredClone(j.animations[0]);
+      second.channels[0].target.path = 'weights';
+      j.animations.push(second);
+    });
+    expect(r).toMatchObject({ issue: '#1060' });
+  });
+});
+
 describe('#1051 — what cannot come across is refused, by name', () => {
   const refusal = (mutate: (json: Json, append: Append) => void) => {
     const r = read(mutate);
@@ -335,12 +382,6 @@ describe('#1051 — what cannot come across is refused, by name', () => {
   const anim = (json: Json) => json.animations[0];
 
   it.each<[string, (json: Json, append: Append) => void, RegExp, string]>([
-    [
-      'a second clip',
-      (j) => j.animations.push({ ...anim(j), name: 'Drop' }),
-      /2 animation clips/,
-      '#1154',
-    ],
     [
       'a weights track',
       (j) => (anim(j).channels[0].target.path = 'weights'),

@@ -22,8 +22,7 @@
 //
 // ── WHAT IS REFUSED ─────────────────────────────────────────────────────────────────────────────
 //
-// Refused whole, by name, like every other native-import refusal: a second clip (#1154), a morph
-// weights track (#1060), an accessor this reader cannot read
+// Refused whole, by name, like every other native-import refusal: a morph weights track (#1060), an accessor this reader cannot read
 // correctly (sparse, bufferless, interleaved — `readAccessor` would silently misread each), and a
 // file that breaks the spec's own rules for animation data. A channel with no target node is
 // skipped, which is what the spec says to do with it (`:2782`).
@@ -118,27 +117,56 @@ function unreadable(json: ClipGltfJson, index: number, what: string): NativeImpo
   return null;
 }
 
+/** One of a file's animations: its name, unique among the file's animations, and its channels. */
+export interface NativeAnimation {
+  readonly name: string;
+  readonly channels: ClipChannel[];
+}
+
 /**
- * The file's clip as channels, or the reason it cannot come across. A file with no animation reads
- * as no channels.
+ * #1154 — every animation the file carries, in the file's order, or the reason one cannot come across.
+ * The first is the one that plays (Blender makes it the active action, `scene.py:86-89`); the rest
+ * are held muted (`animation_utils.py:20-29`). A file with no animation reads as none.
+ *
+ * Names follow Blender's importer: the animation's own name, or `Anim_<index>` when it has none,
+ * made unique among the file's animations with `.001`, `.002`, … (`blender_gltf.py:237-244`,
+ * `find_unused_name`), because each becomes a layer or a track the director picks by name.
  */
-export function readNativeClip(
+export function readNativeAnimations(
   json: ClipGltfJson,
   buffers: Uint8Array[],
-): { channels: ClipChannel[] } | NativeImportRefusal {
-  const animations = json.animations ?? [];
-  if (animations.length === 0) return { channels: [] };
-  if (animations.length > 1) {
-    return {
-      refused: `it carries ${animations.length} animation clips, and only one can come across until clips become Actions`,
-      issue: '#1154',
-    };
+): { animations: NativeAnimation[] } | NativeImportRefusal {
+  const taken = new Set<string>();
+  const animations: NativeAnimation[] = [];
+  for (const [index, animation] of (json.animations ?? []).entries()) {
+    const read = readAnimation(json, buffers, animation);
+    if ('refused' in read) return read;
+    const name = unusedName(taken, animation.name || `Anim_${index}`);
+    taken.add(name);
+    animations.push({ name, channels: read.channels });
   }
+  return { animations };
+}
+
+/** Blender's `find_unused_name`: the name, else the name with the first free `.NNN` suffix. */
+function unusedName(taken: ReadonlySet<string>, desired: string): string {
+  if (!taken.has(desired)) return desired;
+  for (let n = 1; ; n++) {
+    const name = `${desired}.${String(n).padStart(3, '0')}`;
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** One animation's channels, or the reason it cannot come across. */
+function readAnimation(
+  json: ClipGltfJson,
+  buffers: Uint8Array[],
+  animation: NonNullable<ClipGltfJson['animations']>[number],
+): { channels: ClipChannel[] } | NativeImportRefusal {
   // The loose shape above admits what glTF files carry and `GltfJson` does not type (a `weights`
   // path, a sparse or bufferless accessor), so they can be refused. Each accessor is checked by
   // `unreadable` before `readAccessor` touches it, which is what makes this view of it sound.
   const asGltf = json as unknown as GltfJson;
-  const animation = animations[0];
   const seen = new Set<string>();
   const channels: ClipChannel[] = [];
   for (const channel of animation.channels) {

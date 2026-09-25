@@ -12,8 +12,8 @@
 // ── A WHOLE IMPORT IS NATIVE OR IT IS REFUSED, NEVER SPLIT PER CHILD ────────────────────────────
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
-// is refused WHOLE, by name, with the issue that brings it across: a skin (#1205), a second clip
-// (#1154), several primitives on one mesh (#1052), morph targets (#1060),
+// is refused WHOLE, by name, with the issue that brings it across: a skin (#1205), several
+// primitives on one mesh (#1052), morph targets (#1060),
 // a mesh shared by several nodes (#1061), vertex attributes a render buffer has no slot for
 // (#1125), and material features the native material cannot hold (#1123). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
@@ -97,7 +97,7 @@ import {
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
-import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
+import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
   leftBehindAsEmpty,
   nativeSkeletonLayer,
@@ -1220,19 +1220,45 @@ function skinIntoArmatureSpace(
  * #1211 — the file's bone motion is keys on the BASE pose layer: Skeleton.pose → PoseLayer →
  * Object.pose, exactly what keying the character by hand makes. The layer is written even when the
  * file keys no bone, so every native character has its base where a bind will find it. It is named
- * after the file's animation, as Blender names the action.
+ * after the file's first animation, as Blender names the action (the file's name when it has none).
+ *
+ * #1154 — each later animation that keys these bones is an override layer ABOVE the base, MUTED and
+ * named after it, in file order: Blender stashes every animation on a muted NLA track of the armature
+ * it drives (`animation_utils.py:20-29`). Pose layers are the bones' layering system (design D-C), so
+ * the base stays the bottom layer on the rest pose, a hand-pose skips the muted ones, and a bind
+ * mutes only the base.
  */
 function skeletonOps(
   args: NativeGltfImportArgs,
   json: NativeGltfJson,
   skeleton: NativeSkeleton,
-  layer: ReturnType<typeof nativeSkeletonLayer>,
+  layers: ArmatureLayers,
   parentId: string,
   key: string,
 ): Op[] {
   const skeletonId = nativeSkeletonId(args.assetRef, key);
-  const layerId = hashId('nativePoseLayer', args.assetRef, key);
-  const name = json.animations?.[0]?.name || baseNameOf(args.assetRef);
+  const baseId = hashId('nativePoseLayer', args.assetRef, key);
+  const chain = [
+    {
+      id: baseId,
+      params: {
+        name: layers.name ?? baseNameOf(args.assetRef),
+        mode: 'override',
+        members: layers.members,
+        channels: layers.channels,
+      },
+    },
+    ...layers.held.map((layer) => ({
+      id: hashId('nativePoseLayer', args.assetRef, key, String(layer.index)),
+      params: {
+        name: layer.name,
+        mode: 'override',
+        mute: true,
+        members: layer.members,
+        channels: layer.channels,
+      },
+    })),
+  ];
   return [
     {
       type: 'addNode',
@@ -1240,17 +1266,22 @@ function skeletonOps(
       nodeType: 'Skeleton',
       params: { bones: skeleton.bones },
     },
-    {
-      type: 'addNode',
-      nodeId: layerId,
-      nodeType: 'PoseLayer',
-      params: { name, mode: 'override', members: layer.members, channels: layer.channels },
-    },
-    {
-      type: 'connect',
-      from: { node: skeletonId, socket: 'pose' },
-      to: { node: layerId, socket: 'pose' },
-    },
+    ...chain.map(
+      (layer): Op => ({
+        type: 'addNode',
+        nodeId: layer.id,
+        nodeType: 'PoseLayer',
+        params: layer.params,
+      }),
+    ),
+    ...chain.map(
+      (layer, i): Op => ({
+        type: 'connect',
+        from:
+          i === 0 ? { node: skeletonId, socket: 'pose' } : { node: chain[i - 1].id, socket: 'out' },
+        to: { node: layer.id, socket: 'pose' },
+      }),
+    ),
     ...buildSkeletonObjectOps({
       skeletonId,
       bones: skeleton.bones,
@@ -1261,9 +1292,18 @@ function skeletonOps(
       // animation's.
       name: armatureNameOf(json, skeleton),
       nameFollowsClip: false,
-      pose: { node: layerId, socket: 'out' },
+      pose: { node: chain[chain.length - 1].id, socket: 'out' },
     }).ops,
   ];
+}
+
+/** An armature's layers from the file: the base (the first animation) and the held ones above it. */
+interface ArmatureLayers extends ReturnType<typeof nativeSkeletonLayer> {
+  readonly name: string | undefined;
+  readonly held: readonly ({
+    readonly index: number;
+    readonly name: string;
+  } & ReturnType<typeof nativeSkeletonLayer>)[];
 }
 
 /**
@@ -1335,14 +1375,29 @@ async function buildNativeOps(
   }
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
-  const clip = readNativeClip(json as ClipGltfJson, buffers);
-  if ('refused' in clip) return clip;
+  const read_ = readNativeAnimations(json as ClipGltfJson, buffers);
+  if ('refused' in read_) return read_;
+  // #1154 — the first animation plays; the rest are held muted, as Blender stashes each on a muted
+  // NLA track and makes the first the active action (`animation_utils.py:20-29`, `scene.py:86-89`).
+  const [active, ...held] = read_.animations;
+  const clip = { channels: active?.channels ?? [] };
   // #393 — each armature's joints as a skeleton, and the clip's channels on them as its clip
   // (#1208: one skeleton per armature, as Blender's importer makes one armature Object each).
   const read = readNativeSkeletons(json);
   if (read !== null && 'refused' in read) return read;
   const skeletons = read?.skeletons ?? [];
-  const boneLayers = skeletons.map((skeleton) => nativeSkeletonLayer(skeleton, clip.channels));
+  const boneLayers = skeletons.map((skeleton) => ({
+    name: active?.name,
+    ...nativeSkeletonLayer(skeleton, clip.channels),
+    // #1154 — each held animation that keys this armature's bones: a muted layer above the base.
+    held: held
+      .map((animation, i) => ({
+        index: i + 1,
+        name: animation.name,
+        ...nativeSkeletonLayer(skeleton, animation.channels),
+      }))
+      .filter((layer) => layer.channels.length > 0),
+  }));
   const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
   // #1210 — each bone node's skeleton and name, for a mesh the file hangs under it.
   const boneAt = new Map(
@@ -1634,6 +1689,7 @@ async function buildNativeOps(
       params: { name: paramPath, target, paramPath, keyframes: channel.keyframes },
     });
   }
+  ops.push(...heldObjectAnimationOps(args.assetRef, held, isBone, idOfNode));
 
   ops.push({
     type: 'connect',
@@ -1641,4 +1697,66 @@ async function buildNativeOps(
     to: { node: args.sceneNodeId, socket: 'children' },
   });
   return { ops, groupId, objectIds };
+}
+
+/**
+ * #1154 — a held animation's Object channels as NLA: one `Track` per animation, MUTED and named after
+ * it, holding for each Object it drives an `Action` (that Object's channels, target-less) placed by a
+ * `Strip` — what placing an action on a track by hand makes (`mutator.nla.addStrip`). Blender stashes
+ * each animation on a muted NLA track of every object it drives (`animation_utils.py:20-29`), and NLA
+ * is the layering system for scene parameters (design D-C). Bone channels are the armature's layers,
+ * written with the skeleton; an animation that keys only bones writes no track here.
+ */
+function heldObjectAnimationOps(
+  assetRef: string,
+  held: readonly NativeAnimation[],
+  isBone: ReadonlySet<number>,
+  idOfNode: (node: number) => string,
+): Op[] {
+  const ops: Op[] = [];
+  held.forEach((animation, i) => {
+    const index = String(i + 1);
+    const byNode = new Map<number, NativeAnimation['channels']>();
+    for (const channel of animation.channels) {
+      if (isBone.has(channel.node)) continue;
+      byNode.set(channel.node, [...(byNode.get(channel.node) ?? []), channel]);
+    }
+    if (byNode.size === 0) return;
+    const strips: string[] = [];
+    for (const [node, channels] of byNode) {
+      const target = idOfNode(node);
+      const actionId = hashId('nativeAction', assetRef, index, target);
+      const stripId = hashId('nativeStrip', assetRef, index, target);
+      strips.push(stripId);
+      ops.push(
+        {
+          type: 'addNode',
+          nodeId: actionId,
+          nodeType: 'Action',
+          params: {
+            name: animation.name,
+            channels: channels.map((channel) => ({
+              valueType: channel.path === 'rotation' ? 'quat' : 'vec3',
+              name: CLIP_PARAM[channel.path],
+              paramPath: CLIP_PARAM[channel.path],
+              keyframes: channel.keyframes,
+            })),
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: stripId,
+          nodeType: 'Strip',
+          params: { name: animation.name, action: actionId, target },
+        },
+      );
+    }
+    ops.push({
+      type: 'addNode',
+      nodeId: hashId('nativeTrack', assetRef, index),
+      nodeType: 'Track',
+      params: { name: animation.name, strips, order: i, mute: true },
+    });
+  });
+  return ops;
 }
