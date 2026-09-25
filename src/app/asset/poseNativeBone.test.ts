@@ -226,6 +226,91 @@ describe('#1244 — hand-posing a native character', () => {
     expect(Object.values(after.nodes).some((n) => n.type === 'PoseLayer')).toBe(false);
   });
 
+  it('#1245 — posing again under an additive layer lands in the pose layer below it', async () => {
+    const { state, armatureId } = await bar();
+    useDagStore.getState().hydrate(state);
+    expect(pose(armatureId, 'Bone1', [0, 0, 30]).ok).toBe(true);
+    const poseLayer = poseLayerChain(graph(useDagStore.getState().state), armatureId).layers[0];
+    // A director stacks an additive layer on top.
+    useDagStore.getState().dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'lean',
+          nodeType: 'PoseLayer',
+          params: {
+            mode: 'additive',
+            members: [{ bone: 'Bone0', rotationMode: 'XYZ', rotation: [0, 0, 5] }],
+          },
+        },
+        {
+          type: 'connect',
+          from: { node: poseLayer, socket: 'out' },
+          to: { node: 'lean', socket: 'pose' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'lean', socket: 'out' },
+          to: { node: armatureId, socket: 'pose' },
+          replace: true,
+        },
+      ],
+      'user',
+      'add lean',
+    );
+    const again = pose(armatureId, 'Bone1', [0, 0, 60]);
+    expect(again.ok, JSON.stringify(again)).toBe(true);
+    const after = useDagStore.getState().state;
+    expect(poseLayerChain(graph(after), armatureId).layers).toEqual(['lean', poseLayer]);
+    const members = (
+      after.nodes[poseLayer].params as { members: { bone: string; rotation: number[] }[] }
+    ).members;
+    expect(members).toEqual([expect.objectContaining({ bone: 'Bone1', rotation: [0, 0, 60] })]);
+  });
+
+  it('#1245 — a chain of only additive layers gets an override layer under the Object', async () => {
+    const { state, armatureId } = await bar();
+    useDagStore.getState().hydrate(state);
+    const feed = state.nodes[armatureId].inputs.pose as { node: string; socket: string };
+    useDagStore.getState().dispatchAtomic(
+      [
+        {
+          type: 'addNode',
+          nodeId: 'lean',
+          nodeType: 'PoseLayer',
+          params: { mode: 'additive', members: [] },
+        },
+        { type: 'connect', from: feed, to: { node: 'lean', socket: 'pose' } },
+        {
+          type: 'connect',
+          from: { node: 'lean', socket: 'out' },
+          to: { node: armatureId, socket: 'pose' },
+          replace: true,
+        },
+      ],
+      'user',
+      'add lean',
+    );
+    expect(pose(armatureId, 'Bone1', [0, 0, 60]).ok).toBe(true);
+    const chain = poseLayerChain(graph(useDagStore.getState().state), armatureId);
+    expect(chain.layers).toHaveLength(2);
+    expect(chain.layers[1]).toBe('lean');
+  });
+
+  it('#1245 — the pose layer turned additive: a new pose is refused by name, not by an id collision', async () => {
+    const { state, armatureId } = await bar();
+    useDagStore.getState().hydrate(state);
+    expect(pose(armatureId, 'Bone1', [0, 0, 30]).ok).toBe(true);
+    const layer = poseLayerChain(graph(useDagStore.getState().state), armatureId).layers[0];
+    useDagStore
+      .getState()
+      .dispatch({ type: 'setParam', nodeId: layer, paramPath: 'mode', value: 'additive' });
+    const again = pose(armatureId, 'Bone1', [0, 0, 60]);
+    expect(again.ok === false && again.reason).toMatch(
+      /is not an override layer in this Object's pose chain/,
+    );
+  });
+
   it('refusals name themselves', async () => {
     const { state, armatureId } = await bar();
     useDagStore.getState().hydrate(state);

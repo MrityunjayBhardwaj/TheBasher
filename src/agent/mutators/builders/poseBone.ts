@@ -151,12 +151,18 @@ function objectBonesOf(state: DagState, objectId: string): readonly { name: stri
   return ((skeleton.params as { bones?: { name: string }[] }).bones ?? []) as { name: string }[];
 }
 
-/** The layer a pose on `objectId` is written into: the override layer feeding the Object, if any. */
+/**
+ * The layer a pose on `objectId` is written into: the nearest OVERRIDE layer in the Object's chain,
+ * walking down from the top (#1245). Additive layers above it keep adding on top of the pose, which
+ * is what a layer stack means; only a chain with no override layer needs one inserted.
+ */
 function editLayerOf(state: DagState, objectId: string): string | null {
   const { layers } = poseLayerChain(asGraph(state), objectId);
-  const top = layers[0];
-  const mode = top ? (state.nodes[top].params as { mode?: unknown }).mode : undefined;
-  return top !== undefined && (mode === undefined || mode === 'override') ? top : null;
+  for (const id of layers) {
+    const mode = (state.nodes[id].params as { mode?: unknown }).mode;
+    if (mode === undefined || mode === 'override') return id;
+  }
+  return null;
 }
 
 /** The bones of the rig a `RetargetClip` drives, or null when it names none. */
@@ -259,6 +265,18 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
             .slice(0, 12)
             .map((b) => b.name)
             .join(', ')}${bones.length > 12 ? `, … (${bones.length} total)` : ''}.`,
+        };
+      }
+      // #1245 — a pose layer is inserted only when the chain has none to take the pose, and under
+      // an id derived from the Object (a closure is declared before the graph is read, so the id
+      // cannot be invented here). Held by some other node, it is refused by name, not by collision.
+      const layerId = poseLayerIdFor(spec.object);
+      if (editLayerOf(state, spec.object) === null && state.nodes[layerId]) {
+        return {
+          ok: false,
+          reason:
+            `the pose layer "${layerId}" exists but is not an override layer in this Object's pose ` +
+            'chain; wire it back under the Object, or set its mode to override, to pose into it.',
         };
       }
       return { ok: true };
