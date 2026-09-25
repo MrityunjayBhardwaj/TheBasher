@@ -11,10 +11,20 @@
 // its channel order; a muted layer's rows dimmed. Blender's dope sheet shows the selected objects'
 // action curves ("Only Show Selected", on by default), grouped by bone.
 //
+// Below the layers, the computed motion the chain stands on (a retarget, a generated clip) shows
+// read-only (`computedSourceRows`): the keys a bake at every pose would write, and bake is the one road
+// to editing them. Houdini shows motion-clip keys read-only and authored keys editable
+// (`kinefx--rigpose.txt:125,433`); design rule 9.
+//
 // REF: src/agent/mutators/builders/channelAddress.ts (`LayerChannelAddress`, the layer form);
-//      src/app/animate/poseChain.ts (`poseLayerChain`); src/nodes/PoseLayer.ts; issue #1215.
+//      src/app/animate/poseChain.ts (`poseLayerChain`); src/nodes/PoseLayer.ts;
+//      src/app/animate/bakePose.ts (`computedSourceOf`, `bakeTimes`); issue #1215.
 
 import type { Node } from '../core/dag/types';
+import type { DagState } from '../core/dag/state';
+import { createEvaluatorCache, evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import type { PosedSkeletonValue } from '../nodes/types';
+import { bakeTimes, computedSourceOf } from '../app/animate/bakePose';
 import type { PoseLayerParams } from '../nodes/PoseLayer';
 import type {
   ChannelAddressed,
@@ -26,6 +36,9 @@ import type { GraphNodeLike } from '../app/animate/graphNodes';
 import type { ChannelRow } from './clipChannelRows';
 
 const PREFIX = 'layer:';
+const COMPUTED_PREFIX = 'computed:';
+/** What a bake keys for each bone of the wire (`bakedLayerParams`), in its order. */
+const BAKED_COMPONENTS = ['position', 'quaternion', 'scale'] as const;
 
 /** The row id of a layer channel. */
 export function layerRowId(address: LayerChannelAddress): string {
@@ -91,5 +104,84 @@ export function appendLayerRows(args: {
   const { baseRows, nodes, selectedNodeId } = args;
   if (!selectedNodeId || nodes[selectedNodeId]?.type !== 'Object') return baseRows;
   const rows = layerChannelRows(nodes, selectedNodeId);
+  return rows.length === 0 ? baseRows : [...baseRows, ...rows];
+}
+
+/** A cache for `computedSourceRows` to hold across renders (the caller keeps it; this file evaluates). */
+export function computedSourceCache(): EvaluatorCache {
+  return createEvaluatorCache();
+}
+
+/** The row id of one curve of the computed source `node` would bake to. */
+export function computedRowId(node: string, component: string, bone: string): string {
+  const part = encodeURIComponent;
+  return `${COMPUTED_PREFIX}${part(node)}:${component}:${part(bone)}`;
+}
+
+/** True for a computed source's read-only row. */
+export function isComputedRowId(rowId: string): boolean {
+  return rowId.startsWith(COMPUTED_PREFIX);
+}
+
+/**
+ * The computed motion under `objectId`'s pose chain as read-only rows: every bone of the source's wire
+ * × position / quaternion / scale, a key at each of its poses — what a bake at every pose would write.
+ * Empty when the chain stands on its skeleton's rest pose (its motion is keys already, in the layers).
+ * A source that cannot be read, or has no range to take poses from, is ONE row saying so, never no
+ * rows: "could not look" must not read as "nothing there".
+ *
+ * `cache` is the caller's stable evaluator cache: the source is re-evaluated only when its own inputs
+ * change, not on every edit elsewhere in the graph.
+ */
+export function computedSourceRows(
+  state: DagState,
+  objectId: string,
+  cache?: EvaluatorCache,
+): ChannelRow[] {
+  const source = computedSourceOf(state, objectId);
+  if (source === null) return [];
+  const node = state.nodes[source.node];
+  const sourceName = (node.params as { name?: unknown }).name;
+  const label = typeof sourceName === 'string' && sourceName.length > 0 ? sourceName : source.node;
+  const notice = (why: string): ChannelRow[] => [
+    {
+      channelId: computedRowId(source.node, 'none', ''),
+      name: `${label} — ${why}`,
+      keyframes: [],
+      readOnly: true,
+    },
+  ];
+  let wire: PosedSkeletonValue | undefined;
+  try {
+    wire = evaluate(state, source.node, { socket: source.socket, cache }).value as
+      | PosedSkeletonValue
+      | undefined;
+  } catch (error) {
+    return notice(`could not be read (${(error as Error).message})`);
+  }
+  if (!wire?.skeleton) return notice('could not be read (no pose on the wire)');
+  const times = bakeTimes(wire, { kind: 'every' });
+  if (!times.ok) return notice('no poses to show (the motion has no range)');
+  const keyframes = times.times.map((time) => ({ time }));
+  return wire.skeleton.bones.flatMap((bone) =>
+    BAKED_COMPONENTS.map((component) => ({
+      channelId: computedRowId(source.node, component, bone.name),
+      name: `${label} — ${bone.name} ${component}`,
+      keyframes,
+      readOnly: true,
+    })),
+  );
+}
+
+/** `baseRows` with the selected armature Object's computed source rows appended; unchanged otherwise. */
+export function appendComputedSourceRows(args: {
+  baseRows: ChannelRow[];
+  state: DagState;
+  selectedNodeId: string | null;
+  cache?: EvaluatorCache;
+}): ChannelRow[] {
+  const { baseRows, state, selectedNodeId, cache } = args;
+  if (!selectedNodeId || state.nodes[selectedNodeId]?.type !== 'Object') return baseRows;
+  const rows = computedSourceRows(state, selectedNodeId, cache);
   return rows.length === 0 ? baseRows : [...baseRows, ...rows];
 }

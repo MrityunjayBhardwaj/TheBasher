@@ -17,7 +17,7 @@ import { useTimelineSelection } from './timelineSelection';
 import { resolveClipRow } from './clipChannelRows';
 import { isKeyframeChannelNode } from '../app/animate/paramAnimationState';
 import { EditableCurve } from './EditableCurve';
-import { layerChannelRows, parseLayerRowId } from './layerChannelRows';
+import { isComputedRowId, layerChannelRows, parseLayerRowId } from './layerChannelRows';
 import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
 
 const TRACK_COLORS = ['#ef4444', '#22c55e', '#3b82f6']; // x / y / z
@@ -141,6 +141,19 @@ export function CurveEditor({ duration }: { duration: number }) {
             strokeWidth="0.3"
           />
         </svg>
+      </div>
+    );
+  }
+
+  // #1215 — a computed source's row (a retarget, a generated clip): read-only until baked. Its keys
+  // are where the source's poses land; there is no curve to edit, and bake is the road to one.
+  if (isComputedRowId(channelId)) {
+    return (
+      <div
+        data-testid="curve-editor"
+        className="flex h-full items-center justify-center px-4 text-center text-xs text-fg-dim"
+      >
+        Computed motion — “bake motion to keys” in the inspector makes its keys editable.
       </div>
     );
   }

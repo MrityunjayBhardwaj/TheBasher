@@ -179,6 +179,10 @@ const CONSUMERS: Record<string, Decision> = {
   // and a bake whose keys depended on where the scrubber stood would be the bug. It reads the state
   // the mutator is handed, authored, as the bind beside it does.
   'src/app/animate/bakePose.ts': authored('fixed-ctx-by-design'),
+  // #1215 — the dopesheet's read-only rows for a character's computed source. It evaluates the same
+  // time-free wire the bake does, for the same answer (its pose times, `bakeTimes`), off the authored
+  // state the timeline holds; the playhead would change nothing but the hash.
+  'src/timeline/layerChannelRows.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -248,7 +252,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 40 → 41 at #1056: the skeleton-Object collector, a NEW road (skeletons had no scene
     // presence to evaluate for until then), declared above as fixed-ctx.
     // 41 → 42 at #1215: the pose bake, a new road (computed motion had no way into keys).
-    expect(evaluatorConsumers()).toHaveLength(42); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 42 → 43 at #1215: the computed source's read-only rows, a new road (the timeline had no way
+    // to show computed motion before it is baked). They read the bake's own pose times.
+    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

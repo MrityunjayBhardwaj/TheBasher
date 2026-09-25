@@ -100,7 +100,7 @@ import {
   appendSelectionClipRows,
   type ChannelRow,
 } from './clipChannelRows';
-import { appendLayerRows } from './layerChannelRows';
+import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from './layerChannelRows';
 import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
@@ -566,24 +566,35 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
   // Pure: appendSelectionClipRows is a function of (baseRows, nodes, selection).
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  // #1215 — a STABLE evaluator cache for the computed source rows: the source re-evaluates only when
+  // its own inputs change, not on every edit elsewhere (the H40/H48 pattern, as SceneFromDAG's drivers).
+  const sourceCache = useMemo(() => computedSourceCache(), []);
   const rows = useMemo(
     () =>
-      // #1215 — the selected armature Object's pose layers: its keys, editable where they live.
-      appendLayerRows({
-        baseRows: appendSelectionClipRows({
-          // #903 — the AnimationClip road's read-only rows, appended BEFORE the
-          // selection-scoped TransformClip ones so a rig with a generated or
-          // retargeted motion is visible in the dopesheet without a bake. Both
-          // suppress a (bone, component) that already has a real channel, so the
-          // one-row-set invariant holds across both clip kinds.
-          baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
-          nodes,
-          selectedNodeId: primaryNodeId,
-        }),
-        nodes,
+      // #1215 — below the layers, the computed motion the chain stands on, read-only until baked.
+      appendComputedSourceRows({
+        baseRows:
+          // #1215 — the selected armature Object's pose layers: its keys, editable where they live.
+          appendLayerRows({
+            baseRows: appendSelectionClipRows({
+              // #903 — the AnimationClip road's read-only rows, appended BEFORE the
+              // selection-scoped TransformClip ones so a rig with a generated or
+              // retargeted motion is visible in the dopesheet without a bake. Both
+              // suppress a (bone, component) that already has a real channel, so the
+              // one-row-set invariant holds across both clip kinds.
+              baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
+              nodes,
+              selectedNodeId: primaryNodeId,
+            }),
+            nodes,
+            selectedNodeId: primaryNodeId,
+          }),
+        // Read off the live state: `nodes` (the memo key) changes with every edit that could move it.
+        state: useDagStore.getState().state,
         selectedNodeId: primaryNodeId,
+        cache: sourceCache,
       }),
-    [nodes, primaryNodeId],
+    [nodes, primaryNodeId, sourceCache],
   );
 
   // P7.12 B2 — selection → active row. `setActiveChannel` had no production
