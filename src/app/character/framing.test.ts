@@ -271,6 +271,7 @@ Frame Time: 0.0333333
       normalise: false,
       name: 'rig',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of ops) s = applyOp(s, op).next;
     s = applyOp(s, {

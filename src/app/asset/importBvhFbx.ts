@@ -119,6 +119,7 @@ function skeletonObjectOps(
     normalise,
     name,
     clipId,
+    nameFollowsClip: true,
   }).ops;
 }
 

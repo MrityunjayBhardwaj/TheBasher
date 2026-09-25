@@ -66,6 +66,7 @@ function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
     normalise: false,
     name: 'wave',
     clipId: 'clip',
+    nameFollowsClip: true,
   });
   // Out of the scene: every op but the edge that makes it a scene child.
   const outOfScene = ops.filter((op) => !(op.type === 'connect' && op.to.socket === 'children'));

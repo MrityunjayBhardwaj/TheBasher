@@ -77,6 +77,7 @@ describe('buildSkeletonObjectOps', () => {
       normalise: false,
       name: 'soma-walk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     expect(objectId).toBe(skeletonObjectId('sk'));
     expect(ops).toEqual([
@@ -119,6 +120,7 @@ describe('buildSkeletonObjectOps', () => {
       normalise: true,
       name: 'sk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of ops) state = applyOp(state, op).next;
 
@@ -228,6 +230,7 @@ describe('normalisedRigScale', () => {
       normalise: false,
       name: 'sk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
   });
@@ -250,6 +253,7 @@ describe('#1101 — the Object carries its motion name', () => {
       normalise: false,
       name: 'soma-walk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of named.ops) state = applyOp(state, op).next;
     expect(state.nodes[named.objectId].meta?.name).toBe('soma-walk');
@@ -261,6 +265,7 @@ describe('#1101 — the Object carries its motion name', () => {
       normalise: false,
       name: '   ',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
   });
@@ -288,6 +293,7 @@ describe('standingObjectsOf (#1100)', () => {
         normalise: false,
         name: 'sk',
         clipId: 'clip',
+        nameFollowsClip: true,
       }).ops,
     ];
     for (const op of ops) state = applyOp(state, op).next;

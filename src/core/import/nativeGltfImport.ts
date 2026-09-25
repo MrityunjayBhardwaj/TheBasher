@@ -1265,10 +1265,27 @@ function skeletonOps(
       clip: null,
       sceneNodeId: parentId,
       normalise: false,
-      name,
+      // #1238 — the armature node's name, as Blender names the armature Object; the clip keeps the
+      // animation's.
+      name: armatureNameOf(json, skeleton),
+      nameFollowsClip: false,
       clipId,
     }).ops,
   ];
+}
+
+/**
+ * #1238 — the name Blender gives this armature's Object: its armature node's name, or, when the
+ * armature stands at the file's root (no node holds it) or the node is unnamed, the armature data's —
+ * the first skin's name, else `Armature` (`io_scene_gltf2/blender/imp/node.py`, `create_object`;
+ * `vnode.py`, `mark_bones_and_armas`). Measured on Blender 5.1.1: `SkinnedBar`, and `SkinnedBar` +
+ * `SkinnedBarB` in `two-skinned-bars.glb` (`q1238_names.py`).
+ */
+function armatureNameOf(json: NativeGltfJson, skeleton: NativeSkeleton): string {
+  const node = skeleton.armatureNode === null ? undefined : json.nodes[skeleton.armatureNode];
+  if (node?.name) return node.name;
+  const skin = (json.skins ?? []).find((s) => skeleton.boneNodes.includes(s.joints[0]));
+  return skin?.name || 'Armature';
 }
 
 /** A skeleton's id: the asset and the node key of its first bone, one skeleton per armature. */

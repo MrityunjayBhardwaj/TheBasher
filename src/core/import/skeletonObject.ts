@@ -118,23 +118,35 @@ export interface SkeletonObjectArgs {
    *  false: its size is the director's to set (#791). */
   readonly normalise: boolean;
   /**
-   * #1101 — the name the Object shows: its clip's, which is the file's base name on the import
-   * road and the prompt on the generation road. Blender's BVH importer does the same, naming
-   * the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
+   * #1101 — the name the Object shows. For a motion's own rig, its clip's: the file's base name on
+   * the import road and the prompt on the generation road. Blender's BVH importer does the same,
+   * naming the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
+   * For a glTF armature, its armature node's (#1238).
    *
    * Required, so a new caller cannot stand an Object the outliner lists by its id. A blank name
    * adds no op: blank is the unnamed state `nodeDisplayName` falls back from.
    */
   readonly name: string;
   /**
-   * #1122 — the clip this Object's name follows. The Object is named after its clip and keeps
-   * reading as the same motion when the clip is renamed or re-cooked, until a director renames
-   * the Object itself (the link is `meta.nameFrom`; the reducer copies, a rename cuts it).
+   * The clip whose pose poses this Object (#1224), and — when {@link nameFollowsClip} — whose name
+   * it follows (#1122): a motion's rig keeps reading as the same motion when the clip is renamed or
+   * re-cooked, until a director renames the Object itself (the link is `meta.nameFrom`; the reducer
+   * copies, a rename cuts it).
    *
-   * Required for the reason `name` is: a road that could leave it out would stand an Object
-   * whose name silently stops following, and both roads would look the same until a rename.
+   * Required for the reason `name` is: a road that could leave it out would stand an Object with
+   * no pose edge, and both roads would look the same until something played.
    */
   readonly clipId: string;
+  /**
+   * #1238 — whether the Object's name follows its clip's (`meta.nameFrom`). True for a MOTION's own
+   * rig (BVH, FBX, generation): Blender's BVH importer names the armature after the file, and the
+   * clip carries that name (#1101, #1122). False for a glTF armature, which is a node with a name of
+   * its own: Blender names the armature Object after that node (`io_scene_gltf2/blender/imp/node.py`,
+   * `create_object`), and renaming the clip must not rename the character.
+   *
+   * Required, for the reason `name` is: a road that could leave it out would silently inherit one.
+   */
+  readonly nameFollowsClip: boolean;
 }
 
 /**
@@ -166,7 +178,14 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
       },
       ...(args.name.trim()
-        ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name, nameFrom: args.clipId }]
+        ? [
+            {
+              type: 'setMeta' as const,
+              nodeId: objectId,
+              name: args.name,
+              ...(args.nameFollowsClip ? { nameFrom: args.clipId } : {}),
+            },
+          ]
         : []),
       {
         type: 'connect',

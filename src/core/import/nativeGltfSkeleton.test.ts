@@ -141,7 +141,9 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const children = state.nodes[meshObject].inputs.children as { node: string }[];
     expect(children.map((c) => c.node)).toEqual([standIn]);
     expect(state.nodes[standIn!].params).toMatchObject({ scale: [1, 1, 1] });
-    expect(state.nodes[standIn!].meta?.name).toBe('bend');
+    // #1238 — named after the armature node, as Blender 5.1.1 names it; not after the clip `bend`.
+    expect(state.nodes[standIn!].meta?.name).toBe('SkinnedBar');
+    expect(state.nodes[standIn!].meta?.nameFrom).toBeUndefined();
     // #1224 — the clip's pose is the Object's pose: what the band draws and a deform reads.
     const [clipId] = nodesOfType(state, 'AnimationClip');
     expect(state.nodes[standIn!].inputs.pose).toEqual({ node: clipId, socket: 'pose' });
