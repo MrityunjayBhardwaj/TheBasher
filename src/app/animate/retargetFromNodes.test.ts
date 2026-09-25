@@ -9,6 +9,7 @@ import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFrom
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
+import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
@@ -67,7 +68,7 @@ function graph(over: Record<string, GraphNodeLike> = {}): Record<string, GraphNo
       type: 'RetargetClip',
       params: { name: '' },
       inputs: {
-        sourceClip: { node: 'n_src', socket: 'out' },
+        source: { node: 'n_src', socket: 'pose' },
         boneMap: { node: 'n_map', socket: 'out' },
         skeleton: { node: 'n_gltfSkel', socket: 'out' },
       },
@@ -124,14 +125,15 @@ describe('retargetClipParamsFromNodes', () => {
     const viaEvaluate = RetargetClipNode.evaluate(
       RetargetClipParams.parse({}),
       {
-        sourceClip: {
+        // #1225 — the node reads the clip's pose wire.
+        source: posedSkeletonFromClip({
           kind: 'AnimationClip',
           name: 'walk',
           duration: 1,
           loop: 'hold',
           keyframes: sourceKeys(),
           skeleton: { kind: 'Skeleton', bones: sourceBones() },
-        },
+        }),
         boneMap: { kind: 'BoneNameMap', name: 'bridge', map: nameMap() },
         skeleton: { kind: 'Skeleton', bones: bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[] },
       } as never,
@@ -147,16 +149,16 @@ describe('retargetClipParamsFromNodes', () => {
 
   it('is null for every incomplete graph, one cause at a time', () => {
     const cases: Record<string, Record<string, GraphNodeLike>> = {
-      'no sourceClip edge': graph({
+      'no source edge': graph({
         n_retarget: {
           ...graph().n_retarget,
           inputs: { boneMap: { node: 'n_map', socket: 'out' } },
         } as GraphNodeLike,
       }),
-      'sourceClip is not a clip': graph({
+      'source is not a clip': graph({
         n_retarget: {
           ...graph().n_retarget,
-          inputs: { ...graph().n_retarget.inputs, sourceClip: { node: 'n_map', socket: 'out' } },
+          inputs: { ...graph().n_retarget.inputs, source: { node: 'n_map', socket: 'out' } },
         },
       }),
       'source clip has no keys': graph({

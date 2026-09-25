@@ -112,13 +112,14 @@ function buildScene(o: Opts = {}): DagState {
     params: { name: 'retargeted' },
   }).next;
   for (const [from, socket] of [
-    ['a_srcclip', 'sourceClip'],
+    ['a_srcclip', 'source'],
     ['a_map', 'boneMap'],
     ['a_skel', 'skeleton'],
   ] as const) {
     s = applyOp(s, {
       type: 'connect',
-      from: { node: from, socket: 'out' },
+      // #1225 — the retarget reads the clip's pose wire.
+      from: { node: from, socket: socket === 'source' ? 'pose' : 'out' },
       to: { node: 'a_retarget', socket },
     }).next;
   }

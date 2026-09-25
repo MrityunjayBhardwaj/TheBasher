@@ -77,7 +77,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // the rule down as the edge. See migrations.ts formatMigrations[14].
 // v16 (#1224): the armature Object takes the pose wire — `action` (a clip) becomes `pose`, and each
 // saved edge is re-pointed to its producer's pose output. See migrations.ts formatMigrations[15].
-export const PROJECT_FORMAT_VERSION = 16;
+// v17 (#1225): the retarget reads the pose wire — `RetargetClip.sourceClip` becomes `source`, each
+// saved edge re-pointed to its producer's pose output. See migrations.ts formatMigrations[16].
+export const PROJECT_FORMAT_VERSION = 17;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

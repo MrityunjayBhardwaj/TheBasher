@@ -1648,6 +1648,11 @@ export interface WireClipInfo {
   readonly start: number;
   readonly end: number;
   readonly rate: number;
+  /** The motion's name, as `clipinfo` records the clip name. */
+  readonly name?: string;
+  /** What the motion does past its range (`clipinfo`'s end behaviour). Absent is hold. A retarget
+   *  carries it across, so a one-shot motion stays one (#919). */
+  readonly loop?: ClipLoop;
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */

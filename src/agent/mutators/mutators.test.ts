@@ -4053,13 +4053,14 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       params: { name: 'retargeted' },
     }).next;
     for (const [from, socket] of [
-      ['src_clip', 'sourceClip'],
+      ['src_clip', 'source'],
       ['pb_map', 'boneMap'],
       ['tgt_skel', 'skeleton'],
     ] as const) {
       s = applyOp(s, {
         type: 'connect',
-        from: { node: from, socket: 'out' },
+        // #1225 — the retarget reads the clip's pose wire.
+        from: { node: from, socket: socket === 'source' ? 'pose' : 'out' },
         to: { node: 'pb_retarget', socket },
       }).next;
     }
@@ -4728,7 +4729,7 @@ describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #10
           o.to.socket === socket,
       );
     expect(wiredFrom('gltf_skel', 'skeleton')).toBe(true);
-    expect(wiredFrom('src_clip', 'sourceClip')).toBe(true);
+    expect(wiredFrom('src_clip', 'source')).toBe(true);
     expect(wiredFrom('walk_on_gltf_map', 'boneMap')).toBe(true);
     // …and NOT to a clock. The node is time-free on purpose (#901).
     expect(result.ops.some((o) => o.type === 'connect' && o.to.socket === 'time')).toBe(false);

@@ -261,8 +261,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       },
       {
         type: 'connect',
-        from: { node: spec.sourceClipId, socket: 'out' },
-        to: { node: outputId, socket: 'sourceClip' },
+        // #1225 — the retarget reads the pose wire: the clip's pose, which carries its range.
+        from: { node: spec.sourceClipId, socket: 'pose' },
+        to: { node: outputId, socket: 'source' },
       },
       {
         type: 'connect',

@@ -140,7 +140,7 @@ function twoCharactersOneClip(keyframes: unknown[]): DagState {
         type: 'RetargetClip',
         params: { name: '' },
         inputs: {
-          sourceClip: { node: 'n_clip', socket: 'out' },
+          source: { node: 'n_clip', socket: 'pose' },
           boneMap: { node: 'n_map', socket: 'out' },
           skeleton: { node: 'b_rig', socket: 'out' },
         },

@@ -11,9 +11,10 @@
 // `evaluate()`, because the migration runs it on raw saved JSON long before an
 // evaluator exists.
 //
-// Observed on one graph with one node swapped in the `RetargetClip.sourceClip`
-// slot, the `AnimationClip` arm present precisely so the fixture is known to be
-// able to exhibit the property:
+// Observed on one graph with one node swapped in the retarget's source slot
+// (then `RetargetClip.sourceClip`, now `source`, the pose wire, #1225), the
+// `AnimationClip` arm present precisely so the fixture is known to be able to
+// exhibit the property:
 //
 //   AnimationClip   -> boundClips=1  keyframes=4  retarget.sourceNode=AnimationClip
 //   MotionGenerate  -> boundClips=0  keyframes=0  retarget.sourceNode=null

@@ -87,7 +87,7 @@ function view(source: typeof SOURCE, target: typeof SOURCE, map = FULL_MAP) {
       type: 'RetargetClip',
       params: { name: 'retargeted' },
       inputs: {
-        sourceClip: { node: 'clip' },
+        source: { node: 'clip', socket: 'pose' },
         boneMap: { node: 'map1' },
         skeleton: { node: 'tgtRig' },
       },

@@ -83,7 +83,7 @@ function buildRig(
   wire('a_srcskel', 'out', 'a_srcclip', 'skeleton');
   add('a_map', 'BoneNameMap', { name: 'bridge', map: { src_Hips: bones[0] } });
   add('a_retarget', 'RetargetClip', { name: 'retargeted' });
-  wire('a_srcclip', 'out', 'a_retarget', 'sourceClip');
+  wire('a_srcclip', 'pose', 'a_retarget', 'source');
   wire('a_map', 'out', 'a_retarget', 'boneMap');
   if (!opts.skipSkeletonEdge) wire('a_skel', 'out', 'a_retarget', 'skeleton');
   return s;

@@ -46,6 +46,7 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import {
   migrateNodes,
   migrateObjectActionToPose,
+  migrateRetargetSourceToPose,
   migrateProjectFormat,
   migrateSkeletonObjectAction,
 } from './migrations';
@@ -55,6 +56,7 @@ import { radVec3ToDeg } from '../../viewport/rotation';
 import { defaultModifier } from '../../nodes/channelModifiers';
 import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../../app/bakedGltfChannels';
 import { buildDefaultDagState } from './default';
+import { retargetClip } from '../import/retarget';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
 
 beforeEach(() => {
@@ -3781,5 +3783,147 @@ describe('v15 → v16: the armature Object takes the pose wire (#1224)', () => {
     const clipPose = evaluate(state, 'clip', { socket: 'pose' }).value as PosedSkeletonValue;
     for (const t of [0, 0.5, 1]) expect(rig.pose!.sample(t)).toEqual(clipPose.sample(t));
     expect(rig.pose!.sample(0.5)).not.toEqual(rig.pose!.sample(0));
+  });
+});
+
+describe('v16 → v17: the retarget reads the pose wire (#1225)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bones = [
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'arm', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const keyframes = [
+    { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, 1] },
+  ];
+  const retarget = (id: string, inputs: Record<string, unknown>) => ({
+    id,
+    type: 'RetargetClip',
+    version: 1,
+    params: {},
+    inputs,
+  });
+  const operands = {
+    boneMap: { node: 'map', socket: 'out' },
+    skeleton: { node: 'tsk', socket: 'out' },
+  };
+  const v16 = () => ({
+    formatVersion: 16,
+    id: 'p',
+    name: 'p',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {},
+    state: {
+      nodes: {
+        sk: { id: 'sk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        tsk: { id: 'tsk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        clip: {
+          id: 'clip',
+          type: 'AnimationClip',
+          version: 1,
+          params: { name: 'wave', duration: 1, keyframes },
+          inputs: { skeleton: { node: 'sk', socket: 'out' } },
+        },
+        map: {
+          id: 'map',
+          type: 'BoneNameMap',
+          version: 1,
+          params: { map: { root: 'root', arm: 'arm' } },
+          inputs: {},
+        },
+        gen: { id: 'gen', type: 'MotionGenerate', version: 1, params: {}, inputs: {} },
+        retarget: retarget('retarget', {
+          ...operands,
+          sourceClip: { node: 'clip', socket: 'out' },
+        }),
+        chained: retarget('chained', {
+          ...operands,
+          sourceClip: { node: 'retarget', socket: 'out' },
+        }),
+        fromGenerated: retarget('fromGenerated', {
+          ...operands,
+          sourceClip: { node: 'gen', socket: 'out' },
+        }),
+        dangling: retarget('dangling', {
+          ...operands,
+          sourceClip: { node: 'gone', socket: 'out' },
+        }),
+        unwired: retarget('unwired', { ...operands }),
+      },
+      outputs: {},
+    },
+  });
+  type Raw = ReturnType<typeof v16>;
+  type Ref = { node: string; socket: string };
+  const inputsOf = (raw: Raw, id: string) =>
+    (raw.state.nodes as Record<string, { inputs: Record<string, Ref | undefined> }>)[id].inputs;
+
+  it('stamps v17', () => {
+    expect((migrateRetargetSourceToPose(v16()) as Raw).formatVersion).toBe(17);
+  });
+
+  it('re-points each source edge to its producer’s pose OUTPUT, not just its key', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'retarget').source).toEqual({ node: 'clip', socket: 'pose' });
+    expect(inputsOf(out, 'chained').source).toEqual({ node: 'retarget', socket: 'posed' });
+    expect(inputsOf(out, 'retarget').boneMap).toEqual(operands.boneMap);
+    expect(inputsOf(out, 'retarget').skeleton).toEqual(operands.skeleton);
+  });
+
+  it('every edge it writes passes the socket type check, and no sourceClip key remains', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    const sourceInput = getNodeType('RetargetClip')!.inputs.source;
+    const nodes = out.state.nodes as Record<string, { type: string; inputs: Record<string, Ref> }>;
+    let checked = 0;
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'RetargetClip') continue;
+      expect(node.inputs.sourceClip, node.type).toBeUndefined();
+      const ref = node.inputs.source;
+      if (!ref) continue;
+      const produced = getNodeType(nodes[ref.node].type)!.outputs[ref.socket]?.type;
+      expect(produced, `${ref.node}.${ref.socket}`).toBeDefined();
+      expect(inputAccepts(sourceInput, produced!), `${ref.node}.${ref.socket}`).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(2);
+    // The control that must fail: the edge a rename alone would leave.
+    expect(inputAccepts(sourceInput, getNodeType('AnimationClip')!.outputs.out.type)).toBe(false);
+  });
+
+  it('drops, and counts, an edge whose producer has no pose output or is gone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'fromGenerated')).toEqual(operands);
+    expect(inputsOf(out, 'dangling')).toEqual(operands);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-pointed 2'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 2'));
+    warn.mockRestore();
+  });
+
+  it('touches no retarget without a source', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'unwired')).toEqual(operands);
+  });
+
+  it('a saved v16 retarget loads and retargets exactly as it retargeted the clip', () => {
+    const out = migrateProjectFormat(v16()) as Raw;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
+    const value = evaluate(state, 'retarget', { socket: 'out' }).value as {
+      keyframes: readonly { bone: number; time: number; rotation: readonly number[] }[];
+    };
+    const direct = retargetClip({
+      sourceBones: bones as never,
+      sourceClip: { name: 'wave', duration: 1, keyframes: keyframes as never, loop: 'hold' },
+      targetBones: bones as never,
+      nameMap: { root: 'root', arm: 'arm' },
+    });
+    expect(value.keyframes.length).toBeGreaterThan(0);
+    expect(value.keyframes).toEqual(direct.clipParams.keyframes);
   });
 });

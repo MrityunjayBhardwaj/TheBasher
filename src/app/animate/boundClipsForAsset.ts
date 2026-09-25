@@ -176,14 +176,13 @@ export function riggedSkeletonsForClip(
   if (direct && nodes[direct]?.type === 'GltfSkeleton') out.add(direct);
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
-    // A COST GATE, not a correctness one, and said so because it cannot be
-    // falsified: `RetargetClip` is the only node in the tree that declares a
-    // `sourceClip` input, so deleting this line changes no answer today. It
-    // earns its place by skipping two edge reads per node on a table that runs
-    // to several hundred after a glTF import. What makes the answer RIGHT is the
-    // `sourceClip` match below.
+    // A CORRECTNESS GATE since #1225. The retarget's motion input is now named
+    // `source`, and `AnimationClip` declares an input of that name too (the node
+    // that produced its keys, #935), so the edge match below alone would count a
+    // clip whose producer is `clipId` as a retarget of it. It also skips two edge
+    // reads per node on a table that runs to several hundred after a glTF import.
     if (n.type !== 'RetargetClip') continue;
-    if (edgeTarget(n, 'sourceClip') !== clipId) continue;
+    if (edgeTarget(n, 'source') !== clipId) continue;
     const skel = edgeTarget(n, 'skeleton');
     if (skel && nodes[skel]?.type === 'GltfSkeleton') out.add(skel);
   }
@@ -220,8 +219,7 @@ export function charactersDrivenByClip(
     if (n.type !== 'Object') continue;
     const source = poseLayerChain(nodes, id).source;
     const producer = source ? nodes[source.node] : undefined;
-    if (producer?.type !== 'RetargetClip' || edgeTarget(producer, 'sourceClip') !== clipId)
-      continue;
+    if (producer?.type !== 'RetargetClip' || edgeTarget(producer, 'source') !== clipId) continue;
     const skeletonId = edgeTarget(n, 'data');
     if (skeletonId) out.push({ skeletonId, objectId: id });
   }
@@ -280,7 +278,7 @@ export function retargetPairs(nodes: Readonly<Record<string, GraphNodeLike>>): R
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
     if (n.type !== 'RetargetClip') continue;
-    const sourceClipId = edgeTarget(n, 'sourceClip');
+    const sourceClipId = edgeTarget(n, 'source');
     const targetSkeletonId = edgeTarget(n, 'skeleton');
     if (!sourceClipId || !targetSkeletonId) continue;
     out.push({ retargetId: id, sourceClipId, targetSkeletonId });

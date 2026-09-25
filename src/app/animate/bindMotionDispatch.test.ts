@@ -163,7 +163,7 @@ describe('binding a motion to a character', () => {
     // satisfy a type check and drive nothing.
     expect(nodes['n_out_a']?.type).toBe('RetargetClip');
     expect(nodes['n_out_a_map']?.type).toBe('BoneNameMap');
-    expect(edgeOf('n_out_a', 'sourceClip')).toBe('n_clip_a');
+    expect(edgeOf('n_out_a', 'source')).toBe('n_clip_a');
     expect(edgeOf('n_out_a', 'boneMap')).toBe('n_out_a_map');
     expect(edgeOf('n_out_a', 'skeleton')).toBe(SKEL);
     // THE ASSERTION. Copy-on-write: the clip drives every bone through the read

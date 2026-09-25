@@ -232,7 +232,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted)',
   PoseOverride:
     '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
-  RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
+  RetargetClip: '[animate] name=(unrouted) active=(unrouted) sampleRate=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -382,4 +382,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //
 // #1241 appends `PoseLayer.solo`, unrouted (see its row): +1 unrouted.
 //   types 90 · routed 144 · unrouted 243 + 1 = 244
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 244 } as const;
+//
+// #1225 appends `RetargetClip.sampleRate`, unrouted, beside its other two: +1 unrouted.
+//   types 90 · routed 144 · unrouted 244 + 1 = 245
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 245 } as const;

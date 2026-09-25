@@ -141,7 +141,7 @@ export function gltfAssetDepNodes(
         if (n.type !== 'RetargetClip') continue;
         const mapId = edgeTo(n, 'boneMap');
         if (mapId) operandIds.add(mapId);
-        const sourceId = edgeTo(n, 'sourceClip');
+        const sourceId = edgeTo(n, 'source');
         if (!sourceId) continue;
         operandIds.add(sourceId);
         // …and the SOURCE clip's own rig: its keyframes are indices into that

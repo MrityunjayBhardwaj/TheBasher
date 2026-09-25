@@ -408,7 +408,9 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
 
     // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range; any
     // other layer passes the incoming range through.
-    const range = isBase ? poseLayerClipInfo(params.channels) : incoming.clip;
+    const keyed = isBase ? poseLayerClipInfo(params.channels) : undefined;
+    // A base layer is named after the file's animation (Blender's action name), so its range is too.
+    const range = isBase ? keyed && { ...keyed, name: params.name } : incoming.clip;
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,

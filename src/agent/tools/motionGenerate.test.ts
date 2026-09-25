@@ -430,13 +430,15 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // #1240 adds a SIXTH, and it is not a fold of two poses either: `PoseLayer` takes exactly one
     // `PosedSkeleton` and folds its OWN keys onto it, as `PoseOverride` does. Chaining layers is
     // chaining nodes, one pose in each.
+    // #1225 re-types `RetargetClip`'s input from a clip (`sourceClip`) to the pose wire (`source`);
+    // still one, still single, and the node has no other pose-bearing socket.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.clip: AnimationClip (single)',
       'Object.pose: PosedSkeleton (single)',
       'PoseLayer.pose: PosedSkeleton (single)',
       'PoseOverride.pose: PosedSkeleton (single)',
-      'RetargetClip.sourceClip: AnimationClip (single)',
+      'RetargetClip.source: PosedSkeleton (single)',
     ]);
   });
 

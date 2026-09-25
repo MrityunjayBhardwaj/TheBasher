@@ -6,9 +6,15 @@
 // clip, or fix a wrong bone-name map, and nothing re-flows — the target keeps
 // playing the old mapping with nothing on screen saying the two have drifted.
 //
-//   AnimationClip (source)  ─┐
+//   pose wire (source)      ─┐
 //   BoneNameMap             ─┼─→  RetargetClip  ─→  AnimationClip (the target's)
 //   Skeleton (target rig)   ─┘
+//
+// The source is the POSE WIRE (#1225): a clip's pose, a character's base layer,
+// any point on a chain — sampled over the range the wire carries (Houdini's
+// `clipinfo`), at the rate it carries unless `sampleRate` says otherwise. A clip's
+// range lands the samples on its keys, so a clip retargets as it did when this
+// input took the clip itself (`retargetWire.gate.test.ts` pins the agreement).
 //
 // The relationship now lives in the graph rather than in a snapshot of what the
 // relationship once produced.
@@ -53,12 +59,11 @@
 // retargeted keyframes through the same shared sampler factory, so the two can
 // never disagree about where a bone is at t.
 //
-// WHY THE SOURCE RIG COMES OFF THE CLIP AND NOT OFF A FOURTH INPUT. A keyframe's
-// `bone` is an index, meaningful only against the skeleton it was authored for.
-// Taking the keys from one input and the rig from another makes an index/rig
-// mismatch merely unlikely; reading `sourceClip.skeleton` makes it
-// unrepresentable. `boundClipsForAsset` states the same reasoning for the same
-// reason.
+// WHY THE SOURCE RIG COMES OFF THE WIRE AND NOT OFF A FOURTH INPUT. The poses a
+// wire samples pair index-for-index with the skeleton it carries. Taking the
+// poses from one input and the rig from another makes an index/rig mismatch
+// merely unlikely; reading `source.skeleton` makes it unrepresentable.
+// `boundClipsForAsset` states the same reasoning for the same reason.
 //
 // REF: src/core/import/retarget.ts (retargetClip — the math, reused not
 //      reimplemented); src/app/animate/retargetFromNodes.ts (the params-side
@@ -70,12 +75,15 @@ import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import { retargetClip } from '../core/import/retarget';
 import type {
   AnimationClipValue,
+  AnimationKeyframe,
   BoneNameMapValue,
   PosedSkeletonValue,
   SkeletonValue,
+  WireClipInfo,
 } from './types';
 import { clipLoopOf } from './clipLoop';
 import { posedSkeletonFromClip } from './AnimationClip';
+import { eulerXYZFromQuat } from './bonePose';
 import { nameParam } from './paramWidget';
 
 /** Both views of one retarget: the clip, and that same clip as a posed rig.
@@ -93,6 +101,37 @@ function both(out: AnimationClipValue): RetargetOutputs {
   return { out, posed: posedSkeletonFromClip(out) };
 }
 
+/**
+ * #1225 — the source wire as keys the retarget math reads: every bone, sampled `round(span · rate)`
+ * times across the wire's range with both ends included (at least twice), at times counted from the
+ * range's start. Three's retarget samples the same count over the same span, so on a clip's pose the
+ * samples land on the clip's keys (`clipInfoOf`). Rotations leave as XYZ euler radians, the keys'
+ * current spelling; three turns them straight back into the quaternions the wire gave.
+ */
+export function wireKeyframes(
+  source: PosedSkeletonValue,
+  range: WireClipInfo,
+  rate: number,
+): AnimationKeyframe[] {
+  const span = range.end - range.start;
+  const count = Math.max(1, Math.round(span * rate));
+  const keyframes: AnimationKeyframe[] = [];
+  for (let i = 0; i < count; i++) {
+    // One sample is a single pose, at the start: three samples a one-key clip once too.
+    const time = count === 1 ? 0 : (i * span) / (count - 1);
+    const poses = source.sample(range.start + time);
+    poses.forEach((pose, bone) => {
+      keyframes.push({
+        bone,
+        time,
+        position: pose.position,
+        rotation: eulerXYZFromQuat(pose.quaternion),
+      });
+    });
+  }
+  return keyframes;
+}
+
 export const RetargetClipParams = z.object({
   /** Output clip name. Empty → `<sourceName>_retargeted`, the math's own default. */
   name: nameParam(''),
@@ -100,6 +139,11 @@ export const RetargetClipParams = z.object({
    *  `AnimationClip.active` — both are clip carriers in the one walk, so a flag
    *  on only one of them would leave the other's binds ordered by id. */
   active: z.boolean().default(false),
+  /**
+   * #1225 — samples per second taken off the source wire, as Houdini's MotionClip Sample Rate. 0 (the
+   * default) uses the rate the wire carries, which is where the source's own keys sit.
+   */
+  sampleRate: z.number().nonnegative().default(0),
 });
 export type RetargetClipParams = z.infer<typeof RetargetClipParams>;
 
@@ -121,7 +165,11 @@ export const RetargetClipNode: NodeDefinition<
   cost: 'cheap',
   paramSchema: RetargetClipParams,
   inputs: {
-    sourceClip: { type: 'AnimationClip', cardinality: 'single' },
+    /**
+     * #1225 — the motion to retarget, as the pose wire: a clip's pose, a character's base layer, any
+     * point on a chain. Its `clip` range says what to sample; the source rig travels on it.
+     */
+    source: { type: 'PosedSkeleton', cardinality: 'single' },
     boneMap: { type: 'BoneNameMap', cardinality: 'single' },
     skeleton: { type: 'Skeleton', cardinality: 'single' },
   },
@@ -131,46 +179,53 @@ export const RetargetClipNode: NodeDefinition<
   },
   inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs): RetargetOutputs {
-    const sourceClip = inputs.sourceClip as AnimationClipValue | undefined;
+    const source = inputs.source as PosedSkeletonValue | undefined;
     const boneMap = inputs.boneMap as BoneNameMapValue | undefined;
     const target = inputs.skeleton as SkeletonValue | undefined;
+    const range = source?.clip;
 
     // An unwired input is not an error — it is a graph mid-construction. Answer
     // with an EMPTY clip rather than the source's keys: handing back the source
     // unretargeted would drive the target rig with another rig's bone indices,
-    // which is the one failure this node exists to make unrepresentable.
-    if (!sourceClip || !boneMap || !target || target.bones.length === 0) {
+    // which is the one failure this node exists to make unrepresentable. A source
+    // with no range (a skeleton at rest) has no motion to retarget.
+    if (!source || !range || !boneMap || !target || target.bones.length === 0) {
       return both({
         kind: 'AnimationClip',
-        name: params.name || (sourceClip?.name ?? 'clip'),
-        duration: sourceClip?.duration ?? 0,
-        loop: clipLoopOf(sourceClip?.loop),
+        name: params.name || (range?.name ?? 'clip'),
+        duration: range ? range.end : 0,
+        loop: clipLoopOf(range?.loop),
         keyframes: [],
         skeleton: target ?? EMPTY_SKELETON,
       });
     }
 
     const result = retargetClip({
-      sourceBones: sourceClip.skeleton.bones,
+      // The source rig travels on the wire, with the poses it indexes.
+      sourceBones: source.skeleton.bones,
       sourceClip: {
-        name: sourceClip.name,
-        duration: sourceClip.duration,
-        keyframes: sourceClip.keyframes,
-        // #919 — carried, so the node agrees with the params resolver and neither
-        // decides the source's time domain for it.
-        loop: sourceClip.loop,
+        name: range.name ?? 'clip',
+        duration: range.end - range.start,
+        keyframes: wireKeyframes(source, range, params.sampleRate || range.rate),
+        // #919 — carried, so neither side decides the source's time domain for it.
+        loop: clipLoopOf(range.loop),
       },
       targetBones: target.bones,
       nameMap: boneMap.map,
       ...(params.name ? { outputName: params.name } : {}),
     });
 
+    // Sampled from the range's start; placed back where the source plays it.
+    const keyframes =
+      range.start === 0
+        ? result.clipParams.keyframes
+        : result.clipParams.keyframes.map((k) => ({ ...k, time: k.time + range.start }));
     return both({
       kind: 'AnimationClip',
       name: result.clipParams.name,
-      duration: result.clipParams.duration,
+      duration: result.clipParams.duration + range.start,
       loop: result.clipParams.loop,
-      keyframes: result.clipParams.keyframes,
+      keyframes,
       // The TARGET rig — the indices in the emitted keys are the target's.
       skeleton: target,
     });

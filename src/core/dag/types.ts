@@ -128,7 +128,7 @@ export type SocketTypeName =
   | 'Layer'
   // P3.1 — Animation import + retargeting (THESIS §42.1)
   | 'BoneNameMap'
-  // #901 — the retarget as an operator: sourceClip + boneMap + target rig -> clip,
+  // #901 — the retarget as an operator: source pose wire (#1225) + boneMap + target rig -> clip,
   // pure and TIME-FREE, so it recomputes per graph change rather than per frame.
   | 'RetargetClip'
   // P4 — Render graph = render nodes (THESIS §43)

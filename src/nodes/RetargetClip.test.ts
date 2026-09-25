@@ -8,6 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import { RetargetClipNode, RetargetClipParams } from './RetargetClip';
 import { posedSkeletonFromClip } from './AnimationClip';
+import { PoseLayerNode, PoseLayerParams } from './PoseLayer';
+import { restPoseOf } from './Skeleton';
 import { retargetClip } from '../core/import/retarget';
 import type {
   AnimationClipValue,
@@ -57,6 +59,10 @@ function sourceClipValue(over: Partial<AnimationClipValue> = {}): AnimationClipV
     ...over,
   };
 }
+/** #1225 — the node reads the pose wire: the clip's pose, which carries the clip's range. */
+function sourcePose(over: Partial<AnimationClipValue> = {}): PosedSkeletonValue {
+  return posedSkeletonFromClip(sourceClipValue(over));
+}
 function boneMapValue(): BoneNameMapValue {
   return { kind: 'BoneNameMap', name: 'test bridge', map: nameMap() };
 }
@@ -85,7 +91,7 @@ describe('RetargetClip — the operator', () => {
     // agree. The subject reads its operands off `inputs`; the expectation builds
     // its own from the same generators.
     const value = evaluate({
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
@@ -117,11 +123,7 @@ describe('RetargetClip — the operator', () => {
     // `|t:frame.seconds` to the cache key for an IMPURE node, and only a `time`
     // input could make this one a function of the frame.
     expect(RetargetClipNode.pure).toBe(true);
-    expect(Object.keys(RetargetClipNode.inputs ?? {})).toEqual([
-      'sourceClip',
-      'boneMap',
-      'skeleton',
-    ]);
+    expect(Object.keys(RetargetClipNode.inputs ?? {})).toEqual(['source', 'boneMap', 'skeleton']);
     expect('time' in (RetargetClipNode.inputs ?? {})).toBe(false);
   });
 
@@ -141,7 +143,7 @@ describe('RetargetClip — the operator', () => {
     // reader of `out` cannot mistake a description of motion for a sample of it.
     // The row below pins the two as views of one computation.
     const value = evaluate({
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
@@ -157,7 +159,7 @@ describe('RetargetClip — the operator', () => {
     // be two answers to where a bone is at t, which is the exact defect the
     // shared sampler factory exists to prevent.
     const { out, posed } = evaluateBoth({
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
@@ -175,7 +177,7 @@ describe('RetargetClip — the operator', () => {
 
   it('carries the TARGET rig, because the emitted indices are the target’s', () => {
     const value = evaluate({
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
@@ -191,11 +193,11 @@ describe('RetargetClip — the operator', () => {
     // indices arriving on a 23-bone rig and looking like a retarget bug. Each
     // missing input is asserted separately so one guard cannot cover another.
     const full = {
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     };
-    for (const missing of ['sourceClip', 'boneMap', 'skeleton'] as const) {
+    for (const missing of ['source', 'boneMap', 'skeleton'] as const) {
       const inputs: Record<string, unknown> = { ...full };
       delete inputs[missing];
       const value = evaluate(inputs);
@@ -210,7 +212,7 @@ describe('RetargetClip — the operator', () => {
 
   it('takes the output name from its param, and derives one when it is blank', () => {
     const inputs = {
-      sourceClip: sourceClipValue(),
+      source: sourcePose(),
       boneMap: boneMapValue(),
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     };
@@ -218,5 +220,111 @@ describe('RetargetClip — the operator', () => {
     expect(evaluate(inputs, RetargetClipParams.parse({ name: 'Robot motion' })).name).toBe(
       'Robot motion',
     );
+  });
+});
+
+describe('RetargetClip reads the pose wire (#1225)', () => {
+  const target = () => ({ kind: 'Skeleton' as const, bones: targetBones() });
+  const DEG = 180 / Math.PI;
+
+  /** The fixture's motion as keys on a base layer over the source rig's rest pose: the shape a
+   *  character's own motion takes (#1211). Degrees, XYZ members; the keys turn about Y alone. */
+  function baseLayerWire(shift = 0): PosedSkeletonValue {
+    const rest = restPoseOf({ kind: 'Skeleton', bones: sourceBones() });
+    const byBone = new Map<number, AnimationKeyframe[]>();
+    for (const k of sourceKeys()) byBone.set(k.bone, [...(byBone.get(k.bone) ?? []), k]);
+    const names = sourceBones().map((b) => b.name);
+    const channels = [...byBone].flatMap(([bone, keys]) => [
+      {
+        bone: names[bone],
+        component: 'position',
+        keyframes: keys.map((k) => ({ time: k.time + shift, value: k.position, easing: 'linear' })),
+      },
+      {
+        bone: names[bone],
+        component: 'rotation',
+        keyframes: keys.map((k) => ({
+          time: k.time + shift,
+          value: k.rotation.map((r) => r * DEG),
+          easing: 'linear',
+        })),
+      },
+    ]);
+    return PoseLayerNode.evaluate(
+      PoseLayerParams.parse({
+        name: 'walk',
+        members: names.map((bone) => ({ bone, rotationMode: 'XYZ' })),
+        channels,
+      }),
+      { pose: rest },
+      undefined as never,
+    ) as PosedSkeletonValue;
+  }
+
+  it('the same motion as a clip and as a base layer retargets the same', () => {
+    const viaClip = evaluate({ source: sourcePose(), boneMap: boneMapValue(), skeleton: target() });
+    const viaLayer = evaluate({
+      source: baseLayerWire(),
+      boneMap: boneMapValue(),
+      skeleton: target(),
+    });
+    expect(viaLayer.keyframes).toHaveLength(viaClip.keyframes.length);
+    viaLayer.keyframes.forEach((k, i) => {
+      const c = viaClip.keyframes[i];
+      expect(k.bone).toBe(c.bone);
+      expect(k.time).toBe(c.time);
+      for (let a = 0; a < 3; a++) {
+        expect(k.position[a]).toBeCloseTo(c.position[a], 6);
+        expect(k.rotation[a]).toBeCloseTo(c.rotation[a], 6);
+      }
+    });
+    expect(viaLayer.name).toBe('walk_retargeted');
+    expect(viaLayer.keyframes.length).toBeGreaterThan(0);
+  });
+
+  it('a range that starts after 0 is sampled over its span and placed back where it plays', () => {
+    const shifted = evaluate({
+      source: baseLayerWire(0.5),
+      boneMap: boneMapValue(),
+      skeleton: target(),
+    });
+    const unshifted = evaluate({
+      source: baseLayerWire(),
+      boneMap: boneMapValue(),
+      skeleton: target(),
+    });
+    expect(shifted.keyframes.map((k) => k.time)).toEqual(
+      unshifted.keyframes.map((k) => k.time + 0.5),
+    );
+    expect(shifted.duration).toBeCloseTo(1.5, 9);
+    shifted.keyframes.forEach((k, i) =>
+      k.rotation.forEach((r, a) => expect(r).toBeCloseTo(unshifted.keyframes[i].rotation[a], 9)),
+    );
+  });
+
+  it('`sampleRate` overrides the rate the wire carries', () => {
+    const inputs = { source: sourcePose(), boneMap: boneMapValue(), skeleton: target() };
+    const times = (v: AnimationClipValue) => new Set(v.keyframes.map((k) => k.time)).size;
+    // The clip's own rate: 2 keys over 1 s, so 2 samples.
+    expect(times(evaluate(inputs))).toBe(2);
+    expect(times(evaluate(inputs, RetargetClipParams.parse({ sampleRate: 10 })))).toBe(10);
+  });
+
+  it('a wire with no range (a skeleton at rest) has no motion to retarget', () => {
+    const rest = restPoseOf({ kind: 'Skeleton', bones: sourceBones() });
+    expect(rest.clip).toBeUndefined();
+    expect(
+      evaluate({ source: rest, boneMap: boneMapValue(), skeleton: target() }).keyframes,
+    ).toEqual([]);
+  });
+
+  it('carries the source name and end behaviour across, from the wire', () => {
+    const value = evaluate({
+      source: sourcePose({ name: 'jog', loop: 'cycle-offset' }),
+      boneMap: boneMapValue(),
+      skeleton: target(),
+    });
+    expect(value.name).toBe('jog_retargeted');
+    expect(value.loop).toBe('cycle-offset');
   });
 });

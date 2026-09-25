@@ -233,14 +233,22 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
  * clip exactly where it sampled the clip's keys. Nothing on a clip with no duration or no keys.
  */
 export function clipInfoOf(clip: {
+  readonly name: string;
   readonly duration: number;
+  readonly loop: ClipLoop;
   readonly keyframes: readonly AnimationKeyframe[];
 }): WireClipInfo | undefined {
   if (!(clip.duration > 0)) return undefined;
   const perBone = new Map<number, number>();
   for (const k of clip.keyframes) perBone.set(k.bone, (perBone.get(k.bone) ?? 0) + 1);
   if (perBone.size === 0) return undefined;
-  return { start: 0, end: clip.duration, rate: Math.max(...perBone.values()) / clip.duration };
+  return {
+    start: 0,
+    end: clip.duration,
+    rate: Math.max(...perBone.values()) / clip.duration,
+    name: clip.name,
+    loop: clip.loop,
+  };
 }
 
 let samplerBuilds = 0;

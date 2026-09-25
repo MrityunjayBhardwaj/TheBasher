@@ -277,13 +277,13 @@ describe('placeCookedMotionOps (#935)', () => {
       { type: 'addNode', nodeId: 'otherclip', nodeType: 'AnimationClip', params: {} },
       {
         type: 'disconnect',
-        from: { node: clipId, socket: 'out' },
-        to: { node: 'retarget', socket: 'sourceClip' },
+        from: { node: clipId, socket: 'pose' },
+        to: { node: 'retarget', socket: 'source' },
       },
       {
         type: 'connect',
-        from: { node: 'otherclip', socket: 'out' },
-        to: { node: 'retarget', socket: 'sourceClip' },
+        from: { node: 'otherclip', socket: 'pose' },
+        to: { node: 'retarget', socket: 'source' },
       },
     ] as Op[]);
     const out = placeCookedMotionOps(detached);

@@ -15,6 +15,14 @@
 // The node's own `evaluate()` and this resolver therefore both delegate to the
 // same `retargetClip()`. One piece of math, two ways in — not two walks.
 //
+// #1225 — the node now reads the pose WIRE, sampled over the range the wire
+// carries; this resolver still reads the source clip's KEYS. On a clip the two
+// sample the same times: measured over the 12 tracked BVHs onto the stand-in rig,
+// identical key times, positions within 5e-7 and rotations within 1.6e-3°
+// (`retargetWire.gate.test.ts`). A source that is not a clip (a character's base pose
+// layer, wired by hand — the bind builder names a clip) has no keys here, so this
+// read answers null and a clone-road rig rests; the clone road retires in #1053.
+//
 // ─────────────────────────────────────────────────────────────────────────
 // WHY IT MEMOIZES ON OPERAND IDENTITY
 // ─────────────────────────────────────────────────────────────────────────
@@ -98,7 +106,8 @@ type SourceParams = { name?: string; duration?: number; keyframes?: unknown; loo
  * here would make the editor vanish at the moment it is wanted.
  */
 export interface RetargetOperands {
-  /** The `AnimationClip` node feeding `sourceClip`, when there is one. */
+  /** The `AnimationClip` node whose pose feeds the retarget's `source`, when it is one (#1225: the
+   *  node reads any pose wire; this params-only read answers for a clip's keys alone). */
   readonly sourceNode: GraphNodeLike | null;
   readonly sourceParams: SourceParams | null;
   /** The rig the source clip's keyframe indices address — off the CLIP's own edge. */
@@ -115,13 +124,13 @@ export function retargetOperandsFromNodes(
 ): RetargetOperands | null {
   if (!node || node.type !== 'RetargetClip') return null;
 
-  const sourceId = edgeTarget(node, 'sourceClip');
+  const sourceId = edgeTarget(node, 'source');
   const sourceCandidate = sourceId ? nodes[sourceId] : undefined;
   const sourceNode =
     sourceCandidate && sourceCandidate.type === 'AnimationClip' ? sourceCandidate : null;
 
   // The source rig comes off the SOURCE CLIP's own edge — its keys are indices
-  // into that rig and nothing else. Mirrors the node's `sourceClip.skeleton`.
+  // into that rig and nothing else. Mirrors the node, whose source rig rides on the wire.
   const sourceBones = sourceNode
     ? bonesOfSkeletonNode(nodes, edgeTarget(sourceNode, 'skeleton'))
     : null;

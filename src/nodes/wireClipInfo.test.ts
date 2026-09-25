@@ -51,7 +51,13 @@ describe('a clip puts its range on the wire', () => {
     );
     const threeFps = Math.max(...three.tracks.map((t) => t.times.length)) / three.duration;
 
-    expect(pose.clip).toEqual({ start: 0, end: clipParams.duration, rate: threeFps });
+    expect(pose.clip).toEqual({
+      start: 0,
+      end: clipParams.duration,
+      rate: threeFps,
+      name: 'soma-walk',
+      loop: clipParams.loop,
+    });
     // The samples land on the keys: as many samples as the densest bone has keys.
     const densest = Math.max(...three.tracks.map((t) => t.times.length));
     expect(Math.round((pose.clip!.end - pose.clip!.start) * pose.clip!.rate)).toBe(densest);
@@ -98,11 +104,13 @@ describe('a base layer gives the wire its range; everything above passes it thro
     // skinned-bar keys Bone1 from 0 to 1 s (#1211 fixture header).
     expect(expected!.start).toBe(0);
     expect(expected!.end).toBeCloseTo(1, 6);
-    expect(poseOf(state, baseId).clip).toEqual(expected);
+    // The base layer is named after the file's animation, and names its range too.
+    const named = { ...expected, name: (state.nodes[baseId].params as { name: string }).name };
+    expect(poseOf(state, baseId).clip).toEqual(named);
     const object = evaluate(state, armatureId, at).value as ObjectValue & {
       pose: PosedSkeletonValue;
     };
-    expect(object.pose.clip).toEqual(expected);
+    expect(object.pose.clip).toEqual(named);
   });
 
   it('a layer and an override above the base pass the range through; muted too', async () => {

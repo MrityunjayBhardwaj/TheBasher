@@ -279,8 +279,8 @@ describe('gltfAssetDepNodes — the GltfAssetR subscription scope (H48 4th occ /
       { type: 'addNode', nodeId: 'retarget', nodeType: 'RetargetClip', params: { name: '' } },
       {
         type: 'connect',
-        from: { node: 'srcClip', socket: 'out' },
-        to: { node: 'retarget', socket: 'sourceClip' },
+        from: { node: 'srcClip', socket: 'pose' },
+        to: { node: 'retarget', socket: 'source' },
       },
       {
         type: 'connect',
