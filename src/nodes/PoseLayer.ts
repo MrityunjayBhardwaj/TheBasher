@@ -50,7 +50,7 @@ import { EULER_ORDERS, quatFromEuler, type EulerOrder } from './bonePose';
 import { foldChannelValue } from './foldChannel';
 import { KeyframeChannelVec3Node, KeyframeChannelVec3Params } from './KeyframeChannelVec3';
 import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
-import { sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
+import { resolveExtend, sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { KeyframeChannelNumberNode, KeyframeChannelNumberParams } from './KeyframeChannelNumber';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
@@ -116,6 +116,14 @@ export type PoseLayerChannel = z.infer<typeof PoseLayerChannelSchema>;
 export const PoseLayerMemberSchema = z.object({
   bone: z.string(),
   rotationMode: z.enum(POSE_ROTATION_MODES).default('XYZ'),
+  /**
+   * #1242 — how an euler member's rotation curve is read between keys (decision D-E). `axis` (or
+   * absent): each axis on its own, as Blender's euler modes and Maya's Independent Euler. `quaternion`:
+   * the keys, written as euler, are turned into quaternions and slerped between — Maya's Synchronized
+   * Quaternion. A vec3 key holds all three axes at one time, so the keys are synchronized already.
+   * Ignored in quaternion mode.
+   */
+  eulerInterp: z.enum(['axis', 'quaternion']).optional(),
   position: Vec3Schema.optional(),
   /** Euler degrees in the member's order (euler modes only). */
   rotation: Vec3Schema.optional(),
@@ -154,6 +162,28 @@ function quatSampler(
   const before = channel.extendBefore ?? 'hold';
   const after = channel.extendAfter ?? 'hold';
   return (seconds) => sampleQuatKeyframesExtended(sorted, seconds, before, after);
+}
+
+/**
+ * #1242 — an euler key curve read as quaternions: each key's triple becomes the rotation it means, and
+ * the curve slerps between them (Maya's Synchronized Quaternion: slerp for linear keys, cubic for
+ * spline keys; a constant key holds). Extend and Cycles carry over by their TIME rule, the only half
+ * that reaches a rotation.
+ */
+function synchronizedSampler(
+  channel: PoseLayerChannel,
+  toQuat: (deg: Vec3) => Quat,
+): (seconds: number) => Quat {
+  const vec = channel as Extract<PoseLayerChannel, { component: 'rotation' }>;
+  const keys: QuatKey[] = [...vec.keyframes]
+    .sort((a, b) => a.time - b.time)
+    .map((k) => ({
+      time: k.time,
+      value: toQuat(k.value as Vec3),
+      easing: k.easing === 'linear' ? 'linear' : k.easing === 'constant' ? 'constant' : 'cubic',
+    }));
+  const { before, after } = resolveExtend(vec.extendBefore, vec.extendAfter, vec.modifiers);
+  return (seconds) => sampleQuatKeyframesExtended(keys, seconds, before, after);
 }
 
 const BLEND: Record<PoseLayerMode, ChannelBlendMode> = { override: 'replace', additive: 'combine' };
@@ -221,30 +251,41 @@ function resolveMember(
   const scaleKeys = keyed('scale');
   const scale = scaleKeys ? vec3Sampler(scaleKeys) : member.scale ? constant(member.scale) : null;
 
-  let quaternion: At | null;
+  const quaternion = memberRotationSampler(member, channels);
+  return { index, position, quaternion, scale };
+}
+
+/**
+ * A member's rotation over time, as the layer reads it: its keyed curve in the member's mode (a curve
+ * for another mode ignored), else its static value, else null (the member leaves rotation alone).
+ * Exported for the mode change (#1242), which must read the member exactly as the layer does.
+ */
+export function memberRotationSampler(
+  member: PoseLayerMember,
+  channels: readonly PoseLayerChannel[],
+): ((seconds: number) => Quat) | null {
+  const keyed = (component: PoseLayerChannel['component']) =>
+    poseLayerChannelOf(channels, member.bone, component);
   if (member.rotationMode === 'quaternion') {
     const keys = keyed('quaternion');
-    quaternion = keys
-      ? quatSampler(keys as Extract<PoseLayerChannel, { component: 'quaternion' }>)
-      : member.quaternion
-        ? constant(member.quaternion as Quat)
-        : null;
-  } else {
-    const order: EulerOrder = member.rotationMode;
-    const keys = keyed('rotation');
-    const toQuat = (deg: Vec3): Quat =>
-      quatFromEuler([deg[0] * DEG, deg[1] * DEG, deg[2] * DEG], order);
-    if (keys) {
-      const degrees = vec3Sampler(keys);
-      quaternion = (seconds) => toQuat(degrees(seconds));
-    } else if (member.rotation) {
-      const q = toQuat(member.rotation as Vec3);
-      quaternion = () => q;
-    } else {
-      quaternion = null;
-    }
+    if (keys) return quatSampler(keys as Extract<PoseLayerChannel, { component: 'quaternion' }>);
+    const q = member.quaternion as Quat | undefined;
+    return q ? () => q : null;
   }
-  return { index, position, quaternion, scale };
+  const order: EulerOrder = member.rotationMode;
+  const toQuat = (deg: Vec3): Quat =>
+    quatFromEuler([deg[0] * DEG, deg[1] * DEG, deg[2] * DEG], order);
+  const keys = keyed('rotation');
+  if (keys && member.eulerInterp === 'quaternion') return synchronizedSampler(keys, toQuat);
+  if (keys) {
+    const degrees = vec3Sampler(keys);
+    return (seconds) => toQuat(degrees(seconds));
+  }
+  if (member.rotation) {
+    const q = toQuat(member.rotation as Vec3);
+    return () => q;
+  }
+  return null;
 }
 
 /** The layer's weight over time: its `weight` channel when keyed, else the static weight. */

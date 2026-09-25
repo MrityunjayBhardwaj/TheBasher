@@ -156,10 +156,12 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
-    expect(mutators).toHaveLength(30);
+    // 30 → 31 at #1242 — `animate.setPoseMemberMode`, a pose layer member's rotation mode.
+    expect(mutators).toHaveLength(31);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.poseBone',
+      'mutator.animate.setPoseMemberMode',
       'mutator.animation.retarget',
       'mutator.camera.trajectory',
       'mutator.deleteNode',
@@ -2303,7 +2305,8 @@ describe('agent.listMutators tool', () => {
     // agent surface is the one place that lie would never surface as a red.
     // 28 → 29 at #993 — `animate.poseBone`, for the mirror-image reason: a node type
     // the agent surface could not reach at all.
-    expect(parsed.mutators).toHaveLength(30);
+    // 30 → 31 at #1242 — `animate.setPoseMemberMode`.
+    expect(parsed.mutators).toHaveLength(31);
   });
 });
 
@@ -3926,6 +3929,7 @@ import {
   shotCreateMutator as _shotM,
   cameraTrajectoryMutator as _cameraTrajM,
   poseBoneMutator as _poseBoneM,
+  setPoseMemberModeMutator as _setPoseMemberModeM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4018,6 +4022,16 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // this one — poseBone resolves the caller's bone name against the rig's own
   // spelling, so a rig with no bones can resolve nothing and the probe would
   // gate-reject rather than exercise the build.
+  // #1242 — one pose layer holding one static member; the mode change rewrites only its params.
+  function buildSceneForPoseLayer(): DagState {
+    return applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'pl_layer',
+      nodeType: 'PoseLayer',
+      params: { members: [{ bone: 'Bone1', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
+    }).next;
+  }
+
   function buildSceneForPoseBone(): DagState {
     let s = buildSceneForRetarget();
     s = applyOp(s, {
@@ -4277,6 +4291,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       // The LIVE three.js spelling on purpose — the rig calls this bone
       // `mixamorig_Hips`, and resolving the two is the mutator's job.
       spec: { retarget: 'pb_retarget', bone: 'mixamorigHips', rotation: [0, 0, 45] },
+    },
+    'mutator.animate.setPoseMemberMode': {
+      mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseLayer,
+      spec: { layer: 'pl_layer', bone: 'Bone1', rotationMode: 'quaternion' },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,
