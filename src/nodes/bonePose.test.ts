@@ -2,7 +2,11 @@
 import { describe, expect, it } from 'vitest';
 import { Euler, Quaternion } from 'three';
 import { eulerXYZFromQuat, quatFromEulerXYZ, restBonePose } from './bonePose';
-import { buildClipBoneSamplers, posedSkeletonFromClip } from './AnimationClip';
+import {
+  __clipPoseSamplerBuildsForTests,
+  buildClipBoneSamplers,
+  posedSkeletonFromClip,
+} from './AnimationClip';
 import { sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { slerp } from './quatMath';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
@@ -116,8 +120,23 @@ describe('#1202 — a clip slerps between keys', () => {
   it('one clip value has one pose: its samplers are built once, not per reader or per frame', () => {
     const clip = clipOf([0, 0, 0], [0, 0, 1]);
     expect(posedSkeletonFromClip(clip)).toBe(posedSkeletonFromClip(clip));
-    // A copy of the clip (what an overlay makes of a keyed Object's value) is a new pose.
+    // A copy of the clip is another value, so another pose (an overlay no longer makes one: #1236).
     expect(posedSkeletonFromClip({ ...clip })).not.toBe(posedSkeletonFromClip(clip));
+  });
+
+  it('#1237 — a pose builds its samplers on the first sample, once, and never when unread', () => {
+    const clip = clipOf([0, 0, 0], [0, 0, 1]);
+    const before = __clipPoseSamplerBuildsForTests();
+    const pose = posedSkeletonFromClip(clip);
+    expect(__clipPoseSamplerBuildsForTests(), 'made, not sampled: nothing built').toBe(before);
+    const first = pose.sample(0.5);
+    expect(__clipPoseSamplerBuildsForTests()).toBe(before + 1);
+    pose.sample(0.25);
+    posedSkeletonFromClip(clip).sample(0.75);
+    expect(__clipPoseSamplerBuildsForTests(), 'every later sample reuses them').toBe(before + 1);
+    // The same answer the samplers give when built directly.
+    const direct = buildClipBoneSamplers(clip).get(0)!(0.5);
+    expect(first[0].quaternion).toEqual(direct.quaternion);
   });
 });
 

@@ -191,26 +191,43 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; quaternion:
  * shape buys: grouping and sorting every keyframe by bone happens per graph change,
  * not per frame. A bone the clip does not touch holds its rest pose, so the returned
  * array pairs index-for-index with `skeleton.bones`.
+ *
+ * #1237 — built on the FIRST `sample`, not here. Every `AnimationClip` evaluates to its pose as well
+ * as its keys (#1224), and building here cost ~893 µs per evaluation on `walk.bvh` against ~0.2 µs
+ * without, on every graph change that reaches the clip, whether or not anything reads the pose.
+ * An unsampled pose costs nothing, as `PosedSkeleton` and `PoseOverride` already promise.
  */
 export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonValue {
   const known = posedByClip.get(clip);
   if (known) return known;
   const { skeleton } = clip;
-  const samplers = buildClipBoneSamplers(clip);
   const rest = skeleton.bones.map(restBonePose);
+  let samplers: Map<number, ClipBoneSampler> | null = null;
   const posed: PosedSkeletonValue = {
     kind: 'PosedSkeleton',
     skeleton,
-    sample: (seconds: number): readonly BonePose[] =>
-      rest.map((at, i) => {
-        const sampler = samplers.get(i);
+    sample: (seconds: number): readonly BonePose[] => {
+      if (samplers === null) {
+        samplers = buildClipBoneSamplers(clip);
+        samplerBuilds++;
+      }
+      const built = samplers;
+      return rest.map((at, i) => {
+        const sampler = built.get(i);
         if (!sampler) return at;
         const { position, quaternion } = sampler(seconds);
         return { name: at.name, position, quaternion, scale: at.scale };
-      }),
+      });
+    },
   };
   posedByClip.set(clip, posed);
   return posed;
+}
+
+let samplerBuilds = 0;
+/** How many times a clip's pose has built its samplers, since load — for tests of #1237. */
+export function __clipPoseSamplerBuildsForTests(): number {
+  return samplerBuilds;
 }
 
 /**
