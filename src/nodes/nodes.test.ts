@@ -629,8 +629,8 @@ describe('P2 — Skeleton (pure)', () => {
       nodeType: 'Skeleton',
       params: {},
     }).next;
-    const a = evaluate(state, 'sk');
-    const b = evaluate(state, 'sk');
+    const a = evaluate(state, 'sk', { socket: 'out' });
+    const b = evaluate(state, 'sk', { socket: 'out' });
     expect(a.hash).toBe(b.hash);
     const sk = a.value as SkeletonValue;
     expect(sk.bones).toHaveLength(3);

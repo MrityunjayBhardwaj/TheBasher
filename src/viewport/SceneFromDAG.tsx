@@ -329,7 +329,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         const clip = evaluate(state, pair.sourceClipId, { cache, socket: 'out' }).value as
           | AnimationClipValue
           | undefined;
-        const target = evaluate(state, pair.targetSkeletonId, { cache }).value as
+        const target = evaluate(state, pair.targetSkeletonId, { cache, socket: 'out' }).value as
           | SkeletonValue
           | undefined;
         if (!clip || clip.kind !== 'AnimationClip' || !clip.skeleton?.bones?.length) continue;

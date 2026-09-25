@@ -5,11 +5,19 @@
 // not code) extends here: the skeleton is a POJO bone list, not a runtime
 // THREE.Skeleton instance.
 //
-// REF: THESIS.md §40, vyapti V2, V9.
+// #1211 (step 4 of "Bones as Channels", #1233) — a second output, `pose`: the skeleton standing at
+// rest, the same at every time. It is the source at the bottom of a pose chain whose motion lives in
+// pose layers (Skeleton.pose → PoseLayer … → Object.pose). Houdini: a rest skeleton on a wire IS a
+// pose, and layers and Joint Deform take it as one. Blender: an armature with no action stands at
+// rest. Built once per graph change; `sample` returns the same list at every time.
+//
+// REF: THESIS.md §40, vyapti V2, V9; design ref/architecture/bone-channels-design.html (v7, the
+//      structure: "Skeleton ─► rest pose"); issue #1211.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { SkeletonValue } from './types';
+import type { BonePose, PosedSkeletonValue, SkeletonValue } from './types';
+import { restBonePose } from './bonePose';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -39,16 +47,32 @@ export const SkeletonParams = z.object({
 });
 export type SkeletonParams = z.infer<typeof SkeletonParams>;
 
-export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonValue> = {
+/** The skeleton, and the skeleton at rest as a pose. */
+export type SkeletonOutputs = { readonly out: SkeletonValue; readonly pose: PosedSkeletonValue };
+
+/** A skeleton standing at rest: one list, built on the first sample and returned at every time. */
+export function restPoseOf(skeleton: SkeletonValue): PosedSkeletonValue {
+  let rest: readonly BonePose[] | null = null;
+  return {
+    kind: 'PosedSkeleton',
+    skeleton,
+    sample: () => (rest ??= skeleton.bones.map(restBonePose)),
+  };
+}
+
+export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonOutputs> = {
   type: 'Skeleton',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: SkeletonParams,
   inputs: {},
-  outputs: { out: { type: 'Skeleton', cardinality: 'single' } },
-  evaluate(params) {
-    return {
+  outputs: {
+    out: { type: 'Skeleton', cardinality: 'single' },
+    pose: { type: 'PosedSkeleton', cardinality: 'single' },
+  },
+  evaluate(params): SkeletonOutputs {
+    const out: SkeletonValue = {
       kind: 'Skeleton',
       bones: params.bones.map((b) => ({
         name: b.name,
@@ -62,5 +86,6 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonValue> = {
         ...(b.inverseBindMatrix !== undefined ? { inverseBindMatrix: b.inverseBindMatrix } : {}),
       })),
     };
+    return { out, pose: restPoseOf(out) };
   },
 };

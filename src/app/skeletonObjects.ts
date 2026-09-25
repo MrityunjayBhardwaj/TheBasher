@@ -59,7 +59,7 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
     const skeletonId = refNode(node.inputs.data);
     if (!skeletonId) continue;
     try {
-      const data = evaluate(state, skeletonId, { cache, ctx: FRAME_0 }).value as
+      const data = evaluate(state, skeletonId, { cache, ctx: FRAME_0, socket: 'out' }).value as
         | { kind?: string; bones?: BoneSpec[] }
         | undefined;
       if (data?.kind !== 'Skeleton' || !data.bones?.length) continue;
