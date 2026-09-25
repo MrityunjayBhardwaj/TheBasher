@@ -1,5 +1,7 @@
 // EditableCurve — the reze-studio-style graph editor for an authored Number /
-// Vec3 KeyframeChannel (UX-BACKLOG #11 slice 2).
+// Vec3 curve (UX-BACKLOG #11 slice 2): a KeyframeChannel node, or a pose layer's
+// curve (#1215) — the caller hands in the curve's fields and the write that lands
+// an edit where the curve lives.
 //
 // Renders the channel's REAL cubic-bézier curve(s) — sampled THROUGH the shared
 // `keyframeInterp` core, the SAME math the evaluator/renderer use, so the curve
@@ -16,6 +18,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import { useDagStore } from '../core/dag/store';
+import type { Op } from '../core/dag/types';
 import { useTimeStore } from '../app/stores/timeStore';
 import {
   sampleScalarKeyframesExtended,
@@ -111,13 +114,20 @@ export function EditableCurve({
   channelType,
   paramPath,
   keyframes,
+  curve,
+  write,
   duration,
   seconds,
 }: {
+  /** The timeline row id (a channel node's id, or a `layer:` row) — the key-selection key. */
   channelId: string;
   channelType: string;
   paramPath: string;
   keyframes: RawKey[];
+  /** The curve's fields where it lives (extend, modifiers…). */
+  curve: Readonly<Record<string, unknown>>;
+  /** The ops that land `fields` on the curve where it lives (the channel address resolver's write). */
+  write: (fields: Record<string, unknown>) => readonly Op[];
   duration: number;
   seconds: number;
 }) {
@@ -129,42 +139,17 @@ export function EditableCurve({
   // holds the same window. `valueZoom` is the curve-only value-axis scale.
   const view = useTimelineViewStore((s) => s.view);
   const valueZoom = useTimelineViewStore((s) => s.valueZoom);
-  // #270/#275 — the channel's per-side EXTRAPOLATION (hold/slope), read reactively so
-  // the drawn curve shows the SAME extrapolation the render/gizmo sample (H40). The
-  // cycle counts now live in the Cycles F-Modifier → resolved (with `modifiers`) below.
-  const extendBefore = useDagStore(
-    (s) =>
-      (s.state.nodes[channelId]?.params as { extendBefore?: ChannelExtrapolate })?.extendBefore,
-  );
-  const extendAfter = useDagStore(
-    (s) => (s.state.nodes[channelId]?.params as { extendAfter?: ChannelExtrapolate })?.extendAfter,
-  );
-  // #274 — the channel's F-Modifier stack, read reactively so the drawn curve shows
-  // the SAME procedural modification (noise…) + Cycles the render/gizmo sample (H40).
-  const modifiers = useDagStore(
-    (s) =>
-      (s.state.nodes[channelId]?.params as { modifiers?: readonly FChannelModifier[] })?.modifiers,
-  );
-  // #280 — the per-axis modifier override, so a per-axis stack draws on ITS axis only
-  // (render==curve H40). Absent → every axis uses the shared `modifiers` (as before).
-  const axisModifiers = useDagStore(
-    (s) =>
-      (
-        s.state.nodes[channelId]?.params as {
-          axisModifiers?: ReadonlyArray<readonly FChannelModifier[]>;
-        }
-      )?.axisModifiers,
-  );
-  // #289 — the per-axis EXTRAPOLATION override, so a per-axis hold/slope (or per-axis
-  // Cycles in axisModifiers) draws on ITS axis only (render==curve H40).
-  const axisExtend = useDagStore(
-    (s) =>
-      (
-        s.state.nodes[channelId]?.params as {
-          axisExtend?: ReadonlyArray<AxisExtend | null>;
-        }
-      )?.axisExtend,
-  );
+  // #270/#275 — the channel's per-side EXTRAPOLATION (hold/slope), #274 its F-Modifier stack, #280
+  // the per-axis modifier override, #289 the per-axis extrapolation override: read from the curve's
+  // own fields as the caller resolved them (a channel node's params, or a pose layer's channel entry,
+  // #1215), so the drawn curve shows the SAME extrapolation + modification the render/gizmo sample (H40).
+  const { extendBefore, extendAfter, modifiers, axisModifiers, axisExtend } = curve as {
+    extendBefore?: ChannelExtrapolate;
+    extendAfter?: ChannelExtrapolate;
+    modifiers?: readonly FChannelModifier[];
+    axisModifiers?: ReadonlyArray<readonly FChannelModifier[]>;
+    axisExtend?: ReadonlyArray<AxisExtend | null>;
+  };
   // Live drag preview: a keyframes override shown while the pointer is down; the
   // store commit happens once on release (reze's mutate-then-commit).
   const [draft, setDraft] = useState<RawKey[] | null>(null);
@@ -369,13 +354,7 @@ export function EditableCurve({
   const valueTicks = niceTicks(activeDomain.min, activeDomain.max, 4);
 
   function commit(next: RawKey[]) {
-    useDagStore
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: channelId, paramPath: 'keyframes', value: next }],
-        'user',
-        'edit curve',
-      );
+    useDagStore.getState().dispatchAtomic([...write({ keyframes: next })], 'user', 'edit curve');
   }
 
   // #272 — set the ACTIVE keyframe's interpolation type / easing direction. Commits
