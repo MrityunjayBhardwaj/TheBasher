@@ -24,6 +24,10 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 import { useDiffStore } from '../../agent/diff/store';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 import { convertCloneCharacters, type ConvertCloneCharactersDeps } from './convertCloneCharacters';
+import { handPoseOps } from '../../agent/mutators/builders/poseBone';
+import { handPoseLayerOf } from '../animate/poseChain';
+import type { GraphNodeLike } from '../animate/graphNodes';
+import type { PoseLayerChannel } from '../../nodes/PoseLayer';
 
 const REF = 'user-imports/skinned-bar/skinned-bar.glb';
 
@@ -503,5 +507,138 @@ describe('the take a ClipSelect picked', () => {
     const { state, report } = await convertCloneCharacters(saved, deps(TWO));
     expect(state).toBe(saved);
     expect(report.kept[0].why).toEqual([expect.stringMatching(/plays beside the bound/)]);
+  });
+});
+
+describe('keys edited on a bone on the clone road (slice 3)', () => {
+  /** The clone road's key tool on a bone: copy-on-write of the file's track, then the key. */
+  function keyCloneBone(state: DagState, childName: string, time: number, value: number[]) {
+    return tool(state, 'mutator.timeline.keyframe', {
+      bone: { assetRef: REF, childName, component: 'rotation' },
+      time,
+      value,
+    });
+  }
+
+  /** The clone channel the key tool left on `childName`. */
+  function cloneChannel(state: DagState, childName: string) {
+    return Object.values(state.nodes).find(
+      (n) =>
+        n.type === 'KeyframeChannelVec3' &&
+        (n.params as { childName?: string }).childName === childName,
+    )!;
+  }
+
+  /** The same keys written by the native key tool into the hand-pose layer, on a fresh import. */
+  function keyNativeBone(
+    state: DagState,
+    objectId: string,
+    bone: string,
+    keys: readonly { time: number; value: number[]; easing?: string }[],
+  ): DagState {
+    state = apply(state, handPoseOps(state, objectId, bone, {}));
+    const layerId = handPoseLayerOf(
+      state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+      objectId,
+    )!;
+    for (const k of keys) {
+      state = tool(state, 'mutator.timeline.keyframe', {
+        layer: { layerId, bone, component: 'rotation' },
+        time: k.time,
+        value: k.value,
+        ...(k.easing ? { easing: k.easing } : {}),
+      });
+    }
+    return state;
+  }
+
+  const layerChannels = (state: DagState): PoseLayerChannel[] =>
+    Object.values(state.nodes)
+      .filter((n) => n.type === 'PoseLayer')
+      .flatMap((n) => (n.params as { channels: PoseLayerChannel[] }).channels);
+
+  it.each(['skinned-bar.glb', SAME_NAMES] as const)(
+    '%s — a key edit on a bone the file animates: its curve in the hand-pose layer, as the native key tool writes it',
+    async (fixture) => {
+      let saved = await cloneProject(fixture);
+      saved = keyCloneBone(saved, cloneKey(saved, 0), 0.5, [20, 0, 40]);
+      const channel = cloneChannel(saved, cloneKey(saved, 0));
+      const keys = (
+        channel.params as { keyframes: { time: number; value: number[]; easing?: string }[] }
+      ).keyframes;
+      expect(keys.length, 'the copy-on-write track plus the edit').toBeGreaterThan(1);
+      const { state, notes } = await convert(saved, fixture);
+      expect(state.nodes[channel.id]).toBeUndefined();
+      expect(notes).toEqual([]);
+
+      const { state: fresh, native } = await nativeProject(fixture);
+      const bone = native.skeletons[0].boneNames.get(0)!;
+      const want = keyNativeBone(fresh, native.skeletons[0].objectId, bone, keys);
+      const got = layerChannels(state).filter((c) => c.component === 'rotation' && c.bone === bone);
+      expect(got).toHaveLength(1);
+      expect(got[0].keyframes).toEqual(
+        layerChannels(want).find((c) => c.component === 'rotation' && c.bone === bone)!.keyframes,
+      );
+      for (const t of [0.25, 0.5, 1]) {
+        const a = deformed(state, t);
+        const b = deformed(want, t);
+        a.forEach((v, i) => expect(v, `coord ${i} @${t}s`).toBeCloseTo(b[i], 6));
+      }
+      // The edit shows: 40° at 0.5 s is not the file's own bend.
+      expect(deformed(state, 0.5)).not.toEqual(deformed(fresh, 0.5));
+    },
+  );
+
+  it('a key edit on one bone beside a hand-pose on another: the keyed bone joins the layer in the clone’s euler order', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = gizmo(saved, cloneChild(saved, 1), 'rotation', [0, 0, 5]);
+    saved = keyCloneBone(saved, 'Bone1', 0.5, [20, 0, 40]);
+    const keys = (
+      cloneChannel(saved, 'Bone1').params as {
+        keyframes: { time: number; value: number[]; easing?: string }[];
+      }
+    ).keyframes;
+    const { state } = await convert(saved, 'skinned-bar.glb');
+
+    const { state: fresh, native } = await nativeProject('skinned-bar.glb');
+    const objectId = native.skeletons[0].objectId;
+    let want = tool(fresh, 'mutator.animate.poseBone', {
+      object: objectId,
+      bone: 'Bone0',
+      rotation: [0, 0, 5],
+    });
+    want = keyNativeBone(want, objectId, 'Bone1', keys);
+    expectSameCharacter(state, want);
+  });
+
+  it("a component the bone's Object forces: the clone drew the forced value, so the channel is not carried", async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = keyCloneBone(saved, 'Bone1', 0.5, [0, 0, 40]);
+    saved = gizmo(saved, cloneChild(saved, 0), 'rotation', [0, 0, 10]);
+    const { state } = await convert(saved, 'skinned-bar.glb');
+    expect(
+      layerChannels(state).filter((c) => c.bone === 'Bone1' && c.component === 'rotation'),
+    ).toEqual([]);
+    const { state: fresh, native } = await nativeProject('skinned-bar.glb');
+    const want = tool(fresh, 'mutator.animate.poseBone', {
+      object: native.skeletons[0].objectId,
+      bone: 'Bone1',
+      rotation: [0, 0, 10],
+    });
+    expectSameCharacter(state, want);
+  });
+
+  it('a muted curve: carried muted, and the load says it now plays muted', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = keyCloneBone(saved, 'Bone1', 0.5, [0, 0, 40]);
+    const channel = cloneChannel(saved, 'Bone1');
+    saved = apply(saved, [
+      { type: 'setParam', nodeId: channel.id, paramPath: 'mute', value: true },
+    ]);
+    const { state, notes } = await convert(saved, 'skinned-bar.glb');
+    expect(
+      layerChannels(state).find((c) => c.bone === 'Bone1' && c.component === 'rotation')?.mute,
+    ).toBe(true);
+    expect(notes).toEqual([expect.stringMatching(/is now muted as it is marked/)]);
   });
 });

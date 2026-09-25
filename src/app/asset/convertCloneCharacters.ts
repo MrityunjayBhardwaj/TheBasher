@@ -66,11 +66,13 @@ import {
 import { resolveBoneNames } from '../../core/import/retarget';
 import { quatFromEulerXYZ } from '../../nodes/bonePose';
 import type { BoneSpec, Vec3 } from '../../nodes/types';
+import { KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import { bindPosedOps } from '../../agent/mutators/builders/retarget';
 import { handPoseOps } from '../../agent/mutators/builders/poseBone';
+import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
 import { boundClipsForAsset } from '../animate/boundClipsForAsset';
 import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
-import { overrideChain } from '../animate/poseChain';
+import { handPoseLayerOf, overrideChain } from '../animate/poseChain';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { opfsSiblingPath } from './opfsGltfResolver';
 import type { Project } from '../../core/project/schema';
@@ -603,7 +605,50 @@ function planEdits(
     if (p.overridden?.rotation === true && p.rotation) pose.rotation ??= p.rotation;
     overridePose.set(index, pose);
   }
-  // An override leaves only when nothing but its own chain reads it.
+  // ── Keys edited on a bone: the clone's per-bone channels (copy-on-write of a clip, or seeded). ──
+  // A channel belongs to a bone of this character by the clone's own test (`bakedGltfChannels`:
+  // its `childName` names a node of the asset and its `target` is that node's Object). The clone
+  // drew it over every motion and every pose on that component, under only the bone Object's own
+  // forced value; natively it is a curve in the hand-pose layer, which sits above them all.
+  const boneChannels: { id: string; index: number; component: Component }[] = [];
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'KeyframeChannelVec3') continue;
+    const p = node.params as {
+      assetRef?: unknown;
+      childName?: unknown;
+      target?: unknown;
+      paramPath?: unknown;
+    };
+    if (p.assetRef !== assetRef || typeof p.childName !== 'string') continue;
+    const index = indexOfKey.get(p.childName);
+    if (index === undefined || !skinOfBone.has(index)) continue;
+    if (nodeNameMap[p.childName] !== p.target) continue;
+    if (p.paramPath !== 'position' && p.paramPath !== 'rotation' && p.paramPath !== 'scale')
+      continue;
+    boneChannels.push({ id: node.id, index, component: p.paramPath });
+  }
+  const channelIds = new Set(boneChannels.map((c) => c.id));
+  // The clone's bone band samples keys, extend and modifiers only; a curve in a layer honours its
+  // mute and weight, and has no solo (an F-curve has none in Blender). Said, not refused.
+  for (const { id } of boneChannels) {
+    // Read through the channel's own schema, typed: a curve's flags, not an operator's bypass.
+    const parsed = KeyframeChannelVec3Params.safeParse(state.nodes[id].params);
+    if (!parsed.success) continue;
+    const p = parsed.data;
+    const now: string[] = [];
+    if (p.mute === true) now.push('muted');
+    if (p.weight !== 1) now.push(`weighted ${p.weight}`);
+    if (p.blendMode !== 'replace') now.push(`blended by ${p.blendMode}`);
+    if (now.length > 0) {
+      notes.push(
+        `${label(id)} is now ${now.join(' and ')} as it is marked (the old structure drew it regardless)`,
+      );
+    }
+    if (p.solo === true) notes.push(`${label(id)} was soloed; a curve in a pose layer has no solo`);
+  }
+
+  // An override leaves only when nothing but its own chain reads it. (A channel needs no such check:
+  // no node takes a `KeyframeChannel` input, so nothing can read one through an edge.)
   for (const node of Object.values(state.nodes)) {
     if (overrideIds.has(node.id) && node.type === 'PoseOverride') continue;
     for (const [socket, binding] of Object.entries(node.inputs)) {
@@ -626,7 +671,7 @@ function planEdits(
     id === groupId || (childIndex.has(id) && carryable(id) === null);
   const retargets = new Set<string>();
   for (const node of Object.values(state.nodes)) {
-    if (footprint.has(node.id)) continue;
+    if (footprint.has(node.id) || channelIds.has(node.id)) continue;
     let names = false;
     for (const [socket, binding] of Object.entries(node.inputs)) {
       for (const ref of refsOf(binding)) {
@@ -688,7 +733,7 @@ function planEdits(
   }
 
   const motion: MotionPlan = {
-    leaving: [...overrideIds],
+    leaving: [...overrideIds, ...channelIds],
     apply: (initial, native) => {
       let next = initial;
       const run = (ops: readonly Op[]): void => {
@@ -756,6 +801,36 @@ function planEdits(
         };
         if (Object.keys(pose).length === 0) continue;
         run(handPoseOps(next, bone.objectId, bone.name, pose));
+      }
+
+      // Keys edited on a bone: a curve in the hand-pose layer, written by the key tools' own writer.
+      // The member is made first through the hand-pose builder, so it takes the clone's euler order
+      // (the key writer alone would add one in Blender's XYZ). A component the bone's Object forces
+      // was drawn by that value on the clone, never by the channel: it is not carried.
+      for (const channel of [...boneChannels].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+        const bone = boneAt(channel.index);
+        if (!bone) continue;
+        if (boneObjectPose.get(channel.index)?.forced[channel.component] !== undefined) continue;
+        run(handPoseOps(next, bone.objectId, bone.name, {}));
+        const layerId = handPoseLayerOf(
+          next.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+          bone.objectId,
+        );
+        if (layerId === null) throw new Error(`no hand-pose layer on "${bone.objectId}"`);
+        const resolved = resolveChannelAddress(
+          next,
+          { layer: { layerId, bone: bone.name, component: channel.component } },
+          { mint: true },
+        );
+        if (!resolved.ok) throw new Error(resolved.reason);
+        // The clone's label for the channel (`<childName> — <component>`, in the clone's spelling) is
+        // its own and nobody authored it: the curve takes the name the key writer gives any curve.
+        const { name: _label, ...fields } = state.nodes[channel.id].params as Record<
+          string,
+          unknown
+        >;
+        void _label;
+        run(resolved.write(fields));
       }
 
       // The take: the one the ClipSelect picked plays, every other one is muted (#1154's shape).

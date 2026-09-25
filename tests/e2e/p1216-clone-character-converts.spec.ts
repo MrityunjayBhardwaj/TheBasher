@@ -230,11 +230,13 @@ async function stageClone(page: Page, file: string, ref: string): Promise<void> 
 /** Two euler axes, so a wrong axis order or a degrees/radians slip moves the tip. */
 const POSE: [number, number, number] = [20, 0, 30];
 
-function expectSameTip(cloneTip: number[][], nativeTip: number[][]): void {
+function expectSameTip(
+  cloneTip: number[][],
+  nativeTip: number[][],
+  times: readonly number[] = [0.5, 1],
+): void {
   nativeTip.forEach((v, t) =>
-    v.forEach((c, k) =>
-      expect(c, `tip at ${[0.5, 1][t]}s, axis ${k}`).toBeCloseTo(cloneTip[t][k], 4),
-    ),
+    v.forEach((c, k) => expect(c, `tip at ${times[t]}s, axis ${k}`).toBeCloseTo(cloneTip[t][k], 4)),
   );
 }
 
@@ -378,5 +380,39 @@ test('#1216 slice 2 — a later take and a bone posed by the gizmo load native, 
   expectSameTip(clone.tip, native.tip);
   // Wave moves the tip bone between the two times; equal tips are not two rests.
   expect(Math.hypot(...clone.tip[0].map((c, k) => c - clone.tip[1][k]))).toBeGreaterThan(0.05);
+  expect(errors).toEqual([]);
+});
+
+test('#1216 slice 3 — a key edited on a bone loads native, drawn as the clone drew it, between keys too', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await stageClone(page, 'skinned-bar.glb', REF);
+
+  // The clone road's key tool on a bone the file animates: a copy of the file's track, then the key.
+  const keyed = await page.evaluate(async (ref) => {
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    return dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      {
+        bone: { assetRef: ref, childName: 'Bone1', component: 'rotation' },
+        time: 0.5,
+        value: [20, 0, 40],
+      },
+      'key',
+    ).ok;
+  }, REF);
+  expect(keyed).toBe(true);
+  const times = [0.25, 0.5, 1];
+  const clone = await drawnTip(page, times);
+
+  const { after, notice } = await saveAndReload(page, REF);
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+
+  const native = await drawnTip(page, times);
+  console.log(`key edit: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
+  expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
 });
