@@ -1,0 +1,567 @@
+{
+  "$comment": "Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved).",
+  "subjects": {
+    "AmbientLight": {
+      "color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "intensity": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "BoxData": {
+      "material.base.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.base.metalness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.coat.roughness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.coat.weight": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.emission.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.emission.luminance": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.geometry.opacity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.specular.ior": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.specular.roughness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.transmission.weight": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "size": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "CameraData:Orthographic": {
+      "fStop": {
+        "kind": "number",
+        "reach": null
+      },
+      "far": {
+        "kind": "number",
+        "reach": "pose"
+      },
+      "focusDistance": {
+        "kind": "number",
+        "reach": null
+      },
+      "fov": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "near": {
+        "kind": "number",
+        "reach": "pose"
+      },
+      "roll": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "sensorSize": {
+        "kind": "number",
+        "reach": null
+      },
+      "zoom": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "CameraData:Perspective": {
+      "fStop": {
+        "kind": "number",
+        "reach": null
+      },
+      "far": {
+        "kind": "number",
+        "reach": "pose"
+      },
+      "focusDistance": {
+        "kind": "number",
+        "reach": null
+      },
+      "fov": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "near": {
+        "kind": "number",
+        "reach": "pose"
+      },
+      "roll": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "sensorSize": {
+        "kind": "number",
+        "reach": null
+      },
+      "zoom": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "CurveData": {
+      "points.*.co": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "resolution": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "Group": {
+      "pivot": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "LightData:Area": {
+      "angle": {
+        "kind": "number",
+        "reach": null
+      },
+      "color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "decay": {
+        "kind": "number",
+        "reach": null
+      },
+      "distance": {
+        "kind": "number",
+        "reach": null
+      },
+      "height": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "intensity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "penumbra": {
+        "kind": "number",
+        "reach": null
+      },
+      "target": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "width": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "LightData:Directional": {
+      "angle": {
+        "kind": "number",
+        "reach": null
+      },
+      "color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "decay": {
+        "kind": "number",
+        "reach": null
+      },
+      "distance": {
+        "kind": "number",
+        "reach": null
+      },
+      "height": {
+        "kind": "number",
+        "reach": null
+      },
+      "intensity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "penumbra": {
+        "kind": "number",
+        "reach": null
+      },
+      "target": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "width": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "LightData:Point": {
+      "angle": {
+        "kind": "number",
+        "reach": null
+      },
+      "color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "decay": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "distance": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "height": {
+        "kind": "number",
+        "reach": null
+      },
+      "intensity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "penumbra": {
+        "kind": "number",
+        "reach": null
+      },
+      "target": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "width": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "LightData:Spot": {
+      "angle": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "decay": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "distance": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "height": {
+        "kind": "number",
+        "reach": null
+      },
+      "intensity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "lookAt": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "penumbra": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "target": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "width": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "Null": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<BoxData>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<CameraData:Orthographic>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": null
+      }
+    },
+    "Object<CameraData:Perspective>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": null
+      }
+    },
+    "Object<CurveData>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<LightData:Area>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<LightData:Directional>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<LightData:Point>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<LightData:Spot>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<SphereData>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "RenderOutput": {
+      "height": {
+        "kind": "number",
+        "reach": null
+      },
+      "width": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "Scene": {
+      "envIntensity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "envRotationY": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "SphereData": {
+      "heightSegments": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.base.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.base.metalness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.coat.roughness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.coat.weight": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.emission.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.emission.luminance": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.geometry.opacity": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.specular.ior": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.specular.roughness": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "material.transmission.weight": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "radius": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "widthSegments": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "Transform": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    }
+  },
+  "notMeasured": [
+    {
+      "pattern": "(^|\\.)uvTransform\\.",
+      "reason": "only visible through a texture, and the harness places none"
+    }
+  ]
+}

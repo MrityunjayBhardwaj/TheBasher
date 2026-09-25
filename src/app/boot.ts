@@ -612,6 +612,34 @@ export function boot(): Promise<void> {
       void import('./animate/dispatchMutator').then((m) => {
         w.__basher_dispatchMutator = m.dispatchMutatorFromUI;
       });
+      // #1235 — add one primitive of `kind` at `position` through the builder the Add menu
+      // uses (`addPrimitive`), returning both halves of a split kind, so the animatable-param
+      // census can place every kind the product can place without driving the menu 16 times.
+      // Dev-only; no production path reads it (H65).
+      void import('./addPrimitives').then((m) => {
+        w.__basher_addPrimitive = (kind: string, position: [number, number, number]) => {
+          const dag = useDagStore.getState();
+          const result = m.buildAddPrimitiveOps(dag.state, kind as never, position);
+          if (!result) return null;
+          dag.dispatchAtomic(result.ops, 'user', result.description);
+          return { nodeId: result.newNodeId, dataNodeId: result.dataNodeId ?? null };
+        };
+      });
+      // #1235 — make `cameraId` the active camera through the builder the camera menu uses, so
+      // the census can render through each camera it measures. Dev-only (H65).
+      // #1235 — the census measures under the SAME subject key a picker looks up by.
+      void import('./animatableParams').then((m) => {
+        w.__basher_animatableSubject = (nodeId: string) =>
+          m.animatableSubjectOf(useDagStore.getState().state, nodeId);
+      });
+      void import('./setActiveCamera').then((m) => {
+        w.__basher_setActiveCamera = (cameraId: string) => {
+          const dag = useDagStore.getState();
+          const ops = m.buildSetActiveCameraOps(dag.state, cameraId);
+          if (ops) dag.dispatchAtomic(ops, 'user', 'set active camera');
+          return ops !== null;
+        };
+      });
       // NLA "push down" funnel (#283 Phase 5 inc 5E) — the UI composite +
       // its {ok:false}→toast funnel, so e2e can force a rejection and observe
       // BOTH the result and the notification surface (H70/B26) without a
