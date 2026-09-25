@@ -11,6 +11,26 @@
         "reach": "scene"
       }
     },
+    "ArrayModifier": {
+      "count": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "offset": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "BevelModifier": {
+      "amount": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "angleLimit": {
+        "kind": "number",
+        "reach": null
+      }
+    },
     "BoxData": {
       "material.base.color": {
         "kind": "color",
@@ -133,12 +153,64 @@
         "reach": null
       }
     },
+    "Clamp": {
+      "max": {
+        "kind": "number",
+        "reach": null
+      },
+      "min": {
+        "kind": "number",
+        "reach": null
+      }
+    },
     "CurveData": {
       "points.*.co": {
         "kind": "vec3",
         "reach": null
       },
       "resolution": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "CurveRemap": {
+      "points.*.x": {
+        "kind": "number",
+        "reach": null
+      },
+      "points.*.y": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "Fit": {
+      "inMax": {
+        "kind": "number",
+        "reach": null
+      },
+      "inMin": {
+        "kind": "number",
+        "reach": null
+      },
+      "outMax": {
+        "kind": "number",
+        "reach": null
+      },
+      "outMin": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "FollowPath": {
+      "evalTime": {
+        "kind": "number",
+        "reach": "scene"
+      },
+      "offset": {
+        "kind": "number",
+        "reach": null
+      },
+      "order": {
         "kind": "number",
         "reach": null
       }
@@ -159,6 +231,16 @@
       "scale": {
         "kind": "vec3",
         "reach": "scene"
+      }
+    },
+    "Lag": {
+      "factor": {
+        "kind": "number",
+        "reach": null
+      },
+      "seedFrame": {
+        "kind": "number",
+        "reach": null
       }
     },
     "LightData:Area": {
@@ -329,7 +411,137 @@
         "reach": null
       }
     },
+    "Material": {
+      "material.base.color": {
+        "kind": "color",
+        "reach": null
+      },
+      "material.base.metalness": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.coat.roughness": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.coat.weight": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.emission.color": {
+        "kind": "color",
+        "reach": null
+      },
+      "material.emission.luminance": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.geometry.opacity": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.specular.ior": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.specular.roughness": {
+        "kind": "number",
+        "reach": null
+      },
+      "material.transmission.weight": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "MaterialOverrideOp": {
+      "color": {
+        "kind": "color",
+        "reach": null
+      },
+      "emissive": {
+        "kind": "color",
+        "reach": null
+      },
+      "emissiveIntensity": {
+        "kind": "number",
+        "reach": null
+      },
+      "metalness": {
+        "kind": "number",
+        "reach": null
+      },
+      "opacity": {
+        "kind": "number",
+        "reach": null
+      },
+      "roughness": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "MirrorModifier": {
+      "offset": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "Mix": {
+      "factor": {
+        "kind": "number",
+        "reach": null
+      }
+    },
+    "Noise": {
+      "amplitude": {
+        "kind": "number",
+        "reach": null
+      },
+      "octaves": {
+        "kind": "number",
+        "reach": null
+      },
+      "offset": {
+        "kind": "number",
+        "reach": null
+      },
+      "phase": {
+        "kind": "number",
+        "reach": null
+      },
+      "scale": {
+        "kind": "number",
+        "reach": null
+      }
+    },
     "Null": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<ArrayModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<BevelModifier>": {
       "position": {
         "kind": "vec3",
         "reach": "scene"
@@ -383,6 +595,20 @@
       "scale": {
         "kind": "vec3",
         "reach": null
+      }
+    },
+    "Object<ComponentGroupOp>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
       }
     },
     "Object<CurveData>": {
@@ -455,6 +681,62 @@
         "reach": "scene"
       }
     },
+    "Object<MaskModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<MaterialOverrideOp>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<MirrorModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "Object<SetMaterialOp>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
     "Object<SphereData>": {
       "position": {
         "kind": "vec3",
@@ -469,6 +751,26 @@
         "reach": "scene"
       }
     },
+    "Object<UVProjectModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene"
+      }
+    },
+    "ParamDriver": {
+      "order": {
+        "kind": "number",
+        "reach": null
+      }
+    },
     "RenderOutput": {
       "height": {
         "kind": "number",
@@ -476,6 +778,12 @@
       },
       "width": {
         "kind": "number",
+        "reach": null
+      }
+    },
+    "SampleGeometry": {
+      "direction": {
+        "kind": "vec3",
         "reach": null
       }
     },
@@ -487,6 +795,12 @@
       "envRotationY": {
         "kind": "number",
         "reach": "scene"
+      }
+    },
+    "Solver": {
+      "seedFrame": {
+        "kind": "number",
+        "reach": null
       }
     },
     "SphereData": {
@@ -543,6 +857,20 @@
         "reach": "scene"
       }
     },
+    "TrackTo": {
+      "aimPoint": {
+        "kind": "vec3",
+        "reach": null
+      },
+      "order": {
+        "kind": "number",
+        "reach": null
+      },
+      "up": {
+        "kind": "vec3",
+        "reach": null
+      }
+    },
     "Transform": {
       "position": {
         "kind": "vec3",
@@ -555,6 +883,18 @@
       "scale": {
         "kind": "vec3",
         "reach": "scene"
+      }
+    },
+    "UVProjectModifier": {
+      "size": {
+        "kind": "number",
+        "reach": "scene"
+      }
+    },
+    "Vec3Math": {
+      "scalar": {
+        "kind": "number",
+        "reach": null
       }
     }
   },

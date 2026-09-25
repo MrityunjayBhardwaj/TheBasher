@@ -629,8 +629,27 @@ export function boot(): Promise<void> {
       // the census can render through each camera it measures. Dev-only (H65).
       // #1235 — the census measures under the SAME subject key a picker looks up by.
       void import('./animatableParams').then((m) => {
-        w.__basher_animatableSubject = (nodeId: string) =>
-          m.animatableSubjectOf(useDagStore.getState().state, nodeId);
+        w.__basher_animatableContext = (nodeId: string, paramPath?: string) =>
+          m.animatableContextOf(useDagStore.getState().state, nodeId, paramPath);
+      });
+      // #1235 — the builders the stack panels, the material picker and the driver bind call, so
+      // the census places modifiers, material operators, constraints, materials and drivers the
+      // way the product does. The census dispatches the ops these return. Dev-only (H65).
+      void Promise.all([
+        import('./operatorStack'),
+        import('./operatorChain'),
+        import('./constraintStack'),
+        import('./materialLink'),
+        import('./driverBind'),
+      ]).then(([stack, chain, constraints, material, driver]) => {
+        w.__basher_censusBuilders = {
+          operatorTypesInSection: chain.operatorTypesInSection,
+          buildAddModifierOps: stack.buildAddModifierOps,
+          buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
+          buildAddConstraintOps: constraints.buildAddConstraintOps,
+          buildNewMaterialOps: material.buildNewMaterialOps,
+          buildBindDriverOps: driver.buildBindDriverOps,
+        };
       });
       void import('./setActiveCamera').then((m) => {
         w.__basher_setActiveCamera = (cameraId: string) => {

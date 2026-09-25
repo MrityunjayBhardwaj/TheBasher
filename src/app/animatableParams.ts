@@ -35,6 +35,10 @@
 
 import type { DagState } from '../core/dag/state';
 import census from './animatableCensus.json';
+import { resolveExposedTarget } from './exposeParams';
+import { constraintStackForTarget, followPathStackForTarget } from './nodeConstraints';
+import { chainSocketOf, isDataLaneOperator, singleRef } from './operatorChain';
+import { driverStackForTarget } from './paramDrivers';
 
 /** The value kinds a keyframe channel carries, named as `addChannel` names them. */
 export type ChannelValueKind = 'number' | 'vec2' | 'vec3' | 'quat' | 'color';
@@ -88,6 +92,71 @@ export function animatableSubjectOf(state: DagState, nodeId: string): string | n
   return typeof kind === 'string' ? `${node.type}:${kind}` : node.type;
 }
 
+/**
+ * The data-lane operator stacked directly on `nodeId`, if any.
+ *
+ * A data param under an operator is a different question from the same param on a bare mesh:
+ * its write is re-read through the TOP operator's handle, and a name that both carry is handed
+ * to the wrong one — keying a Cube's `size` under a UV Project crashes the viewport (#1247).
+ * The census measures each operator on a mesh of its own and does not measure the base data
+ * beneath it, so the lookup must know when it is being asked about that case.
+ */
+function operatorAbove(state: DagState, nodeId: string): string | null {
+  for (const node of Object.values(state.nodes)) {
+    if (!isDataLaneOperator(node)) continue;
+    const socket = chainSocketOf(node);
+    if (socket && singleRef(node, socket)?.node === nodeId) return node.type;
+  }
+  return null;
+}
+
+/**
+ * What supplies (`nodeId`, `paramPath`) instead of the param itself, if anything.
+ *
+ * A keyframe on a param something else supplies moves nothing, and that is a fact about this
+ * instance, not about the param: a Cube's `position` animates until a Follow-Path places it, a
+ * material colour until a linked Material owns it, a radius until a driver writes it. The census
+ * measures each param where nothing else supplies it, so these are answered "unmeasured", never
+ * "still". Each question is put to the function that already owns it.
+ */
+function suppliedElsewhere(state: DagState, nodeId: string, paramPath: string): string | null {
+  const root = paramPath.split('.')[0];
+  if (driverStackForTarget(state.nodes, nodeId, paramPath).length > 0)
+    return 'a driver supplies it';
+  if (
+    (root === 'rotation' || root === 'quaternion') &&
+    constraintStackForTarget(state.nodes, nodeId).length > 0
+  )
+    return 'a Track-To aims it';
+  if (root === 'position' && followPathStackForTarget(state.nodes, nodeId).length > 0)
+    return 'a Follow-Path places it';
+  const owner = resolveExposedTarget(state, nodeId, paramPath);
+  if (owner && (owner.nodeId !== nodeId || owner.paramPath !== paramPath))
+    return `${owner.nodeId}.${owner.paramPath} supplies it`;
+  return null;
+}
+
+/** The census subject for `nodeId` — and, given a path, for that param on it — or why the
+ *  census cannot answer. */
+export function animatableContextOf(
+  state: DagState,
+  nodeId: string,
+  paramPath?: string,
+): { readonly subject: string } | { readonly unmeasured: string } {
+  const subject = animatableSubjectOf(state, nodeId);
+  if (!subject) return { unmeasured: 'no such node' };
+  const above = operatorAbove(state, nodeId);
+  if (above)
+    return {
+      unmeasured: `under an operator stack (${above}), which the census does not measure (#1247)`,
+    };
+  if (paramPath !== undefined) {
+    const supplier = suppliedElsewhere(state, nodeId, paramPath);
+    if (supplier) return { unmeasured: `${supplier}, so a keyframe on it would not show` };
+  }
+  return { subject };
+}
+
 /** A param path with every array index generalised, so `points.3.co` looks up `points.*.co`. */
 export function animatablePathPattern(paramPath: string): string {
   return paramPath
@@ -106,8 +175,9 @@ export function isAnimatable(
   const pattern = animatablePathPattern(paramPath);
   const skipped = CENSUS.notMeasured.find((n) => new RegExp(n.pattern).test(pattern));
   if (skipped) return { answer: 'unmeasured', reason: skipped.reason };
-  const subject = animatableSubjectOf(state, nodeId);
-  if (!subject) return { answer: 'unmeasured', reason: 'no such node' };
+  const context = animatableContextOf(state, nodeId, paramPath);
+  if ('unmeasured' in context) return { answer: 'unmeasured', reason: context.unmeasured };
+  const { subject } = context;
   const rows = CENSUS.subjects[subject];
   if (!rows) return { answer: 'unmeasured', reason: `the census places no ${subject}` };
   const row = rows[pattern];
@@ -125,10 +195,11 @@ export function animatablePathsOf(
   nodeId: string,
   kind: ChannelValueKind,
 ): string[] | null {
-  const subject = animatableSubjectOf(state, nodeId);
-  const rows = subject ? CENSUS.subjects[subject] : undefined;
+  const context = animatableContextOf(state, nodeId);
+  const rows = 'subject' in context ? CENSUS.subjects[context.subject] : undefined;
   if (!rows) return null;
   return Object.entries(rows)
     .filter(([, r]) => r.kind === kind && r.reach !== null)
-    .map(([p]) => p);
+    .map(([p]) => p)
+    .filter((p) => p.includes('*') || !suppliedElsewhere(state, nodeId, p));
 }
