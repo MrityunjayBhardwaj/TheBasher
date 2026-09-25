@@ -106,6 +106,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // becomes `source` (a PosedSkeleton), re-pointed to the source's pose output for the same
   // reason as v16: loading checks no socket type.
   16: migrateRetargetSourceToPose,
+  // v17 → v18 (#1225): locomotion reads the pose wire. `LocomotionState.clip` becomes `pose`,
+  // re-pointed to the producer's pose output for v16's reason.
+  17: migrateLocomotionClipToPose,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1781,14 +1784,43 @@ export function migrateObjectActionToPose(raw: unknown): unknown {
 }
 
 /**
+ * #1225 — re-point every `type` node's `from` input (a clip) to `to` (the pose wire), on its
+ * producer's pose output, exactly as v16 did for the armature Object: loading checks no socket type
+ * and the evaluator follows every saved input key, so a rename alone would hand a clip to a pose
+ * socket (#1222). A producer with no pose output (a `MotionGenerate`), or an edge to a node that is
+ * gone, is dropped and counted. Returns the two counts.
+ */
+function repointClipInputToPose(
+  nodes: Record<string, RawNode>,
+  type: string,
+  from: string,
+  to: string,
+): { repointed: number; dropped: number } {
+  let repointed = 0;
+  let dropped = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== type || node.inputs?.[from] === undefined) continue;
+    const { [from]: edge, ...rest } = node.inputs;
+    const ref = Array.isArray(edge) ? edge[0] : edge;
+    const producer = ref?.node === undefined ? undefined : nodes[ref.node]?.type;
+    const socket = producer === undefined ? undefined : POSE_OUTPUT_OF[producer];
+    if (ref?.node !== undefined && socket !== undefined) {
+      node.inputs = { ...rest, [to]: { node: ref.node, socket } };
+      repointed++;
+    } else {
+      node.inputs = rest;
+      dropped++;
+    }
+  }
+  return { repointed, dropped };
+}
+
+/**
  * v16 → v17 (#1225) — the retarget reads the pose wire.
  *
  * `RetargetClip.sourceClip` (an `AnimationClip`) becomes `source` (a `PosedSkeleton`), so a retarget
- * can read any motion on the wire, a character's base layer among them. Each saved edge is
- * RE-POINTED to its producer's pose output, not merely renamed, for v16's reason: loading checks no
- * socket type and the evaluator follows every saved input key, so a renamed edge still naming `out`
- * would hand a clip to the pose socket (#1222). A producer with no pose output (a `MotionGenerate`),
- * or an edge to a node that is gone, is dropped and counted, and the retarget answers an empty clip.
+ * can read any motion on the wire, a character's base layer among them; the retarget answers an
+ * empty clip where the edge is dropped.
  */
 export function migrateRetargetSourceToPose(raw: unknown): unknown {
   const proj = raw as {
@@ -1797,30 +1829,41 @@ export function migrateRetargetSourceToPose(raw: unknown): unknown {
   };
   const nodes = proj.state?.nodes;
   if (!nodes) return { ...proj, formatVersion: 17 };
-
-  let repointed = 0;
-  let dropped = 0;
-  for (const node of Object.values(nodes)) {
-    if (node?.type !== 'RetargetClip' || node.inputs?.sourceClip === undefined) continue;
-    const { sourceClip, ...rest } = node.inputs;
-    const ref = Array.isArray(sourceClip) ? sourceClip[0] : sourceClip;
-    const producer = ref?.node === undefined ? undefined : nodes[ref.node]?.type;
-    const socket = producer === undefined ? undefined : POSE_OUTPUT_OF[producer];
-    if (ref?.node !== undefined && socket !== undefined) {
-      node.inputs = { ...rest, source: { node: ref.node, socket } };
-      repointed++;
-    } else {
-      node.inputs = rest;
-      dropped++;
-    }
-  }
-
+  const { repointed, dropped } = repointClipInputToPose(
+    nodes,
+    'RetargetClip',
+    'sourceClip',
+    'source',
+  );
   if (repointed > 0 || dropped > 0) {
     console.warn(
       `[migrateRetargetSourceToPose] re-pointed ${repointed} retarget source edge(s) to the pose ` +
         `wire; dropped ${dropped} whose producer has no pose output (#1225).`,
     );
   }
-
   return { ...proj, formatVersion: 17 };
+}
+
+/**
+ * v17 → v18 (#1225) — locomotion reads the pose wire.
+ *
+ * `LocomotionState.clip` (an `AnimationClip`) becomes `pose` (a `PosedSkeleton`); the node hands the
+ * wire through as the character's pose. Where the edge is dropped, the character stands empty-posed,
+ * as an unwired clip left it.
+ */
+export function migrateLocomotionClipToPose(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 18 };
+  const { repointed, dropped } = repointClipInputToPose(nodes, 'LocomotionState', 'clip', 'pose');
+  if (repointed > 0 || dropped > 0) {
+    console.warn(
+      `[migrateLocomotionClipToPose] re-pointed ${repointed} locomotion clip edge(s) to the pose ` +
+        `wire; dropped ${dropped} whose producer has no pose output (#1225).`,
+    );
+  }
+  return { ...proj, formatVersion: 18 };
 }

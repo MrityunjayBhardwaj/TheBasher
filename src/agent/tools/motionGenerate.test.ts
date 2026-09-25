@@ -431,10 +431,11 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // `PosedSkeleton` and folds its OWN keys onto it, as `PoseOverride` does. Chaining layers is
     // chaining nodes, one pose in each.
     // #1225 re-types `RetargetClip`'s input from a clip (`sourceClip`) to the pose wire (`source`);
-    // still one, still single, and the node has no other pose-bearing socket.
+    // still one, still single, and the node has no other pose-bearing socket. #1225 re-types
+    // `LocomotionState`'s the same way (`clip` → `pose`); still one, still single.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
-      'LocomotionState.clip: AnimationClip (single)',
+      'LocomotionState.pose: PosedSkeleton (single)',
       'Object.pose: PosedSkeleton (single)',
       'PoseLayer.pose: PosedSkeleton (single)',
       'PoseOverride.pose: PosedSkeleton (single)',

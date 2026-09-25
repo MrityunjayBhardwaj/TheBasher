@@ -39,7 +39,7 @@
 // as one that could be "layered under a hand-authored clip", which is a
 // capability the graph does not have: enumerating every input socket of all 81
 // registered node types finds exactly one that consumes a pose —
-// `LocomotionState.clip`, cardinality `single` — and `PosedSkeleton` has none at
+// `LocomotionState.clip` (now `pose`, #1225), cardinality `single` — and `PosedSkeleton` had none at
 // all, so two clips cannot meet anywhere. Nothing layers, for generated,
 // imported or hand-authored motion alike; `AnimationLayer` carried it and was
 // retired in #199. A description is an instruction to a model, and a capability

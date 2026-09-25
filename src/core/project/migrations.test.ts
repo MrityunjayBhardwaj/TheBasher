@@ -47,6 +47,7 @@ import {
   migrateNodes,
   migrateObjectActionToPose,
   migrateRetargetSourceToPose,
+  migrateLocomotionClipToPose,
   migrateProjectFormat,
   migrateSkeletonObjectAction,
 } from './migrations';
@@ -3925,5 +3926,105 @@ describe('v16 → v17: the retarget reads the pose wire (#1225)', () => {
     });
     expect(value.keyframes.length).toBeGreaterThan(0);
     expect(value.keyframes).toEqual(direct.clipParams.keyframes);
+  });
+});
+
+describe('v17 → v18: locomotion reads the pose wire (#1225)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bones = [
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'arm', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const loco = (id: string, inputs: Record<string, unknown>) => ({
+    id,
+    type: 'LocomotionState',
+    version: 1,
+    params: {},
+    inputs,
+  });
+  const v17 = () => ({
+    formatVersion: 17,
+    id: 'p',
+    name: 'p',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {},
+    state: {
+      nodes: {
+        sk: { id: 'sk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        clip: {
+          id: 'clip',
+          type: 'AnimationClip',
+          version: 1,
+          params: {
+            duration: 1,
+            keyframes: [
+              { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+              { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, 1] },
+            ],
+          },
+          inputs: { skeleton: { node: 'sk', socket: 'out' } },
+        },
+        gen: { id: 'gen', type: 'MotionGenerate', version: 1, params: {}, inputs: {} },
+        walk: loco('walk', { clip: { node: 'clip', socket: 'out' } }),
+        walkGenerated: loco('walkGenerated', { clip: { node: 'gen', socket: 'out' } }),
+        walkDangling: loco('walkDangling', { clip: { node: 'gone', socket: 'out' } }),
+        stand: loco('stand', {}),
+      },
+      outputs: {},
+    },
+  });
+  type Raw = ReturnType<typeof v17>;
+  type Ref = { node: string; socket: string };
+  const inputsOf = (raw: Raw, id: string) =>
+    (raw.state.nodes as Record<string, { inputs: Record<string, Ref | undefined> }>)[id].inputs;
+
+  it('stamps v18', () => {
+    expect((migrateLocomotionClipToPose(v17()) as Raw).formatVersion).toBe(18);
+  });
+
+  it('re-points the clip edge to the clip’s pose OUTPUT, and every written edge type-checks', () => {
+    const out = migrateLocomotionClipToPose(v17()) as Raw;
+    expect(inputsOf(out, 'walk')).toEqual({ pose: { node: 'clip', socket: 'pose' } });
+    const poseInput = getNodeType('LocomotionState')!.inputs.pose;
+    const nodes = out.state.nodes as Record<string, { type: string; inputs: Record<string, Ref> }>;
+    let checked = 0;
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'LocomotionState') continue;
+      expect(node.inputs.clip).toBeUndefined();
+      const ref = node.inputs.pose;
+      if (!ref) continue;
+      const produced = getNodeType(nodes[ref.node].type)!.outputs[ref.socket]?.type;
+      expect(inputAccepts(poseInput, produced!), `${ref.node}.${ref.socket}`).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(1);
+    // The control that must fail: the edge a rename alone would leave.
+    expect(inputAccepts(poseInput, getNodeType('AnimationClip')!.outputs.out.type)).toBe(false);
+  });
+
+  it('drops, and counts, an edge whose producer has no pose output or is gone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = migrateLocomotionClipToPose(v17()) as Raw;
+    expect(inputsOf(out, 'walkGenerated')).toEqual({});
+    expect(inputsOf(out, 'walkDangling')).toEqual({});
+    expect(inputsOf(out, 'stand')).toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-pointed 1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 2'));
+    warn.mockRestore();
+  });
+
+  it('a saved v17 locomotion loads and poses exactly as its clip does', () => {
+    const out = migrateProjectFormat(v17()) as Raw;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
+    const walk = evaluate(state, 'walk').value as { pose: PosedSkeletonValue };
+    const clipPose = evaluate(state, 'clip', { socket: 'pose' }).value as PosedSkeletonValue;
+    for (const t of [0, 0.5, 1]) expect(walk.pose.sample(t)).toEqual(clipPose.sample(t));
+    expect(walk.pose.sample(0.5)).not.toEqual(walk.pose.sample(0));
   });
 });

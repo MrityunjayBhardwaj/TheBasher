@@ -79,7 +79,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // saved edge is re-pointed to its producer's pose output. See migrations.ts formatMigrations[15].
 // v17 (#1225): the retarget reads the pose wire — `RetargetClip.sourceClip` becomes `source`, each
 // saved edge re-pointed to its producer's pose output. See migrations.ts formatMigrations[16].
-export const PROJECT_FORMAT_VERSION = 17;
+// v18 (#1225): locomotion reads the pose wire — `LocomotionState.clip` becomes `pose`, re-pointed
+// the same way. See migrations.ts formatMigrations[17].
+export const PROJECT_FORMAT_VERSION = 18;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

@@ -187,8 +187,8 @@ function buildBaselineCharacter(): DagState {
   }).next;
   state = applyOp(state, {
     type: 'connect',
-    from: { node: 'clip', socket: 'out' },
-    to: { node: 'loco', socket: 'clip' },
+    from: { node: 'clip', socket: 'pose' },
+    to: { node: 'loco', socket: 'pose' },
   }).next;
   state = applyOp(state, {
     type: 'connect',

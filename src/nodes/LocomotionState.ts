@@ -2,8 +2,9 @@
 //
 // Inputs:
 //   - path (WalkPath, single)         — the trajectory
-//   - clip (AnimationClip, single)    — the character's locomotion clip,
-//                                       sampled at the input time
+//   - pose (PosedSkeleton, single)    — the character's locomotion as the pose
+//                                       wire (#1225): a clip's pose, a retarget's,
+//                                       a base layer — handed through untouched
 //   - time (Time, single)             — drives speed-along-path
 //
 // Output:
@@ -11,7 +12,7 @@
 //
 // Pure: same (params, inputs) → same locomotion. Travel speed in
 // world-units/second is a param; given a constant time and a constant
-// path, a constant position falls out. The pose comes from the clip.
+// path, a constant position falls out. The pose is the wire it was given.
 //
 // Position-along-path:
 //   distance = (time.seconds * speed) modulo path.length    (looping)
@@ -23,24 +24,12 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type {
-  AnimationClipValue,
   LocomotionStateValue,
   PosedSkeletonValue,
   TimeValue,
   Vec3,
   WalkPathValue,
 } from './types';
-import { posedSkeletonFromClip } from './AnimationClip';
-
-/**
- * This node's posed view of its bound clip. Delegates to the ONE clip→pose
- * adapter (#992) rather than carrying a second copy: a private interpolator here
- * would be a second answer to "where is this bone at t" that drifts from the
- * render band's silently. An unbound clip poses nothing.
- */
-function posedFor(clip: AnimationClipValue | undefined): PosedSkeletonValue {
-  return clip ? posedSkeletonFromClip(clip) : EMPTY_POSE;
-}
 
 export const LocomotionStateParams = z.object({
   /** World-units per second along the path. */
@@ -95,13 +84,16 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
   paramSchema: LocomotionStateParams,
   inputs: {
     path: { type: 'WalkPath', cardinality: 'single' },
-    clip: { type: 'AnimationClip', cardinality: 'single' },
+    /** #1225 — the motion, as the pose wire. It used to take a clip and turn it into a pose here,
+     *  through the one clip→pose adapter; the wire is that pose already, from any source. */
+    pose: { type: 'PosedSkeleton', cardinality: 'single' },
     time: { type: 'Time', cardinality: 'single' },
   },
   outputs: { out: { type: 'LocomotionState', cardinality: 'single' } },
   evaluate(params, inputs: ResolvedInputs) {
     const path = inputs.path as WalkPathValue | undefined;
-    const clip = inputs.clip as AnimationClipValue | undefined;
+    // An unwired pose poses nothing.
+    const pose = (inputs.pose as PosedSkeletonValue | undefined) ?? EMPTY_POSE;
     const time = inputs.time as TimeValue | undefined;
     const tSeconds = time?.seconds ?? 0;
 
@@ -110,7 +102,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
         kind: 'LocomotionState',
         position: [0, 0, 0],
         heading: 0,
-        pose: posedFor(clip),
+        pose,
       };
     }
     const total = path.length;
@@ -122,7 +114,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
       kind: 'LocomotionState',
       position,
       heading,
-      pose: posedFor(clip),
+      pose,
     };
   },
 };

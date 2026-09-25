@@ -14,6 +14,8 @@ import { registerAllNodes } from './registerAll';
 import { buildClipBoneSamplers } from './AnimationClip';
 import { eulerXYZFromQuat } from './bonePose';
 import { SCATTER_MAX } from './ScatterNode';
+import { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
+import type { LocomotionStateValue } from './types';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitSphere } from '../test-utils/splitSphere';
@@ -868,6 +870,27 @@ describe('P2 — WalkPath (pure)', () => {
 });
 
 describe('P2 — LocomotionState + Character (pure, time-aware integrating chain)', () => {
+  it('#1225 — hands the pose wire it is given through untouched, whatever made it', () => {
+    // Not a clip: a sway, which no clip adapter could have produced.
+    const wire = {
+      kind: 'PosedSkeleton' as const,
+      skeleton: { kind: 'Skeleton' as const, bones: [] },
+      sample: () => [],
+    };
+    const value = LocomotionStateNode.evaluate(
+      LocomotionStateParams.parse({}),
+      { pose: wire },
+      undefined as never,
+    ) as LocomotionStateValue;
+    expect(value.pose).toBe(wire);
+    const unwired = LocomotionStateNode.evaluate(
+      LocomotionStateParams.parse({}),
+      {},
+      undefined as never,
+    ) as LocomotionStateValue;
+    expect(unwired.pose.sample(0)).toEqual([]);
+  });
+
   function buildLocoChain() {
     let state = emptyDagState();
     state = applyOp(state, {
@@ -930,8 +953,8 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'clip', socket: 'out' },
-      to: { node: 'loco', socket: 'clip' },
+      from: { node: 'clip', socket: 'pose' },
+      to: { node: 'loco', socket: 'pose' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
@@ -1051,8 +1074,8 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
       }).next;
       state = applyOp(state, {
         type: 'connect',
-        from: { node: `clip_${id}`, socket: 'out' },
-        to: { node: `loco_${id}`, socket: 'clip' },
+        from: { node: `clip_${id}`, socket: 'pose' },
+        to: { node: `loco_${id}`, socket: 'pose' },
       }).next;
       state = applyOp(state, {
         type: 'connect',

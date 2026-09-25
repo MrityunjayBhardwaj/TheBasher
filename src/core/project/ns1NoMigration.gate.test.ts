@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly eight times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, then #1225', () => {
+  it('has moved the project format version exactly nine times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, then #1225 twice', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -127,8 +127,9 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // checks no socket type, so only a pass that re-points each saved edge to its producer's pose
     // output keeps every saved rig playing, and correctly typed.
     // #1225 is the EIGHTH: the retarget's `sourceClip` (a clip) becomes `source` (the pose wire),
-    // re-pointed to each saved producer's pose output for #1224's reason.
-    const MIGRATIONS_SINCE_FREEZE = 8; // #915, #920, #930, #389, #1062, #1203, #1224, then #1225
+    // re-pointed to each saved producer's pose output for #1224's reason. The NINTH is #1225's second:
+    // `LocomotionState.clip` becomes `pose` the same way.
+    const MIGRATIONS_SINCE_FREEZE = 9; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 
