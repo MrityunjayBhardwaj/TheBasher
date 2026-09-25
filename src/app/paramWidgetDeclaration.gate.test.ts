@@ -318,7 +318,8 @@ describe('a param declares its control on its schema (#872)', () => {
     // below are gaps with a known shape: an identifier wants a PICKER over what exists, and
     // giving it free text would let a director type a name that silently selects nothing —
     // worse than read-only, because it looks like it worked. Tracked separately rather than
-    // papered over here — #1032 carries the twenty-five that want one.
+    // papered over here — #1032 carries every WIRING and CHOICE entry still listed below (twenty-five
+    // when this was written; each picker that lands removes its own line).
     const MINTED =
       'machine-minted — a hash, a handle or an id the product writes; typing one is never right';
     const WIRING =
