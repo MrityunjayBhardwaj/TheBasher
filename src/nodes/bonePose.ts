@@ -72,3 +72,63 @@ export function armaturePoseOf(object: ObjectValue): PosedSkeletonValue | null {
   }
   return pose;
 }
+
+/**
+ * #1240 — the euler orders a pose layer member can be keyed in, named as Blender names them (its
+ * pose bones' and Objects' `rotation_mode`). Blender's order names the axes in the order they are
+ * APPLIED, so its `XYZ` is three's `ZYX` and the reverse — measured on Blender 5.1.1 for all six
+ * (`q1240_euler_orders.py`). This codebase's own euler, `BoneSpec.rotation` and every clip key, is
+ * three's `XYZ`, which is Blender's `ZYX`.
+ */
+export const EULER_ORDERS = ['XYZ', 'XZY', 'YXZ', 'YZX', 'ZXY', 'ZYX'] as const;
+export type EulerOrder = (typeof EULER_ORDERS)[number];
+
+/** A rotation as euler radians in Blender's `order`, as the quaternion it means. The six arms are
+ *  three's `Quaternion.setFromEuler`, each under the three name its Blender order equals. */
+export function quatFromEuler(e: Vec3, order: EulerOrder): Quat {
+  const c1 = Math.cos(e[0] / 2);
+  const c2 = Math.cos(e[1] / 2);
+  const c3 = Math.cos(e[2] / 2);
+  const s1 = Math.sin(e[0] / 2);
+  const s2 = Math.sin(e[1] / 2);
+  const s3 = Math.sin(e[2] / 2);
+  switch (order) {
+    case 'ZYX': // three XYZ
+      return quatFromEulerXYZ(e);
+    case 'ZXY': // three YXZ
+      return [
+        s1 * c2 * c3 + c1 * s2 * s3,
+        c1 * s2 * c3 - s1 * c2 * s3,
+        c1 * c2 * s3 - s1 * s2 * c3,
+        c1 * c2 * c3 + s1 * s2 * s3,
+      ];
+    case 'YXZ': // three ZXY
+      return [
+        s1 * c2 * c3 - c1 * s2 * s3,
+        c1 * s2 * c3 + s1 * c2 * s3,
+        c1 * c2 * s3 + s1 * s2 * c3,
+        c1 * c2 * c3 - s1 * s2 * s3,
+      ];
+    case 'XYZ': // three ZYX
+      return [
+        s1 * c2 * c3 - c1 * s2 * s3,
+        c1 * s2 * c3 + s1 * c2 * s3,
+        c1 * c2 * s3 - s1 * s2 * c3,
+        c1 * c2 * c3 + s1 * s2 * s3,
+      ];
+    case 'XZY': // three YZX
+      return [
+        s1 * c2 * c3 + c1 * s2 * s3,
+        c1 * s2 * c3 + s1 * c2 * s3,
+        c1 * c2 * s3 - s1 * s2 * c3,
+        c1 * c2 * c3 - s1 * s2 * s3,
+      ];
+    case 'YZX': // three XZY
+      return [
+        s1 * c2 * c3 - c1 * s2 * s3,
+        c1 * s2 * c3 - s1 * c2 * s3,
+        c1 * c2 * s3 + s1 * s2 * c3,
+        c1 * c2 * c3 + s1 * s2 * s3,
+      ];
+  }
+}

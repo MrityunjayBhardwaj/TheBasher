@@ -154,7 +154,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // census next door moves with it rather than independently.
     // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator.
     // 88 -> 89 at #393 (ArmatureModifier), an OPERATOR, so the operator census moves with it.
-    expect(listNodeTypes()).toHaveLength(89);
+    // 89 -> 90 at #1240 (PoseLayer), a pose-wire layer and NOT an operator (no chain spine).
+    expect(listNodeTypes()).toHaveLength(90);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
@@ -235,10 +236,15 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'src/nodes/KeyframeChannelVec2.ts',
       'src/nodes/KeyframeChannelVec3.ts',
       'src/nodes/ParamDriver.ts',
+      // #1240 — an animation LAYER, so it takes the animation lane's word, as `Track` (the NLA
+      // track, its nearest counterpart) and every keyframe channel do; APEX layers mute. It
+      // declares no chain spine, so `muted` (the operators' word, named by `chain.bypass`) is
+      // not its vocabulary.
+      'src/nodes/PoseLayer.ts',
       'src/nodes/Track.ts',
       'src/nodes/TrackTo.ts',
     ]);
-    expect(registeredDeclaring('mute')).toHaveLength(11);
+    expect(registeredDeclaring('mute')).toHaveLength(12);
 
     // 22 declarations of one concept across 85 node types, in two vocabularies, and no
     // node declares both. The pair moves together at #818 — `BevelModifier` picked `muted`,
@@ -251,7 +257,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // `muted` because its own `chain.bypass` names it, and registration refuses a declaration
     // whose named param the schema does not declare.
     // 23 -> 24 at #393, the same mechanism a third time: `ArmatureModifier` names `muted`.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(24);
+    // 24 -> 25 at #1240, on the `mute` side: `PoseLayer` is an animation layer, not an operator.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(25);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);

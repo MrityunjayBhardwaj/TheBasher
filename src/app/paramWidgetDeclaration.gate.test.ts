@@ -223,7 +223,8 @@ describe('a param declares its control on its schema (#872)', () => {
     expect({ examined: examined > 0, nameCount: names.length, undeclared }).toEqual({
       examined: true,
       // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
-      nameCount: 25,
+      // 26 at #1240: `PoseLayer.name`, through `nameParam` like every other.
+      nameCount: 26,
       undeclared: [],
     });
   });
@@ -449,8 +450,8 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
-      // 25 since #1124 retired `MotionGenerate.name`.
-      count: 25,
+      // 25 since #1124 retired `MotionGenerate.name`; 26 at #1240 (`PoseLayer.name`).
+      count: 26,
     });
     expect(declaredWord.every((k) => k.endsWith('.name'))).toBe(true);
   });

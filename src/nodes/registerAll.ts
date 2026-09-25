@@ -69,6 +69,7 @@ import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
 import { PosedSkeletonNode } from './PosedSkeleton';
 import { PoseOverrideNode } from './PoseOverride';
+import { PoseLayerNode } from './PoseLayer';
 import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
@@ -158,6 +159,7 @@ const ALL: NodeDefinition[] = [
   GltfSkeletonNode as unknown as NodeDefinition,
   PosedSkeletonNode as unknown as NodeDefinition,
   PoseOverrideNode as unknown as NodeDefinition,
+  PoseLayerNode as unknown as NodeDefinition,
   AnimationClipNode as unknown as NodeDefinition,
   NavmeshNode as unknown as NodeDefinition,
   WalkPathNode as unknown as NodeDefinition,

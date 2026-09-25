@@ -226,6 +226,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // from its three inputs, which is the point of the node.
   // #974 — hand-posing. No `home` declared: the params are the override itself,
   // not a routed view of somebody else's, so every cell is honestly unrouted.
+  // #1240 — the pose layer that absorbs PoseOverride. No `home` declared, for PoseOverride's
+  // reason: the params are the layer itself. Its controls arrive with the writers (#1244).
+  PoseLayer:
+    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) members=(unrouted) channels=(unrouted)',
   PoseOverride:
     '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
@@ -370,4 +374,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #393 adds `ArmatureModifier` as a wholly new node type: +1 type, +1 routed (`muted`). Nothing
 // existing moved:
 //   types 88 + 1 = 89 · routed 143 + 1 = 144 · unrouted 236
-export const GOLDEN_TOTALS = { types: 89, routed: 144, unrouted: 237 } as const;
+//
+// #1240 adds `PoseLayer` as a wholly new node type: +1 type, +6 unrouted (see its row). Counted
+// from the constant as committed (237 — one more than the trail above ends on; that gap predates
+// this arrival and is not resolved here):
+//   types 89 + 1 = 90 · routed 144 · unrouted 237 + 6 = 243
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 243 } as const;
