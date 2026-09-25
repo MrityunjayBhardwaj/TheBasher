@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { RetargetClipNode, RetargetClipParams } from './RetargetClip';
-import { posedSkeletonFromClip } from './AnimationClip';
+import { motionPosesFromKeyframes, posedSkeletonFromClip } from './AnimationClip';
 import { PoseLayerNode, PoseLayerParams } from './PoseLayer';
 import { restPoseOf } from './Skeleton';
 import { retargetClip } from '../core/import/retarget';
@@ -18,6 +18,7 @@ import type {
   BoneSpec,
   PosedSkeletonValue,
 } from './types';
+import { clipValueFromKeys } from '../test-utils/clipValue';
 
 /**
  * Fresh operands per call — subject and expectation must never share an object.
@@ -49,7 +50,7 @@ function nameMap(): Record<string, string> {
 }
 
 function sourceClipValue(over: Partial<AnimationClipValue> = {}): AnimationClipValue {
-  return {
+  return clipValueFromKeys({
     kind: 'AnimationClip',
     name: 'walk',
     duration: 1,
@@ -57,7 +58,7 @@ function sourceClipValue(over: Partial<AnimationClipValue> = {}): AnimationClipV
     keyframes: sourceKeys(),
     skeleton: { kind: 'Skeleton', bones: sourceBones() },
     ...over,
-  };
+  });
 }
 /** #1225 — the node reads the pose wire: the clip's pose, which carries the clip's range. */
 function sourcePose(over: Partial<AnimationClipValue> = {}): PosedSkeletonValue {
@@ -110,11 +111,14 @@ describe('RetargetClip — the operator', () => {
       targetBones: targetBones(),
       nameMap: nameMap(),
     });
-    expect(value.keyframes).toEqual(expected.clipParams.keyframes);
+    // #1225 — the value carries the retargeted keys as timed poses on the target's bone names.
+    expect(value.poses).toEqual(
+      motionPosesFromKeyframes(expected.clipParams.keyframes, targetBones()),
+    );
     expect(value.duration).toBe(expected.clipParams.duration);
     expect(value.name).toBe(expected.clipParams.name);
     expect(value.loop).toBe(expected.clipParams.loop);
-    expect(value.keyframes.length).toBeGreaterThan(0);
+    expect(value.poses.length).toBeGreaterThan(0);
   });
 
   it('is TIME-FREE and pure — the lever that keeps ~12ms off the frame path', () => {
@@ -150,7 +154,7 @@ describe('RetargetClip — the operator', () => {
     expect('pose' in value).toBe(false);
     // …while still answering everything a clip IS asked for.
     expect(value.kind).toBe('AnimationClip');
-    expect(value.keyframes.length).toBeGreaterThan(0);
+    expect(value.poses.length).toBeGreaterThan(0);
   });
 
   it('`posed` is the SAME motion as `out`, sampled — the two cannot disagree', () => {
@@ -182,10 +186,12 @@ describe('RetargetClip — the operator', () => {
       skeleton: { kind: 'Skeleton', bones: targetBones() },
     });
     expect(value.skeleton.bones.map((b) => b.name)).toEqual(['hips', 'spine']);
-    for (const k of value.keyframes) {
-      expect(k.bone).toBeGreaterThanOrEqual(0);
-      expect(k.bone).toBeLessThan(value.skeleton.bones.length);
+    // #1225 — every bone a pose names is one of the target's.
+    const names = new Set(value.skeleton.bones.map((b) => b.name));
+    for (const pose of value.poses) {
+      for (const name of Object.keys(pose.bones)) expect(names.has(name), name).toBe(true);
     }
+    expect(value.poses.length).toBeGreaterThan(0);
   });
 
   it('answers EMPTY for a half-wired graph — never the source’s own keys', () => {
@@ -201,13 +207,13 @@ describe('RetargetClip — the operator', () => {
       const inputs: Record<string, unknown> = { ...full };
       delete inputs[missing];
       const value = evaluate(inputs);
-      expect(value.keyframes, `${missing} unwired`).toEqual([]);
+      expect(value.poses, `${missing} unwired`).toEqual([]);
     }
     // A rig with no bones is the same case wearing a wired edge.
-    expect(evaluate({ ...full, skeleton: { kind: 'Skeleton', bones: [] } }).keyframes).toEqual([]);
+    expect(evaluate({ ...full, skeleton: { kind: 'Skeleton', bones: [] } }).poses).toEqual([]);
     // The control: with everything wired it is NOT empty, so the rows above are
     // measuring the guards and not a subject that never produces anything.
-    expect(evaluate(full).keyframes.length).toBeGreaterThan(0);
+    expect(evaluate(full).poses.length).toBeGreaterThan(0);
   });
 
   it('takes the output name from its param, and derives one when it is blank', () => {
@@ -268,18 +274,21 @@ describe('RetargetClip reads the pose wire (#1225)', () => {
       boneMap: boneMapValue(),
       skeleton: target(),
     });
-    expect(viaLayer.keyframes).toHaveLength(viaClip.keyframes.length);
-    viaLayer.keyframes.forEach((k, i) => {
-      const c = viaClip.keyframes[i];
-      expect(k.bone).toBe(c.bone);
-      expect(k.time).toBe(c.time);
-      for (let a = 0; a < 3; a++) {
-        expect(k.position[a]).toBeCloseTo(c.position[a], 6);
-        expect(k.rotation[a]).toBeCloseTo(c.rotation[a], 6);
+    expect(viaLayer.poses).toHaveLength(viaClip.poses.length);
+    viaLayer.poses.forEach((pose, i) => {
+      const c = viaClip.poses[i];
+      expect(pose.time).toBe(c.time);
+      expect(Object.keys(pose.bones)).toEqual(Object.keys(c.bones));
+      for (const [name, bone] of Object.entries(pose.bones)) {
+        for (let a = 0; a < 3; a++)
+          expect(bone.position![a]).toBeCloseTo(c.bones[name].position![a], 6);
+        for (let a = 0; a < 4; a++) {
+          expect(bone.quaternion![a]).toBeCloseTo(c.bones[name].quaternion![a], 6);
+        }
       }
     });
     expect(viaLayer.name).toBe('walk_retargeted');
-    expect(viaLayer.keyframes.length).toBeGreaterThan(0);
+    expect(viaLayer.poses.length).toBeGreaterThan(0);
   });
 
   it('a range that starts after 0 is sampled over its span and placed back where it plays', () => {
@@ -293,18 +302,21 @@ describe('RetargetClip reads the pose wire (#1225)', () => {
       boneMap: boneMapValue(),
       skeleton: target(),
     });
-    expect(shifted.keyframes.map((k) => k.time)).toEqual(
-      unshifted.keyframes.map((k) => k.time + 0.5),
-    );
+    expect(shifted.poses.map((p) => p.time)).toEqual(unshifted.poses.map((p) => p.time + 0.5));
     expect(shifted.duration).toBeCloseTo(1.5, 9);
-    shifted.keyframes.forEach((k, i) =>
-      k.rotation.forEach((r, a) => expect(r).toBeCloseTo(unshifted.keyframes[i].rotation[a], 9)),
-    );
+    shifted.poses.forEach((pose, i) => {
+      for (const [name, bone] of Object.entries(pose.bones)) {
+        bone.quaternion!.forEach((q, a) =>
+          expect(q).toBeCloseTo(unshifted.poses[i].bones[name].quaternion![a], 9),
+        );
+      }
+    });
+    expect(shifted.poses.length).toBeGreaterThan(0);
   });
 
   it('`sampleRate` overrides the rate the wire carries', () => {
     const inputs = { source: sourcePose(), boneMap: boneMapValue(), skeleton: target() };
-    const times = (v: AnimationClipValue) => new Set(v.keyframes.map((k) => k.time)).size;
+    const times = (v: AnimationClipValue) => v.poses.length;
     // The clip's own rate: 2 keys over 1 s, so 2 samples.
     expect(times(evaluate(inputs))).toBe(2);
     expect(times(evaluate(inputs, RetargetClipParams.parse({ sampleRate: 10 })))).toBe(10);
@@ -313,9 +325,9 @@ describe('RetargetClip reads the pose wire (#1225)', () => {
   it('a wire with no range (a skeleton at rest) has no motion to retarget', () => {
     const rest = restPoseOf({ kind: 'Skeleton', bones: sourceBones() });
     expect(rest.clip).toBeUndefined();
-    expect(
-      evaluate({ source: rest, boneMap: boneMapValue(), skeleton: target() }).keyframes,
-    ).toEqual([]);
+    expect(evaluate({ source: rest, boneMap: boneMapValue(), skeleton: target() }).poses).toEqual(
+      [],
+    );
   });
 
   it('carries the source name and end behaviour across, from the wire', () => {

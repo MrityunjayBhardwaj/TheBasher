@@ -91,6 +91,7 @@ import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
 import { widget } from './paramWidget';
+import { motionPosesFromKeyframes } from './AnimationClip';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -217,7 +218,8 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         // which is a claim about the motion that nothing measured. `'hold'` is
         // what the old `false` meant, in the vocabulary #930 gave the concept.
         loop: 'hold',
-        keyframes: clip.keyframes,
+        // #1225 — the generated keys as timed poses by bone name, through the one adapter.
+        poses: motionPosesFromKeyframes(clip.keyframes, clip.skeleton.bones),
         skeleton: clip.skeleton,
         // BOTH halves of the placement, always together. `worldRotationRadians`
         // is optional on the state — a clip cached before the facing half existed
@@ -243,7 +245,7 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
       // length it does not have to every consumer that reads one.
       duration: 0,
       loop: 'hold',
-      keyframes: [],
+      poses: [],
       skeleton: EMPTY_SKELETON,
       generation:
         failure !== undefined

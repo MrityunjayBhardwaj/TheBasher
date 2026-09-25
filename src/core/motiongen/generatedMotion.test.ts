@@ -201,8 +201,8 @@ describe("the identical road — the phase's discriminating observation", () => 
     expect(clip.kind).toBe('AnimationClip');
     expect(clip.duration).toBeGreaterThan(0);
     // No pose (#920): a clip is a description, and the consumer holding a Time is
-    // what samples it. The keys and the rig they index MUST travel together.
-    expect(clip.keyframes.length).toBeGreaterThan(0);
+    // what samples it. The poses and the rig they name MUST travel together (#1225).
+    expect(clip.poses.length).toBeGreaterThan(0);
     expect(clip.skeleton.bones.length).toBeGreaterThan(0);
   });
 

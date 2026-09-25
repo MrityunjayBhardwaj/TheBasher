@@ -10,7 +10,8 @@ import {
 import { sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { slerp } from './quatMath';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
-import type { AnimationClipValue, BoneSpec, Quat, Vec3 } from './types';
+import type { BoneSpec, Quat, Vec3 } from './types';
+import { clipValueFromKeys } from '../test-utils/clipValue';
 
 /** Angle between two orientations, degrees — `2·atan2(|a−b|, |a+b|)`, precise near zero where
  *  `acos` of the dot product bottoms out around 1e-6°. */
@@ -77,17 +78,18 @@ describe('#1202 — a clip slerps between keys', () => {
     kind: 'Skeleton' as const,
     bones: [{ name: 'Bone', parent: -1, position: [0, 0, 0] as Vec3, rotation: [0, 0, 0] as Vec3 }],
   };
-  const clipOf = (a: Vec3, b: Vec3): AnimationClipValue => ({
-    kind: 'AnimationClip',
-    name: 'c',
-    duration: 1,
-    loop: 'hold',
-    keyframes: [
-      { bone: 0, time: 0, position: [0, 0, 0], rotation: a },
-      { bone: 0, time: 1, position: [0, 0, 0], rotation: b },
-    ],
-    skeleton,
-  });
+  const clipOf = (a: Vec3, b: Vec3) =>
+    clipValueFromKeys({
+      kind: 'AnimationClip',
+      name: 'c',
+      duration: 1,
+      loop: 'hold',
+      keyframes: [
+        { bone: 0, time: 0, position: [0, 0, 0], rotation: a },
+        { bone: 0, time: 1, position: [0, 0, 0], rotation: b },
+      ],
+      skeleton,
+    });
 
   it('a 120° turn about (1, 1, 0) is on the slerp at the midpoint (lerping the angles missed by 24.79°)', () => {
     const axis = [Math.SQRT1_2, Math.SQRT1_2, 0];

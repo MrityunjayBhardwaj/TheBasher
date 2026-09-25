@@ -12,13 +12,8 @@ import { emptyDagState, type DagState } from '../core/dag/state';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
 import { boneOfGroups, sampleSkinDeform } from './armatureDeform';
 import { cloneForOverlay } from './overlayChannels';
-import type {
-  AnimationClipValue,
-  BoneSpec,
-  MeshGeometryData,
-  ModifiedDataValue,
-  SkinDeformValue,
-} from './types';
+import type { BoneSpec, MeshGeometryData, ModifiedDataValue, SkinDeformValue } from './types';
+import { clipValueFromKeys } from '../test-utils/clipValue';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -198,7 +193,7 @@ const BONES: BoneSpec[] = [
   { name: 'Root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
   { name: 'Tip', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
 ];
-const TURN: AnimationClipValue = {
+const TURN = clipValueFromKeys({
   kind: 'AnimationClip',
   name: 'turn',
   duration: 1,
@@ -208,7 +203,7 @@ const TURN: AnimationClipValue = {
     { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, Math.PI / 2] },
   ],
   skeleton: { kind: 'Skeleton', bones: BONES },
-};
+});
 
 /** One point per binding, all at the chain's tip. `bind` lists [joint, weight] lanes. */
 function meshOf(groups: string[], bindings: [number, number][][]): MeshGeometryData {

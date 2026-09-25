@@ -82,7 +82,7 @@ import type {
   WireClipInfo,
 } from './types';
 import { clipLoopOf } from './clipLoop';
-import { posedSkeletonFromClip } from './AnimationClip';
+import { motionPosesFromKeyframes, posedSkeletonFromClip } from './AnimationClip';
 import { eulerXYZFromQuat } from './bonePose';
 import { nameParam } from './paramWidget';
 
@@ -195,7 +195,7 @@ export const RetargetClipNode: NodeDefinition<
         name: params.name || (range?.name ?? 'clip'),
         duration: range ? range.end : 0,
         loop: clipLoopOf(range?.loop),
-        keyframes: [],
+        poses: [],
         skeleton: target ?? EMPTY_SKELETON,
       });
     }
@@ -225,8 +225,9 @@ export const RetargetClipNode: NodeDefinition<
       name: result.clipParams.name,
       duration: result.clipParams.duration + range.start,
       loop: result.clipParams.loop,
-      keyframes,
-      // The TARGET rig — the indices in the emitted keys are the target's.
+      // #1225 — the retargeted keys as timed poses on the TARGET rig's bone names.
+      poses: motionPosesFromKeyframes(keyframes, target.bones),
+      // The TARGET rig — the poses name its bones.
       skeleton: target,
     });
   },

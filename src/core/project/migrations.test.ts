@@ -29,6 +29,7 @@ import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import { createEvaluatorCache, evaluate } from '../dag/evaluator';
 import { sampleCurve } from '../../nodes/curveMath';
 import type {
+  AnimationClipValue,
   BakedDataValue,
   CurveDataValue,
   InlineMaterialSpec,
@@ -59,6 +60,7 @@ import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../../app/bake
 import { buildDefaultDagState } from './default';
 import { retargetClip } from '../import/retarget';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
+import { motionPosesFromKeyframes } from '../../nodes/AnimationClip';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -3915,17 +3917,16 @@ describe('v16 → v17: the retarget reads the pose wire (#1225)', () => {
     const out = migrateProjectFormat(v16()) as Raw;
     expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
-    const value = evaluate(state, 'retarget', { socket: 'out' }).value as {
-      keyframes: readonly { bone: number; time: number; rotation: readonly number[] }[];
-    };
+    const value = evaluate(state, 'retarget', { socket: 'out' }).value as AnimationClipValue;
     const direct = retargetClip({
       sourceBones: bones as never,
       sourceClip: { name: 'wave', duration: 1, keyframes: keyframes as never, loop: 'hold' },
       targetBones: bones as never,
       nameMap: { root: 'root', arm: 'arm' },
     });
-    expect(value.keyframes.length).toBeGreaterThan(0);
-    expect(value.keyframes).toEqual(direct.clipParams.keyframes);
+    expect(value.poses.length).toBeGreaterThan(0);
+    // #1225 — the value carries those keys as timed poses by bone name, through the one adapter.
+    expect(value.poses).toEqual(motionPosesFromKeyframes(direct.clipParams.keyframes, bones));
   });
 });
 

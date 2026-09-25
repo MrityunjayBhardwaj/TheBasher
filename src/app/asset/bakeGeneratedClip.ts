@@ -92,6 +92,7 @@ import { evaluate } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { edgeTarget } from '../animate/graphNodes';
+import { lookupGeneratedClip } from '../../core/motiongen/generatedClipCache';
 import type { AnimationClipValue } from '../../nodes/types';
 
 /** One sink whose params are behind its producer, and the hash that will fix it. */
@@ -192,6 +193,11 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
     // lock/freeze exists to prevent.
     if (!stale || status !== 'ready') continue;
     const value = evaluate(state, producerId).value as AnimationClipValue;
+    // #1225 — the params still spell keys by bone index in XYZ euler (until #1233 step 8), and the
+    // value now carries timed poses; the generated keys themselves are in the generation cache the
+    // value was built from, so they land exactly as generated, with no quaternion round trip.
+    const generated = lookupGeneratedClip(value.generation!.requestHash);
+    if (!generated) continue;
 
     // The rig FIRST. A keyframe's `bone` is an index into the skeleton the keys
     // were authored against, so params written in the other order leave a window
@@ -213,7 +219,7 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
       // what put a director's rename back to the generator's on every re-cook.
       { type: 'setParam', nodeId: clipId, paramPath: 'duration', value: value.duration },
       { type: 'setParam', nodeId: clipId, paramPath: 'loop', value: value.loop },
-      { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: value.keyframes },
+      { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: generated.keyframes },
       // LAST, and that is load-bearing: this is the receipt that the params above
       // were written. An inverse that stops partway leaves the hash unchanged, so
       // the clip still reads as stale and the next cook redoes it — rather than

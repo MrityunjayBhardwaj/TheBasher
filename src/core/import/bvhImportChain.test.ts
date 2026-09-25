@@ -82,13 +82,15 @@ describe('buildBvhImportOps', () => {
     expect(value.duration).toBeGreaterThan(0);
     // The clip is a DESCRIPTION, not a sample (#920): it carries its keys and the
     // rig they are indexed against, and no pose. A consumer holding a Time samples
-    // it. Asserting the keys and the rig travel together IS the row — a clip whose
-    // indices arrived without their skeleton would name the wrong bones.
-    expect(value.keyframes.length).toBeGreaterThan(0);
+    // it. Asserting the poses and the rig travel together IS the row — a clip whose
+    // poses arrived without their skeleton would name bones it cannot place (#1225:
+    // the value names bones; its keys' indices are resolved against this rig).
+    expect(value.poses.length).toBeGreaterThan(0);
     expect(value.skeleton.bones.length).toBeGreaterThan(0);
-    expect(Math.max(...value.keyframes.map((k) => k.bone))).toBeLessThan(
-      value.skeleton.bones.length,
-    );
+    const names = new Set(value.skeleton.bones.map((b) => b.name));
+    for (const pose of value.poses) {
+      for (const name of Object.keys(pose.bones)) expect(names.has(name), name).toBe(true);
+    }
   });
 
   it('twice-call builds deterministic Op chains for the same spec', () => {

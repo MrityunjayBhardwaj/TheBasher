@@ -1655,6 +1655,19 @@ export interface WireClipInfo {
   readonly loop?: ClipLoop;
 }
 
+/** #1225 — one bone in a MotionClip pose: whichever of its local transform the pose states. */
+export interface MotionBonePose {
+  readonly position?: Vec3;
+  readonly quaternion?: Quat;
+  readonly scale?: Vec3;
+}
+
+/** #1225 — a MotionClip pose: a time, and the bones it holds by name (sparse). */
+export interface MotionPose {
+  readonly time: number;
+  readonly bones: Readonly<Record<string, MotionBonePose>>;
+}
+
 /** A single keyframe targeting a bone (by index) at a given clip-time. */
 export interface AnimationKeyframe {
   readonly bone: number;
@@ -1666,12 +1679,14 @@ export interface AnimationKeyframe {
 /**
  * A clip, as a value.
  *
- * WHY THE KEYS AND THE RIG TRAVEL WITH IT (#901). A keyframe's `bone` is an
- * INDEX, and an index means nothing except against the skeleton it was authored
- * for. A consumer that took the keys from one place and the rig from another
- * could pair a 78-bone source's indices with a 23-bone target's spine and get a
- * plausible-looking wrong answer — the same producer-vs-consumer split #913 and
- * #916 closed for the time domain. So the clip carries both, and `loop` besides:
+ * WHY THE POSES AND THE RIG TRAVEL WITH IT (#901). A pose names its bones, and
+ * a name only means something against the rig it was authored on; a bone the
+ * poses never hold takes that rig's rest. A consumer that took the poses from one
+ * place and the rig from another could pair one character's motion with another's
+ * rest and get a plausible-looking wrong answer — the same producer-vs-consumer
+ * split #913 and #916 closed for the time domain. (Keys once addressed bones by
+ * INDEX, which made the pairing worse; #1225 moved the value to names.) So the
+ * clip carries both, and `loop` besides:
  * a consumer able to take the keys without the domain is a consumer able to make
  * a copy that stops where its source wraps.
  *
@@ -1680,8 +1695,9 @@ export interface AnimationKeyframe {
  * per-frame-re-render invariant exists to forbid. Both producers are now
  * time-free: `RetargetClip` always was, and `AnimationClip` joined it. Sampling
  * belongs to the consumer, which is the only party holding a `Time` to sample
- * AT; `LocomotionState` does it with `buildClipBoneSamplers`, the same factory
- * the baked render band uses, so a bone posed through either cannot disagree.
+ * AT, through `posedSkeletonFromClip`, which samples each bone through the same
+ * per-track sampler the baked render band uses (`clipTrackSampler`), so a bone
+ * posed through either cannot disagree.
  */
 export interface AnimationClipValue {
   readonly kind: 'AnimationClip';
@@ -1691,9 +1707,16 @@ export interface AnimationClipValue {
    *  `true` meant cycle-WITH-OFFSET — so cycle-in-place had no spelling, and the
    *  sibling carrier defaulted the opposite way. */
   readonly loop: ClipLoop;
-  /** The clip's keys. `bone` indexes {@link AnimationClipValue.skeleton}. */
-  readonly keyframes: readonly AnimationKeyframe[];
-  /** The rig the keyframe indices are authored against. */
+  /**
+   * #1225 — the motion as TIMED POSES, Houdini's MotionClip (`kinefx-motionclips.txt:16-34`): each
+   * pose a time and the bones it holds, BY NAME, each with a local position, a quaternion and a
+   * scale where it states one. Poses are sparse: a bone missing from a pose is interpolated from
+   * the nearest poses that hold it, and a bone no pose holds stays at the rig's rest. Sorted by
+   * time. Built from the node's params by `motionPosesFromKeyframes` until the params move to the
+   * same shape (#1233 step 8).
+   */
+  readonly poses: readonly MotionPose[];
+  /** The rig the poses' bone names are drawn from — its rest is what an unheld bone keeps. */
   readonly skeleton: SkeletonValue;
   /**
    * Present only on a clip produced by {@link MotionGenerateNode} (#902).

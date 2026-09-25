@@ -19,7 +19,6 @@ import { emptyDagState } from '../core/dag/state';
 import { sampleSkinDeform, boneOfGroups } from '../nodes/armatureDeform';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
 import type {
-  AnimationClipValue,
   BoneSpec,
   MeshGeometryData,
   ModifiedDataValue,
@@ -29,6 +28,7 @@ import { buildMeshGeometry } from './meshGeometryData';
 import { meshSplitLayout } from './polygonLayout';
 import { buildSkinnedDraw, skinnedDrawKey } from './skinnedDraw';
 import { cloneForOverlay } from '../nodes/overlayChannels';
+import { clipValueFromKeys } from '../test-utils/clipValue';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -146,7 +146,7 @@ const BONES: BoneSpec[] = [
   { name: 'Root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
   { name: 'Tip', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
 ];
-const TURN: AnimationClipValue = {
+const TURN = clipValueFromKeys({
   kind: 'AnimationClip',
   name: 'turn',
   duration: 1,
@@ -156,7 +156,7 @@ const TURN: AnimationClipValue = {
     { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, Math.PI / 2] },
   ],
   skeleton: { kind: 'Skeleton', bones: BONES },
-};
+});
 
 function triangle(groups: string[], lanes: [number, number][], at: number[]): MeshGeometryData {
   const joints = new Int32Array(12);

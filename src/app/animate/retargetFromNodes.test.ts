@@ -9,10 +9,11 @@ import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFrom
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
-import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { motionPosesFromKeyframes, posedSkeletonFromClip } from '../../nodes/AnimationClip';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
+import { clipValueFromKeys } from '../../test-utils/clipValue';
 
 const ASSET_REF = 'asset://rig.glb';
 
@@ -126,14 +127,16 @@ describe('retargetClipParamsFromNodes', () => {
       RetargetClipParams.parse({}),
       {
         // #1225 — the node reads the clip's pose wire.
-        source: posedSkeletonFromClip({
-          kind: 'AnimationClip',
-          name: 'walk',
-          duration: 1,
-          loop: 'hold',
-          keyframes: sourceKeys(),
-          skeleton: { kind: 'Skeleton', bones: sourceBones() },
-        }),
+        source: posedSkeletonFromClip(
+          clipValueFromKeys({
+            kind: 'AnimationClip',
+            name: 'walk',
+            duration: 1,
+            loop: 'hold',
+            keyframes: sourceKeys(),
+            skeleton: { kind: 'Skeleton', bones: sourceBones() },
+          }),
+        ),
         boneMap: { kind: 'BoneNameMap', name: 'bridge', map: nameMap() },
         skeleton: { kind: 'Skeleton', bones: bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[] },
       } as never,
@@ -142,7 +145,13 @@ describe('retargetClipParamsFromNodes', () => {
     // #992/#974 — the node emits two views of one retarget, so the parity claim
     // names the `out` socket. `posed` is pinned against this same clip in
     // RetargetClip.test.ts, so both views stay tied to this one params road.
-    expect(viaParams!.keyframes).toEqual(viaEvaluate.out.keyframes);
+    // #1225 — the node's value carries the keys as timed poses by bone name, through the one adapter.
+    expect(viaEvaluate.out.poses).toEqual(
+      motionPosesFromKeyframes(
+        viaParams!.keyframes!,
+        bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[],
+      ),
+    );
     expect(viaParams!.duration).toBe(viaEvaluate.out.duration);
     expect(viaParams!.name).toBe(viaEvaluate.out.name);
   });

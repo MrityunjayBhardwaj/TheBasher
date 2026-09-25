@@ -11,7 +11,7 @@ import {
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { registerAllNodes } from './registerAll';
-import { buildClipBoneSamplers } from './AnimationClip';
+import { posedSkeletonFromClip } from './AnimationClip';
 import { eulerXYZFromQuat } from './bonePose';
 import { SCATTER_MAX } from './ScatterNode';
 import { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
@@ -778,17 +778,16 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   // this bone at t" rather than two that can drift.
   it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
     const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
-    const torso = buildClipBoneSamplers(clip).get(1);
-    expect(torso).toBeDefined();
+    // #1225 — the value is timed poses; its pose samples them, bone 1 being the torso.
+    const torso = (t: number) => posedSkeletonFromClip(clip).sample(t)[1];
     // #1223 — the sampler answers an orientation; a single-axis turn slerps to the same angle.
-    expect(eulerXYZFromQuat(torso!(0.5).quaternion)[1]).toBeCloseTo(0.25, 5);
+    expect(eulerXYZFromQuat(torso(0.5).quaternion)[1]).toBeCloseTo(0.25, 5);
   });
 
   it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
     const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
-    const torso = buildClipBoneSamplers(clip).get(1);
-    expect(torso).toBeDefined();
-    expect(torso!(2.0).quaternion).toEqual(torso!(0).quaternion);
+    const torso = (t: number) => posedSkeletonFromClip(clip).sample(t)[1];
+    expect(torso(2.0).quaternion).toEqual(torso(0).quaternion);
   });
 });
 

@@ -184,8 +184,8 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(clip.duration).toBeGreaterThan(0);
     // Optional since #901; an `AnimationClip` node still always answers one.
     // No pose (#920) — the clip describes the motion; a consumer with a Time
-    // samples it. Keys and the rig they are indexed against travel together.
-    expect(clip.keyframes.length).toBeGreaterThan(0);
+    // samples it. Poses and the rig whose bones they name travel together (#1225).
+    expect(clip.poses.length).toBeGreaterThan(0);
     expect(clip.skeleton.bones.length).toBeGreaterThan(0);
   });
 
