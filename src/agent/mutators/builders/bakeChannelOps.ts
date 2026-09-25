@@ -69,7 +69,14 @@ function cycleModifierFor(component: BakedComponent, loop: ClipLoop): FChannelMo
   // `clipExtendRules` makes, because a minted channel must extend the way the
   // clip it was minted FROM extends; their spec asserts they agree past the
   // duration and reds if either moves alone.
-  const mode = component === 'position' && loop === 'cycle-offset' ? 'repeat-offset' : 'repeat';
+  // #1225 — a mirrored clip mints a mirrored channel: the cycles modifier's `repeat-mirror`, the
+  // same ping-pong the clip's `mirror` extend samples (keyframeInterp `REPEAT_MODE_OF`).
+  const mode =
+    loop === 'mirror'
+      ? 'repeat-mirror'
+      : component === 'position' && loop === 'cycle-offset'
+        ? 'repeat-offset'
+        : 'repeat';
   return { type: 'cycles', beforeMode: mode, afterMode: mode, beforeCycles: 0, afterCycles: 0 };
 }
 

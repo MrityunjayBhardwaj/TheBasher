@@ -49,7 +49,7 @@ import {
   type Vec3Key,
 } from './keyframeInterp';
 import { quatFromEulerXYZ, restBonePose } from './bonePose';
-import { ClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
+import { MotionClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
@@ -60,7 +60,7 @@ export const AnimationClipParams = z.object({
   /** What the clip does past its authored range — see `clipLoop.ts`. Was a
    *  boolean whose `true` meant cycle-WITH-OFFSET, which made cycle-in-place
    *  unreachable and disagreed with TransformClip's opposite default (#930). */
-  loop: ClipLoopSchema,
+  loop: MotionClipLoopSchema,
   /**
    * Is this the clip the director most recently bound to its rig? (#907)
    *

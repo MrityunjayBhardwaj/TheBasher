@@ -15,6 +15,7 @@ import {
   type ClipOutputs,
 } from './AnimationClip';
 import { quatFromEulerXYZ } from './bonePose';
+import { TransformClipParams } from './TransformClip';
 import type { AnimationClipValue, BoneSpec, MotionPose, Quat, Vec3 } from './types';
 
 const BONES: BoneSpec[] = [
@@ -206,5 +207,35 @@ describe('Linear or Constant between poses (Houdini MotionClip Evaluate)', () =>
       expect(pose.sample(t)[1].quaternion).toEqual(band(t).quaternion);
     }
     expect(pose.sample(0.5)[1].position).toEqual([0, 1, 0]);
+  });
+});
+
+describe('Mirrored Loop (Houdini MotionClip end behaviour)', () => {
+  const walk = clip(
+    [
+      { time: 0, bones: { arm: { position: [0, 0, 0], quaternion: Q0 } } },
+      { time: 2, bones: { arm: { position: [0, 4, 0], quaternion: QZ90 } } },
+    ],
+    { loop: 'mirror' },
+  );
+
+  it('past the end it plays back; before the start it plays forward reflected; no seam jumps', () => {
+    const pose = posedSkeletonFromClip(walk);
+    const y = (t: number) => pose.sample(t)[1].position[1];
+    expect(y(2.5)).toBeCloseTo(y(1.5), 12);
+    expect(y(3)).toBeCloseTo(y(1), 12);
+    expect(y(4)).toBeCloseTo(y(0), 12);
+    expect(y(5)).toBeCloseTo(y(1), 12);
+    expect(y(-0.5)).toBeCloseTo(y(0.5), 12);
+    // Continuous at the reflection: just before and just after the end meet.
+    expect(Math.abs(y(2 - 1e-6) - y(2 + 1e-6))).toBeLessThan(1e-5);
+    // The rotation mirrors too.
+    const q = (t: number) => pose.sample(t)[1].quaternion;
+    q(2.5).forEach((v, i) => expect(v).toBeCloseTo(q(1.5)[i], 12));
+  });
+
+  it('only a MotionClip offers it: TransformClip, which cannot mirror, refuses it rather than holding', () => {
+    expect(AnimationClipParams.parse({ loop: 'mirror' }).loop).toBe('mirror');
+    expect(TransformClipParams.safeParse({ loop: 'mirror' }).success).toBe(false);
   });
 });

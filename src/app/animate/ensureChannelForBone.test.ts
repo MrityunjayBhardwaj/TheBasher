@@ -249,6 +249,23 @@ describe('#913 the mint carries the clip time domain', () => {
     }
   });
 
+  it('#1225 — a bone minted from a MIRRORED clip plays back and forth as the clip does', () => {
+    const state = riggedState({ loop: 'mirror' });
+    const sample = buildVec3Sampler(mintedParams(state, 'position'));
+    const fromClip = buildClipBoneSamplers({
+      keyframes: (state.nodes.n_clip as { params: AnimationClipParams }).params.keyframes,
+      duration: D,
+      loop: 'mirror',
+    }).get(1)!;
+    for (const t of [D + 0.25, D * 1.5, D * 2 + 0.25, -0.25]) {
+      const a = fromClip(t).position;
+      const b = sample(t);
+      b.forEach((v, i) => expect(v, `t ${t}`).toBeCloseTo(a[i], 6));
+    }
+    // Mirrored, not repeated: a quarter past the end is a quarter BEFORE it.
+    expect(sample(D + 0.25)).toEqual(sample(D - 0.25));
+  });
+
   it('a bone minted from a NON-looping clip still holds — the fix must not make everything cycle', () => {
     const params = mintedParams(riggedState({ loop: 'hold' }), 'position');
     expect(params.modifiers ?? []).toEqual([]);
