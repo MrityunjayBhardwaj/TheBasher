@@ -87,12 +87,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     'The P3 locomotion species — see #998. buildWalkToOps returns null without one, which ' +
     'is why WalkPath has a road it can never actually be taken.',
 
-  PoseLayer:
-    'Built ahead of its roads on purpose (#1240): the node and its fold land first, proven by ' +
-    'unit and deform tests. Its two roads in are filed and next — saved PoseOverride nodes ' +
-    'convert into one (#1243), and posing a bone from the pose row, the gizmo or the agent ' +
-    'writes into one (#1244). Remove this entry when either lands.',
-
   PosedSkeleton:
     'Deliberate and known: the target shape of the pose lane, defined early and left ' +
     'unwired. PoseOverride (#993) is the reachable half; this is the socket type both ' +

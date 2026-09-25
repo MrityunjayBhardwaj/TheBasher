@@ -82,7 +82,8 @@ export function expandClosure(spec: ClosureSpec, state: DagState): ClosureSet {
   // `visited` set for membership but uses a kind-local frontier so a
   // 'children' descendant is never followed via 'parent'.
   for (const kind of spec.followedEdges) {
-    walkKind(spec.rootSelectors, kind, maxDepth, state, consumersOf, idRefsInto, visited, edges);
+    const depth = spec.depthByKind?.[kind] ?? maxDepth;
+    walkKind(spec.rootSelectors, kind, depth, state, consumersOf, idRefsInto, visited, edges);
   }
 
   return {

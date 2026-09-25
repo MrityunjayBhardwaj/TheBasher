@@ -90,7 +90,7 @@ import { ParamDiamond } from './ParamDiamond';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
-import { poseTargetForBone } from './animate/poseTargetForBone';
+import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
 import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   boneMapView,
@@ -3941,6 +3941,8 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
   );
   const [refusal, setRefusal] = useState<string | null>(null);
   if (!target) return null;
+  // #1244 — a native character's bone: posed into the layer feeding its armature Object.
+  if (target.kind === 'object') return <ObjectBonePoseRow target={target} />;
 
   if (target.overrideId !== null) {
     const rotation = (state.nodes[target.overrideId]?.params as { rotation?: unknown } | undefined)
@@ -3973,6 +3975,71 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
       >
         pose this bone
       </button>
+      {refusal !== null ? (
+        <div
+          className="mt-1 font-mono text-[10px] text-warn"
+          data-testid="inspector-bone-pose-refusal"
+        >
+          {refusal}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * #1244 — the pose row for a bone of an armature Object. Both gestures go through
+ * `mutator.animate.poseBone` (the agent's verb, anchored on the Object): the first pose inserts a
+ * pose layer under the Object, and every edit after it rewrites that bone's member. A member is an
+ * entry in a list found by bone name, so there is no param path for an ordinary param row to write.
+ */
+function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const pose = (rotation: [number, number, number]) => {
+    const res = dispatchMutatorFromUI(
+      'mutator.animate.poseBone',
+      { object: target.objectId, bone: target.bone, rotation },
+      `pose ${target.bone}`,
+    );
+    setRefusal(res.ok ? null : res.reason);
+  };
+  const rotation = target.rotation;
+  return (
+    <div className="mt-2" data-testid="inspector-bone-pose">
+      {rotation === null ? (
+        <button
+          type="button"
+          className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
+          data-testid="inspector-bone-pose-add"
+          // Seeded at zero so asking for a pose is not itself a pose; the member then holds
+          // against the motion underneath, dragged back to zero or not.
+          onClick={() => pose([0, 0, 0])}
+        >
+          pose this bone
+        </button>
+      ) : (
+        <div className="flex items-center gap-1 text-[11px] text-fg/80">
+          <span className="w-14 font-mono text-[10px] text-fg/50">rotation</span>
+          {(['x', 'y', 'z'] as const).map((axis, i) => (
+            <input
+              key={axis}
+              type="number"
+              step="1"
+              aria-label={`rotation ${axis}`}
+              value={rotation[i]}
+              data-testid={`inspector-bone-pose-rotation-${axis}`}
+              className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) => {
+                const next = parseFloat(e.target.value);
+                if (Number.isNaN(next)) return;
+                const r: [number, number, number] = [rotation[0], rotation[1], rotation[2]];
+                r[i] = next;
+                pose(r);
+              }}
+            />
+          ))}
+        </div>
+      )}
       {refusal !== null ? (
         <div
           className="mt-1 font-mono text-[10px] text-warn"

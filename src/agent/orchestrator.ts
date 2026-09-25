@@ -1151,6 +1151,8 @@ const KNOWN_EDGE_KINDS_LIST = [
   // NLA strips naming their subject by id in params). Followed by the delete sweep so
   // the nodes it removes or repoints are inside its own closure.
   'id-ref',
+  // #1244 — the pose wire under an armature Object (its `pose` input and each layer's).
+  'pose',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

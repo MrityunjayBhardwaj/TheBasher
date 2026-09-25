@@ -83,15 +83,22 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { edgeTarget, type GraphNodeLike } from '../../../app/animate/graphNodes';
-import { overrideChain } from '../../../app/animate/poseChain';
+import { overrideChain, poseLayerChain } from '../../../app/animate/poseChain';
+import type { PoseLayerMember } from '../../../nodes/PoseLayer';
 import { bonesOfSkeletonNode } from '../../../app/animate/retargetFromNodes';
 import { resolveBoneNames } from '../../../core/import/retarget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
 const PoseBoneSpec = z.object({
-  /** The `RetargetClip` whose rig is being posed — the anchor of the pose chain. */
-  retarget: z.string().min(1),
+  /** The `RetargetClip` whose rig is being posed — the anchor of the pose chain (clone road). */
+  retarget: z.string().min(1).optional(),
+  /**
+   * #1244 — the armature Object being posed (a native character). The pose goes into the pose
+   * layer feeding the Object, one is inserted when there is none. Exactly one of `retarget` and
+   * `object` is given.
+   */
+  object: z.string().min(1).optional(),
   /**
    * The bone to pose. Accepted in EITHER spelling — the live three.js name
    * (`mixamorigHips`) or the DAG's (`mixamorig_Hips`) — and stored as the rig's
@@ -127,6 +134,31 @@ function overrideIdFor(spec: PoseBoneSpec): NodeId {
   return spec.overrideId ?? `${spec.retarget}_${safeName(spec.bone)}_pose`;
 }
 
+/** #1244 — the id of the pose layer a first pose inserts under an armature Object. */
+export function poseLayerIdFor(objectId: string): NodeId {
+  return `${objectId}_pose_layer`;
+}
+
+const asGraph = (state: DagState) =>
+  state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+
+/** The bones of the skeleton an armature Object stands, or null when its data is not one. */
+function objectBonesOf(state: DagState, objectId: string): readonly { name: string }[] | null {
+  const node = state.nodes[objectId];
+  if (!node || node.type !== 'Object') return null;
+  const skeleton = state.nodes[edgeTarget(asGraph(state)[objectId], 'data') ?? ''];
+  if (skeleton?.type !== 'Skeleton') return null;
+  return ((skeleton.params as { bones?: { name: string }[] }).bones ?? []) as { name: string }[];
+}
+
+/** The layer a pose on `objectId` is written into: the override layer feeding the Object, if any. */
+function editLayerOf(state: DagState, objectId: string): string | null {
+  const { layers } = poseLayerChain(asGraph(state), objectId);
+  const top = layers[0];
+  const mode = top ? (state.nodes[top].params as { mode?: unknown }).mode : undefined;
+  return top !== undefined && (mode === undefined || mode === 'override') ? top : null;
+}
+
 /** The bones of the rig a `RetargetClip` drives, or null when it names none. */
 function targetBonesOf(state: DagState, retargetId: string): readonly { name: string }[] | null {
   const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
@@ -156,15 +188,17 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
   // "summary" then runs on to the next capital — the measured way three entries
   // became 400-550 characters each and pushed the catalog over its byte ceiling.
   description:
-    'Hand-pose ONE bone of a retargeted rig, by minting a PoseOverride on the ' +
-    "RetargetClip's pose chain or extending that bone's existing override. " +
+    'Hand-pose ONE bone of a character, held against the motion underneath. ' +
+    'Anchor with `object` (an armature Object): the pose goes into the pose layer feeding it, ' +
+    'one is inserted when there is none. Or anchor with `retarget` (a RetargetClip on an ' +
+    "imported rig): a PoseOverride on its pose chain, or that bone's existing override. " +
     'Position is local translation; rotation is local Euler DEGREES XYZ, and at ' +
     'least one of the two is required — an override authoring neither is inert. ' +
     'The bone may be named in either the live-scene or the DAG spelling; it is ' +
     "stored as the rig's own.",
   spec: PoseBoneSpec,
   specExample: {
-    retarget: 'node_id',
+    object: 'node_id',
     bone: 'mixamorig_LeftArm',
     rotation: [0, 0, 45],
   },
@@ -172,24 +206,35 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     // 'parent' walks consumer-side from the retarget, which is how the existing
     // pose chain gets into the closure: an override is reached only by the node
     // that consumes the retarget, then the node that consumes THAT.
-    requiredEdges: ['parent'],
-    requiredNodeTypes: ['RetargetClip'],
+    // #1244 — two anchors, two closures: the retarget's walks `parent`, the Object's walks `pose`.
+    // A static contract can name only what EVERY closure has, which is nothing; each anchor's
+    // node type is checked in `preconditions`, as the retarget mutator checks its skeletons.
+    requiredEdges: [],
+    requiredNodeTypes: [],
     // The rig's motion is untouched — an override REPLACES components of one
     // bone's sampled pose downstream of the retarget and writes nothing back.
     preserves: ['position', 'rotation', 'scale', 'material', 'children', 'animation'],
   },
   buildClosureSpec(spec): ClosureSpec {
+    if (spec.object !== undefined) {
+      // #1244 — the Object, the layer chain under it (`pose`), and the fresh layer id.
+      return {
+        rootSelectors: [spec.object, poseLayerIdFor(spec.object)],
+        followedEdges: ['pose'],
+      };
+    }
     // Roots: the anchor (whose consumer-side walk reaches the whole chain) and
     // the fresh id (a gate-3 isFreshAddNode, unused when build extends instead).
-    return { rootSelectors: [spec.retarget, overrideIdFor(spec)], followedEdges: ['parent'] };
+    return {
+      rootSelectors: [spec.retarget ?? '', overrideIdFor(spec)],
+      followedEdges: ['parent'],
+    };
   },
   preconditions(spec, _closure, state) {
-    const node = state.nodes[spec.retarget];
-    if (!node) return { ok: false, reason: `retarget "${spec.retarget}" not in DAG.` };
-    if (node.type !== 'RetargetClip') {
+    if ((spec.retarget === undefined) === (spec.object === undefined)) {
       return {
         ok: false,
-        reason: `"${spec.retarget}" is a ${node.type}; poseBone anchors on a RetargetClip (the node carrying the \`posed\` output).`,
+        reason: 'poseBone takes exactly one anchor: `object` (an armature Object) or `retarget`.',
       };
     }
     if (spec.position === undefined && spec.rotation === undefined) {
@@ -199,11 +244,39 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
           'poseBone needs position, rotation, or both — an override authoring neither component is inert.',
       };
     }
-    const bones = targetBonesOf(state, spec.retarget);
+    if (spec.object !== undefined) {
+      const bones = objectBonesOf(state, spec.object);
+      if (bones === null) {
+        return {
+          ok: false,
+          reason: `"${spec.object}" is not an armature Object (an Object whose data is a Skeleton).`,
+        };
+      }
+      if (!bones.some((b) => b.name === spec.bone)) {
+        return {
+          ok: false,
+          reason: `bone "${spec.bone}" is not on this rig. Its bones are: ${bones
+            .slice(0, 12)
+            .map((b) => b.name)
+            .join(', ')}${bones.length > 12 ? `, … (${bones.length} total)` : ''}.`,
+        };
+      }
+      return { ok: true };
+    }
+    const retarget = spec.retarget!;
+    const node = state.nodes[retarget];
+    if (!node) return { ok: false, reason: `retarget "${retarget}" not in DAG.` };
+    if (node.type !== 'RetargetClip') {
+      return {
+        ok: false,
+        reason: `"${retarget}" is a ${node.type}; poseBone anchors on a RetargetClip (the node carrying the \`posed\` output).`,
+      };
+    }
+    const bones = targetBonesOf(state, retarget);
     if (!bones || bones.length === 0) {
       return {
         ok: false,
-        reason: `retarget "${spec.retarget}" names no target rig (its \`skeleton\` input is unwired, or the rig has no bones).`,
+        reason: `retarget "${retarget}" names no target rig (its \`skeleton\` input is unwired, or the rig has no bones).`,
       };
     }
     if (resolveBoneOn(bones, spec.bone) === null) {
@@ -218,13 +291,15 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
+    if (spec.object !== undefined) return buildOnObject(spec, spec.object, state);
+    const retarget = spec.retarget!;
     const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
-    const bones = targetBonesOf(state, spec.retarget);
+    const bones = targetBonesOf(state, retarget);
     // Non-null by the precondition; the fallback keeps `build` total rather than
     // throwing into gate 5 if it is ever called without one.
     const bone = (bones && resolveBoneOn(bones, spec.bone)) ?? spec.bone;
 
-    const chain = overrideChain(nodes, spec.retarget);
+    const chain = overrideChain(nodes, retarget);
     const existing = chain.find((o) => o.bone === bone);
 
     // The authored set is the union of what is already authored and what this
@@ -268,7 +343,7 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     // MINT, onto the tip of the chain — the retarget itself when there is none.
     // The tip's output socket differs by type: a retarget hands out `posed`, an
     // override `out`.
-    const tip = chain.length > 0 ? chain[chain.length - 1].id : spec.retarget;
+    const tip = chain.length > 0 ? chain[chain.length - 1].id : retarget;
     const fromSocket = chain.length > 0 ? 'out' : 'posed';
     const overrideId = overrideIdFor(spec);
 
@@ -293,3 +368,61 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     ];
   },
 };
+
+/**
+ * #1244 — pose a bone of a native character: write it into the override layer feeding its armature
+ * Object, as a member held against whatever motion arrives underneath — keyed bones included (the
+ * decision on #1214: Blender drops such a pose at the next frame, we keep it).
+ *
+ * The rotation keeps this verb's one meaning, local euler DEGREES in the codebase's order, which is
+ * Blender's `ZYX` (`bonePose.ts`, `EULER_ORDERS`); the member is stored in that mode. Members are a
+ * list found by bone name, so the whole list is written: a bone name never becomes a param path.
+ * With no layer feeding the Object, one is inserted between the Object and whatever posed it.
+ */
+function buildOnObject(spec: PoseBoneSpec, objectId: string, state: DagState): Op[] {
+  const existingLayer = editLayerOf(state, objectId);
+  const members: PoseLayerMember[] = existingLayer
+    ? [...((state.nodes[existingLayer].params as { members?: PoseLayerMember[] }).members ?? [])]
+    : [];
+  const at = members.findIndex((m) => m.bone === spec.bone);
+  const before = at >= 0 ? members[at] : undefined;
+  const member: PoseLayerMember = {
+    ...(before ?? { bone: spec.bone }),
+    bone: spec.bone,
+    rotationMode: spec.rotation !== undefined ? 'ZYX' : (before?.rotationMode ?? 'ZYX'),
+    ...(spec.position !== undefined ? { position: spec.position } : {}),
+    ...(spec.rotation !== undefined ? { rotation: spec.rotation } : {}),
+  };
+  if (at >= 0) members[at] = member;
+  else members.push(member);
+
+  if (existingLayer) {
+    return [{ type: 'setParam', nodeId: existingLayer, paramPath: 'members', value: members }];
+  }
+
+  const layerId = poseLayerIdFor(objectId);
+  const feed = state.nodes[objectId].inputs?.pose as { node: string; socket: string } | undefined;
+  return [
+    {
+      type: 'addNode',
+      nodeId: layerId,
+      nodeType: 'PoseLayer',
+      params: { name: 'pose', mode: 'override', members },
+    },
+    ...(feed
+      ? [
+          {
+            type: 'connect' as const,
+            from: { node: feed.node, socket: feed.socket },
+            to: { node: layerId, socket: 'pose' },
+          },
+        ]
+      : []),
+    {
+      type: 'connect',
+      from: { node: layerId, socket: 'out' },
+      to: { node: objectId, socket: 'pose' },
+      replace: true,
+    },
+  ];
+}

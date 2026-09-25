@@ -24,11 +24,32 @@ import type { DagState } from '../../core/dag/state';
 import { boundClipsForAsset } from './boundClipsForAsset';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { bonesOfSkeletonNode } from './retargetFromNodes';
-import { overrideChain } from './poseChain';
+import { overrideChain, poseLayerChain } from './poseChain';
+import type { PoseLayerMember } from '../../nodes/PoseLayer';
+import type { Vec3 } from '../../nodes/types';
 import { resolveBoneNames } from '../../core/import/retarget';
 import { selectedAssetRefs } from '../asset/bindMotionToCharacter';
 
+/**
+ * Where a hand-pose for the selected bone goes: onto a native character's armature Object (#1244),
+ * or onto the clone road's retarget chain. Both answer here, so the pose row asks one lookup; the
+ * clone half is deleted with the clone road (#1053).
+ */
+export type BonePoseTarget = PoseTarget | ObjectPoseTarget;
+
+/** #1244 — a native character: the pose goes into the layer feeding its armature Object. */
+export interface ObjectPoseTarget {
+  readonly kind: 'object';
+  /** The armature Object — the mutator's `object`. */
+  readonly objectId: string;
+  /** The bone, in the skeleton's own spelling. */
+  readonly bone: string;
+  /** The rotation already posed for this bone (degrees, the verb's order), or null when none is. */
+  readonly rotation: Vec3 | null;
+}
+
 export interface PoseTarget {
+  readonly kind: 'retarget';
   /** The `RetargetClip` a pose for this bone hangs off — the mutator's `retarget`. */
   readonly retargetId: string;
   /** The RIG's spelling of the selected bone — the mutator's `bone`. */
@@ -49,8 +70,34 @@ export function poseTargetForBone(
   state: DagState,
   nodeId: string,
   liveBoneName: string,
-): PoseTarget | null {
+): BonePoseTarget | null {
   const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+
+  // #1244 — a bone of an armature Object (the node a click on its bones selects): pose it there,
+  // whatever drives it. Any armature can be posed, as in Blender, not only a character.
+  const selected = state.nodes[nodeId];
+  const data =
+    selected?.type === 'Object' ? state.nodes[edgeTarget(nodes[nodeId], 'data') ?? ''] : null;
+  if (data?.type === 'Skeleton') {
+    const bones = ((data.params as { bones?: { name: string }[] }).bones ?? []) as {
+      name: string;
+    }[];
+    const resolved = bones.some((b) => b.name === liveBoneName)
+      ? liveBoneName
+      : resolveBoneNames([liveBoneName], bones as never)[liveBoneName];
+    if (resolved === undefined || !bones.some((b) => b.name === resolved)) return null;
+    const top = poseLayerChain(nodes, nodeId).layers[0];
+    const members = top
+      ? ((state.nodes[top].params as { members?: PoseLayerMember[] }).members ?? [])
+      : [];
+    const member = members.find((m) => m.bone === resolved);
+    return {
+      kind: 'object',
+      objectId: nodeId,
+      bone: resolved,
+      rotation: member?.rotation ? (member.rotation as Vec3) : null,
+    };
+  }
 
   // The retarget driving this rig, found through the SAME walk the render band uses to
   // decide which clips reach an asset — so the panel cannot offer a pose on a rig the band
@@ -77,5 +124,5 @@ export function poseTargetForBone(
   if (resolved === undefined || !bones.some((b) => b.name === resolved)) return null;
 
   const existing = overrideChain(nodes, retargetId).find((o) => o.bone === resolved);
-  return { retargetId, bone: resolved, overrideId: existing?.id ?? null };
+  return { kind: 'retarget', retargetId, bone: resolved, overrideId: existing?.id ?? null };
 }

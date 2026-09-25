@@ -38,7 +38,12 @@ export type EdgeKind =
   // repoints them needs them inside its closure or gate 3 rejects its own ops.
   // Walks BOTH directions of what a node type declares in `NodeDefinition.idRefs`:
   // nodes naming this one, and nodes this one names.
-  | 'id-ref';
+  | 'id-ref'
+  // #1244 — the pose wire: an armature Object's `pose` input and every `PoseLayer`'s, walked
+  // producer-side by socket name, so a writer that edits or rewires the layer chain under an
+  // Object has that chain in scope. Stops at the pose's source (a clip or a retarget carries
+  // no `pose` input), so it reaches layers and nothing past them.
+  | 'pose';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */
@@ -47,6 +52,12 @@ export interface ClosureSpec {
   followedEdges: EdgeKind[];
   /** Cap on traversal depth. Defaults to 256 (P-1 mitigation). */
   maxDepth?: number;
+  /**
+   * #1244 — a depth cap for ONE kind, overriding `maxDepth` for that kind's walk only. A mutator
+   * that keeps its consumer-side reach to one hop (`parent`, #907) can still walk a layer chain
+   * of any length (`pose`), without one cap having to serve both.
+   */
+  depthByKind?: Partial<Record<EdgeKind, number>>;
 }
 
 export interface ClosureEdge {

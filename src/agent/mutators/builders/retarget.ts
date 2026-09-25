@@ -48,7 +48,13 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Node, Op } from '../../../core/dag/types';
 import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
-import { standInObjectOf, standingObjectsOf } from '../../../core/import/skeletonObject';
+import {
+  skeletonObjectId,
+  standInObjectOf,
+  standingObjectsOf,
+} from '../../../core/import/skeletonObject';
+import { poseLayerChain } from '../../../app/animate/poseChain';
+import type { GraphNodeLike } from '../../../app/animate/graphNodes';
 
 /** Node types whose `out` is a `Skeleton` value — accepted as retarget source/target. */
 const SKELETON_NODE_TYPES = ['Skeleton', 'GltfSkeleton'] as const;
@@ -124,7 +130,10 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         spec.sourceClipId,
         spec.sourceSkeletonId,
         spec.targetSkeletonId,
-        ...(spec.targetObjectId ? [spec.targetObjectId] : []),
+        // #1244 — the Object the retarget poses, so its layer chain can be walked (`pose` below).
+        // Named, or else the one the import derived for the target skeleton; an Object pointed at
+        // the skeleton by hand with layers under it needs `targetObjectId` to be reached.
+        spec.targetObjectId ?? skeletonObjectId(spec.targetSkeletonId),
       ],
       // ONE 'parent' hop (#907) — the clips already bound to the target rig.
       //
@@ -138,8 +147,11 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       // working. A mutator that reaches further than it declares is the thing
       // this gate exists to catch; the answer is to declare the reach, not to
       // move the write somewhere the gate cannot see it.
-      followedEdges: ['parent'],
+      followedEdges: ['parent', 'pose'],
       maxDepth: 1,
+      // #1244 — the layer chain under the Object is walked to its bottom, whatever its length; the
+      // consumer-side reach above stays one hop.
+      depthByKind: { pose: 256 },
     };
   },
   preconditions(spec, _closure, state) {
@@ -304,12 +316,24 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     // holds one action, and Houdini's retarget output is the animated pose Joint Deform reads.
     // `replace: true` declares the displacement, and the inverse restores the old edge on undo.
     // No Object (a clone-road `GltfSkeleton`, whose pose is the active clip above) wires nothing.
+    //
+    // #1244 — AT THE BOTTOM OF THE OBJECT'S LAYERS. A pose layer edits whatever motion arrives, so a
+    // hand-pose stays on when the motion under it is replaced: the retarget takes the place of the
+    // chain's SOURCE, not of the Object's pose, and every layer above keeps its keys. With no layers
+    // the bottom is the Object itself.
     const posed = posedObjectOf(spec, _state);
     if (posed.ok && posed.objectId !== null) {
+      const { layers } = poseLayerChain(
+        _state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+        posed.objectId,
+      );
       ops.push({
         type: 'connect',
         from: { node: outputId, socket: 'posed' },
-        to: { node: posed.objectId, socket: 'pose' },
+        to: {
+          node: layers.length > 0 ? layers[layers.length - 1] : posed.objectId,
+          socket: 'pose',
+        },
         replace: true,
       });
     }

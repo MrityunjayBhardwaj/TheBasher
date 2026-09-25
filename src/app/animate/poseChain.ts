@@ -55,3 +55,41 @@ export function overrideChain(
   }
   return out;
 }
+
+/** The pose layers under an armature Object, and the source they edit. */
+export interface PoseLayerChain {
+  /** `PoseLayer` ids from the Object down: `[0]` feeds the Object, the last reads the source. */
+  readonly layers: readonly string[];
+  /** Where the bottom of the chain reads its pose — a clip's `pose`, a retarget's `posed` — or
+   *  null when nothing feeds it. */
+  readonly source: { readonly node: string; readonly socket: string } | null;
+}
+
+/**
+ * #1244 — the layer chain under an armature Object: ONE walk, for every writer of the native pose
+ * lane (the bind, which rewires the chain's bottom, and the pose writers, which edit its top).
+ *
+ * Walked PRODUCER-side from the Object's `pose` input, one hop at a time, while the producer is a
+ * `PoseLayer`; the first producer that is not one is the source. Unlike the clone road's override
+ * chain there is no fork to guard: every hop reads a single-cardinality input. Bounded by the node
+ * count so a malformed graph cannot spin.
+ */
+export function poseLayerChain(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  objectId: string,
+): PoseLayerChain {
+  const layers: string[] = [];
+  let at = nodes[objectId];
+  const limit = Object.keys(nodes).length;
+  for (let hops = 0; at && hops <= limit; hops++) {
+    const binding = at.inputs?.pose as { node?: string; socket?: string } | undefined;
+    const producer = binding?.node;
+    if (typeof producer !== 'string' || !nodes[producer]) return { layers, source: null };
+    if (nodes[producer].type !== 'PoseLayer' || layers.includes(producer)) {
+      return { layers, source: { node: producer, socket: binding?.socket ?? 'out' } };
+    }
+    layers.push(producer);
+    at = nodes[producer];
+  }
+  return { layers, source: null };
+}
