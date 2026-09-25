@@ -307,7 +307,7 @@ describe('#1244 — hand-posing a native character', () => {
       .dispatch({ type: 'setParam', nodeId: layer, paramPath: 'mode', value: 'additive' });
     const again = pose(armatureId, 'Bone1', [0, 0, 60]);
     expect(again.ok === false && again.reason).toMatch(
-      /is not an override layer in this Object's pose chain/,
+      /_pose_layer" is additive, not override, so it cannot take a pose/,
     );
   });
 

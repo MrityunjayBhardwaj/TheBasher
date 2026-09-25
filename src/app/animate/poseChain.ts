@@ -63,6 +63,13 @@ export interface PoseLayerChain {
   /** Where the bottom of the chain reads its pose — a clip's `pose`, a retarget's `posed` — or
    *  null when nothing feeds it. */
   readonly source: { readonly node: string; readonly socket: string } | null;
+  /**
+   * #1211 — the chain's BASE layer, or null: its bottom layer, when it is an override layer reading a
+   * skeleton's rest pose (`Skeleton.pose`). That is where an imported file's motion lives as keys, the
+   * counterpart of the action on a Blender armature. A bind replaces it (mutes it, as Blender swaps
+   * the action); a hand-pose never writes into it, so a hand-pose survives a rebind (#1244).
+   */
+  readonly base: string | null;
 }
 
 /**
@@ -84,12 +91,28 @@ export function poseLayerChain(
   for (let hops = 0; at && hops <= limit; hops++) {
     const binding = at.inputs?.pose as { node?: string; socket?: string } | undefined;
     const producer = binding?.node;
-    if (typeof producer !== 'string' || !nodes[producer]) return { layers, source: null };
+    if (typeof producer !== 'string' || !nodes[producer]) {
+      return { layers, source: null, base: null };
+    }
     if (nodes[producer].type !== 'PoseLayer' || layers.includes(producer)) {
-      return { layers, source: { node: producer, socket: binding?.socket ?? 'out' } };
+      const source = { node: producer, socket: binding?.socket ?? 'out' };
+      return { layers, source, base: baseOf(nodes, layers, source) };
     }
     layers.push(producer);
     at = nodes[producer];
   }
-  return { layers, source: null };
+  return { layers, source: null, base: null };
+}
+
+/** The bottom layer, when it is an override layer reading a skeleton's rest pose. */
+function baseOf(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  layers: readonly string[],
+  source: { readonly node: string; readonly socket: string },
+): string | null {
+  const bottom = layers[layers.length - 1];
+  if (bottom === undefined) return null;
+  if (nodes[source.node]?.type !== 'Skeleton' || source.socket !== 'pose') return null;
+  const mode = (nodes[bottom].params as { mode?: unknown } | undefined)?.mode;
+  return mode === undefined || mode === 'override' ? bottom : null;
 }

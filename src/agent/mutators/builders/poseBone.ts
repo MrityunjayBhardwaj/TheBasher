@@ -84,7 +84,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { edgeTarget, type GraphNodeLike } from '../../../app/animate/graphNodes';
 import { overrideChain, poseLayerChain } from '../../../app/animate/poseChain';
-import type { PoseLayerMember } from '../../../nodes/PoseLayer';
+import type { PoseLayerMember, PoseLayerParams } from '../../../nodes/PoseLayer';
 import { bonesOfSkeletonNode } from '../../../app/animate/retargetFromNodes';
 import { resolveBoneNames } from '../../../core/import/retarget';
 
@@ -155,13 +155,27 @@ function objectBonesOf(state: DagState, objectId: string): readonly { name: stri
  * The layer a pose on `objectId` is written into: the nearest OVERRIDE layer in the Object's chain,
  * walking down from the top (#1245). Additive layers above it keep adding on top of the pose, which
  * is what a layer stack means; only a chain with no override layer needs one inserted.
+ *
+ * #1211 — never the chain's BASE layer (an imported file's motion, as keys): a bind mutes that one,
+ * and a hand-pose survives a rebind (#1244). Never a MUTED layer either, where a pose would do
+ * nothing. With neither to take it, a layer is inserted directly under the Object, above the base.
  */
 function editLayerOf(state: DagState, objectId: string): string | null {
-  const { layers } = poseLayerChain(asGraph(state), objectId);
+  const { layers, base } = poseLayerChain(asGraph(state), objectId);
   for (const id of layers) {
-    const mode = (state.nodes[id].params as { mode?: unknown }).mode;
-    if (mode === undefined || mode === 'override') return id;
+    if (whyNotEditable(state, id, base) === null) return id;
   }
+  return null;
+}
+
+/** Why the chain layer `id` cannot take a hand-pose, or null when it can. The walk only passes
+ *  through `PoseLayer`s, so its params are that node's. */
+function whyNotEditable(state: DagState, id: string, base: string | null): string | null {
+  if (id === base) return "is this Object's base layer, which a bind replaces";
+  const params = state.nodes[id].params as Partial<PoseLayerParams>;
+  if (params.mute === true) return 'is muted';
+  if (params.mode !== undefined && params.mode !== 'override')
+    return `is ${params.mode}, not override`;
   return null;
 }
 
@@ -272,11 +286,14 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
       // cannot be invented here). Held by some other node, it is refused by name, not by collision.
       const layerId = poseLayerIdFor(spec.object);
       if (editLayerOf(state, spec.object) === null && state.nodes[layerId]) {
+        const { layers, base } = poseLayerChain(asGraph(state), spec.object);
+        const why = layers.includes(layerId) ? whyNotEditable(state, layerId, base) : null;
         return {
           ok: false,
-          reason:
-            `the pose layer "${layerId}" exists but is not an override layer in this Object's pose ` +
-            'chain; wire it back under the Object, or set its mode to override, to pose into it.',
+          reason: why
+            ? `the pose layer "${layerId}" ${why}, so it cannot take a pose.`
+            : `the pose layer "${layerId}" exists but is not an override layer in this Object's pose ` +
+              'chain; wire it back under the Object, or set its mode to override, to pose into it.',
         };
       }
       return { ok: true };
