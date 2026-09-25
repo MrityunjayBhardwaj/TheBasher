@@ -63,57 +63,42 @@ export function channelIsActive(ch: KeyframeChannelValue): boolean {
 }
 
 /**
- * The copy an overlay patches: what `JSON.parse(JSON.stringify(base))` gives, except that typed
- * arrays come back as the SAME arrays rather than as `{ "0": …, "1": … }`.
+ * The copy an overlay patches: a SHALLOW copy of the root. Everything below it is the very object
+ * the evaluator produced until `writeAt` writes through it, and a write copies only the path it
+ * goes through (copy-on-write, tracked per root).
  *
- * #1158 — a Group's value carries its children's, so an overlay on a Group clones its whole
- * subtree, and a stored mesh below it held its points and faces as typed arrays. JSON destroyed
- * them, and a cold geometry cache then built from the wreck and unmounted the editor. An overlay
- * writes params by path and never into a typed array, and the no-overlay road already hands
- * consumers these very arrays, so sharing them loses nothing.
+ * #1236 — this used to be a JSON-style deep copy, and that did two kinds of harm. It dropped every
+ * function, so a value carrying a pose as a `sample` closure lost it the moment its Object was
+ * keyed. And it copied everything else every frame, so a keyed armature Object copied its whole
+ * action — 2,425 µs a frame on `walk.bvh` (9,360 keys), against 42 µs for the deform itself — and
+ * every memo keyed on a sub-value's identity missed every frame (#1207: 10 skinned-mesh builds
+ * over 10 frames). Sharing what is not written fixes both, and it is what a reader of an unkeyed
+ * Object already gets. Blender's animation system works the same way: it writes each animated
+ * property path into the evaluated object and leaves what isn't animated alone.
  *
- * Written as a direct copy rather than JSON with a replacer: the replacer alone measured 2.7×
- * slower on a value with no typed array in it (9.3 → 25.4 µs), and this runs per animated node per
- * frame. It keeps JSON's rules for everything else — a non-finite number becomes null, `-0`
- * becomes 0, `undefined` and functions drop out of objects and become null in arrays, `toJSON` is
- * honoured, and only own enumerable keys are copied — so no overlay reads a different value.
+ * #1158's typed arrays are shared for the same reason, now without a special case.
+ *
+ * THE RULE THIS RESTS ON: nothing writes into an overlay's copy except through `writeAt`. The
+ * writers are the channel fold below, `overlayTransients`, and the two identity repairs in
+ * `overlayWithIdentity` (which the constraint road also calls on its own spread). A direct
+ * assignment below the root would write into the evaluator's cached value.
  */
 export function cloneForOverlay<T>(base: T): T {
-  return copyLikeJson(base, '') as T;
+  if (base === null || typeof base !== 'object') return base;
+  const root = (Array.isArray(base) ? base.slice() : { ...base }) as T & object;
+  ownedBy.set(root, new WeakSet());
+  return root;
 }
 
-function copyLikeJson(value: unknown, key: string): unknown {
-  if (value === null) return null;
-  switch (typeof value) {
-    case 'number':
-      return Number.isFinite(value) ? (value === 0 ? 0 : value) : null;
-    case 'string':
-    case 'boolean':
-      return value;
-    case 'object': {
-      if (ArrayBuffer.isView(value)) return value;
-      const toJSON = (value as { toJSON?: (key: string) => unknown }).toJSON;
-      if (typeof toJSON === 'function') return copyLikeJson(toJSON.call(value, key), key);
-      if (Array.isArray(value)) {
-        const out = new Array<unknown>(value.length);
-        for (let i = 0; i < value.length; i++) {
-          const item = copyLikeJson(value[i], String(i));
-          out[i] = item === undefined ? null : item;
-        }
-        return out;
-      }
-      const out: Record<string, unknown> = {};
-      for (const k of Object.keys(value)) {
-        const item = copyLikeJson((value as Record<string, unknown>)[k], k);
-        if (item !== undefined) out[k] = item;
-      }
-      return out;
-    }
-    default:
-      // undefined, function, symbol: absent, as JSON leaves them. (A bigint throws in JSON; none is
-      // ever an overlaid value.)
-      return undefined;
+/** Per root: the objects below it a write has already copied, and so may write into. */
+const ownedBy = new WeakMap<object, WeakSet<object>>();
+
+/** A copy of one object on a write's path, of the same shape. `null` when it cannot be copied. */
+function copyForWrite(value: object): object | null {
+  if (ArrayBuffer.isView(value)) {
+    return 'slice' in value && typeof value.slice === 'function' ? (value.slice() as object) : null;
   }
+  return Array.isArray(value) ? value.slice() : { ...value };
 }
 
 export function overlayChannels<T>(
@@ -176,22 +161,41 @@ export function readAt(obj: Record<string, unknown>, path: string): unknown {
 }
 
 /**
- * Write `value` at a dot-path on `obj`, IN PLACE. Shared with `overlayTransients`
+ * Write `value` at a dot-path on `obj`. Shared with `overlayTransients`
  * (issue #149) so the transient overlay writes a paramPath EXACTLY the way the
  * channel patch does — one path-writer, no drift (H40). A missing intermediate
  * object is a no-op (the path must already exist; every animated/transient
  * paramPath does, because routeAnimatedGrab only fires on an existing animated
  * field and the inspector/gizmo route the whole band).
+ *
+ * `obj` itself is written in place; every object BELOW it on the path is copied the first time
+ * a write goes through it from this root, and the copy is written instead (#1236). So a write
+ * never reaches an object the root shares with anything else — the evaluator's value under an
+ * overlay's shallow copy (`cloneForOverlay`), or the overlaid value under the constraint road's
+ * spread — and a second write through the same object reuses its copy.
  */
 export function writeAt(obj: Record<string, unknown>, path: string, value: unknown): void {
   const parts = path.split('.');
   const last = parts.pop();
   if (last == null) return;
+  let owned = ownedBy.get(obj);
+  if (!owned) {
+    owned = new WeakSet();
+    ownedBy.set(obj, owned);
+  }
   let cur: Record<string, unknown> = obj;
   for (const key of parts) {
     const nxt = cur[key];
     if (nxt == null || typeof nxt !== 'object') return;
-    cur = nxt as Record<string, unknown>;
+    if (owned.has(nxt)) {
+      cur = nxt as Record<string, unknown>;
+      continue;
+    }
+    const copy = copyForWrite(nxt);
+    if (copy === null) return;
+    owned.add(copy);
+    cur[key] = copy;
+    cur = copy as Record<string, unknown>;
   }
   cur[last] = value;
 }

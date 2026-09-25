@@ -218,9 +218,9 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
  * #1223 — each clip value's pose, built once. A clip value is made once per graph change (the
  * evaluator caches it), so every reader of the same clip — the deform, the bone draw, bone
  * parenting — shares one set of samplers instead of rebuilding them per call: measured at ~383 µs
- * a frame rebuilt against ~32 µs sampled on the 78-bone `walk.bvh` (#1222). An overlay copies a
- * keyed Object's value every frame (`cloneForOverlay`), and a copied clip is a new key here, so
- * a keyed armature Object still rebuilds per frame, as it did before this memo.
+ * a frame rebuilt against ~32 µs sampled on the 78-bone `walk.bvh` (#1222). An overlay on a
+ * keyed Object copies only the paths it writes (`cloneForOverlay`, #1236), so the clip under a
+ * keyed armature Object is the same value and this memo hits there too.
  */
 const posedByClip = new WeakMap<AnimationClipValue, PosedSkeletonValue>();
 

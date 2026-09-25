@@ -3,9 +3,10 @@
 //
 // ── THE DEFECT THIS EXISTS TO CLOSE ────────────────────────────────────────────────────
 //
-// The two primitives below are correct and untouched. `overlayChannels` deep-clones the
+// The two primitives below are correct and untouched. `overlayChannels` copies the
 // evaluated value and writes each sampled channel at its paramPath; `overlayTransients`
-// does the same for held, un-keyed edits. Neither mutates anything shared. What neither
+// does the same for held, un-keyed edits. Neither mutates anything shared: the copy is
+// shallow, and `writeAt` copies each object on a write's path before writing it (#1236). What neither
 // does — and could not, since neither knows what a material is — is RE-IDENTIFY the copy.
 //
 // Since #536 S1 the evaluator mints `MeshDataValue.materialKey`: the material's identity,
@@ -201,8 +202,9 @@ export function overlayWithIdentity<T>(
   // the static scene, which must cost nothing and must not churn the caller's memo.
   if (patched === base) return base as IdentityIntact<T>;
 
-  // `base` goes along as the handles' source: the patched value is a JSON clone, and a handle
-  // read off it has lost every typed array it carried (#1099).
+  // `base` goes along as the handles' source (#1099). Since #1236 the patched value shares every
+  // object the overlay did not write, so a handle read off either is the same one; reading it from
+  // the evaluator's value keeps that true whatever a copy does.
   return repairInvalidatedIdentity(band, patched, writtenPaths(channels, nodeId, transients), base);
 }
 
@@ -261,10 +263,11 @@ function rebuildInvalidatedHandles(
     // it is neither rebuilt from a descriptor field nor put back from the source.
     if (paths.some((p) => writeInvalidates(p, field.handlePath))) continue;
 
-    // #1099 — the handle comes from the UN-OVERLAID value, never from the clone. Both overlay
-    // primitives clone through JSON, and a handle whose descriptor carries stored mesh data
-    // (a native import, or a modifier whose `source` is one) comes back from JSON with every
-    // typed array turned into a plain `{ "0": …, "1": … }` object. Rebuilding an Array over
+    // #1099 — the handle comes from the UN-OVERLAID value, never from the clone. When this was
+    // written both overlay primitives cloned through JSON, and a handle whose descriptor carries
+    // stored mesh data (a native import, or a modifier whose `source` is one) came back with every
+    // typed array turned into a plain `{ "0": …, "1": … }` object (#1236 now shares what the
+    // overlay does not write, so the clone's handle is the source's own). Rebuilding an Array over
     // that source re-minted its tiled attributes from points with no `length` and threw,
     // unmounting the editor. The written PARAMS still come from the clone, which is where
     // the overlay put them; only the handle is taken from the value the evaluator produced.
@@ -331,8 +334,8 @@ function rebuildInvalidatedHandles(
  * spread), and it is the same precondition the overlay has always relied on.
  *
  * `source` is the value a handle is read from (#1099). The overlay passes the un-overlaid
- * base, because its clone went through JSON; the constraint road's spread copies no handle,
- * so there it is the value itself, the default.
+ * base, the value the evaluator produced; the constraint road's spread copies no handle, so
+ * there it is the value itself, the default.
  */
 export function repairInvalidatedIdentity<T>(
   band: OverlayBand,

@@ -2119,9 +2119,9 @@ export interface ModifiedDataValue {
  * evaluation, frozen on the value so the deform is a function of time alone.
  *
  * PLAIN DATA, NO CLOSURE. Time enters as an argument to `sampleSkinDeform`, never as an edge, and
- * the value carries no `sample` function of its own: an overlay copies a value the way JSON does
- * and drops every function in it (`cloneForOverlay`), so a closure here would vanish the moment a
- * channel touched the mesh's Object, and the deform with it.
+ * the value carries no `sample` function of its own. This shape was forced by the overlay, which
+ * copied a keyed Object's value the way JSON does and dropped every function in it; since #1236 it
+ * copies only the paths it writes and shares the rest, closures included.
  */
 export interface SkinDeformValue {
   readonly kind: 'SkinDeform';

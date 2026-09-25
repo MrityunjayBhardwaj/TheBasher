@@ -7,6 +7,9 @@
 // editor. Measured in the running app importing an animated file whose empty is keyed (#1051); here
 // the same shape is built on the plain native cube import, with a key put on its import Group.
 //
+// #1236 replaced the JSON clone with a copy of only the paths an overlay writes, so a typed array is
+// now shared like every other unwritten object; the last block pins that contract.
+//
 // These rows build the draw's own order: the parent's overlay first, the child read out of what it
 // produced, then the geometry built from a cold cache.
 
@@ -121,30 +124,83 @@ describe('#1158 — a stored mesh under an overlaid node keeps its data', () => 
   });
 });
 
-describe("#1158 — the overlay clone is JSON's, except for typed arrays", () => {
-  it('agrees with a JSON round trip on every value JSON treats specially', () => {
-    const odd = {
-      a: 1,
-      b: undefined,
-      c: () => 1,
-      d: [1, undefined, () => 2, NaN, Infinity, -0],
-      e: new Date(0),
-      f: new Map([[1, 2]]),
-      g: { h: null, i: 'x', j: true },
-      k: -0,
-      l: [[[1]]],
-    };
-    // Structural, never through JSON: stringifying the clone would re-apply the very rules under
-    // test (NaN → null, a hole → null) and pass a copy that broke them.
-    expect(cloneForOverlay(odd)).toStrictEqual(JSON.parse(JSON.stringify(odd)));
+describe('#1236 — an overlay copies only the paths it writes, and shares the rest', () => {
+  /** Freeze a value and everything under it, so any write that escapes the copy throws. */
+  function deepFreeze<T>(value: T): T {
+    if (value === null || typeof value !== 'object' || ArrayBuffer.isView(value)) return value;
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+    return value;
+  }
+  const at = (path: string, value: unknown) =>
+    ({
+      kind: 'KeyframeChannel',
+      name: 'c',
+      target: 't',
+      paramPath: path,
+      valueType: typeof value === 'number' ? 'number' : 'vec3',
+      sample: () => value,
+    }) as never;
+
+  it('shares what it does not write — typed arrays, functions, clips — as the same objects', () => {
+    const points = new Float32Array([1, 2, 3]);
+    const sample = (s: number) => [s];
+    const action = { keyframes: [{ time: 0 }] };
+    const base = deepFreeze({
+      data: { geometry: { points } },
+      pose: { kind: 'PosedSkeleton', sample },
+      action,
+      position: [0, 1, 0],
+    });
+    const out = overlayChannels(base, [at('position', [5, 0, 0])], 1, 0) as typeof base;
+    expect(out).not.toBe(base);
+    expect(out.position).toEqual([5, 0, 0]);
+    expect(out.data).toBe(base.data);
+    expect(out.data.geometry.points).toBe(points);
+    expect(out.pose).toBe(base.pose);
+    expect(out.pose.sample).toBe(sample);
+    expect(out.action).toBe(action);
   });
 
-  it('hands a typed array back as the same array, and copies everything around it', () => {
-    const points = new Float32Array([1, 2, 3]);
-    const base = { data: { geometry: { points } }, position: [0, 1, 0] };
-    const copy = cloneForOverlay(base);
-    expect(copy.data.geometry.points).toBe(points);
-    expect(copy.data).not.toBe(base.data);
-    expect(copy.position).not.toBe(base.position);
+  it('a write below the root copies its path and never reaches the base', () => {
+    const base = deepFreeze({
+      data: { size: [1, 1, 1], other: { keep: true } },
+      position: [0, 0, 0],
+    });
+    // A frozen base throws on any write that escapes the copy, so reaching here green is the proof.
+    const out = overlayChannels(base, [at('data.size.1', 4)], 1, 0) as typeof base;
+    expect(out.data.size).toEqual([1, 4, 1]);
+    expect(base.data.size).toEqual([1, 1, 1]);
+    expect(out.data).not.toBe(base.data);
+    expect(out.data.size).not.toBe(base.data.size);
+    expect(out.data.other).toBe(base.data.other);
+    expect(out.position).toBe(base.position);
+  });
+
+  it('a held edit on top of a channel, and the identity repair, write only into copies', () => {
+    const base = deepFreeze({ data: { size: [1, 1, 1] }, position: [0, 0, 0] });
+    const edits = new Map([
+      ['t:data.size.0', { nodeId: 't', paramPath: 'data.size.0', value: 9 }],
+    ]) as never;
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      't',
+      [at('data.size.1', 4)],
+      edits,
+      0,
+    ) as typeof base;
+    expect(out.data.size).toEqual([9, 4, 1]);
+    expect(base.data.size).toEqual([1, 1, 1]);
+    // The held edit's own copy never wrote into the channel overlay's intermediate either.
+    const channelOnly = overlayChannels(base, [at('data.size.1', 4)], 1, 0) as typeof base;
+    expect(channelOnly.data.size).toEqual([1, 4, 1]);
+  });
+
+  it('the no-write road still hands the base back by reference', () => {
+    const base = deepFreeze({ position: [0, 0, 0] });
+    expect(overlayChannels(base, [], 1, 0)).toBe(base);
+    expect(overlayTransients(base, 't', new Map())).toBe(base);
+    expect(cloneForOverlay(base)).not.toBe(base);
   });
 });
