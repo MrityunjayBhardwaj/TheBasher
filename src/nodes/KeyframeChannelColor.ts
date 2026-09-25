@@ -22,12 +22,32 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Easing, KeyframeChannelColorValue } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 export const KeyframeChannelColorParams = z.object({
   name: nameParam('channel'),
-  target: z.string().default(''),
-  paramPath: z.string().default(''),
+  // #1066 — picked from what a color channel animates, through a slot the app fills: the
+  // pickers' module reaches the node registry, so importing it here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('color'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('color'),
+    undefined,
+    'name',
+    channelPathLockOf('color'),
+  ),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),

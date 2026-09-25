@@ -181,6 +181,19 @@ export type OptionsValueKind = 'name' | 'nodeId';
 const VALUE_KINDS = new WeakMap<object, OptionsValueKind>();
 
 /**
+ * Why an `options` param cannot be picked right now, or null when it can (#1066).
+ *
+ * For a param whose list depends on another param, there are states where nobody knows
+ * the answer — a channel aimed at a node the census never measured. Offering a list there
+ * would be offering guesses, and an empty list would read as "nothing animates". So the
+ * control shows the stored value read-only, with this reason.
+ */
+export type OptionsLock = (state: DagState, nodeId: string) => string | null;
+
+/** Schema instance → its lock. Weak and keyed by identity for {@link WIDGETS}' reasons. */
+const LOCKS = new WeakMap<object, OptionsLock>();
+
+/**
  * Declare that `schema` is authored as a picker over `provider`'s live options, and return the
  * SAME schema.
  *
@@ -198,10 +211,18 @@ export function optionsParam<S extends z.ZodTypeAny>(
   provider: OptionsProvider,
   none?: string,
   valueKind: OptionsValueKind = 'name',
+  lock?: OptionsLock,
 ): S {
   PROVIDERS.set(schema, provider);
   if (valueKind !== 'name') VALUE_KINDS.set(schema, valueKind);
+  if (lock) LOCKS.set(schema, lock);
   return widget('options', schema, none);
+}
+
+/** The lock this `options` schema declares, or `undefined` if it is always pickable. */
+export function optionsLockOf(schema: unknown): OptionsLock | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return LOCKS.get(schema);
 }
 
 /** What this `options` schema's value names — `'name'` unless it declared otherwise. */

@@ -188,6 +188,23 @@ export function isAnimatable(
     : { answer: 'still', kind: row.kind };
 }
 
+/** Did the census place `subject` at all? "Measured, and nothing moves" and "never looked" are
+ *  different answers and a caller must be able to say which (#1066). */
+export function isMeasuredSubject(subject: string): boolean {
+  return subject in CENSUS.subjects;
+}
+
+/** The path patterns the census measured as animatable for `subject` with a `kind` channel,
+ *  before anything about an instance is asked — so a picker can tell "this subject has such
+ *  params, but here something else supplies them" from "this subject has none" (#1066). */
+export function measuredPathsOfSubject(subject: string, kind: ChannelValueKind): string[] {
+  const rows = CENSUS.subjects[subject];
+  if (!rows) return [];
+  return Object.entries(rows)
+    .filter(([, r]) => r.kind === kind && r.reach !== null)
+    .map(([p]) => p);
+}
+
 /** Every measured animatable path of `kind` on `nodeId`, in census order — a picker's list.
  *  Null when the census never placed this node's subject, so a caller can say so. */
 export function animatablePathsOf(

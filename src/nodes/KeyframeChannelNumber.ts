@@ -43,7 +43,13 @@ import {
   migrateExtendParamsToCycles,
   type FChannelModifier,
 } from './channelModifiers';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 const HandleSchema = z
   .object({
@@ -55,9 +61,23 @@ const HandleSchema = z
 export const KeyframeChannelNumberParams = z.object({
   name: nameParam('channel'),
   /** Target node id (resolved at apply time, not at evaluator time). */
-  target: z.string().default(''),
+  // #1066 — picked from what a number channel animates, through a slot the app fills: the
+  // pickers' module reaches the node registry, so importing it here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('number'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
   /** Param path on the target — e.g. 'intensity', 'fov'. */
-  paramPath: z.string().default(''),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('number'),
+    undefined,
+    'name',
+    channelPathLockOf('number'),
+  ),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),

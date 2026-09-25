@@ -70,6 +70,7 @@ import {
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import {
+  optionsLockOf,
   optionsOf,
   optionsValueKindOf,
   placeholderOf,
@@ -1073,6 +1074,13 @@ function OptionsParamField({
   );
   const none = declaredPlaceholder(nodeId, paramPath) ?? 'none';
   const field = paramPath.includes('.') ? null : fieldSchemaOf(nodeId, paramPath);
+  const lock = optionsLockOf(field);
+  const locked = useMemo(
+    () => (lock ? lock(state, nodeId) : null),
+    // `nodes` is the meaningful dep, for the list's reason above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, lock, nodeId],
+  );
   // #1065 — a node-id value that no option offers may still name a live node (the wrong kind,
   // or one a strip cannot drive). NodeRefField's wording, for the same reason.
   const staleLabel =
@@ -1080,6 +1088,21 @@ function OptionsParamField({
       ? (id: string) =>
           nodes[id] ? `${nodeDisplayName(nodes, id)} — not a valid target` : `${id} — not found`
       : undefined;
+  // #1066 — nobody knows this param's answer right now: show what is stored, and why it
+  // cannot be picked, instead of a list of guesses or an empty list that reads "nothing".
+  if (locked !== null)
+    return (
+      <div
+        className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
+        data-testid={`inspector-options-locked-${nodeId}-${paramPath}`}
+      >
+        <span className="font-mono text-fg/60">{paramPath}</span>
+        <span className="min-w-0 truncate text-right" title={locked}>
+          <span className="font-mono">{value || `— ${none} —`}</span>
+          <span className="text-fg/50"> — {locked}</span>
+        </span>
+      </div>
+    );
   return (
     <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{paramPath}</span>

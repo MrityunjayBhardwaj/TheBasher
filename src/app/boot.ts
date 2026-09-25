@@ -66,6 +66,9 @@ export const RIGGING_ERROR_REF = 'Rigging';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+// #1066 — fills the slot the keyframe channels' target/path pickers ask (a load-time side
+// effect on purpose: the schemas cannot import it without a cycle through the registry).
+import './channelPickers';
 import { registerAllTools } from '../agent/tools';
 import { registerAllMutators } from '../agent/mutators';
 import { registerAllStrategies } from '../agent/strategy';

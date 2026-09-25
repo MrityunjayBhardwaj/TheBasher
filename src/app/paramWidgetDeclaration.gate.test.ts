@@ -48,6 +48,15 @@ import { overrideDescriptor } from './overrideDescriptor';
 import { resolveActiveRigNode } from './resolveRigLightSources';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { activeProfileSelect, buildAddProfileOps } from './studioProfiles';
+import { isAnimatable } from './animatableParams';
+import { buildAddModifierOps } from './operatorStack';
+import { buildNewMaterialOps } from './materialLink';
+import { buildBindDriverOps } from './driverBind';
+// #1066 — loading the pickers fills the slot the channel schemas ask (boot does this in the app).
+import './channelPickers';
+import { bakeBasherControllerValues, bakeComfyBatchedTracks } from './video/compileComfyBatch';
+import { comfyParamPath, importComfyGraph, type ComfyApiJson } from '../core/comfy/comfyGraph';
+import { comfyControllerPath, scanBasherControllers } from '../core/comfy/basherControllers';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -318,14 +327,22 @@ describe('a param declares its control on its schema (#872)', () => {
     // below are gaps with a known shape: an identifier wants a PICKER over what exists, and
     // giving it free text would let a director type a name that silently selects nothing —
     // worse than read-only, because it looks like it worked. Tracked separately rather than
-    // papered over here — #1032 carries every WIRING and CHOICE entry still listed below (twenty-five
-    // when this was written; each picker that lands removes its own line).
+    // papered over here — #1032 carries every CHOICE entry and every named-wait entry still
+    // listed below (twenty-five when this was written; each picker that lands removes its own
+    // line). The last generic WIRING entry left in #1066; what wiring remains names its wait.
     const MINTED =
       'machine-minted — a hash, a handle or an id the product writes; typing one is never right';
-    const WIRING =
-      'names another node or a path into it — wants a picker, and free text would accept a target that resolves to nothing';
     const CHOICE =
       'selects from what exists at runtime — wants a picker over the live options, for the same reason';
+    // #1066 — channel wiring whose picker waits on a measurement, each named.
+    const NO_VEC2_ROWS =
+      'the animatable census has no vec2 rows (compositor layers, uvTransform), so no list could be honest (#1259)';
+    const NO_QUAT_ROWS =
+      'the animatable census has no quat rows (imported rotations, optional quaternion), so no list could be honest (#1259)';
+    const NOTHING_READS_IMAGE =
+      'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
+    const DRIVERS_UNMEASURED =
+      'drivers reach fewer readers than channels (the camera pose ignores them) and are not measured yet (#1258)';
 
     const ACKNOWLEDGED: Readonly<Record<string, string>> = {
       'AnimationClip.sourceHash': MINTED,
@@ -339,23 +356,18 @@ describe('a param declares its control on its schema (#872)', () => {
       'RenderJob.jobId': MINTED,
 
       // `FollowPath.target`, `Strip.action`, `Strip.target` and `TrackTo.target` left this list in
-      // #1065 — pickers over what the strip fold and the constraint fold can resolve.
-      'KeyframeChannelColor.paramPath': WIRING,
-      'KeyframeChannelColor.target': WIRING,
-      'KeyframeChannelImage.paramPath': WIRING,
-      'KeyframeChannelImage.target': WIRING,
-      'KeyframeChannelNumber.paramPath': WIRING,
-      'KeyframeChannelNumber.target': WIRING,
-      'KeyframeChannelQuat.paramPath': WIRING,
-      'KeyframeChannelQuat.target': WIRING,
-      'KeyframeChannelText.paramPath': WIRING,
-      'KeyframeChannelText.target': WIRING,
-      'KeyframeChannelVec2.paramPath': WIRING,
-      'KeyframeChannelVec2.target': WIRING,
-      'KeyframeChannelVec3.paramPath': WIRING,
-      'KeyframeChannelVec3.target': WIRING,
-      'ParamDriver.paramPath': WIRING,
-      'ParamDriver.target': WIRING,
+      // #1065 — pickers over what the strip fold and the constraint fold can resolve. The Number,
+      // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
+      // the census measured and what a ComfyUI batch reads. What stays has a named reason: a
+      // picker needs something that KNOWS which paths animate, and for these nothing does yet.
+      'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
+      'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
+      'KeyframeChannelQuat.paramPath': NO_QUAT_ROWS,
+      'KeyframeChannelQuat.target': NO_QUAT_ROWS,
+      'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
+      'KeyframeChannelVec2.target': NO_VEC2_ROWS,
+      'ParamDriver.paramPath': DRIVERS_UNMEASURED,
+      'ParamDriver.target': DRIVERS_UNMEASURED,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
@@ -403,7 +415,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(29);
+    expect(readOnly.length).toBe(21);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -547,6 +559,14 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       optionsWidget: [
         'FollowPath.target',
+        'KeyframeChannelColor.target',
+        'KeyframeChannelColor.paramPath',
+        'KeyframeChannelNumber.target',
+        'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelText.target',
+        'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec3.target',
+        'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
         'Strip.action',
         'Strip.target',
@@ -554,6 +574,14 @@ describe('a param declares its control on its schema (#872)', () => {
       ],
       withProvider: [
         'FollowPath.target',
+        'KeyframeChannelColor.target',
+        'KeyframeChannelColor.paramPath',
+        'KeyframeChannelNumber.target',
+        'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelText.target',
+        'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec3.target',
+        'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
         'Strip.action',
         'Strip.target',
@@ -640,6 +668,199 @@ describe('a param declares its control on its schema (#872)', () => {
 
     // Strip target — the add-strip popover's own rows, so the two cannot disagree.
     expect(enabled('Strip', 'target')).toEqual(stripTargetRows(s).map((r) => r.id));
+  });
+
+  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', () => {
+    // V558's property for the channel pickers, both ways, against each road's own answer:
+    //   - a scene node: the measured census (`isAnimatable`) on EVERY concrete leaf of the
+    //     channel's shape, so a path the picker drops or a pattern it mis-expands reds;
+    //   - a ComfyUI workflow: the batch bake itself — each input is keyed A → B and counts only
+    //     when the baked values move AND the baked input's declared kind is the channel's.
+    // Two workflows, one per compile mode, because Mode A reads controllers and IGNORES keyed
+    // foreign inputs: the mode branch is exactly what a picker could get wrong.
+    const apply = (st: DagState, ops: readonly Op[]) => {
+      let n = st;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const kind of SCENE_OBJECT_KINDS) {
+      const r = buildAddPrimitiveOps(s, kind, [1, 0, 0]);
+      if (r) s = apply(s, r.ops);
+    }
+    // The contexts the census answers "unmeasured" for, built by the product's own builders, so
+    // a picker that offered "not still" instead of "animates" would list them (and reds).
+    const placeKind = (kind: 'Cube' | 'Sphere' | 'Math') => {
+      const r = buildAddPrimitiveOps(s, kind, [2, 0, 0])!;
+      s = apply(s, r.ops);
+      return { obj: r.newNodeId, data: r.dataNodeId ?? r.newNodeId };
+    };
+    const linked = placeKind('Cube');
+    s = apply(s, buildNewMaterialOps(s, linked.data)!.ops);
+    const stacked = placeKind('Cube');
+    s = apply(s, buildAddModifierOps(s, stacked.data, 'UVProjectModifier')!.ops);
+    const aimed = placeKind('Cube');
+    s = apply(s, buildAddConstraintOps(s, aimed.obj, 'TrackTo')!.ops);
+    const driven = placeKind('Sphere');
+    const source = placeKind('Math');
+    const bind = buildBindDriverOps(s, {
+      targetId: driven.data,
+      paramPath: 'radius',
+      source: { kind: 'output', id: 'm', label: 'm', ref: { node: source.obj, socket: 'out' } },
+      driverId: 'drv',
+    });
+    s = apply(s, bind.ok ? bind.ops : []);
+    expect(bind.ok, 'the driver binds').toBe(true);
+
+    const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
+    const MODE_B: ComfyApiJson = {
+      '3': {
+        class_type: 'KSampler',
+        inputs: { seed: 42, steps: 20, cfg: 6.5, sampler_name: 'euler', denoise: 1 },
+      },
+      '5': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512 } },
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a cube' } },
+      '9': { class_type: 'LoadImage', inputs: { image: 'a.png' } },
+    };
+    const MODE_A: ComfyApiJson = {
+      '3': { class_type: 'KSampler', inputs: { cfg: ['10', 0], denoise: 1 } },
+      '10': {
+        class_type: 'basher_controller',
+        inputs: { name: 'CFG', kind: 'float', values_json: '[7.5]', frame_count: 1 },
+      },
+      '11': {
+        class_type: 'basher_controller',
+        inputs: { name: 'Prompt', kind: 'string', values_json: '["x"]', frame_count: 1 },
+      },
+      '12': {
+        class_type: 'basher_controller',
+        inputs: { name: 'Flip', kind: 'bool', values_json: '[false]', frame_count: 1 },
+      },
+    };
+    const WORKFLOWS: Record<string, ComfyApiJson> = { wfB: MODE_B, wfA: MODE_A };
+    s = apply(
+      s,
+      Object.entries(WORKFLOWS).map(([id, api]) => ({
+        type: 'addNode' as const,
+        nodeId: id,
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: importComfyGraph(api, META) },
+      })),
+    );
+
+    const CHANNELS = [
+      ['KeyframeChannelNumber', 'number', 1, 9],
+      ['KeyframeChannelVec3', 'vec3', [0, 0, 0], [1, 2, 3]],
+      ['KeyframeChannelColor', 'color', '#000000', '#ffffff'],
+      ['KeyframeChannelText', 'text', 'A', 'B'],
+    ] as const;
+    const shapeOf = (v: unknown): string | null => {
+      if (typeof v === 'number') return 'number';
+      if (typeof v === 'string') return /^#[0-9a-fA-F]{6}$/.test(v) ? 'color' : null;
+      if (Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number'))
+        return 'vec3';
+      return null;
+    };
+    const leaves = (v: unknown, at: string[], out: [string, string][]) => {
+      const shape = shapeOf(v);
+      if (shape) out.push([at.join('.'), shape]);
+      else if (v !== null && typeof v === 'object')
+        for (const [k, x] of Object.entries(v)) leaves(x, [...at, k], out);
+      return out;
+    };
+
+    const counted: Record<string, number> = {};
+    for (const [type, kind, a, b] of CHANNELS) {
+      const field = (key: string) =>
+        optionsOf((getNodeType(type)!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key])!;
+      const withProbe = (target: string, path: string, keyed: boolean) =>
+        apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'probe',
+            nodeType: type,
+            params: {
+              target,
+              paramPath: path,
+              keyframes: keyed
+                ? [
+                    { time: 0, value: a, easing: 'linear' },
+                    { time: 0.1, value: b, easing: 'linear' },
+                  ]
+                : [],
+            },
+          },
+        ]);
+
+      // What the pickers offer: every enabled target, then every enabled path on it.
+      const offered: string[] = [];
+      for (const t of field('target')(withProbe('', '', false), 'probe')) {
+        if (t.disabledReason) continue;
+        for (const pth of field('paramPath')(withProbe(t.value, '', false), 'probe'))
+          if (!pth.disabledReason) offered.push(`${t.value} ${pth.value}`);
+      }
+
+      // What animates, asked of each road independently of the pickers.
+      const truth: string[] = [];
+      // No scene param is a text channel's (the census measures no text), so its truth is
+      // ComfyUI-only below.
+      if (kind !== 'text')
+        for (const [id, node] of Object.entries(s.nodes)) {
+          if (node.type === 'ComfyUIWorkflow') continue;
+          for (const [path, shape] of leaves(node.params, [], []))
+            if (shape === kind && isAnimatable(s, id, path, kind).answer === 'animatable')
+              truth.push(`${id} ${path}`);
+        }
+      if (kind === 'number' || kind === 'text') {
+        const declared = kind === 'number' ? ['float', 'int'] : ['string'];
+        for (const [id, api] of Object.entries(WORKFLOWS)) {
+          const decls = scanBasherControllers(api);
+          const candidates = [
+            ...decls.map((d) => ({ path: comfyControllerPath(d.nodeId), declaredKind: d.kind })),
+            ...Object.entries(api).flatMap(([nid, n]) =>
+              Object.keys(n.inputs ?? {}).map((input) => ({
+                path: comfyParamPath(nid, input),
+                declaredKind: null as string | null,
+              })),
+            ),
+          ];
+          for (const c of candidates) {
+            const st = withProbe(id, c.path, true);
+            if (decls.length > 0) {
+              const baked = bakeBasherControllerValues(st, id, decls, 0, 3, 30, 4);
+              const moved = Object.entries(baked).some(
+                ([cid, vs]) =>
+                  comfyControllerPath(cid) === c.path && new Set(vs.map(String)).size > 1,
+              );
+              if (moved && declared.includes(String(c.declaredKind))) truth.push(`${id} ${c.path}`);
+            } else {
+              const track = bakeComfyBatchedTracks(
+                st,
+                id,
+                importComfyGraph(api, META),
+                0,
+                3,
+                30,
+                4,
+              ).find((t) => comfyParamPath(t.nodeId, t.inputName) === c.path);
+              if (
+                track &&
+                new Set(track.values.map(String)).size > 1 &&
+                declared.includes(track.valueKind)
+              )
+                truth.push(`${id} ${c.path}`);
+            }
+          }
+        }
+      }
+      expect({ kind, offered: [...offered].sort() }).toEqual({ kind, offered: [...truth].sort() });
+      counted[kind] = truth.length;
+    }
+    // The denominators ride with the verdict: an empty list on both sides would pass.
+    expect(
+      Object.values(counted).every((n) => n > 0),
+      JSON.stringify(counted),
+    ).toBe(true);
   });
 
   it('row 18 — every enabled profile option, once chosen, resolves to that rig on both roads (#1064)', () => {
