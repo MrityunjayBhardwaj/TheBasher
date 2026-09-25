@@ -90,6 +90,7 @@ import {
   whyNotHandPosable,
 } from '../../../app/animate/poseChain';
 import type { PoseLayerMember } from '../../../nodes/PoseLayer';
+import type { Vec3 } from '../../../nodes/types';
 import { bonesOfSkeletonNode } from '../../../app/animate/retargetFromNodes';
 import { resolveBoneNames } from '../../../core/import/retarget';
 
@@ -311,7 +312,12 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    if (spec.object !== undefined) return buildOnObject(spec, spec.object, state);
+    if (spec.object !== undefined) {
+      return handPoseOps(state, spec.object, spec.bone, {
+        ...(spec.position !== undefined ? { position: spec.position } : {}),
+        ...(spec.rotation !== undefined ? { rotation: spec.rotation } : {}),
+      });
+    }
     const retarget = spec.retarget!;
     const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
     const bones = targetBonesOf(state, retarget);
@@ -398,20 +404,30 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
  * Blender's `ZYX` (`bonePose.ts`, `EULER_ORDERS`); the member is stored in that mode. Members are a
  * list found by bone name, so the whole list is written: a bone name never becomes a param path.
  * With no layer feeding the Object, one is inserted between the Object and whatever posed it.
+ *
+ * The one builder of a hand-pose: this mutator, and a saved clone-road pose converting at load
+ * (#1216), both call it. `scale` is written by the conversion only (a clone bone could be scaled by
+ * hand); the mutator's spec has none.
  */
-function buildOnObject(spec: PoseBoneSpec, objectId: string, state: DagState): Op[] {
+export function handPoseOps(
+  state: DagState,
+  objectId: string,
+  bone: string,
+  pose: { readonly position?: Vec3; readonly rotation?: Vec3; readonly scale?: Vec3 },
+): Op[] {
   const existingLayer = editLayerOf(state, objectId);
   const members: PoseLayerMember[] = existingLayer
     ? [...((state.nodes[existingLayer].params as { members?: PoseLayerMember[] }).members ?? [])]
     : [];
-  const at = members.findIndex((m) => m.bone === spec.bone);
+  const at = members.findIndex((m) => m.bone === bone);
   const before = at >= 0 ? members[at] : undefined;
   const member: PoseLayerMember = {
-    ...(before ?? { bone: spec.bone }),
-    bone: spec.bone,
-    rotationMode: spec.rotation !== undefined ? 'ZYX' : (before?.rotationMode ?? 'ZYX'),
-    ...(spec.position !== undefined ? { position: spec.position } : {}),
-    ...(spec.rotation !== undefined ? { rotation: spec.rotation } : {}),
+    ...(before ?? { bone }),
+    bone,
+    rotationMode: pose.rotation !== undefined ? 'ZYX' : (before?.rotationMode ?? 'ZYX'),
+    ...(pose.position !== undefined ? { position: [...pose.position] } : {}),
+    ...(pose.rotation !== undefined ? { rotation: [...pose.rotation] } : {}),
+    ...(pose.scale !== undefined ? { scale: [...pose.scale] } : {}),
   };
   if (at >= 0) members[at] = member;
   else members.push(member);

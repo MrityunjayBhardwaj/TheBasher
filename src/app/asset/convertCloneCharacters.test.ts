@@ -122,7 +122,7 @@ describe('an untouched saved character', () => {
       expect(cloneTypes(saved).length).toBeGreaterThan(0);
       const { state, report } = await convertCloneCharacters(saved, deps(fixture));
       expect(report.kept).toEqual([]);
-      expect(report.converted).toEqual([{ name: 'skinned-bar.glb', assetRef: REF }]);
+      expect(report.converted).toEqual([{ name: 'skinned-bar.glb', assetRef: REF, notes: [] }]);
       expect(cloneTypes(state)).toEqual([]);
       expect(state.nodes).toEqual((await freshNative(fixture)).nodes);
     },
@@ -169,7 +169,7 @@ describe('edits carried across', () => {
       { type: 'setHidden', nodeId: grp, hidden: true },
     ]);
     const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
-    expect(report.converted).toEqual([{ name: 'Hero', assetRef: REF }]);
+    expect(report.converted).toEqual([{ name: 'Hero', assetRef: REF, notes: [] }]);
     const nativeGrp = hashId('nativeGrp', REF);
     expect(state.nodes.n_holder.inputs.children).toEqual([
       { node: nativeGrp, socket: 'out' },
@@ -249,13 +249,70 @@ describe('edits carried across', () => {
   });
 });
 
+describe('a moved child the file animates (the clone let the gizmo outrank the clip)', () => {
+  // The file's empty, animated by the same keys as its first channel (a rotation).
+  const animatedEmpty = () =>
+    glbWith('skinned-bar-child-mesh.glb', (json) => {
+      const first = json.animations[0].channels[0];
+      json.animations[0].channels.push({
+        sampler: first.sampler,
+        target: { node: 3, path: first.target.path },
+      });
+    });
+
+  it("converts: the moved value is written, the file's keys play over it (Blender), and the load says so", async () => {
+    const fixture = animatedEmpty();
+    let saved = await savedClone(fixture);
+    const armature = cloneChild(saved, 'SkinnedBar');
+    saved = apply(saved, [
+      { type: 'setParam', nodeId: armature, paramPath: 'position', value: [1, 0, 0] },
+      { type: 'setParam', nodeId: armature, paramPath: 'rotation', value: [0, 0, 90] },
+      {
+        type: 'setParam',
+        nodeId: armature,
+        paramPath: 'overridden',
+        value: { position: true, rotation: true },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps(fixture));
+    expect(report.kept).toEqual([]);
+    expect(report.converted[0].notes).toEqual([
+      `the file's animation now plays "SkinnedBar"'s rotation over the value it was moved to, as a value set under an F-curve is in Blender`,
+    ]);
+    const empty = hashId('nativeEmpty', REF, 'SkinnedBar');
+    const params = state.nodes[empty].params as { position: number[]; quaternion: number[] };
+    // The position is not keyed by the file: it stays where it was moved.
+    expect(params.position).toEqual([1, 0, 0]);
+    const s = Math.SQRT1_2;
+    [0, 0, s, s].forEach((v, i) => expect(params.quaternion[i]).toBeCloseTo(v, 12));
+    // The rotation is: the file's channel on it is there, and plays.
+    expect(state.nodes[`${empty}_quaternion_channel`]?.type).toBe('KeyframeChannelQuat');
+  });
+
+  it('a value moved without its override bit is not carried: the clone drew the clip there', async () => {
+    const fixture = animatedEmpty();
+    let saved = await savedClone(fixture);
+    saved = apply(saved, [
+      {
+        type: 'setParam',
+        nodeId: cloneChild(saved, 'SkinnedBar'),
+        paramPath: 'position',
+        value: [1, 0, 0],
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps(fixture));
+    expect(report.converted[0].notes).toEqual([]);
+    const native = await buildSavedCharacterOps(argsFor(fixture));
+    if ('refused' in native) throw new Error(native.refused);
+    expect(state.nodes).toEqual(apply(buildDefaultDagState(), native.ops).nodes);
+  });
+});
+
 describe('a character that is kept, and says why', () => {
-  it('a moved bone: kept as saved, named, and nothing written', async () => {
+  it('a renamed bone: kept as saved, named, and nothing written', async () => {
     let saved = await savedClone('skinned-bar.glb');
     const bone = cloneChild(saved, 'Bone1');
-    saved = apply(saved, [
-      { type: 'setParam', nodeId: bone, paramPath: 'rotation', value: [0, 0, 30] },
-    ]);
+    saved = apply(saved, [{ type: 'setMeta', nodeId: bone, name: 'Forearm' }]);
     const stored: string[] = [];
     const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb', stored));
     expect(state).toBe(saved);
@@ -264,7 +321,7 @@ describe('a character that is kept, and says why', () => {
       {
         name: 'skinned-bar.glb',
         assetRef: REF,
-        why: ['"Bone1" was moved, and it is a bone, whose pose this step does not carry yet'],
+        why: ['"Forearm" was renamed, and it is a bone, which has no node of its own natively'],
       },
     ]);
     expect(stored).toEqual([]);
@@ -277,27 +334,8 @@ describe('a character that is kept, and says why', () => {
     const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
     expect(state).toBe(saved);
     expect(report.kept[0].why).toEqual([
-      '"Bone0" was hidden, and it is a bone, whose pose this step does not carry yet',
+      '"Bone0" was hidden, and it is a bone, which has no node of its own natively',
     ]);
-  });
-
-  it('a moved child the file animates: kept (the clone let the gizmo outrank the clip)', async () => {
-    // The file's empty, animated by the same keys as its first channel.
-    const animatedEmpty = glbWith('skinned-bar-child-mesh.glb', (json) => {
-      const first = json.animations[0].channels[0];
-      json.animations[0].channels.push({
-        sampler: first.sampler,
-        target: { node: 3, path: first.target.path },
-      });
-    });
-    let saved = await savedClone(animatedEmpty);
-    const armature = cloneChild(saved, 'SkinnedBar');
-    saved = apply(saved, [
-      { type: 'setParam', nodeId: armature, paramPath: 'position', value: [1, 0, 0] },
-    ]);
-    const { state, report } = await convertCloneCharacters(saved, deps(animatedEmpty));
-    expect(state).toBe(saved);
-    expect(report.kept[0].why).toEqual(['"SkinnedBar" was moved, and it is animated by the file']);
   });
 
   it('a rotation channel on a child: kept (euler degrees have no place on a quaternion-mode node)', async () => {
@@ -369,7 +407,10 @@ describe('the load door: saved to storage, loaded back, converted', () => {
     const loaded = await loadProject(storage, 'proj_saved');
 
     const { project, report } = await convertLoadedProject(loaded, storage);
-    expect(report).toEqual({ converted: [{ name: 'skinned-bar.glb', assetRef: REF }], kept: [] });
+    expect(report).toEqual({
+      converted: [{ name: 'skinned-bar.glb', assetRef: REF, notes: [] }],
+      kept: [],
+    });
     expect(project.id).toBe('proj_saved');
     expect(project.state.nodes).toEqual((await freshNative('skinned-bar.glb')).nodes);
 

@@ -140,6 +140,29 @@ export interface NativeImportResult {
    * the clone road keys its children by it too (`keyByGltfNodeIndex`), while the names differ.
    */
   readonly nodeIds: readonly (string | null)[];
+  /**
+   * #1216 — each armature, in the order the reader meets them: its `Skeleton`, the Object standing
+   * it, and each bone's name by the glTF node the bone is. With `skinSkeleton` (per skin, in
+   * `json.skins` order, the armature it binds to) this is the join a saved clone-road rig needs: the
+   * clone names a bone by its joint key, the native skeleton by Blender's spelling, and the node index
+   * is the one thing both agree on.
+   */
+  readonly skeletons: readonly {
+    readonly skeletonId: string;
+    readonly objectId: string;
+    readonly boneNames: ReadonlyMap<number, string>;
+  }[];
+  readonly skinSkeleton: readonly number[];
+  /**
+   * #1216 — the nodes each of the file's animations lives in, in file order (#1154): the first one's
+   * base pose layers and bare Object channels, each later one's held (muted) layers and its NLA track.
+   * What a director mutes and unmutes to switch which animation plays.
+   */
+  readonly takes: readonly {
+    readonly layers: readonly string[];
+    readonly channels: readonly string[];
+    readonly track: string | null;
+  }[];
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -1717,7 +1740,51 @@ async function buildNativeOps(
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
   });
-  return { ops, groupId, objectIds, nodeIds };
+  // #1216 — the ids above, gathered for a caller that must address them by the file's structure.
+  const firstBoneKey = (s: number): string => keyByGltfNodeIndex[skeletons[s].boneNodes[0]];
+  const skeletonIds = skeletons.map((skeleton, s) => ({
+    skeletonId: nativeSkeletonId(args.assetRef, firstBoneKey(s)),
+    objectId: skeletonObjectOf(s),
+    boneNames: new Map(skeleton.boneNodes.map((node, b) => [node, skeleton.bones[b].name])),
+  }));
+  const objectChannelIds = (animation: NativeAnimation): string[] => [
+    ...new Set(
+      animation.channels
+        .filter((channel) => !isBone.has(channel.node))
+        .map((channel) => `${idOfNode(channel.node)}_${CLIP_PARAM[channel.path]}_channel`),
+    ),
+  ];
+  const takes = read_.animations.map((animation, k) =>
+    k === 0
+      ? {
+          layers: skeletons.map((_, s) =>
+            hashId('nativePoseLayer', args.assetRef, firstBoneKey(s)),
+          ),
+          channels: objectChannelIds(animation),
+          track: null,
+        }
+      : {
+          layers: boneLayers.flatMap((layers, s) =>
+            layers.held.some((layer) => layer.index === k)
+              ? [hashId('nativePoseLayer', args.assetRef, firstBoneKey(s), String(k))]
+              : [],
+          ),
+          channels: [],
+          track:
+            objectChannelIds(animation).length > 0
+              ? hashId('nativeTrack', args.assetRef, String(k))
+              : null,
+        },
+  );
+  return {
+    ops,
+    groupId,
+    objectIds,
+    nodeIds,
+    skeletons: skeletonIds,
+    skinSkeleton: (read?.skins ?? []).map((skin) => skin.skeleton),
+    takes,
+  };
 }
 
 /**

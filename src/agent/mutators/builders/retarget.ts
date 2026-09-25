@@ -324,25 +324,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     // the bottom is the Object itself.
     const posed = posedObjectOf(spec, _state);
     if (posed.ok && posed.objectId !== null) {
-      const { layers, base } = poseLayerChain(
-        _state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
-        posed.objectId,
-      );
-      // #1211 — the chain's BASE layer holds the character's own motion as keys (an imported file's,
-      // or a hand-keyed one). The bound motion replaces it, as Blender swaps an armature's action:
-      // muted, never removed, so undo or an unmute brings it back. Layers above it keep their edits.
-      if (base !== null) {
-        ops.push({ type: 'setParam', nodeId: base, paramPath: 'mute', value: true });
-      }
-      ops.push({
-        type: 'connect',
-        from: { node: outputId, socket: 'posed' },
-        to: {
-          node: layers.length > 0 ? layers[layers.length - 1] : posed.objectId,
-          socket: 'pose',
-        },
-        replace: true,
-      });
+      ops.push(...bindPosedOps(_state, outputId, posed.objectId));
     }
 
     // #1056 — THE SOURCE RIG STEPS ASIDE. Every imported motion stands in the scene as an
@@ -369,6 +351,36 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     return ops;
   },
 };
+
+/**
+ * #1213 #1244 — a retarget becomes the pose of the armature Object `objectId`: its `posed` output
+ * connects at the BOTTOM of the Object's layer chain (the Object itself when there are none), so
+ * every layer above keeps its edits.
+ *
+ * #1211 — the chain's BASE layer holds the character's own motion as keys (an imported file's, or a
+ * hand-keyed one). The bound motion replaces it, as Blender swaps an armature's action: muted, never
+ * removed, so undo or an unmute brings it back.
+ *
+ * The one builder of a bind's wiring: the mutator and a saved clone-road bind converting at load
+ * (#1216) both call it.
+ */
+export function bindPosedOps(state: DagState, retargetId: string, objectId: string): Op[] {
+  const { layers, base } = poseLayerChain(
+    state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+    objectId,
+  );
+  const ops: Op[] = [];
+  if (base !== null) {
+    ops.push({ type: 'setParam', nodeId: base, paramPath: 'mute', value: true });
+  }
+  ops.push({
+    type: 'connect',
+    from: { node: retargetId, socket: 'posed' },
+    to: { node: layers.length > 0 ? layers[layers.length - 1] : objectId, socket: 'pose' },
+    replace: true,
+  });
+  return ops;
+}
 
 /**
  * #1213 — the armature Object the retarget poses: the one named, which must stand the target
