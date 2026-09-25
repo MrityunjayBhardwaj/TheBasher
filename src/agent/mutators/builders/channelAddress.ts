@@ -1,7 +1,7 @@
 // channelAddress — how an authoring op names the channel it writes to (#889).
 //
 // ─────────────────────────────────────────────────────────────────────────
-// WHY THERE ARE TWO FORMS, AND WHY THAT IS NOT A FALLBACK
+// WHY THERE IS MORE THAN ONE FORM, AND WHY THAT IS NOT A FALLBACK
 // ─────────────────────────────────────────────────────────────────────────
 // Every channel-authoring mutator was addressed by `channelId` alone, and
 // refused when the node was absent. That worked for exactly one reason: an
@@ -19,7 +19,7 @@
 // `bakeGltfChannel` has carried exactly this spec shape since Wave D for
 // exactly this reason.
 //
-// The two forms are an XOR, not a primary with a fallback. A fallback would be
+// The forms are an XOR, not a primary with a fallback. A fallback would be
 // worse than it looks: it fails only for a bone with NO channel, which under
 // copy-on-write is the common case, so a caller that forgot it would be green
 // everywhere except where it matters.
@@ -33,6 +33,13 @@
 //               which is all an id can ever do.
 //   bone      — a glTF bone's TRS component. May or may not have a channel yet;
 //               that is the caller's business, not the caller's problem.
+//               The CLONE road's form; it retires with that road (#1053).
+//   layer     — #1215: a bone's curve inside a `PoseLayer`, where a native
+//               character's keys live ({layerId, bone, component}). Not a
+//               node: found by the channel's own `bone` + `component` fields,
+//               written by rewriting the layer's whole channel list. Keying a
+//               curve that is not there creates it (and the bone's membership);
+//               removing its last key removes it — Blender's F-curve rules.
 //
 // 🔑 AND THE SPLIT IS ENFORCED, NOT DOCUMENTED (#889 slice 3). `resolveChannelAddress`
 // REFUSES a `channelId` that names a bone's channel. Without that, "address a bone
@@ -69,6 +76,7 @@ import {
   type PoseLayerMember,
   type PoseLayerParams,
 } from '../../../nodes/PoseLayer';
+import { SkeletonParams } from '../../../nodes/Skeleton';
 
 /**
  * The agent-facing address contract, WORD FOR WORD, for every authoring mutator's
@@ -230,6 +238,32 @@ function nodeWrite(channelId: string) {
 }
 
 /**
+ * #1254 — the bone names of the skeleton a pose layer poses: down the chain (each consumer reading the
+ * layer's `out` on its `pose` input) to the armature Object, then its `data` Skeleton. Null when the
+ * layer feeds no armature Object — the names cannot be known, which is not the same as "not there".
+ */
+function layerSkeletonBones(state: DagState, layerId: string): string[] | null {
+  let at = layerId;
+  const limit = Object.keys(state.nodes).length;
+  for (let hops = 0; hops <= limit; hops++) {
+    const next = Object.values(state.nodes).find(
+      (n) => (n.inputs?.pose as { node?: string } | undefined)?.node === at,
+    );
+    if (!next) return null;
+    if (next.type === 'Object') {
+      const data = (next.inputs?.data as { node?: string } | undefined)?.node;
+      const skeleton = data ? state.nodes[data] : undefined;
+      if (skeleton?.type !== 'Skeleton') return null;
+      const parsed = SkeletonParams.safeParse(skeleton.params ?? {});
+      return parsed.success ? parsed.data.bones.map((b) => b.name) : null;
+    }
+    if (next.type !== 'PoseLayer') return null;
+    at = next.id;
+  }
+  return null;
+}
+
+/**
  * #1215 — a bone's channel inside a pose layer. Keying a curve that is not there creates it (and the
  * bone's membership, in the mode the component implies), as Blender's key insert creates an F-curve
  * in the action; a curve left with no keys is removed, as Blender's key delete removes an emptied
@@ -281,6 +315,23 @@ function resolveLayerChannel(
     component !== 'weight' && !member
       ? { bone, rotationMode: component === 'quaternion' ? 'quaternion' : 'XYZ' }
       : null;
+  // #1254 — a new member must name a bone of the skeleton this layer poses (Blender's key insert on a
+  // pose bone that does not exist resolves no path and creates nothing).
+  if (addMember) {
+    const bones = layerSkeletonBones(state, layerId);
+    if (bones === null) {
+      return {
+        ok: false,
+        reason: `cannot tell which skeleton "${layerId}" poses (it feeds no armature Object), so "${bone}" cannot be checked.`,
+      };
+    }
+    if (!bones.includes(bone)) {
+      return {
+        ok: false,
+        reason: `the skeleton "${layerId}" poses has no bone "${bone}" (it has ${bones.length}: ${bones.slice(0, 8).join(', ')}${bones.length > 8 ? ', …' : ''}).`,
+      };
+    }
+  }
   return {
     ok: true,
     channelId: label,

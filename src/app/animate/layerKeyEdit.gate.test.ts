@@ -221,6 +221,37 @@ describe('#1215 — one key edited in the layer that holds it', () => {
     expect(!quat.ok && quat.reason).toMatch(/XYZ euler/);
   });
 
+  it('#1254 — refuses a bone the skeleton does not have, and a layer whose skeleton cannot be found', async () => {
+    const { layer } = await bar();
+    const misspelled = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      {
+        layer: { layerId: layer, bone: 'Bone_1', component: 'position' },
+        time: 0,
+        value: [0, 1, 0],
+      },
+      'key',
+    );
+    expect(!misspelled.ok && misspelled.reason).toMatch(/no bone "Bone_1".*Bone0, Bone1/);
+    // A layer feeding no armature Object: its skeleton cannot be known, and it says so.
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'addNode', nodeId: 'loose_layer', nodeType: 'PoseLayer', params: {} }],
+        'user',
+      );
+    const loose = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      {
+        layer: { layerId: 'loose_layer', bone: 'Bone1', component: 'position' },
+        time: 0,
+        value: [0, 1, 0],
+      },
+      'key',
+    );
+    expect(!loose.ok && loose.reason).toMatch(/cannot tell which skeleton/);
+  });
+
   it('refuses a rotation curve of the other mode, and names the one to use', async () => {
     const { layer } = await bar();
     const res = dispatchMutatorFromUI(

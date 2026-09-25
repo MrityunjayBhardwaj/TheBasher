@@ -334,8 +334,9 @@ const setKeys = (channelId: string) => (fields: Readonly<Record<string, unknown>
   );
 
 /**
- * Resolve the timeline's active row id — a real channel id, or a synthetic
- * `clip:<childName>:<component>` one — into the channel a write lands on.
+ * Resolve the timeline's active row id — a real channel id, a synthetic
+ * `clip:<childName>:<component>` one, or a pose layer's `layer:` row (#1215) —
+ * into the channel a write lands on, and the `write` that lands it there.
  *
  * The synthetic form is why this exists. A read-only clip row has no DAG node,
  * so every keyboard path bailed on it: `buildKeyframeInsertOp` and
