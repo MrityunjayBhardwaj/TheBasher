@@ -813,8 +813,8 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1063',
     ],
-    // A skin can deform and draw natively now (#393, #1197), and the refusal stays: a character on
-    // the native road could not yet take a motion or have its bones posed (#1205).
+    // A skin can deform and draw natively now (#393, #1197) and take a motion (#1213), and the
+    // refusal stays: a character on the native road could not yet have its bones posed (#1205).
     ['a skinned, animated rig', () => fixture('public/assets/skinned-bar.glb'), '#1205'],
     // #1196 — a vertex with more than four influences carries a second set, which a stored mesh does
     // not hold. Refused by the attribute guard, by name.

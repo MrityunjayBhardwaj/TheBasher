@@ -31,9 +31,10 @@
 // (#1219) — is refused by name like everything above.
 //
 // The product still refuses a skin, because the clone road does more for a CHARACTER than deform
-// it: a motion binds to it (only a `GltfSkeleton` is a motion target) and its bones can be
-// selected and posed. A skinned import taking this road would lose both. #1205 lifts the refusal
-// with them; until then only tests go past it, through the door below.
+// it: its bones can be selected and posed. A motion now binds to a native character too — the
+// retarget becomes its armature Object's pose (#1213) — but a skinned import taking this road would
+// still lose the posing. #1205 lifts the refusal with it; until then only tests go past it, through
+// the door below.
 //
 // ── IMAGES COME ACROSS AS THE PROJECT'S OWN FILES (#1050) ───────────────────────────────────────
 //
@@ -1337,8 +1338,7 @@ async function buildNativeOps(
   if (refusal !== null) return refusal;
   if (!pastSkinRefusal && (json.skins?.length ?? 0) > 0) {
     return {
-      refused:
-        'it is skinned, and a native character cannot yet take a motion or have its bones posed',
+      refused: 'it is skinned, and a native character cannot yet have its bones posed',
       issue: '#1205',
     };
   }

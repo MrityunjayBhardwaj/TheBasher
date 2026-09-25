@@ -29,7 +29,7 @@
 // operand, and requiring one would refuse a retarget that has everything it
 // needs. Its own header says why the time-freedom is the whole cost decision.
 //
-// Closure: roots = [sourceClipId, sourceSkeletonId, targetSkeletonId];
+// Closure: roots = [sourceClipId, sourceSkeletonId, targetSkeletonId, targetObjectId?];
 // followedEdges = []. Both new node ids are fresh — V13 allows addNode under
 // fresh-add semantics — and every connect TARGETS a fresh node.
 //
@@ -48,7 +48,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Node, Op } from '../../../core/dag/types';
 import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
-import { standInObjectOf } from '../../../core/import/skeletonObject';
+import { standInObjectOf, standingObjectsOf } from '../../../core/import/skeletonObject';
 
 /** Node types whose `out` is a `Skeleton` value — accepted as retarget source/target. */
 const SKELETON_NODE_TYPES = ['Skeleton', 'GltfSkeleton'] as const;
@@ -68,6 +68,11 @@ const RetargetSpec = z.object({
   /** Caller-supplied id; defaults to `<sourceClipId>_retargeted`. */
   outputClipId: z.string().optional(),
   outputName: z.string().optional(),
+  /**
+   * #1213 — the armature Object whose pose the retarget becomes. Optional: omitted, it is the one
+   * Object standing the target skeleton, and a skeleton several Objects stand is refused by name.
+   */
+  targetObjectId: z.string().min(1).optional(),
 });
 export type RetargetSpec = z.infer<typeof RetargetSpec>;
 
@@ -90,7 +95,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     ') or customMap for arbitrary rigs. ' +
     'Emits a RetargetClip node wired to the source clip, the map and the ' +
     'target rig, so editing either operand re-poses the target with no ' +
-    're-run; the source clip is left untouched. The Object the import stood the ' +
+    're-run; the source clip is left untouched. The retarget becomes the pose of the armature ' +
+    'Object standing the target skeleton (targetObjectId names it when several do), replacing ' +
+    'the pose it had. The Object the import stood the ' +
     'source skeleton up with is hidden in the same step, unless source and target are ' +
     'one skeleton.',
   spec: RetargetSpec,
@@ -113,7 +120,12 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
-      rootSelectors: [spec.sourceClipId, spec.sourceSkeletonId, spec.targetSkeletonId],
+      rootSelectors: [
+        spec.sourceClipId,
+        spec.sourceSkeletonId,
+        spec.targetSkeletonId,
+        ...(spec.targetObjectId ? [spec.targetObjectId] : []),
+      ],
       // ONE 'parent' hop (#907) — the clips already bound to the target rig.
       //
       // A bind now stands its predecessor down, and 'parent' walks consumer-side:
@@ -200,6 +212,8 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         reason: `Unknown mapPresetId "${spec.mapPresetId}". Known: ${knownIds}.`,
       };
     }
+    const posed = posedObjectOf(spec, state);
+    if (!posed.ok) return posed;
     return { ok: true };
   },
   // The build samples no operand off the graph: every one is named by an edge instead
@@ -283,6 +297,23 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       ops.push({ type: 'setParam', nodeId: id, paramPath: 'active', value: false });
     }
 
+    // #1213 — THE RETARGET BECOMES THE TARGET OBJECT'S POSE. An armature Object is posed by its
+    // `pose` edge and by nothing else (#1224): the deform, the bone draw and bone-parented Objects
+    // all read it, so a bind that left it alone moved nothing on a native character. A single
+    // socket holds one edge, so the connect REPLACES the pose it had — Blender's armature Object
+    // holds one action, and Houdini's retarget output is the animated pose Joint Deform reads.
+    // `replace: true` declares the displacement, and the inverse restores the old edge on undo.
+    // No Object (a clone-road `GltfSkeleton`, whose pose is the active clip above) wires nothing.
+    const posed = posedObjectOf(spec, _state);
+    if (posed.ok && posed.objectId !== null) {
+      ops.push({
+        type: 'connect',
+        from: { node: outputId, socket: 'posed' },
+        to: { node: posed.objectId, socket: 'pose' },
+        replace: true,
+      });
+    }
+
     // #1056 — THE SOURCE RIG STEPS ASIDE. Every imported motion stands in the scene as an
     // Object pointed at its skeleton, so it can be looked at before anything plays it. Once a
     // character does, that Object is a second rig standing beside the character, so the bind
@@ -307,6 +338,39 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     return ops;
   },
 };
+
+/**
+ * #1213 — the armature Object the retarget poses: the one named, which must stand the target
+ * skeleton, or else the one Object standing it. Null when none stands it (a clone-road rig). Several
+ * with none named is refused, naming them, because which of two Objects plays a motion is a choice.
+ */
+function posedObjectOf(
+  spec: RetargetSpec,
+  state: DagState,
+): { ok: true; objectId: string | null } | { ok: false; reason: string } {
+  if (spec.targetObjectId !== undefined) {
+    const node = state.nodes[spec.targetObjectId];
+    if (node?.type !== 'Object' || edgeSource(node, 'data') !== spec.targetSkeletonId) {
+      return {
+        ok: false,
+        reason:
+          `targetObjectId "${spec.targetObjectId}" is not an Object standing the target skeleton ` +
+          `"${spec.targetSkeletonId}" (its data must be that skeleton).`,
+      };
+    }
+    return { ok: true, objectId: spec.targetObjectId };
+  }
+  const standing = standingObjectsOf(state, spec.targetSkeletonId);
+  if (standing.length > 1) {
+    return {
+      ok: false,
+      reason:
+        `the target skeleton "${spec.targetSkeletonId}" stands as several Objects ` +
+        `(${standing.join(', ')}); pass targetObjectId to say which one takes the motion.`,
+    };
+  }
+  return { ok: true, objectId: standing[0] ?? null };
+}
 
 /** The node id feeding `node.inputs[socket]`, or null. */
 function edgeSource(node: Node, socket: string): string | null {

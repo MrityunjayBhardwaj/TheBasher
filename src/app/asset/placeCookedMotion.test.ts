@@ -31,6 +31,8 @@ import { buildDefaultDagState } from '../../core/project/default';
 import { collectSkeletonObjects } from '../skeletonObjects';
 import { validatePlan } from '../../agent/mutators/index';
 import { retargetMutator } from '../../agent/mutators/builders/retarget';
+import { readFileSync } from 'node:fs';
+import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
 
 /** The offset the generator reports when a world path was requested. */
 const OFFSET: [number, number] = [3, -1];
@@ -287,6 +289,71 @@ describe('placeCookedMotionOps (#935)', () => {
     expect(out.ops).toEqual([]);
     expect(out.refusals).toHaveLength(1);
     expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+  });
+
+  // #1213 — A NATIVE CHARACTER IS PLACED BY THE ROOT ITS IMPORT HANGS IT UNDER. The bind makes the
+  // retarget the armature Object's pose; placement finds the character through that edge and moves
+  // the import's root, so the mesh and the rig it is skinned to move together.
+  it('places a NATIVE character, found through its armature Object’s pose, by its import root', async () => {
+    const bytes = readFileSync('public/assets/skinned-bar.glb');
+    // `project()` has no scene aggregator; the native road hangs its root under one.
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+      buffer: bytes.buffer.slice(
+        bytes.byteOffset,
+        bytes.byteOffset + bytes.byteLength,
+      ) as ArrayBuffer,
+      assetRef: 'user-imports/native/skinned-bar.glb',
+      sceneNodeId: 'scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    s = apply(s, result.ops as Op[]);
+    const armature = Object.values(s.nodes).find(
+      (n) => n.type === 'Object' && s.nodes[edgeTarget(n, 'data') ?? '']?.type === 'Skeleton',
+    )!.id;
+    const barSkeleton = edgeTarget(s.nodes[armature], 'data')!;
+    const root = (s.nodes.scene.inputs.children as { node: string }[])
+      .map((c) => c.node)
+      .find((id) => s.nodes[id].type === 'Group')!;
+
+    const { ops, clipId } = mintMotionGenerateOps(s, {
+      prompt: 'a slow walk',
+      seed: 7,
+      model: 'kimodo-base',
+      curveObjectId: 'pathObj',
+    });
+    let next = apply(s, ops);
+    const bind = validatePlan(
+      retargetMutator,
+      {
+        sourceClipId: clipId,
+        sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
+        targetSkeletonId: barSkeleton,
+        customMap: { Hips: 'Bone0', Spine: 'Bone1' },
+        outputClipId: 'retarget',
+      },
+      next,
+      'bind the generated motion to the native bar',
+    );
+    if (!bind.ok) throw new Error(`the real bind refused: ${bind.reason}`);
+    next = apply(next, bind.ops as Op[]);
+    expect(edgeTarget(next.nodes[armature], 'pose')).toBe('retarget');
+    await resolvePendingMotionGenerations(next, capability());
+    next = apply(next, bakeGeneratedClipOps(next));
+
+    const before = (next.nodes[root].params as { position: number[] }).position;
+    const { ops: placeOps, refusals } = placeCookedMotionOps(next);
+    expect(refusals).toEqual([]);
+    const placed = apply(next, placeOps as Op[]);
+    const params = placed.nodes[root].params as { position: number[]; pivot?: number[] };
+    const pivot = params.pivot ?? [0, 0, 0];
+    // No facing was asked, so the effective start is `position - pivot`, and Y stays.
+    expect([params.position[0] - pivot[0], params.position[2] - pivot[2]]).toEqual(OFFSET);
+    expect(params.position[1]).toBe(before[1]);
   });
 
   it('does NOT treat a retarget onto a plain Skeleton as a character to place', async () => {

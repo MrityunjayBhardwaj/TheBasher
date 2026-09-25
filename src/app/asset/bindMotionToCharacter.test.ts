@@ -10,11 +10,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { stripComments } from '../../test-utils/sourceScan';
 import { registerAllNodes } from '../../nodes/registerAll';
-import {
-  chooseMotionTarget,
-  motionTargetCandidates,
-  retargetedClipId,
-} from './bindMotionToCharacter';
+import { chooseMotionTarget, characterTargets, retargetedClipId } from './bindMotionToCharacter';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import { gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import type { DagState } from '../../core/dag/state';
@@ -87,10 +83,10 @@ const MIXAMO = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
 /** A source skeleton no node in these graphs answers to — rows about something else. */
 const NO_MOTION = 'skel_not_in_graph';
 
-describe('motionTargetCandidates', () => {
+describe('characterTargets', () => {
   it('finds a character by its rig node and reads the bones off the projection', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
-    const found = motionTargetCandidates(state);
+    const found = characterTargets(state);
     expect(found).toHaveLength(1);
     expect(found[0].label).toBe('dwarf');
     expect(found[0].boneNames).toEqual(MIXAMO);
@@ -100,7 +96,7 @@ describe('motionTargetCandidates', () => {
     // The node exists and evaluates; it just has nothing to drive. Reporting it
     // as a candidate would turn a scene with no character into an ambiguity.
     const state = stateOf(...character('user-imports/box/box.glb', []));
-    expect(motionTargetCandidates(state)).toEqual([]);
+    expect(characterTargets(state)).toEqual([]);
   });
 
   it('is stable in order, so an ambiguity always names candidates the same way', () => {
@@ -108,10 +104,8 @@ describe('motionTargetCandidates', () => {
       ...character('user-imports/b/b.glb', MIXAMO),
       ...character('user-imports/a/a.glb', MIXAMO),
     ];
-    const forward = motionTargetCandidates(stateOf(...nodes)).map((c) => c.skeletonId);
-    const reversed = motionTargetCandidates(stateOf(...[...nodes].reverse())).map(
-      (c) => c.skeletonId,
-    );
+    const forward = characterTargets(stateOf(...nodes)).map((c) => c.skeletonId);
+    const reversed = characterTargets(stateOf(...[...nodes].reverse())).map((c) => c.skeletonId);
     expect(forward).toEqual(reversed);
   });
 });

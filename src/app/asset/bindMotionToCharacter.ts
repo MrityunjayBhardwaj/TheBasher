@@ -60,6 +60,7 @@ import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
 // #1001 — the two-hop rig→asset read moved to the module that owns the graph
 // walks, where `placeGeneratedMotion`'s id-returning half already points.
 import { assetRefOfSkeleton } from '../animate/boundClipsForAsset';
+import { edgeTarget } from '../animate/graphNodes';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNotificationStore, type ToastSeverity } from '../stores/notificationStore';
@@ -113,10 +114,18 @@ export type BindMotionOutcome =
     }
   | { readonly ok: false; readonly refusal: BindMotionRefusal; readonly reason: string };
 
-/** A character the motion could drive: a rig node with bones, and the asset it projects. */
-interface Candidate {
+/**
+ * A character the motion could drive (#1213): the rig the retarget targets, and the armature Object
+ * whose pose it becomes.
+ *
+ * `objectId` is null only on the clone road, where a `GltfSkeleton` stands no Object and is posed by
+ * its active clip; `assetRef` is null only on the native road. Both roads answer here, in one query,
+ * so no consumer asks what kind of rig it holds — and #1053 deletes the clone half here, once.
+ */
+export interface Candidate {
   readonly skeletonId: string;
-  readonly assetRef: string;
+  readonly objectId: string | null;
+  readonly assetRef: string | null;
   readonly boneNames: string[];
   readonly label: string;
 }
@@ -128,14 +137,38 @@ export function labelForAssetRef(assetRef: string): string {
 }
 
 /**
- * Every character in the scene that could receive motion.
+ * Every character in the scene that could receive motion — the ONE character query (#1213).
  *
- * A rig node with NO bones is excluded rather than reported as a candidate that
- * happens to fail later: it projects a skin the asset does not carry, so it is
- * not a character the director could have meant.
+ * A character is a rig that deforms a mesh (user decision, 2026-09-25). Natively that is an armature
+ * Object some mesh's Armature modifier points at (#393) — so a motion's own rig, a BVH/FBX/generated
+ * skeleton standing as an Object with nothing skinned to it, is never a target, and a second walk
+ * dropped beside the first does not chain onto it. On the clone road it is a `GltfSkeleton` projecting
+ * bones off its asset's skin; a rig node with NO bones is excluded rather than reported as a candidate
+ * that fails later, because it is not a character the director could have meant.
  */
-export function motionTargetCandidates(state: DagState): Candidate[] {
+export function characterTargets(state: DagState): Candidate[] {
   const out: Candidate[] = [];
+  const seen = new Set<string>();
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'ArmatureModifier') continue;
+    const objectId = edgeTarget(node, 'armature');
+    const object = objectId ? state.nodes[objectId] : undefined;
+    if (!objectId || object?.type !== 'Object' || seen.has(objectId)) continue;
+    const skeletonId = edgeTarget(object, 'data');
+    if (!skeletonId || state.nodes[skeletonId]?.type !== 'Skeleton') continue;
+    const bones =
+      (state.nodes[skeletonId].params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
+    if (bones.length === 0) continue;
+    seen.add(objectId);
+    out.push({
+      skeletonId,
+      objectId,
+      assetRef: null,
+      boneNames: bones.map((b) => b.name),
+      label: nodeDisplayName(state.nodes, objectId),
+    });
+  }
+  // The clone road — deleted by #1053.
   for (const node of Object.values(state.nodes)) {
     if (node.type !== 'GltfSkeleton') continue;
     const assetRef = assetRefOfSkeleton(state.nodes, node.id);
@@ -145,14 +178,59 @@ export function motionTargetCandidates(state: DagState): Candidate[] {
     if (bones.length === 0) continue;
     out.push({
       skeletonId: node.id,
+      objectId: null,
       assetRef,
       boneNames: bones.map((b) => b.name),
       label: labelForAssetRef(assetRef),
     });
   }
-  // Stable order (V22): id-sorted, so an ambiguity message names the candidates
-  // in the same order every time rather than in object-key order.
-  return out.sort((a, b) => (a.skeletonId < b.skeletonId ? -1 : 1));
+  // Stable order (V22): sorted by the node that IS the character, so an ambiguity message names
+  // the candidates in the same order every time rather than in object-key order.
+  const keyOf = (c: Candidate) => c.objectId ?? c.skeletonId;
+  return out.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+}
+
+/**
+ * The nodes a selection reaches by walking up input edges, a bounded three levels (#1213): the armature
+ * Object itself, the skinned mesh's Object (data → Armature modifier → armature), and the Object the
+ * import hangs both under (children → mesh Object → modifier → armature). Bounded so it never turns
+ * into a search of the graph.
+ */
+function reachedFromSelection(state: DagState, selectedNodeId: string): Set<string> {
+  // Breadth-first, so each node is expanded at the SHALLOWEST depth it is reached: a depth-first walk
+  // that met a node deep first would never expand it again from a shorter path.
+  const reached = new Set<string>([selectedNodeId]);
+  let frontier = [selectedNodeId];
+  for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
+    const next: string[] = [];
+    for (const nodeId of frontier) {
+      for (const socket of Object.values(state.nodes[nodeId]?.inputs ?? {})) {
+        const conns = Array.isArray(socket) ? socket : socket ? [socket] : [];
+        for (const conn of conns) {
+          if (!conn?.node || reached.has(conn.node) || !state.nodes[conn.node]) continue;
+          reached.add(conn.node);
+          next.push(conn.node);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return reached;
+}
+
+/** Does the selection point at this character? The one tie-break both roads answer through. */
+function selectionPicks(
+  state: DagState,
+  selectedNodeId: string | null,
+  candidate: Candidate,
+): boolean {
+  if (!selectedNodeId) return false;
+  if (candidate.objectId !== null) {
+    return reachedFromSelection(state, selectedNodeId).has(candidate.objectId);
+  }
+  return (
+    candidate.assetRef !== null && selectedAssetRefs(state, selectedNodeId).has(candidate.assetRef)
+  );
 }
 
 /**
@@ -219,7 +297,8 @@ export function chooseMotionTarget(
   | { ok: true; target: Candidate }
   | { ok: false; refusal: BindMotionRefusal; reason: string; severity: ToastSeverity } {
   const { verb, retry } = ARRIVAL[arrival];
-  const candidates = motionTargetCandidates(state);
+  // The motion's own rig is never its target: a bind hides it (#1056).
+  const candidates = characterTargets(state).filter((c) => c.skeletonId !== sourceSkeletonId);
   if (candidates.length === 0) {
     // #1103 — since #1056 (files) and #1078 (generation) a motion with no character
     // is not left with nothing: its skeleton stands in the scene as an Object. So
@@ -246,8 +325,7 @@ export function chooseMotionTarget(
   }
   if (candidates.length === 1) return { ok: true, target: candidates[0] };
 
-  const refs = selectedAssetRefs(state, selectedNodeId);
-  const selected = candidates.filter((c) => refs.has(c.assetRef));
+  const selected = candidates.filter((c) => selectionPicks(state, selectedNodeId, c));
   if (selected.length === 1) return { ok: true, target: selected[0] };
 
   return {
@@ -320,6 +398,8 @@ export function bindMotionToCharacter(
       targetSkeletonId: target.skeletonId,
       ...(bridge.presetId ? { mapPresetId: bridge.presetId } : {}),
       ...(bridge.customMap ? { customMap: bridge.customMap } : {}),
+      // #1213 — the Object whose pose the retarget becomes; a clone-road rig stands none.
+      ...(target.objectId !== null ? { targetObjectId: target.objectId } : {}),
       outputClipId,
       outputName,
     },
@@ -328,9 +408,13 @@ export function bindMotionToCharacter(
   if (!result.ok) {
     // A gate refused. That is a fault in the graph, not a choice the director
     // made, so it goes to the surface that PERSISTS until something changes.
+    // Keyed by the asset on the clone road and by the character's Object natively.
     useAssetErrorStore
       .getState()
-      .report(target.assetRef, `could not bind motion: ${formatAssetError(result.reason)}`);
+      .report(
+        target.assetRef ?? target.objectId ?? target.skeletonId,
+        `could not bind motion: ${formatAssetError(result.reason)}`,
+      );
     return { ok: false, refusal: 'rejected', reason: result.reason };
   }
 

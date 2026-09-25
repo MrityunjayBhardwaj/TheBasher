@@ -189,6 +189,43 @@ export function riggedSkeletonsForClip(
   return [...out].sort();
 }
 
+/** A character a clip drives: its rig, and the armature Object it poses (null on the clone road). */
+export interface DrivenCharacter {
+  readonly skeletonId: string;
+  readonly objectId: string | null;
+}
+
+/**
+ * #1213 — every character a clip drives, on both roads, in one answer.
+ *
+ * Clone road: the `GltfSkeleton`s {@link riggedSkeletonsForClip} finds, with no Object. Native: every
+ * armature Object whose `pose` edge is a `RetargetClip` reading this clip — the bind's own edge,
+ * since the Object's pose is the one thing that poses a native rig (#1224). The motion's own rig is
+ * posed by the clip itself, not a retarget of it, so it is not a character here. #1053 deletes the
+ * clone half. Sorted by the node that IS the character (V22).
+ */
+export function charactersDrivenByClip(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  clipId: string,
+): DrivenCharacter[] {
+  const out: DrivenCharacter[] = riggedSkeletonsForClip(nodes, clipId).map((skeletonId) => ({
+    skeletonId,
+    objectId: null,
+  }));
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (n.type !== 'Object') continue;
+    const poseFrom = edgeTarget(n, 'pose');
+    const producer = poseFrom ? nodes[poseFrom] : undefined;
+    if (producer?.type !== 'RetargetClip' || edgeTarget(producer, 'sourceClip') !== clipId)
+      continue;
+    const skeletonId = edgeTarget(n, 'data');
+    if (skeletonId) out.push({ skeletonId, objectId: id });
+  }
+  const keyOf = (c: DrivenCharacter) => c.objectId ?? c.skeletonId;
+  return out.sort((a, b) => (keyOf(a) < keyOf(b) ? -1 : 1));
+}
+
 /**
  * The `assetRef` of the `GltfAsset` a `GltfSkeleton` projects, or null when the
  * rig is not wired to one.

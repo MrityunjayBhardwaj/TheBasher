@@ -2,7 +2,7 @@
 // deformed by the Armature modifier's rule, with no asset clone anywhere.
 //
 // WHICH ROAD THIS TAKES, SAID FIRST. The product still refuses a skinned file on the native road
-// (#1205 — a native character cannot yet take a motion or have its bones posed), so no product
+// (#1205 — a native character cannot yet have its bones posed), so no product
 // seam can bring one across yet. This spec builds the native ops through the test-only door
 // (`__buildSkinnedNativeGltfImportOpsForTests`, loaded as a dev-server module) and dispatches them
 // into the live editor. It witnesses the DRAW. The product-road gate — the same tip-vertex check
