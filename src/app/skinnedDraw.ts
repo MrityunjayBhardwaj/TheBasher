@@ -31,14 +31,15 @@
 // REF: src/nodes/armatureDeform.ts; src/core/import/threeAdapter.ts (`specToThreeSkeleton`);
 //      node_modules/three/src/objects/SkinnedMesh.js; issues #1197, #393.
 
-import { Bone, Euler, Matrix4, Skeleton } from 'three';
+import { Bone, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
 import { posedSkeletonFromClip } from '../nodes/AnimationClip';
+import { restBonePose } from '../nodes/bonePose';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
 import type {
   AnimationClipValue,
+  BonePose,
   MeshGeometryData,
-  PosedSkeletonValue,
   SkinDeformValue,
 } from '../nodes/types';
 import { meshSplitLayout } from './polygonLayout';
@@ -89,12 +90,15 @@ export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData):
 
   const { skinIndex, skinWeight } = vertexBindings(skin, mesh, groups);
   const roots = bones.filter((b) => !b.parent);
-  const euler = new Euler();
-  // The sampler of the last action posed with, rebuilt only when a different clip value arrives.
-  let sampled: { action: AnimationClipValue; sampler: PosedSkeletonValue } | null = null;
-  const place = (i: number, position: readonly number[], rotation: readonly number[]): void => {
-    bones[i].position.set(position[0], position[1], position[2]);
-    bones[i].quaternion.setFromEuler(euler.set(rotation[0], rotation[1], rotation[2], 'XYZ'));
+  const rest = skin.bones.map(restBonePose);
+  const place = (entries: readonly BonePose[]): void => {
+    entries.forEach((p, i) => {
+      const bone = bones[i];
+      if (!bone) return;
+      bone.position.set(p.position[0], p.position[1], p.position[2]);
+      bone.quaternion.set(p.quaternion[0], p.quaternion[1], p.quaternion[2], p.quaternion[3]);
+      bone.scale.set(p.scale[0], p.scale[1], p.scale[2]);
+    });
   };
   return {
     skeleton: new Skeleton(palette, inverses),
@@ -102,17 +106,9 @@ export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData):
     skinIndex,
     skinWeight,
     pose(seconds, action) {
-      if (action === null) {
-        skin.bones.forEach((b, i) => place(i, b.position, b.rotation));
-      } else {
-        if (sampled?.action !== action) {
-          sampled = { action, sampler: posedSkeletonFromClip(action) };
-        }
-        const pose = sampled.sampler.sample(seconds);
-        pose.forEach((p, i) => {
-          if (bones[i]) place(i, p.position, p.rotation);
-        });
-      }
+      // The clip's pose is built once per clip value (`posedSkeletonFromClip`'s memo), the same
+      // samplers the CPU deform reads, so the draw and the modifier cannot disagree.
+      place(action === null ? rest : posedSkeletonFromClip(action).sample(seconds));
       for (const root of roots) root.updateMatrixWorld(true);
     },
   };

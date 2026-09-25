@@ -27,6 +27,7 @@
 
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 import { buildClipBoneSamplers } from '../nodes/AnimationClip';
+import { eulerXYZFromQuat } from '../nodes/bonePose';
 import type { Vec3 } from '../nodes/types';
 import type { BakedChannel } from './resolveGltfChildTransform';
 // The radians→degrees boundary. THE SAME helper `ensureChannelForBone` seeds a
@@ -228,7 +229,10 @@ function clipBandSamplersForAsset(
       // DEGREES. `ensureChannelForBone` documents why at length — copying
       // through unconverted scales every bone rotation by π/180, which renders
       // as a character standing still while its root position travels (#843).
-      slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
+      // #1223 — the clip slerps between keys, so its sample is an orientation; this band is XYZ
+      // euler degrees, and the conversion lands on three's branch (y within ±90°). Same rotation at
+      // every time; at a key whose stored angles sit on another branch the numbers differ.
+      slot.rotation ??= (seconds) => radVec3ToDeg(eulerXYZFromQuat(sample(seconds).quaternion));
     }
   }
   return out;

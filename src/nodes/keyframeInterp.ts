@@ -1306,6 +1306,37 @@ function boundaryTangentVec3(keys: readonly Vec3Key[], at: 'first' | 'last'): Ve
   ];
 }
 
+/**
+ * #1223 — sample a quaternion channel at `t` with per-side extend rules: the quat sibling of
+ * {@link sampleVec3KeyframesExtended}, through the same time plan (`planExtend`).
+ *
+ * Only the TIME half of a rule applies to a rotation. `cycle` and `mirror` fold the time back into
+ * the keyed range; `cycle-offset` folds it too but adds no travel, because a rotation is bounded and
+ * a residual added every period would compound without end (the clip's own rule, `clipExtendRules`,
+ * never offsets rotation for the same reason); `slope` holds the boundary key, since a quaternion
+ * curve has no tangent to extend along.
+ */
+export function sampleQuatKeyframesExtended(
+  keys: readonly QuatKey[],
+  t: number,
+  before: ChannelExtend = 'hold',
+  after: ChannelExtend = 'hold',
+): Quat {
+  if (keys.length === 0) return [0, 0, 0, 1];
+  const first = keys[0];
+  const last = keys[keys.length - 1];
+  const plan = planExtend(first.time, last.time, t, before, after);
+  switch (plan.kind) {
+    case 'in':
+      return sampleQuatKeyframes(keys, t);
+    case 'hold':
+    case 'slope':
+      return plan.at === 'first' ? first.value : last.value;
+    case 'sample':
+      return sampleQuatKeyframes(keys, plan.t);
+  }
+}
+
 /** Sample a vec3 channel at time `t` with per-side extend rules (#269). */
 export function sampleVec3KeyframesExtended(
   keys: readonly Vec3Key[],

@@ -167,7 +167,7 @@ describe('RetargetClip — the operator', () => {
     // One pose per target bone, index-aligned.
     const at0 = posed.sample(0);
     expect(at0).toHaveLength(out.skeleton.bones.length);
-    expect(at0.map((p) => p.bone)).toEqual(out.skeleton.bones.map((_, i) => i));
+    expect(at0.map((p) => p.name)).toEqual(out.skeleton.bones.map((b) => b.name));
     // Independently sampling the clip through the shared factory agrees.
     const viaClip = posedSkeletonFromClip(out).sample(0.5);
     expect(posed.sample(0.5)).toEqual(viaClip);

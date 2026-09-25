@@ -24,6 +24,7 @@
 import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { BonePose, PosedSkeletonValue, SkeletonValue, Vec3 } from './types';
+import { quatFromEulerXYZ } from './bonePose';
 
 export const PosedSkeletonParams = z.object({
   /** Sway amplitude in radians; bones rotate ±amp around their bind rotation. */
@@ -66,7 +67,12 @@ export const PosedSkeletonNode: NodeDefinition<PosedSkeletonParams, PosedSkeleto
           const sway = Math.sin(seconds * frequency * TWO_PI + phase) * amplitude;
           const bind = skeleton.bones[i];
           const rot: Vec3 = [bind.rotation[0], bind.rotation[1] + sway, bind.rotation[2]];
-          poses.push({ bone: i, position: bind.position, rotation: rot });
+          poses.push({
+            name: bind.name,
+            position: bind.position,
+            quaternion: quatFromEulerXYZ(rot),
+            scale: bind.scale ?? [1, 1, 1],
+          });
         }
         return poses;
       },

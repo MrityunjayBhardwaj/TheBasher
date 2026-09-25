@@ -12,6 +12,7 @@ import { buildDefaultDagState, buildDefaultProject } from '../core/project/defau
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { registerAllNodes } from './registerAll';
 import { buildClipBoneSamplers } from './AnimationClip';
+import { eulerXYZFromQuat } from './bonePose';
 import { SCATTER_MAX } from './ScatterNode';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -692,7 +693,7 @@ describe('P2 — PosedSkeleton (pure, TIME-FREE — #992)', () => {
   // Time did not stop mattering — it moved from an edge to an argument.
   it('sample IS a function of time — different seconds produce different poses', () => {
     const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
-    expect(posed.sample(0)[1].rotation).not.toEqual(posed.sample(0.5)[1].rotation);
+    expect(posed.sample(0)[1].quaternion).not.toEqual(posed.sample(0.5)[1].quaternion);
   });
 
   // The array pairs index-for-index with the skeleton, so a consumer can map a
@@ -701,7 +702,7 @@ describe('P2 — PosedSkeleton (pure, TIME-FREE — #992)', () => {
     const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
     const poses = posed.sample(1.25);
     expect(poses).toHaveLength(posed.skeleton.bones.length);
-    expect(poses.map((p) => p.bone)).toEqual(posed.skeleton.bones.map((_, i) => i));
+    expect(poses.map((p) => p.name)).toEqual(posed.skeleton.bones.map((b) => b.name));
   });
 });
 
@@ -770,14 +771,15 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
     const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
     const torso = buildClipBoneSamplers(clip).get(1);
     expect(torso).toBeDefined();
-    expect(torso!(0.5).rotation[1]).toBeCloseTo(0.25, 5);
+    // #1223 — the sampler answers an orientation; a single-axis turn slerps to the same angle.
+    expect(eulerXYZFromQuat(torso!(0.5).quaternion)[1]).toBeCloseTo(0.25, 5);
   });
 
   it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
     const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
     const torso = buildClipBoneSamplers(clip).get(1);
     expect(torso).toBeDefined();
-    expect(torso!(2.0).rotation).toEqual(torso!(0).rotation);
+    expect(torso!(2.0).quaternion).toEqual(torso!(0).quaternion);
   });
 });
 

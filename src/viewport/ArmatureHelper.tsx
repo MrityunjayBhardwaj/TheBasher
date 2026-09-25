@@ -27,7 +27,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   type BoneFrame,
-  boneTransforms,
+  poseTransforms,
   degenerateBasisCount,
   degenerateBasisNames,
   octahedralIndices,
@@ -35,7 +35,8 @@ import {
   placeBones,
   resetDegenerateBasisCount,
 } from './boneShape';
-import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
+import { armatureBounds, referencePlacement } from './referenceRig';
+import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -619,9 +620,9 @@ export function ArmatureHelper({
           }
           if (!best || bestScore < NAME_MATCH_THRESHOLD) continue;
 
-          const posed = boneTransforms(
-            posedSourceBones(rig.clip, seconds),
+          const posed = poseTransforms(
             rig.clip.skeleton.bones,
+            posedSkeletonFromClip(rig.clip).sample(seconds),
           );
           if (posed.length === 0) continue;
           const srcB = armatureBounds(posed);

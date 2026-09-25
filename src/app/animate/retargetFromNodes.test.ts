@@ -286,10 +286,10 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const wayPast = sampler(9);
     // Held: nine seconds out reads exactly what the last key reads.
     expect(wayPast.position).toEqual(atEnd.position);
-    expect(wayPast.rotation).toEqual(atEnd.rotation);
+    expect(wayPast.quaternion).toEqual(atEnd.quaternion);
     // And the clip must genuinely MOVE inside its range, or "held" is satisfied by
     // a clip that never did anything and this row certifies nothing.
-    expect(sampler(0).rotation).not.toEqual(atEnd.rotation);
+    expect(sampler(0).quaternion).not.toEqual(atEnd.quaternion);
     // POSITIVE CONTROL. "Held" is only a finding if this fixture could have failed it.
     // Same bound clip, same keys, cycle-offset instead of the carried 'hold': the root
     // accumulates a full travel per period and reads ~9x out at t=9. So the assertions

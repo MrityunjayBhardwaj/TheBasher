@@ -25,6 +25,8 @@ import { evaluate } from '../../../core/dag/evaluator';
 import { validatePlan } from '../validate';
 import type { MutatorValidationResult } from '../types';
 import { poseBoneMutator, type PoseBoneSpec } from './poseBone';
+import { eulerXYZFromQuat } from '../../../nodes/bonePose';
+import type { PosedSkeletonValue } from '../../../nodes/types';
 
 registerAllNodes();
 
@@ -262,11 +264,13 @@ describe('poseBone — a second bone CHAINS, so the band and the value lane agre
       (s.nodes[id].inputs as Record<string, { node?: string } | undefined>)?.pose?.node;
     const consumed = new Set(overridesIn(s).map(([id]) => poseEdge(id)));
     const tip = overridesIn(s).find(([id]) => !consumed.has(id))![0];
-    const value = evaluate(s, tip).value as {
-      sample: (t: number) => readonly { rotation: readonly number[] }[];
-    };
+    const value = evaluate(s, tip).value as PosedSkeletonValue;
     const frame = value.sample(0);
-    expect(frame[0].rotation).toEqual([0, 0, 45]);
-    expect(frame[1].rotation).toEqual([5, 0, 0]);
+    // #1223 — the band is authored degrees; the lane is an orientation. The same numbers used to
+    // appear on both only because the lane copied degrees into a radians lane (#1222 finding 1).
+    const deg = (i: number) =>
+      eulerXYZFromQuat(frame[i].quaternion).map((r) => (r * 180) / Math.PI);
+    deg(0).forEach((v, k) => expect(v).toBeCloseTo([0, 0, 45][k], 9));
+    deg(1).forEach((v, k) => expect(v).toBeCloseTo([5, 0, 0][k], 9));
   });
 });

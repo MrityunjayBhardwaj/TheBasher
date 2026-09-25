@@ -16,7 +16,8 @@
 // Pure + unit-testable; no THREE scene objects, no store, no DAG.
 
 import * as THREE from 'three';
-import { buildClipBoneSamplers } from '../nodes/AnimationClip';
+import { posedSkeletonFromClip } from '../nodes/AnimationClip';
+import { eulerXYZFromQuat } from '../nodes/bonePose';
 import type { AnimationClipValue, BoneSpec } from '../nodes/types';
 import type { BoneFrame } from './boneShape';
 
@@ -127,27 +128,22 @@ export function referencePlacement(
 }
 
 /**
- * The source clip's own skeleton, posed at `seconds`.
+ * The source clip's own skeleton, posed at `seconds`, as bind-shaped bones (XYZ euler radians and a
+ * scale), for readers that measure or place a rig from `BoneSpec`s.
  *
- * Sampling goes through `buildClipBoneSamplers` — the SAME factory the
- * locomotion pose path and the baked render band already use. A second
- * interpolator here would be a second answer to "where is this bone at t", and
- * it would drift from the retarget's answer silently, which is precisely the
- * comparison this rig is drawn to make. A bone the clip does not touch holds
- * its rest pose.
+ * Sampling goes through `posedSkeletonFromClip` — the ONE clip→pose adapter the deform, the drawn
+ * armature and the locomotion path read, built once per clip value. A second interpolator here
+ * would be a second answer to "where is this bone at t", and it would drift from the retarget's
+ * answer silently, which is precisely the comparison this rig is drawn to make. A bone the clip
+ * does not touch holds its rest pose. A per-frame draw reads the pose directly (`poseTransforms`)
+ * and skips the euler round trip.
  */
 export function posedSourceBones(clip: AnimationClipValue, seconds: number): BoneSpec[] {
-  const bones = clip.skeleton.bones;
-  const samplers = buildClipBoneSamplers(clip);
-  const out: BoneSpec[] = [];
-  for (let i = 0; i < bones.length; i++) {
-    const sampler = samplers.get(i);
-    if (!sampler) {
-      out.push(bones[i]);
-      continue;
-    }
-    const { position, rotation } = sampler(seconds);
-    out.push({ ...bones[i], position, rotation });
-  }
-  return out;
+  const pose = posedSkeletonFromClip(clip).sample(seconds);
+  return clip.skeleton.bones.map((bone, i) => {
+    const p = pose[i];
+    return p
+      ? { ...bone, position: p.position, rotation: eulerXYZFromQuat(p.quaternion), scale: p.scale }
+      : bone;
+  });
 }

@@ -15,7 +15,7 @@
 // nothing and touches no store).
 
 import * as THREE from 'three';
-import type { BoneSpec } from '../nodes/types';
+import type { BonePose, BoneSpec } from '../nodes/types';
 
 // ---------------------------------------------------------------------------
 // The shape, in normalised bone space: head at the origin, tail at (0,1,0).
@@ -172,17 +172,45 @@ const _s = new THREE.Vector3();
  * without throwing — a bad rig must draw wrong, never crash the viewport.
  */
 export function boneWorldMatrices(bones: readonly BoneSpec[]): THREE.Matrix4[] {
-  const out: (THREE.Matrix4 | null)[] = bones.map(() => null);
+  return worldMatrices(bones, (i) => bindLocal(bones[i]));
+}
 
-  const local = (i: number): THREE.Matrix4 => {
-    const b = bones[i];
-    _v.set(b.position[0], b.position[1], b.position[2]);
-    _e.set(b.rotation[0], b.rotation[1], b.rotation[2], 'XYZ');
-    _q.setFromEuler(_e);
-    const sc = b.scale;
-    _s.set(sc ? sc[0] : 1, sc ? sc[1] : 1, sc ? sc[2] : 1);
+/** A bone's bind transform relative to its parent. */
+function bindLocal(b: BoneSpec): THREE.Matrix4 {
+  _v.set(b.position[0], b.position[1], b.position[2]);
+  _e.set(b.rotation[0], b.rotation[1], b.rotation[2], 'XYZ');
+  _q.setFromEuler(_e);
+  const sc = b.scale;
+  _s.set(sc ? sc[0] : 1, sc ? sc[1] : 1, sc ? sc[2] : 1);
+  return new THREE.Matrix4().compose(_v, _q, _s);
+}
+
+/**
+ * #1223 — world-space matrix per bone for a POSE: the same parent-chain walk as
+ * {@link boneWorldMatrices}, with each bone's local transform taken from the pose entry at its index
+ * (position, quaternion, scale) instead of its bind values. An entry the pose lacks keeps the bind
+ * transform. The one composer, so a posed rig and a resting one cannot disagree about a hierarchy.
+ */
+export function posedWorldMatrices(
+  bones: readonly BoneSpec[],
+  pose: readonly BonePose[],
+): THREE.Matrix4[] {
+  return worldMatrices(bones, (i) => {
+    const p = pose[i];
+    if (!p) return bindLocal(bones[i]);
+    _v.set(p.position[0], p.position[1], p.position[2]);
+    _q.set(p.quaternion[0], p.quaternion[1], p.quaternion[2], p.quaternion[3]);
+    _s.set(p.scale[0], p.scale[1], p.scale[2]);
     return new THREE.Matrix4().compose(_v, _q, _s);
-  };
+  });
+}
+
+/** The parent-chain walk both composers share, given each bone's local matrix. */
+function worldMatrices(
+  bones: readonly BoneSpec[],
+  local: (i: number) => THREE.Matrix4,
+): THREE.Matrix4[] {
+  const out: (THREE.Matrix4 | null)[] = bones.map(() => null);
 
   // Iterative resolve with an explicit visiting set, so a cycle or a
   // forward reference degrades to "treat as root" instead of recursing forever.
@@ -445,6 +473,22 @@ export function boneTransforms(posed: readonly BoneSpec[], rest: readonly BoneSp
   const world = boneWorldMatrices(posed);
   return placeBones(
     posed.map((b, i) => ({ name: b.name, parent: b.parent, matrix: world[i] })),
+    boneWorldMatrices(rest),
+  );
+}
+
+/**
+ * #1223 — the bones of `rest` placed as `pose` holds them (or at rest when `pose` is null), for the
+ * drawn armature and Frame Selected. The pose-wire twin of {@link boneTransforms}: same placement
+ * core, world matrices from {@link posedWorldMatrices}.
+ */
+export function poseTransforms(
+  rest: readonly BoneSpec[],
+  pose: readonly BonePose[] | null,
+): BoneFrame[] {
+  const world = pose === null ? boneWorldMatrices(rest) : posedWorldMatrices(rest, pose);
+  return placeBones(
+    rest.map((b, i) => ({ name: b.name, parent: b.parent, matrix: world[i] })),
     boneWorldMatrices(rest),
   );
 }

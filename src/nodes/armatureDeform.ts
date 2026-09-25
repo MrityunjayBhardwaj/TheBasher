@@ -22,10 +22,10 @@
 //      ref/probes/blender-armature-deform/q11_join.py, q13_skinned_bar_oracle.py; issue #393.
 
 import { Matrix4, Vector3 } from 'three';
-import { boneWorldMatrices } from '../viewport/boneShape';
+import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
 import { posedSkeletonFromClip } from './AnimationClip';
-import type { AnimationClipValue, BoneSpec, MeshGeometryData, SkinDeformValue } from './types';
+import type { BoneSpec, MeshGeometryData, PosedSkeletonValue, SkinDeformValue } from './types';
 
 /** Below this matched weight a point is left where it is — Blender's `contrib_threshold`. */
 const CONTRIB_THRESHOLD = 0.0001;
@@ -47,31 +47,30 @@ export function boneOfGroups(
 
 /**
  * Each bone's posed matrix at `seconds`, in armature space — Blender's `pose_mat`, at the bone's
- * head — or the rest matrices when there is no action. THE one answer to where a bone is: the
+ * head — or the rest matrices when there is no pose. THE one answer to where a bone is: the
  * deform reads it here, and an Object parented to a bone reads it too (`boneParent.ts`, #1210), so
  * a prop in a hand cannot drift from the skin the hand deforms.
+ *
+ * It takes the POSE, built once per graph change, not a clip (#1223): it used to rebuild every
+ * bone's sampler on every call, ~383 µs a frame on the 78-bone `walk.bvh` against ~32 µs to sample
+ * (#1222).
  */
 export function posedBoneMatrices(
   bones: readonly BoneSpec[],
-  action: AnimationClipValue | null,
+  pose: PosedSkeletonValue | null,
   seconds: number,
 ): Matrix4[] {
-  if (action === null) return boneWorldMatrices(bones);
-  const pose = posedSkeletonFromClip(action).sample(seconds);
-  return boneWorldMatrices(
-    bones.map((bone, i) => ({
-      ...bone,
-      position: pose[i]?.position ?? bone.position,
-      rotation: pose[i]?.rotation ?? bone.rotation,
-    })),
-  );
+  if (pose === null) return boneWorldMatrices(bones);
+  return posedWorldMatrices(bones, pose.sample(seconds));
 }
 
 /** Each bone's skinning matrix at `seconds`, in armature space: pose · rest⁻¹. */
 function skinningMatrices(skin: SkinDeformValue, seconds: number): Matrix4[] {
   const rest = boneWorldMatrices(skin.bones);
   if (skin.action === null) return rest.map(() => new Matrix4());
-  const posed = posedBoneMatrices(skin.bones, skin.action, seconds);
+  // The value stays plain data (an overlay drops closures), so the pose is derived here — once per
+  // clip value, by `posedSkeletonFromClip`'s memo.
+  const posed = posedBoneMatrices(skin.bones, posedSkeletonFromClip(skin.action), seconds);
   return posed.map((m, i) => m.clone().multiply(rest[i].clone().invert()));
 }
 

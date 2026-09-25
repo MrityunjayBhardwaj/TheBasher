@@ -21,6 +21,7 @@ import { evaluate } from '../dag';
 import { emptyDagState, type DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import { actionPoseOf, posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { eulerXYZFromQuat } from '../../nodes/bonePose';
 import { unpackMeshData } from '../../app/meshGeometryData';
 import type {
   AnimationClipValue,
@@ -147,7 +148,7 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const rig = evaluate(state, standIn!, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
     }).value as ObjectValue;
-    expect(actionPoseOf(rig)?.sample(1)[1].rotation[2]).toBeCloseTo(
+    expect(eulerXYZFromQuat(actionPoseOf(rig)!.sample(1)[1].quaternion)[2]).toBeCloseTo(
       2 * Math.atan2(0.6756, 0.7373),
       3,
     );
@@ -164,10 +165,10 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const posed = posedSkeletonFromClip(clip);
     // The file's end key: (0, 0, 0.6756, 0.7373), a rotation of 2·atan2(0.6756, 0.7373) about Z.
     const end = 2 * Math.atan2(0.6756, 0.7373);
-    expect(posed.sample(1)[1].rotation[2]).toBeCloseTo(end, 3);
-    expect(posed.sample(0.5)[1].rotation[2]).toBeCloseTo(end / 2, 3);
+    expect(eulerXYZFromQuat(posed.sample(1)[1].quaternion)[2]).toBeCloseTo(end, 3);
+    expect(eulerXYZFromQuat(posed.sample(0.5)[1].quaternion)[2]).toBeCloseTo(end / 2, 3);
     // Bone0 has no channel and holds its rest.
-    expect(posed.sample(0.5)[0].rotation).toEqual([0, 0, 0]);
+    expect(posed.sample(0.5)[0].quaternion).toEqual([0, 0, 0, 1]);
   });
 
   it('the product entry still refuses a skinned file, until a native character can take a motion (#1205)', async () => {

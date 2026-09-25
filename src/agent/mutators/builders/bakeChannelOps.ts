@@ -171,7 +171,10 @@ export function bakeChannelOpsForBone(args: {
           // These keys are not hand-authored — they are a per-frame RESTATEMENT
           // of a clip whose sampler interpolates LINEARLY (TransformClip.ts:116-118
           // raw `lerpVec3`; AnimationClip's `buildClipBoneSamplers` states
-          // `easing: 'linear'` for this same reason) and whose keyframes cannot
+          // `easing: 'linear'` for this same reason — its ROTATION slerps since
+          // #1223, so this euler copy agrees at every key and sits within 1.29°
+          // of it between keys on the dense BVH clips, until bake replaces the
+          // copy, step 6 of #1233) and whose keyframes cannot
           // express easing at all. Stamping the authored-curve default onto baked data made the
           // bake disagree with its own source between keyframes: identical at
           // every key, but up to |smoothstep(u) - u| = 1/(6*sqrt(3)) ~ 9.6% of

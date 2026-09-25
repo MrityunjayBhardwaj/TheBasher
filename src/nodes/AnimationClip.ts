@@ -35,10 +35,17 @@ import type {
   BonePose,
   ObjectValue,
   PosedSkeletonValue,
+  Quat,
   SkeletonValue,
   Vec3,
 } from './types';
-import { sampleVec3KeyframesExtended, type Vec3Key } from './keyframeInterp';
+import {
+  sampleQuatKeyframesExtended,
+  sampleVec3KeyframesExtended,
+  type QuatKey,
+  type Vec3Key,
+} from './keyframeInterp';
+import { quatFromEulerXYZ, restBonePose } from './bonePose';
 import { ClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 import { nameParam } from './paramWidget';
 
@@ -132,7 +139,7 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
 // `ensureChannelForBone`'s spec asserts they agree past the duration.
 
 /** A bone's pose as a function of wall-clock time — the clip's own sampling. */
-export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: Vec3 };
+export type ClipBoneSampler = (seconds: number) => { position: Vec3; quaternion: Quat };
 
 /**
  * Build a per-bone-INDEX sampler over a clip's keyframes: the clip's own
@@ -160,11 +167,17 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * a zero pose — the caller must be able to fall through to the bands below,
  * and a bone the clip never touched has no opinion to contribute.
  *
- * Rotation is in the clip's own units (RADIANS). Callers writing into a
- * degrees-valued band convert at that boundary; see
- * app/animate/ensureChannelForBone.ts, which is where that unit change is
- * documented, and app/bakedGltfChannels.ts, which makes the same conversion for
- * the read band.
+ * ROTATION SLERPS (#1202, #1223). A key stores XYZ euler radians, but between two keys the
+ * rotation is the spherical interpolation of the two orientations, as glTF requires for a LINEAR
+ * rotation (`Specification.adoc:3579`) and as Basher's quaternion channel already samples. Lerping
+ * the three angles instead drifted up to 24.79° at a midpoint on a two-axis turn (#1202); on the
+ * dense BVH clips the two differ by at most 0.10° (walk), 1.29° (run), 0.12° (jump), and agree at
+ * every key. Callers writing into a degrees-valued euler band convert at that boundary
+ * (app/bakedGltfChannels.ts).
+ *
+ * ⚠️ The copy-on-first-edit mint (`bakeChannelOps`) copies these keys into an euler channel, which
+ * lerps its angles, so an edited bone can differ from an unedited one BETWEEN keys by the amounts
+ * above, and agrees at every key. That copy retires in step 6 of #1233 (bake).
  */
 /**
  * A clip, viewed as a posed rig — the ONE clip→pose adapter (#992, rung 2 of #900).
@@ -181,30 +194,35 @@ export type ClipBoneSampler = (seconds: number) => { position: Vec3; rotation: V
  * array pairs index-for-index with `skeleton.bones`.
  */
 export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonValue {
+  const known = posedByClip.get(clip);
+  if (known) return known;
   const { skeleton } = clip;
   const samplers = buildClipBoneSamplers(clip);
-  return {
+  const rest = skeleton.bones.map(restBonePose);
+  const posed: PosedSkeletonValue = {
     kind: 'PosedSkeleton',
     skeleton,
-    sample: (seconds: number): readonly BonePose[] => {
-      const poses: BonePose[] = [];
-      for (let i = 0; i < skeleton.bones.length; i++) {
+    sample: (seconds: number): readonly BonePose[] =>
+      rest.map((at, i) => {
         const sampler = samplers.get(i);
-        if (!sampler) {
-          poses.push({
-            bone: i,
-            position: skeleton.bones[i].position,
-            rotation: skeleton.bones[i].rotation,
-          });
-          continue;
-        }
-        const { position, rotation } = sampler(seconds);
-        poses.push({ bone: i, position, rotation });
-      }
-      return poses;
-    },
+        if (!sampler) return at;
+        const { position, quaternion } = sampler(seconds);
+        return { name: at.name, position, quaternion, scale: at.scale };
+      }),
   };
+  posedByClip.set(clip, posed);
+  return posed;
 }
+
+/**
+ * #1223 — each clip value's pose, built once. A clip value is made once per graph change (the
+ * evaluator caches it), so every reader of the same clip — the deform, the bone draw, bone
+ * parenting — shares one set of samplers instead of rebuilding them per call: measured at ~383 µs
+ * a frame rebuilt against ~32 µs sampled on the 78-bone `walk.bvh` (#1222). An overlay copies a
+ * keyed Object's value every frame (`cloneForOverlay`), and a copied clip is a new key here, so
+ * a keyed armature Object still rebuilds per frame, as it did before this memo.
+ */
+const posedByClip = new WeakMap<AnimationClipValue, PosedSkeletonValue>();
 
 /**
  * #1203 — an armature Object's pose: its action, played on its skeleton, or `null` when it has no
@@ -260,9 +278,10 @@ export function buildClipBoneSamplers(
       value: k.position,
       easing: 'linear',
     }));
-    const rotKeys: Vec3Key[] = sorted.map((k) => ({
+    // Each key's orientation. No hemisphere bookkeeping: the slerp takes the short arc itself.
+    const rotKeys: QuatKey[] = sorted.map((k) => ({
       time: k.time,
-      value: k.rotation,
+      value: quatFromEulerXYZ(k.rotation),
       easing: 'linear',
     }));
     out.set(bone, (seconds: number) => {
@@ -273,7 +292,7 @@ export function buildClipBoneSamplers(
       const t = duration > 0 ? seconds : sorted[0].time;
       return {
         position: sampleVec3KeyframesExtended(posKeys, t, posRule, posRule),
-        rotation: sampleVec3KeyframesExtended(rotKeys, t, rotRule, rotRule),
+        quaternion: sampleQuatKeyframesExtended(rotKeys, t, rotRule, rotRule),
       };
     });
   }

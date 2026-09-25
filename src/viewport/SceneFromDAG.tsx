@@ -73,6 +73,7 @@ import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { restBonePose } from '../nodes/bonePose';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
@@ -4591,15 +4592,16 @@ function CharacterR({ value }: { value: CharacterValue }) {
   const seconds = useTimeStore((s) => s.seconds);
   const boneTransforms: {
     position: [number, number, number];
-    rotation: [number, number, number];
+    quaternion: [number, number, number, number];
   }[] = [];
   const skel = value.pose.skeleton;
   const poses = value.pose.sample(seconds);
   for (let i = 0; i < skel.bones.length; i++) {
-    const pose = poses[i];
+    // #1223 — the wire carries an orientation; a bone the pose lacks rests.
+    const pose = poses[i] ?? restBonePose(skel.bones[i]);
     boneTransforms.push({
-      position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
-      rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],
+      position: pose.position as [number, number, number],
+      quaternion: pose.quaternion as unknown as [number, number, number, number],
     });
   }
   return (
@@ -4625,7 +4627,10 @@ function CharacterBoneRig({
   transforms,
 }: {
   bones: readonly { parent: number }[];
-  transforms: readonly { position: [number, number, number]; rotation: [number, number, number] }[];
+  transforms: readonly {
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+  }[];
 }) {
   // Build a recursive tree: each bone is a <group> with its parent's group
   // as the React parent, so bone-local transforms compose by THREE matrix
@@ -4641,7 +4646,7 @@ function CharacterBoneRig({
     const t = transforms[i];
     const kids = childrenOf.get(i) ?? [];
     return (
-      <group key={`b:${i}`} position={t.position} rotation={t.rotation}>
+      <group key={`b:${i}`} position={t.position} quaternion={t.quaternion}>
         <mesh position={[0, 0.05, 0]}>
           <boxGeometry args={[0.18, 0.18, 0.18]} />
           <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />

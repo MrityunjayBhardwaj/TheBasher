@@ -1558,17 +1558,27 @@ export interface SkeletonValue {
   readonly bones: readonly BoneSpec[];
 }
 
+/**
+ * One bone's LOCAL transform on the pose wire (#1223): relative to its parent, as the skeleton's
+ * bind values are, but posed.
+ *
+ * A quaternion and a scale rather than XYZ euler, because the wire is where layers fold and where
+ * clips interpolate: euler angles cannot slerp (#1202), and a scale key had nowhere to go. Euler
+ * stays an AUTHORING form (a member's rotation mode, a clip's stored keys) and is converted as it
+ * is read (`bonePose.ts`).
+ */
 export interface BonePose {
-  /** Index into the skeleton's `bones`. */
-  readonly bone: number;
+  /** The bone's name — how a consumer on another rig finds it, as Blender finds a pose channel. */
+  readonly name: string;
   readonly position: Vec3;
-  readonly rotation: Vec3;
+  readonly quaternion: Quat;
+  readonly scale: Vec3;
 }
 
 /**
  * A posed rig, as a FUNCTION OF TIME (rung 2 of #900, issue #992).
  *
- * Bone-indexed counterpart to {@link TransformClipValue}, and the same shape for
+ * Per-bone counterpart to {@link TransformClipValue}, and the same shape for
  * the same reason: `sample(seconds)` returns the per-bone poses at that time, so
  * a producing node's `evaluate` takes NO `Time` input and its cache key does not
  * flip while the clock runs.
@@ -1587,12 +1597,11 @@ export interface BonePose {
  * put ~12ms on the frame path" is true of the INSTANT shape and false of this
  * one.
  *
- * **Bone-indexed, not name-keyed, deliberately.** A {@link BonePose}'s `bone` is
- * an index, meaningful only against the skeleton it is paired with — the same
- * reasoning `RetargetClip` gives for taking the source rig off the clip rather
- * than off a fourth input. Reconciling index → name belongs at the one seam that
- * needs names, not in the value, so there is one reconciliation rather than one
- * per consumer.
+ * **In the skeleton's order, and named (#1223).** `sample` returns one entry per bone of
+ * `skeleton`, index for index, so a consumer on the same rig reads by position with no lookup.
+ * Each entry also carries its bone's NAME, which is what a consumer on a different rig joins by —
+ * a layer's members, a deform whose groups name bones. This was index-only before; the name is
+ * what lets motion move between rigs the way Blender's actions do, by name.
  */
 export interface PosedSkeletonValue {
   readonly kind: 'PosedSkeleton';

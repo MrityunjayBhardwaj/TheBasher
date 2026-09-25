@@ -17,9 +17,10 @@
 // and clicking on. Posing the source rig would mean authoring against a skeleton
 // that is not on screen.
 //
-// WHY THE BONE IS NAMED, NOT INDEXED. `BonePose.bone` is an index and stays one —
-// index is the key across the render boundary, where two sanitisers disagree
-// about spelling (#922). But an INDEX is not an authoring vocabulary: it is
+// WHY THE BONE IS NAMED, NOT INDEXED. A pose entry sits at its bone's index and,
+// since #1223, carries the bone's name too; the index stays the key across the
+// render boundary, where two sanitisers disagree about spelling (#922). But an
+// INDEX is not an authoring vocabulary: it is
 // meaningful only against one skeleton, and the director picks a bone, not an
 // ordinal. So the param is the bone NAME — the same key space as a
 // KeyframeChannel's `childName` and the asset's `nodeNameMap` — and it is
@@ -38,6 +39,7 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { BonePose, PosedSkeletonValue, Vec3 } from './types';
 import { nameParam } from './paramWidget';
+import { quatFromEulerXYZ } from './bonePose';
 
 // Local, as in TrackTo/FollowPath — the codebase declares this tuple per node
 // rather than sharing one schema object.
@@ -112,7 +114,14 @@ export const PoseOverrideNode: NodeDefinition<PoseOverrideParams, PosedSkeletonV
     }
 
     const position: Vec3 = [params.position[0], params.position[1], params.position[2]];
-    const rotation: Vec3 = [params.rotation[0], params.rotation[1], params.rotation[2]];
+    // #1223 — the param is authored in DEGREES (the codebase convention); the wire carries an
+    // orientation. Converting here is what makes this node's output agree with a clip's: it used to
+    // copy the degrees straight into a lane whose other rotations were radians (#1222 finding 1).
+    const quaternion = quatFromEulerXYZ([
+      (params.rotation[0] * Math.PI) / 180,
+      (params.rotation[1] * Math.PI) / 180,
+      (params.rotation[2] * Math.PI) / 180,
+    ]);
 
     return {
       kind: 'PosedSkeleton',
@@ -125,9 +134,10 @@ export const PoseOverrideNode: NodeDefinition<PoseOverrideParams, PosedSkeletonV
         const at = out[index];
         if (at === undefined) return base;
         out[index] = {
-          bone: at.bone,
+          name: at.name,
           position: wantPosition ? position : at.position,
-          rotation: wantRotation ? rotation : at.rotation,
+          quaternion: wantRotation ? quaternion : at.quaternion,
+          scale: at.scale,
         };
         return out;
       },

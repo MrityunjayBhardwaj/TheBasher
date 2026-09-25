@@ -11,8 +11,8 @@
 //      (`boundsForNode`, the fitting reader); src/app/skeletonObjects.ts (the inputs).
 
 import * as THREE from 'three';
-import { boneTransforms, type BoneFrame } from './boneShape';
-import { posedSourceBones } from './referenceRig';
+import { poseTransforms, type BoneFrame } from './boneShape';
+import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import type { SceneBounds } from './sceneBounds';
 import type { SkeletonObject } from '../app/skeletonObjects';
 
@@ -46,7 +46,7 @@ function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): B
  *  has none (or several). */
 export function skeletonObjectFrames(o: SkeletonObject, seconds: number): BoneFrame[] {
   return placeInWorld(
-    boneTransforms(o.clip ? posedSourceBones(o.clip, seconds) : o.bones, o.bones),
+    poseTransforms(o.bones, o.clip ? posedSkeletonFromClip(o.clip).sample(seconds) : null),
     o.world,
   );
 }

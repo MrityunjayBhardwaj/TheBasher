@@ -36,6 +36,5 @@ export function boneParentMatrix(
   if (data?.kind !== 'Skeleton') return null;
   const index = data.bones.findIndex((b) => b.name === bone);
   if (index < 0) return null;
-  const action = actionPoseOf(armature) === null ? null : (armature.action ?? null);
-  return posedBoneMatrices(data.bones, action, seconds)[index];
+  return posedBoneMatrices(data.bones, actionPoseOf(armature), seconds)[index];
 }
